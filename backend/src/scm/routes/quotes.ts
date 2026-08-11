@@ -2,12 +2,16 @@
 // /quotes — saved POS quotes (port of 2990 apps/api/src/routes/quotes.ts, #386).
 //
 // A quote is a saved cart, NOT yet promoted to an order. "Open" = not yet
-// promoted (promoted_to_order_id IS NULL).
+// promoted and not cancelled (promoted_to_order_id IS NULL AND cancelled_at IS
+// NULL).
 //
-//   GET    /quotes       — list open quotes (company- + row-scoped)
-//   POST   /quotes       — save the current cart as a quote
-//   PATCH  /quotes/:id   — update an OPEN quote's cart in place
-//   DELETE /quotes/:id   — delete a quote
+//   GET    /quotes          — list open quotes (company- + row-scoped)
+//   POST   /quotes          — save the current cart as a quote
+//   PATCH  /quotes/:id      — update an OPEN quote's cart in place
+//   PATCH  /quotes/:id/cancel — retire a quote (mig 0278; replaced DELETE)
+//
+// There is NO delete. Owner rule 不可以删只可以 cancel — see the block at the
+// bottom of this file, and docs/hard-delete-inventory.md.
 //
 // Houzs port notes (mirror sofa-quick-picks.ts + the companyScope helpers):
 //   * `supabaseAuth` attaches the scm-scoped service-role client (c.get('supabase'))
@@ -49,7 +53,7 @@ quotes.use('*', supabaseAuth);
 const QUOTE_PRICING_VERSION = 'v1';
 
 const QUOTE_COLUMNS =
-  'id, created_by, showroom_id, customer_name, customer_phone, customer_email, cart, addons, subtotal, addon_total, total, pricing_version, expires_at, promoted_to_order_id, created_at, updated_at';
+  'id, created_by, showroom_id, customer_name, customer_phone, customer_email, cart, addons, subtotal, addon_total, total, pricing_version, expires_at, promoted_to_order_id, cancelled_at, cancelled_by, created_at, updated_at';
 
 // GET /quotes — list open quotes (company- AND row-scoped). "Open" = not yet
 // promoted.
@@ -82,7 +86,12 @@ quotes.get('/', async (c) => {
     c.get('houzsUser')?.id,
     canViewAllSales(c),
   );
-  let q = supabase.from('quotes').select(QUOTE_COLUMNS).is('promoted_to_order_id', null);
+  /* "Open" is now two conditions, not one: not yet promoted AND not cancelled.
+     Before mig 0278 a quote could only leave this list by being converted or
+     DELETED, which is exactly why the delete existed. */
+  let q = supabase.from('quotes').select(QUOTE_COLUMNS)
+    .is('promoted_to_order_id', null)
+    .is('cancelled_at', null);
   if (scopeIds) q = q.in('created_by', scopeIds);
   const { data, error } = await scopeToCompany(q, c)
     .order('created_at', { ascending: false })
@@ -204,7 +213,8 @@ quotes.patch('/:id', async (c) => {
         total: Math.round(total),
       })
       .eq('id', id)
-      .is('promoted_to_order_id', null), // never edit an already-converted quote
+      .is('promoted_to_order_id', null)  // never edit an already-converted quote
+      .is('cancelled_at', null),         // ...nor a cancelled one
     co.companyId,
   )
     .select('id, customer_name, total, updated_at')
@@ -214,27 +224,87 @@ quotes.patch('/:id', async (c) => {
     return c.json({ error: 'db_update_failed', detail: error.message }, 500);
   }
   if (!data) {
-    // Missing, wrong company, or already promoted to an order.
+    // Missing, wrong company, already promoted to an order, or cancelled.
     return c.json({ error: 'not_found_or_converted' }, 404);
   }
   return c.json({ quote: data });
 });
 
-// DELETE /quotes/:id — delete a quote (company-scoped).
-quotes.delete('/:id', async (c) => {
+/* PATCH /quotes/:id/cancel — retire a quote WITHOUT destroying it.
+ *
+ * This replaces the DELETE that used to sit here (see the block below). A quote
+ * is the only pre-sale document in the SCM surface, and until mig 0278 it had no
+ * retirement path at all: no status column, `expires_at` written by nothing, and
+ * `promoted_to_order_id` set only by a conversion that already happened. Delete
+ * was the sole way to get an unwanted quote off the list, so removing the delete
+ * without adding this would have left callers with no way to close one.
+ *
+ * `cancelled_at` / `cancelled_by` mirror the sibling documents' cancel shape
+ * (purchase_consignment_orders, delivery_orders). The row stays, with who and
+ * when on it.
+ *
+ * A PROMOTED quote is refused rather than cancelled: once it has become an
+ * order, the order is the live document and cancelling belongs there. Already
+ * cancelled is idempotent — the same 200, so a retry is safe. */
+quotes.patch('/:id/cancel', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: scope strictly; select reports whether a row in THIS
-  // company was actually removed (a blind id from another company is not found).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data, error } = await scopeToCompanyId(
-    supabase.from('quotes').delete().eq('id', id),
+
+  const { data: cur, error: readErr } = await scopeToCompanyId(
+    supabase.from('quotes').select('id, cancelled_at, promoted_to_order_id').eq('id', id),
     co.companyId,
-  ).select('id').maybeSingle();
-  if (error) {
-    return c.json({ error: 'db_delete_failed', detail: error.message }, 500);
+  ).maybeSingle();
+  if (readErr) return c.json({ error: 'db_read_failed', detail: readErr.message }, 500);
+  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+
+  const row = cur as { id: string; cancelled_at: string | null; promoted_to_order_id: string | null };
+  if (row.promoted_to_order_id) {
+    return c.json({
+      error: 'already_converted',
+      message: 'This quote became an order. Cancel the order, not the quote.',
+    }, 409);
   }
-  if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ ok: true });
+  if (row.cancelled_at) return c.json({ quote: { id: row.id, cancelled_at: row.cancelled_at } });
+
+  // Same attribution source as the create path, so "who cancelled it" reads in
+  // the same vocabulary as "who quoted it".
+  const cancelledBy =
+    (await resolveCallerStaffId(supabase, c.get('houzsUser')?.id)) ?? c.get('user').id;
+
+  const { data, error } = await scopeToCompanyId(
+    supabase
+      .from('quotes')
+      .update({ cancelled_at: new Date().toISOString(), cancelled_by: cancelledBy })
+      .eq('id', id)
+      .is('promoted_to_order_id', null),
+    co.companyId,
+  ).select('id, cancelled_at, cancelled_by').maybeSingle();
+  if (error) return c.json({ error: 'db_update_failed', detail: error.message }, 500);
+  if (!data) return c.json({ error: 'not_found_or_converted' }, 404);
+  return c.json({ quote: data });
 });
+
+/* ── DELETE /quotes/:id: REMOVED (owner rule, 2026-08-11) ───────────────────
+   There was a DELETE /:id here that hard-purged a quote row. It is gone, and it
+   must not come back.
+
+   The owner's rule is 不可以删只可以 cancel — nothing is ever deleted, only
+   cancelled. Of the three document-level hard deletes found on the SCM route
+   surface this was the LEAST guarded: no status check, no audit row, no
+   downstream lock. Any quote in the active company, at any point in its life,
+   could be erased by id — including one that had already been promoted to a
+   sales order, which would have destroyed the only record of what the customer
+   was actually quoted before that order existed.
+
+   A quote is pre-sale and never reaches AutoCount, so this is not a
+   sync-divergence risk the way the PO and PC Order deletes were. It is a
+   commercial-history risk: the priced cart, the customer contact and the
+   salesperson attribution are the evidence behind a disputed order.
+
+   PATCH /:id/cancel above is the replacement, and mig 0278 gave the table the
+   cancelled_at / cancelled_by columns it needed to have one.
+
+   The full classification of every delete on the SCM route surface is in
+   docs/hard-delete-inventory.md. Check it before adding a DELETE handler. */

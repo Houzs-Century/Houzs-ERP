@@ -221,6 +221,29 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
   return drift > 0.005;
 };
 
+/**
+ * How much of the caller's selling price to believe.
+ *
+ *   false            the authoritative default — a catalog line is re-priced to
+ *                    mfg_products.sell_price_sen (+ fabric delta + extras).
+ *   true             owner ruling 2026-05-31: a trusted non-POS author's
+ *                    hand-entered price wins, but only when they entered one.
+ *                    0 still means "not provided" and takes the catalogue fill.
+ *   'including-zero' additionally believes a stored 0.
+ *
+ * 'including-zero' exists for MIGRATED documents (linked_ac_docno IS NOT NULL)
+ * and nothing else. Their prices came from AutoCount, where a sofa set is
+ * routinely carried as the whole-set price on ONE lead module line with 0 on its
+ * siblings. Under `true` those 0 siblings would each be handed a catalogue price
+ * on the next approved amendment and the customer would be billed for the set
+ * several times over; under 'including-zero' the AutoCount shape survives.
+ *
+ * Do NOT reach for it on a line the operator is authoring now — there a 0 really
+ * does mean the client could not resolve a price, and the catalogue fill is the
+ * correct answer.
+ */
+export type TrustSelling = boolean | 'including-zero';
+
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
  *  so the math path is verifiable without Supabase. */
@@ -275,8 +298,11 @@ export function recomputeFromSnapshot(
    *  PERSISTED as-is instead of normalised to the authoritative catalog figure.
    *  Default false = the authoritative behaviour for every other caller. NEVER
    *  true for a POS-tablet session (those are drift-rejected upstream). Cost is a
-   *  server-only snapshot and is untouched by this flag. */
-  trustOperatorSelling: boolean = false,
+   *  server-only snapshot and is untouched by this flag.
+   *
+   *  See {@link TrustSelling} for what 'including-zero' adds and why only a
+   *  MIGRATED document may ask for it. */
+  trustOperatorSelling: TrustSelling = false,
 ): RecomputedLine {
   const category = toMfgCategory(item.itemGroup, product?.category ?? '');
   const variants = item.variants ?? {};
@@ -587,8 +613,16 @@ export function recomputeFromSnapshot(
      actually entered, persist THAT over the authoritative catalog figure.
      manualUnitSelling === 0 means "not provided" (client couldn't resolve it) ->
      keep the authoritative fill. `drift` above is unchanged (only a POS caller is
-     rejected on it; a trusted caller's drift is ignored by the route). */
-  if (trustOperatorSelling && manualUnitSelling > 0) {
+     rejected on it; a trusted caller's drift is ignored by the route).
+
+     'including-zero' additionally treats a stored 0 as a REAL price rather than
+     "not provided". That distinction only makes sense for a MIGRATED document,
+     and there it is load-bearing: an AutoCount sofa is frequently carried as the
+     whole set price on ONE lead module line with 0 on its siblings, so under
+     plain `true` every sibling would still be handed a catalogue price and the
+     set would be billed several times over. Never use it for a line the operator
+     is authoring now — there a 0 really does mean "not provided". */
+  if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
     unitToPersistSen = manualUnitSelling;
   }
 
@@ -984,12 +1018,21 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 /** End-to-end: given an item draft, load product + fabric + config and
  *  return the recompute. The caller assembles the DB row from the result.
  *  Returns drift=true when the client's unitPriceCenti differs > 0.5%
- *  from the server compute — caller decides whether to reject (HTTP 400). */
+ *  from the server compute — caller decides whether to reject (HTTP 400).
+ *
+ *  `opts.trustOperatorSelling` is an OPTIONS OBJECT, not a 5th positional, on
+ *  purpose. Until 2026-08-11 this wrapper could not express the flag at all: it
+ *  called recomputeFromSnapshot with 14 positional arguments and simply let the
+ *  15th default to false, so the SO amendment path — its only caller — re-priced
+ *  every approved amendment to catalogue, including a MIGRATED order carrying the
+ *  price AutoCount negotiated with the customer. A 15-argument positional call is
+ *  what made that invisible; a named option cannot be dropped by miscounting. */
 export async function recomputeOneLine(
   sb: any,
   item: MfgItemForRecompute,
   cachedConfig?: MaintenanceConfig | null,
   companyId?: number | null,
+  opts?: { trustOperatorSelling?: TrustSelling },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);
   const [product, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
@@ -1014,5 +1057,5 @@ export async function recomputeOneLine(
         loadModelSofaModuleCostRows(sb, product.base_model, companyId),
       ])
     : [null, null];
-  return recomputeFromSnapshot(item, product, fabric, config, null, sofaModulePrices, sellingTiers, fabricAddonConfig, null, null, null, sofaModuleCostRows, modelOverrides, compartmentOverrides);
+  return recomputeFromSnapshot(item, product, fabric, config, null, sofaModulePrices, sellingTiers, fabricAddonConfig, null, null, null, sofaModuleCostRows, modelOverrides, compartmentOverrides, opts?.trustOperatorSelling ?? false);
 }

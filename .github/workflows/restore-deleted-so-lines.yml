@@ -1,0 +1,56 @@
+name: Restore the two DELETED sales-order lines as CANCELLED (DRY-RUN gated)
+
+# Owner rule 2026-08-10: "不可以删只可以 cancel". Production run 31393696809 hard-
+# DELETED one 9050-2S from HC-SO-012624 and one 8030-1S from HC-SO-013167 while
+# correcting those builds. Confirmed against the database, not the log: both
+# documents hold 2 live sofa lines and no cancelled third.
+#
+# This puts each row back CANCELLED at 0 price, so the live piece set, every
+# readiness query (all of which filter cancelled = false) and every total stay
+# exactly as they are, and the order's history stops lying about what was on it.
+#
+# The safety is not an argument, it is a mechanism: the whole sales-order header
+# row is snapshotted as jsonb before and after the insert INSIDE the same
+# transaction and every key compared, together with SUM(total_centi) and
+# SUM(balance_centi) over all lines and over live lines only. If anything moved,
+# the transaction ROLLS BACK and the run reports instead of reconciling.
+#
+# DRY-RUN unless apply=1. Idempotent.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: restore-deleted-so-lines
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/restore-deleted-so-lines.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

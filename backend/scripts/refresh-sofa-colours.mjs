@@ -60,6 +60,25 @@ const txt = (v) => (typeof v === "string" ? v.trim() : "");
 // all three together, and a half-written line must still not be re-stamped
 const isBound = (v) => !!(txt(v?.fabricId) || txt(v?.colourId) || txt(v?.fabricCode));
 
+/* The 2026-08-10 runs of this script left `variants` as an ARRAY on the rows
+   they claimed to stamp: [ the original object, "the patch as a STRING", ... ],
+   one appended element per run. Element 0 is the untouched original, so that is
+   where a damaged row's real seatHeight / specials / colourLabel still live.
+   Read through it - otherwise the colourLabel fallback below silently stops
+   finding the colour on exactly the rows this sweep damaged. */
+const asObject = (v) => {
+  if (Array.isArray(v)) return (v[0] && typeof v[0] === "object" && !Array.isArray(v[0])) ? v[0] : {};
+  return (v && typeof v === "object") ? v : {};
+};
+const isDamaged = (v) => Array.isArray(v) || (v != null && typeof v !== "object");
+
+/* The one SQL expression that reads a row's variants as an OBJECT whatever
+   shape it is in now. Used for both the guard and the value, so the statement
+   repairs the shape in the same pass that stamps the colour. */
+const BASE = `(CASE WHEN jsonb_typeof(variants) = 'array'  THEN COALESCE(variants -> 0, '{}'::jsonb)
+                    WHEN jsonb_typeof(variants) = 'object' THEN variants
+                    ELSE '{}'::jsonb END)`;
+
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO}`);
 
@@ -77,14 +96,15 @@ async function main() {
   log(`migrated sofa lines: SO ${soLines.length}, PO ${poLines.length}`);
 
   const updates = { so: [], po: [] };
-  const tally = { bound: 0, none: 0, pending: 0, perPiece: 0, fill: 0, miss: 0 };
+  const tally = { bound: 0, none: 0, pending: 0, perPiece: 0, fill: 0, miss: 0, damaged: 0 };
   const bindCounts = new Map();   // "doc string -> series / colour" -> lines
   const missCounts = new Map();   // unresolved doc string -> lines
   const pendCounts = new Map();   // TBC/KIV string -> lines
 
   for (const [which, rows] of [["so", soLines], ["po", poLines]]) {
     for (const r of rows) {
-      const had = r.variants || {};
+      if (isDamaged(r.variants)) tally.damaged++;
+      const had = asObject(r.variants);
       if (isBound(had)) { tally.bound++; continue; }
       /* {model}-{compartment}; the alias table is what the importers apply, so
          the re-decode sees the same model they did. */
@@ -128,6 +148,7 @@ async function main() {
   log("");
   log(`scanned ${scanned} migrated sofa lines`);
   log(`  already set (a colour is bound - left untouched): ${tally.bound}`);
+  log(`  variants NOT an object (damaged by this script on 2026-08-10): ${tally.damaged}  <- repaired by the write below`);
   log(`  no colour written on the line:                    ${tally.none}${tally.perPiece ? ` (of which per-piece "colour (2S): X": ${tally.perPiece})` : ""}`);
   log(`  TBC / KIV - not chosen yet, left blank:           ${tally.pending}`);
   log(`  TO FILL:                                          ${tally.fill}  (SO ${updates.so.length}, PO ${updates.po.length})`);
@@ -152,6 +173,30 @@ async function main() {
 
   if (!APPLY) { log(""); log("DRY-RUN - set APPLY=1 to write."); await sql.end(); return; }
 
+  /* ---- repair the shape FIRST -----------------------------------------------
+     Driven by the shape, not by the fill list. A row this script damaged whose
+     colour no longer resolves is still damaged, and a fill-driven sweep would
+     walk straight past it. Element 0 is the original object; the trailing
+     elements are the double-encoded patches this script appended and have never
+     been anything a reader could use. Nothing is removed from the ORDER - this
+     restores a column to the value it held before 15:42 today. Rows whose
+     element 0 is not an object are left alone and reported, because that is not
+     this damage and guessing at it would be a second defect. */
+  let repaired = 0;
+  for (const table of ["mfg_sales_order_items", "purchase_order_items"]) {
+    const odd = await sql.unsafe(
+      `SELECT COUNT(*)::int AS n FROM scm.${table}
+        WHERE jsonb_typeof(variants) = 'array' AND jsonb_typeof(variants -> 0) IS DISTINCT FROM 'object'`);
+    if (odd[0].n) log(`  !! ${table}: ${odd[0].n} array-shaped rows whose element 0 is not an object - LEFT ALONE for a human`);
+    const r = await sql.unsafe(
+      `UPDATE scm.${table} SET variants = variants -> 0
+        WHERE jsonb_typeof(variants) = 'array' AND jsonb_typeof(variants -> 0) = 'object'
+        RETURNING id`);
+    repaired += r.length;
+    log(`  shape repair: ${table} ${r.length} rows restored to an object`);
+  }
+  log(`shape repair total: ${repaired} rows`);
+
   // ---- write ----------------------------------------------------------------
   let wrote = 0, raced = 0;
   for (const [which, table] of [["so", "mfg_sales_order_items"], ["po", "purchase_order_items"]]) {
@@ -162,22 +207,69 @@ async function main() {
         for (const u of b) {
           /* Merge, never replace - and repeat the "nobody has chosen one" test
              in the UPDATE itself, so a pick made since the read above is not
-             overwritten by this sweep. */
+             overwritten by this sweep.
+
+             BASE also repairs the shape. The 2026-08-10 runs of this script
+             turned `variants` into an ARRAY on the rows they claimed to stamp
+             (see BUG-HISTORY: object || non-object concatenates in postgres,
+             it does not merge), so element 0 is the untouched original object
+             and everything after it is the damage. Reading through element 0
+             and writing an object back is the repair, in the same statement
+             that does the stamping - the rows needing repair are exactly the
+             rows needing the colour. */
           const res = await tx.unsafe(
             `UPDATE scm.${table}
-                SET variants = COALESCE(variants, '{}'::jsonb) || $1::jsonb
+                SET variants = ${BASE} || $1::jsonb
               WHERE id = $2
-                AND COALESCE(variants->>'fabricId', '') = ''
-                AND COALESCE(variants->>'colourId', '') = ''
-                AND COALESCE(variants->>'fabricCode', '') = ''`,
-            [JSON.stringify(u.patch), u.id]);
-          if (res.count) wrote += res.count; else raced++;
+                AND COALESCE(${BASE} ->> 'fabricId', '') = ''
+                AND COALESCE(${BASE} ->> 'colourId', '') = ''
+                AND COALESCE(${BASE} ->> 'fabricCode', '') = ''
+              RETURNING variants ->> 'fabricId' AS f`,
+            /* tx.json, NEVER JSON.stringify. postgres.js applies its own
+               JSON.stringify to any parameter whose type resolves to json /
+               jsonb (types.js serializers 114/3802), and with prepare:false +
+               parameters it ALWAYS learns that type from the server before
+               binding (connection.js:238 describeFirst). A pre-stringified
+               string therefore gets encoded twice and arrives as a jsonb
+               STRING. That is what broke this sweep three times. */
+            [tx.json(u.patch), u.id]);
+          /* Count what came BACK, not the command tag. A command tag counts
+             rows the statement touched; it cannot tell you the row now holds
+             what you meant. Three runs reported 127/146/146 from the tag with
+             nothing to show for it. */
+          if (res.length && res[0].f) wrote += res.length; else raced++;
         }
       });
       log(`  ${which} ..${Math.min(i + 200, list.length)}/${list.length}`);
     }
   }
-  log(`APPLIED - stamped ${wrote} sofa lines${raced ? `; ${raced} skipped (a colour was chosen since the scan)` : ""}.`);
   await sql.end();
+
+  /* ---- the read that decides ------------------------------------------------
+     A connection that has just written is the last witness to trust about
+     whether the write committed. Re-open and count from scratch. */
+  const fresh = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  const [after] = await fresh`
+    WITH lines AS (
+      SELECT i.variants FROM scm.mfg_sales_order_items i
+        JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
+       WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+      UNION ALL
+      SELECT i.variants FROM scm.purchase_order_items i
+        JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
+       WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
+    )
+    SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE COALESCE(variants->>'fabricId','') <> '')::int AS bound,
+           COUNT(*) FILTER (WHERE jsonb_typeof(variants) IS DISTINCT FROM 'object'
+                              AND variants IS NOT NULL)::int AS malformed
+      FROM lines`;
+  await fresh.end();
+  log("");
+  log(`APPLIED - stamped ${wrote} sofa lines${raced ? `; ${raced} skipped (a colour was chosen since the scan, or the write did not take)` : ""}.`);
+  log(`POST-APPLY READ (fresh connection): ${after.bound} of ${after.total} migrated sofa lines carry a fabricId; ${after.malformed} still hold a non-object variants.`);
+  log(`  before this run: ${tally.bound} bound. ${after.bound - tally.bound >= 0 ? "+" : ""}${after.bound - tally.bound}.`);
+  if (after.bound <= tally.bound && wrote > 0)
+    log("::error::the write reported rows but the re-read did not move - do NOT report this run as applied");
 }
 main().catch((e) => { console.error(e); process.exit(1); });
