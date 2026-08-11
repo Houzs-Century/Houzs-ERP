@@ -618,7 +618,7 @@ written out in full because on Friday somebody has to walk up to that machine.
 | `C:\Temp\AcSyncService.prev.exe` | The rollback. Stop, restore, start |
 | `C:\Temp\ac-svc-key.txt` | The `X-API-KEY` the service requires. Must match the `AC_SYNC_KEY` Worker secret |
 | `C:\Temp\ac-sync-service.log` | Where the service writes. A `CreatedLines(...) failed:` line here is what a missing `lines` array in a create response means |
-| `C:\Tempc-svc-port.txt` | The port, as a FILE not a constant — 8899 turned out to be pinned inside `http.sys` by an orphaned listener registration from the cutover file server. Default 8900 |
+| `C:\Temp\ac-svc-port.txt` | The port, as a FILE not a constant — 8899 turned out to be pinned inside `http.sys` by an orphaned listener registration from the cutover file server. Default 8900 |
 | `C:\InistateConnector\setup.json` | Where the SQL credentials are read from at build time (`dbUsername` / `dbPassword`). Never copied into source |
 | `C:\Program Files\AutoCount\Accounting 2.2\` | The licensed assemblies. `csc.exe` references five of them |
 | LINQPad, **"Query 2"** | Intact, and it is the build button. Reassembles the bridge parts, substitutes, compiles, swaps the exe, posts the log back at `seq = -3` |
