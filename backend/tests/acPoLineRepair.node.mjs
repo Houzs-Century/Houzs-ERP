@@ -458,6 +458,29 @@ test("a document the code match never opens is named as such, not blamed on the 
   }), "the AutoCount document is in NEITHER committed PO export");
 });
 
+test("the reason list UNDERCOUNTS compartments, which is why the census counts them separately", () => {
+  /* This is the fact that decides whether "the 589 are decomposed sofa
+     compartments" can be answered from the reason tally. It cannot.
+     codeMatchGapReason() returns the FIRST cause that applies and the
+     document-level ones are tested first — correctly, because a line on a
+     document the script never opens fails whatever its item code is. So a row
+     that IS a compartment is reported under the document reason and never
+     counted as one.
+
+     Measured on production 2026-08-11: the reason list said 65 compartments
+     while 464 rows were claimed by the document cause ahead of it. The census
+     therefore asks `isCompartmentSku` of EVERY row independently. Delete that
+     independent tally and the report goes back to answering the question with a
+     number that is only a lower bound. */
+  const bothApply = {
+    codeMatched: false, docInOutstandingPo: false, docInSoLinkedPos: true,
+    skuBeyondItemCode: true, acItemMapped: true,
+  };
+  assert.doesNotMatch(codeMatchGapReason(bothApply), /COMPARTMENT/);
+  // ...though the row plainly is one, asked directly.
+  assert.equal(isCompartmentSku("DSL-8030 SOFA 1A(LHF)", "DSL-8030 SOFA"), true);
+});
+
 test("a line the code match DID reach has no gap to explain", () => {
   assert.equal(codeMatchGapReason({
     codeMatched: true, docInOutstandingPo: true, docInSoLinkedPos: true,

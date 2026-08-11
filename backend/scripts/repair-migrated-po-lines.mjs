@@ -446,26 +446,49 @@ async function main() {
       skuBeyondItemCode: ac ? isCompartmentSku(r.supplier_sku, ac.itemCode) : false,
       acItemMapped: ac ? Boolean(byAc.get(norm(ac.itemCode))) : false,
     });
-    if (reason) gapRows.push({ r, reason, reachable: Boolean(ac) });
+    if (reason) {
+      gapRows.push({
+        r, reason, reachable: Boolean(ac),
+        /* Measured independently of which reason won. codeMatchGapReason()
+           returns the FIRST cause that applies, and the document-level ones are
+           checked first on purpose — a line on a document the script never
+           opens fails whatever its item code is. That ordering makes the
+           "compartment" tally in the reason list a LOWER BOUND, not the answer
+           to "how many of these are decomposed sofa compartments". This flag is
+           the answer: it asks the question of every row, whatever reason was
+           reported for it. `null` where the row cannot be reached at all, which
+           is not the same as false and must not be counted as one. */
+        compartment: ac ? isCompartmentSku(r.supplier_sku, ac.itemCode) : null,
+      });
+    }
   }
   const gapByReason = new Map();
   const gapByGroup = new Map();
   for (const g of gapRows) {
     gapByReason.set(g.reason, (gapByReason.get(g.reason) ?? 0) + 1);
     const k = g.r.item_group ?? "(none)";
-    if (!gapByGroup.has(k)) gapByGroup.set(k, { total: 0, reachable: 0 });
+    if (!gapByGroup.has(k)) gapByGroup.set(k, { total: 0, reachable: 0, compartment: 0 });
     const e = gapByGroup.get(k);
-    e.total++; if (g.reachable) e.reachable++;
+    e.total++; if (g.reachable) e.reachable++; if (g.compartment === true) e.compartment++;
   }
   const reachable = gapRows.filter((g) => g.reachable).length;
+  const isComp = gapRows.filter((g) => g.compartment === true).length;
+  const notComp = gapRows.filter((g) => g.compartment === false).length;
+  const unknownComp = gapRows.filter((g) => g.compartment === null).length;
   log("");
   log(`THE LINES THE (DocNo, ERP code) MATCH COULD NOT REACH — its "no AC match" count, re-derived here: ${gapRows.length}`);
-  log("   by reason:");
+  log("   by reason (FIRST cause that applies; the document-level ones are tested first, because a line on a document the script never opens fails whatever its item code is):");
   for (const [reason, n] of [...gapByReason.entries()].sort((a, b) => b[1] - a[1])) log(`      ${n} x  ${reason}`);
   log("   by item_group (reachable = this repair DOES find the AutoCount line for it):");
   for (const [g, e] of [...gapByGroup.entries()].sort((a, b) => b[1].total - a[1].total)) {
-    log(`      ${g}: ${e.total} line(s), of which this repair reaches ${e.reachable}`);
+    log(`      ${g}: ${e.total} line(s), of which this repair reaches ${e.reachable}, and ${e.compartment} are decomposed compartments`);
   }
+  /* The standing hypothesis was that this gap IS the decomposed sofa
+     compartments. Asked of every row rather than only the ones no earlier cause
+     already claimed, so the answer is a measurement and not an artefact of the
+     order the reasons are tested in. */
+  log(`   DECOMPOSED COMPARTMENT? asked of every row, independent of the reason above:`);
+  log(`      yes ${isComp}; no ${notComp}; unanswerable because this repair cannot reach the AutoCount line either ${unknownComp}`);
   log(`   TOTAL this repair reaches that the code match cannot: ${reachable} of ${gapRows.length}`);
 
   if (!APPLY) {
