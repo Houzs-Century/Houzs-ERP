@@ -71,6 +71,10 @@ export type AmendmentLine = {
   new_variants: unknown;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  /* mig 0280 — the requested line REMARK (the operator's free-text instruction
+     for whoever executes the line). null = the request does not touch it; ''
+     = clear it. Absent on every row raised before 0280. */
+  new_remark?: string | null;
   old_snapshot: unknown;
 };
 
@@ -106,6 +110,10 @@ export type CreateAmendmentLine = {
   newVariants?: unknown;
   newQty?: number;
   newUnitPriceSen?: number;
+  /* mig 0280 — the line's REMARK. Omit when the request does not touch it; ''
+     is a real request to clear it. Before 0280 this had no column and the
+     submit dropped it in silence (owner 2026-08-11, 2990-SO-2608-016). */
+  newRemark?: string;
   oldSnapshot?: unknown;
 };
 

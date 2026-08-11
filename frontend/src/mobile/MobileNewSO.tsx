@@ -1589,6 +1589,13 @@ export function MobileNewSO({
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
     if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
+    /* mig 0280 — the remark is a carryable field now, so a remark-only edit IS
+       a request. Stated explicitly rather than relying on the variants compare
+       above: buildVariants copies the remark into variants.remark, so this was
+       incidentally caught here while desktop's signature (four fields, no
+       variants.remark side channel) missed it entirely and silently requested
+       nothing. Both platforms now test the same five fields on purpose. */
+    if (l.remark.trim() !== (snap.remark ?? "").trim()) return true;
     return false;
   };
 
@@ -1658,6 +1665,12 @@ export function MobileNewSO({
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
         newUnitPriceSen: toCenti(l.price),
+        /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
+           new_remark is "not requested", which is what keeps the apply from
+           rewriting a remark this session never touched. */
+        ...(l.remark.trim() !== (snap.remark ?? "").trim()
+          ? { newRemark: l.remark.trim() }
+          : {}),
         oldSnapshot: {
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
@@ -1692,6 +1705,11 @@ export function MobileNewSO({
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
         newUnitPriceSen: toCenti(l.price),
+        /* mig 0280 — desktop parity: an added line carries its typed remark to
+           the mfg_sales_order_items.remark COLUMN, not only inside the variants
+           blob. A service line added purely to carry an instruction is the case
+           that lost the owner's text on 2990-SO-2608-016. */
+        ...(l.remark.trim() ? { newRemark: l.remark.trim() } : {}),
       });
     }
     return out;
