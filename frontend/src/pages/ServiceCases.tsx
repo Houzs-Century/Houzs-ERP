@@ -6818,24 +6818,57 @@ function PrintMenu({
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
-  /* Which copy the operator picked, held until the Print preview confirms it.
-     A service case prints from a SERVER-rendered HTML view, not a jspdf file,
-     so this preview names the case and the copy and then hands over to that
-     view — there is no document here to download. */
+  /* Which copy the operator picked. This preview USED to stop here: a card that
+     restated the copy you had just chosen in the menu and a button that opened
+     the print view in another tab — a confirmation box wearing a preview's name.
+     Nothing about the document was visible until it was already in a tab, which
+     is how a wrong SUB-STATUS line reached customer copies unnoticed (owner
+     2026-08-07: "为什么没有 Print Preview?"). The dialog now shows the real page. */
   const [variant, setVariant] = useState<PrintVariant | null>(null);
+  const [html, setHtml] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
 
-  async function go(v: PrintVariant) {
+  const path = (v: PrintVariant) => `/api/assr-print/${caseId}?variant=${v}`;
+
+  async function openInTab(v: PrintVariant) {
     try {
-      await api.openHtml(`/api/assr-print/${caseId}?variant=${v}`);
+      await api.openHtml(path(v));
     } catch (e: any) {
       toast.error(e?.message || "Failed to open print view");
     }
   }
-  const print = usePrintPreview(() => (variant ? go(variant) : undefined));
-  const pick = (v: PrintVariant) => {
+
+  /* Print the PREVIEWED document straight from its iframe. The old flow opened a
+     tab and left the operator to print from there; the iframe already holds the
+     exact same HTML, and printing it bypasses the app's global @media print
+     rules entirely (see components/scm-v2/PrintPreviewModal). Falls back to the
+     tab when the frame is not ready — never silently do nothing. */
+  const printNow = () => {
+    const frame = frameRef.current;
+    if (!frame?.contentWindow) {
+      if (variant) void openInTab(variant);
+      return;
+    }
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+  };
+
+  const print = usePrintPreview(printNow);
+  const pick = async (v: PrintVariant) => {
     setOpen(false);
     setVariant(v);
+    setHtml(null);
+    setLoadFailed(false);
     print.openPreview();
+    try {
+      setHtml(await api.getHtml(path(v)));
+    } catch (e: any) {
+      // Keep the dialog open with an explicit failure — "Open in new tab" is
+      // still a way through, and a blank frame would read as an empty document.
+      setLoadFailed(true);
+      toast.error(e?.message || "Failed to load the print view");
+    }
   };
 
   // Click-outside close — listen on document while open.
@@ -6888,8 +6921,30 @@ function PrintMenu({
           rows={[
             { label: "Copy", value: PRINT_VARIANTS[variant].label },
             { label: "Contains", value: PRINT_VARIANTS[variant].hint },
-            { value: "Print now opens the print view in a new tab." },
           ]}
+          document={
+            loadFailed ? (
+              <div className="px-5 py-8 text-center text-[12.5px] text-ink-secondary">
+                Couldn't load the print view. Open it in a new tab to try again.
+              </div>
+            ) : html === null ? (
+              <div className="px-5 py-8 text-center text-[12.5px] text-ink-muted">
+                Loading the {PRINT_VARIANTS[variant].label.toLowerCase()}…
+              </div>
+            ) : (
+              /* srcDoc, not a blob URL: the document is same-origin-inherited so
+                 contentWindow.print() is reachable, which is what makes "Print
+                 now" print THIS page instead of bouncing through a tab. */
+              <iframe
+                ref={frameRef}
+                srcDoc={html}
+                title={`${assrNo ?? `Case ${caseId}`} — ${PRINT_VARIANTS[variant].label}`}
+                className="h-[58vh] w-full border-0 bg-white"
+              />
+            )
+          }
+          onViewPdf={() => openInTab(variant)}
+          viewLabel="Open in new tab"
           onPrint={print.handlers.onPrint}
         />
       )}
