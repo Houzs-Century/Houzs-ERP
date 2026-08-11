@@ -107,12 +107,16 @@ const STAGE_LABEL: Record<string, string> = {
   closed: "Completed",
 };
 
+/* Owner-approved wording (2026-08-11). Kept identical in all three
+   copies of this map — backend print, desktop StatusDot, mobile — because
+   the document and the app showing the same case different words is what
+   sent us looking in the first place. */
 const RESOLUTION_LABEL: Record<string, string> = {
   replace_unit: "Replace Unit",
-  supplier_repair: "Supplier Repair (Workshop)",
-  field_service_own: "Field Service (Own Team)",
-  field_service_supplier: "Field Service (Supplier)",
-  return_visit: "Return Visit",
+  supplier_repair: "Supplier Service",
+  field_service_own: "On Site Service (Own Team)",
+  field_service_supplier: "On Site Service (Supplier)",
+  return_visit: "2nd Services",
 };
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -325,13 +329,16 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   // Status pills (design: two outlined pills top-right). SERVICE maps
   // the resolution method to a service-location bucket; STATUS is the
   // workflow stage. Both render static — change in-app and reprint.
-  const servicePillLabel = (() => {
-    const m = cs.resolution_method;
-    if (m === "field_service_own" || m === "field_service_supplier") return "At Customer";
-    if (m === "replace_unit" || m === "supplier_repair") return "Return to Supplier";
-    if (m === "return_visit") return "Internal (own team)";
-    return "—";
-  })();
+  /* The REAL resolution method, worded exactly as the app words it (owner
+     2026-08-11). This used to collapse the five methods into three buckets —
+     "At Customer" / "Return to Supplier" / "Internal (own team)" — which threw
+     away the distinction the reader cares about most: Replace Unit and Supplier
+     Service both printed "Return to Supplier", so a customer could not tell
+     from the paper whether they were waiting on a new unit or a repair. Same
+     for the two on-site methods, which hid whether we or the supplier turns up. */
+  const servicePillLabel = cs.resolution_method
+    ? RESOLUTION_LABEL[cs.resolution_method] || cs.resolution_method
+    : "—";
   const statusPillLabel = STAGE_LABEL[cs.stage] || cs.stage;
   // Void reason prints beneath the status when the case is voided
   // (Nico 2026-07-29) so the recipient sees why it was rejected.
@@ -401,10 +408,11 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 <head>
   <meta charset="UTF-8">
   <title>${esc(docTitle)} — ${esc(cs.assr_no)}</title>
-  <!-- Which letterhead this copy actually resolved to. The caller cannot work
-       it out on its own — with no ?entity the answer is the CASE's company, a
-       field the print dialog does not hold — so the document states it and the
-       entity picker highlights what is really on the paper. -->
+  <!-- Which letterhead this copy actually resolved to. With no ?entity the
+       answer is the CASE's company, which nothing else on the page records, so
+       a saved copy can still be traced back to the entity that headed it.
+       Nothing reads this at runtime — it is for whoever is holding the file
+       and asking. -->
   <meta name="print-entity" content="${esc(entity)}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -761,10 +769,21 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
        SERVICE line up regardless of how long the values run. */
     .sbox { width: 72mm; flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
     .sbox .main { background: var(--lane); color: #fff; font-size: 11pt; font-weight: 700; padding: 2.6mm 4mm; }
+    /* Sub-status rides INSIDE the bar as a qualifier of the stage rather than
+       taking a row of its own. It cannot be read without its stage ("Pending
+       Inspection" of what?), and it exists on ~5% of cases — a peer row made
+       the card look like it held two equal facts when it holds one fact and a
+       footnote. */
+    .sbox .main .qual {
+      display: block; margin-top: 1.2mm;
+      font-size: 8.5pt; font-weight: 600; line-height: 1.25;
+      color: rgba(255,255,255,.86);
+    }
     /* "Same colour at 10%" — derived from the lane so the tint follows the top
        bar when a lane scale lands, instead of drifting from it. */
+    /* One row only — Service. The divider rule that used to separate stacked
+       rows is gone with the stack; add it back if a second row ever returns. */
     .sbox .row { display: grid; grid-template-columns: 20mm 1fr; gap: 3mm; padding: 3mm 4mm; background: rgba(22,105,95,.10); align-items: baseline; }
-    .sbox .row + .row { border-top: 1px solid var(--line); }
     .sbox .row .cap { font-size: 7pt; font-weight: 600; letter-spacing: .12em; color: var(--c-secondary-a); text-transform: uppercase; }
     .sbox .row .val { font-size: 9.5pt; font-weight: 600; color: var(--ink); }
     /* Service reads one step louder than Sub-Status (owner 2026-08-11): it is
@@ -910,13 +929,18 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           ${docSubtitle ? `<div class="subtitle mono">${esc(docSubtitle)}</div>` : ""}
         </div>
         <div class="sbox">
-          <!-- Service ABOVE Sub-Status (owner 2026-08-11). Service is how the
-               case gets fixed — the stable, headline fact; Sub-Status is only
-               where inside the current stage it happens to sit today. Reading
-               the transient one first put them in the wrong order. -->
-          <div class="main">${esc(statusPillLabel)}</div>${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
-          <div class="row lead"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}${subStatusLabel ? `
-          <div class="row"><span class="cap mono">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}
+          <!-- Two facts, not three rows (owner 2026-08-11). The STAGE and its
+               sub-state are one thought, so the sub-state sits inside the bar;
+               SERVICE — how the case gets fixed — is the orthogonal one and
+               gets the card's only row, in the louder size.
+
+               Sized for what actually prints: of 833 live cases 75.5% have
+               neither a sub-state nor a method, so the card is just the bar and
+               has to look deliberate that way; the full three-piece version is
+               3.2%. The supplier copy never shows Service here — its Resolution
+               Plan block below carries the method instead. -->
+          <div class="main">${esc(statusPillLabel)}${subStatusLabel ? `<span class="qual">${esc(subStatusLabel)}</span>` : ""}</div>${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
+          <div class="row lead"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
         </div>
       </div>
       <div class="ref mono">

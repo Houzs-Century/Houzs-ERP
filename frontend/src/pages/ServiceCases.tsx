@@ -3553,7 +3553,15 @@ function DetailContent({
           <>
             {/* PR 1 redesign — Print + Portal Link moved up from the
                 pill row. Match the design's title-row action group. */}
-            <PrintMenu caseId={id} assrNo={c.assr_no} toast={toast} />
+            <PrintMenu
+              caseId={id}
+              assrNo={c.assr_no}
+              customer={c.customer_name}
+              refNo={c.ref_no}
+              stage={c.stage}
+              resolutionMethod={c.resolution_method}
+              toast={toast}
+            />
             <PortalLinksMenu
               id={id}
               assrNo={c.assr_no}
@@ -6820,47 +6828,43 @@ const PRINT_ENTITIES = {
 } as const;
 type PrintEntity = keyof typeof PRINT_ENTITIES;
 
-/** What letterhead the fetched document actually used (the backend stamps it —
- *  with no explicit choice the answer is the case's own company, which the
- *  print dialog has no other way to know). */
-function entityOf(html: string): PrintEntity | null {
-  const m = /<meta\s+name="print-entity"\s+content="([^"]+)"/i.exec(html);
-  const v = m?.[1];
-  return v && v in PRINT_ENTITIES ? (v as PrintEntity) : null;
-}
 
 function PrintMenu({
   caseId,
   assrNo,
+  customer,
+  refNo,
+  stage,
+  resolutionMethod,
   toast,
 }: {
   caseId: number;
   assrNo?: string | null;
+  customer?: string | null;
+  refNo?: string | null;
+  stage?: string | null;
+  resolutionMethod?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
-  /* Which copy the operator picked. This preview USED to stop here: a card that
-     restated the copy you had just chosen in the menu and a button that opened
-     the print view in another tab — a confirmation box wearing a preview's name.
-     Nothing about the document was visible until it was already in a tab, which
-     is how a wrong SUB-STATUS line reached customer copies unnoticed (owner
-     2026-08-07: "为什么没有 Print Preview?"). The dialog now shows the real page. */
+  /* Which copy the operator picked.
+
+     HISTORY, because this went back and forth: the card originally said only
+     "Copy: Customer Copy / Contains: …" — it restated the menu choice and told
+     you nothing about the case, which is why it read as no preview at all. The
+     fix attempted next was embedding the real print page in an iframe; the
+     owner rejected that on sight (2026-08-11) — it drags the print page's own
+     toolbar into the dialog and clips an A4 page into a narrow modal. What was
+     actually wanted is the shape every OTHER document already uses: a compact
+     summary card with the facts that identify the document, then the exits.
+     So: no iframe, real content. */
   const [variant, setVariant] = useState<PrintVariant | null>(null);
-  const [html, setHtml] = useState<string | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
   /* Whose letterhead the copy prints on (owner 2026-08-11). Null = the case's
      own company, which is what the document has always used — the backend
      applies that default, so a print with no choice made is byte-identical to
-     before. The picker lives HERE rather than in the copy menu because the
-     menu would otherwise become 3 copies × 3 entities = 9 rows, and because the
-     preview makes the choice self-evident: switch it and watch the letterhead
-     change before committing paper to it. */
+     before. The picker lives in the dialog rather than the copy menu because
+     the menu would otherwise become 3 copies × 3 entities = 9 rows. */
   const [entity, setEntity] = useState<PrintEntity | null>(null);
-  /* Highlight what is ON THE PAPER, not what was clicked: before any choice is
-     made the backend picked the case's own company, and the loaded document is
-     the only thing that knows which that was. */
-  const effectiveEntity = entity ?? (html ? entityOf(html) : null);
 
   const path = (v: PrintVariant, e: PrintEntity | null) =>
     `/api/assr-print/${caseId}?variant=${v}${e ? `&entity=${e}` : ""}`;
@@ -6873,53 +6877,42 @@ function PrintMenu({
     }
   }
 
-  /* Re-fetch the document under a different letterhead. The frame is cleared
-     first so the operator never sees the OLD entity's paper while the new one
-     loads — on a slow link that is exactly how you print the wrong one. */
-  const chooseEntity = async (e: PrintEntity) => {
-    if (!variant || e === effectiveEntity) return;
-    setEntity(e);
-    setHtml(null);
-    setLoadFailed(false);
+  /* Print without a visible embed and without bouncing through a tab: fetch the
+     document, mount it in a HIDDEN iframe, print that, then drop it. Same trick
+     the PDF documents use (vendor/scm/lib/pdf-common deliverPdf), and the same
+     reason — printing an iframe sidesteps the app's global @media print rules,
+     which would otherwise put a blank sheet in the tray. */
+  const printNow = async (v: PrintVariant, e: PrintEntity | null) => {
+    let html: string;
     try {
-      setHtml(await api.getHtml(path(variant, e)));
+      html = await api.getHtml(path(v, e));
     } catch (err: any) {
-      setLoadFailed(true);
       toast.error(err?.message || "Failed to load the print view");
-    }
-  };
-
-  /* Print the PREVIEWED document straight from its iframe. The old flow opened a
-     tab and left the operator to print from there; the iframe already holds the
-     exact same HTML, and printing it bypasses the app's global @media print
-     rules entirely (see components/scm-v2/PrintPreviewModal). Falls back to the
-     tab when the frame is not ready — never silently do nothing. */
-  const printNow = () => {
-    const frame = frameRef.current;
-    if (!frame?.contentWindow) {
-      if (variant) void openInTab(variant, entity);
       return;
     }
-    frame.contentWindow.focus();
-    frame.contentWindow.print();
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+    frame.srcdoc = html;
+    frame.onload = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      } catch {
+        /* Some engines throw before the document settles; the tab exit is still
+           there and the frame is cleaned up below either way. */
+      }
+    };
+    document.body.appendChild(frame);
+    // 60s, same as the PDF path: long enough for the OS print dialog to hold it.
+    window.setTimeout(() => { try { document.body.removeChild(frame); } catch { /* gone */ } }, 60_000);
   };
 
-  const print = usePrintPreview(printNow);
-  const pick = async (v: PrintVariant) => {
+  const print = usePrintPreview(() => (variant ? printNow(variant, entity) : undefined));
+  const pick = (v: PrintVariant) => {
     setOpen(false);
     setVariant(v);
-    setHtml(null);
-    setLoadFailed(false);
     setEntity(null);
     print.openPreview();
-    try {
-      setHtml(await api.getHtml(path(v, null)));
-    } catch (e: any) {
-      // Keep the dialog open with an explicit failure — "Open in new tab" is
-      // still a way through, and a blank frame would read as an empty document.
-      setLoadFailed(true);
-      toast.error(e?.message || "Failed to load the print view");
-    }
   };
 
   // Click-outside close — listen on document while open.
@@ -6969,56 +6962,49 @@ function PrintMenu({
           onClose={print.close}
           docTitle="Service Case"
           docNo={assrNo ?? `Case ${caseId}`}
+          /* The facts that identify THIS document, in the same shape the DO /
+             SO / SI previews use — customer, what is wrong, how it is being
+             fixed. "Copy" stays because it is the one thing the menu chose. */
           rows={[
-            { label: "Copy", value: PRINT_VARIANTS[variant].label },
-            { label: "Contains", value: PRINT_VARIANTS[variant].hint },
+            { label: "Customer", value: customer || "—" },
+            ...(refNo ? [{ label: "Ref No", value: refNo }] : []),
+            { label: "Stage", value: caseStageLabel(stage ?? "") },
+            {
+              label: "Service",
+              value: resolutionMethod ? resolutionLabel(resolutionMethod) : "Not set yet",
+            },
+            { label: "Copy", value: `${PRINT_VARIANTS[variant].label} · ${PRINT_VARIANTS[variant].hint}` },
             {
               label: "Letterhead",
               value: (
-                <span className="inline-flex overflow-hidden rounded-md border border-border">
-                  {(Object.keys(PRINT_ENTITIES) as PrintEntity[]).map((e) => (
+                /* "Default" is a real option, not a placeholder: it sends no
+                   entity at all, so the backend heads the paper with the case's
+                   own company exactly as it always has. Without it the dialog
+                   would have to name that company to highlight it, and this
+                   component does not hold it. */
+                <span className="inline-flex overflow-hidden rounded-md border border-border align-middle">
+                  {([null, ...(Object.keys(PRINT_ENTITIES) as PrintEntity[])] as (PrintEntity | null)[]).map((e) => (
                     <button
-                      key={e}
+                      key={e ?? "default"}
                       type="button"
-                      onClick={() => void chooseEntity(e)}
-                      aria-pressed={effectiveEntity === e}
+                      onClick={() => setEntity(e)}
+                      aria-pressed={entity === e}
                       className={cn(
                         "px-2.5 py-1 text-[11.5px] font-semibold transition-colors",
-                        effectiveEntity === e
+                        entity === e
                           ? "bg-primary text-white"
                           : "bg-surface text-ink-secondary hover:bg-surface-dim"
                       )}
                     >
-                      {PRINT_ENTITIES[e]}
+                      {e ? PRINT_ENTITIES[e] : "Default"}
                     </button>
                   ))}
                 </span>
               ),
             },
           ]}
-          document={
-            loadFailed ? (
-              <div className="px-5 py-8 text-center text-[12.5px] text-ink-secondary">
-                Couldn't load the print view. Open it in a new tab to try again.
-              </div>
-            ) : html === null ? (
-              <div className="px-5 py-8 text-center text-[12.5px] text-ink-muted">
-                Loading the {PRINT_VARIANTS[variant].label.toLowerCase()}…
-              </div>
-            ) : (
-              /* srcDoc, not a blob URL: the document is same-origin-inherited so
-                 contentWindow.print() is reachable, which is what makes "Print
-                 now" print THIS page instead of bouncing through a tab. */
-              <iframe
-                ref={frameRef}
-                srcDoc={html}
-                title={`${assrNo ?? `Case ${caseId}`} — ${PRINT_VARIANTS[variant].label}`}
-                className="h-[58vh] w-full border-0 bg-white"
-              />
-            )
-          }
           onViewPdf={() => openInTab(variant, entity)}
-          viewLabel="Open in new tab"
+          viewLabel="View full copy"
           onPrint={print.handlers.onPrint}
         />
       )}
