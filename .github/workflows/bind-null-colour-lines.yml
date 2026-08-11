@@ -1,0 +1,67 @@
+name: Bind the NULL-colour migrated SO lines
+
+# Manual. Binds the migrated sales-order lines whose `variants.colourId` is NULL
+# and whose OWN AutoCount description2 names a colour the live library holds -
+# the 7 lines #1964 named and deliberately left unfilled.
+#
+# One of the two reasons they were deferred is now gone: the duplicate fabric
+# series were merged on 2026-08-11 by the owner's decision, so a colour like
+# STAR-10 no longer resolves to one of two competing spellings. The other reason
+# STANDS and is enforced here by a guard, not a list: PC151-101 -> PC151-11
+# MOVES A DIGIT, and a colour number is an identity, not a spelling (#1893).
+#
+# Only ACTIVE series can receive a binding, so a superseded duplicate cannot be
+# bound to. DRY-RUN by default; apply=1 writes.
+# See backend/scripts/bind-null-colour-lines.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      docs:
+        description: "comma-separated SO doc_no list (blank = the named 5)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: bind-null-colour-lines-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Bind the NULL colours
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+        run: |
+          set -o pipefail
+          node scripts/bind-null-colour-lines.mjs | tee bind-colours.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bind-null-colour-lines-${{ inputs.apply == '1' && 'apply' || 'dryrun' }}
+          path: backend/bind-colours.txt
+          retention-days: 30
