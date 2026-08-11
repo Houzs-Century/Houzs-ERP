@@ -1106,6 +1106,9 @@ describe('every document the ERP creates carries the ERP number', () => {
     });
     expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
     expect((outbox(sb)[0].payload.body as Record<string, unknown>).DocNo).toBe('HC-SO-9');
+  });
+});
+
 /* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
    unconditionally - so a supplier the account book does not have fails the same
    foreign key a missing item does, and takes the whole PO with it. */
