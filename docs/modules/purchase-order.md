@@ -146,6 +146,9 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
 | PATCH | `/:id` | `:2219` | Header edit. |
+| POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. A line carrying `soItemId` is capped at the SO line's remaining exactly like `POST /` — over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (2026-08-11; see *Binding a PO line to its source SO line*). |
+| PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. |
+| PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. |
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
@@ -266,6 +269,17 @@ it, but a hand-typed line never could.
   active company**, must not be cancelled, and its `item_code` must equal the PO
   line's `material_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
+  proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
+  line paths take an operator-supplied qty, and until this landed neither capped
+  it, so a line could be appended (or edited upward) against an SO line that was
+  already fully converted and re-order the goods. Now capped at
+  `qty - po_qty_picked` → `409 qty_exceeds_remaining`, overridable with
+  `confirmOverConvert: true` (the same escape hatch `POST /` documents).
+  On **edit**, the line's own stored qty is credited back while it stays on the
+  SAME SO line — otherwise re-saving an already-bound line would 409 against
+  itself; a **rebind** onto a different SO line gets no such credit.
+  Repeat conversion stays legal: the ceiling is capped, never the second convert.
 - **UI:** the PO detail edit grid's `PoLineCard` renders an optional *Source
   Sales Order line* picker plus a `SO LINKED` / `NOT LINKED` badge. Candidates
   come from the existing `GET /mfg-purchase-orders/outstanding-so-items` shortage

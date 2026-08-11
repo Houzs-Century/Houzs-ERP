@@ -51,6 +51,18 @@ rather than fail, when one exists at zero configuration.
 
 **Ref** — 2026-08-10, PR fix/photo-proxy-fallback.
 
+## 2026-08-11
+
+### [HIGH] Two PO line paths took an operator-supplied qty against an SO line with NO remaining-qty cap — the SO→PO ceiling was enforced on every BATCH path and on neither LINE path
+- **Symptom.** Nothing visible to staff and nothing wrong in the data yet — this was found by proving the guard, not by an incident. The owner asked (2026-08-10) to confirm that a document already converted to a DO or GR cannot be converted again. Repeat conversion is DELIBERATE here (the business ships one order in several batches), so the real guard is the QUANTITY CEILING, not an "already converted" flag. Auditing every convert path against that ceiling found two with none: an operator could append a PO line — or edit an existing one upward — bound to an SO line that was ALREADY fully converted, and order the goods from the supplier a second time.
+- **Root cause (traced to the code, not guessed).** `POST /mfg-purchase-orders/:id/items` (mfg-purchase-orders.ts:2674) and `PATCH /mfg-purchase-orders/:id/items/:itemId` (:2795) both call `soLinkTargetRefusal` (:2595), which validates that a bind POINTS at a legitimate SO line — it exists, it belongs to the active company, it is not cancelled, and its `item_code` matches the PO line. It says nothing about HOW MUCH. Every batch path does cap it: `/from-sos` via `!fromMrp && p.qty > remaining` (:1597), the generic `POST /` via `findOverConvertOffender` (:1142, added by #1220), and `/:id/convert-from-so` by deriving qty server-side as the unpicked remainder (the F1 audit fix of 2026-06-10, which closed exactly this double-ordering on that one path). The two line-level paths take an operator-supplied qty and were simply never included. The PATCH path guarded only the DOWNWARD direction (`line_qty_below_allocated`, mig 0235); its own comment — "if it raised qty, picked rises" — states the unguarded upward case in passing. Nothing backstops it at the DB: `po_qty_picked` is a plain counter recomputed by `recomputeSoPicked`, with no trigger and no constraint.
+- **What limited the blast radius.** `poHasDownstream` (:237) blocks both handlers once a non-cancelled GRN exists, so the hole was reachable only BEFORE receipt — which is precisely when over-ordering the supplier does the damage.
+- **Fix.** `soLineHeadroom` (new, in `scm/lib/po-over-convert.ts`) is the pure ceiling: `qty - po_qty_picked`, plus this line's OWN stored qty credited back while it stays bound to the SAME SO line (without that credit a no-op re-save of an already-bound line would 409 against itself), clamped at 0. `soLineOverConvertRefusal` wraps it with the SO-line read and is now called by both handlers, refusing with the same `qty_exceeds_remaining` 409 the sibling paths return. Overridable with `confirmOverConvert` — the SAME escape hatch the generic create already documents — so a deliberate over-order stays one explicit flag away rather than becoming impossible.
+- **What the audit RULED OUT.** Every other convert path was read line by line and is correctly capped, including its line-level back doors. SO→DO caps on `qty - delivered + returned` (`soDeliverableRemaining`, delivery-orders-mfg.ts:1885) with a pre-check at :3336 AND a post-insert race re-check that rolls the DO back at :3575, plus write-path guards at :2951/:3085/:4030/:4165/:4660. PO→GRN caps on `qty - received_qty` at grns.ts:1506/1653/1860/1926/2035/2656/2886. DO→SI and DO→DR share ONE pool (`delivered - invoiced - returned`, do-line-remaining.ts:218), so invoicing and returning compete and a unit can never be both. GRN→PI and GRN→PR cap at purchase-invoices.ts:904/1007/1414/1684/1844/1907/2023 and purchase-returns.ts:557/1101/1163/1260. `/from-grns` accepts no client qty at all — it clamps server-side to `min(qty_rejected, qty_accepted - returned_qty)`. Amendments do not bypass the ceiling, they MOVE it, and the arithmetic fails safe: a line amended below what already shipped yields a NEGATIVE remaining, and every enforcement site compares with `>`, so a negative ceiling refuses everything rather than wrapping into fresh headroom.
+- **The premise that did not hold.** The brief asked whether migrated documents carrying `migrated_no_stock = true` count toward the ceiling. **That column does not exist in this repo** — no `migrated_no_stock`, and no equivalent boolean on `scm.delivery_orders` or `scm.grns`; a grep across every `.ts`, `.tsx`, `.sql`, `.mjs` and `.md` returns nothing. So there is no flag by which a migrated document could be excluded: a migrated DO or GRN counts on exactly the same terms as a native one, by STATUS and by LINK. The real exposure is the LINK, not a flag — `soDeliverableRemaining` skips any DO line whose `so_item_id` is NULL (delivery-orders-mfg.ts:1815), and the `received_qty` recount sums only GRN lines carrying a `purchase_order_item_id` (grns.ts:800). An unlinked line moves stock that the ceiling never sees. That is not hypothetical: it is why DO-2607-005 on SO-2606-019 double-shipped while the over-delivery guard stayed blind. Both exposures are now pinned by named tests, so a future change has to face them deliberately instead of inheriting them silently.
+- **Test.** `backend/src/scm/lib/convert-ceilings.test.ts` — 42 cases covering the ceiling on all six paths, each with a partial (allowed) and an over-quantity (refused) case, plus cancel/draft release, the invoice-XOR-return exclusion, the amendment fail-safe, and the two unlinked-line exposures. **Mutation-verified, both numbers:** with the fix **42 pass**; with both production files reverted to `main`, **13 fail / 26 pass**; with the lib helper kept but ONLY the two call sites removed, exactly the **2** wiring cases fail (**2 fail / 37 pass**) — so the suite fails for the right reason, not merely because a new export is missing. The wiring cases assert the call sites against the router SOURCE (a `?raw` import, typed by `backend/src/raw-import.d.ts`) because scm routes cannot be exercised end to end in this harness: they ride Supabase Postgres and the harness rebuilds only the D1 side.
+- **NOT proven by test.** No case drives the two handlers over HTTP, for the harness reason above — the guard function is tested directly and its invocation is asserted structurally. Nothing was run against production data.
+- **Ref:** #1920. `chore/convert-guard-proof` 2026-08-11.
 ## The array-shaped custom_specials are NOT the same damage, and NULLing them would have deleted correct data [med]
 
 **Symptom** - #1944 NULLed the 478 `custom_specials` values the old sofa
@@ -1958,6 +1970,62 @@ harring gd 8371" and "ZanoLeather" name a series with no colour chosen;
 is a choice the salesperson never narrowed.
 
 **Ref** - fix/unresolved-sofa-fabrics, 2026-08-10
+
+## Every SO line photo rendered the literal text "err" while the photos were fine [high]
+
+**Symptom** — on SO line cards, every saved photo tile showed the literal text
+`err` instead of the image. Reported after 983 imported AutoCount photos landed
+in R2 and none of them would display.
+
+**Root cause (traced, not guessed)** — two independent things, and only the
+second is ours to fix here.
+
+1. `GET .../photos/<key>/signed` answers
+   `500 {"error":"signing_failed","reason":"R2_ACCESS_KEY_ID not configured"}`.
+   Signing needs the R2 **S3-API** credentials (`R2_ACCESS_KEY_ID` /
+   `R2_SECRET_ACCESS_KEY` / `R2_ENDPOINT`), which are wrangler SECRETS that
+   were never provisioned in production.
+2. `PhotoThumb` treated that 500 as *the photo is broken* and rendered `err`.
+   It never fell back — even though `GET .../photos/<key>` (the authed proxy,
+   which streams via the Worker's **R2 binding** and needs no credentials at
+   all) returned the same photo `200 image/jpeg` the whole time. Verified live
+   against production on 2026-08-10: the signed route 500s and the proxy route
+   serves the identical key.
+
+So a signing failure was being reported to the operator as a missing photo. The
+objects were in R2, readable, one working route away.
+
+**Fix** — `PhotoThumb` now falls back to the authed proxy when `/signed` fails
+or hands back a URL an `<img>` cannot load directly. The proxy URL **cannot**
+be an `<img src>`: it is behind bearer auth and an `<img>` tag sends no
+`Authorization` header — this app has no cookie session at all (0 `Set-Cookie`
+in `backend/src`, 0 `credentials:` in `frontend/src`; the auth middleware reads
+only the `Authorization` header). So the bytes are fetched with the token and
+handed to `<img>` as a `blob:` object URL, the same mechanism `slip.ts` already
+uses for payment slips — and for the same underlying reason, which that file
+documents: *"Houzs prod never provisioned the R2 S3-API creds those need (every
+/slips/init 500'd)"*. The blob is **revoked on unmount**; a photo grid mounts
+and unmounts repeatedly, so leaking one image blob per tile per open is real.
+
+`err` is deliberately KEPT for the genuinely-broken case — proxy 404 (missing
+key) or 401/403 (refused). A missing photo must still be visible AS missing;
+silently rendering nothing would be a different bug.
+
+**Trap for the next person** — `backend/src/scm/routes/public-images.ts:5-7`
+claims the SPA passes the auth gate with "its session cookie", so its `<img
+src=...>` loads fine. That is **false**; there is no cookie session.
+`backend/src/index.ts:282-284` states the opposite and is correct. Anyone who
+trusts the `public-images.ts` comment will ship an `<img src>` fallback that
+401s. Corrected in this PR.
+
+**Not covered** — PO and consignment line photos still will not render, for a
+different reason: no PO frontend component renders line photos at all
+(`photoUrls` reaches the client and is discarded), and `ConsignmentOrderDetail`
+never maps `photo_urls` into the `SoLineCard` draft. That is missing UI, not
+this fallback.
+
+**Ref** — PR fix/photo-tile-fallback, 2026-08-10. Test:
+`frontend/src/vendor/scm/components/SoLinePhotoFallback.test.tsx`.
 
 ## The fixed colour matcher could not reach a single migrated SOFA line [high]
 

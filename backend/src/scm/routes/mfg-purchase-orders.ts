@@ -48,7 +48,7 @@ import {
   LEAD_TIME_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
-import { findOverConvertOffender } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -2864,6 +2864,43 @@ async function soLinkTargetRefusal(
   return null;
 }
 
+/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
+   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
+   it says nothing about HOW MUCH that line may order. The batch paths all cap
+   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
+   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
+   the unpicked remainder — but add-line and line-edit did not, so an operator
+   could append (or edit up to) any qty against an SO line that was already
+   fully converted. That is the same double-ordering the F1 audit closed on
+   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
+   accept an operator-supplied qty.
+
+   Repeat conversion stays legal — the business splits one SO across several POs
+   on purpose. The ceiling is what is capped, never the second conversion.
+
+   Overridable with confirmOverConvert, the SAME escape hatch the generic create
+   documents, so a deliberate over-order is still one explicit flag away. */
+export async function soLineOverConvertRefusal(
+  sb: any,
+  soItemId: string | null,
+  requestedQty: number,
+  ownCurrentQty: number,
+): Promise<OverConvertOffender | null> {
+  if (!soItemId) return null;
+  const { data } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, qty, po_qty_picked')
+    .eq('id', soItemId)
+    .maybeSingle();
+  const row = data as { qty: number; po_qty_picked: number } | null;
+  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
+     404 before we get here, so there is nothing left to cap. */
+  if (!row) return null;
+  const remaining = soLineHeadroom(row, ownCurrentQty);
+  const requested = Math.max(0, Number(requestedQty ?? 0));
+  return requested > remaining ? { soItemId, requested, remaining } : null;
+}
+
 mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -2905,6 +2942,12 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   {
     const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
     if (refusal) return c.json(refusal.body, refusal.status);
+  }
+  /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
+     its own headroom is the raw remainder (ownCurrentQty = 0). */
+  if (it.confirmOverConvert !== true) {
+    const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -3093,6 +3136,20 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
     if (refusal) return c.json(refusal.body, refusal.status);
     updates['so_item_id'] = nextSoItemId;
+  }
+
+  /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
+     qty on an ALREADY-bound line over-orders just as surely as binding a new
+     one. This line's own stored qty is credited back only while it stays on the
+     SAME SO line (that qty already sits inside po_qty_picked, so without the
+     credit a no-op edit would refuse itself); a REBIND onto a different SO line
+     gets no credit, since the new target's counter holds none of it yet. */
+  if (it.confirmOverConvert !== true) {
+    const ownCurrentQty = nextSoItemId && nextSoItemId === prevSoItemId
+      ? Number(prev.qty ?? 0)
+      : 0;
+    const over = await soLineOverConvertRefusal(sb, nextSoItemId, qty, ownCurrentQty);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
