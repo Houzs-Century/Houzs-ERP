@@ -147,6 +147,12 @@ The five checks, from `docs/autocount-service-deploy.md` section 4:
 **Then cancel the throwaway document with `/cancel`. Never delete it.** 4.2 is safe on the live
 book by construction: a passing guard writes nothing.
 
+Run them by hand with `curl` against `http://localhost:8900`, per
+`docs/autocount-service-deploy.md` section 4. The automated harness that was doing this — the
+self-test block described in section 6 — was a temporary injection into the source and is **not in
+this repository**; the clean build removes it, and that is correct. Do not re-inject it just to
+save typing five requests.
+
 **Verify:** all five read PASS, and the throwaway document is present in the book with
 `Cancelled = 'T'`.
 
