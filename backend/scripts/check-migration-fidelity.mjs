@@ -312,6 +312,14 @@ async function main() {
       FROM scm.delivery_orders d
       JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
      WHERE d.company_id = ${CO} AND d.migrated_no_stock = true`;
+  /* The ERP's canonical venue names. A venue divergence where the ERP value IS
+     a canonical venue and AutoCount's free text is not is the post-import
+     canonicalisation, evidenced rather than asserted - "SETIA CITY CONVENTION
+     CENTRE" for AutoCount's "SCCC" is not a prefix of anything, so a string
+     test alone would have called it a different place. */
+  let canonVenues = new Set();
+  try { canonVenues = new Set((await sql`SELECT name FROM scm.venues WHERE company_id = ${CO}`).map((r) => norm(r.name))); }
+  catch { /* venue is free text in this schema: fall back to the string test */ }
 
   log("SCOPE — the ERP rows this check walks (every one of them is accounted for below)");
   log("-".repeat(96));
@@ -484,9 +492,9 @@ async function main() {
     // venue: separate a canonicalised LABEL from a different PLACE
     if (norm(h.venue) !== norm(a.UDF_VENUE)) {
       const e = norm(h.venue), c = norm(a.UDF_VENUE);
-      const canon = e && c && (c.startsWith(e) || e.startsWith(c));
+      const canon = e && ((c && (c.startsWith(e) || e.startsWith(c))) || (canonVenues.has(e) && !canonVenues.has(c)));
       F.add("SO header", canon ? "venue (label canonicalised)" : "venue", k, txt(h.venue), txt(a.UDF_VENUE),
-        canon ? "post-import venue canonicalisation" : null);
+        canon ? "ERP holds the canonical venue name; AutoCount holds the operator's free text" : null);
     }
     // derived money, with the ERP's OWN line sum beside it so a header/line
     // disagreement is distinguishable from a missing or extra line
