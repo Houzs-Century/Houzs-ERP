@@ -126,7 +126,7 @@ async function main() {
            g.migrated_no_stock, p.po_number, p.linked_ac_docno
       FROM "${sGrnI}"."grn_items" gi
       JOIN "${sGrn}"."grns" g ON g.id = gi.grn_id
-      LEFT JOIN "${sPo}"."purchase_orders" p ON p.id = g.purchase_order_id
+      JOIN "${sPo}"."purchase_orders" p ON p.id = g.purchase_order_id
      WHERE g.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
      ORDER BY g.grn_number, gi.material_code`);
 
