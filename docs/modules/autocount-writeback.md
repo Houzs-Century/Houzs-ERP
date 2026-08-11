@@ -794,6 +794,60 @@ compartment row of a build the same DtlKey** — which is exactly the shape
 key is worse than a missing one: missing is refused loudly, wrong silently edits
 a different line in a live book.
 
+## 7m. The master-data foreign key chain — read this before debugging a refused document
+
+**A document is refused as a WHOLE when any master it names is missing.** The
+live book enforces foreign keys the old evaluation book did not, and they are
+discovered **one at a time**: satisfying one only reveals the next, so "I fixed
+the error and retried" buys exactly one attempt. Four have been hit so far, each
+against `AED_HOUZS`, each with the evidence beside it.
+
+| # | Constraint | Named by | Opened by | Found |
+|---|---|---|---|---|
+| 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` | 2026-08-11 |
+| 2 | `FK_SODTL_Location` | SO **line** `Location` | `ensure-masters` → `Locations` | 2026-08-11 |
+| 3 | `FK_Item_ItemGroup` | a NEW item being opened | `ensure-masters` → `Items[].ItemGroup` | 2026-08-12 |
+| 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`** | 2026-08-12 |
+
+**#3 — an item cannot be opened without a group.** `ItemGroup` is a foreign key,
+not a label, so a brand-new SKU arriving from the ERP is refused on its very
+first document. The service now defaults to `OTHER`, which exists precisely for
+this. The groups the live book holds, by item count:
+
+```
+BEDFRAME 645   MATTRESS 517   SOFA 114   ACC 99   BEDLINES 85
+DINING 55      DIFFUSER 39    OTHER 4    CARPET 2  TRANS 1
+```
+
+Everything lands in `OTHER` until somebody maps the ERP's own `item_group`
+vocabulary onto these. **That mapping is an owner decision, not a guess** — it
+decides where a new product shows up in AutoCount's own reports.
+
+**#4 — a PURCHASE agent is not a sales agent.** Different table
+(`dbo.PurchaseAgent`), different foreign key, different SDK command
+(`AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand`, whose shape mirrors
+`SalesAgentCommand` exactly). Opening `OTHERS` as a sales agent does **nothing**
+for a purchase order naming it. This one is worth remembering because
+`ensure-masters` cheerfully reported `agent:OTHERS` as *already existing* while
+`/create-po` was failing on it — the report was true and irrelevant.
+`mastersOf` now routes the agent by whether the payload carries a
+`CreditorCode`, which is the one field only a purchase document has.
+
+**Values known to exist in `AED_HOUZS`**, for a throwaway test document:
+
+| Field | Use |
+|---|---|
+| `DebtorCode` | `300-C002` |
+| `CreditorCode` | `400-N002` (NICOLLO SDN BHD, 3,326 POs) |
+| `Agent` / `PurchaseAgent` | `OTHERS`, `KINGSLEY`, `MK`, `WW`, `ALEX`, `SIANG` |
+| `Location` / `SalesLocation` | `KL`, `HQ`, `KELANA.J`, `C&C DISP`, `C&C K.J`, `EM DISP` |
+| `ItemGroup` | `OTHER` for anything unclassified |
+
+**How to read a refusal.** The HTTP response carries only a 500; the constraint
+name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
+status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
+completely different problems.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |

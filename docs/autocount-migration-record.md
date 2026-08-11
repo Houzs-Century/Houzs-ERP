@@ -800,15 +800,38 @@ DELETE is deliberately absent: per 不可以删只可以 cancel, delete is not a
 
 | Doc | CREATE | CONVERT (in) | EDIT | CANCEL |
 |---|---|---|---|---|
-| **SO** | BUILT | n/a (no parent) | BUILT — **2,316 of 2,723** documents editable | BUILT |
-| **PO** | BUILT | n/a (no parent) | BUILT — **127 of 449** documents editable | BUILT |
-| **DO** | n/a by design | BUILT (SO to DO) | **NOTHING** | BUILT |
+| **SO** | **PROVEN** | n/a (no parent) | **PROVEN** (4.2-4.5) — **2,316 of 2,723** documents editable | **PROVEN** |
+| **PO** | **REFUSED** — `FK_PO_PurchaseAgent` | n/a (no parent) | BUILT — **127 of 449** documents editable | BUILT |
+| **DO** | n/a by design | **PROVEN** (SO to DO) | **NOTHING** | **PROVEN** |
 | **GR** | n/a by design | BUILT (PO to GR) | **NOTHING** | BUILT |
 | **SI** | n/a by design | BUILT (DO to IV) | **NOTHING** | **NOTHING** |
 | **PI** | n/a by design | BUILT (GR to PI) | **NOTHING** | **NOTHING** |
 
-**No cell anywhere is PROVEN.** The only live-book evidence is a manual SO create by a program that
-is no longer the one being shipped.
+**Five cells are PROVEN as of 2026-08-12**, all against the live `AED_HOUZS` book through the
+rebuilt service, all over the tunnel or its loopback:
+
+```
+/health      -> {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+/create-so   -> ZZERP-SO-20260812-012957, DtlKey 895100                     (4.1)
+/edit  x4    -> keyless REFUSED / by-key / IsNewLine / Retire               (4.2-4.5, ZZERP-0001)
+/so-to-do    -> DO-011260, 1 line   <- a REAL DO number was consumed
+/cancel      -> DO then SO, both cancelled and NOT deleted
+```
+
+**`/create-po` is REFUSED on the live book** — `FK_PO_PurchaseAgent`, read out of
+`C:\Temp\ac-sync-service.log`, not out of the 500. A purchase order's agent lives in
+`dbo.PurchaseAgent`, a different master from the sales agent `ensure-masters` was opening. Fixed on
+both sides; **the fix is not yet deployed to the host**, so PO create and `po-to-gr` remain
+unproven. The full foreign-key chain and the values known to exist are in
+`docs/modules/autocount-writeback.md` section 7m.
+
+**One test assumption was wrong and is recorded so nobody rebuilds it.** `qa-convert.ps1` step 6
+cancels the parent SO while its DO is still live and expects that to FAIL, on the theory that
+AutoCount refuses to cancel a transferred document. **It does not** — the cancel succeeded. That is
+a fact about AutoCount's cancel semantics, not a defect in the convert (`so-to-do` returned
+`DO-011260`, which is what proves the link). It matters for the owner's *cancel must not diverge*
+rule: cancelling an ERP sales order whose delivery order is still open will be accepted by
+AutoCount, leaving the DO behind.
 
 **The asymmetry is entirely on the ERP side.** The AutoCount service already serves more than the
 ERP asks of it:
