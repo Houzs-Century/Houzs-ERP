@@ -1114,15 +1114,23 @@ function MultiSelectFilter({
             <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
               {placeholder}
             </span>
-            {selected.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onChange([])}
-                className="text-[10.5px] font-semibold text-ink-secondary hover:text-err"
-              >
-                Clear ({selected.length})
-              </button>
-            )}
+            {/* Untick-all is ALWAYS shown (owner 2026-08-11) so the affordance is
+                visible even before anything is ticked — it just greys out and is
+                disabled while the list is empty, then activates (with a count)
+                once you tick something. */}
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              disabled={selected.length === 0}
+              className={cn(
+                "text-[10.5px] font-semibold",
+                selected.length === 0
+                  ? "cursor-default text-ink-muted/50"
+                  : "text-ink-secondary hover:text-err",
+              )}
+            >
+              {selected.length > 0 ? `Untick all (${selected.length})` : "Untick all"}
+            </button>
           </div>
           {groups.map((g, gi) => (
             <div key={g.name ?? `g${gi}`} className="mb-1.5">
