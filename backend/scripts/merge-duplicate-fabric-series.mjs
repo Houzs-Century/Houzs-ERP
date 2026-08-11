@@ -137,9 +137,20 @@ const codeKeys = (r) => {
 };
 
 async function main() {
-  const cols = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
+  const allCols = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const libs = await sql`SELECT id, label, tier, default_surcharge, active FROM scm.fabric_library WHERE company_id = ${CO}`;
-  note(`library: ${libs.length} series / ${cols.length} colours (company ${CO})`);
+
+  /* A SUPERSEDED series is not a duplicate any more - it is a merge that already
+     happened. Its colours are retained on purpose (nothing is deleted), so they
+     still collide by code with the winner that absorbed them, and a census that
+     reads the whole table therefore re-proposes every pair it just merged
+     forever. Count only the ACTIVE library, and say how many pairs that
+     removed, so a completed merge reads as done instead of as outstanding. */
+  const retired = new Set(libs.filter((l) => l.active === false).map((l) => l.id));
+  const cols = allCols.filter((c) => !retired.has(c.fabric_id));
+  note(`library: ${libs.length} series / ${allCols.length} colours (company ${CO})`);
+  note(`  ACTIVE: ${libs.length - retired.size} series / ${cols.length} colours`);
+  note(`  SUPERSEDED (already merged, retained not deleted): ${retired.size} series / ${allCols.length - cols.length} colours`);
 
   /* live references, per series and per colour. These are the five keys the SO
      importer and refresh-sofa-colours write; fabricId is the series. */
@@ -218,7 +229,7 @@ async function main() {
   const movedLines = plan.reduce((a, p) => a + p.dropRefs, 0);
   const droppedSeries = new Set(plan.map((p) => p.drop));
   note(`\n=== EXPOSURE IF MERGED (SO+PO reference count, the canonical-side rule) ===`);
-  note(`  series superseded:              ${droppedSeries.size} of ${libs.length}`);
+  note(`  series superseded:              ${droppedSeries.size} of ${libs.length - retired.size} active`);
   note(`  live document lines repointed:  ${movedLines} of ${totalRefs}`);
   note(`  lines NOT touched:              ${totalRefs - movedLines}`);
 
