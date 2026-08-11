@@ -110,6 +110,7 @@ import { ServiceSettingsView } from "./ServiceSettings";
 import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import type {
   Paginated,
@@ -3560,6 +3561,7 @@ function DetailContent({
               refNo={c.ref_no}
               stage={c.stage}
               resolutionMethod={c.resolution_method}
+              companyCode={c.company_code}
               toast={toast}
             />
             <PortalLinksMenu
@@ -6836,6 +6838,7 @@ function PrintMenu({
   refNo,
   stage,
   resolutionMethod,
+  companyCode,
   toast,
 }: {
   caseId: number;
@@ -6844,6 +6847,10 @@ function PrintMenu({
   refNo?: string | null;
   stage?: string | null;
   resolutionMethod?: string | null;
+  /** The case's OWN company — not the active workspace's. The two differ
+   *  routinely (a 2990 workspace holding a Houzs-owned case), and this is what
+   *  the document heads itself with when no entity is picked. */
+  companyCode?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
@@ -6865,11 +6872,22 @@ function PrintMenu({
      before. The picker lives in the dialog rather than the copy menu because
      the menu would otherwise become 3 copies × 3 entities = 9 rows. */
   const [entity, setEntity] = useState<PrintEntity | null>(null);
+  /* Null means "not touched" — which resolves to the case's OWN company, the
+     same thing the backend falls back to. Resolving it here rather than leaving
+     it blank is what lets the picker highlight a real choice and the card name
+     the company that will actually head the paper. */
+  const caseEntity: PrintEntity = companyCode === "2990" ? "2990" : "houzs";
+  const chosen: PrintEntity = entity ?? caseEntity;
+  /* The band names the entity being printed, not the workspace you happen to be
+     in. `both` heads the paper with Houzs (see the route), so it says Houzs. */
+  const bandCompany = defaultBrandingForCompany(
+    chosen === "2990" ? "2990" : HOUZS_COMPANY_CODE,
+  ).companyName;
 
-  const path = (v: PrintVariant, e: PrintEntity | null) =>
-    `/api/assr-print/${caseId}?variant=${v}${e ? `&entity=${e}` : ""}`;
+  const path = (v: PrintVariant, e: PrintEntity) =>
+    `/api/assr-print/${caseId}?variant=${v}&entity=${e}`;
 
-  async function openInTab(v: PrintVariant, e: PrintEntity | null) {
+  async function openInTab(v: PrintVariant, e: PrintEntity) {
     try {
       await api.openHtml(path(v, e));
     } catch (e2: any) {
@@ -6882,7 +6900,7 @@ function PrintMenu({
      the PDF documents use (vendor/scm/lib/pdf-common deliverPdf), and the same
      reason — printing an iframe sidesteps the app's global @media print rules,
      which would otherwise put a blank sheet in the tray. */
-  const printNow = async (v: PrintVariant, e: PrintEntity | null) => {
+  const printNow = async (v: PrintVariant, e: PrintEntity) => {
     let html: string;
     try {
       html = await api.getHtml(path(v, e));
@@ -6907,7 +6925,7 @@ function PrintMenu({
     window.setTimeout(() => { try { document.body.removeChild(frame); } catch { /* gone */ } }, 60_000);
   };
 
-  const print = usePrintPreview(() => (variant ? printNow(variant, entity) : undefined));
+  const print = usePrintPreview(() => (variant ? printNow(variant, chosen) : undefined));
   const pick = (v: PrintVariant) => {
     setOpen(false);
     setVariant(v);
@@ -6962,6 +6980,7 @@ function PrintMenu({
           onClose={print.close}
           docTitle="Service Case"
           docNo={assrNo ?? `Case ${caseId}`}
+          companyName={bandCompany}
           /* The facts that identify THIS document, in the same shape the DO /
              SO / SI previews use — customer, what is wrong, how it is being
              fixed. "Copy" stays because it is the one thing the menu chose. */
@@ -6977,33 +6996,28 @@ function PrintMenu({
             {
               label: "Letterhead",
               value: (
-                /* "Default" is a real option, not a placeholder: it sends no
-                   entity at all, so the backend heads the paper with the case's
-                   own company exactly as it always has. Without it the dialog
-                   would have to name that company to highlight it, and this
-                   component does not hold it. */
                 <span className="inline-flex overflow-hidden rounded-md border border-border align-middle">
-                  {([null, ...(Object.keys(PRINT_ENTITIES) as PrintEntity[])] as (PrintEntity | null)[]).map((e) => (
+                  {(Object.keys(PRINT_ENTITIES) as PrintEntity[]).map((e) => (
                     <button
-                      key={e ?? "default"}
+                      key={e}
                       type="button"
                       onClick={() => setEntity(e)}
-                      aria-pressed={entity === e}
+                      aria-pressed={chosen === e}
                       className={cn(
                         "px-2.5 py-1 text-[11.5px] font-semibold transition-colors",
-                        entity === e
+                        chosen === e
                           ? "bg-primary text-white"
                           : "bg-surface text-ink-secondary hover:bg-surface-dim"
                       )}
                     >
-                      {e ? PRINT_ENTITIES[e] : "Default"}
+                      {PRINT_ENTITIES[e]}
                     </button>
                   ))}
                 </span>
               ),
             },
           ]}
-          onViewPdf={() => openInTab(variant, entity)}
+          onViewPdf={() => openInTab(variant, chosen)}
           viewLabel="View full copy"
           onPrint={print.handlers.onPrint}
         />
