@@ -11,7 +11,7 @@
  * reason and the candidates it could not choose between. A silent fallback to
  * material_code is the one behaviour that must be impossible.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import {
   AC_ITEM_MAP_ROWS,
   ItemCodeError,
