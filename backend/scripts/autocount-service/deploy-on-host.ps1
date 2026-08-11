@@ -33,7 +33,8 @@ param(
   [string] $DbLineFile   = "",
   [string] $Server       = "",
   [string] $Book         = "AED_HOUZS",
-  [string] $HealthUrl    = "http://localhost:8900/health",
+  [int]    $ExpectPort   = 8900,
+  [string] $PortFile     = "C:\Temp\ac-svc-port.txt",
   [string] $KeyFile      = "C:\Temp\ac-svc-key.txt"
 )
 
@@ -59,6 +60,23 @@ if (-not (Test-Path $KeyFile)) {
 }
 Ok "preflight - source, AutoCount 2.2, csc, key file all present"
 
+# THE PORT MUST NOT MOVE. It is 8900 and everything downstream assumes it: the
+# cloudflared ingress that fronts autocount.houzscentury.com, and every runbook
+# curl. The service reads the port from $PortFile - and until 2026-08-12 that
+# path carried a stray 0x07 byte, so the file could never be found and the port
+# was 8900 by accident. Fixing the path made the file LIVE. If one exists
+# carrying anything else (8899 was the old port, pinned inside http.sys), this
+# build would silently move the service and the tunnel would answer nothing.
+if (Test-Path $PortFile) {
+  $onDisk = (Get-Content $PortFile -Raw).Trim()
+  if ($onDisk -ne "$ExpectPort") {
+    Die "$PortFile says '$onDisk' but this deploy expects $ExpectPort. The service would start on the wrong port and the tunnel would stop answering. Delete the file to use $ExpectPort, or pass -ExpectPort $onDisk deliberately."
+  }
+  Step "port file present and says $onDisk - matches"
+} else {
+  Step "no port file - the service will use its built-in default $ExpectPort"
+}
+
 # ------------------------------------------------- 2 build the connection line
 # Read from a prepared dbline.txt if given (the older documented procedure), or
 # assemble it from setup.json. Either way the value is held in memory only.
@@ -70,13 +88,41 @@ if ($DbLineFile) {
 } else {
   if (-not (Test-Path $SetupJson)) { Die "setup.json not found at $SetupJson. Pass -SetupJson or -DbLineFile." }
   $cfg = Get-Content $SetupJson -Raw | ConvertFrom-Json
-  $u = $null; $p = $null; $srv = $Server
-  foreach ($k in @('dbUsername','DbUsername','username','user')) { if (-not $u -and $cfg.PSObject.Properties.Name -contains $k) { $u = $cfg.$k } }
-  foreach ($k in @('dbPassword','DbPassword','password','pwd'))   { if (-not $p -and $cfg.PSObject.Properties.Name -contains $k) { $p = $cfg.$k } }
-  foreach ($k in @('dbServer','DbServer','server','serverName'))  { if (-not $srv -and $cfg.PSObject.Properties.Name -contains $k) { $srv = $cfg.$k } }
-  if (-not $u)   { Die "setup.json has no username key. Keys present: $($cfg.PSObject.Properties.Name -join ', ')" }
-  if (-not $p)   { Die "setup.json has no password key. Keys present: $($cfg.PSObject.Properties.Name -join ', ')" }
+  # The real file nests the credentials one level down, in an ARRAY:
+  # { "AutoCountServers": [ { server, database, dbUsername, dbPassword, ... } ] }
+  # The first version of this script only looked at the top level and refused
+  # with "no username key" - correct behaviour, wrong assumption. Search the
+  # top level first, then every array-valued property's first element, so the
+  # shape is discovered rather than hard-coded.
+  $scopes = @($cfg)
+  foreach ($prop in $cfg.PSObject.Properties) {
+    if ($prop.Value -is [System.Array] -and $prop.Value.Count -gt 0 -and $prop.Value[0] -is [PSCustomObject]) {
+      $scopes += $prop.Value[0]
+    }
+  }
+  $pick = {
+    param($names)
+    foreach ($s in $scopes) {
+      foreach ($k in $names) {
+        if ($s.PSObject.Properties.Name -contains $k -and "$($s.$k)".Trim()) { return $s.$k }
+      }
+    }
+    return $null
+  }
+  $u = & $pick @('dbUsername','DbUsername','username','user')
+  $p = & $pick @('dbPassword','DbPassword','password','pwd')
+  $srv = $Server; if (-not $srv) { $srv = & $pick @('dbServer','DbServer','server','serverName') }
+  $seen = ($scopes | ForEach-Object { $_.PSObject.Properties.Name }) -join ', '
+  if (-not $u)   { Die "setup.json has no username key. Keys seen (top level + first element of each array): $seen" }
+  if (-not $p)   { Die "setup.json has no password key. Keys seen (top level + first element of each array): $seen" }
   if (-not $srv) { Die "could not determine the SQL server. Pass -Server, or add it to setup.json." }
+  # The file also NAMES a database. If it disagrees with what we are about to
+  # compile in, say so - a build pointed at the wrong book is the defect this
+  # whole __BOOK__ substitution exists to prevent.
+  $cfgBook = & $pick @('database','Database','db')
+  if ($cfgBook -and $cfgBook -ne $Book) {
+    Step "NOTE: setup.json names database '$cfgBook' but this build targets '$Book' (from -Book). Proceeding with '$Book'."
+  }
   # These go inside ORDINARY C# string literals, not verbatim ones, so a
   # backslash is an escape sequence. A named SQL instance is spelled
   # HOST\INSTANCE, so the unescaped form fails to compile with CS1009 on all
@@ -146,33 +192,58 @@ Start-Process -FilePath $exe -WindowStyle Hidden
 Start-Sleep -Seconds 3
 
 # -------------------------------------------- 6 verify, and roll back if wrong
-function Health {
+function Call($path, $body) {
   try {
-    $req = [Net.HttpWebRequest]::Create($HealthUrl)
-    $req.Method = "POST"; $req.ContentLength = 0; $req.Timeout = 20000
+    $req = [Net.HttpWebRequest]::Create("http://localhost:$ExpectPort$path")
+    $req.Method = "POST"; $req.ContentType = "application/json"; $req.Timeout = 120000
     $req.Headers.Add("X-API-KEY", (Get-Content $KeyFile -Raw).Trim())
+    $b = [Text.Encoding]::UTF8.GetBytes($body)
+    $req.ContentLength = $b.Length
+    if ($b.Length) { $s = $req.GetRequestStream(); $s.Write($b, 0, $b.Length); $s.Close() }
     $r = $req.GetResponse()
-    return (New-Object IO.StreamReader($r.GetResponseStream())).ReadToEnd()
-  } catch { return $null }
+    return @{ code = [int]$r.StatusCode; body = (New-Object IO.StreamReader($r.GetResponseStream())).ReadToEnd() }
+  } catch {
+    $r = $_.Exception.Response
+    if ($r) { return @{ code = [int]$r.StatusCode; body = (New-Object IO.StreamReader($r.GetResponseStream())).ReadToEnd() } }
+    return @{ code = 0; body = $_.Exception.Message }
+  }
 }
-$h = Health
-if (-not $h) { Start-Sleep -Seconds 5; $h = Health }
 
-if ($h -and $h -match '"ok"\s*:\s*true' -and $h -match [regex]::Escape($Book)) {
+$h = (Call "/health" "").body
+if (-not $h) { Start-Sleep -Seconds 5; $h = (Call "/health" "").body }
+
+# /health answers from CONSTANTS. It proves the process is up and which book it
+# was COMPILED for - it opens no database, so it cannot tell you the connection
+# line works. A build carrying a server name the host cannot resolve passes
+# /health and then fails every real request with
+# "Error Locating Server/Instance Specified". That happened on 2026-08-12 and
+# the swap was accepted because health was the only gate. /ensure-masters with
+# an EMPTY payload is the cheapest honest probe: EnsureMasters() opens the
+# session on its first line and the empty arrays create nothing.
+$db = Call "/ensure-masters" '{"Items":[],"Agents":[],"Creditors":[],"Locations":[],"UdfOptions":[]}'
+
+if ($h -and $h -match '"ok"\s*:\s*true' -and $h -match [regex]::Escape($Book) -and $db.code -eq 200) {
   Ok "health: $h"
+  Ok "database reachable: /ensure-masters answered $($db.code) - the connection line works"
+  Ok "listening on port $ExpectPort, as expected"
   Write-Host ""
   Write-Host "DONE. Rollback if you ever need it: stop AcSyncService, copy $prev over $exe, start it." -ForegroundColor Cyan
   exit 0
 }
 
-Write-Host "health did not confirm the book - rolling back" -ForegroundColor Red
-Write-Host ("what it answered: " + $(if ($h) { $h } else { "nothing" })) -ForegroundColor Red
+Write-Host "the new exe did not pass verification - rolling back" -ForegroundColor Red
+Write-Host ("  /health         : " + $(if ($h) { $h } else { "nothing" })) -ForegroundColor Red
+Write-Host ("  /ensure-masters : " + $db.code + " " + $db.body) -ForegroundColor Red
+if ($db.code -ne 200 -and $db.body -match 'Locating Server') {
+  Write-Host "  That error is the SQL server name, not the code. Pass -Server with the name" -ForegroundColor Yellow
+  Write-Host "  this host actually resolves (the LINQPad connection uses '.\A2006')." -ForegroundColor Yellow
+}
 Get-Process -Name "AcSyncService" -ErrorAction SilentlyContinue | Stop-Process -Force
 if (Test-Path $prev) {
   Copy-Item $prev $exe -Force
   Start-Process -FilePath $exe -WindowStyle Hidden
   Start-Sleep -Seconds 3
-  $h2 = Health
+  $h2 = (Call "/health" "").body
   Die "rolled back to the previous exe. It answers: $(if ($h2) { $h2 } else { 'nothing - check C:\Temp\ac-sync-service.log' })"
 }
 Die "the new exe did not come up and there was no previous exe to restore. Check C:\Temp\ac-sync-service.log"
