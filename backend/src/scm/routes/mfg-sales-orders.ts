@@ -122,6 +122,7 @@ import { noteScanDraftAccepted } from '../lib/scan-sample-review';
 import { genCode, inList, resolveOwnerStaffId } from './pwp-codes';
 import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r2';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
+import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
 import {
   loadMaintenanceConfig,
@@ -10206,15 +10207,31 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     // WO-7: thumbUrl is signed for the `.thumb` sibling. When no thumb was
     // uploaded the URL 404s on fetch and the frontend falls back to photoUrl.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ photoKey, photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
+    return c.json({ photoKey, mode: 'signed', photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
   } catch (e) {
-    // Signing should never fail in production (creds + endpoint validated
-    // at boot), but if it does we fall back to the proxy URL rather than
-    // losing the upload — the row is already inserted.
-    const photoUrl = `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}`;
-    // eslint-disable-next-line no-console
-    console.warn('[so-item-photo] signing failed, falling back to proxy:', e);
-    return c.json({ photoKey, photoUrl }, 201);
+    /* Signing failed — the upload itself succeeded and the row is already
+       inserted, so never lose it. Hand back the proxy path.
+
+       2026-08-10: this fallback existed but was INERT. It returns `photoUrl` as
+       an API-client-relative path, and the caller only cached the value when it
+       `startsWith('http')` — which a relative path never does. So nothing was
+       cached, the tile re-fetched /signed, got the 500, and showed "err".
+       `mode` is emitted so the client can branch on the contract instead of
+       sniffing the string shape. */
+    const basePath = `/mfg-sales-orders/${docNo}/items/${itemId}`;
+    const reason = e instanceof Error ? e.message : String(e);
+    warnSigningFailedOnce('so-item-photo', reason);
+    return c.json(
+      {
+        photoKey,
+        mode: 'proxy',
+        photoUrl: photoProxyPath(basePath, photoKey),
+        thumbProxyPath: photoProxyPath(basePath, thumbKeyFor(photoKey)),
+        expiresAt: null,
+        reason,
+      },
+      201,
+    );
   }
 });
 
@@ -10222,7 +10239,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
 // hits this on mount when no cached URL exists for a key, and on a
 // 403 (URL expired). Auth-checked the same way as the proxy: the key
 // must belong to this SO+item and currently be in photo_urls.
-mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) => {
+export const soItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -10246,19 +10263,40 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) =>
     // WO-7: signed thumb sibling. Pre-existing photos have no thumb object —
     // the frontend's <img> onError falls back to signedUrl on the 404.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: the R2 S3 creds are unset in prod, so signing throws for
+       EVERY photo and this used to answer 500 — the line card rendered "err"
+       even though the bytes are readable through the proxy below via the R2
+       binding. Serve the proxy path instead of failing. See
+       scm/lib/photoProxyFallback.ts for why this is NOT returned as
+       `signedUrl` (an <img src> sends no bearer token, so it would 401). */
+    return c.json(
+      proxyFallbackPayload(
+        'so-item-photo',
+        `/mfg-sales-orders/${docNo}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
+
+mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', soItemPhotoSignedHandler);
 
 /**
- * @deprecated Task #92 — superseded by signed-URL flow. The frontend
- * now reads photos directly from R2 via short-lived signed URLs minted
- * by `GET /photos/:photoKey/signed`. This proxy endpoint is retained
- * as a fallback for legacy clients holding old proxy URLs in the wild;
- * remove after the post-deploy cooldown (~7 days, longer than any
- * signed-URL TTL or cached page load).
+ * NOT deprecated — load-bearing. (It was marked `@deprecated Task #92` with a
+ * "remove after ~7 day cooldown" note when the signed-URL flow landed.)
+ *
+ * 2026-08-10: the R2 S3 credentials that `/photos/:photoKey/signed` needs were
+ * never provisioned in production, so signing throws for every photo and the
+ * signed route now FALLS BACK to this endpoint. It reads the R2 *binding*
+ * (c.env.SO_ITEM_PHOTOS), which needs no credential, and is the only reason SO
+ * photos display at all today. Deleting it would blank every photo in the app.
+ *
+ * It may be retired only once signing is proven working in production AND the
+ * fallback in soItemPhotoSignedHandler is removed with it.
  */
 mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');
