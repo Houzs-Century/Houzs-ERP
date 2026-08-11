@@ -48,7 +48,7 @@ import {
   LEAD_TIME_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
-import { findOverConvertOffender } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
@@ -69,7 +69,8 @@ import {
 } from '../lib/po-email';
 import { getSupabaseService } from '../../db/supabase';
 import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
-import { thumbKeyFor } from '../../services/photoThumbs';
+import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
+import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -2916,6 +2917,43 @@ async function soLinkTargetRefusal(
   return null;
 }
 
+/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
+   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
+   it says nothing about HOW MUCH that line may order. The batch paths all cap
+   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
+   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
+   the unpicked remainder — but add-line and line-edit did not, so an operator
+   could append (or edit up to) any qty against an SO line that was already
+   fully converted. That is the same double-ordering the F1 audit closed on
+   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
+   accept an operator-supplied qty.
+
+   Repeat conversion stays legal — the business splits one SO across several POs
+   on purpose. The ceiling is what is capped, never the second conversion.
+
+   Overridable with confirmOverConvert, the SAME escape hatch the generic create
+   documents, so a deliberate over-order is still one explicit flag away. */
+export async function soLineOverConvertRefusal(
+  sb: any,
+  soItemId: string | null,
+  requestedQty: number,
+  ownCurrentQty: number,
+): Promise<OverConvertOffender | null> {
+  if (!soItemId) return null;
+  const { data } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, qty, po_qty_picked')
+    .eq('id', soItemId)
+    .maybeSingle();
+  const row = data as { qty: number; po_qty_picked: number } | null;
+  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
+     404 before we get here, so there is nothing left to cap. */
+  if (!row) return null;
+  const remaining = soLineHeadroom(row, ownCurrentQty);
+  const requested = Math.max(0, Number(requestedQty ?? 0));
+  return requested > remaining ? { soItemId, requested, remaining } : null;
+}
+
 mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -2957,6 +2995,12 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   {
     const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
     if (refusal) return c.json(refusal.body, refusal.status);
+  }
+  /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
+     its own headroom is the raw remainder (ownCurrentQty = 0). */
+  if (it.confirmOverConvert !== true) {
+    const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -3145,6 +3189,20 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
     if (refusal) return c.json(refusal.body, refusal.status);
     updates['so_item_id'] = nextSoItemId;
+  }
+
+  /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
+     qty on an ALREADY-bound line over-orders just as surely as binding a new
+     one. This line's own stored qty is credited back only while it stays on the
+     SAME SO line (that qty already sits inside po_qty_picked, so without the
+     credit a no-op edit would refuse itself); a REBIND onto a different SO line
+     gets no credit, since the new target's counter holds none of it yet. */
+  if (it.confirmOverConvert !== true) {
+    const ownCurrentQty = nextSoItemId && nextSoItemId === prevSoItemId
+      ? Number(prev.qty ?? 0)
+      : 0;
+    const over = await soLineOverConvertRefusal(sb, nextSoItemId, qty, ownCurrentQty);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
@@ -3520,7 +3578,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
    lock out a producer — the importer's `po-items/...` keys are served unchanged.
    The SO endpoint is untouched: it validates against mfg_sales_order_items and
    would have had to be loosened to serve a PO line. */
-mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', async (c) => {
+export const poItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const poId = c.req.param('id');
   const itemId = c.req.param('itemId');
@@ -3544,11 +3602,83 @@ mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', async (c) =>
     // Signed thumb sibling. A photo uploaded before thumbnails existed has no
     // `.thumb` object — the URL 404s and the client falls back to signedUrl.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: R2 S3 creds unset in prod => signing throws for every photo.
+       Fall back to the proxy route below (R2 binding, no creds needed) rather
+       than 500. See scm/lib/photoProxyFallback.ts for why this is not returned
+       as `signedUrl`. */
+    return c.json(
+      proxyFallbackPayload(
+        'po-item-photo',
+        `/mfg-purchase-orders/${poId}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', poItemPhotoSignedHandler);
+
+/* ── PO photo PROXY — the credential-free read path ────────────────────────
+   Added 2026-08-10 alongside the signing outage. The SO and consignment
+   surfaces already had a proxy; the PO side had ONLY /signed, so when signing
+   broke there was nothing to fall back to.
+
+   Streams the object from the R2 BINDING (c.env.SO_ITEM_PHOTOS), which needs no
+   S3 credential. PO photos live in the same bucket as SO photos — both the
+   convert-carried `so-items/...` keys and the AutoCount importer's
+   `po-items/...` keys — so one binding serves both.
+
+   AUTHZ is a copy of the /signed route's, deliberately including
+   scopeToCompany. The SO proxy does NOT company-scope (its /signed twin does
+   not either), but the PO /signed route DOES, so omitting it here would make
+   this proxy strictly MORE permissive than the route it backs up — a
+   cross-company read leak. Membership, never key shape: the key must be listed
+   in THIS line's photo_urls and the line must belong to THIS PO. A `.thumb`
+   sibling is authorised against its BASE key, because thumbs are never
+   themselves listed in photo_urls.
+
+   NOTE: this sits behind the global auth gate, so it is NOT usable as a bare
+   <img src> — see scm/lib/photoProxyFallback.ts. */
+export const poItemPhotoProxyHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const poId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  if (!c.env.SO_ITEM_PHOTOS) {
+    return c.json({ error: 'photo_bucket_not_configured' }, 500);
+  }
+
+  const { data: item } = await scopeToCompany(sb
+    .from('purchase_order_items')
+    .select('purchase_order_id, photo_urls')
+    .eq('id', itemId), c)
+    .maybeSingle();
+  if (!item) return c.json({ error: 'item_not_found' }, 404);
+  const i = item as { purchase_order_id: string; photo_urls: string[] | null };
+  if (i.purchase_order_id !== poId) return c.json({ error: 'item_doc_mismatch' }, 400);
+  if (!(i.photo_urls ?? []).includes(baseKeyOf(photoKey))) {
+    return c.json({ error: 'photo_not_in_item' }, 404);
+  }
+
+  const obj = await c.env.SO_ITEM_PHOTOS.get(photoKey);
+  if (!obj) return c.json({ error: 'photo_not_found_in_r2' }, 404);
+
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+      // Keys are immutable per object (uuid / ac-<DtlKey>-<n>), so a replaced
+      // photo is a different key. `private` — PO photos are not public.
+      'cache-control': 'private, max-age=31536000, immutable',
+    },
+  });
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey', poItemPhotoProxyHandler);
 
 /* ── PR #78 — Convert from Sales Order ─────────────────────────────────
    Commander 2026-05-26 (AutoCount parity): "可以点击 Convert from Sales

@@ -458,6 +458,31 @@ with `a.categories.includes(category.toUpperCase())`
 (`SoLineCard.tsx` and `mobile/MobileNewSO.tsx`), so a lowercase token yields a
 row the backfill can map to and no human can ever tick.
 
+**What actually landed in production, 2026-08-11.** The `Hydraulic` row was
+created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
+`sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh
+connection. The stamp ran through `backfill-specials-into-variants.mjs` with
+`SKIP_PRICED=1` (run **31454747001**): **SO 41 + PO 8 = 49 lines**, with **27
+unrelated lines held back** for carrying a priced code. Every money column was
+summed inside the transaction before and after — `unit_price_centi`,
+`total_centi`, `unit_cost_centi`, `line_cost_centi`, `special_order_price_sen`,
+`divan_price_sen`, `leg_price_sen` — all **IDENTICAL**, and the transaction
+would have rolled back on any difference. A fresh read-only re-run
+(**31454827796**) shows every one of the 49 now carrying the code, no line still
+waiting to gain it, and `divanHeight` intact on the 46 that had one.
+
+**The 3 lines with NO `divanHeight`** — the tick is the only thing the ERP knows
+about these beds, so a human must read the slip. No height was inferred:
+
+| doc | item | AutoCount Desc2 |
+|---|---|---|
+| `HC-SO-012403` | `BEDFRAME KIV` | `LVL 1 QUEEN HYDRAULIC` |
+| `HC-SO-013122` | `BEDFRAME KIV` | `LVL1 HYDRAULIC KING` |
+| `HC-SO-012039` | `HILTON (A)-(Q)` | `hydraulic` |
+
+Two are `BEDFRAME KIV` placeholders whose Desc2 names no measurement at all; the
+third is a real HILTON line whose entire Desc2 is the word `hydraulic`.
+
 A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
 object; rebuilding deletes every key it has not heard of. `custom_specials` is a
 DERIVED output of the pricing recompute and is written by no script at all.

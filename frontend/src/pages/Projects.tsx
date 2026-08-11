@@ -8692,6 +8692,39 @@ function DocRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const reviewable = REVIEWABLE_TITLES.has(item.title);
   const latest = attachments[0];
+  // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
+  // VERSION to the approve/reject decision made while it was the newest file, so
+  // the FILES list shows "Approved/Rejected · who · when" per version and greys a
+  // rejected one — instead of only the item-level trail. No schema change:
+  // uploaded_at and comment.created_at are both ISO-Z, so a plain lexical compare
+  // is correct. A decision in [thisUpload, nextUpload) belongs to this version;
+  // the current newest file with no later decision stays unlabelled (still
+  // pending). Batch uploads take the last decision inside their window. Merged
+  // crew photos (id < 0) are excluded — they're not review versions.
+  const versionStatus = useMemo(() => {
+    const decisions = comments
+      .filter((c) => c.kind === "approve" || c.kind === "reject")
+      .slice()
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    const asc = attachments
+      .filter((a) => a.id > 0)
+      .sort((a, b) => ((a.uploaded_at || "") < (b.uploaded_at || "") ? -1 : 1));
+    const m = new Map<number, { kind: "approve" | "reject"; who: string; at: string }>();
+    asc.forEach((att, i) => {
+      const ta = att.uploaded_at || "";
+      const tnext = i + 1 < asc.length ? asc[i + 1].uploaded_at || "" : "￿";
+      const d = decisions
+        .filter((dec) => dec.created_at >= ta && dec.created_at < tnext)
+        .pop();
+      if (d)
+        m.set(att.id, {
+          kind: d.kind as "approve" | "reject",
+          who: d.user_name || "—",
+          at: d.created_at,
+        });
+    });
+    return m;
+  }, [comments, attachments]);
   const rs = item.review_status;
   const awaiting = rs === "pending_review" || rs === "amended";
   const naActive = item.status === "na";
@@ -8908,22 +8941,24 @@ function DocRow({
                 disabled={uploading}
                 title="Attach file"
                 aria-label="Attach file"
-                className="rounded-md border border-border bg-surface inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"
+                className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               >
-                {uploading ? "…" : <Paperclip size={13} />}
+                <Paperclip size={12} />
+                {uploading ? "…" : "Attach"}
               </button>
             )}
             {canManage && (
               <button
                 onClick={() => setRemarkOpen((x) => !x)}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   remarkNotes.length > 0
                     ? "border-accent/40 bg-accent/5 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
                 title="Add a remark"
               >
+                <MessageSquare size={12} />
                 {remarkNotes.length > 0 ? `Remark (${remarkNotes.length})` : "Remark"}
               </button>
             )}
@@ -8931,12 +8966,14 @@ function DocRow({
               <button
                 onClick={() => onStatus(item, naActive ? "pending" : "na")}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   naActive
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
+                title={naActive ? "Mark applicable" : "Mark N/A"}
               >
+                <Ban size={12} />
                 N/A
               </button>
             )}
@@ -9025,18 +9062,36 @@ function DocRow({
         <tr>
           <td colSpan={6} className="px-3 pb-2">
             <div className="overflow-hidden rounded-md border border-border-subtle">
-              {attachments.map((a) => (
-                <TaskAttachmentRow
-                  key={a.id}
-                  attachment={a}
-                  /* id < 0 = merged crew phase photo — view/download only. */
-                  canManage={canManage && a.id > 0}
-                  showRemark={remarkOpen}
-                  itemTitle={item.title}
-                  onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
-                  toast={toast}
-                />
-              ))}
+              {attachments.map((a) => {
+                // Part 2 (owner 2026-08-10): a rejected version stays in the list,
+                // greyed, tagged with who rejected it and when; an approved one is
+                // tagged in green. Undecided current file: no tag.
+                const vs = versionStatus.get(a.id);
+                return (
+                  <div key={a.id} className={vs?.kind === "reject" ? "opacity-60" : undefined}>
+                    <TaskAttachmentRow
+                      attachment={a}
+                      /* id < 0 = merged crew phase photo — view/download only. */
+                      canManage={canManage && a.id > 0}
+                      showRemark={remarkOpen}
+                      itemTitle={item.title}
+                      onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
+                      toast={toast}
+                    />
+                    {vs && (
+                      <div
+                        className={cn(
+                          "px-2 pb-1.5 text-[9px] font-semibold",
+                          vs.kind === "approve" ? "text-synced" : "text-err",
+                        )}
+                      >
+                        {vs.kind === "approve" ? "Approved" : "Rejected"} · {vs.who} ·{" "}
+                        {formatDateTime(vs.at)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </td>
         </tr>
@@ -9689,44 +9744,50 @@ function ChecklistRow({
               if (f) uploadAttachment(f, cap);
             }}
           />
+          {/* Attach / Remark / N/A — BOXED style (owner 2026-08-11):
+              "one consistent button style for this action group across the
+              entire desktop PMS". These were an icon-stack (icon over label, no
+              border) while the table sections (Contract, Booth Layout & Setup)
+              used a bordered box, so the same three actions looked like two
+              different controls depending on the section. Now every section
+              uses the DocRow treatment: icon + label inside one bordered pill,
+              accent-filled when active. */}
           {canManage && !readOnlyAttach && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
-              className="inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 text-ink-muted hover:text-accent disabled:opacity-50"
+              className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               title="Attach file"
             >
-              <Paperclip size={13} />
-              <span className="text-[9px] font-semibold tracking-wide leading-none">
-                {uploading ? "…" : "Attach"}
-              </span>
+              <Paperclip size={12} />
+              {uploading ? "…" : "Attach"}
             </button>
           )}
           <button
             onClick={() => setExpanded((x) => !x)}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:text-accent",
-              expanded ? "text-accent" : "text-ink-muted"
+              ACTION_BTN_BASE,
+              expanded
+                ? "border-accent/40 bg-accent/5 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title="Remark"
           >
-            <MessageSquare size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">
-              Remark
-            </span>
+            <MessageSquare size={12} />
+            Remark
           </button>
           <button
             onClick={() => onStatus(item.status === "na" ? "pending" : "na")}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:bg-surface-dim",
+              ACTION_BTN_BASE,
               item.status === "na"
-                ? "text-accent"
-                : "text-ink-muted hover:text-accent"
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title={item.status === "na" ? "Mark applicable" : "Mark N/A"}
           >
-            <Ban size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">N/A</span>
+            <Ban size={12} />
+            N/A
           </button>
         </div>
       </div>
@@ -10360,6 +10421,16 @@ function AddStockTransferForm({
 function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
+
+/** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
+ *  2026-08-11: "one consistent button style for this action group across the
+ *  entire desktop PMS"). Boxed = icon + label inside a bordered pill, the style
+ *  the Contract / Booth Layout tables already used; the checklist-card sections
+ *  (Operation, Setup & Dismantle Documents, Expo Map) were an unbordered
+ *  icon-stack. Callers append only the colour/state classes, so the geometry can
+ *  never drift between sections again. */
+const ACTION_BTN_BASE =
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[9px] font-semibold leading-none min-w-[46px]";
 
 function roleChipClass(role: string | null | undefined): string {
   switch ((role || "").toUpperCase()) {
