@@ -747,8 +747,20 @@ UPDATE scm.app_config SET value = '1', updated_at = now()
 **Turn it off** — set `value = 'off'`. Takes effect within 30 seconds (the cache
 TTL). Queued rows stay `pending` and drain when it is turned back on.
 
-**What to watch.** The cron logs `[cron ac-writeback]` per sweep, and logs at
-ERROR level whenever a row reaches `failed` — a failed row means a document
+**What to watch — run the check, do not read the tail.** Actions ->
+**AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
+the queue by status, the FAILED rows in full (each one is a document that is in
+the ERP and not in the account book), the age of the oldest pending row, and the
+`skipped` backlog split by REASON — a refusal needs a line-key backfill, a
+merged conversion needs a human, a parentless document can never exist in
+AutoCount at all. An unrecognised reason is printed rather than counted away.
+
+An empty queue is reported as EMPTY, not as healthy: the table is append-only,
+so zero rows means nothing was ever enqueued, which is the correct state while
+the toggle is off.
+
+The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
+a row reaches `failed` — a failed row means a document
 exists in the ERP and does not exist in AutoCount, which is the exact divergence
 this mechanism exists to prevent.
 
