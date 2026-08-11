@@ -311,6 +311,13 @@ export interface ComposeOptions {
    */
   requireLocation?: boolean;
   /**
+   * ERP code (uppercased) -> AutoCount ItemCode, from
+   * `scm.supplier_material_bindings`. Consulted BEFORE the compiled cutover
+   * map: the binding is the live record and the CSV is a 2026-08-05 snapshot,
+   * so only the binding can know a product opened since.
+   */
+  bindings?: Map<string, string> | null;
+  /**
    * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
    * that a keyless line is genuinely new rather than un-backfilled. Honoured
    * only when EVERY keyless line on the document is one of these; see the
@@ -422,6 +429,7 @@ export function composeDetails(
     const r = resolveAcItemCode(l.item_code, {
       supplierCode: opts.supplierCode ?? null,
       index: opts.itemIndex,
+      bindings: opts.bindings ?? null,
     });
     if (!r.ok) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
