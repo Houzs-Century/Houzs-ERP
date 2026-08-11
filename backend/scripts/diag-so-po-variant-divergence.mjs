@@ -20,7 +20,8 @@
    The PO arm has the same shape and mostly escapes it: ac-outstanding-po.json.gz
    holds only ~338 rows because a RECEIVED PO is not "outstanding", so nearly
    every PO bedframe line falls through to the per-line description2 fallback,
-   which is line-accurate by construction.
+   which is line-accurate by construction. "Mostly" is a claim, not a
+   measurement - section F is the measurement.
 
    Sections:
      A  the named SO/PO pairs, line by line: is Desc2 really byte-identical, what
@@ -30,6 +31,16 @@
         its OWN DtlKey, counted against what the row holds now.
      C  fabric-code truncation sweep: linked SO/PO line pairs whose bound colour
         on one side is a strict PREFIX of the other's.
+     D  duplicated delivery-order lines.
+     E  GRN variants: the arm neither refresh script touches.
+
+   SECTION B'S COUNTERPART FOR THE PO ARM IS NOT HERE. It is
+   check-po-arm-own-text.mjs, a standalone read-only check, because the repair
+   that acts on its verdict (repair-collided-po-variants.mjs) has to measure the
+   identical thing before and after it writes - and a measurement that lives
+   inside a five-section diagnostic cannot be re-run on its own to show a number
+   move. Both import the one classifier in lib/po-arm-own-text.mjs, so the check
+   and the repair cannot drift apart.
 
    DATABASE_URL required.
    SO_DOCS  comma-separated SO doc_no list for section A (default: the 14 + the

@@ -10,6 +10,7 @@ import {
 import mergeLibSource from '../scripts/lib/variant-merge.mjs?raw';
 import soRefreshSource from '../scripts/refresh-so-variants.mjs?raw';
 import poRefreshSource from '../scripts/refresh-po-variants.mjs?raw';
+import applyPatchSource from '../scripts/apply-variant-patch.mjs?raw';
 
 /* The guard for BUG-HISTORY.md "The variant refresh scripts REPLACE the whole
    variants jsonb, so any key they do not know about is dropped".
@@ -36,6 +37,30 @@ const fc = { fabric_id: 'GIRONA J9047', colour_id: 'GIRONA J9047-01 BRUNETTE', l
    explaining what they stopped doing. */
 function codeOnly(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ');
+}
+
+/* Every postgres.js TAGGED TEMPLATE body in a source, so an assertion about
+   what reaches a query PARAMETER cannot be fooled by the same text appearing in
+   a log line. Scans to the closing backtick, stepping over `${...}` so an
+   interpolation containing a brace or a backtick does not end the scan early. */
+function sqlTaggedTemplates(src: string): string[] {
+  const out: string[] = [];
+  const open = /\b(?:sql|tx|db|verify)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = open.exec(src)) !== null) {
+    let i = open.lastIndex;
+    let depth = 0;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === '\\') { i++; continue; }
+      if (c === '$' && src[i + 1] === '{') { depth++; i++; continue; }
+      if (c === '}' && depth > 0) { depth--; continue; }
+      if (c === '`' && depth === 0) break;
+    }
+    out.push(src.slice(open.lastIndex, i));
+    open.lastIndex = i + 1;
+  }
+  return out;
 }
 
 describe('variant refresh: the sweep declares the keys it owns', () => {
@@ -149,6 +174,58 @@ describe('variant refresh: the WRITE is a merge, in the source', () => {
   test('the patch reaches the parameter as a value, never as a stringified string', () => {
     expect(sources[0][1]).toContain('db.json(patch)');
     for (const [, src] of sources) expect(src).not.toContain('JSON.stringify');
+  });
+
+  test('the reviewed hand-patch path is the same write, in the library', () => {
+    /* apply-variant-patch.mjs was the last script in this family merging jsonb
+       in JAVASCRIPT: SELECT variants, `{...row.variants, ...p.variants}`, assign
+       the whole column back. It preserved keys - which is why it never showed up
+       as the "REPLACE the whole variants jsonb" bug - but it had no
+       jsonb_typeof guard and no read-back, the two things the colour-sweep COE
+       is about. Spreading an ARRAY variants column yields {"0":..,"1":..}, a
+       valid object, so the write would have converted a detectably damaged row
+       into an undetectably damaged one. Pin the library function it now uses. */
+    const [, lib] = sources[0];
+    expect(lib).toContain('export async function mergeReviewedVariantPatch');
+    // COALESCE geometry, not the sweep's unconditional restamp: a hand patch
+    // that says nothing about `gap` must leave gap alone.
+    expect(lib).toContain('gap_inches = COALESCE(');
+  });
+
+  test('the hand-patch script never merges jsonb in JavaScript again', () => {
+    const src = codeOnly(applyPatchSource);
+    // the write goes through the library, guarded and counted there
+    expect(src).toContain('mergeReviewedVariantPatch');
+    // no bare assignment of the column
+    for (const at of [...src.matchAll(/\bvariants\s*=[^=]/g)].map((m) => m.index ?? 0))
+      expect(`apply-variant-patch.mjs: ${src.slice(at, at + 70).replace(/\s+/g, ' ')}`)
+        .toMatch(/variants = COALESCE\(variants, '\{\}'::jsonb\) \|\|/);
+    // no JS-side read-modify-write of the column
+    expect(src).not.toMatch(/\.\.\.\s*\(?\s*row\.variants/);
+    expect(src).not.toMatch(/SELECT\s+variants\s+FROM/i);
+    /* the read-back is the other half. A command tag answers "did a row change",
+       never "does the row hold what I meant" - the colour sweep reported three
+       successful applies while destroying the column. */
+    expect(src).toContain('READ-BACK on a fresh connection');
+    expect(src).toMatch(/postgres\(DST[\s\S]{0,80}\)/);
+  });
+
+  test('the hand patch is bound as a value, never a stringified string', () => {
+    /* This script legitimately uses JSON.stringify for LOG lines and for
+       comparing read-back values, so the blanket `not.toContain` the sweeps get
+       would be wrong here and would only teach the next author to delete the
+       assertion. Assert the thing that actually matters: nothing stringified
+       reaches a QUERY parameter. postgres.js applies its own JSON.stringify to
+       anything the server resolves to jsonb, so a pre-serialized string is
+       encoded twice and lands a jsonb STRING scalar
+       (docs/jsonb-double-encoding-coe.md). */
+    const src = codeOnly(applyPatchSource);
+    const templates = sqlTaggedTemplates(src);
+    expect(templates.length).toBeGreaterThan(0);   // never pass vacuously
+    for (const t of templates)
+      expect(`SQL template binds a stringified value: ${t.replace(/\s+/g, ' ').slice(0, 90)}`)
+        .not.toContain('JSON.stringify');
+    expect(src).toMatch(/sql\.json\(/);
   });
 
   test('neither sweep writes custom_specials any more', () => {

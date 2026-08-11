@@ -168,3 +168,64 @@ export async function mergeVariantPatch(db, { table, id, patch, geometry = null,
   }
   return rows.length;
 }
+
+/**
+ * The same write for a REVIEWED HAND PATCH (apply-variant-patch.mjs), which is
+ * the one caller that legitimately carries keys no sweep owns.
+ *
+ * WHY THE OWNED-KEY ASSERTION IS NOT APPLIED HERE, and why that is not a hole.
+ * `assertOnlyOwnedKeys` exists to stop a SWEEP quietly widening the set of keys
+ * it overwrites on every future run against every future row. A hand patch is
+ * the opposite kind of write: a human or AI read one line's Desc2 that the regex
+ * parser could not, and the patch's key list IS the reviewed artifact, submitted
+ * per batch through a workflow input. Constraining it to OWNED_VARIANT_KEYS
+ * would make the escape hatch unable to set `seatHeight` or the picker's
+ * `special` - the very fields it exists for.
+ *
+ * WHAT IS NOT RELAXED. Everything the COE mandates still applies, because none
+ * of it depends on knowing the key names:
+ *   - the merge happens in the DATABASE (`variants || patch`), not in JavaScript.
+ *     The old code did `{...row.variants, ...p.variants}` between a SELECT and an
+ *     UPDATE: correct on key preservation, but a read-modify-write window in
+ *     which a concurrent writer's key is read, forgotten and overwritten.
+ *   - `jsonb_typeof(...) = 'object'` guards it. Object || non-object CONCATENATES
+ *     INTO AN ARRAY. Worse for the old JS merge: spreading an ARRAY variants
+ *     column yields `{"0":..,"1":..}` and writes that back as a perfectly valid
+ *     object, converting a detectably damaged row into an undetectably damaged
+ *     one. A row this guard refuses belongs to #1938's shape repair.
+ *   - the patch is bound with `db.json(patch)`, never a pre-stringified value.
+ *   - the caller counts RETURNING, not the command tag.
+ *
+ * Geometry uses COALESCE, unlike the sweep: a hand patch that says nothing about
+ * `gap` must LEAVE gap alone, where a Desc2 re-parse is entitled to restamp all
+ * three from the text it just read.
+ *
+ * @returns 1 when merged, 0 when the row was skipped (missing, or `variants` is
+ *          not a jsonb object). The caller must report a 0.
+ */
+export async function mergeReviewedVariantPatch(db, { table, id, patch, geometry = null }) {
+  if (!MERGE_TABLES.includes(table)) throw new Error(`mergeReviewedVariantPatch: unknown table ${table}`);
+  if (!isPlainObject(patch)) throw new Error(`reviewed variant patch must be a plain object, got ${Array.isArray(patch) ? "array" : typeof patch}`);
+  const json = db.json(patch);
+  const g = geometry || {};
+  const gap = g.gap ?? null, divan = g.divan ?? null, leg = g.leg ?? null;
+
+  const rows = table === "mfg_sales_order_items"
+    ? await db`UPDATE scm.mfg_sales_order_items SET
+                 variants = COALESCE(variants, '{}'::jsonb) || ${json},
+                 gap_inches = COALESCE(${gap}, gap_inches),
+                 divan_height_inches = COALESCE(${divan}, divan_height_inches),
+                 leg_height_inches = COALESCE(${leg}, leg_height_inches)
+               WHERE id = ${id}
+                 AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
+               RETURNING id`
+    : await db`UPDATE scm.purchase_order_items SET
+                 variants = COALESCE(variants, '{}'::jsonb) || ${json},
+                 gap_inches = COALESCE(${gap}, gap_inches),
+                 divan_height_inches = COALESCE(${divan}, divan_height_inches),
+                 leg_height_inches = COALESCE(${leg}, leg_height_inches)
+               WHERE id = ${id}
+                 AND jsonb_typeof(COALESCE(variants, '{}'::jsonb)) = 'object'
+               RETURNING id`;
+  return rows.length;
+}
