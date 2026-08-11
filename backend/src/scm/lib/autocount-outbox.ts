@@ -663,6 +663,18 @@ export async function enqueueConvert(
          off for a whole-document transfer, where "all outstanding" is the same
          answer and AutoCount's own book is the better authority on it. */
       body: {
+        /* THE ERP NUMBERS ITS OWN DOCUMENTS, on every type.
+           A create already sent its DocNo and AutoCount took it; a conversion
+           sent none, so AutoCount auto-numbered the DO, the GRN, the invoice
+           and the purchase invoice — four of the six types carrying a number
+           nobody in this building would recognise, and every reconciliation
+           having to go through linked_ac_docno instead of the number on the
+           paperwork. The service was always ready for it: SalesHeader and
+           PurchaseHeader both apply DocNo when the payload carries one.
+           Supplying our own does NOT advance AutoCount's counter, so anything
+           raised in its own UI keeps its own series in parallel — which is
+           what tells the two apart. */
+        DocNo: opts.docNo ?? null,
         DocDate: opts.docDate ?? null,
         Ref: opts.ref ?? null,
         ...(source.keys ? { DtlKeys: source.keys } : {}),
