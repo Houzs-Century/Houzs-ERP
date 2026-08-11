@@ -43,15 +43,26 @@ import { isPendingColour } from "./fabric-colour-match.mjs";
 
 export const norm2 = (s) => (s || "").replace(/\s+/g, " ").trim();
 
-/* `variants` may be a jsonb STRING, or an ARRAY on a row the sofa sweep damaged
-   (docs/jsonb-double-encoding-coe.md). A damaged shape is NOT silently unwrapped
-   into a verdict here - it gets its own bucket, because guessing at element 0 is
-   how a repair writes into a column it does not understand. */
+/* ONLY a genuine jsonb OBJECT is a value this check will judge. Anything else
+   gets its own bucket and is left alone.
+
+   THIS IS DELIBERATELY STRICTER THAN THE SO ARM'S `asObj`, which JSON.parses a
+   string and takes element 0 of an array. Those helpers were written for
+   diagnostics that wanted to SEE inside a damaged row. This one decides whether
+   a row is healthy, and the two are not the same question: a jsonb STRING
+   scalar - the shape the double-encoding defect leaves behind - still parses
+   into a perfectly sensible object in JavaScript, but in the DATABASE
+   `variants->>'colourId'` on it is NULL, so every consumer reads nothing.
+   Unwrapping it here would report a row the ERP cannot read as AGREES, and a
+   false clean is the one result this whole exercise must not produce.
+
+   Rows in this bucket belong to #1938's shape repair, and the merge guard
+   (`jsonb_typeof(...) = 'object'`) would refuse to write them anyway. */
 export function asVariantObject(v) {
-  let x = v;
-  if (typeof x === "string") { try { x = JSON.parse(x); } catch { return null; } }
-  if (Array.isArray(x)) return null;
-  return x && typeof x === "object" ? x : null;
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return null;          // a jsonb string scalar - damaged
+  if (Array.isArray(v)) return null;               // the concatenated-array shape - damaged
+  return typeof v === "object" ? v : null;
 }
 
 /* The variant block a Desc2 re-parse produces, on exactly the axes the refresh
