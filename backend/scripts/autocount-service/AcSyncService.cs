@@ -26,9 +26,10 @@
 // (docNo, userID) — inherited by every invoicing command. Setting Cancelled on
 // the entity would bypass AutoCount's transferred-document guards.
 //
-// Headless safety: the SDK raises WinForms dialogs for over-transfer and
-// transfer conflicts. We subscribe ConfirmOverTransferedQtyEvent and answer it
-// programmatically so a service call can never block on a hidden dialog.
+// Headless safety: the SDK raises WinForms dialogs for over-transfer. That
+// event's EventArgs type is not public, so it cannot be subscribed; the
+// condition is instead made unreachable by only ever transferring what is
+// outstanding. See the note above OverQty's former site.
 //
 // Build (on the AutoCount host):
 //   csc.exe /platform:x64 ^
@@ -81,7 +82,13 @@ using System.Web.Script.Serialization;
 
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
-  const string BOOK = "AED_HOUZS";
+  /* Substituted at build time from the SAME value that builds the DB connection
+     line below, so the
+     book this service REPORTS can never disagree with the book it is actually
+     connected to. It used to be a separate hardcoded constant, which meant a
+     build pointed at a test book still announced the live one on /health — the
+     single signal an operator uses to check exactly that. */
+  const string BOOK = "__BOOK__";
   /* Port is a FILE, not a constant: 8899 turned out to be pinned inside
      http.sys by an orphaned listener registration from the cutover file
      server, and a service that cannot be moved without a recompile is a
@@ -313,7 +320,6 @@ class AcSyncService {
       case "DO": {
         var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         SalesHeader(doc, p);
         doc.Save();
@@ -322,7 +328,6 @@ class AcSyncService {
       case "IV": {
         var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         SalesHeader(doc, p);
         doc.Save();
@@ -331,7 +336,6 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
@@ -341,7 +345,6 @@ class AcSyncService {
       case "PI": {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
@@ -352,12 +355,17 @@ class AcSyncService {
     throw new Exception("unsupported target " + toType);
   }
 
-  /* The SDK's over-transfer dialog, answered in code. Refusing is the safe
-     default: an ERP that thinks it is shipping more than the PO ordered is a
-     data bug, and silently accepting it here would hide it inside AutoCount. */
-  static void OverQty(object sender, AutoCount.Invoicing.ConfirmOverTransferedQtyEventArgs e) {
-    Set(() => e.IsConfirmed = false);
-  }
+  /* OVER-TRANSFER: unreachable by construction, not answered by a handler.
+     Every document class exposes ConfirmOverTransferedQtyEvent, but its
+     EventArgs type is not public in AutoCount.Invoicing — reflection against
+     the real assemblies found the delegate and no matching public args type,
+     so it cannot be subscribed from outside the SDK, and naming it does not
+     compile. Instead the condition is made impossible: DtlKeys() only ever
+     selects source lines with (Qty - TransferedQty) > 0 and transfers exactly
+     what is outstanding. If a caller passes explicit DtlKeys that would
+     over-transfer, AutoCount raises PartialTransferQtyLessThanTransferedQty
+     Exception (or a sibling) and the service returns that as an error — the
+     failure mode is a refused call, never a silently accepted over-ship. */
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
