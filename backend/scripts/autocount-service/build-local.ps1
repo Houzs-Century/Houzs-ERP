@@ -43,8 +43,10 @@ try {
   $src = Get-Content $Source -Raw
   [System.IO.File]::WriteAllText($tmp, $src.Replace('__DBLINE__', $dummy).Replace('__BOOK__', 'AED_HOUZS'))
 
-  # Stock / ARAP / GeneralMaint carry the MASTER-DATA classes that /ensure-masters
-  # drives (ItemDataAccess, DebtorDataAccess, SalesAgentCommand). The five
+  # Stock / ARAP / GeneralMaint / StockMaint carry the MASTER-DATA classes that
+  # /ensure-masters drives - ItemDataAccess, DebtorDataAccess, CreditorDataAccess,
+  # SalesAgentCommand and LocationMaintenance (which is in StockMaint, NOT Stock).
+  # AutoCount.UDF.UDFList is in AutoCount.dll, already referenced. The five
   # document assemblies alone are no longer enough.
   $refs = @(
     "$AutoCountDir\AutoCount.dll",
@@ -54,7 +56,8 @@ try {
     "$AutoCountDir\AutoCount.Accounting.dll",
     "$AutoCountDir\AutoCount.Stock.dll",
     "$AutoCountDir\AutoCount.ARAP.dll",
-    "$AutoCountDir\AutoCount.GeneralMaint.dll"
+    "$AutoCountDir\AutoCount.GeneralMaint.dll",
+    "$AutoCountDir\AutoCount.StockMaint.dll"
   ) | ForEach-Object { "/r:$_" }
 
   & $csc /nologo /platform:x64 /target:exe "/out:$exe" @refs /r:System.Web.Extensions.dll /r:System.Data.dll $tmp

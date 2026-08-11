@@ -146,6 +146,7 @@ csc.exe /platform:x64 ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Stock.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.ARAP.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.GeneralMaint.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.StockMaint.dll" ^
   /r:System.Web.Extensions.dll /r:System.Data.dll ^
   /out:AcSyncService.exe AcSyncService.build.cs
 ```
