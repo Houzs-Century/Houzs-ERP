@@ -535,6 +535,32 @@ class AcSyncService {
       }
     }
 
+    /* A PURCHASE ORDER NAMES A CREDITOR, and CreditorCode is applied
+       unconditionally by CreatePo - so a supplier the account book does not
+       have fails the same foreign key a missing item does, and takes the whole
+       PO with it. Same shape as the Location that FK'd on the live book; the
+       only reason it was not found the same way is that no PO has been pushed
+       yet. */
+    foreach (var o in List(p, "Creditors")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var acc = Str(it, "AccNo");
+      if (acc.Length == 0) continue;
+      try {
+        var da = AutoCount.ARAP.Creditor.CreditorDataAccess.Create(s, s.DBSetting);
+        if (CreditorExists(da, acc)) { existed.Add("creditor:" + acc); continue; }
+        var e = da.NewCreditor();
+        e.AccNo = acc;
+        Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
+        Set(() => e.ControlAccount = Str(it, "ControlAccount"));
+        da.SaveCreditor(e, USER);
+        created.Add("creditor:" + acc);
+        Log("  ensure-masters CREATED creditor " + acc);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "creditor:" + acc }, { "error", ex.Message } });
+      }
+    }
+
     var res = new Dictionary<string, object> {
       { "ok", failed.Count == 0 },
       { "created", created },
@@ -558,6 +584,9 @@ class AcSyncService {
   }
   static bool DebtorExists(AutoCount.ARAP.Debtor.DebtorDataAccess da, string acc) {
     try { return da.GetDebtor(acc) != null; } catch { return false; }
+  }
+  static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
+    try { return da.GetCreditor(acc) != null; } catch { return false; }
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
