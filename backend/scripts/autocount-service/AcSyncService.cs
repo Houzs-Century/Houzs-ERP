@@ -41,7 +41,7 @@
 //     /r:System.Web.Extensions.dll /r:System.Data.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
-// Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
+// Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
 //   /create-so       -> { docNo, lines[] }  payload = header + Details[]
@@ -94,8 +94,8 @@ class AcSyncService {
      server, and a service that cannot be moved without a recompile is a
      service that fights the machine it runs on. Default 8900. */
   static string Url =
-    "http://localhost:" + (File.Exists(@"C:\Tempc-svc-port.txt")
-      ? File.ReadAllText(@"C:\Tempc-svc-port.txt").Trim() : "8900") + "/";
+    "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
+      ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
   const string USER = "ADMIN";
 
   static string ApiKey =

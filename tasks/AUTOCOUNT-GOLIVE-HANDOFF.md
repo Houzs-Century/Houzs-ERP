@@ -83,12 +83,16 @@ the part that mattered most.
 | Line identity in prod | SO **12,910 / 13,909** (92.8%), PO 275 / 864. **2,316 of 2,723 SO** and 127 of 449 PO are fully covered, i.e. editable |
 | Still needed | The office-side tunnel, and the C# service compiled and deployed on the AutoCount host (runbook: `docs/autocount-service-deploy.md`) |
 
-**Three gates verified shut**, before and after merge, read back from `main`:
-`AC_SYNC_URL` commented at `backend/wrangler.toml:34` (0 uncommented
-occurrences); migration 0277 seeds `scm.autocount_writeback = 'off'`; and
+**Two gates verified shut, and the third is now OPEN — re-read 2026-08-11.**
+`AC_SYNC_URL` is **set and uncommented** at `backend/wrangler.toml:42`
+(`https://autocount.houzscentury.com`), so the sentence this paragraph used to
+carry — "commented at line 34" — is no longer true and must not be quoted.
+What still holds: migration 0277 seeds `scm.autocount_writeback = 'off'`, and
 `callAcService` has one non-test caller, reachable only from
-`drainAutoCountOutbox`, which returns `ac_service_not_configured` *before* it
-reads the outbox.
+`drainAutoCountOutbox`. **The toggle is now the only thing holding**, and the
+live proof is that `scm.autocount_outbox` holds **zero rows of any status** —
+not zero pending, zero rows, so nothing has ever been enqueued
+(`autocount-outbox-health`, run 31501435043).
 
 **What was nearly shipped.** `create` returned only the document number, never
 the line DtlKeys, and `edit` appends when it cannot find a key. So creating a
