@@ -35,10 +35,12 @@ import {
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
+  composeDetails,
   composeEdit,
-  identityResolver,
   acServiceConfig,
+  ItemCodeError,
   KeylessLineError,
+  SofaCollapseError,
   type AcDocType,
   type AcOp,
   type AcCreatedLine,
@@ -93,14 +95,17 @@ export interface AcOutboxPayload {
   /**
    * Store the DtlKeys the call returns onto these ERP line rows.
    *
-   * `ids` are the ERP line row ids IN THE ORDER their details were put into the
-   * payload, so the Nth returned key belongs to the Nth id. `codes` is the same
-   * list of AutoCount ItemCodes, kept so the zip can be CHECKED rather than
-   * trusted — see persistLineKeys.
+   * `ids[n]` are the ERP line row ids behind the Nth detail in the payload, so
+   * the Nth returned key belongs to all of them. It is a LIST because the
+   * mapping is not 1:1: a sofa build is one AutoCount line and several ERP
+   * compartment rows, and every compartment must carry the same DtlKey or the
+   * build has no line identity at all (composeEdit then refuses, loudly).
+   * `codes` is the list of AutoCount ItemCodes actually sent, kept so the zip
+   * can be CHECKED rather than trusted — see persistLineKeys.
    */
   lineWriteback?: {
     table: AcLineTable;
-    ids: string[];
+    ids: Array<string | string[]>;
     codes: string[];
     /**
      * The Desc2 each line was sent with, positionally aligned to `ids`.
@@ -197,8 +202,12 @@ const SO_ITEM_COLS =
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
 const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+/* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
+   Desc2 verbatim onto every compartment row, and that stored text is what the
+   D9 collapse echoes back. Leaving the column out of this list is what made the
+   PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -374,29 +383,36 @@ async function readOrThrow<T>(
  *
  * TWO kinds of refusal reach here and they are not the same thing:
  *
- *   AcReadError      — the ERP could not read its own document. The operation
- *                      was never composed. Transient, or a schema bug.
- *   KeylessLineError — the ERP read the document perfectly well and DECLINED to
- *                      send it, because a line has no AutoCount DtlKey and
- *                      sending it would append duplicates into the live account
- *                      book. A data gap with a known remedy: backfill the line
- *                      keys for that document.
+ *   AcReadError       — the ERP could not read its own document. The operation
+ *                       was never composed. Transient, or a schema bug.
+ *   KeylessLineError  — the ERP read the document perfectly well and DECLINED to
+ *                       send it, because a line has no AutoCount DtlKey and
+ *                       sending it would append duplicates into the live account
+ *                       book. A data gap with a known remedy: backfill the line
+ *                       keys for that document.
+ *   SofaCollapseError — a sofa build cannot be folded into AutoCount's one-line
+ *                       shape without inventing Desc2 text (D9).
+ *   ItemCodeError     — a line has no single AutoCount ItemCode (D10): either
+ *                       the cutover map has never heard of it, or it maps to
+ *                       several items and the document names no supplier.
  *
- * Both must land in the outbox. A refusal nobody can see is indistinguishable
- * from a write-back that quietly stopped working.
+ * All four must land in the outbox. A refusal nobody can see is
+ * indistinguishable from a write-back that quietly stopped working.
  */
 async function noteReadFailure(
   sb: Sb,
   e: unknown,
   ctx: { companyId: number; op: AcOp; docType: EnqueueInput['docType']; docNo: string; docId?: string | null },
 ): Promise<void> {
-  const refused = e instanceof KeylessLineError;
+  const refused = e instanceof KeylessLineError
+    || e instanceof SofaCollapseError
+    || e instanceof ItemCodeError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
   console.error(
     refused
-      ? `[autocount-outbox] ${ctx.op} REFUSED, nothing queued for AutoCount (line identity missing):`
+      ? `[autocount-outbox] ${ctx.op} REFUSED, nothing queued for AutoCount (${(e as Error).name}):`
       : `[autocount-outbox] ${ctx.op} compose read failed — NOTHING queued for AutoCount:`,
     ctx.docNo,
     message,
@@ -410,8 +426,13 @@ async function noteReadFailure(
       docId: ctx.docId ?? null,
       payload: { body: {} },
       status: 'skipped',
+      /* The class name goes into the DURABLE row, not just the log line. Three
+         different refusals reach here and they have three different remedies —
+         backfill a DtlKey, fix a sofa build, map an item code. The console.error
+         above is gone the moment the Worker is recycled; this row is what an
+         operator actually reads. */
       reason: refused
-        ? `refused, nothing sent: ${message}`
+        ? `refused, nothing sent (${(e as Error).name}): ${message}`
         : `compose failed, nothing sent: ${message}`,
     });
   } catch { /* the note is best-effort; the log above is the floor */ }
@@ -436,7 +457,14 @@ export async function enqueueSoCreate(
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const body = composeCreateSo(header as never, rows.map(soLine));
+    const lines = rows.map(soLine);
+    /* Composed TWICE on purpose: once to learn which ERP rows produced which
+       AutoCount detail (a sofa build is several rows and one detail), once for
+       the payload itself. Both calls are pure and the document is already
+       committed; sharing state between them would be the only way to get them
+       out of step. */
+    const { collapsed, details } = composeDetails(lines);
+    const body = composeCreateSo(header as never, lines);
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -445,13 +473,13 @@ export async function enqueueSoCreate(
       payload: {
         body: body as unknown as Record<string, unknown>,
         writeback: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: opts.docNo },
-        /* toDetails is a strict 1:1 map over these rows, so the Nth detail in
-           the payload is the Nth row here, and the Nth DtlKey AutoCount reports
-           belongs to it. persistLineKeys re-checks that by ItemCode anyway. */
+        /* The Nth detail in the payload comes from the Nth collapsed line, and
+           that line names the ERP rows it was folded from. persistLineKeys
+           re-checks the zip against the AutoCount ItemCodes we actually sent. */
         lineWriteback: {
           table: 'mfg_sales_order_items',
-          ids: rows.map((r) => String(r.id)),
-          codes: rows.map((r) => String(r.item_code ?? '')),
+          ids: collapsed.map((c) => c.sourceIndexes.map((i) => String(rows[i].id))),
+          codes: details.map((d) => d.ItemCode),
         },
       },
       dedupeKey: `create_so:${opts.docNo}`,
@@ -512,7 +540,9 @@ export async function enqueuePoCreate(
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const body = composeCreatePo(header, rows.map(soLine));
+    const lines = rows.map(soLine);
+    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code });
+    const body = composeCreatePo(header, lines);
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_po',
@@ -524,8 +554,8 @@ export async function enqueuePoCreate(
         writeback: { table: 'purchase_orders', keyCol: 'id', key: opts.poId },
         lineWriteback: {
           table: 'purchase_order_items',
-          ids: rows.map((r) => String(r.id)),
-          codes: rows.map((r) => String(r.material_code ?? '')),
+          ids: collapsed.map((c) => c.sourceIndexes.map((i) => String(rows[i].id))),
+          codes: details.map((d) => d.ItemCode),
         },
       },
       dedupeKey: `create_po:${opts.poId}`,
@@ -1214,7 +1244,7 @@ async function composeDownstreamState(
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as Record<string, unknown> | null,
     edit: () => composeEdit(
-      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, identityResolver, retired,
+      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
     ),
   };
 }
@@ -1246,7 +1276,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
       InvAddr2: (h.address2 as string) ?? null,
       InvAddr3: (h.address3 as string) ?? null,
       InvAddr4: (h.address4 as string) ?? null,
-    }, lines, identityResolver, retired),
+    }, lines, {}, retired),
   };
 }
 
@@ -1267,7 +1297,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }, lines, identityResolver, retired),
+    }, lines, { supplierCode: header.creditor_code }, retired),
   };
 }
 
@@ -1327,6 +1357,7 @@ async function persistLineKeys(
     }
 
     const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
+    const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
     for (let i = 0; i < ordered.length; i += 1) {
       const got = norm(ordered[i].ItemCode);
@@ -1388,12 +1419,17 @@ async function persistLineKeys(
     }
 
     for (let i = 0; i < ordered.length; i += 1) {
-      const { error } = await sb.from(target.table)
-        .update({ linked_ac_dtlkey: ordered[i].DtlKey })
-        .eq('id', target.ids[i]);
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.error(`${label}: partial — row ${target.ids[i]} failed: ${error.message}`);
+      /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
+         that is the build's compartments; composeEdit later accepts the build
+         only when all of them still agree on it. */
+      for (const id of groups[i]) {
+        const { error } = await sb.from(target.table)
+          .update({ linked_ac_dtlkey: ordered[i].DtlKey })
+          .eq('id', id);
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error(`${label}: partial — row ${id} failed: ${error.message}`);
+        }
       }
     }
   } catch (e) {

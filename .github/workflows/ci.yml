@@ -59,6 +59,14 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # The AutoCount write-back composes against two GENERATED files: the
+      # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
+      # run on (D9). Both are compiled from backend/scripts/data/ because the
+      # backend suite runs in workerd and cannot read the filesystem. Refreshing
+      # an export without regenerating them would leave the composer resolving
+      # against last month's account book while the suite stayed green.
+      - run: npm run audit:ac-item-map
+      - run: npm run audit:ac-sofa-corpus
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single

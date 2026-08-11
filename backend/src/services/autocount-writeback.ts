@@ -23,6 +23,16 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
+import {
+  ItemCodeError,
+  resolveAcItemCode,
+  type AcItemIndex,
+} from './autocount-item-code';
+import {
+  collapseSofaLines,
+  type CollapsedLine,
+  type SofaRefusal,
+} from './autocount-sofa-collapse';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -270,12 +280,37 @@ export class KeylessLineError extends Error {
   }
 }
 
-/** Resolves an ERP item_code to its AutoCount ItemCode. Injected so the
- *  composer stays database-free. */
-export type ItemCodeResolver = (erpItemCode: string) => { acItemCode: string | null };
+/**
+ * What a composer needs to know about the document beyond its rows.
+ *
+ * `supplierCode` is the creditor (scm.suppliers.code). It is the disambiguator
+ * for the ERP codes the cutover collapsed from several AutoCount items — a
+ * purchase order has one, a sales order does not, and the difference shows up
+ * as refusals on the sales side rather than as guesses.
+ */
+export interface ComposeOptions {
+  supplierCode?: string | null;
+  /** Test seam: an alternative cutover map. Defaults to the compiled one. */
+  itemIndex?: AcItemIndex;
+}
 
-/** Passthrough resolver — used when the caller has already resolved codes. */
-export const identityResolver: ItemCodeResolver = (code) => ({ acItemCode: code });
+/**
+ * Thrown when a sofa build cannot be folded into AutoCount's one-line shape
+ * without inventing text. Carries every refused build.
+ */
+export class SofaCollapseError extends Error {
+  readonly refusals: readonly SofaRefusal[];
+  constructor(refusals: SofaRefusal[]) {
+    super(
+      `${refusals.length} sofa build(s) cannot be written to AutoCount faithfully: `
+      + refusals.map((r) => r.reason).join('; '),
+    );
+    this.name = 'SofaCollapseError';
+    this.refusals = refusals;
+  }
+}
+
+export { ItemCodeError };
 
 /**
  * Build the Description 2 string from ERP variants when the line has none.
@@ -299,43 +334,65 @@ export function composeDescription2(line: ErpLine): string | null {
 }
 
 /**
- * Build an ItemCodeResolver from the ERP supplier bindings (material_code ->
- * AutoCount supplier_sku). A sofa compartment with no direct binding collapses
- * to the parent model's sofa code — the owner's rule is that every compartment
- * points at ONE AutoCount code and the compartment goes into Desc 2. Carried
- * over from PR #1696.
+ * The whole ERP -> AutoCount line transformation, in the order it has to happen.
+ *
+ *   1. COLLAPSE (D9). Sofa compartment lines fold into AutoCount's one line per
+ *      sofa, with the build carried in Desc2 — echoed verbatim when the stored
+ *      text still decodes to the compartments the ERP holds, composed and
+ *      re-decoded when it does not, refused when neither survives the gate.
+ *   2. RESOLVE (D10). Every remaining line gets exactly one AutoCount ItemCode
+ *      out of the cutover map. There is no fallback to material_code.
+ *
+ * BOTH STEPS REFUSE THE WHOLE DOCUMENT rather than sending part of it. A
+ * half-synced order is a divergence with no marker on either side; a refusal is
+ * a 'skipped' outbox row with the reason on it.
+ *
+ * Returns the collapsed lines alongside the details so the caller can zip
+ * AutoCount's DtlKeys back onto the ERP rows that produced each one.
  */
-export function makeItemCodeResolver(bindings: Map<string, string>): ItemCodeResolver {
-  const parentOf = (code: string) => code.split('-')[0].trim().toUpperCase();
-  return (erpItemCode: string) => {
-    const direct = bindings.get(erpItemCode);
-    if (direct) return { acItemCode: direct };
-    const parent = parentOf(erpItemCode);
-    for (const [code, sku] of bindings) {
-      if (parentOf(code) === parent && /SOFA/i.test(sku)) return { acItemCode: sku };
+export function composeDetails(
+  lines: ErpLine[],
+  opts: ComposeOptions = {},
+): { details: AcDetail[]; collapsed: CollapsedLine[] } {
+  const { lines: collapsed, refusals } = collapseSofaLines(lines);
+  if (refusals.length) throw new SofaCollapseError(refusals);
+
+  const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
+  const details: AcDetail[] = [];
+  collapsed.forEach((l, i) => {
+    const r = resolveAcItemCode(l.item_code, {
+      supplierCode: opts.supplierCode ?? null,
+      index: opts.itemIndex,
+    });
+    if (!r.ok) {
+      failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
+      return;
     }
-    return { acItemCode: null };
-  };
+    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
+    const d: AcDetail = {
+      ItemCode: r.acItemCode,
+      Description: l.description ?? null,
+      Desc2: composeDescription2(l as ErpLine),
+      Qty: Number(l.qty) || 0,
+      UnitPrice: price(l.unit_price_centi),
+    };
+    /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
+     *
+     * AcSyncService's line loop is ContainsKey-gated (AcSyncService.cs:538-543)
+     * and its Str helper turns a present-but-null key into the empty string
+     * (:571). So {"Location": null} does not mean "leave it alone" — it means
+     * d.Location = "", blanking the value the account book owns. SO_ITEM_COLS
+     * and PO_ITEM_COLS select no `location`, so emitting the key unconditionally
+     * wiped the stock location off every line of every edited document. */
+    if (location) d.Location = location;
+    if (l.delivery_date) d.DeliveryDate = l.delivery_date;
+    details.push(d);
+  });
+  if (failures.length) throw new ItemCodeError(failures);
+
+  return { details, collapsed };
 }
 
-/**
- * A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
- *
- * AcSyncService's line loop is `ContainsKey`-gated exactly like its header loop
- * (AcSyncService.cs:538-543) and its `Str` helper turns a present-but-null key
- * into the empty string (AcSyncService.cs:571). So `{"Location": null}` does not
- * mean "leave it alone" — it means `d.Location = ""`, blanking the value the
- * account book owns.
- *
- * This bit us silently on the SO and PO edit paths: SO_ITEM_COLS and
- * PO_ITEM_COLS select no `location` column, so every ErpLine had
- * `location === undefined`, `toDetails` emitted `Location: null`, and every
- * edit wiped the stock location off every line of a live AutoCount document.
- *
- * Dropping the key is a NO-OP on the create routes — CreateSo/CreatePo call
- * `Set(() => d.Location = Str(it, "Location"))` unconditionally, and an absent
- * key yields the same "" they were already getting — so one rule serves both.
- */
 /**
  * A cancelled line has no place on a document being CREATED.
  *
@@ -347,22 +404,6 @@ export function makeItemCodeResolver(bindings: Map<string, string>): ItemCodeRes
  */
 export const live = (lines: ErpLine[]): ErpLine[] => lines.filter((l) => l.cancelled !== true);
 
-function toDetails(lines: ErpLine[], resolve: ItemCodeResolver): AcDetail[] {
-  return lines.map((l) => {
-    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
-    const d: AcDetail = {
-      ItemCode: resolve(l.item_code).acItemCode ?? l.item_code,
-      Description: l.description,
-      Desc2: composeDescription2(l),
-      Qty: Number(l.qty) || 0,
-      UnitPrice: price(l.unit_price_centi),
-    };
-    if (location) d.Location = location;
-    if (l.delivery_date) d.DeliveryDate = l.delivery_date;
-    return d;
-  });
-}
-
 /** UDF entries, blanks dropped — AcSyncService writes every key it is given. */
 function udf(entries: Record<string, string | null>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -373,7 +414,7 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   return {
     DocNo: header.doc_no,
@@ -394,14 +435,14 @@ export function composeCreateSo(
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
     }),
-    Details: toDetails(live(lines), resolve),
+    Details: composeDetails(live(lines), opts).details,
   };
 }
 
 export function composeCreatePo(
   header: ErpPoHeader,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
 ): AcCreatePoPayload {
   return {
     DocNo: header.po_number,
@@ -412,7 +453,12 @@ export function composeCreatePo(
     Ref: header.ref,
     Description: header.notes,
     UDF: {},
-    Details: toDetails(live(lines), resolve),
+    /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
+       from the header so no caller can forget it. */
+    Details: composeDetails(live(lines), {
+      supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
+      itemIndex: opts.itemIndex,
+    }).details,
   };
 }
 
@@ -465,15 +511,41 @@ export function composeEdit(
   docNo: string,
   header: Record<string, string | null>,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const details = toDetails(lines, resolve);
+  const { details, collapsed } = composeDetails(lines, opts);
+  /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
+     line has one DtlKey, and a sofa build's compartments only carry line
+     identity when every one of them holds the same key — anything else
+     collapses to null here and is refused below, which is the whole point. */
+  /* A build is RETIRED only when every compartment behind it is cancelled.
+     AutoCount holds one line for the whole build, so "half retired" has no
+     shape there; some-but-not-all is ambiguous and is refused rather than
+     guessed — the same rule the collapse itself runs under. */
+  const cancelledOf = (i: number): boolean | 'partial' => {
+    const src = collapsed[i].sourceIndexes;
+    const n = src.filter((ix) => lines[ix]?.cancelled === true).length;
+    if (n === 0) return false;
+    return n === src.length ? true : 'partial';
+  };
+  const partial: SofaRefusal[] = [];
   const keyed: AcEditLine[] = details.map((d, i) => {
-    const key = lines[i].linked_ac_dtlkey;
+    const key = collapsed[i].linked_ac_dtlkey;
     const n = key == null ? null : Number(key);
     const dtlKey = n != null && Number.isFinite(n) ? n : undefined;
-    if (lines[i].cancelled === true && dtlKey != null) {
+    const cancelled = cancelledOf(i);
+    if (cancelled === 'partial') {
+      partial.push({
+        sourceIndexes: collapsed[i].sourceIndexes,
+        itemCodes: collapsed[i].sourceIndexes.map((ix) => lines[ix]?.item_code ?? ''),
+        reason:
+          `${d.ItemCode}: some compartments of this build are cancelled and some are not. `
+          + 'AutoCount holds ONE line for the whole build, so there is no shape for a partial '
+          + 'retirement — cancel the rest of the build, or reinstate them.',
+      });
+    }
+    if (cancelled === true && dtlKey != null) {
       const line: AcRetiredLine & { Retire: true } = {
         DtlKey: dtlKey, ItemCode: d.ItemCode, Retire: true,
       };
@@ -485,13 +557,18 @@ export function composeEdit(
     return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
   });
 
+  /* Refused BEFORE the keyless check, because a half-cancelled build is a
+     question about what the operator meant, not a missing backfill — telling
+     them to backfill a key would send them after the wrong thing. */
+  if (partial.length) throw new SofaCollapseError(partial);
+
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
   if (keyless.length) {
     const which = keyless
-      .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${lines[i].cancelled === true ? ', cancelled' : ''})`)
+      .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    const anyCancelled = keyless.some((i) => lines[i].cancelled === true);
+    const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
       + `DtlKey — line(s) ${which}. `
