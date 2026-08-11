@@ -81,6 +81,37 @@
 
 ---
 
+## 2C. 第二天的第二半 - Fabric Converter (scm.fabric_trackings)
+
+**Converter 是主表，布料库是它镜像出来的**，不是反过来 (`fabric-tracking.ts:74-82`)。
+2026-08-11 上午的正规化改的是镜像那一侧，主表原封不动，于是两边的码劈开了 —— 而
+`fabric_code` 正是**价格档位**的 join key。owner 看到画面时的原话：**"两边一定要一样的啊"**。
+
+| 时间 (UTC) | run | 做了什么 |
+|---|---|---|
+| 08-11 ~10:2x | `align-fabric-trackings` **31478813584** | PLAN，量出**492 条单据行**对不上主表（SO 310 / PO 126 / GRN 54 / DO 2），涉及 76 个码 |
+| 08-11 ~10:4x | `repair-split-colour-numbers` **31487319388** | APPLY，还原 6 个被切坏的四位数码（`NOVENA-100` 名字「3」→ `NOVENA-1003` 等），0 条活跃单据受影响 |
+| 08-11 ~11:2x | `align-fabric-trackings` **31488481377** | APPLY **失败并整个回滚** —— tier 是 enum，绑成了 text。没写进任何东西 |
+| 08-11 ~11:4x | `align-fabric-trackings` **31489281011** | APPLY，**code 改写 386 / series 填 220 / 重复停用 88 / 新建主表行 122**；孤儿行 **492 → 15**；VERIFY PASS |
+
+**收盘时的两个硬指标（verify 会挡）：**
+- 一个 code 被超过一行 **active** 持有 = **0** —— 这正是 `loadFabricByCode` 里说的「档位静默掉档」的成因
+- 布料库里有、Converter 没有 active 主行的颜色 = **0** —— 两边一一对应
+
+**还开着的：**
+
+| # | 还开着的 | 下一步 |
+|---|---|---|
+| 1 | **122 个新建的主表行没有价格档位** —— 整个 TR 和 DE 在内 | **owner**：去 Converter 画面设 PRICE_1/2/3。脚本不编价格 |
+| 2 | 15 条单据行仍对不上主表（原 492） | 跑一次 plan，第 1 段会逐个列出来 |
+| 3 | 32 个 Converter 有、布料库没有的码（`NOVENA-1005`、`GORGE-3001` 这类四位数） | 开单时选不到；要补就往库里镜像 |
+| 4 | **SO 上 7 条 `variants` 是阵列形状** | 跟 fabric 无关。08-11 08:1x 之后出现（在那之前两次 apply 都量到 0），另一路改 specials jsonb 留下的，见 `docs/jsonb-double-encoding-coe.md` |
+
+> **给一年后的人：改布料码永远从 Converter 改起。** 只改布料库，画面看起来对了，
+> 价格档位却会静默掉到 PRICE_2，而且没有任何东西会报错。
+
+---
+
 ## 3. 怎么跑
 
 Actions → **Seed the owner's fabric catalogue** → Run workflow
