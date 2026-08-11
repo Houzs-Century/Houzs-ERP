@@ -137,6 +137,25 @@ export interface ErpLine {
   /** The AutoCount DtlKey this ERP line maps to (PR #1819, mig 0273). NULL is
    *  the correct "create, do not update" signal on the edit path. */
   linked_ac_dtlkey?: number | string | null;
+  /**
+   * The line has been RETIRED in the ERP — the owner's cancel-never-delete rule
+   * applied at line level.
+   *
+   * Only `scm.mfg_sales_order_items` carries the column today, so this is
+   * `undefined` on the other five line tables and the composer treats that as
+   * "live". Asking PostgREST for a column a table does not have fails the WHOLE
+   * query with 42703, so it must stay off their column lists until each gets
+   * the column (see docs/autocount-line-retirement-plan.md).
+   */
+  cancelled?: boolean | null;
+}
+
+/** A line the ERP removed, named by the AutoCount key it still points at. */
+export interface AcRetiredLine {
+  DtlKey: number;
+  ItemCode: string;
+  /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
+  Desc2?: string | null;
 }
 
 // ── AcSyncService payload shapes ────────────────────────────────────────────
@@ -206,11 +225,23 @@ export interface AcCancelPayload {
  */
 export type AcDocType = 'SO' | 'PO' | 'DO' | 'GR' | 'IV' | 'PI';
 
+/**
+ * A retired line carries the MINIMUM that identifies it and nothing else.
+ *
+ * AcSyncService's Retire branch `continue`s before it reads Qty / UnitPrice /
+ * Description / Location, so sending them would be inert today and a trap
+ * tomorrow: the first service build that stops short-circuiting would apply an
+ * ERP quantity to a line the ERP has already written off.
+ */
+export type AcEditLine =
+  | (AcDetail & { DtlKey?: number })
+  | (AcRetiredLine & { Retire: true });
+
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
   Header: Record<string, string | null>;
-  Lines: Array<AcDetail & { DtlKey?: number }>;
+  Lines: AcEditLine[];
 }
 
 /**
@@ -305,6 +336,17 @@ export function makeItemCodeResolver(bindings: Map<string, string>): ItemCodeRes
  * `Set(() => d.Location = Str(it, "Location"))` unconditionally, and an absent
  * key yields the same "" they were already getting — so one rule serves both.
  */
+/**
+ * A cancelled line has no place on a document being CREATED.
+ *
+ * On the edit path a cancelled line is sent as a retirement, because AutoCount
+ * already holds it. On a create AutoCount holds nothing yet, so the only honest
+ * rendering of a line the ERP has written off is its absence — sending it would
+ * put a live, outstanding, transferable line into a brand-new account-book
+ * document for goods nobody is going to deliver.
+ */
+export const live = (lines: ErpLine[]): ErpLine[] => lines.filter((l) => l.cancelled !== true);
+
 function toDetails(lines: ErpLine[], resolve: ItemCodeResolver): AcDetail[] {
   return lines.map((l) => {
     const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
@@ -352,7 +394,7 @@ export function composeCreateSo(
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
     }),
-    Details: toDetails(lines, resolve),
+    Details: toDetails(live(lines), resolve),
   };
 }
 
@@ -370,7 +412,7 @@ export function composeCreatePo(
     Ref: header.ref,
     Description: header.notes,
     UDF: {},
-    Details: toDetails(lines, resolve),
+    Details: toDetails(live(lines), resolve),
   };
 }
 
@@ -400,6 +442,23 @@ export function composeCreatePo(
  * from a legacy line whose key was never stored. AcSyncService accepts an
  * explicit IsNewLine marker for that case and nothing sets it yet — see
  * docs/modules/autocount-writeback.md for what has to be true first.
+ *
+ * LINE REMOVAL IS A RETIREMENT, NEVER AN OMISSION. Two things reach AutoCount as
+ * `Retire: true` (Qty = 0, Transferable = false, an `[ERP-CANCELLED]` Desc2
+ * marker — the only shape the 2.2 SDK allows, since no detail class has a
+ * line-level Cancelled and only SalesOrder has DeleteDetail):
+ *
+ *   • a RETAINED line the ERP has cancelled (`ErpLine.cancelled`), and
+ *   • `retired` — a line the ERP HARD-DELETED, named by the AutoCount key the
+ *     row carried before it went. Simply leaving it out of `Lines` is what the
+ *     naive version did, and /edit applies only the lines it is GIVEN: the
+ *     account book would keep the line live, outstanding, and transferable into
+ *     a later DO. The delete routes therefore have to say so explicitly.
+ *
+ * A CANCELLED LINE WITH NO KEY IS REFUSED like any other keyless line, and for
+ * a sharper reason: it means the ERP wants a line retired in the account book
+ * and cannot name which one. Dropping it would be a silent divergence — the
+ * exact failure mode this whole path exists to avoid.
  */
 export function composeEdit(
   docType: AcDocType,
@@ -407,23 +466,53 @@ export function composeEdit(
   header: Record<string, string | null>,
   lines: ErpLine[],
   resolve: ItemCodeResolver = identityResolver,
+  retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const keyed: Array<AcDetail & { DtlKey?: number }> = toDetails(lines, resolve).map((d, i) => {
+  const details = toDetails(lines, resolve);
+  const keyed: AcEditLine[] = details.map((d, i) => {
     const key = lines[i].linked_ac_dtlkey;
     const n = key == null ? null : Number(key);
-    return n != null && Number.isFinite(n) ? { ...d, DtlKey: n } : d;
+    const dtlKey = n != null && Number.isFinite(n) ? n : undefined;
+    if (lines[i].cancelled === true && dtlKey != null) {
+      const line: AcRetiredLine & { Retire: true } = {
+        DtlKey: dtlKey, ItemCode: d.ItemCode, Retire: true,
+      };
+      /* Present-but-null would blank it (Str turns null into ""), and the
+         service's own fallback keeps whatever the book already has. */
+      if (d.Desc2 != null) line.Desc2 = d.Desc2;
+      return line;
+    }
+    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
   });
 
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
   if (keyless.length) {
-    const which = keyless.map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'})`).join(', ');
+    const which = keyless
+      .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${lines[i].cancelled === true ? ', cancelled' : ''})`)
+      .join(', ');
+    const anyCancelled = keyless.some((i) => lines[i].cancelled === true);
     throw new KeylessLineError(
       `${docType} ${docNo}: ${keyless.length} of ${keyed.length} line(s) carry no AutoCount `
-      + `DtlKey — line(s) ${which}. Sending this edit would append duplicate lines to the live `
-      + `account book, and on a PO a duplicate cannot be removed. Backfill `
-      + `scm.*_items.linked_ac_dtlkey for this document, then save it again.`,
+      + `DtlKey — line(s) ${which}. `
+      + (anyCancelled
+        ? 'A cancelled line with no key cannot be retired in AutoCount, and a live one would be '
+          + 'appended as a duplicate. '
+        : 'Sending this edit would append duplicate lines to the live account book, and on a PO a '
+          + 'duplicate cannot be removed. ')
+      + 'Backfill scm.*_items.linked_ac_dtlkey for this document, then save it again.',
     );
+  }
+
+  /* Deleted rows come LAST and are deduplicated against the retained lines: a
+     re-added line that inherited the same key would otherwise be edited and
+     retired in the same payload, and AcSyncService applies Lines in order, so
+     the retirement would win and silently zero a line the operator restored. */
+  const present = new Set(keyed.map((d) => d.DtlKey).filter((k): k is number => k != null));
+  for (const r of retired) {
+    if (!Number.isFinite(r.DtlKey) || present.has(r.DtlKey)) continue;
+    present.add(r.DtlKey);
+    keyed.push({ ...r, Retire: true });
   }
 
   return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed };

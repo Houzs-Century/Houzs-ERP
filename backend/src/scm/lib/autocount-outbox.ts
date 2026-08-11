@@ -36,13 +36,19 @@ import {
   composeCreateSo,
   composeDescription2,
   composeEdit,
+  identityResolver,
   acServiceConfig,
   KeylessLineError,
   type AcDocType,
   type AcOp,
   type AcCreatedLine,
+  type AcRetiredLine,
   type ErpLine,
 } from '../../services/autocount-writeback';
+
+/* Re-exported so a route can name the shape it passes to enqueueEdit without
+   also importing the composer module. */
+export type { AcRetiredLine } from '../../services/autocount-writeback';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -181,8 +187,12 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    and carry on — so these are the single place a phantom column can enter. */
 const SO_HEADER_COLS =
   'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
+/* `cancelled` is on THIS list and on no other, because only
+   scm.mfg_sales_order_items has the column (the other five line tables are
+   still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
+   for a column a table does not have fails the whole query with 42703. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -230,6 +240,9 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   unit_price_centi: Number(r.unit_price_centi ?? 0),
   variants: (r.variants as Record<string, unknown> | null) ?? null,
   linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
+  /* undefined on the five tables that have no such column, which composeEdit
+     reads as "live" — the same answer the column's own default gives. */
+  cancelled: r.cancelled === true,
 });
 
 interface AcDownstreamSpec {
@@ -237,6 +250,11 @@ interface AcDownstreamSpec {
   itemTable: AcLineTable;
   /** The column on the item table that points back at the header. */
   itemFk: string;
+  /** The line table this document's lines were transferred FROM. */
+  sourceItemTable: AcLineTable;
+  /** The column on the item table naming the SOURCE line it came from. NULL
+   *  there means an ad-hoc line with no counterpart to transfer. */
+  sourceFk: string;
   headerCols: string;
   itemCols: string;
   /** The human document number, for the outbox row's doc_no. */
@@ -252,6 +270,8 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     table: 'delivery_orders',
     itemTable: 'delivery_order_items',
     itemFk: 'delivery_order_id',
+    sourceItemTable: 'mfg_sales_order_items',
+    sourceFk: 'so_item_id',
     headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
@@ -268,6 +288,8 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     table: 'grns',
     itemTable: 'grn_items',
     itemFk: 'grn_id',
+    sourceItemTable: 'purchase_order_items',
+    sourceFk: 'purchase_order_item_id',
     headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
     itemCols: 'id, material_code, item_group, description, description2, qty_accepted, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
@@ -286,6 +308,8 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     table: 'sales_invoices',
     itemTable: 'sales_invoice_items',
     itemFk: 'sales_invoice_id',
+    sourceItemTable: 'delivery_order_items',
+    sourceFk: 'do_item_id',
     headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
@@ -302,6 +326,8 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     table: 'purchase_invoices',
     itemTable: 'purchase_invoice_items',
     itemFk: 'purchase_invoice_id',
+    sourceItemTable: 'grn_items',
+    sourceFk: 'grn_item_id',
     headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
     itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
@@ -530,6 +556,21 @@ export async function enqueueConvert(
     createdBy?: number | null;
   },
 ): Promise<boolean> {
+  /* WHICH SOURCE LINES THIS CONVERSION ACTUALLY TOOK.
+     Resolved BEFORE the enqueue so a refusal is recorded instead of a wrong
+     transfer being queued. */
+  const source = await readConvertSourceKeys(sb, opts.op, opts.docId ?? null);
+  if (source.refuse) {
+    return recordConvertSkipped(sb, {
+      companyId: opts.companyId,
+      op: opts.op,
+      docType: opts.docType,
+      docNo: opts.docNo,
+      docId: opts.docId ?? null,
+      reason: source.refuse,
+      createdBy: opts.createdBy ?? null,
+    });
+  }
   return enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
@@ -537,12 +578,21 @@ export async function enqueueConvert(
     docNo: opts.docNo,
     docId: opts.docId ?? null,
     payload: {
-      /* No DtlKeys: AcSyncService then transfers every still-outstanding line
-         on the parent (AcSyncService.cs:300-329). Sending our own line list
-         would require the ERP to hold AutoCount's DtlKeys for every line, and
-         to be right about which are already transferred — AutoCount's own book
-         is the authority on that, so let it answer. */
-      body: { DocDate: opts.docDate ?? null, Ref: opts.ref ?? null },
+      /* DtlKeys NAMES THE SUBSET. Omitting it makes AcSyncService fall through
+         to DtlKeys() and transfer EVERY still-outstanding line on the parent
+         (AcSyncService.cs:382-411) — so a delivery order shipping 2 of a sales
+         order's 5 lines produced an AutoCount DO of all 5, moving stock in the
+         account book that never moved here. Partial shipment is the daily case,
+         not an edge one, so the ERP has to say which lines it took.
+         readConvertSourceKeys returns the keys only when it can name EVERY
+         source line; otherwise it either refuses (above) or leaves the field
+         off for a whole-document transfer, where "all outstanding" is the same
+         answer and AutoCount's own book is the better authority on it. */
+      body: {
+        DocDate: opts.docDate ?? null,
+        Ref: opts.ref ?? null,
+        ...(source.keys ? { DtlKeys: source.keys } : {}),
+      },
       fromDoc: opts.from,
       writeback: opts.to,
       /* The conversion routes report the lines they created exactly as the
@@ -558,6 +608,131 @@ export async function enqueueConvert(
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
     createdBy: opts.createdBy ?? null,
   });
+}
+
+/**
+ * WHICH LINES OF THE PARENT THIS CONVERSION TOOK, as AutoCount DtlKeys.
+ *
+ * Three outcomes, and the difference between them is the whole safety argument:
+ *
+ *   { keys }   — every line of this document names a source line, and every one
+ *                of those source lines carries an AutoCount DtlKey. The subset
+ *                is expressible exactly, so send it.
+ *   { refuse } — the ERP took a STRICT SUBSET of the parent's lines and cannot
+ *                name it, because some source line has no DtlKey stored. Sending
+ *                no DtlKeys here is the defect: AutoCount would transfer every
+ *                outstanding line, shipping or receiving goods in a live book
+ *                that did not move in the ERP. A visible skipped row is the
+ *                correct outcome; the remedy is the line-key backfill.
+ *   {}         — this document covers EVERY line of the parent, so "all
+ *                outstanding" and "the lines we took" are the same set and the
+ *                account book is the better authority on which are still
+ *                untransferred. Also the answer when the ERP cannot read its own
+ *                links at all: falling back is exactly the old behaviour, and a
+ *                conversion must never be lost to a diagnostic read.
+ *
+ * NOT COVERED, and deliberately so: partial QUANTITY on a line. The SDK's only
+ * primitive is AddPartialTransferDetail(fromType, dtlKeys, bool) — it takes line
+ * keys, not quantities, so a DO shipping 2 of a 5-unit line still produces an
+ * AutoCount DO of 5 on that line. Naming the right lines does not fix the wrong
+ * number on them. See docs/modules/autocount-writeback.md.
+ */
+async function readConvertSourceKeys(
+  sb: Sb,
+  op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>,
+  docId: string | null,
+): Promise<{ keys?: number[]; refuse?: string }> {
+  if (!docId) return {};
+  try {
+    const spec = DOWNSTREAM[CONVERT_TARGET[op]];
+    const { data, error } = await sb.from(spec.itemTable)
+      .select(`id, ${spec.sourceFk}`).eq(spec.itemFk, docId);
+    if (error || !data) return {};
+    const rows = data as unknown as Record<string, unknown>[];
+    if (!rows.length) return {};
+
+    const sourceIds = [...new Set(
+      rows.map((r) => r[spec.sourceFk]).filter((v): v is string => typeof v === 'string' && !!v),
+    )];
+    /* Not one line came from a source document. Nothing to name, and the
+       parentless / ad-hoc shape is already recorded by its own route. */
+    if (!sourceIds.length) return {};
+
+    const { data: src, error: sErr } = await sb.from(spec.sourceItemTable)
+      .select('id, linked_ac_dtlkey').in('id', sourceIds);
+    if (sErr || !src) return {};
+    const srcRows = src as unknown as Array<{ id: string; linked_ac_dtlkey: number | null }>;
+
+    const keys: number[] = [];
+    const missing: string[] = [];
+    for (const id of sourceIds) {
+      const k = srcRows.find((r) => r.id === id)?.linked_ac_dtlkey;
+      const n = k == null ? NaN : Number(k);
+      if (Number.isFinite(n) && n > 0) keys.push(n); else missing.push(id);
+    }
+    if (!missing.length) return { keys };
+
+    /* Some source line has no key. Whether that is fatal depends on ONE thing:
+       is this a partial transfer? A whole-document transfer degrades safely to
+       the old behaviour; a partial one cannot. */
+    const partial = await conversionIsPartial(sb, spec, sourceIds);
+    if (!partial) return {};
+    return {
+      refuse:
+        `this ${op.replace('_to_', ' -> ').toUpperCase()} transfers only ${sourceIds.length} of the `
+        + `source document's lines, and ${missing.length} of them carry no AutoCount DtlKey, so the `
+        + 'ERP cannot name the subset. Sending the conversion without DtlKeys would make AutoCount '
+        + 'transfer EVERY outstanding line on the source — goods moving in the account book that did '
+        + `not move here. Backfill scm.${spec.sourceItemTable}.linked_ac_dtlkey for the source `
+        + 'document, then re-raise this document.',
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Does this conversion leave any of the parent's lines behind?
+ *
+ * Answered against the ERP's own parent, not AutoCount's — this decides only
+ * whether the FALLBACK ("transfer everything outstanding") is a safe
+ * approximation, and the ERP's line set is what the fallback would be wrong
+ * about. On any doubt the answer is "partial", because that is the branch that
+ * refuses: a wrong "no, it is whole" would let the defect through.
+ */
+async function conversionIsPartial(
+  sb: Sb,
+  spec: AcDownstreamSpec,
+  takenSourceIds: string[],
+): Promise<boolean> {
+  const parentFk: Record<AcLineTable, string | null> = {
+    mfg_sales_order_items: 'doc_no',
+    purchase_order_items: 'purchase_order_id',
+    delivery_order_items: 'delivery_order_id',
+    grn_items: 'grn_id',
+    sales_invoice_items: null,
+    purchase_invoice_items: null,
+  };
+  const fk = parentFk[spec.sourceItemTable];
+  if (!fk) return true;
+  try {
+    const { data: one, error: oErr } = await sb.from(spec.sourceItemTable)
+      .select(`id, ${fk}`).eq('id', takenSourceIds[0]).maybeSingle();
+    if (oErr || !one) return true;
+    const parentKey = (one as unknown as Record<string, unknown>)[fk];
+    if (parentKey == null) return true;
+    let q = sb.from(spec.sourceItemTable)
+      .select('id', { count: 'exact', head: true }).eq(fk, parentKey as string);
+    /* A retired parent line is not one this conversion "left behind" — it is
+       one nobody will ever transfer. Only mfg_sales_order_items has the column
+       (42703 on the others), so the filter is applied only there. */
+    if (spec.sourceItemTable === 'mfg_sales_order_items') q = q.eq('cancelled', false);
+    const { count, error: cErr } = await q;
+    if (cErr || count == null) return true;
+    return count > takenSourceIds.length;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -591,6 +766,51 @@ async function readConvertTargetLines(
     };
   } catch {
     return undefined;
+  }
+}
+
+/** The ItemCode column each line table spells its product in. */
+const LINE_CODE_COL: Record<AcLineTable, string> = {
+  mfg_sales_order_items: 'item_code',
+  purchase_order_items: 'material_code',
+  delivery_order_items: 'item_code',
+  grn_items: 'material_code',
+  sales_invoice_items: 'item_code',
+  purchase_invoice_items: 'material_code',
+};
+
+/**
+ * Read a line's AutoCount identity BEFORE the route destroys the row, so the
+ * removal can be pushed as a RETIREMENT rather than vanishing.
+ *
+ * This is the whole reason line removal reaches AutoCount at all. `/edit`
+ * applies only the lines it is GIVEN (AcSyncService.cs:490-540): a deleted row
+ * is simply absent from the recomposed payload, and the account book keeps the
+ * line live, outstanding, and transferable into a later DO or GRN. The ERP has
+ * to name it and say "retire this one".
+ *
+ * Returns [] when the row carries no DtlKey — AutoCount never knew about the
+ * line, so there is nothing there to retire and nothing to refuse over. Never
+ * throws: it runs on the delete path, where an AutoCount concern must not cost
+ * the user their save.
+ */
+export async function retiredLineOf(
+  sb: Sb,
+  table: AcLineTable,
+  itemId: string,
+): Promise<AcRetiredLine[]> {
+  try {
+    const codeCol = LINE_CODE_COL[table];
+    const { data, error } = await sb.from(table)
+      .select(`${codeCol}, description2, linked_ac_dtlkey`).eq('id', itemId).maybeSingle();
+    if (error || !data) return [];
+    const r = data as unknown as Record<string, unknown>;
+    const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
+    if (!Number.isFinite(n) || n <= 0) return [];
+    const desc2 = r.description2 == null ? undefined : String(r.description2);
+    return [{ DtlKey: n, ItemCode: String(r[codeCol] ?? ''), ...(desc2 ? { Desc2: desc2 } : {}) }];
+  } catch {
+    return [];
   }
 }
 
@@ -816,17 +1036,26 @@ export async function enqueueEdit(
     docNo?: string | null;
     docId?: string | null;
     createdBy?: number | null;
+    /**
+     * Lines the ERP has just HARD-DELETED, named by the AutoCount key the row
+     * carried. Composed from the document as it is now, so a deleted line is
+     * simply absent — and /edit applies only the lines it is given, which would
+     * leave the account book holding it live, outstanding and transferable. The
+     * delete route has to say so explicitly, and this is how.
+     */
+    retire?: AcRetiredLine[];
   },
 ): Promise<boolean> {
   try {
     if (opts.companyId == null) return false;
     if (!(await isWritebackEnabled(sb, opts.companyId))) return false;
 
+    const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo))
+      ? await composeSoState(sb, String(opts.docNo), retired)
       : opts.docType === 'PO'
-        ? await composePoState(sb, String(opts.docId ?? opts.docNo))
-        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo));
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
+        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
@@ -966,7 +1195,9 @@ async function findPendingOriginatingOp(
  * calls. That ordering is not assumed to match AutoCount's — persistLineKeys
  * checks the correspondence and refuses rather than trusting it.
  */
-async function composeDownstreamState(sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string) {
+async function composeDownstreamState(
+  sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string, retired: AcRetiredLine[] = [],
+) {
   const spec = DOWNSTREAM[docType];
   const header = await readOrThrow(`${spec.table} header`,
     sb.from(spec.table).select(spec.headerCols).eq('id', id).maybeSingle());
@@ -982,11 +1213,13 @@ async function composeDownstreamState(sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI'
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as Record<string, unknown> | null,
-    edit: () => composeEdit(docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines),
+    edit: () => composeEdit(
+      docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, identityResolver, retired,
+    ),
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = []) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
@@ -1013,11 +1246,11 @@ async function composeSoState(sb: Sb, docNo: string) {
       InvAddr2: (h.address2 as string) ?? null,
       InvAddr3: (h.address3 as string) ?? null,
       InvAddr4: (h.address4 as string) ?? null,
-    }, lines),
+    }, lines, identityResolver, retired),
   };
 }
 
-async function composePoState(sb: Sb, poId: string) {
+async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = []) {
   const header = await readPoHeader(sb, poId);
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
@@ -1034,7 +1267,7 @@ async function composePoState(sb: Sb, poId: string) {
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }, lines),
+    }, lines, identityResolver, retired),
   };
 }
 

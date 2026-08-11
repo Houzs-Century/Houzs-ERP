@@ -23,15 +23,16 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
-async function queueAcPiEdit(c: any, id: string): Promise<void> {
+async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'PI',
     docId: id,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -2298,6 +2299,11 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const line = lineRow as unknown as Record<string, unknown>;
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_invoice_items', itemId);
+
   const { error } = await sb.from('purchase_invoice_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -2349,6 +2355,6 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('purchase_invoices').select('invoice_number').eq('id', piId).maybeSingle();
     if (h) await resyncPiAccounting(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-accounting] post-line-delete resync failed:', e); }
-  await queueAcPiEdit(c, piId);
+  await queueAcPiEdit(c, piId, retire);
   return c.body(null, 204);
 });

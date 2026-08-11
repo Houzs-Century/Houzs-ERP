@@ -19,7 +19,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { doHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
    queueAcSoEdit. Every DO mutation route funnels through it, so exactly one
@@ -30,11 +30,12 @@ import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCa
    (AcSyncService.cs:442); what was missing was any way for the ERP to ASK, and
    a column to remember the line identity by (mig 0280). Never throws: a write
    to AutoCount must not fail a user's save. */
-async function queueAcDoEdit(c: any, id: string): Promise<void> {
+async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'DO',
     docId: id,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -4955,6 +4956,11 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
     .eq('id', itemId).maybeSingle();
   const doomed = (doomedRow ?? {}) as Record<string, unknown>;
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'delivery_order_items', itemId);
+
   const { error } = await sb.from('delivery_order_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -4995,7 +5001,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user?.id);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-line-delete failed:', e); }
-  await queueAcDoEdit(c, id);
+  await queueAcDoEdit(c, id, retire);
   return c.json({ ok: true });
 });
 

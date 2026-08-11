@@ -55,15 +55,16 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
    (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
-async function queueAcSiEdit(c: any, id: string): Promise<void> {
+async function queueAcSiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'IV',
     docId: id,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -1880,6 +1881,11 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
   if (!doomedRow) return c.json({ error: 'not_found' }, 404);
   const doomed = doomedRow as unknown as Record<string, unknown>;
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'sales_invoice_items', itemId);
+
   const { error } = await sb.from('sales_invoice_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -1908,7 +1914,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-delete resync failed:', e); }
-  await queueAcSiEdit(c, id);
+  await queueAcSiEdit(c, id, retire);
   return c.json({ ok: true });
 });
 

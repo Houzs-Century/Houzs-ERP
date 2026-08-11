@@ -36,6 +36,7 @@ const PI = lf(rawPi);
 const SO_AMEND = lf(rawSoAmend);
 const PO_AMEND = lf(rawPoAmend);
 const OUTBOX = lf(rawOutbox);
+const WRITEBACK = lf(rawWriteback);
 const SERVICE = lf(rawService);
 
 const ROUTERS = [SO, PO, DO, GRN, SI, PI, SO_AMEND, PO_AMEND];
@@ -108,28 +109,28 @@ describe('the four downstream document types queue an edit on every line and hea
     expect(between(DO, "deliveryOrdersMfg.patch('/:id',", 'return c.json({\n    ok: true,')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcDoEdit(c, id)');
     expect(between(DO, "deliveryOrdersMfg.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
-    expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id)');
+    expect(between(DO, "deliveryOrdersMfg.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcDoEdit(c, id, retire)');
   });
 
   test('GRN — header PATCH and line add / edit / delete', () => {
     expect(between(GRN, "grns.patch('/:id',", 'return c.json({ grn: data });')).toContain('queueAcGrnEdit(c, id)');
     expect(between(GRN, "grns.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcGrnEdit(c, grnId)');
     expect(between(GRN, "grns.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcGrnEdit(c, grnId)');
-    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, grnId)');
+    expect(between(GRN, "grns.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcGrnEdit(c, grnId, retire)');
   });
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(SI, "salesInvoices.patch('/:id',", 'return c.json({ ok: true, id });')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.post('/:id/items',", 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
-    expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
+    expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id, retire)');
   });
 
   test('Purchase Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(PI, "purchaseInvoices.patch('/:id',", 'return c.json({ purchaseInvoice: data });')).toContain('queueAcPiEdit(c, id)');
     expect(between(PI, "purchaseInvoices.post('/:id/items',", 'return c.json({ item: data }, 201);')).toContain('queueAcPiEdit(c, piId)');
     expect(between(PI, "purchaseInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcPiEdit(c, piId)');
-    expect(between(PI, "purchaseInvoices.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcPiEdit(c, piId)');
+    expect(between(PI, "purchaseInvoices.delete('/:id/items/:itemId',", 'return c.body(null, 204);')).toContain('queueAcPiEdit(c, piId, retire)');
   });
 });
 
@@ -271,5 +272,48 @@ describe('an edit must be an edit, never a delete-and-recreate', () => {
     // And the ERP side now omits the key instead of sending null.
     expect(lf(rawWriteback)).toContain('if (location) d.Location = location;');
     expect(lf(rawWriteback)).not.toContain('Location: l.location ? mapOrPassthrough');
+  });
+});
+
+/* ── LINE REMOVAL REACHES AUTOCOUNT ON ALL SIX ───────────────────────────────
+   The failure mode is silence, which is why this is derived from the six DELETE
+   handlers rather than from a hand-written list. /edit applies only the lines it
+   is GIVEN (AcSyncService.cs, its Lines loop): a row the ERP deleted is simply
+   absent from the recomposed payload, so without an explicit retirement the
+   account book keeps the line LIVE, outstanding, and transferable into a later
+   DO or GRN. Every line-DELETE route must therefore read the row's AutoCount key
+   before destroying it and hand it to the edit. */
+describe('every line-DELETE route retires the line in AutoCount', () => {
+  const DELETES: Array<[string, string, string, string, string]> = [
+    ['SO',  SO,  "mfgSalesOrders.delete('/:docNo/items/:itemId',",      'return c.body(null, 204);', 'mfg_sales_order_items'],
+    ['PO',  PO,  "mfgPurchaseOrders.delete('/:id/items/:itemId',",      'return c.body(null, 204);', 'purchase_order_items'],
+    ['DO',  DO,  "deliveryOrdersMfg.delete('/:id/items/:itemId',",      'return c.json({ ok: true });', 'delivery_order_items'],
+    ['GR',  GRN, "grns.delete('/:id/items/:itemId',",                   'return c.body(null, 204);', 'grn_items'],
+    ['IV',  SI,  "salesInvoices.delete('/:id/items/:itemId',",          'return c.json({ ok: true });', 'sales_invoice_items'],
+    ['PI',  PI,  "purchaseInvoices.delete('/:id/items/:itemId',",       'return c.body(null, 204);', 'purchase_invoice_items'],
+  ];
+
+  test.each(DELETES)('%s — the key is read BEFORE the row is destroyed', (_t, src, start, end, table) => {
+    const body = between(src, start, end);
+    expect(body).toContain(`retiredLineOf(sb, '${table}', itemId)`);
+    /* Order is the whole property: after the delete the row is gone and its
+       DtlKey with it, so the read has to come first. */
+    expect(body.indexOf('retiredLineOf')).toBeLessThan(body.indexOf(`from('${table}').delete()`) >= 0
+      ? body.indexOf(`from('${table}').delete()`)
+      : body.indexOf('.delete()'));
+  });
+
+  test('the composer expresses a retirement, and refuses one it cannot name', () => {
+    // Retire is what AcSyncService turns into Qty = 0 + Transferable = false.
+    expect(WRITEBACK).toContain('Retire: true');
+    expect(SERVICE).toContain('if (Bool(it, "Retire"))');
+    // A cancelled line with no key is refused rather than silently dropped.
+    expect(WRITEBACK).toContain('A cancelled line with no key cannot be retired in AutoCount');
+  });
+
+  test('a conversion names the lines it took, so a partial shipment stays partial', () => {
+    // Omitting DtlKeys makes AcSyncService transfer every outstanding line.
+    expect(OUTBOX).toContain('DtlKeys: source.keys');
+    expect(SERVICE).toContain('var given = List(p, "DtlKeys");');
   });
 });

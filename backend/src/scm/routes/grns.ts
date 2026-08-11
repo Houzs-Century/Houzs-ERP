@@ -6,15 +6,16 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-async function queueAcGrnEdit(c: any, id: string): Promise<void> {
+async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'GR',
     docId: id,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -3342,6 +3343,11 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'grn_items', itemId);
+
   const { error } = await sb.from('grn_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -3426,6 +3432,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, grnId, retire);
   return c.body(null, 204);
 });

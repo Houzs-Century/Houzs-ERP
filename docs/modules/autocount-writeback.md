@@ -181,6 +181,7 @@ Each hook sits at the point the document becomes permanent — after the
 | PI edit | `purchase-invoices.ts` | `queueAcPiEdit` from the header PATCH and line add/edit/delete |
 | PO create (from SOs) | `mfg-purchase-orders.ts` | `convertSosToPosCore`, per bucket, when the inserted status is not DRAFT — this is what `POST /from-sos` and the MRP agent both ride |
 | DO / GRN / SI / PI created parentless | the four routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these |
+| line REMOVED, any of the six | the six `DELETE /.../items/:itemId` handlers | `retiredLineOf(...)` BEFORE the row is destroyed, handed to the edit as `retire` — see 7a |
 
 **An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
 `applyPoAmendment` rewrite a confirmed document's header and lines in place; the
@@ -360,15 +361,118 @@ an `[ERP-CANCELLED]` prefix on `Desc2`.
 `Qty - ISNULL(TransferedQty,0) > 0`, so only zeroing the quantity makes
 AutoCount's outstanding set agree with a retired ERP line.
 
-**Nothing in the ERP sends `Retire` yet** — it needs a soft-cancel flag on the
-ERP line first. `scm.mfg_sales_order_items.cancelled` exists and is read in ~85
-places, but no code ever sets it and production has zero such rows; the line
-delete routes still hard-delete. See
-`docs/autocount-line-retirement-plan.md` for what has to change before that flag
-can be turned into a retirement, and why doing it halfway is worse than the hard
-delete it replaces.
+**The ERP now sends `Retire`, from two places, and they are not the same thing.**
+
+| source | what it is | where it comes from |
+|---|---|---|
+| `ErpLine.cancelled` | a RETAINED line the ERP has written off | `scm.mfg_sales_order_items.cancelled`, the only line table with the column |
+| `enqueueEdit({ retire })` | a line the ERP HARD-DELETED | `retiredLineOf(sb, table, itemId)`, called by all six line-DELETE routes BEFORE the row is destroyed |
+
+The second is what makes line removal reach AutoCount at all, and it is easy to
+get wrong by doing nothing: **`/edit` applies only the lines it is GIVEN**
+(`AcSyncService.cs`, its `Lines` loop). A deleted row is simply absent from the
+recomposed payload, so without an explicit retirement the account book keeps the
+line live, outstanding, and transferable into a later DO or GRN. Leaving it out
+is not neutral — it is a divergence.
+
+Order of operations therefore matters and is pinned by a test: the DELETE handler
+reads the row's `linked_ac_dtlkey` FIRST, because after the delete the key is
+gone with the row.
+
+Three rules the composer keeps:
+
+- **A retired line carries the minimum that identifies it** — `DtlKey`,
+  `ItemCode`, and `Desc2` only when the ERP has one. No `Qty`, `UnitPrice`,
+  `Description` or `Location`: the service's `Retire` branch `continue`s before
+  it reads them, so sending them is inert today and a trap the day a service
+  build stops short-circuiting. `Desc2` is OMITTED rather than nulled when the
+  ERP has none, so the book keeps its own text under the marker.
+- **A cancelled line with no `DtlKey` is REFUSED**, like any other keyless line
+  and for a sharper reason: it means the ERP wants a line retired in the account
+  book and cannot name which one. Dropping it would be a silent divergence.
+- **A re-added line that inherited the same key wins over the retirement.**
+  Retirements are appended last and deduplicated against the retained lines,
+  because `/edit` applies `Lines` in order and the retirement would otherwise
+  zero a line the operator just restored.
+
+**A cancelled line is never on a CREATE.** On an edit AutoCount already holds the
+line, so a retirement is the honest rendering; on a create it holds nothing, and
+the honest rendering of a written-off line is its absence. `composeCreateSo` and
+`composeCreatePo` filter through `live()`.
+
+**What is still NOT built: the soft cancel itself.** Five of the six line tables
+have no `cancelled` column, and all six DELETE routes still hard-delete the row.
+So the owner's cancel-never-delete rule is honoured **towards AutoCount** on all
+six today, and **inside the ERP** on none of them. Converting a DELETE into an
+`UPDATE ... SET cancelled = true` needs every reader of that table taught to
+exclude the row first — `purchase_order_items` alone has ~186 references — and a
+half-converted soft cancel is worse than the hard delete it replaces, because a
+hard delete is at least consistent. `docs/autocount-line-retirement-plan.md`
+holds the per-gap evidence and the order to do it in.
 
 ---
+
+## 7b. A conversion must name the lines it took
+
+`AcSyncService`'s convert routes resolve their source lines through `DtlKeys()`:
+if the payload carries a `DtlKeys` array it transfers exactly those, and **if it
+does not, it reads the account book for every still-outstanding line on the
+parent** and transfers all of them.
+
+`enqueueConvert` used to send no `DtlKeys` at all, deliberately — the reasoning
+was that AutoCount's own book is the authority on what is still outstanding. It
+is, and that is beside the point: a delivery order shipping 2 of a sales order's
+5 lines produced an AutoCount DO of **all 5**, moving stock in a live account
+book that never moved here. Partial shipment is the daily case, not an edge one.
+
+`readConvertSourceKeys` now resolves the subset from the downstream document's
+own source-line links, and has three outcomes:
+
+| outcome | when | what is queued |
+|---|---|---|
+| `DtlKeys: [...]` | every line names a source line, and every one of those carries a `linked_ac_dtlkey` | the conversion, naming exactly those lines |
+| refusal | a STRICT SUBSET of the parent's lines, and some source key is missing | a visible `skipped` row; the remedy is the line-key backfill |
+| no `DtlKeys` | the document covers EVERY line of the parent, or the ERP cannot read its own links | the conversion, unchanged — "all outstanding" is the same set, and a diagnostic read must never cost a shipment |
+
+The source link per type: `delivery_order_items.so_item_id`,
+`grn_items.purchase_order_item_id`, `sales_invoice_items.do_item_id`,
+`purchase_invoice_items.grn_item_id`. A cancelled parent SO line is not counted
+as one the conversion left behind — nobody will ever transfer it.
+
+**Still open, and NOT fixed by this: partial QUANTITY on a line.**
+`AddPartialTransferDetail(fromDocType, dtlKeys, bool)` takes line keys, not
+quantities, so a DO shipping 2 of a 5-unit line still produces an AutoCount DO of
+5 on that line. Naming the right lines does not fix the wrong number on them. The
+shape of a fix exists — the conversion captures the new document's own `DtlKey`s
+via `lineWriteback`, so a follow-up `/edit` could set each quantity — but it needs
+a DEFERRED compose (the keys do not exist until the convert has drained), which
+`enqueueEdit` cannot express today.
+
+## 7c. The four documents AutoCount cannot create at all
+
+A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never
+exist in the account book: `AddPartialTransferDetail` is the SDK's only
+construction primitive for these four, so there is no create route to add and
+none could be added. `recordParentlessCreate` writes a visible `skipped` row for
+every one going forward.
+
+**Measured on production, 2026-08-11** (`backend/scripts/check-parentless-downstream.mjs`,
+Actions -> *Parentless DO / GR / SI / PI census (read-only)*):
+
+| type | documents | can never sync |
+|---|---|---|
+| DO | 57 | **1** (`2990-DO-2607-005`, company 2, already CANCELLED) |
+| GR | 329 | 0 |
+| SI | 0 | 0 |
+| PI | 32 | 0 |
+| **all four** | **418** | **1** |
+
+So the gap is effectively empty: 417 of 418 downstream documents have a parent,
+and the single exception is already cancelled on both sides. **A "must come from
+a parent" guard is not needed** — the practice already respects the shape. Two
+things the census did surface and neither is this gap: 4 company-2 DOs have **no
+lines at all**, and 0 documents of any type are PARTIALLY parented (which would
+give AutoCount a document missing its ad-hoc lines).
 
 ## 8. Configuration
 

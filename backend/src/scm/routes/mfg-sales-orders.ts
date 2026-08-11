@@ -26,7 +26,7 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
    recompute sites (create + cross-category re-detect). */
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
-import { enqueueSoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
@@ -255,11 +255,12 @@ mfgSalesOrders.use('*', async (c, next) => {
 
    Only ever reached for an order the downstream lock let through, which is the
    same rule AutoCount enforces on its side. Never throws. */
-async function queueAcSoEdit(c: any, docNo: string): Promise<void> {
+async function queueAcSoEdit(c: any, docNo: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'SO',
     docNo,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -8461,6 +8462,11 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     }, 422);
   }
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'mfg_sales_order_items', itemId);
+
   const { error } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items').delete(),
     docNo,
@@ -8519,7 +8525,7 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-delete failed:', e); }
 
-  await queueAcSoEdit(c, docNo);
+  await queueAcSoEdit(c, docNo, retire);
 
   return c.body(null, 204);
 });

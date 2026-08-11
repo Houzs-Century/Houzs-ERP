@@ -35,12 +35,18 @@ function fakeSb(tables: Record<string, Row[]>, missing: Record<string, string[]>
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
     let columnError: { code: string; message: string } | null = null;
+    let wantCount = false;
     const rows = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       return limitN == null ? rs : rs.slice(0, limitN);
     };
     const settle = () => {
       if (columnError) return { data: null, error: columnError };
+      /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
+         to decide whether a transfer leaves any of the parent's lines behind,
+         and a fake that answered `undefined` would make every test take the
+         refusal branch for the wrong reason. */
+      if (wantCount) return { data: null, count: rows().length, error: null };
       if (pendingInsert) {
         tables[table].push({ id: `row-${tables[table].length + 1}`, ...pendingInsert });
         return { data: null, error: null };
@@ -52,9 +58,10 @@ function fakeSb(tables: Record<string, Row[]>, missing: Record<string, string[]>
       return { data: rows(), error: null };
     };
     const builder: any = {
-      select(cols?: string) {
+      select(cols?: string, opts?: { count?: string; head?: boolean }) {
         const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
         if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
+        if (opts?.count) wantCount = true;
         return builder;
       },
       insert(payload: Row) { pendingInsert = payload; return builder; },
@@ -663,5 +670,207 @@ describe('the drain', () => {
 
     expect(sent[0]).toMatchObject({ FromDocNo: 'SO-000123' });
     expect(sb.tables.delivery_orders[0].linked_ac_docno).toBe('DO-000045');
+  });
+});
+
+/* ── A CONVERSION MUST NAME THE LINES IT TOOK ────────────────────────────────
+   The defect these pin: enqueueConvert sent no DtlKeys, so AcSyncService fell
+   through to DtlKeys() and transferred EVERY still-outstanding line on the
+   parent (AcSyncService.cs:382-411). A delivery order shipping 2 of a sales
+   order's 5 lines therefore produced an AutoCount DO of all 5 — stock moving in
+   a live account book that never moved here. Partial shipment is the daily
+   case, so this is not an edge condition. */
+describe('a partial conversion transfers only the lines it actually took', () => {
+  const soLines = (keys: Array<number | null>) => keys.map((k, i) => ({
+    id: `so-item-${i + 1}`, doc_no: 'HC-SO-9', item_code: `SKU-${i + 1}`,
+    qty: 1, unit_price_centi: 100, linked_ac_dtlkey: k, cancelled: false,
+  }));
+
+  const convertDo = (sb: unknown) => enqueueConvert(sb as never, {
+    companyId: 1,
+    op: 'so_to_do',
+    from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+    to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    docType: 'DO',
+    docNo: 'HC-DO-1',
+    docId: 'do-1',
+  });
+
+  test('two of three lines ship -> DtlKeys names exactly those two', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: soLines([9001, 9002, 9003]),
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-item-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
+      ],
+    });
+    expect(await convertDo(sb)).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
+    /* The whole point: the third line's key is NOT in the payload, so AutoCount
+       cannot transfer goods the ERP did not ship. */
+    expect(row.payload.body.DtlKeys).not.toContain(9003);
+  });
+
+  test('a PARTIAL transfer whose source line has no key is REFUSED, not sent blind', async () => {
+    const sb = withFlag('1', {
+      /* so-item-2 was never keyed, and the DO leaves so-item-3 behind. */
+      mfg_sales_order_items: soLines([9001, null, 9003]),
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-item-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
+      ],
+    });
+    expect(await convertDo(sb)).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('cannot name the subset');
+    /* A refusal must not also queue the wrong thing. */
+    expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  test('a WHOLE-document transfer with no keys falls back rather than blocking the shipment', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: soLines([null, null]),
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-item-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
+      ],
+    });
+    expect(await convertDo(sb)).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    /* "All outstanding" and "the lines we took" are the same set here, and the
+       account book is the better authority on which are still open. */
+    expect(row.payload.body.DtlKeys).toBeUndefined();
+  });
+
+  test('a cancelled parent line is not a line this conversion left behind', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        ...soLines([9001, 9002]),
+        {
+          id: 'so-item-3', doc_no: 'HC-SO-9', item_code: 'SKU-3', qty: 1,
+          unit_price_centi: 100, linked_ac_dtlkey: null, cancelled: true,
+        },
+      ],
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-item-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
+      ],
+    });
+    expect(await convertDo(sb)).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
+  });
+
+  test('a DO built entirely of ad-hoc lines queues the conversion unchanged', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: soLines([9001]),
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: null, item_code: 'ADHOC' },
+      ],
+    });
+    expect(await convertDo(sb)).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    expect(row.payload.body.DtlKeys).toBeUndefined();
+  });
+});
+
+/* ── LINE REMOVAL IS A RETIREMENT ────────────────────────────────────────────
+   /edit applies only the lines it is GIVEN, so a line the ERP removed and did
+   not mention stays live, outstanding and transferable in the account book. */
+describe('a removed line is retired in AutoCount, never just left out', () => {
+  const soHeader = {
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: null,
+    branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
+  };
+  const keyed = (over: Record<string, unknown> = {}) => ({
+    id: 'so-item-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'Mattress',
+    qty: 2, unit_price_centi: 100, linked_ac_dtlkey: 7001, cancelled: false, ...over,
+  });
+
+  test('a HARD-DELETED line is named on the next edit with Retire: true', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...soHeader }],
+      mfg_sales_order_items: [keyed()],
+    });
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1,
+      docType: 'SO',
+      docNo: 'HC-SO-9',
+      retire: [{ DtlKey: 7002, ItemCode: 'SKU-2', Desc2: 'Col: Grey' }],
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.Lines).toHaveLength(2);
+    expect(row.payload.body.Lines[0]).toMatchObject({ DtlKey: 7001, Qty: 2 });
+    expect(row.payload.body.Lines[1]).toEqual({
+      DtlKey: 7002, ItemCode: 'SKU-2', Desc2: 'Col: Grey', Retire: true,
+    });
+  });
+
+  test('a RETAINED cancelled line is retired, not sent as a live line', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...soHeader }],
+      mfg_sales_order_items: [
+        keyed(),
+        keyed({ id: 'so-item-2', item_code: 'SKU-2', linked_ac_dtlkey: 7002, cancelled: true }),
+      ],
+    });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
+    const [row] = outbox(sb);
+    const lines = row.payload.body.Lines as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(2);
+    const retired = lines.find((l) => l.DtlKey === 7002);
+    expect(retired?.Retire).toBe(true);
+    /* No quantity on a retired line: AcSyncService zeroes it, and sending the
+       ERP number would be inert today and wrong the day it stops being. */
+    expect(retired?.Qty).toBeUndefined();
+  });
+
+  test('a cancelled line with NO key is refused — a retirement we cannot name is not one we may drop', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...soHeader }],
+      mfg_sales_order_items: [
+        keyed(),
+        keyed({ id: 'so-item-2', item_code: 'SKU-2', linked_ac_dtlkey: null, cancelled: true }),
+      ],
+    });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('cancelled');
+    expect(row.last_error).toContain('cannot be retired');
+  });
+
+  test('a re-added line that inherited the key is edited, not retired out from under itself', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...soHeader }],
+      mfg_sales_order_items: [keyed()],
+    });
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'SO', docNo: 'HC-SO-9',
+      retire: [{ DtlKey: 7001, ItemCode: 'SKU-1' }],
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.Lines).toHaveLength(1);
+    expect(row.payload.body.Lines[0].Retire).toBeUndefined();
+  });
+
+  test('a CREATE never carries a cancelled line — AutoCount holds nothing to retire yet', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...soHeader, linked_ac_docno: null }],
+      mfg_sales_order_items: [
+        keyed({ linked_ac_dtlkey: null }),
+        keyed({ id: 'so-item-2', item_code: 'SKU-2', linked_ac_dtlkey: null, cancelled: true }),
+      ],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.Details).toHaveLength(1);
+    expect(row.payload.body.Details[0].ItemCode).toBe('SKU-1');
   });
 });
