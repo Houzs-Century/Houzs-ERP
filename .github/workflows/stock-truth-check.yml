@@ -75,7 +75,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: node scripts/check-stock-truth.mjs
+      - run: node scripts/check-cancel-parity.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMPANY: ${{ inputs.company }}
