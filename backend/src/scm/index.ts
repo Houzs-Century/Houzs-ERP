@@ -95,6 +95,7 @@ import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
 import { scmWriteFreeze } from "./lib/write-freeze";
+import { writeFreezeStatus } from "./routes/write-freeze-status";
 
 export const scm = new Hono<{ Bindings: Env }>();
 
@@ -102,9 +103,19 @@ export const scm = new Hono<{ Bindings: Env }>();
    Non-GET requests are refused with 503 while app_config['scm.write_freeze']
    is '1', so staff edits stop drifting the data being migrated from AutoCount
    (the AutoCount side is already frozen). Reads stay open; owner / scm.admin
-   bypass so IT can still correct data. Toggle with the scm-write-freeze
-   workflow — no deploy needed. Mounted FIRST so it covers every sub-router. */
+   bypass so IT can still correct data. Toggle with the set-write-freeze
+   workflow — no deploy needed. Mounted FIRST so it covers every sub-router.
+
+   The value also carries a PER-MODULE staged lift ('1 - scm.sales.orders' =
+   company 1 frozen except sales orders), keyed on the same L2 areas the guards
+   below use. Grammar, the UPDATE for each stage, and the rollback:
+   docs/write-freeze-staged-lift.md. */
 scm.use('/*', scmWriteFreeze());
+
+/* Read-only view of that value for the operator making the go/no-go call —
+   GET, so the freeze never blocks it, and no area guard because it is not an
+   SCM data surface. Gated inside to the bypass cohort. */
+scm.route("/write-freeze", writeFreezeStatus);
 
 // ── L2 per-area WRITE authorization (ADDITIVE on top of requireScmAccess) ────
 // Each sub-router is preceded by `scm.use('/<prefix>/*', scmAreaGuard('<area>'))`

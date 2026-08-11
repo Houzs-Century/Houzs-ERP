@@ -312,6 +312,17 @@ screen.
 Each verified against the tree; if you are reading this long after 2026-07-21,
 re-check the cited file rather than trusting the line.
 
+- **SCM writes are FROZEN for Houzs right now.** `scm.app_config` key
+  `scm.write_freeze` holds `'1'`, and `scm/lib/write-freeze.ts` (mounted ahead of
+  every SCM sub-router) refuses every non-GET on `/api/scm/*` for company 1.
+  Company 2 (2990) is unaffected — the value is a company id list, not a boolean.
+  If an SCM write "mysteriously" 503s with `error: write_frozen`, this is why,
+  and it is deliberate. The value also takes a per-module exception clause
+  (`'1 - scm.sales.orders'`) for the staged go-live lift. Read the current state
+  with the **SCM write freeze — status (read-only)** workflow or
+  `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
+  rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
+  test something — it gates a live business.
 - **AutoCount writes are hard-off in code**: `AUTOCOUNT_WRITES_DISABLED = true` in
   `backend/src/services/autocount.ts`. Flipping it is a code edit, not a config
   change. Inbound pulls, by contrast, are env-gated (`AUTOCOUNT_SYNC_DISABLED` in

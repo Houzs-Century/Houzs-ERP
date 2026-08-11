@@ -1204,15 +1204,6 @@ export function useReopenPurchaseOrder() {
   });
 }
 
-/** Hard-delete PO. Only allowed when status is CANCELLED (post-0078). */
-export function useDeletePurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ ok: true; deleted: string }>(
-        `/mfg-purchase-orders/${id}`,
-        { method: 'DELETE' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
-  });
-}
+/* useDeletePurchaseOrder was REMOVED with its endpoint (owner rule 2026-08-11:
+   不可以删只可以 cancel). A PO is cancelled, never purged — see the note where
+   DELETE /:id used to live in backend/src/scm/routes/mfg-purchase-orders.ts. */
