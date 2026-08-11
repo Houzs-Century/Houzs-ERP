@@ -366,6 +366,11 @@ test("a group whose two sides do not split the same way is refused whole, never 
   assert.equal(m.pairs.length, 0);
   assert.equal(m.refused.length, 1);
   assert.equal(m.refused[0].code, "AK-BASTION (Q)");
+  /* The caller builds the per-line reason list from rowIds, so a refusal that
+     omits them leaves its rows explained only at group level. Every unrepaired
+     line gets a reason — HC-PO-009620 was the production row that fell through
+     this exact gap. */
+  assert.deepEqual(m.refused[0].rowIds, ["r1", "r2"]);
 });
 
 test("an ERP row no AutoCount line owns is reported, not attached to the nearest thing", () => {

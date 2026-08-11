@@ -134,6 +134,12 @@ export function matchAcLinesToErpRows(acLines, erpRows) {
         code,
         acLines: group.lines.length,
         erpRows: rows.length,
+        /* rowIds on THIS refusal too. The caller turns rowIds into the per-line
+           reason list, so omitting them here made a refused row visible only in
+           the group summary — and "every unrepaired line gets a reason" is the
+           promise this report makes. Measured: HC-PO-009620 was the one row in
+           production that fell through that gap. */
+        rowIds: rows.map((r) => r.id),
         reason: "the AutoCount lines and the ERP rows do not split the same way on (qty, Desc2)",
       });
       continue;
