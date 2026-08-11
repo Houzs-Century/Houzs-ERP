@@ -1449,8 +1449,24 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
   const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
   if (agent) agents.push({ Agent: agent });
 
-  if (!items.size && !agents.length) return null;
-  return { Items: [...items.values()], Agents: agents };
+  /* A PURCHASE ORDER NAMES A CREDITOR, and CreatePo applies CreditorCode
+     unconditionally — so a supplier the account book does not have fails the
+     same foreign key a missing item does, and takes the whole PO with it. The
+     DEBTOR stays absent for the opposite reason: Houzs writes every order
+     against ONE fixed account and overwrites the name, so there is no
+     per-customer account to open. */
+  const creditors: Array<{ AccNo: string; CompanyName: string }> = [];
+  const cred = typeof body.CreditorCode === 'string' ? body.CreditorCode.trim() : '';
+  if (cred) {
+    creditors.push({
+      AccNo: cred,
+      CompanyName: typeof body.CreditorName === 'string' && body.CreditorName
+        ? body.CreditorName : cred,
+    });
+  }
+
+  if (!items.size && !agents.length && !creditors.length) return null;
+  return { Items: [...items.values()], Agents: agents, Creditors: creditors };
 }
 
 /** Read one ERP document's AutoCount counterpart number. */
