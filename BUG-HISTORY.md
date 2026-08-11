@@ -114,7 +114,7 @@ deleted" means the rows are still there to be miscounted, and a detector that
 cries wolf after a repair is worse than one that never fired - it teaches the
 next person that the repair did not work.
 
-**Ref** - 2026-08-11, PR #1978 (fix/detectors-stop-crying-wolf). Prod evidence:
+**Ref** - 2026-08-11, PR #1980 (fix/detectors-stop-crying-wolf). Prod evidence:
 runs 31454888561 and 31454890568, both taken as post-state verification of
 #1971 and #1972.
 
