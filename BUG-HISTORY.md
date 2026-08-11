@@ -121,7 +121,7 @@ reason it did not reach production is that the run was a DRY-RUN and its output
 was read line by line rather than trusted for its summary. Write the guard, then
 make the tool print the specific case it exists to refuse, and go look.
 
-**Ref** - 2026-08-11, PR #1973 (fix/colour-bind-digit-runs). Prod evidence: the
+**Ref** - 2026-08-11, PR #1976 (fix/colour-bind-digit-runs). Prod evidence: the
 DRY-RUN that caught it, run 31452652036.
 
 ## One physical fabric series, two library rows, and a merge that would have deleted the better half [med]
