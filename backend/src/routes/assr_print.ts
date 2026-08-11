@@ -11,6 +11,7 @@ import {
   HOUZS_COMPANY_CODE,
   letterheadLogoKey,
 } from "../services/branding";
+import { formatPhone } from "../scm/shared/phone";
 
 // Formal service-case document modeled on a standard Malaysian business
 // invoice/service report:
@@ -200,6 +201,78 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       ? await fetchAsDataUri(c.env, "static/logo-wordmark.png")
       : null;
 
+  /* ── Letterhead subject (owner 2026-08-11) ────────────────────────────────
+     Which company's paper this prints on is now the OPERATOR's choice, not a
+     consequence of which company owns the record. The two entities share a
+     service operation, so a case raised under one is routinely handed to the
+     customer on the other's letterhead — and `both` names them separately when
+     the distinction matters.
+
+     Default is the case's own company, so every existing link and bookmark
+     prints exactly what it printed before. */
+  type PrintEntity = "houzs" | "2990" | "both";
+  const caseEntity: PrintEntity = companyCode === HOUZS_COMPANY_CODE ? "houzs" : "2990";
+  const rawEntity = (c.req.query("entity") || "").toLowerCase();
+  const entity: PrintEntity =
+    rawEntity === "houzs" || rawEntity === "2990" || rawEntity === "both"
+      ? (rawEntity as PrintEntity)
+      : caseEntity;
+
+  /* One entity's letterhead facts. Everything comes from the Branding config
+     (Settings → Branding) — the identity is edited in one place and every
+     document follows, which is the whole point of that record. */
+  type EntityProfile = {
+    name: string;
+    reg: string | null;
+    addressLines: string[];
+    tel: string | null;
+    email: string | null;
+    logo: string | null;
+    /** Square mark vs wide wordmark — drives the logo's fit, not its width. */
+    square: boolean;
+  };
+  const loadEntityProfile = async (code: string): Promise<EntityProfile> => {
+    const b = code === companyCode ? branding : await getBrandingForCompany(c.env, code);
+    const key = letterheadLogoKey(b);
+    const logo = key
+      ? await fetchAsDataUri(c.env, key)
+      : code === HOUZS_COMPANY_CODE
+        ? await fetchAsDataUri(c.env, "static/logo-wordmark.png")
+        : null;
+    /* The contact row is driven by the CS contact fields, not by a hardcoded
+       company check: Houzs carries csPhone/csEmail (the numbers a customer
+       should actually call), 2990 carries neither, so 2990's letterhead comes
+       out contact-free without this code naming either of them. */
+    const csTel = (b as { csPhone?: string | null }).csPhone || null;
+    const csMail = (b as { csEmail?: string | null }).csEmail || null;
+    return {
+      name: b.companyName,
+      reg: b.registrationNo || null,
+      addressLines: brandingAddressLines(composeBrandingAddress(b)),
+      tel: csTel ? formatPhone(csTel) : null,
+      email: csMail,
+      logo,
+      square: code === HOUZS_COMPANY_CODE,
+    };
+  };
+  const houzsProfile = entity === "houzs" || entity === "both"
+    ? await loadEntityProfile(HOUZS_COMPANY_CODE)
+    : null;
+  const homeProfile = entity === "2990" || entity === "both"
+    ? await loadEntityProfile("2990")
+    : null;
+  // `both` heads the paper with Houzs (the service provider) and names 2990 in
+  // the band below; the single-entity modes head with whoever was picked.
+  const headProfile = (entity === "2990" ? homeProfile : houzsProfile) ?? {
+    name: branding.companyName,
+    reg: branding.registrationNo || null,
+    addressLines: coAddressLines,
+    tel: null,
+    email: null,
+    logo: logoUri,
+    square: companyCode === HOUZS_COMPANY_CODE,
+  };
+
   const imageAttachments = attachments.filter((a: any) =>
     (a.content_type || "").startsWith("image/")
   );
@@ -328,11 +401,54 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 <head>
   <meta charset="UTF-8">
   <title>${esc(docTitle)} — ${esc(cs.assr_no)}</title>
+  <!-- Which letterhead this copy actually resolved to. The caller cannot work
+       it out on its own — with no ?entity the answer is the CASE's company, a
+       field the print dialog does not hold — so the document states it and the
+       entity picker highlights what is really on the paper. -->
+  <meta name="print-entity" content="${esc(entity)}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=IBM+Plex+Serif:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
-    @page { size: A4; margin: 12mm 10mm 12mm 10mm; }
+    @page { size: A4; margin: 14mm 14mm 12mm 14mm; }
+
+    /* ── Design tokens (header block) ────────────────────────────────────────
+       This document is served standalone — it loads NONE of the app's CSS — so
+       the DS tokens the header spec refers to have to be declared here with
+       their values.
+
+       NOTE ON THE NAME: the spec calls the accent --c-orange and pins it to
+       #16695f, which is petrol/teal, NOT the app DS's --c-orange (#e86b3a, a
+       real orange). The VALUE is the one that matters — it is what this document
+       already uses for the status box — so the name is inherited from the spec
+       and the value is petrol. Do not "correct" this to the app's orange. */
+    :root {
+      --c-orange: #16695f;          /* accent — petrol, see note above */
+      --c-paper: #f4f6f3;
+      --line: #e3e6e0;
+      --c-secondary-a: #2F5D4F;
+      --c-brass: #a16a2e;
+      --ink: #11140f;
+      --ink-2: #4a4f45;
+      --ink-3: #767b6e;
+      /* Status-card lane colour. One lane today: every stage prints petrol,
+         which is what the document has always looked like. The plumbing is
+         here so a lane→colour map only has to set this variable per stage
+         (owner 2026-08-11 deferred the colour scale itself). */
+      --lane: var(--c-orange);
+    }
+    /* The header block is system-stack only (spec): no web font can fail to
+       load on the one part of the page that identifies who sent it. The rest of
+       the document keeps the IBM Plex layering signed off on 2026-07-30. */
+    .hdr-blk {
+      font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .hdr-blk .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
 
     *, *::before, *::after {
       box-sizing: border-box;
@@ -387,27 +503,65 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     table.sheet > tfoot > tr > td { padding: 2mm 10mm 2mm 10mm; }
     table.sheet > tbody > tr.filler > td { padding: 0 !important; height: 100%; }
 
+    /* ── Letterhead ─────────────────────────────────────────────────────────
+       Logo and text sit side by side, text LEFT-aligned. It used to be
+       justify-content: space-between with the text right-aligned, which left a
+       ragged edge that moved every time a company name or address changed. */
     .letterhead {
       display: flex;
-      justify-content: space-between;
+      gap: 5mm;
       align-items: flex-start;
-      padding-bottom: 4mm;
-      border-bottom: 1.5pt solid #000;
+      padding-bottom: 5mm;
+      border-bottom: 2px solid var(--c-orange);
     }
-    .letterhead .logo { max-height: 46px; max-width: 210px; object-fit: contain; display: block; }
-    .letterhead .logo-fallback { font-weight: 700; font-size: 19.4pt; letter-spacing: 1.2pt; color: #000; text-transform: uppercase; }
-    .letterhead .company { text-align: right; font-size: 10.6pt; line-height: 1.4; color: #000; max-width: 95mm; }
+    /* Equal logo WIDTH across entities is a hard requirement: the Houzs mark is
+       square and the 2990 mark is a wide wordmark, so without a fixed box the
+       text column jumps sideways when the entity is switched. */
+    .letterhead .logo-box { width: 26.7mm; flex: none; }
+    .letterhead .logo { display: block; width: 100%; }
+    .letterhead .logo.square { height: 27.8mm; object-fit: contain; }
+    .letterhead .logo.wide { height: auto; margin-top: 2mm; }
+    .letterhead .logo-fallback { font-weight: 700; font-size: 14pt; letter-spacing: .02em; color: var(--ink); text-transform: uppercase; }
+    .letterhead .company { min-width: 0; }
+    .letterhead .co-name { font-size: 14pt; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
+    .letterhead .reg-no { font-size: 8pt; color: var(--ink-3); margin-top: 1.5mm; }
+    .letterhead .addr { font-size: 8.5pt; line-height: 1.5; color: var(--ink-2); margin-top: 2mm; }
+    .letterhead .contact { display: flex; flex-wrap: wrap; gap: 1.5mm 4mm; margin-top: 2mm; align-items: baseline; }
+    .letterhead .contact .cap { font-size: 7pt; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-3); }
+    .letterhead .contact .val { font-size: 8.5pt; color: var(--ink); }
+
+    /* ── Dual-entity band (entity=both only) ───────────────────────────────
+       Who serviced it vs whose customer it is — two facts that are the same
+       company most of the time and must not be guessed at when they are not. */
+    .entities {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6mm;
+      margin-top: 5mm;
+      padding: 4mm 5mm;
+      background: var(--c-paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .entities .cap { font-size: 7.5pt; font-weight: 600; text-transform: uppercase; letter-spacing: .14em; color: var(--c-brass); }
+    .entities .nm { font-size: 9.5pt; font-weight: 600; margin-top: 1.5mm; }
+    .entities .reg { font-size: 7.5pt; color: var(--ink-3); margin-top: .8mm; }
+    .entities .addr { font-size: 8pt; line-height: 1.5; color: var(--ink-2); margin-top: 1.2mm; }
+    .entities .contact { font-size: 7.5pt; color: var(--ink-2); margin-top: 1.2mm; }
     .letterhead .company .co-name { font-weight: 700; font-size: 12.5pt; letter-spacing: 0.3pt; text-transform: uppercase; }
     .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 10.0pt; margin-top: 0.5pt; }
 
     /* Design refresh — Plex Serif for the document title, left-aligned
        to sit next to the report meta on the right (the header row is
        still centered by the parent .doc-title container). */
-    .doc-title { text-align: left; margin: 0 0 8mm 0; }
-    .doc-title h1 { margin: 0; font-family: "IBM Plex Serif", "Georgia", serif; font-size: 23.8pt; font-weight: 700; letter-spacing: 0.2pt; line-height: 1.05; }
-    .doc-title .subtitle { margin-top: 2mm; font-family: "Roboto Mono", monospace; font-size: 10.6pt; letter-spacing: 1.5pt; text-transform: uppercase; color: #555; }
-    .doc-title .ref { margin-top: 3mm; font-family: "Roboto Mono", monospace; font-size: 13.8pt; color: #333; white-space: nowrap; }
-    .doc-title .ref b { font-size: 15.6pt; }
+    .doc-title { text-align: left; margin: 8mm 0 8mm 0; }
+    .doc-title h1 { margin: 0; font-size: 24pt; font-weight: 700; letter-spacing: -.02em; line-height: 1.08; max-width: 78mm; }
+    .doc-title .subtitle { margin-top: 2mm; font-size: 8.5pt; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+    /* Doc-no line: labels recede, the numbers are the thing being read. */
+    .doc-title .ref { margin-top: 8mm; display: flex; align-items: baseline; gap: 3mm; flex-wrap: wrap; }
+    .doc-title .ref .cap { font-size: 10pt; color: var(--ink-3); }
+    .doc-title .ref b { font-size: 12pt; font-weight: 700; color: var(--ink); }
+    .doc-title .ref .sep { color: #c9ccc4; }
 
     /* Info strip with optional QR panel on the side */
     .info {
@@ -593,12 +747,17 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     /* Status corner — owner-approved merged box (Nico 2026-07-30,
        Theme C): petrol header carries the stage, soft rows carry the
        sub-status / service route. Empty service row is simply omitted. */
-    .sbox { border: 1.2pt solid #16695f; border-radius: 2.4mm; overflow: hidden; min-width: 62mm; max-width: 74mm; flex-shrink: 0; }
-    .sbox .main { background: #16695f; color: #fff; font-family: "IBM Plex Serif", "Georgia", serif; font-size: 13pt; font-weight: 700; padding: 2.4mm 4mm; letter-spacing: 0.1pt; }
-    .sbox .row { padding: 1.9mm 4mm 2.1mm; background: #e1efed; display: flex; align-items: baseline; gap: 2.6mm; }
-    .sbox .row + .row { border-top: 0.4pt solid rgba(22,105,95,.25); }
-    .sbox .row .cap { font-family: "IBM Plex Mono", "Roboto Mono", monospace; font-size: 7pt; font-weight: 700; letter-spacing: 0.9pt; color: #16695f; text-transform: uppercase; flex: none; }
-    .sbox .row .val { font-family: "IBM Plex Serif", "Georgia", serif; font-size: 10.5pt; font-weight: 700; color: #0c3f39; }
+    /* Status card. Fixed 72mm so the title beside it has a stable column to
+       wrap into; the field rows are a 20mm label / value grid so SUB-STATUS and
+       SERVICE line up regardless of how long the values run. */
+    .sbox { width: 72mm; flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .sbox .main { background: var(--lane); color: #fff; font-size: 11pt; font-weight: 700; padding: 2.6mm 4mm; }
+    /* "Same colour at 10%" — derived from the lane so the tint follows the top
+       bar when a lane scale lands, instead of drifting from it. */
+    .sbox .row { display: grid; grid-template-columns: 20mm 1fr; gap: 3mm; padding: 3mm 4mm; background: rgba(22,105,95,.10); align-items: baseline; }
+    .sbox .row + .row { border-top: 1px solid var(--line); }
+    .sbox .row .cap { font-size: 7pt; font-weight: 600; letter-spacing: .12em; color: var(--c-secondary-a); text-transform: uppercase; }
+    .sbox .row .val { font-size: 9.5pt; font-weight: 600; color: var(--ink); }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .itable .th {
@@ -689,17 +848,40 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   <table class="sheet">
 
     <thead><tr><td>
-      <div class="letterhead">
-        <div>
-          ${logoUri
-            ? `<img src="${logoUri}" alt="${esc(coShort)}" class="logo" />`
-            : `<div class="logo-fallback">${esc(coShort)}</div>`}
+      <div class="hdr-blk">
+        <div class="letterhead">
+          <div class="logo-box">
+            ${headProfile.logo
+              ? `<img src="${headProfile.logo}" alt="${esc(headProfile.name)}" class="logo ${headProfile.square ? "square" : "wide"}" />`
+              : `<div class="logo-fallback">${esc(shortCompanyName(headProfile.name))}</div>`}
+          </div>
+          <div class="company">
+            <div class="co-name">${esc(headProfile.name)}</div>
+            ${headProfile.reg ? `<div class="reg-no mono">${esc(headProfile.reg)}</div>` : ""}
+            ${headProfile.addressLines.length
+              ? `<div class="addr">${headProfile.addressLines.map((l) => esc(l)).join("<br>")}</div>`
+              : ""}
+            ${headProfile.tel || headProfile.email ? `
+            <div class="contact">
+              ${headProfile.tel ? `<span class="cap mono">Tel</span><span class="val mono">${esc(headProfile.tel)}</span>` : ""}
+              ${headProfile.email ? `<span class="cap mono">Email</span><span class="val mono">${esc(headProfile.email)}</span>` : ""}
+            </div>` : ""}
+          </div>
         </div>
-        <div class="company">
-          <div class="co-name">${esc(branding.companyName)}</div>
-          ${branding.registrationNo ? `<div class="reg-no">${esc(branding.registrationNo)}</div>` : ""}
-          ${coAddressLines.map((l) => `<div>${esc(l)}</div>`).join("")}
-        </div>
+        ${entity === "both" && houzsProfile && homeProfile ? `
+        <div class="entities">
+          ${[
+            { cap: "Service Provider", p: houzsProfile },
+            { cap: "Retail Entity", p: homeProfile },
+          ].map(({ cap, p }) => `
+          <div>
+            <div class="cap mono">${esc(cap)}</div>
+            <div class="nm">${esc(p.name)}</div>
+            ${p.reg ? `<div class="reg mono">${esc(p.reg)}</div>` : ""}
+            ${p.addressLines.length ? `<div class="addr">${p.addressLines.map((l) => esc(l)).join("<br>")}</div>` : ""}
+            ${p.tel || p.email ? `<div class="contact mono">${[p.tel, p.email].filter(Boolean).map((v) => esc(String(v))).join(" · ")}</div>` : ""}
+          </div>`).join("")}
+        </div>` : ""}
       </div>
     </td></tr></thead>
 
@@ -708,19 +890,22 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     <!-- The nowrap ref line lives BELOW the flex row on its own full-width
          line — beside the status box the two can't fit A4 when the Ref No
          is long (Nico 2026-07-30: the box spilled past the right margin). -->
-    <div class="doc-title">
-      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 6mm;">
+    <div class="doc-title hdr-blk">
+      <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 10mm;">
         <div style="min-width: 0;">
           <h1>${esc(docTitle)}</h1>
-          ${docSubtitle ? `<div class="subtitle">${esc(docSubtitle)}</div>` : ""}
+          ${docSubtitle ? `<div class="subtitle mono">${esc(docSubtitle)}</div>` : ""}
         </div>
         <div class="sbox">
           <div class="main">${esc(statusPillLabel)}</div>${subStatusLabel ? `
-          <div class="row"><span class="cap">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
-          <div class="row"><span class="cap">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
+          <div class="row"><span class="cap mono">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
+          <div class="row"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
         </div>
       </div>
-      <div class="ref">ASSR No. <b>${esc(cs.assr_no)}</b>${cs.ref_no ? ` · Ref No. <b>${esc(cs.ref_no)}</b>` : ""}</div>
+      <div class="ref mono">
+        <span class="cap">ASSR No.</span><b>${esc(cs.assr_no)}</b>${cs.ref_no ? `
+        <span class="sep">·</span><span class="cap">Ref No.</span><b>${esc(cs.ref_no)}</b>` : ""}
+      </div>
     </div>
     ${voidReason ? `
     <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">

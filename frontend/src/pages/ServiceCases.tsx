@@ -6808,6 +6808,27 @@ const PRINT_VARIANTS = {
 } as const;
 type PrintVariant = keyof typeof PRINT_VARIANTS;
 
+/* Whose paper the copy prints on. The two entities share one service
+   operation, so a case raised under one is routinely handed to the customer on
+   the other's letterhead; "Both" names them separately (service provider vs
+   retail entity) for the cases where the difference matters. Applies to all
+   three copies — customer, supplier and office. */
+const PRINT_ENTITIES = {
+  houzs: "Houzs",
+  "2990": "2990",
+  both: "Both",
+} as const;
+type PrintEntity = keyof typeof PRINT_ENTITIES;
+
+/** What letterhead the fetched document actually used (the backend stamps it —
+ *  with no explicit choice the answer is the case's own company, which the
+ *  print dialog has no other way to know). */
+function entityOf(html: string): PrintEntity | null {
+  const m = /<meta\s+name="print-entity"\s+content="([^"]+)"/i.exec(html);
+  const v = m?.[1];
+  return v && v in PRINT_ENTITIES ? (v as PrintEntity) : null;
+}
+
 function PrintMenu({
   caseId,
   assrNo,
@@ -6828,16 +6849,45 @@ function PrintMenu({
   const [html, setHtml] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  /* Whose letterhead the copy prints on (owner 2026-08-11). Null = the case's
+     own company, which is what the document has always used — the backend
+     applies that default, so a print with no choice made is byte-identical to
+     before. The picker lives HERE rather than in the copy menu because the
+     menu would otherwise become 3 copies × 3 entities = 9 rows, and because the
+     preview makes the choice self-evident: switch it and watch the letterhead
+     change before committing paper to it. */
+  const [entity, setEntity] = useState<PrintEntity | null>(null);
+  /* Highlight what is ON THE PAPER, not what was clicked: before any choice is
+     made the backend picked the case's own company, and the loaded document is
+     the only thing that knows which that was. */
+  const effectiveEntity = entity ?? (html ? entityOf(html) : null);
 
-  const path = (v: PrintVariant) => `/api/assr-print/${caseId}?variant=${v}`;
+  const path = (v: PrintVariant, e: PrintEntity | null) =>
+    `/api/assr-print/${caseId}?variant=${v}${e ? `&entity=${e}` : ""}`;
 
-  async function openInTab(v: PrintVariant) {
+  async function openInTab(v: PrintVariant, e: PrintEntity | null) {
     try {
-      await api.openHtml(path(v));
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to open print view");
+      await api.openHtml(path(v, e));
+    } catch (e2: any) {
+      toast.error(e2?.message || "Failed to open print view");
     }
   }
+
+  /* Re-fetch the document under a different letterhead. The frame is cleared
+     first so the operator never sees the OLD entity's paper while the new one
+     loads — on a slow link that is exactly how you print the wrong one. */
+  const chooseEntity = async (e: PrintEntity) => {
+    if (!variant || e === effectiveEntity) return;
+    setEntity(e);
+    setHtml(null);
+    setLoadFailed(false);
+    try {
+      setHtml(await api.getHtml(path(variant, e)));
+    } catch (err: any) {
+      setLoadFailed(true);
+      toast.error(err?.message || "Failed to load the print view");
+    }
+  };
 
   /* Print the PREVIEWED document straight from its iframe. The old flow opened a
      tab and left the operator to print from there; the iframe already holds the
@@ -6847,7 +6897,7 @@ function PrintMenu({
   const printNow = () => {
     const frame = frameRef.current;
     if (!frame?.contentWindow) {
-      if (variant) void openInTab(variant);
+      if (variant) void openInTab(variant, entity);
       return;
     }
     frame.contentWindow.focus();
@@ -6860,9 +6910,10 @@ function PrintMenu({
     setVariant(v);
     setHtml(null);
     setLoadFailed(false);
+    setEntity(null);
     print.openPreview();
     try {
-      setHtml(await api.getHtml(path(v)));
+      setHtml(await api.getHtml(path(v, null)));
     } catch (e: any) {
       // Keep the dialog open with an explicit failure — "Open in new tab" is
       // still a way through, and a blank frame would read as an empty document.
@@ -6921,6 +6972,29 @@ function PrintMenu({
           rows={[
             { label: "Copy", value: PRINT_VARIANTS[variant].label },
             { label: "Contains", value: PRINT_VARIANTS[variant].hint },
+            {
+              label: "Letterhead",
+              value: (
+                <span className="inline-flex overflow-hidden rounded-md border border-border">
+                  {(Object.keys(PRINT_ENTITIES) as PrintEntity[]).map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      onClick={() => void chooseEntity(e)}
+                      aria-pressed={effectiveEntity === e}
+                      className={cn(
+                        "px-2.5 py-1 text-[11.5px] font-semibold transition-colors",
+                        effectiveEntity === e
+                          ? "bg-primary text-white"
+                          : "bg-surface text-ink-secondary hover:bg-surface-dim"
+                      )}
+                    >
+                      {PRINT_ENTITIES[e]}
+                    </button>
+                  ))}
+                </span>
+              ),
+            },
           ]}
           document={
             loadFailed ? (
@@ -6943,7 +7017,7 @@ function PrintMenu({
               />
             )
           }
-          onViewPdf={() => openInTab(variant)}
+          onViewPdf={() => openInTab(variant, entity)}
           viewLabel="Open in new tab"
           onPrint={print.handlers.onPrint}
         />
