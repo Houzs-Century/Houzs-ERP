@@ -39,6 +39,7 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
+import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel } from "./lib/fabric-code.mjs";
 import { countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -58,76 +59,6 @@ const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `E
 /* The series seed-owner-fabric-catalogue.mjs owns. It drove these to the
    owner's own list, colour names included; this script must not re-derive them. */
 const CATALOGUE_SERIES = new Set(["ZL", "MODENZA", "BO315", "NX", "GD2502", "AM275", "CH141", "M2402", "ORION", "TR", "DE", "HR805"]);
-
-const strip = (s) => normColour(s).replace(/[^A-Z0-9]/g, "");
-
-/* The SERIES keeps its own internal separator, collapsed to a single dash.
-   "SF-AT 01" is series SF-AT, and SF-AT is what the slips and the showroom
-   actually say; flattening it to SFAT makes a code nobody recognises. Same for
-   ALPINE-5311 and CHANTIC-141. Only the separator is normalised - no character
-   is added or removed. */
-const seriesToken = (s) => normColour(s).replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
-/* scm.fabric_colours grew an UNMATCHED bucket when an import could not place a
-   row - "UNMATCHED-PICCO-FG66151-11", "UNMATCHED-STAR-FABRIC-CLOUD". It is not
-   a fabric series and no rule can decide what its rows mean: the first is
-   probably FG66151-11, the second is a STAR colour called CLOUD with no number
-   at all. Reported, never rewritten. */
-const isJunkBucket = (id) => /^UNMATCHED/.test(normColour(id));
-
-/* A leading word is a BRAND only when what follows is already a complete code -
-   letters AND digits. Otherwise it belongs to the series and the space closes
-   up. See the header: this is the whole PC 1461 / ARMANI J9226 distinction. */
-const BRAND = /^([A-Z][A-Z]{2,})\s+(?=[A-Z]{1,4}\d{3,})/;
-const JOIN_SERIES = /^([A-Z]{1,4})\s+(?=\d)/;
-
-/* Split "<series><sep><number><sep><name>". The series part is GREEDY on
-   purpose: "CHANTIC-141-2" is series CHANTIC141 colour 2, not series CHANTIC
-   colour 141. A lazy match gets that backwards and would collapse a whole
-   series onto one colour.
-
-   THE NUMBER RUNS TO FOUR DIGITS, and that is not cosmetic. At {1,3} the lazy
-   pattern read "NOVENA-1003" as series NOVENA, colour 100, colour NAME "3" -
-   and the 2026-08-11 apply wrote exactly that to production: NOVENA-100
-   labelled "NOVENA-100 3", and the same for LAMB VELVET-2005, GORGE-3003,
-   POLAR-5002, MERINO-4005 and MERINO-4010. A four-digit colour number is a
-   whole number, never three digits and a name that happens to be a digit.
-   repair-split-colour-numbers.mjs puts the six already-written rows back. */
-const SPLIT = /^(.+?)[\s\-]+(\d{1,4})\s*#?[\s\-]*(.*)$/;
-const SPLIT_GREEDY = /^(.+)[\s\-]+(\d{1,4})\s*#?[\s\-]*([A-Z].*)?$/;
-/* No separator at all - "NB01". Only a ONE OR TWO digit tail qualifies, which
-   is what keeps "PU1910", "FG6876" and "BN125" out: nobody can tell from the
-   string whether those are PU + 1910 or PU19 + 10, so they stay unparsed and
-   get reported rather than guessed at. */
-const SPLIT_GLUED = /^([A-Z]{2,})(\d{1,2})$/;
-
-function parse(colourId) {
-  let v = normColour(colourId);
-  let brand = null;
-  const b = BRAND.exec(v);
-  if (b) { brand = b[1]; v = v.slice(b[0].length).trim(); }
-  const j = JOIN_SERIES.exec(v);
-  if (j) v = v.replace(JOIN_SERIES, "$1");
-  const m = SPLIT_GREEDY.exec(v) || SPLIT.exec(v) || SPLIT_GLUED.exec(v);
-  if (!m) return null;
-  const series = seriesToken(m[1]);
-  const num = m[2];
-  let name = (m[3] || "").replace(/^[#\s\-]+/, "").trim();
-  /* A "name" made only of digits is not a name, it is the tail of the number
-     that the split cut off. Refuse the parse rather than mint a colour called
-     "3" - this is the NOVENA-1003 failure, seen from the other side. */
-  if (name && /^\d+$/.test(name)) return null;
-  /* A series may be all digits - "311" is a real one - so the guard is length,
-     not the presence of a letter. */
-  if (series.length < 2) return null;
-  return { brand, series, num, name };
-}
-
-const canonId = (p) => `${p.series}-${p.num.length >= 2 ? p.num : p.num.padStart(2, "0")}`;
-const canonLabel = (p) => {
-  const id = canonId(p);
-  return p.name ? `${id} ${p.name}` : id;
-};
 
 async function main() {
   const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
