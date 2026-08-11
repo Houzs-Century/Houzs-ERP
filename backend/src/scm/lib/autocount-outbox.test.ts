@@ -973,3 +973,49 @@ describe('the masters a document names are opened BEFORE the document is sent', 
     expect(calls.filter((c) => c.includes('/ensure-masters'))).toHaveLength(0);
   });
 });
+
+/* D8: a create sent the salesperson, the sales location, the document date and
+   the three UDFs; an edit sent none of them, so changing any one on a live
+   order never reached AutoCount. The account book takes all of them on /edit -
+   they are in AcSyncService.Edit's allow-list and it calls ApplyUdf - so this
+   was the ERP declining to speak, not AutoCount refusing to listen. */
+describe('an edit carries the fields a create carries', () => {
+  const so = {
+    doc_no: 'HC-SO-9', so_date: '2026-08-10', debtor_name: 'ACME', agent: 'KAR JIUN',
+    sales_location: 'PETALING JAYA', branding: 'AKEMI', venue: 'KSL CITY MALL',
+    address1: 'A1', address2: null, address3: null, address4: null,
+    phone: '012', ref: 'R', po_doc_no: 'CUST-PO-7', linked_ac_docno: 'SO-000021',
+  };
+  const item = {
+    doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1,
+    unit_price_centi: 100, linked_ac_dtlkey: 991,
+  };
+
+  test('the salesperson, the location and the date reach AutoCount, mapped', async () => {
+    const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }] });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
+    const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+    expect(h.Agent).toBe('TAN KAR JIUN');
+    expect(h.SalesLocation).toBe('KL');
+    expect(h.DocDate).toBe('2026-08-10');
+  });
+
+  test('branding and venue ride in the NESTED UDF object, which is the only place the service reads them', async () => {
+    const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }] });
+    await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
+    const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+    expect(h.UDF).toEqual({ BRANDING: 'AKEMI', VENUE: 'KSL CITY MALL JOHOR SOLO', ToPONo: 'CUST-PO-7' });
+  });
+
+  test('a field the ERP does not have is OMITTED, never sent as null that would blank the book', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, agent: null, sales_location: null, branding: null, venue: null, po_doc_no: null }],
+      mfg_sales_order_items: [{ ...item }],
+    });
+    await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
+    const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+    expect(h).not.toHaveProperty('Agent');
+    expect(h).not.toHaveProperty('SalesLocation');
+    expect(h).not.toHaveProperty('UDF');
+  });
+});

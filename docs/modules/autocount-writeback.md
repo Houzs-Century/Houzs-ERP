@@ -589,6 +589,33 @@ things the census did surface and neither is this gap: 4 company-2 DOs have **no
 lines at all**, and 0 documents of any type are PARTIALLY parented (which would
 give AutoCount a document missing its ad-hoc lines).
 
+## 7d2. An edit carries the fields a create carries (D8)
+
+A create sent the salesperson, the sales location, the document date and the
+three UDFs. An edit sent none of them — so changing the salesperson, the sales
+location, the order date, the branding or the venue on a live order **never
+reached AutoCount at all**.
+
+The account book was never the obstacle: `AcSyncService.Edit()` has `Agent`,
+`SalesLocation` and `DocDate` in its header allow-list and calls `ApplyUdf`.
+This was the ERP declining to speak.
+
+| field | source | shape |
+|---|---|---|
+| `Agent` | `mfg_sales_orders.agent` through `AGENT_MAP` | header |
+| `SalesLocation` | `sales_location` through `LOCATION_MAP` | header |
+| `DocDate` | `so_date` | header |
+| `BRANDING` / `VENUE` / `ToPONo` | `branding` / `venue` / `po_doc_no` | **nested `UDF` object** |
+
+`UDF` is nested because that is the only place the service reads it
+(`ApplyUdf` -> `Dict(h, "UDF")`); a flat `SOUDF_*` key at header level is
+silently ignored.
+
+**A field the ERP does not have is OMITTED, never sent as null.** The service's
+header loop is `ContainsKey`-gated and `Str` turns a present-but-null into `""`,
+so `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
+the account book has". Same rule as the line-level Location, one level up.
+
 ## 7e. The masters a document names are opened first
 
 A document naming a master AutoCount does not have does not fail politely: it

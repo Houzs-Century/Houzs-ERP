@@ -32,6 +32,11 @@ import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import {
   callAcService,
+  AGENT_MAP,
+  LOCATION_MAP,
+  BRANDING_MAP,
+  VENUE_MAP,
+  mapOrPassthrough,
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
@@ -1267,16 +1272,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
-    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), {
-      DebtorName: (h.debtor_name as string) ?? null,
-      Attention: (h.debtor_name as string) ?? null,
-      Ref: (h.ref as string) ?? null,
-      Phone1: (h.phone as string) ?? null,
-      InvAddr1: (h.address1 as string) ?? null,
-      InvAddr2: (h.address2 as string) ?? null,
-      InvAddr3: (h.address3 as string) ?? null,
-      InvAddr4: (h.address4 as string) ?? null,
-    }, lines, {}, retired),
+    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines, {}, retired),
   };
 }
 
@@ -1302,6 +1298,49 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
 }
 
 // ── drain ───────────────────────────────────────────────────────────────────
+
+/**
+ * The SO header fields an EDIT carries.
+ *
+ * A create sends the salesperson, the sales location, the document date and the
+ * three UDFs; an edit used to send none of them, so changing any one of those on
+ * a live order never reached AutoCount at all (divergence D8). The account book
+ * accepts every one of them on `/edit` — `AcSyncService.Edit()` has them in its
+ * allow-list and calls `ApplyUdf` — so this was the ERP declining to speak, not
+ * AutoCount refusing to listen.
+ *
+ * A NULL VALUE IS OMITTED, NEVER SENT. The service's header loop is
+ * `ContainsKey`-gated and `Str` turns a present-but-null into `""`, so sending
+ * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
+ * the account book has". The same rule as the line-level Location, one level up.
+ */
+function soEditHeader(h: Record<string, unknown>): Record<string, string | null | Record<string, string>> {
+  const out: Record<string, string | null | Record<string, string>> = {
+    DebtorName: (h.debtor_name as string) ?? null,
+    Attention: (h.debtor_name as string) ?? null,
+    Ref: (h.ref as string) ?? null,
+    Phone1: (h.phone as string) ?? null,
+    InvAddr1: (h.address1 as string) ?? null,
+    InvAddr2: (h.address2 as string) ?? null,
+    InvAddr3: (h.address3 as string) ?? null,
+    InvAddr4: (h.address4 as string) ?? null,
+  };
+  const agent = mapOrPassthrough((h.agent as string) ?? null, AGENT_MAP);
+  if (agent) out.Agent = agent;
+  const loc = mapOrPassthrough((h.sales_location as string) ?? null, LOCATION_MAP);
+  if (loc) out.SalesLocation = loc;
+  if (h.so_date) out.DocDate = String(h.so_date);
+
+  const udf: Record<string, string> = {};
+  const branding = mapOrPassthrough((h.branding as string) ?? null, BRANDING_MAP);
+  if (branding) udf.BRANDING = branding;
+  const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
+  if (venue) udf.VENUE = venue;
+  if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  if (Object.keys(udf).length) out.UDF = udf;
+
+  return out;
+}
 
 /**
  * The masters a payload NAMES, in the shape /ensure-masters consumes.

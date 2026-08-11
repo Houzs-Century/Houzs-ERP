@@ -250,7 +250,11 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
-  Header: Record<string, string | null>;
+  /* `UDF` is a NESTED object, because that is how AcSyncService reads it
+     (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
+     silently ignored — the connector's own decompiled source made the same
+     point about its create path, and it cost a round of blind pushes then. */
+  Header: Record<string, string | null | Record<string, string>>;
   Lines: AcEditLine[];
 }
 
@@ -509,7 +513,7 @@ export function composeCreatePo(
 export function composeEdit(
   docType: AcDocType,
   docNo: string,
-  header: Record<string, string | null>,
+  header: Record<string, string | null | Record<string, string>>,
   lines: ErpLine[],
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
