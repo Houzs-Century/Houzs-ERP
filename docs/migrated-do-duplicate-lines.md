@@ -20,6 +20,89 @@ fix. The run log names each residue with the documents standing behind it. See
 
 ---
 
+## APPLIED — production, 2026-08-11
+
+| | |
+|---|---|
+| DRY-RUN | Actions run **31451629651** |
+| APPLY | Actions run **31451705673** |
+| Read-only diagnostic the list came from | run **31450027318**, Section D |
+
+**18 rows zeroed, 0 refused.** All 8 documents were `migrated_no_stock` with 0
+inventory movements; every surplus row carried `0` in every money column; none
+had a `sales_invoice_items` or `delivery_return_items` row against it; and the
+catalogue read reported **no triggers at all** on `scm.delivery_order_items`, so
+the before/after numbers are the table's own.
+
+The complete prior state of all 18 rows is printed row by row in the apply run's
+artifact (`zero-duplicate-do-lines-apply` → `zero-dup-do.txt`), which is the
+backup this decision relies on. Retention is 30 days; the run log is the record.
+
+### Document totals did not move
+
+Read back on a fresh connection: `line_count`, `local_total_centi`,
+`total_cost_centi`, `total_margin_centi`, the physical line count and the sum of
+`line_total_centi` are **identical** on all 8 documents. Only `sum_qty` moved,
+which is the entire point:
+
+| document | lines | sum_qty before → after |
+|---|---|---|
+| `HC-DO-004868` | 2 | 2 → 1 |
+| `HC-DO-004903` | 2 | 2 → 1 |
+| `HC-DO-005452` | 12 | 24 → 12 |
+| `HC-DO-006224` | 4 | 4 → 2 |
+| `HC-DO-007525` | 6 | 6 → 1 |
+| `HC-DO-009013` | 2 | 4 → 2 |
+| `HC-DO-010008` | 2 | 2 → 1 |
+| `HC-DO-010222` | 2 | 8 → 4 |
+
+Every row is still present — the line counts are unchanged.
+
+### Over-delivered: 11 → 7, and the 7 are not duplicates
+
+The projection computed before the write and the read-back after it agree
+exactly. **4 cleared:**
+
+```
+HC-SO-005554 STORAGE                    2 -> 1   CLEARS
+HC-SO-006089 AKEMI ARMOUR MATT (K)      2 -> 1   CLEARS
+HC-SO-006766 STORAGE                    6 -> 1   CLEARS
+HC-SO-010504 NTYR-CL MX MICR PIL        4 -> 2   CLEARS
+```
+
+**7 remain, and zeroing more would be wrong** — each surviving line is a real
+delivered quantity:
+
+```
+HC-SO-001920 AK-COOL HUGGY BLANKET      ordered 1, delivered 2
+HC-SO-001920 AK-CS AIRLOFT COMFY PIL    ordered 2, delivered 4
+HC-SO-001920 AKEMI ARISTOI MATT (SK)    ordered 1, delivered 2
+HC-SO-001920 ELEPAHNE-(SK)              ordered 1, delivered 2
+HC-SO-001920 HB709M-CC                  ordered 1, delivered 2
+HC-SO-001920 HB709NL                    ordered 1, delivered 2
+HC-SO-009774 AK-CS AIRLOFT COMFY PIL    ordered 2, delivered 4
+```
+
+Two distinct causes, neither of them a duplicate:
+
+1. **`AKEMI ARISTOI MATT (SK)` and `ELEPAHNE-(SK)`** — one unit from
+   `DO-005452` (2025-07-19) and one from `DO-006224` (2025-09-13). That second
+   unit is AutoCount's own, two months later, against a 1-unit order. **Correct
+   data, a commercial question for the owner, not an ERP defect.**
+2. **The other five** — one surviving delivery line whose own quantity exceeds
+   the linked sales-order line's ordered quantity (`AK-COOL HUGGY BLANKET`:
+   one line of qty 2 against an order line of 1). This is the **mis-link** half
+   of the same writer defect: a second AutoCount row of one item code was
+   attached to the FIRST sales-order line, so a real delivery is counted against
+   the wrong line. #1964 fixed the writer (candidates are now consumed in
+   order); the rows already written still carry the old link.
+
+**This residue is OPEN and is a different piece of work** — re-attaching a
+delivery line to the sales-order line it actually belongs to. It is not a
+duplicate, so Option B neither addresses it nor should.
+
+---
+
 ## What happened
 
 `create-migrated-documents.mjs`, the script that mirrored AutoCount's existing
