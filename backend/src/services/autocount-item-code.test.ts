@@ -29,6 +29,10 @@ import {
   type ErpLine,
 } from './autocount-writeback';
 
+/* `location` is not decoration: a CREATE with none is refused outright, because
+   AutoCount answers FK_SODTL_Location to an empty one. These cases are about
+   the ITEM CODE, so every line carries a real warehouse and gets out of the
+   way. */
 const line = (over: Partial<ErpLine>): ErpLine => ({
   item_code: 'MISC',
   item_group: null,
@@ -36,6 +40,7 @@ const line = (over: Partial<ErpLine>): ErpLine => ({
   description2: null,
   qty: 1,
   unit_price_centi: 1000,
+  location: 'KL',
   ...over,
 } as ErpLine);
 

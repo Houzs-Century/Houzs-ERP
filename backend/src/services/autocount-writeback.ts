@@ -296,6 +296,18 @@ export interface ComposeOptions {
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
+  /**
+   * The document's own location, used for a line that carries none of its own.
+   * A sales order knows where it sells from even when a line does not.
+   */
+  defaultLocation?: string | null;
+  /**
+   * CREATE only. A line that still resolves to no location is REFUSED rather
+   * than sent — see MissingLocationError for the live-book evidence. An edit
+   * must never set this: there, an absent location means "leave the account
+   * book's own value alone".
+   */
+  requireLocation?: boolean;
 }
 
 /**
@@ -311,6 +323,39 @@ export class SofaCollapseError extends Error {
     );
     this.name = 'SofaCollapseError';
     this.refusals = refusals;
+  }
+}
+
+/**
+ * A CREATE with no stock location is refused, because AutoCount refuses it too.
+ *
+ * MEASURED ON THE LIVE BOOK, 2026-08-11 11:54:59: a `/create-so` whose lines
+ * carried no `Location` came back
+ * `AutoCount.Data.ForeignKeyException ... FK_SODTL_Location ... table
+ * "dbo.Location", column 'Location'`. The same document at 11:57:43 with
+ * `Location: "KL"` on both lines saved. AcSyncService's create path applies the
+ * key unconditionally (`Set(() => d.Location = Str(it, "Location"))`) and `Str`
+ * turns an absent key into `""` — and `""` is not a row in `dbo.Location`.
+ *
+ * The omission rule was introduced with a comment claiming it was "a NO-OP on
+ * the create routes". It is not, and it was wrong in the direction that fails
+ * EVERY create. The rule stays correct for an EDIT, where a blank would
+ * overwrite the location the account book already holds; on a CREATE there is
+ * nothing to preserve and a foreign key to satisfy.
+ */
+export class MissingLocationError extends Error {
+  readonly lines: ReadonlyArray<{ index: number; itemCode: string }>;
+  constructor(lines: Array<{ index: number; itemCode: string }>) {
+    super(
+      `${lines.length} line(s) carry no stock location and none can be inherited from the `
+      + `document: ${lines.map((l) => `${l.index + 1} (${l.itemCode})`).join(', ')}. `
+      + 'AutoCount rejects a document line whose Location is not in dbo.Location, and an '
+      + 'absent key reaches it as the empty string — so this create would fail on '
+      + 'FK_SODTL_Location. Set the warehouse on the line, or the sales location on the '
+      + 'document, then save again.',
+    );
+    this.name = 'MissingLocationError';
+    this.lines = lines;
   }
 }
 
@@ -362,6 +407,7 @@ export function composeDetails(
   if (refusals.length) throw new SofaCollapseError(refusals);
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
+  const locationless: Array<{ index: number; itemCode: string }> = [];
   const details: AcDetail[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
@@ -372,7 +418,12 @@ export function composeDetails(
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
-    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
+    const raw = l.location ?? opts.defaultLocation ?? null;
+    const location = raw ? mapOrPassthrough(raw, LOCATION_MAP) ?? raw : null;
+    if (!location && opts.requireLocation) {
+      locationless.push({ index: i, itemCode: r.acItemCode });
+      return;
+    }
     const d: AcDetail = {
       ItemCode: r.acItemCode,
       Description: l.description ?? null,
@@ -393,6 +444,7 @@ export function composeDetails(
     details.push(d);
   });
   if (failures.length) throw new ItemCodeError(failures);
+  if (locationless.length) throw new MissingLocationError(locationless);
 
   return { details, collapsed };
 }
@@ -439,7 +491,11 @@ export function composeCreateSo(
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
     }),
-    Details: composeDetails(live(lines), opts).details,
+    Details: composeDetails(live(lines), {
+      ...opts,
+      defaultLocation: opts.defaultLocation ?? header.sales_location,
+      requireLocation: true,
+    }).details,
   };
 }
 
@@ -462,6 +518,11 @@ export function composeCreatePo(
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
+      /* A purchase order has no location of its own — the ship-to warehouse is
+         per LINE (purchase_order_items.warehouse_id). There is nothing to
+         inherit, so a line without one is refused rather than guessed at. */
+      defaultLocation: opts.defaultLocation ?? null,
+      requireLocation: true,
     }).details,
   };
 }

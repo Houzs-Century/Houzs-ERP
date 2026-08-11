@@ -45,6 +45,7 @@ import {
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
+  MissingLocationError,
   SofaCollapseError,
   type AcDocType,
   type AcOp,
@@ -202,7 +203,7 @@ const SO_HEADER_COLS =
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
    for a column a table does not have fails the whole query with 42703. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled';
+  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -212,7 +213,7 @@ const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_do
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -257,7 +258,43 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   /* undefined on the five tables that have no such column, which composeEdit
      reads as "live" — the same answer the column's own default gives. */
   cancelled: r.cancelled === true,
+  /* Filled in by withLocations below. The raw column is a warehouse UUID and
+     AutoCount wants the short code, so the line cannot carry it on its own. */
+  location: null,
 });
+
+/**
+ * Hang the AutoCount stock location on each line.
+ *
+ * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
+ * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
+ * the ids into codes. Lines share warehouses, so this is one `in` query, not
+ * one per line.
+ *
+ * A line with no warehouse keeps `location: null` and the caller decides:
+ * a create refuses it (MissingLocationError), an edit simply omits the key so
+ * the account book keeps its own value.
+ */
+async function withLocations(
+  sb: Sb,
+  rows: Record<string, unknown>[],
+  lines: ErpLine[],
+): Promise<ErpLine[]> {
+  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  if (!ids.length) return lines;
+  const wh = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').in('id', ids));
+  const byId = new Map<string, string>();
+  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
+    const code = (w.code as string | null) ?? (w.name as string | null);
+    if (w.id && code) byId.set(String(w.id), code);
+  }
+  return lines.map((l, i) => {
+    const id = rows[i]?.warehouse_id;
+    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
+    return code ? { ...l, location: code } : l;
+  });
+}
 
 interface AcDownstreamSpec {
   table: AcLinkTable;
@@ -411,7 +448,8 @@ async function noteReadFailure(
 ): Promise<void> {
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
-    || e instanceof ItemCodeError;
+    || e instanceof ItemCodeError
+    || e instanceof MissingLocationError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -462,7 +500,7 @@ export async function enqueueSoCreate(
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
        AutoCount detail (a sofa build is several rows and one detail), once for
        the payload itself. Both calls are pure and the document is already
@@ -545,7 +583,7 @@ export async function enqueuePoCreate(
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code });
     const body = composeCreatePo(header, lines);
     return await enqueueAcOp(sb, {
@@ -1104,7 +1142,7 @@ export async function enqueueEdit(
       if (composed.create) {
         const { error } = await sb.from('autocount_outbox')
           .update({
-            payload: { ...(pending.payload ?? {}), body: composed.create },
+            payload: { ...(pending.payload ?? {}), body: composed.create() },
             updated_at: new Date().toISOString(),
           })
           .eq('id', pending.id);
@@ -1247,7 +1285,7 @@ async function composeDownstreamState(
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
-    create: null as Record<string, unknown> | null,
+    create: null as (() => Record<string, unknown>) | null,
     edit: () => composeEdit(
       docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
     ),
@@ -1260,13 +1298,17 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
     sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const soRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
-    create: composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
+    /* LAZY. An edit builds this same state, and composing a create it will
+       never send would refuse the edit for the create's reasons — a line with
+       no stock location is fatal to a create and irrelevant to an edit. */
+    create: () => composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1281,12 +1323,13 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const poRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, poRows, poRows.map(soLine));
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
-    create: composeCreatePo(header, lines) as unknown as Record<string, unknown>,
+    create: () => composeCreatePo(header, lines) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */

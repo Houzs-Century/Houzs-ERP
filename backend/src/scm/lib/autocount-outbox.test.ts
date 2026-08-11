@@ -227,7 +227,8 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000, warehouse_id: 'wh-1' }],
+      warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
     }, {
       /* The four columns the composer used to ask purchase_orders for and that
          it has never had. Naming them here is what makes this test fail if one
@@ -358,7 +359,7 @@ describe('the six flows each queue their operation', () => {
 
 describe('cancel and edit against a document still sitting in the outbox', () => {
   const so = {
-    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: null,
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
   };
@@ -803,7 +804,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
    not mention stays live, outstanding and transferable in the account book. */
 describe('a removed line is retired in AutoCount, never just left out', () => {
   const soHeader = {
-    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: null,
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
   };

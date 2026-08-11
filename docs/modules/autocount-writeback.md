@@ -521,6 +521,37 @@ The refusal is raised **before** the keyless-line check, because a half-cancelle
 build is a question about what the operator meant, not a missing backfill —
 telling them to backfill a key would send them after the wrong thing.
 
+### The stock location — mandatory on a CREATE, untouched on an EDIT
+
+The two paths need OPPOSITE rules for the same field, which is why this has its
+own heading.
+
+`AcSyncService`'s create applies the key unconditionally
+(`Set(() => d.Location = Str(it, "Location"))`) and `Str` turns an absent key
+into `""`. `""` is not a row in `dbo.Location`, so the live book rejects it:
+
+```
+2026-08-11 11:54:59  /create-so  (no Location on either line)
+  -> AutoCount.Data.ForeignKeyException  FK_SODTL_Location
+     table "dbo.Location", column 'Location'
+2026-08-11 11:57:43  /create-so  (Location "KL" on both lines)  -> saved
+```
+
+So a create resolves a location per line, in this order, and **refuses when it
+runs out** (`MissingLocationError`, a visible `skipped` row — never `""`):
+
+| | source |
+|---|---|
+| 1 | the line's own `warehouse_id`, resolved to the warehouse CODE (`scm.warehouses`), then through `LOCATION_MAP` |
+| 2 | the document — `mfg_sales_orders.sales_location`. A purchase order has none: its ship-to warehouse is per LINE, so there is nothing to inherit and step 2 does not apply |
+| 3 | refuse, naming the line |
+
+An **edit** does the opposite: no location means OMIT the key, because the
+account book already holds one and a blank would erase it. The same asymmetry
+is why `create` is composed LAZILY in `composeSoState` / `composePoState` — an
+edit builds the same state object, and eagerly composing a create it will never
+send would refuse the edit for the create's reasons.
+
 Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
 `npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
 export without regenerating cannot leave the composer resolving against last
