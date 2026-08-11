@@ -5,6 +5,8 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
+import { grnHasDownstream } from '../lib/downstream-lock';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -865,16 +867,12 @@ export async function recomputePoReceived(
 /* ── GRN child-lock guard (migration 0106) ─────────────────────────────────
    A GRN locks (read-only — no line edit / no cancel) once ANY of its lines has
    a downstream child: invoiced_qty > 0 OR returned_qty > 0 (a PI or PR line is
-   drawn from it). Returns the blocking JSON, or null if the GRN is free to
-   edit. */
-async function grnHasDownstream(sb: any, grnId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('grn_items')
-    .select('invoiced_qty, returned_qty').eq('grn_id', grnId);
-  const any = ((data ?? []) as Array<{ invoiced_qty: number; returned_qty: number }>)
-    .some((r) => (r.invoiced_qty ?? 0) > 0 || (r.returned_qty ?? 0) > 0);
-  if (any) return { error: 'grn_has_downstream', message: 'GRN has a Purchase Invoice / Return — delete it first to edit' };
-  return null;
-}
+   drawn from it).
+
+   The rule now lives in scm/lib/downstream-lock.ts with its three siblings
+   (SO / PO / DO), which had drifted into four private copies in four route
+   files. Same signature, same JSON, same behaviour — see that module for why
+   it is also the ERP half of AutoCount's transferred-document rule. */
 
 /* ── Downstream-consumption guard (bug #2) ─────────────────────────────────
    Reversing a GRN receipt (whole-cancel or line-delete) writes an inventory OUT
@@ -1948,6 +1946,32 @@ grns.post('/from-pos', async (c) => {
     `Batch-converted from ${poList.length} PO${poList.length === 1 ? '' : 's'}: ${poNumbersJoined}`,
   );
 
+  /* ERP -> AutoCount PO->GR. A GRN batched across several POs has no AutoCount
+     shape (one transfer, one source document), so it is recorded as skipped
+     rather than invented or dropped. */
+  if (poList.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'po_to_gr',
+      from: { table: 'purchase_orders', keyCol: 'id', key: poList[0].id },
+      to: { table: 'grns', keyCol: 'id', key: h.id },
+      docType: 'GR',
+      docNo: h.grn_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'po_to_gr',
+      docType: 'GR',
+      docNo: h.grn_number,
+      docId: h.id,
+      reason: `batched from ${poList.length} POs (${poNumbersJoined}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
+
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -2284,6 +2308,30 @@ grns.post('/from-po-items', async (c) => {
       sb, c.get('houzsUser'), activeCompanyId(c), h.id, bucket.lines.length,
       `Received from ${[...bucket.poNumbers].join(', ')}`,
     );
+
+    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document. */
+    if (bucket.poNumbers.size === 1 && bucket.primaryPoId) {
+      await enqueueConvert(sb, {
+        companyId: activeCompanyId(c),
+        op: 'po_to_gr',
+        from: { table: 'purchase_orders', keyCol: 'id', key: bucket.primaryPoId },
+        to: { table: 'grns', keyCol: 'id', key: h.id },
+        docType: 'GR',
+        docNo: h.grn_number,
+        docId: h.id,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    } else {
+      await recordConvertSkipped(sb, {
+        companyId: activeCompanyId(c),
+        op: 'po_to_gr',
+        docType: 'GR',
+        docNo: h.grn_number,
+        docId: h.id,
+        reason: `received against ${bucket.poNumbers.size} POs (${[...bucket.poNumbers].join(', ')}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     const postFailReason = postRes.ok ? undefined : postRes.reason;
     const bucketMovementErrors = postRes.ok ? postRes.movementErrors : undefined;
     const bucketRecountError = postRes.ok ? postRes.recountError : undefined;
@@ -2490,6 +2538,19 @@ grns.patch('/:id/cancel', async (c) => {
   } catch { /* best-effort */ }
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a GRN the downstream lock let
+     through (grnHasDownstream, checked above) — the same rule AutoCount
+     applies, so this can never ask it to cancel an invoiced receipt. */
+  await enqueueCancel(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: head.grn_number ?? id,
+    docId: id,
+    self: { table: 'grns', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
 });
 

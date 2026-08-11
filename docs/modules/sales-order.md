@@ -102,10 +102,57 @@ fully-shipped lines; ONE `computeMrp` per list load). The visible chips read
 THAT, because the previous content (`converted_po_nos`, the convert-time
 raise-link) lied by omission: an accessories/CS SO fulfilled from stock bought
 under other POs raises no PO of its own and showed "—" while its drill named
-the source PO. `converted_po_nos` still rides the payload as the tooltip
-("Raised PO (convert-time link, not a goods source)") when it differs. Mobile
-Orders card renders the same union via `SourcePosRowMobile` (row omitted when
-empty — card idiom).
+the source PO.
+
+**LIST "PO No." column — the raised PO is a CHIP again (2026-08-11, SURFACE
+CHANGE).** Demoting `converted_po_nos` to a tooltip reintroduced the same lie
+from the other side. BOTH source arms need EXECUTION: the shipped arm needs a
+Delivery Order line, the READY arm needs an open lot that still resolves to a
+PO. A CONFIRMED order that has not shipped and whose stock is not allocated
+satisfies neither, so the cell rendered "—" for documents whose own
+Relationship Map names a purchase order (`HC-SO-011733` → `HC-PO-008783` →
+`HC-GR-004863`). Measured on production: of the 2,723 Houzs Century SOs at
+most **53** can light the source arms at all, while **277** carry a real
+non-cancelled PO on `purchase_order_items.so_item_id` — so the column was
+blank for ~91% of the orders that have one. A tooltip on an em-dash is not an
+answer: **if a link exists, a chip must show.**
+
+The cell now renders two chip identities, never conflated — SOLID for a goods
+source (`source_po_union`), MUTED for a raised PO (`converted_po_nos`, filtered
+against the source set so a PO is never chipped twice), each with its own
+tooltip. It is a LIST surface, so it caps at `PO_CELL_MAX` (3) and appends a
+`+N` chip whose title lists every PO — many-POs-to-one-SO is real (12 Houzs SOs
+carry 2, one carries 3) and must never render only the first in silence. `—`
+now means "no purchase order of any kind", which is what a reader assumes it
+means. `getValue` (search / export) returns the same combined list the cell
+renders.
+
+One derivation for both surfaces: `frontend/src/lib/soPoChips.ts`
+(`poCellChips` + `PO_CELL_MAX`, pure). Desktop renders it via `SoListPoCell` in
+`components/SoSourceChips.tsx`; the mobile Orders card via
+`SourcePosRowMobile`'s `raised` slot (`mobile/source-chips.tsx`, row omitted
+when empty — card idiom, and the `+N` cap is a list-cell rule so the phone
+wraps the full list instead). Render tests for both surfaces:
+`frontend/src/components/SoListPoCell.test.tsx`. No backend change was needed —
+`converted_po_nos` was already on the list payload.
+
+**LINE "SPECIAL:" segment — one request prints once (2026-08-11).** The
+migrated-corpus backfill (`backfill-specials-into-variants.mjs`, PRs
+#1926/#1940) is deliberately MERGE-ONLY and machine-asserts that it never
+removes a pre-existing entry, so `variants.specials` legitimately holds BOTH
+the parser's glued phrase and the picker code derived from it — and
+`buildVariantSummary` printed both (`SPECIAL: BACKCUSHIONCHANGE8030 + Change
+8030 Backcushion + Wooden Arm`). The stored data is correct; the doubled
+RENDERING was the defect, and it is resolved at the display layer only:
+`foldRedundantSpecials` in `scm/shared/variant-summary.ts` hides an entry when
+another entry in the same list is a strictly richer twin of it. Deliberately
+narrow — only a SINGLE-TOKEN (machine-glued / fragmentary) entry is ever
+hideable, so an operator's multi-word request can never be suppressed. Measured
+on production: **216 of 1,051** lines carrying specials rendered a redundant
+twin (0 emptied, 0 live picker codes lost); **26 more** carry a SEMANTIC pair
+(`NOSTICHINGINSITTINGAREA` beside `No notch on Seat Cushion`) that needs the
+owner's phrase ruling and is deliberately left alone — see BUG-HISTORY for why
+the phrase map was NOT vendored into the runtime bundles.
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
@@ -149,6 +196,25 @@ The cancel transition — and only that transition — runs inside
 customer's vouchers on an order that is still live. So a cancel needs
 `DATABASE_URL`: without it the endpoint fails closed with
 `503 scm_pg_command_required`. See `BUG-HISTORY.md` 2026-07-29.
+
+### The downstream lock — and why AutoCount cares
+
+An SO with any non-cancelled Delivery Order or Sales Invoice against it cannot
+be cancelled and its lines cannot be edited (`soHasDownstream`, 409
+`so_has_downstream`). Emitting the NEXT DO is still allowed — only mutation and
+cancel are blocked.
+
+Owner, 2026-08-10, on the AutoCount cutover:
+*"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"*.
+AutoCount refuses to cancel or edit a transferred document, so the ERP must
+refuse the same or the two systems disagree the first time someone edits a
+shipped order — with the ERP wrong, because the stock has already moved.
+
+`soHasDownstream` used to be a private copy inside this router; it now lives in
+`backend/src/scm/lib/downstream-lock.ts` with its PO / DO / GRN siblings, same
+signature and same JSON, and is unit-tested for the first time. Every SO
+mutation that gets past it also queues an ERP -> AutoCount edit — see
+`docs/modules/autocount-writeback.md`.
 
 ### The SO line's downstream links — `so_item_id`, and what deletes it
 
@@ -358,6 +424,20 @@ same contract as the Processing-Date gates), all reasons at once:
 | `salesperson_required` | `salesperson_id` OR the legacy `agent` text set (HC-SO-2607-008 confirmed as "Unassigned") |
 | `venue_required` | `venue` text OR `venue_id` set (owner: *"venue is compulsory的"*). No venue-less order class exists in code — venue-binding's "empty is honest" rule governs AUTO-resolution only; when it resolves nothing, confirm demands a human pick |
 | `variants_incomplete` | every goods line's required axes via `missingConfirmVariantAxes` (shared, both frontends + backend): sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/Fabrics. **Colour-KIV satisfies the fabric axis** — KIV blocks the Processing Date (2026-07-24 rule), never confirm. Mattress / accessory / service / others carry no axes |
+
+**Who may write which key of the `variants` jsonb.** The column has several
+writers and no schema, so ownership is by convention and the convention is
+enforced in code:
+
+| keys | owner |
+|---|---|
+| `fabricId` / `colourId` / `fabricCode` / `colourLabel` / `fabricLabel` / `gap` / `divanHeight` / `legHeight` / `totalHeight` / `size` | the AutoCount re-parse sweeps — `OWNED_VARIANT_KEYS` in `backend/scripts/lib/variant-merge.mjs` |
+| `specials` (and the HOOKKA singular `special`) | `backend/scripts/backfill-specials-into-variants.mjs`, the only writer with the money guard — a picked add-on's surcharge folds into the authoritative unit price, so stamping a PRICED code reprices a historical document |
+| everything else (POS configurator, line editors) | its own writer |
+
+A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
+object; rebuilding deletes every key it has not heard of. `custom_specials` is a
+DERIVED output of the pricing recompute and is written by no script at all.
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
@@ -642,3 +722,36 @@ SO-specific wiring:
 - **Audit:** `lib/so-revision.ts` stamps a `routing` field-change + a `routing …`
   note on the `AMENDMENT_SO_APPROVED` row recording which departments the single
   approval covered.
+
+### What an approved amendment does to the LINE PRICE
+
+Approving an amendment re-runs the honest-pricing recompute on every changed
+line (`so-revision.ts` -> `recomputeOneLine`), and that recompute is
+**authoritative by default**: it rewrites `unit_price_centi` to
+`mfg_products.sell_price_sen` (+ fabric-tier delta + extras). That is deliberate
+for a NATIVE order — the catalogue is the truth for an order this ERP priced —
+and it applies even to a QTY-ONLY amendment, because the recompute is per-line,
+not per-changed-field.
+
+**A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
+(migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
+on `scm.grns` / `scm.delivery_orders`, never on the SO or PO header), the apply
+passes `trustOperatorSelling: 'including-zero'` and the stored price is kept. Two
+reasons, both money:
+
+- that unit price is what AutoCount recorded as negotiated with the customer, and
+  `sell_price_sen` is in no sense a better answer for an order this ERP never
+  priced;
+- `'including-zero'` rather than plain `true` because a migrated sofa is
+  routinely carried as the **whole-set price on ONE lead module line with 0 on its
+  siblings**. Plain trust reads a stored 0 as "not provided" and hands the sibling
+  a catalogue price anyway, which bills the set several times over.
+
+If a migrated line's price genuinely must change, the amendment carries
+`new_unit_price_sen` and THAT is what persists — a SPEC change alone does not
+re-price a migrated line.
+
+Note the reachability gate: a migrated SO is only `amendment_eligible` once it is
+processing-locked, and the importer does not set `internal_expected_dd`, so today
+most migrated orders cannot reach this path at all. The exemption exists so that
+giving one a Processing Date does not silently destroy its price later.
