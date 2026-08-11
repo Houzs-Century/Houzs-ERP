@@ -587,3 +587,26 @@ entangled with the deferred line-retirement work
 (`docs/autocount-line-retirement-plan.md`). The exact 18 lines, the two options
 and the recommendation are in `docs/migrated-do-duplicate-lines.md` — an owner
 decision, laid out to be approved in one read.
+
+**Decided 2026-08-11 — Option B: the surplus lines hold quantity 0.** The owner
+chose "qty 改 0 + 审计备注" over adding a `cancelled` column, so
+`backend/scripts/zero-duplicate-do-lines.mjs` (Actions → **Zero the duplicate
+migrated DO lines (owner Option B)**) sets `qty = 0` on the surplus rows and
+appends an audit note to the line's `description`. **The rows stay** — nothing
+is deleted, which is the owner's standing rule.
+
+What that means for anyone reading or writing this module:
+
+- **A `scm.delivery_order_items` row with `qty = 0` is now a real, expected
+  shape on migrated documents.** It is a retired duplicate, not a data error.
+  The note in `description` begins `[ZEROED ` and names the original quantity
+  and the twin row that carries the real delivery.
+- Nothing had to change to make the arithmetic right: `delivered` is the line's
+  own `qty` (`do-line-remaining.ts:199`) and every delivered sum is `SUM(qty)`,
+  so a zero contributes nothing. No reader was taught a new flag, which is
+  exactly why this was preferred over a half-converted soft-cancel.
+- **A zero-quantity line still prints on the DO PDF** unless the renderer
+  filters it. That is the accepted cost of Option B, recorded here so it is not
+  rediscovered as a bug.
+- When the line-retirement work lands for real, these rows are still present
+  and can be flipped to `cancelled = true` in one statement.
