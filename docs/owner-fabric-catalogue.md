@@ -1,0 +1,101 @@
+# 布料码总表 — owner 2026-08-11 亲自给的那一份
+
+**这份文件是「ERP 应该有哪些布料码」的唯一权威。** 在这之前没有这样一份东西:
+`scm.fabric_colours` 是一路被单据喂大的 —— 单子上写什么就补什么 —— 所以它既缺码,
+又同一个颜色存了好几行。owner 2026-08-11 直接把整份清单发过来,并给了三句话:
+
+> **"这个是我们都应该有的fabric code 你看没有的都帮我开code进去"**
+> **"旧的就merge起来 跟我们现在的整齐的"**
+> **"同个颜色的就merge起来"**
+
+外加一个拼写裁决(他自己纠正的):
+
+> **"Modenza 才对"** —— 清单里写的 `MONDENZA` 是笔误,**不要**拿它去改 `MODENZA`。
+
+---
+
+## 1. 动手前必须知道的三件事
+
+**(1) 一个颜色可能已经有好几行。** 库里是按**拼法**长的,不是按颜色长的:
+`CH141` 14 个颜色占 **28 行**(`CH141-8` 和 `CH141-8-ARMY` 是同一块布)、
+`AM275` 14 个占 16 行、`M2402` 12 个占 21 行、`ZL` 和 `ORION` 还有没补零的
+`ZL-3` / `ORION-1` 跟补了零的并存。**先不 merge 就直接开 `ZL-03`,只会变成第三种拼法。**
+
+**(2) 什么都不删。** owner 的老规矩是「只取消不删除」,#1972 已经给 fabric merge 定好形状:
+输的那一行**留着**,`active = false`,label 上记「被哪个码吸收、什么时候」。
+历史单据仍然指得到它,画面上仍然显示得出来。
+
+**(3) 改名字 = 一次只有一个成员的 merge。** 把 `ZL-3` 改成 `ZL-03`,会改掉活跃单据
+`variants->>'fabricCode'` 里存的那个字符串。所以**改名也必须把单据一起 repoint**,
+四条 arm(SO / PO / GRN / DO)一条都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+
+---
+
+## 2. 清单本体
+
+`ORION` / `TR` / `DE` / `HR805` owner 没给颜色名,那就**只有码,不编名字**。
+
+| 系列 | 码 | 备注 |
+|---|---|---|
+| **ZL** | `ZL-01` IVORY · `-02` BUTTER CREAM · `-03` CHAMPAGNE · `-04` GREIGE · `-05` SMOKE · `-06` DESSERT · `-07` FOSSIL · `-08` STONE · `-09` TAUPE · `-10` MUSTARD · `-11` ORANGE · `-12` TAN · `-13` OLIVE · `-14` JADE · `-15` MISTY · `-16` METAL · `-17` GREY · `-18` SLATE · `-19` DARK BROWN · `-20` BLACK | ZANO LEATHER |
+| **MODENZA** | `-01` HOUSTON CREAM · `-02` BARLEY · `-03` BROWN · `-04` MUSTARD · `-05` DARK OLIVE · `-06` SILVER GREY · `-07` SILVER HEATHER · `-08` GRAPHITE | **不是 MONDENZA** |
+| **BO315** | `-01` PEARL · `-02` FEATHER · `-03` BEIGE · `-04` SAND · `-05` FOSSIL · `-06` YELLOW · `-07` PEACH · `-08` SKY · `-09` MINT · `-10` SILVER · `-11` METAL · `-12` DEEP GREY,以及 `-21`~`-32` 是同样十二个颜色**带星号**(`PEARL*` …) | 单子上常写成 `B0315`(数字零),matcher 已经认得 |
+| **NX** | `NX001` CANDY · `002` BANANA · `003` HONEY · `004` OPAL · `005` AVOCADO · `006` PACIFIC · `007` LILAC · `008` TORTILLA · `009` EARTH · `010` IVORY · `011` BEIGE · `012` DOVE · `013` GRANITE · `014` SMOKE · `015` FERN · `016` CHARCOAL | 三位数,没有横杠 |
+| **GD2502** | `#04` OAK · `#09` SANDY · `#11` WHEAT · `#13` PEARL · `#14` SILVER · `#18` GREY · `#20` DARK GREY · `#22` INK | **label 保留 `#`**(现有行就是这么写的),`colour_id` 统一用横杠 |
+| **AM275** | `-01` IVORY · `-02` BEIGE · `-03` LATTE · `-04` WOOD · `-05` BROWN · `-06` BEE · `-07` FOREST · `-08` TURQUOISE · `-09` NAVY · `-10` MAROON · `-11` VIOLET · `-12` SILVER · `-13` GREY · `-14` CHARCOAL | 库里另有一个带空格的假系列 `AM 275` |
+| **CH141** | `-01` CREAM · `-02` BEIGE · `-03` KHAKI · `-04` WOOD · `-05` PEARL · `-06` PEACH · `-07` WINE · `-08` ARMY · `-09` SKY · `-10` OCEAN · `-11` SILVER · `-12` METAL · `-13` DEEP GREY · `-14` CHARCOAL | ⚠️ **13 / 14 跟库里是反的**,见下 |
+| **M2402** | `-01` PEARL · `-04` SAND · `-05` LIGHT BROWN · `-06` FOSSIL · `-07` DARK BROWN · `-08` YELLOW · `-09` TAN · `-13` FOREST · `-15` AQUA · `-17` SILVER · `-18` LIGHT GREY · `-19` DARK GREY | 号码不连续,是原样 |
+| **ORION** | `ORION-01` ~ `ORION-13` | 无颜色名 |
+| **TR** | `TR01` ~ `TR21` | **整个系列 ERP 里原本没有** |
+| **DE** | `DE01` ~ `DE22` | **整个系列 ERP 里原本没有** |
+| **HR805** | `-10` `-20` `-30` `-31` `-40` `-90` | 无颜色名;库里另有一个 `HR805-09`,不在清单上,**不动** |
+
+### ⚠️ CH141 的 13 和 14 是反的
+
+库里今天是 `CH141-13 CHARCOAL` / `CH141-14 DEEP GREY`,owner 的清单是
+**`13 DEEP GREY` / `14 CHARCOAL`**。**以 owner 的清单为准。**
+动的只有**名字**,码不动 —— 所以已经开出去的单据指的还是同一个码,不受影响。
+
+---
+
+## 3. 怎么跑
+
+Actions → **Seed the owner's fabric catalogue** → Run workflow
+
+| | |
+|---|---|
+| 只看会做什么 | `mode = plan`(默认,**什么都不写**) |
+| 真的写 | `mode = apply` + `confirm = I HAVE REVIEWED THE DRY-RUN` |
+| 只做一两个系列 | `series = ZL,TR`(逗号分隔,留空 = 全部) |
+
+脚本:`backend/scripts/seed-owner-fabric-catalogue.mjs`。它把每一条清单项分成四种下场,
+plan 阶段就逐行印出来:
+
+- **CREATE** —— 库里认不出任何一行,开新的(必要时连系列一起开)
+- **MERGE** —— 认出不只一行:**已经是标准码的那一行赢**(它就是 PK,让它赢才不会撞主键),
+  其余的把活跃单据 repoint 过去、然后 `active = false` 标上被谁吸收
+- **RENAME** —— 只认出一行但拼法/名字不对:改成标准形,**单据一起 repoint**
+- **已经对了** —— 不动
+
+另外还会印一段 **「不在 owner 清单上的行」**,例如 `HR805-09`、`BO315-23=LITE-01`。
+**这些一律不动** —— owner 没说要删,而且这里从不删东西。要处理请他逐条讲。
+
+### 匹配用的是共用 matcher,不是本地再写一份
+
+`lib/fabric-colour-match.mjs` 是唯一知道「字母 O 折成 0、但**颜色号码一位都不能动**」
+的地方(数字守卫,#1976)。之前五个脚本各抄一份、抄到互相打架,#1893 才收回来一份。
+**不要在这里再抄第七份。**
+
+### jsonb 的写法是 `jsonb_set(..., to_jsonb($1::text))`
+
+把已经序列化好的字符串绑到 jsonb 参数上,是 2026-08-10 一天之内毁掉 variants 栏三次的
+那个写法。见 `docs/jsonb-double-encoding-coe.md`。
+
+---
+
+## 相关文件
+
+- `docs/duplicate-fabric-series-merge.md` —— **系列**层的重复合并(#1972),跟这份是两个轴:
+  那份合并 `fabric_library`,这份合并 `fabric_colours`
+- `docs/jsonb-double-encoding-coe.md` —— jsonb 双重编码的 COE
+- `backend/scripts/lib/fabric-colour-match.mjs` —— 唯一的颜色匹配器
