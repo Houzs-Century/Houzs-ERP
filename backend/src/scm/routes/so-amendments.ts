@@ -37,6 +37,7 @@ import {
   dispatchOne,
 } from '../lib/amendment-command';
 import { readBridgeCommandConfig, probeBridge } from '../lib/bridge-2990-command';
+import { enqueueEdit } from '../lib/autocount-outbox';
 import type { Context } from 'hono';
 import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
@@ -750,6 +751,24 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
         : 'No PO follow-up needed for this amendment.',
     });
   }
+
+  /* ERP -> AutoCount edit. THE SANCTIONED WAY TO CHANGE A CONFIRMED SO, and
+     until now the one that told AutoCount nothing. applySoAmendment rewrites the
+     header and the lines of an SO that is already PROCESSING-locked — which is
+     precisely the SO most likely to exist in the account book — so the amendment
+     path is where the two sides drifted furthest, fastest, and most officially.
+
+     Queued AFTER the amendment's own status flip won its optimistic-lock race
+     (`updated` is null on a loser, and that branch returned above), so exactly
+     one edit is queued per applied amendment. Queued outside runScmPgCommand for
+     the same reason queueAcSoEditAfter is: a write-back must never be able to
+     roll back a revision the operator has already been told succeeded. */
+  await enqueueEdit(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'SO',
+    docNo: amendment.so_doc_no,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 
   await scheduleStockAllocationAfterCommand(c, sb, `amendment-approve-so:${amendment.so_doc_no}`);
   return c.json({
