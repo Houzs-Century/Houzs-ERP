@@ -6,7 +6,18 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
+   the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
+async function queueAcGrnEdit(c: any, id: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -1742,6 +1753,28 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalCenti is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
+     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
+     need not have a parent PO. AutoCount has no create for a GRN at all; it
+     builds one only by transferring a PO's lines. Even when a purchaseOrderId
+     IS supplied here, sending a conversion would be WRONG rather than merely
+     approximate: AcSyncService resolves the source lines from AutoCount's own
+     outstanding predicate (DtlKeys()), so the account book would receive the
+     PO's outstanding lines, not the quantities the receiver actually typed and
+     accepted on this form. That is a wrong value, and a wrong value is worse
+     than a blank — so the divergence is recorded instead of guessed.
+     The two real conversion routes are POST /from-pos and /from-po-items. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: h.grn_number,
+    docId: h.id,
+    missing: (body.purchaseOrderId as string | undefined)
+      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
+      : 'no source Purchase Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -2733,6 +2766,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
+  await queueAcGrnEdit(c, id);
   return c.json({ grn: data });
 });
 
@@ -2968,6 +3002,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
+  await queueAcGrnEdit(c, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3238,6 +3273,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
+  await queueAcGrnEdit(c, grnId);
   return c.json({ ok: true });
 });
 
@@ -3390,5 +3426,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
+  await queueAcGrnEdit(c, grnId);
   return c.body(null, 204);
 });

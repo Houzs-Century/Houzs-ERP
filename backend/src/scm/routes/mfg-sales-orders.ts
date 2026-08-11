@@ -6117,6 +6117,14 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     note: (body.reason as string) || undefined,
   });
 
+  /* ERP -> AutoCount edit. This route writes unit_price_centi, which IS an
+     AutoCount field (UnitPrice on SODTL) — so an override that never reached
+     the account book left the two sides quoting different money for the same
+     order line. It was missed because it is the one price path that does not go
+     through PATCH /:docNo/items/:itemId: it is the admin-only audited side-door,
+     and the wiring test that claimed "every SO mutation path queues an edit"
+     asserted seven named anchors rather than the set. */
+  await queueAcSoEdit(c, docNo);
   return c.json({ ok: true, itemId, newPrice });
 });
 

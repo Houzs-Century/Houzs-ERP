@@ -55,7 +55,18 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
+   (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
+async function queueAcSiEdit(c: any, id: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -1075,6 +1086,23 @@ salesInvoices.post('/', async (c) => {
      Written before the DRAFT early-return so both statuses record exactly one. */
   await recordSiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. A standalone invoice
+     with no delivery order behind it has nothing for AutoCount to transfer
+     from, and there is no /create-iv route on AcSyncService to reach for.
+     Recorded rather than dropped, because this invoice will never appear in the
+     account book and the owner's outstanding rule ("not converted to DO and NOT
+     TO IV") reads exactly this document class. Placed BEFORE the DRAFT early
+     return so a draft and a posted invoice each record exactly one row, in step
+     with recordSiCreate directly above. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docNo: h.invoice_number,
+    docId: h.id,
+    missing: 'no source Delivery Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   /* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post AR/GL revenue nor auto-apply
      customer credit. Both happen on confirm (PATCH /:id/status DRAFT→SENT). */
   if (isDraft) {
@@ -1500,6 +1528,17 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
   if ((si as { status: string }).status !== 'DRAFT') {
     await postSiRevenue(sb, (si as { invoice_number: string }).invoice_number);
   }
+  /* ERP -> AutoCount edit. This is AutoCount's PARTIAL TRANSFER — a second (or
+     third) delivery order folded into an invoice that already exists — and it
+     was the one conversion path that queued nothing at all, not even a skipped
+     row, so the invoice in the account book kept the lines of only the first DO.
+
+     It is queued as an EDIT rather than a second convert on purpose: a convert
+     would make AcSyncService AddNew a whole new Invoice document, which is a
+     different document from the one the ERP just appended to. Where the added
+     lines have no DtlKey the edit is refused with a visible row — see the same
+     note on the PO's convert-from-so. */
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, added: rows.length }, 201);
 });
 
@@ -1607,6 +1646,7 @@ salesInvoices.patch('/:id', async (c) => {
     fieldChanges: diffFields(before, auditPatch, SI_AUDIT_FIELDS),
   });
 
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, id });
 });
 
@@ -1697,6 +1737,7 @@ salesInvoices.post('/:id/items', async (c) => {
   try {
     await resyncSiRevenue(sb, (header as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
 });
 
@@ -1814,6 +1855,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-edit resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true });
 });
 
@@ -1866,6 +1908,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-delete resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true });
 });
 
@@ -2320,6 +2363,27 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
         console.error(`[customer-credit] credit-from-cancel failed for ${d.invoice_number}:`, e);
       }
     }
+
+    /* ERP -> AutoCount cancel. THE OWNER'S OUTSTANDING RULE IS WHY THIS EXISTS,
+       not tidiness: his rule is "not converted to DO and NOT TO IV, cancelled
+       excluded". An invoice cancelled here but left live in the account book
+       keeps consuming its Sales Order on the AutoCount side, so the two systems
+       disagree about which orders are still outstanding by exactly the set of
+       invoices the ERP has cancelled. AcSyncService has handled `case "IV"`
+       since it was written (AcSyncService.cs:423); the ERP simply never asked.
+
+       Placed inside the atomic `.neq('status','CANCELLED')` branch, so a losing
+       concurrent cancel returned above and exactly one cancel is ever queued.
+       Never throws — enqueueCancel swallows, and a write-back must not fail a
+       save that has already committed. */
+    await enqueueCancel(sb, {
+      companyId: co.companyId ?? activeCompanyId(c),
+      docType: 'IV',
+      docNo: d.invoice_number ?? id,
+      docId: id,
+      self: { table: 'sales_invoices', keyCol: 'id', key: id },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   if (isReopen) {

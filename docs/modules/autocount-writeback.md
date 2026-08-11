@@ -30,8 +30,17 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/po-to-gr` | `po_to_gr` | PO -> Goods Receipt |
 | `/do-to-iv` | `do_to_iv` | DO -> Sales Invoice |
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |
-| `/cancel` | `cancel` | SO / PO cancel |
-| `/edit` | `edit` | header, lines, and variant/SKU changes |
+| `/cancel` | `cancel` | cancel — all six types (SO, PO, DO, GR, IV, PI) |
+| `/edit` | `edit` | edit — all six types: header, lines, variant/SKU changes |
+
+There is deliberately **no create route for DO / GRN / Invoice / Purchase
+Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
+primitive for those four is `AddPartialTransferDetail(fromDocType, dtlKeys)` —
+you build one by transferring a SOURCE document's lines — so a parentless one
+cannot be expressed at all. The ERP CAN create all four parentless (a manual
+GRN with no PO is an explicit owner decision), and each such document is
+recorded as a `skipped` outbox row by `recordParentlessCreate` so the
+divergence is written down rather than silently dropped.
 
 ---
 
@@ -162,8 +171,24 @@ Each hook sits at the point the document becomes permanent — after the
 | PO cancel | `mfg-purchase-orders.ts` | `PATCH /:id/cancel` |
 | DO cancel | `delivery-orders-mfg.ts` | `PATCH /:id/status` when the transition is to CANCELLED |
 | GRN cancel | `grns.ts` | `PATCH /:id/cancel`, after the atomic flip won the race |
-| SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, and `tbc-update` / `tbc-swap` / `tbc-swap-sofa` |
-| PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH and line add/edit/delete |
+| SI cancel | `sales-invoices.ts` | `PATCH /:id/status` inside the atomic CANCELLED branch |
+| PI cancel | `purchase-invoices.ts` | `PATCH /:id/cancel`, after the atomic ACTIVE->CANCELLED flip won |
+| SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, `tbc-update` / `tbc-swap` / `tbc-swap-sofa`, the admin price `override`, and `so-amendments.ts` approve-so |
+| PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH, line add/edit/delete, `bulk-supplier-date` (per PO that moved), `convert-from-so`, and `po-amendments.ts` approve |
+| DO edit | `delivery-orders-mfg.ts` | `queueAcDoEdit` from the header PATCH and line add/edit/delete |
+| GRN edit | `grns.ts` | `queueAcGrnEdit` from the header PATCH and line add/edit/delete |
+| SI edit | `sales-invoices.ts` | `queueAcSiEdit` from the header PATCH, line add/edit/delete, and `POST /:id/items/from-do/:doId` (the partial transfer) |
+| PI edit | `purchase-invoices.ts` | `queueAcPiEdit` from the header PATCH and line add/edit/delete |
+| PO create (from SOs) | `mfg-purchase-orders.ts` | `convertSosToPosCore`, per bucket, when the inserted status is not DRAFT — this is what `POST /from-sos` and the MRP agent both ride |
+| DO / GRN / SI / PI created parentless | the four routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these |
+
+**An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
+`applyPoAmendment` rewrite a confirmed document's header and lines in place; the
+queue call sits after the amendment's own optimistic-lock flip won, so exactly
+one edit is queued per applied amendment. Re-creating the document instead would
+destroy AutoCount's own `DocTransfer` links and its audit trail — a worse loss
+than the ERP-side one, and forbidden outright by the owner's rule that nothing is
+ever deleted.
 
 A **variant or SKU change IS a line change** — AutoCount takes it as `Desc2` +
 `ItemCode` on the same `DtlKey` — so the `tbc-*` routes need no operation of
@@ -172,6 +197,15 @@ OUTSIDE the transaction and fires only on a 2xx.
 
 `tests/autocountWritebackWiring.test.ts` pins every one of these anchors so a
 refactor cannot silently unhook the queue.
+
+`tests/autocountWritebackCells.test.ts` asks the stronger question. Pinning named
+anchors is a regression net, not a coverage claim: a test whose name says "every
+SO mutation path queues an edit" while its body checks seven hand-listed places
+passes forever after the eighth path is added — and the NAME is what the next
+reader trusts. So that file DERIVES the expected set from `AcSyncService.cs`: it
+reads the `case` labels out of `Cancel()` and `Edit()` and asserts the ERP asks
+for exactly the same six document types. A type the service can handle and the
+ERP cannot reach now fails automatically, with nobody having to remember.
 
 ### Two cases that need care
 
@@ -374,6 +408,44 @@ SELECT doc_type, doc_no, op, attempts, last_error
   FROM scm.autocount_outbox WHERE status = 'failed' ORDER BY created_at DESC;
 ```
 
+**Do not paste those into a console for the owner.** The repo rule is that a
+production fact is a script plus a `workflow_dispatch` workflow, never a query
+handed to a human. Actions -> **Cancel parity check (read-only)** answers the
+question that matters — is the outstanding set the same on both sides, and did
+the ERP ever ask for the cancels it made — and prints the outbox breakdown as
+its section 5.
+
+### The cancel-parity check — the owner's rule 3, made testable
+
+`backend/scripts/check-cancel-parity.mjs` + `.github/workflows/cancel-parity-check.yml`.
+
+His rule: a cancel applied on one side only splits the outstanding set, and the
+acceptance test is that his own rule — NOT converted to DO and NOT to IV,
+cancelled excluded — computes IDENTICALLY on both sides. The check computes it on
+both and prints every document outstanding on ONE side only, sorted by cause: the
+ERP cancelled it and AutoCount still holds it open; AutoCount cancelled it and the
+ERP still holds it open; a conversion that was not mirrored; a document that
+exists on one side only. It then asks the outbox whether the ERP ever ASKED for
+each cancel it made, because "the ask failed" and "there was no ask" are
+different faults with different fixes.
+
+On the AutoCount side the rule is one predicate, not two: `SODTL.TransferedQty`
+counts a transfer to a Delivery Order and a direct transfer to an Invoice alike,
+so it is `Cancelled='F' AND EXISTS (a line with Qty - TransferedQty > 0)`.
+
+The AutoCount half is a committed snapshot
+(`backend/scripts/data/ac-cancel-parity.json.gz`) because no one machine can
+reach both systems — the account book is behind ZeroTier, production Postgres is
+reachable only from a runner. Refresh it on the shop's network first:
+
+```
+AC_CRED_FILE=<cred file> python backend/scripts/export-ac-cancel-parity.py
+```
+
+The check prints the snapshot's age and marks it STALE past
+`AC_SNAPSHOT_MAX_AGE_DAYS`, so a disagreement caused by the days in between can
+never be mistaken for a cancel divergence.
+
 ---
 
 ## 10. Tests
@@ -384,6 +456,7 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
+| `tests/autocountWritebackCells.test.ts` | That the ERP can reach EVERY document type `AcSyncService` handles — the expected set is read out of the C# `switch` rather than hand-listed — plus the DO/GRN/SI/PI edit hooks, the SO/PO paths the anchor test missed (price override, both amendment applies, `bulk-supplier-date`, `convert-from-so`, the SI partial transfer), the SO->PO create hole, the four parentless-create records, and that no route expresses an edit as cancel-then-create |
 
 ---
 

@@ -192,12 +192,22 @@ export interface AcConvertPayload {
 }
 
 export interface AcCancelPayload {
-  DocType: string;
+  DocType: AcDocType;
   DocNo: string;
 }
 
+/**
+ * The six document types AcSyncService can cancel and edit.
+ *
+ * These are AutoCount's own literals, not the ERP's names: 'IV' is the Sales
+ * Invoice and 'GR' the Goods Received Note. Cancel() (AcSyncService.cs:421-426)
+ * and Edit() (:441-446) each switch over exactly this set, and the four
+ * conversion sources ('SO' | 'PO' | 'DO' | 'GR') are a subset of it.
+ */
+export type AcDocType = 'SO' | 'PO' | 'DO' | 'GR' | 'IV' | 'PI';
+
 export interface AcEditPayload {
-  DocType: string;
+  DocType: AcDocType;
   DocNo: string;
   Header: Record<string, string | null>;
   Lines: Array<AcDetail & { DtlKey?: number }>;
@@ -277,16 +287,38 @@ export function makeItemCodeResolver(bindings: Map<string, string>): ItemCodeRes
   };
 }
 
+/**
+ * A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
+ *
+ * AcSyncService's line loop is `ContainsKey`-gated exactly like its header loop
+ * (AcSyncService.cs:538-543) and its `Str` helper turns a present-but-null key
+ * into the empty string (AcSyncService.cs:571). So `{"Location": null}` does not
+ * mean "leave it alone" — it means `d.Location = ""`, blanking the value the
+ * account book owns.
+ *
+ * This bit us silently on the SO and PO edit paths: SO_ITEM_COLS and
+ * PO_ITEM_COLS select no `location` column, so every ErpLine had
+ * `location === undefined`, `toDetails` emitted `Location: null`, and every
+ * edit wiped the stock location off every line of a live AutoCount document.
+ *
+ * Dropping the key is a NO-OP on the create routes — CreateSo/CreatePo call
+ * `Set(() => d.Location = Str(it, "Location"))` unconditionally, and an absent
+ * key yields the same "" they were already getting — so one rule serves both.
+ */
 function toDetails(lines: ErpLine[], resolve: ItemCodeResolver): AcDetail[] {
-  return lines.map((l) => ({
-    ItemCode: resolve(l.item_code).acItemCode ?? l.item_code,
-    Description: l.description,
-    Desc2: composeDescription2(l),
-    Qty: Number(l.qty) || 0,
-    UnitPrice: price(l.unit_price_centi),
-    Location: l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null,
-    DeliveryDate: l.delivery_date ?? null,
-  }));
+  return lines.map((l) => {
+    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
+    const d: AcDetail = {
+      ItemCode: resolve(l.item_code).acItemCode ?? l.item_code,
+      Description: l.description,
+      Desc2: composeDescription2(l),
+      Qty: Number(l.qty) || 0,
+      UnitPrice: price(l.unit_price_centi),
+    };
+    if (location) d.Location = location;
+    if (l.delivery_date) d.DeliveryDate = l.delivery_date;
+    return d;
+  });
 }
 
 /** UDF entries, blanks dropped — AcSyncService writes every key it is given. */
@@ -370,7 +402,7 @@ export function composeCreatePo(
  * docs/modules/autocount-writeback.md for what has to be true first.
  */
 export function composeEdit(
-  docType: 'SO' | 'PO',
+  docType: AcDocType,
   docNo: string,
   header: Record<string, string | null>,
   lines: ErpLine[],

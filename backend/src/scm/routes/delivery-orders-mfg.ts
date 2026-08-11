@@ -19,7 +19,25 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { doHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
+   queueAcSoEdit. Every DO mutation route funnels through it, so exactly one
+   snapshot of the SAVED delivery order is queued per successful save — header
+   PATCH and line add / edit / delete alike.
+
+   AcSyncService has handled `case "DO"` in Edit() since it was written
+   (AcSyncService.cs:442); what was missing was any way for the ERP to ASK, and
+   a column to remember the line identity by (mig 0280). Never throws: a write
+   to AutoCount must not fail a user's save. */
+async function queueAcDoEdit(c: any, id: string): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'DO',
+    docId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
@@ -3501,6 +3519,21 @@ deliveryOrdersMfg.post('/', async (c) => {
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
     });
+  } else {
+    /* THE ELSE BRANCH IS THE POINT. A source-less DO used to fall out of this
+       `if` writing nothing at all — no outbox row, no reason, nothing to find it
+       by — so a shipment that exists in the ERP and can never exist in the
+       account book left no trace of the fact. It is a permanent shape mismatch,
+       not a bug, and permanent divergences are exactly the ones that have to be
+       written down. */
+    await recordParentlessCreate(sb, {
+      companyId: activeCompanyId(c),
+      docType: 'DO',
+      docNo: h.do_number,
+      docId: h.id,
+      missing: 'no source Sales Order',
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   /* A DO = goods shipped on creation → deduct stock now (idempotent: the
@@ -4396,6 +4429,7 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
     }
   }
 
+  await queueAcDoEdit(c, id);
   return c.json({
     ok: true,
     id,
@@ -4608,6 +4642,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     });
   }
 
+  await queueAcDoEdit(c, id);
   return c.json({ item: data }, 201);
 });
 
@@ -4871,6 +4906,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user?.id);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-line-edit failed:', e); }
+  await queueAcDoEdit(c, id);
   return c.json({ ok: true });
 });
 
@@ -4959,6 +4995,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user?.id);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-line-delete failed:', e); }
+  await queueAcDoEdit(c, id);
   return c.json({ ok: true });
 });
 

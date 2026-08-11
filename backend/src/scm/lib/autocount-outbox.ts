@@ -34,9 +34,11 @@ import {
   callAcService,
   composeCreatePo,
   composeCreateSo,
+  composeDescription2,
   composeEdit,
   acServiceConfig,
   KeylessLineError,
+  type AcDocType,
   type AcOp,
   type AcCreatedLine,
   type ErpLine,
@@ -56,6 +58,15 @@ export type AcLinkTable =
   | 'grns'
   | 'sales_invoices'
   | 'purchase_invoices';
+
+/** The ERP line tables that can carry an AutoCount DtlKey (0273 + 0280). */
+export type AcLineTable =
+  | 'mfg_sales_order_items'
+  | 'purchase_order_items'
+  | 'delivery_order_items'
+  | 'grn_items'
+  | 'sales_invoice_items'
+  | 'purchase_invoice_items';
 
 export interface AcDocRef {
   table: AcLinkTable;
@@ -82,9 +93,20 @@ export interface AcOutboxPayload {
    * trusted — see persistLineKeys.
    */
   lineWriteback?: {
-    table: 'mfg_sales_order_items' | 'purchase_order_items';
+    table: AcLineTable;
     ids: string[];
     codes: string[];
+    /**
+     * The Desc2 each line was sent with, positionally aligned to `ids`.
+     *
+     * ItemCode alone does not identify a line: a sofa order carries several
+     * lines of the SAME code differing only in their build text, and the
+     * conversion routes do not send a line list at all — AutoCount picks the
+     * source lines itself — so the two orderings are only presumed to agree.
+     * Desc2 is what tells two same-code lines apart, and persistLineKeys uses
+     * it to REFUSE rather than store a confidently wrong line identity.
+     */
+    desc2?: Array<string | null>;
   };
 }
 
@@ -104,7 +126,7 @@ export interface AcOutboxRow {
 export interface EnqueueInput {
   companyId: number | null | undefined;
   op: AcOp;
-  docType: 'SO' | 'PO' | 'DO' | 'IV' | 'GR' | 'PI';
+  docType: AcDocType;
   docNo: string;
   docId?: string | null;
   payload: AcOutboxPayload;
@@ -167,6 +189,134 @@ const SO_ITEM_COLS =
 const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_docno';
 const PO_ITEM_COLS =
   'id, material_code, item_group, description, qty, unit_price_centi, variants, linked_ac_dtlkey';
+
+/**
+ * The four DOWNSTREAM document types, described once.
+ *
+ * AcSyncService can edit all six (AcSyncService.cs:441-446) and cancel all six
+ * (:421-426); until now the ERP could only reach SO and PO, because enqueueEdit
+ * was typed to those two. These four differ from SO/PO in one structural way and
+ * it shapes everything below: THEY HAVE NO CREATE. AutoCount builds a DO, GRN,
+ * Invoice or Purchase Invoice only by transferring source lines
+ * (AddPartialTransferDetail is the SDK's one primitive), so the operation that
+ * brings one into the account book is its CONVERSION, and its line identity is
+ * whatever AutoCount assigned during that conversion.
+ *
+ * WHAT IS DELIBERATELY ABSENT FROM EVERY `header` BELOW:
+ *
+ *   DocDate — the conversion set it, and the ERP's date column is not the same
+ *     quantity. A GRN's is `received_at`, a timestamp; the DO's `do_date` and
+ *     the shipment date are different facts. /edit applies only the keys it is
+ *     GIVEN (AcSyncService.cs:460 `h.ContainsKey`), so omitting it leaves the
+ *     book's own posting date alone. A wrong posting date is worse than none.
+ *   Addresses — the DO and SI carry address1/2 + city/state/postcode, which is
+ *     five ERP fields against AutoCount's four numbered lines. Any packing rule
+ *     would be invented here rather than derived, so the keys are omitted and
+ *     AutoCount keeps what the transfer gave it.
+ *   Agent / SalesLocation — mapped through AGENT_MAP / LOCATION_MAP on the SO,
+ *     where a miss yields null. Sending that null would BLANK a real agent on a
+ *     document the ERP is not the authority for.
+ */
+/* Declared HERE rather than beside the other enqueue helpers: DOWNSTREAM below
+   is a module-level const that references it during module evaluation, so a
+   later `const soLine` would be in its temporal dead zone and every import of
+   this module would throw. */
+const soLine = (r: Record<string, unknown>): ErpLine => ({
+  item_code: String(r.item_code ?? r.material_code ?? ''),
+  item_group: (r.item_group as string) ?? null,
+  description: (r.description as string) ?? null,
+  description2: (r.description2 as string) ?? null,
+  qty: Number(r.qty ?? 0),
+  unit_price_centi: Number(r.unit_price_centi ?? 0),
+  variants: (r.variants as Record<string, unknown> | null) ?? null,
+  linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
+});
+
+interface AcDownstreamSpec {
+  table: AcLinkTable;
+  itemTable: AcLineTable;
+  /** The column on the item table that points back at the header. */
+  itemFk: string;
+  headerCols: string;
+  itemCols: string;
+  /** The human document number, for the outbox row's doc_no. */
+  docNoOf: (h: Record<string, unknown>) => string;
+  line: (r: Record<string, unknown>) => ErpLine;
+  header: (h: Record<string, unknown>) => Record<string, string | null>;
+}
+
+const str = (v: unknown): string | null => (v == null ? null : String(v));
+
+const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
+  DO: {
+    table: 'delivery_orders',
+    itemTable: 'delivery_order_items',
+    itemFk: 'delivery_order_id',
+    headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
+    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
+    line: soLine,
+    header: (h) => ({
+      DebtorName: str(h.debtor_name),
+      Attention: str(h.debtor_name),
+      Ref: str(h.ref),
+      Phone1: str(h.phone),
+      Note: str(h.note),
+    }),
+  },
+  GR: {
+    table: 'grns',
+    itemTable: 'grn_items',
+    itemFk: 'grn_id',
+    headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
+    itemCols: 'id, material_code, item_group, description, description2, qty_accepted, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
+    /* qty_ACCEPTED, not qty_received. AutoCount's GR line quantity is what
+       entered stock, and qty_accepted is the number this ERP posts to stock and
+       rolls up onto the PO. The received/rejected split has no AutoCount
+       counterpart at all, so sending qty_received would make AutoCount's PO
+       outstanding disagree with the ERP's by exactly the rejected quantity. */
+    line: (r) => soLine({ ...r, qty: r.qty_accepted }),
+    header: (h) => ({
+      Ref: str(h.delivery_note_ref),
+      Description: str(h.notes),
+    }),
+  },
+  IV: {
+    table: 'sales_invoices',
+    itemTable: 'sales_invoice_items',
+    itemFk: 'sales_invoice_id',
+    headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
+    itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
+    line: soLine,
+    header: (h) => ({
+      DebtorName: str(h.debtor_name),
+      Attention: str(h.debtor_name),
+      Ref: str(h.ref),
+      Phone1: str(h.phone),
+      Note: str(h.note),
+    }),
+  },
+  PI: {
+    table: 'purchase_invoices',
+    itemTable: 'purchase_invoice_items',
+    itemFk: 'purchase_invoice_id',
+    headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
+    itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
+    docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
+    line: soLine,
+    header: (h) => ({
+      Ref: str(h.supplier_invoice_ref),
+      Description: str(h.notes),
+    }),
+  },
+};
+
+/** The line table each conversion's TARGET lines live in, for key capture. */
+const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 'DO' | 'GR' | 'IV' | 'PI'> = {
+  so_to_do: 'DO', po_to_gr: 'GR', do_to_iv: 'IV', gr_to_pi: 'PI',
+};
 
 /**
  * A read that FAILED, as opposed to a read that found nothing.
@@ -242,17 +392,6 @@ async function noteReadFailure(
 }
 
 // ── enqueue helpers, one per flow ───────────────────────────────────────────
-
-const soLine = (r: Record<string, unknown>): ErpLine => ({
-  item_code: String(r.item_code ?? r.material_code ?? ''),
-  item_group: (r.item_group as string) ?? null,
-  description: (r.description as string) ?? null,
-  description2: (r.description2 as string) ?? null,
-  qty: Number(r.qty ?? 0),
-  unit_price_centi: Number(r.unit_price_centi ?? 0),
-  variants: (r.variants as Record<string, unknown> | null) ?? null,
-  linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
-});
 
 /** SO create. Composes from the row the handler has just committed. */
 export async function enqueueSoCreate(
@@ -406,10 +545,53 @@ export async function enqueueConvert(
       body: { DocDate: opts.docDate ?? null, Ref: opts.ref ?? null },
       fromDoc: opts.from,
       writeback: opts.to,
+      /* The conversion routes report the lines they created exactly as the
+         create routes do (AcSyncService.cs:163-166 pick the detail table, :171
+         returns CreatedLines). Capturing them here is what makes a later EDIT of
+         this document expressible at all — without a stored DtlKey composeEdit
+         refuses, because a wrong key silently rewrites a different line in a
+         live book while a missing one only refuses. Best-effort: a read failure
+         degrades to "no keys stored", which costs a refused edit later and is
+         visible, and must never cost the conversion itself. */
+      lineWriteback: await readConvertTargetLines(sb, opts.op, opts.docId ?? null),
     },
     dedupeKey: `${opts.op}:${opts.docId ?? opts.docNo}`,
     createdBy: opts.createdBy ?? null,
   });
+}
+
+/**
+ * The ERP lines of a freshly-created downstream document, positionally ordered,
+ * so the DtlKeys AutoCount reports can be zipped onto them.
+ *
+ * Returns undefined on ANY doubt — no id, an unreadable table, or no lines.
+ * Undefined means "do not attempt to store line identity", which is the safe
+ * outcome: the document still syncs, and only a later edit is refused.
+ */
+async function readConvertTargetLines(
+  sb: Sb,
+  op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>,
+  docId: string | null,
+): Promise<AcOutboxPayload['lineWriteback']> {
+  if (!docId) return undefined;
+  try {
+    const spec = DOWNSTREAM[CONVERT_TARGET[op]];
+    const { data, error } = await sb.from(spec.itemTable).select(spec.itemCols)
+      .eq(spec.itemFk, docId)
+      .order('created_at', { ascending: true }).order('id', { ascending: true });
+    if (error || !data) return undefined;
+    const rows = data as unknown as Record<string, unknown>[];
+    if (!rows.length) return undefined;
+    const lines = rows.map(spec.line);
+    return {
+      table: spec.itemTable,
+      ids: rows.map((r) => String(r.id)),
+      codes: lines.map((l) => l.item_code),
+      desc2: lines.map((l) => composeDescription2(l)),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -449,6 +631,59 @@ export async function recordConvertSkipped(
 }
 
 /**
+ * Record a document the ERP created that AUTOCOUNT CANNOT HOLD AT ALL, and why.
+ *
+ * The ERP can create a Delivery Order with no Sales Order behind it, a GRN with
+ * no Purchase Order (owner decision 2026-05-29, stated in grns.ts), and a Sales
+ * or Purchase Invoice with no delivery / receipt behind it. AutoCount cannot:
+ * the 2.2 SDK's ONLY construction primitive for these four is
+ * AddPartialTransferDetail(fromDocType, dtlKeys) — you build a DO/GRN/Invoice by
+ * transferring a SOURCE document's lines — so AcSyncService has /create-so and
+ * /create-po and no third create, and could not sensibly be given one.
+ *
+ * This is therefore not a bug to fix later; it is a permanent SHAPE MISMATCH
+ * between the two systems. What WAS a bug is that it happened in silence. Every
+ * one of these documents exists in the ERP and will never exist in the account
+ * book, which is exactly the kind of divergence the owner's outstanding rule
+ * trips over — and until now nothing recorded it, so nothing could find it.
+ *
+ * Recorded under the CONVERSION op that would have produced the document
+ * (so_to_do for a parentless DO, and so on), because that is the operation that
+ * did not happen, and because 0277's CHECK constraint admits exactly the eight
+ * operations AcSyncService serves — inventing a ninth would need a migration to
+ * describe an operation that can never run.
+ */
+export async function recordParentlessCreate(
+  sb: Sb,
+  opts: {
+    companyId: number | null | undefined;
+    docType: 'DO' | 'IV' | 'GR' | 'PI';
+    docNo: string;
+    docId?: string | null;
+    /** What the ERP document is missing, in the operator's vocabulary. */
+    missing: string;
+    createdBy?: number | null;
+  },
+): Promise<boolean> {
+  const OP: Record<'DO' | 'IV' | 'GR' | 'PI', Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>> = {
+    DO: 'so_to_do', GR: 'po_to_gr', IV: 'do_to_iv', PI: 'gr_to_pi',
+  };
+  return recordConvertSkipped(sb, {
+    companyId: opts.companyId,
+    op: OP[opts.docType],
+    docType: opts.docType,
+    docNo: opts.docNo,
+    docId: opts.docId ?? null,
+    reason:
+      `created with ${opts.missing}, so there is no source document to transfer from. `
+      + 'AutoCount builds a DO / GRN / Invoice only by transferring a source document\'s lines '
+      + '(AddPartialTransferDetail is the SDK\'s only primitive), so this document cannot be '
+      + 'created in the account book at all and will stay ERP-only.',
+    createdBy: opts.createdBy ?? null,
+  });
+}
+
+/**
  * Cancel.
  *
  * If the operation that would BRING this document into AutoCount is still
@@ -461,7 +696,7 @@ export async function enqueueCancel(
   sb: Sb,
   opts: {
     companyId: number | null | undefined;
-    docType: 'SO' | 'PO' | 'DO' | 'IV' | 'GR' | 'PI';
+    docType: AcDocType;
     docNo: string;
     self: AcDocRef;
     docId?: string | null;
@@ -513,8 +748,8 @@ export async function enqueueEdit(
   sb: Sb,
   opts: {
     companyId: number | null | undefined;
-    docType: 'SO' | 'PO';
-    /** An SO is keyed by its number; a PO by its id. Pass what the route has. */
+    docType: AcDocType;
+    /** An SO is keyed by its number; every other type by its id. */
     docNo?: string | null;
     docId?: string | null;
     createdBy?: number | null;
@@ -526,7 +761,9 @@ export async function enqueueEdit(
 
     const composed = opts.docType === 'SO'
       ? await composeSoState(sb, String(opts.docNo))
-      : await composePoState(sb, String(opts.docId ?? opts.docNo));
+      : opts.docType === 'PO'
+        ? await composePoState(sb, String(opts.docId ?? opts.docNo))
+        : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo));
     if (!composed) return false;
     /* A PO route knows its id, not its number; the outbox row is keyed by the
        human document number so it lines up with the create row. */
@@ -534,15 +771,47 @@ export async function enqueueEdit(
 
     const pending = await findPendingOriginatingOp(sb, opts.companyId, opts.docType, docNo, opts.docId ?? null);
     if (pending) {
-      const { error } = await sb.from('autocount_outbox')
-        .update({
-          payload: { ...(pending.payload ?? {}), body: composed.create },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', pending.id);
-      return !error;
+      /* SO / PO: the create is still unsent, so fold the new state INTO it.
+         Queueing an edit behind a stale create would push the pre-edit order
+         into AutoCount and then correct it, which is visible in the live book. */
+      if (composed.create) {
+        const { error } = await sb.from('autocount_outbox')
+          .update({
+            payload: { ...(pending.payload ?? {}), body: composed.create },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', pending.id);
+        return !error;
+      }
+      /* DO / GRN / IV / PI: there is no create to fold into — the pending row is
+         a CONVERSION, and its payload is a FromDocNo plus header overrides. The
+         body must not be touched or the conversion is destroyed.
+
+         And the edit genuinely cannot be carried: a conversion transfers the
+         PARENT document's outstanding lines, so when this one drains AutoCount
+         will build the document from the source, not from the state the
+         operator just saved. That is a real divergence in the window between
+         creating a downstream document and its conversion draining, so it is
+         WRITTEN DOWN rather than dropped. */
+      await enqueueAcOp(sb, {
+        companyId: opts.companyId,
+        op: 'edit',
+        docType: opts.docType,
+        docNo,
+        docId: opts.docId ?? null,
+        payload: { body: {} },
+        status: 'skipped',
+        reason:
+          `edited before its AutoCount counterpart existed: the ${opts.docType} conversion is `
+          + 'still queued and will transfer the source document\'s lines, not this edit. '
+          + 'Re-save the document once the conversion has drained.',
+        createdBy: opts.createdBy ?? null,
+      });
+      return false;
     }
 
+    /* No AutoCount counterpart and no pending originating op: the document was
+       made while the write-back was off. Nothing to edit, and nothing to say. */
     if (!composed.linkedAcDocNo) return false;
 
     return await enqueueAcOp(sb, {
@@ -595,6 +864,41 @@ async function findPendingOriginatingOp(
   q = docId ? q.eq('doc_id', docId) : q.eq('doc_no', docNo);
   const { data } = await q.maybeSingle();
   return (data as { id: string; payload: AcOutboxPayload } | null) ?? null;
+}
+
+/**
+ * The current state of a DO / GRN / Sales Invoice / Purchase Invoice, in the
+ * shape enqueueEdit wants.
+ *
+ * `create` is NULL and that is the point: these four have no create route on
+ * AcSyncService (its Handle() switch has /create-so and /create-po and nothing
+ * else — AcSyncService.cs:160-170), because the SDK's only construction
+ * primitive is AddPartialTransferDetail. A parentless one cannot be expressed at
+ * all, and enqueueEdit reads the null to know it must not fold this state into a
+ * pending conversion.
+ *
+ * Lines are ordered by created_at then id so the sequence is STABLE across
+ * calls. That ordering is not assumed to match AutoCount's — persistLineKeys
+ * checks the correspondence and refuses rather than trusting it.
+ */
+async function composeDownstreamState(sb: Sb, docType: 'DO' | 'GR' | 'IV' | 'PI', id: string) {
+  const spec = DOWNSTREAM[docType];
+  const header = await readOrThrow(`${spec.table} header`,
+    sb.from(spec.table).select(spec.headerCols).eq('id', id).maybeSingle());
+  if (!header) return null;
+  const h = header as unknown as Record<string, unknown>;
+  const items = await readOrThrow(spec.itemTable,
+    sb.from(spec.itemTable).select(spec.itemCols).eq(spec.itemFk, id)
+      .order('created_at', { ascending: true }).order('id', { ascending: true }));
+  const lines = ((items ?? []) as unknown as Record<string, unknown>[]).map(spec.line);
+  const docNo = spec.docNoOf(h);
+  return {
+    docNo,
+    linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
+    create: null as Record<string, unknown> | null,
+    edit: () => composeEdit(docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines),
+  };
 }
 
 async function composeSoState(sb: Sb, docNo: string) {
@@ -716,6 +1020,50 @@ async function persistLineKeys(
         console.error(
           `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
           + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
+        );
+        return;
+      }
+    }
+
+    /* ItemCode alone stops being an identity check the moment a code repeats,
+       and on a CONVERSION that is the normal case, not an edge one: the ERP
+       never sends a line list for a conversion — AutoCount chooses the source
+       lines itself (AcSyncService.cs:382-411) — so the two orderings are only
+       PRESUMED to line up. A sofa document is the concrete failure: several
+       lines share one code and differ only in the build written into Desc2, so
+       an all-codes-match check passes while the keys land on the wrong lines,
+       and the next edit rewrites somebody else's line in a live book.
+       Desc2 is what tells those lines apart, so where it is available on both
+       sides it must agree too, and a repeated code with no Desc2 to separate it
+       is refused outright rather than guessed. */
+    const dupes = new Set(
+      target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
+    );
+    for (let i = 0; i < ordered.length; i += 1) {
+      const gotD = norm(ordered[i].Desc2);
+      const wantD = norm(target.desc2?.[i]);
+      /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2
+         is nvarchar(100) and live sofa builds already sit at exactly 100 — the
+         account book cut them itself, before the ERP ever saw them. An equality
+         test would refuse those legitimately-matching lines. A prefix test keeps
+         all the discriminating power that matters here: two different builds of
+         the same model diverge in the first few tokens, not after character
+         100. */
+      const differs = gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD);
+      if (differs) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — position ${i + 1} carries Desc2 '${ordered[i].Desc2}' in `
+          + `AutoCount but '${target.desc2?.[i]}' in the ERP. Same ItemCode, different line.`,
+        );
+        return;
+      }
+      if (dupes.has(norm(target.codes[i])) && !(gotD && wantD)) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `${label}: NOT STORED — ItemCode '${target.codes[i]}' appears on more than one line and `
+          + 'position ' + (i + 1) + ' has no Desc2 on both sides to tell them apart. '
+          + 'Storing by position here would be a guess.',
         );
         return;
       }

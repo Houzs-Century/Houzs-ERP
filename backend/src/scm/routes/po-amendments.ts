@@ -34,6 +34,7 @@ import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
    current truth. po-revision re-exports so-revision's ReceivedFloorError (same
    class), so the one imported above already covers both engines. */
 import { reviseBoundPo } from '../lib/so-revision';
+import { enqueueEdit } from '../lib/autocount-outbox';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import {
@@ -404,6 +405,20 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
       note: `Follow-up confirmed — PO re-derived from the revised Sales Order (${amendment.source_so_amendment_no ?? 'SO amendment'}), now revision ${appliedRevision}.`,
     });
   }
+
+  /* ERP -> AutoCount edit. The PO mirror of the SO amendment leg: both apply
+     engines (applyPoAmendment on the manual path, reviseBoundPo on the SO-sourced
+     one) rewrite the PO's header and lines in place, and neither told AutoCount.
+     Queued after the amendment's own optimistic-lock flip won, so one edit per
+     applied amendment. `enqueueEdit` swallows its own failures by design — an
+     approval that has already committed must not fail on a write-back. */
+  await enqueueEdit(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'PO',
+    docId: amendment.po_id,
+    docNo: amendment.po_number,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 
   return c.json({ amendment: updated, revision: appliedRevision, warnings: appliedWarnings });
 }
