@@ -435,6 +435,29 @@ enforced in code:
 | `specials` (and the HOOKKA singular `special`) | `backend/scripts/backfill-specials-into-variants.mjs`, the only writer with the money guard — a picked add-on's surcharge folds into the authoritative unit price, so stamping a PRICED code reprices a historical document |
 | everything else (POS configurator, line editors) | its own writer |
 
+**HYDRAULIC is a tickable code, and it does NOT replace `divanHeight`**
+(owner 2026-08-11, *"开 special order 那边勾选"* — this overrode the earlier
+recommendation that a hydraulic base stay a property of the divan and never
+become a `special_addons` row). The two are **complementary, not alternatives**:
+
+- the **tick** (`variants.specials` gains `Hydraulic`) records *what the bed is*;
+- **`variants.divanHeight`** records *how big it is*, and `parse-bedframe.mjs`
+  derives it from the very same hydraulic wording (outer figure wins, an
+  inner-only figure converts at +2 — owner's ruling 2026-08-10).
+
+45 of the 49 lines that say HYDRAULIC carry both and must keep carrying both;
+dropping the height in favour of the tick would discard a measurement someone
+took. The chain — slip Desc2 to parser phrase to picker code, *and* the height
+surviving — is pinned end-to-end in `backend/tests/parseBedframeHydraulic.test.ts`.
+The code is created **at price 0** (`seed-hydraulic-special-addon.mjs`); the
+owner sets the price when he is ready, and it must stay 0 while the 49 migrated
+lines are being stamped.
+
+Categories on a `special_addons` row must be **UPPERCASE** — both pickers filter
+with `a.categories.includes(category.toUpperCase())`
+(`SoLineCard.tsx` and `mobile/MobileNewSO.tsx`), so a lowercase token yields a
+row the backfill can map to and no human can ever tick.
+
 A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
 object; rebuilding deletes every key it has not heard of. `custom_specials` is a
 DERIVED output of the pricing recompute and is written by no script at all.
@@ -755,3 +778,39 @@ Note the reachability gate: a migrated SO is only `amendment_eligible` once it i
 processing-locked, and the importer does not set `internal_expected_dd`, so today
 most migrated orders cannot reach this path at all. The exemption exists so that
 giving one a Processing Date does not silently destroy its price later.
+
+### A priced special add-on is CHARGED, not only costed (owner 2026-08-11)
+
+Owner: *"让收费追上成本."* The SELLING path used to drop the surcharge the COST
+path booked, so a priced add-on could only ever reduce margin.
+
+The surcharge total is `breakdown.unitPriceSen - breakdown.basePriceSen` in
+`scm/lib/mfg-pricing-recompute.ts`. The selling base is pinned at 0 by
+`computeMfgLinePrice` (the product price tables are COST), so that subtraction
+IS the director-authored selling surcharges — specials, divan, leg, total
+height. It reached the customer's price through exactly one branch, gated on
+`category !== 'SOFA' && effectiveBaseSen > 0`, which exempted two populations:
+
+| exempt | why it was exempt | what it cost |
+|---|---|---|
+| every SOFA line | excluded by category; the sofa branch rebuilt the price from Σ module prices and never re-added the surcharges | the COST branch beside it DID re-add its own (`costSurchargesSen` on top of Σ module costs), so a priced sofa add-on was costed and never charged |
+| any line whose product carries `sell_price_sen = 0` | excluded by the `> 0` test, in any category | same — costed, never charged |
+
+Both now charge it, from the same figure the cost path uses. **A migrated line
+still cannot re-price**: the new `sellingSurchargesSen > 0` arm is inert under
+`trustOperatorSelling === 'including-zero'`, so the marker blocks it
+structurally, not merely via the trust overwrite at the end of the function.
+That belt-and-braces is load-bearing — 10,856 of 13,909 migrated lines are
+priced 0 and 549 of those are SOFA, i.e. the exempt populations and the migrated
+corpus are very nearly the same set. Pinned in
+`mfg-pricing-recompute.surcharge.test.ts`.
+
+**Clients that SUBMIT a price must now add the add-on themselves.** A trusted
+(non-POS) author is unaffected — their hand-typed price is persisted as-is, and
+the desktop line editor's `pricingBreakdown` is display-only by design. A
+drift-gated POS caller is not: it must send `sofaSellingSen + surcharges + …` or
+`driftThresholdExceeded` will 400 it. `specialAddonsSurchargeSen`
+(`scm/shared/mfg-pricing.ts`) is the helper for exactly that and has **no caller
+in either tree** — it is a WIRING GAP, not dead code, and must not be deleted.
+It is inert only while every add-on is priced 0; the first add-on the owner
+prices is the moment a price-submitting client has to call it.
