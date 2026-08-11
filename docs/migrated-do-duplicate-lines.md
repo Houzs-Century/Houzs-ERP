@@ -1,8 +1,22 @@
-# The 18 duplicate delivery-order lines — one decision to make
+# The 18 duplicate delivery-order lines — DECIDED: Option B
 
 **Date:** 2026-08-11
-**Status:** writer FIXED and merged. The 18 rows already written are UNTOUCHED
-and need one owner decision. Nothing here has moved stock.
+**Status:** writer FIXED and merged. **The owner chose Option B on 2026-08-11 —
+"qty 改 0 + 审计备注".** The tool is
+`backend/scripts/zero-duplicate-do-lines.mjs` + Actions → **Zero the duplicate
+migrated DO lines (owner Option B)**. Nothing here has moved stock, and nothing
+is deleted: every one of the 18 rows is still in the table, holding quantity 0
+and an audit note naming its original quantity and its twin.
+
+**What the apply run does NOT clear, and why that is correct.** Zeroing removes
+the *duplicate* half of the arithmetic, not every over-delivery. Some of the 11
+lines below stay over-delivered afterwards, because the surviving delivery
+quantity genuinely exceeds what that sales-order line ordered — the mis-link
+half of the writer defect (a second AutoCount row of one item code pointed at
+the FIRST sales-order line) put a real delivery against the wrong line. That is
+a *link* question, not a duplicate, and it is not what Option B was approved to
+fix. The run log names each residue with the documents standing behind it. See
+"Do not conflate this with the real second delivery" at the foot of this file.
 
 ---
 
@@ -111,6 +125,35 @@ description or the document note.
 **Recommendation: Option B**, and revisit it only when the line-retirement work
 lands for real — at which point the 18 zeroed rows can be flipped to
 `cancelled = true` in one statement, because they are still there.
+
+### Option B as built (the owner approved it 2026-08-11)
+
+`backend/scripts/zero-duplicate-do-lines.mjs`, DRY-RUN by default, `APPLY=1` to
+write, one transaction, verification on a SECOND connection.
+
+- It re-derives the groups at the moment of acting rather than reading the
+  UUID list above — the list in a document goes stale, the table does not.
+- `qty <> 0` is in the grouping query twice over: it skips rows a previous run
+  already zeroed, and it stops the five zeroed `HC-DO-007525` rows from
+  grouping with **each other** at quantity 0 on the next run. Re-running is
+  inert.
+- It keeps `ids[0]` of every group — the real delivery line — and zeroes only
+  the rest, which is what leaves `HC-DO-006224`'s genuine second unit standing.
+- It **refuses**, rather than zeroing: a document that is not
+  `migrated_no_stock`; a document with any inventory movement by any source
+  type; a surplus line carrying a non-zero money column (zeroing the quantity
+  and leaving the value would break the document a new way); and a surplus line
+  already claimed by a `sales_invoice_items` or `delivery_return_items` row,
+  because remaining-to-invoice is `delivered − invoiced − returned` and zeroing
+  such a row drives it negative.
+- The audit note is appended to the line's `description`, never overwriting it,
+  and never touching `description2` — that column is the per-line AutoCount key
+  #1964's collision repair corroborates against.
+- It prints **every prior value of every surplus row in full** before writing,
+  so the run log is the backup.
+- It asserts the money does not move: `line_count`, `local_total_centi`,
+  `total_cost_centi`, `total_margin_centi`, the line count and the sum of
+  `line_total_centi` are read before and after and must be identical.
 
 **Not recommended:** doing nothing. The 11 over-delivered lines are visible to
 staff now and will be read as a stock problem, which is exactly the confusion
