@@ -379,16 +379,35 @@ export async function applySoAmendment(
          re-check covers amendments raised before that gate existed and any
          non-route writer. Company-scoped to the SO's own company — code is
          only unique per company. */
+      /* The same row also supplies the line's NAME and CATEGORY (owner
+         2026-08-11) — see the two stamps below. One read, three uses. */
+      let prodName: string | null = null;
+      let prodCategory: string | null = null;
       {
-        let q = sb.from('mfg_products').select('code').eq('code', itemCode);
+        let q = sb.from('mfg_products').select('code, name, category').eq('code', itemCode);
         if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
         const { data: prodRows } = await q.limit(1);
         if (!prodRows || prodRows.length === 0) {
           throw new Error(`applySoAmendment: ADD line item code is not in the product catalog: ${itemCode}`);
         }
+        const prod = prodRows[0] as { name?: string | null; category?: string | null };
+        prodName = (prod.name ?? '').trim() || null;
+        prodCategory = (prod.category ?? '').trim() || null;
       }
       const variants = (diff.new_variants ?? null) as Record<string, unknown> | null;
-      const itemGroup = String((variants?.itemGroup ?? diff.old_snapshot?.item_group ?? 'others')).toLowerCase();
+      /* ITEM GROUP — the requested blob first, then the line's own old snapshot,
+         then the CATALOG's category (owner 2026-08-11). The catalog step is new:
+         the chain used to fall straight to the literal 'others', so an added
+         SVC-ADDON landed with item_group='others' while the identical SKU
+         created through POST / lands 'service'. That is not cosmetic —
+         isServiceLine() reads item_group, and a SERVICE line is never allocated
+         stock, never gates SO readiness, never becomes MRP demand and never
+         produces an inventory movement (vendor/shared/service-sku.ts). A service
+         line mis-grouped as goods asks the factory to make a delivery fee.
+         'others' remains the last resort for a catalog row with no category. */
+      const itemGroup = String(
+        variants?.itemGroup ?? diff.old_snapshot?.item_group ?? prodCategory ?? 'others',
+      ).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
 
       // Recompute the new line authoritatively (same path as POST /).
@@ -423,6 +442,18 @@ export async function applySoAmendment(
         line_date:              todayMyt(),
         item_group:             itemGroup,
         item_code:              itemCode,
+        /* NAME + variant summary (owner 2026-08-11). This insert wrote NEITHER,
+           so every line ever added by an approved amendment landed with
+           description NULL and description2 NULL — the row could only ever name
+           itself by its bare SKU code, on the SO, on the DO and SI it flows to,
+           and on all three printed documents. The name comes from the CATALOG
+           row just read (`mfg_products.name`), never from the amendment payload:
+           an amendment line carries no description field, and the catalog is the
+           authority the swap path (PATCH …/items/:id/swap) already uses.
+           description2 is the server-built variant summary, exactly as POST /
+           builds it — the single source of truth for the long attribute string. */
+        description:            prodName,
+        description2:           buildVariantSummary(itemGroup, variants) || null,
         uom:                    'UNIT',
         qty,
         unit_price_centi:       unit,
