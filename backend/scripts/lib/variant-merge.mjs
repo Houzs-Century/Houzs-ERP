@@ -69,6 +69,22 @@ export const OWNED_VARIANT_KEYS = Object.freeze([
   "size",
 ]);
 
+/* The keys the SOFA backfill owns. A sofa has no divan, leg or gap, so those
+   must never appear in a sofa patch — its dimensional axis is the seat.
+
+   `seatHeight` is here and in no other owned list because until now NOTHING
+   swept sofa at all: `refresh-po-variants.mjs` and `refresh-so-variants.mjs`
+   are both hard-filtered to `item_group = 'bedframe'`, which is why the fabric
+   library being tidied repeatedly never moved a single sofa line. */
+export const OWNED_SOFA_KEYS = Object.freeze([
+  "fabricId",
+  "colourId",
+  "fabricCode",
+  "colourLabel",
+  "fabricLabel",
+  "seatHeight",
+]);
+
 /* The subset a non-bedframe (SP) special-size line owns: its dimensions only.
    No fabric, no gap, no divan, no leg - a custom-size MATTRESS has none of
    those and must not have them nulled. */
@@ -104,6 +120,37 @@ export function buildBedframeVariantPatch(bf, fc) {
     totalHeight: tot ? tot + '"' : null,
     size: bf.size || null,
   }, OWNED_VARIANT_KEYS, "bedframe variant patch");
+}
+
+/**
+ * The SOFA patch, and it FILLS ONLY — a key already carrying a value is left
+ * exactly as it is.
+ *
+ * The bedframe sweep overwrites the keys it owns, which is right for a sweep
+ * that re-derives the whole line every run. This is a BACKFILL of documents
+ * staff have been editing for months, so an operator's own correction outranks
+ * a re-parse of the same old text: the owner's instruction was 补齐, fill in
+ * the blanks, not restate them. `existing` is the row's current `variants`.
+ *
+ * @returns a patch carrying only the blank axes, or null when nothing is blank
+ */
+export function buildSofaVariantPatch(sofa, fc, existing) {
+  const had = existing && isPlainObject(existing) ? existing : {};
+  const filled = (...keys) => keys.some((k) => {
+    const v = had[k];
+    return v !== undefined && v !== null && String(v).trim() !== "";
+  });
+  const patch = {};
+  if (fc && !filled("fabricCode", "colourId", "colorCode", "colourCode", "fabricColor")) {
+    patch.fabricId = fc.fabric_id;
+    patch.colourId = fc.colour_id;
+    patch.fabricCode = fc.colour_id;
+    patch.colourLabel = fc.label;
+    patch.fabricLabel = fc.fabric_id;
+  }
+  if (sofa.size && !filled("seatHeight", "depth")) patch.seatHeight = `${sofa.size}"`;
+  if (!Object.keys(patch).length) return null;
+  return assertOnlyOwnedKeys(patch, OWNED_SOFA_KEYS, "sofa variant patch");
 }
 
 /** The (SP) special-size patch: the dimensions and nothing else. */
