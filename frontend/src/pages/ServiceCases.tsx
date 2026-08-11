@@ -4142,6 +4142,11 @@ function DetailContent({
               label="Resolution Method"
               value={c.resolution_method}
               options={resolutionOptions.length ? resolutionOptions : [...RESOLUTION_OPTIONS]}
+              /* The one place the slug used to leak to the operator: the
+                 summary above, the status card and the printed document all
+                 say "Supplier Service" while this dropdown said
+                 "supplier_repair" (owner 2026-08-12). Same map, one wording. */
+              optionLabel={resolutionLabel}
               onSave={(v) => patch({ resolution_method: v })}
             />
             {/* Refresh — route tag chip + consequence line right under
