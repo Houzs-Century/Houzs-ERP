@@ -61,6 +61,20 @@ const CATALOGUE_SERIES = new Set(["ZL", "MODENZA", "BO315", "NX", "GD2502", "AM2
 
 const strip = (s) => normColour(s).replace(/[^A-Z0-9]/g, "");
 
+/* The SERIES keeps its own internal separator, collapsed to a single dash.
+   "SF-AT 01" is series SF-AT, and SF-AT is what the slips and the showroom
+   actually say; flattening it to SFAT makes a code nobody recognises. Same for
+   ALPINE-5311 and CHANTIC-141. Only the separator is normalised - no character
+   is added or removed. */
+const seriesToken = (s) => normColour(s).replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/* scm.fabric_colours grew an UNMATCHED bucket when an import could not place a
+   row - "UNMATCHED-PICCO-FG66151-11", "UNMATCHED-STAR-FABRIC-CLOUD". It is not
+   a fabric series and no rule can decide what its rows mean: the first is
+   probably FG66151-11, the second is a STAR colour called CLOUD with no number
+   at all. Reported, never rewritten. */
+const isJunkBucket = (id) => /^UNMATCHED/.test(normColour(id));
+
 /* A leading word is a BRAND only when what follows is already a complete code -
    letters AND digits. Otherwise it belongs to the series and the space closes
    up. See the header: this is the whole PC 1461 / ARMANI J9226 distinction. */
@@ -88,7 +102,7 @@ function parse(colourId) {
   if (j) v = v.replace(JOIN_SERIES, "$1");
   const m = SPLIT_GREEDY.exec(v) || SPLIT.exec(v) || SPLIT_GLUED.exec(v);
   if (!m) return null;
-  const series = strip(m[1]);
+  const series = seriesToken(m[1]);
   const num = m[2];
   const name = (m[3] || "").replace(/^[#\s\-]+/, "").trim();
   /* A series may be all digits - "311" is a real one - so the guard is length,
@@ -122,11 +136,12 @@ async function main() {
   /* Group every ACTIVE colour by the canonical code it should carry. A group
      with more than one member is two spellings of one colour. */
   const groups = new Map();
-  const unparsed = [], skipped = [];
+  const unparsed = [], skipped = [], junk = [];
   for (const r of cols) {
     if (r.active === false) continue;
     const p = parse(r.colour_id);
     if (!p) { unparsed.push(r); continue; }
+    if (isJunkBucket(r.fabric_id) || isJunkBucket(r.colour_id)) { junk.push(r); continue; }
     if (CATALOGUE_SERIES.has(p.series)) { skipped.push(r); continue; }
     if (ONLY.length && !ONLY.includes(p.series)) continue;
     const id = canonId(p);
@@ -163,17 +178,63 @@ async function main() {
     } else if (!lose.length) plan.ok++;
 
     const oldSeries = win.r.fabric_id;
-    if (strip(oldSeries) !== g.series) {
+    if (seriesToken(oldSeries) !== g.series) {
       const brand = [...g.brands][0] || null;
       plan.seriesRename.set(oldSeries, { from: oldSeries, to: g.series, brand });
     }
   }
 
+  /* THE CONSISTENCY GUARD, and the reason it exists.
+
+     The first production plan (run 31465598454) proposed 37 series renames.
+     Thirty-four were right - the brand extractions, NB01..NB10 -> NB,
+     NINJA 0x -> NINJA, STAR 0x -> STAR. Three were garbage:
+
+       "SF"        -> "SFAT"
+       "J9883"     -> "J98831"
+       "UNMATCHED" -> "UNMATCHEDPICCOFG66151"
+
+     Every one of those is a series whose colours do NOT agree on what the
+     series is. "UNMATCHED" is a junk bucket holding unrelated codes; a rename
+     driven by whichever colour happened to be scored first would have renamed a
+     real, referenced series to a string nobody will ever type.
+
+     So a rename needs CORROBORATION: every active colour under the series must
+     derive the same series token. One disagreement and the rename is refused
+     and printed - the colours still get their own code and label fixed, which
+     is the part that is unambiguous. This is the same principle the colour
+     matcher already applies with its digit guard: correct what is provable,
+     refuse what is not, never pick one of two answers. */
+  const derived = new Map();
+  for (const r of cols) {
+    if (r.active === false) continue;
+    const p = parse(r.colour_id);
+    if (!p) continue;
+    if (!derived.has(r.fabric_id)) derived.set(r.fabric_id, new Set());
+    derived.get(r.fabric_id).add(p.series);
+  }
+  const refused = [];
+  for (const [from, s] of [...plan.seriesRename]) {
+    const seen = derived.get(from) || new Set();
+    if (seen.size > 1) {
+      refused.push({ from, to: s.to, seen: [...seen] });
+      plan.seriesRename.delete(from);
+    }
+  }
+  plan.refusedSeries = refused;
+
   note("");
   note(`PLAN  code/label rewrites ${plan.change.length} | duplicate colours merged ${plan.merge.reduce((a, m) => a + m.lose.length, 0)} | series renamed ${plan.seriesRename.size} | already right ${plan.ok}`);
   note(`      skipped, the owner's own 12 series: ${skipped.length} colours`);
   note(`      could not be parsed into series+number, LEFT ALONE: ${unparsed.length}`);
+  note(`      in the UNMATCHED import bucket, LEFT ALONE for a person: ${junk.length}`);
+  for (const r of junk) note(`        ? "${r.colour_id}" ${JSON.stringify(r.label)} series=${r.fabric_id}`);
 
+  if (plan.refusedSeries.length) {
+    note("");
+    note(`--- SERIES RENAME REFUSED (${plan.refusedSeries.length}) — its colours disagree on what the series is ---`);
+    for (const r of plan.refusedSeries) note(`  "${r.from}" left alone; its colours derive ${r.seen.map((x) => `"${x}"`).join(", ")}`);
+  }
   if (plan.seriesRename.size) {
     note("");
     note(`--- SERIES RENAMED (${plan.seriesRename.size}) — the brand moves to the NAME ---`);
