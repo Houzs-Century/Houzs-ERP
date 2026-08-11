@@ -55,6 +55,7 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
+import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -1330,6 +1331,31 @@ salesInvoices.post('/from-dos', async (c) => {
     sb, c.get('houzsUser'), activeCompanyId(c), h.id, rows.length,
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
+
+  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
+     several DOs has no AutoCount shape and is recorded as skipped instead. */
+  if (doIds.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */

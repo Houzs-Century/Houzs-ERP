@@ -247,6 +247,19 @@ export、同一批 doc_no** 上报的是 `already imported: 0; to insert: 2275` 
 提示语原文:*"Editing is paused while the AutoCount data migration is completed. Please do not create
 or change orders — ask IT when you need something updated."*
 
+**2026-08-11 修正:这句提示语在 SCM 以外的路径上显示不出来。**
+后端只把它放在 `reason` 字段里。`vendor/scm/lib/authed-fetch.ts` 读 `reason`,
+所以**所有 SCM 单据页面一直是对的**;但 `frontend/src/api/client.ts` 的 `humanHttpMessage`
+只读 `error` / `message` / `detail`,掉回通用 503 文案
+*"The service is briefly unavailable. Please try again in a moment."* ——
+一个**停机**文案配一个**业务决定**,而且那句话正是 `isColdPool503` 匹配的字串,
+所以那条路径上每按一次会再静悄悄重发 4 次。今天走这条路径的 `/api/scm` 写只有一处
+(`pages/Team.tsx:3243` showroom parking),但它是非 vendor 代码的默认 client。
+另外一个**确实会打到 SCM 主路径**的坑:两个 client 都会丢弃 ≥200 字符的服务器句子并掉回通用 5xx 文案,
+而这句提示语是 operator 在 `app_config.description` 里手打的。
+修复(`fix/freeze-message-not-outage`):后端 `message` 和 `reason` 同时带这句话,
+并在服务端把 operator 自定义提示语限制在 200 字符以内。
+
 表由 `migrations-pg/0272_scm_app_config.sql` 建,seed 是 `'off'` ——
 **开闸永远是一个明确的动作,不会是跑 migration 的副作用。**
 
@@ -980,6 +993,7 @@ W16 照做了:511 + 49 张改成了 AutoCount 的号。
 
 ## 相关文件
 
+- `docs/modules/autocount-writeback.md` — **反方向**:割接之后 ERP 是 master,每一张单怎么写回 AutoCount(outbox + 下游锁)。跟这份账本是两件事,不要混
 - `docs/sofa-import-handoff.md` — 沙发那一路的语法、开件、管线与未完事项(PR #1831)
 - `docs/2990-cutover/` — 2990(company 2)的割接,跟这一份是两件事
 - `docs/cutover-tally-method.md` — 对数的方法论

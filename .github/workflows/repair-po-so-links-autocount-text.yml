@@ -1,0 +1,74 @@
+name: Repair PO -> SO links from the AutoCount text (DRY-RUN gated)
+
+# backfill-po-so-item-links.mjs resolves a link from the PO's "From SOs:" note,
+# written at raise time by the SO -> PO convert. A MIGRATED purchase order has
+# no such note: of the 181 company-1 sofa/bedframe PO lines with a NULL
+# so_item_id, exactly ZERO have notes naming a sales order. Its three tiers are
+# structurally blind here.
+#
+# The evidence a migrated line DOES carry is the AutoCount text. This stamps a
+# link only where the PO line sits on a part-linked purchase order AND exactly
+# ONE unclaimed, non-cancelled sales-order line carries the same item code and
+# the same AutoCount text. Measured: 8 such lines, and those 8 are exactly the
+# lines behind 6 of the 8 "short PO" findings on LEG 1.
+#
+# LEFT ALONE by design: the 168 lines on POs where nothing is linked (a stock
+# purchase has no order to point at — the column is procurement provenance),
+# anything that does not pair 1:1, and HC-SO-012949's CODY-(S), which is a
+# genuine short order and a commercial decision, not a data repair.
+#
+# fixdangling=1 also repairs HC-PO-000290, whose second CODY-(K) line points at
+# a MATTRESS sales-order line: re-pointed if exactly one correct target exists,
+# NULLed otherwise. A null link is honest; a wrong link is not.
+#
+# DRY-RUN unless apply=1. Idempotent; every UPDATE re-asserts so_item_id IS NULL.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      fixdangling:
+        description: "1 to also correct the mis-linked HC-PO-000290 CODY-(K)"
+        required: false
+        default: "0"
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      cap:
+        description: "max plan lines to print"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: repair-po-so-links-autocount-text
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-po-so-links-autocount-text.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          FIXDANGLING: ${{ inputs.fixdangling }}
+          COMPANY: ${{ inputs.company }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
