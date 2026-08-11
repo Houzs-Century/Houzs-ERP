@@ -83,6 +83,17 @@ const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missi
 
 const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_outbox ?? [];
 
+/* REAL cutover codes, not invented ones. Since D10 the composer resolves every
+   ERP code against autocount-erp-mapping-1561.csv and REFUSES what it cannot
+   find, so a fixture SKU that the account book has never heard of no longer
+   tests the flow — it tests the refusal. These four are rows of the real map:
+   the ERP code on the left is what scm holds, the AC code on the right is what
+   the licensed book calls it, and both map 1:1 so no supplier is needed. */
+const ERP_A = 'AKEMI APEX MATT (SP)';
+const AC_A = 'AK-APEX MATT (SP)';
+const ERP_B = 'AKEMI ARISTOI MATT (SP)';
+const AC_B = 'AK-ARISTOI MATT (SP)';
+
 beforeEach(() => resetWritebackFlagCache());
 
 describe('the runtime toggle', () => {
@@ -171,7 +182,7 @@ describe('the six flows each queue their operation', () => {
     address1: 'A1', address2: null, address3: null, address4: null,
     phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
   };
-  const soItem = { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'Mattress', qty: 2, unit_price_centi: 12345 };
+  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 2, unit_price_centi: 12345 };
   /* scm.purchase_orders as it ACTUALLY is: supplier_id, not a creditor code or
      name, and no agent or ref at all. The creditor is one join away. */
   const po = {
@@ -208,7 +219,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000 }],
     }, {
       /* The four columns the composer used to ask purchase_orders for and that
          it has never had. Naming them here is what makes this test fail if one
@@ -233,7 +244,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po, linked_ac_docno: 'PO-000042' }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', description: 'D', qty: 3, unit_price_centi: 5000, linked_ac_dtlkey: 7001 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000, linked_ac_dtlkey: 7001 }],
     }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
     const [row] = outbox(sb);
@@ -309,7 +320,7 @@ describe('the six flows each queue their operation', () => {
     test('PO create: a header read that fails queues nothing', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...po }], suppliers: [{ ...supplier }],
-        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: 'SKU-1', qty: 1, unit_price_centi: 1 }],
+        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, qty: 1, unit_price_centi: 1 }],
       }, { purchase_orders: ['po_number'] });
       expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(false);
       const rows = outbox(sb);
@@ -401,7 +412,7 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
   test('editing before the create was sent REPLACES the pending create payload', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],
-      mfg_sales_order_items: [{ doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'before', qty: 1, unit_price_centi: 100 }],
+      mfg_sales_order_items: [{ doc_no: 'HC-SO-9', item_code: ERP_A, description: 'before', qty: 1, unit_price_centi: 100 }],
     });
     await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' });
     expect(outbox(sb)[0].payload.body.Details[0].Description).toBe('before');
@@ -424,8 +435,8 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [
-        { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'known line', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
-        { doc_no: 'HC-SO-9', item_code: 'SKU-2', description: 'other line', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: 4243 },
+        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'known line', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
+        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'other line', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: 4243 },
       ],
     });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
@@ -446,8 +457,8 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [
-        { doc_no: 'HC-SO-9', item_code: 'SKU-1', description: 'keyed', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
-        { doc_no: 'HC-SO-9', item_code: 'SKU-2', description: 'keyless', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null },
+        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'keyed', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
+        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'keyless', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null },
       ],
     });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
@@ -457,7 +468,14 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     expect(rows[0].status).toBe('skipped');
     expect(rows[0].op).toBe('edit');
     expect(rows[0].last_error).toContain('refused, nothing sent');
-    expect(rows[0].last_error).toContain('SKU-2');
+    /* Named by its KeylessLineError, not by an ItemCode refusal that happens to
+       quote the same row. Both codes resolve cleanly, so the ONLY thing that can
+       stop this edit is the missing DtlKey — and the message says so in
+       AutoCount's own vocabulary, which is what the operator has to look up. */
+    expect(rows[0].last_error).toContain('KeylessLineError');
+    expect(rows[0].last_error).toContain('DtlKey');
+    expect(rows[0].last_error).toContain(AC_B);
+    expect(rows[0].last_error).not.toContain('no single AutoCount ItemCode');
     /* Nothing pending means nothing will ever be POSTed for this save. */
     expect(rows.filter((r: Row) => r.status === 'pending')).toHaveLength(0);
   });

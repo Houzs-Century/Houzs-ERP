@@ -23,6 +23,16 @@
 // resolver, so it unit-tests with no database and no AutoCount.
 // ----------------------------------------------------------------------------
 import type { Env } from '../types';
+import {
+  ItemCodeError,
+  resolveAcItemCode,
+  type AcItemIndex,
+} from './autocount-item-code';
+import {
+  collapseSofaLines,
+  type CollapsedLine,
+  type SofaRefusal,
+} from './autocount-sofa-collapse';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -229,12 +239,37 @@ export class KeylessLineError extends Error {
   }
 }
 
-/** Resolves an ERP item_code to its AutoCount ItemCode. Injected so the
- *  composer stays database-free. */
-export type ItemCodeResolver = (erpItemCode: string) => { acItemCode: string | null };
+/**
+ * What a composer needs to know about the document beyond its rows.
+ *
+ * `supplierCode` is the creditor (scm.suppliers.code). It is the disambiguator
+ * for the ERP codes the cutover collapsed from several AutoCount items — a
+ * purchase order has one, a sales order does not, and the difference shows up
+ * as refusals on the sales side rather than as guesses.
+ */
+export interface ComposeOptions {
+  supplierCode?: string | null;
+  /** Test seam: an alternative cutover map. Defaults to the compiled one. */
+  itemIndex?: AcItemIndex;
+}
 
-/** Passthrough resolver — used when the caller has already resolved codes. */
-export const identityResolver: ItemCodeResolver = (code) => ({ acItemCode: code });
+/**
+ * Thrown when a sofa build cannot be folded into AutoCount's one-line shape
+ * without inventing text. Carries every refused build.
+ */
+export class SofaCollapseError extends Error {
+  readonly refusals: readonly SofaRefusal[];
+  constructor(refusals: SofaRefusal[]) {
+    super(
+      `${refusals.length} sofa build(s) cannot be written to AutoCount faithfully: `
+      + refusals.map((r) => r.reason).join('; '),
+    );
+    this.name = 'SofaCollapseError';
+    this.refusals = refusals;
+  }
+}
+
+export { ItemCodeError };
 
 /**
  * Build the Description 2 string from ERP variants when the line has none.
@@ -258,35 +293,53 @@ export function composeDescription2(line: ErpLine): string | null {
 }
 
 /**
- * Build an ItemCodeResolver from the ERP supplier bindings (material_code ->
- * AutoCount supplier_sku). A sofa compartment with no direct binding collapses
- * to the parent model's sofa code — the owner's rule is that every compartment
- * points at ONE AutoCount code and the compartment goes into Desc 2. Carried
- * over from PR #1696.
+ * The whole ERP -> AutoCount line transformation, in the order it has to happen.
+ *
+ *   1. COLLAPSE (D9). Sofa compartment lines fold into AutoCount's one line per
+ *      sofa, with the build carried in Desc2 — echoed verbatim when the stored
+ *      text still decodes to the compartments the ERP holds, composed and
+ *      re-decoded when it does not, refused when neither survives the gate.
+ *   2. RESOLVE (D10). Every remaining line gets exactly one AutoCount ItemCode
+ *      out of the cutover map. There is no fallback to material_code.
+ *
+ * BOTH STEPS REFUSE THE WHOLE DOCUMENT rather than sending part of it. A
+ * half-synced order is a divergence with no marker on either side; a refusal is
+ * a 'skipped' outbox row with the reason on it.
+ *
+ * Returns the collapsed lines alongside the details so the caller can zip
+ * AutoCount's DtlKeys back onto the ERP rows that produced each one.
  */
-export function makeItemCodeResolver(bindings: Map<string, string>): ItemCodeResolver {
-  const parentOf = (code: string) => code.split('-')[0].trim().toUpperCase();
-  return (erpItemCode: string) => {
-    const direct = bindings.get(erpItemCode);
-    if (direct) return { acItemCode: direct };
-    const parent = parentOf(erpItemCode);
-    for (const [code, sku] of bindings) {
-      if (parentOf(code) === parent && /SOFA/i.test(sku)) return { acItemCode: sku };
-    }
-    return { acItemCode: null };
-  };
-}
+export function composeDetails(
+  lines: ErpLine[],
+  opts: ComposeOptions = {},
+): { details: AcDetail[]; collapsed: CollapsedLine[] } {
+  const { lines: collapsed, refusals } = collapseSofaLines(lines);
+  if (refusals.length) throw new SofaCollapseError(refusals);
 
-function toDetails(lines: ErpLine[], resolve: ItemCodeResolver): AcDetail[] {
-  return lines.map((l) => ({
-    ItemCode: resolve(l.item_code).acItemCode ?? l.item_code,
-    Description: l.description,
-    Desc2: composeDescription2(l),
-    Qty: Number(l.qty) || 0,
-    UnitPrice: price(l.unit_price_centi),
-    Location: l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null,
-    DeliveryDate: l.delivery_date ?? null,
-  }));
+  const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
+  const details: AcDetail[] = [];
+  collapsed.forEach((l, i) => {
+    const r = resolveAcItemCode(l.item_code, {
+      supplierCode: opts.supplierCode ?? null,
+      index: opts.itemIndex,
+    });
+    if (!r.ok) {
+      failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
+      return;
+    }
+    details.push({
+      ItemCode: r.acItemCode,
+      Description: l.description ?? null,
+      Desc2: composeDescription2(l as ErpLine),
+      Qty: Number(l.qty) || 0,
+      UnitPrice: price(l.unit_price_centi),
+      Location: l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null,
+      DeliveryDate: l.delivery_date ?? null,
+    });
+  });
+  if (failures.length) throw new ItemCodeError(failures);
+
+  return { details, collapsed };
 }
 
 /** UDF entries, blanks dropped — AcSyncService writes every key it is given. */
@@ -299,7 +352,7 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   return {
     DocNo: header.doc_no,
@@ -320,14 +373,14 @@ export function composeCreateSo(
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
     }),
-    Details: toDetails(lines, resolve),
+    Details: composeDetails(lines, opts).details,
   };
 }
 
 export function composeCreatePo(
   header: ErpPoHeader,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
 ): AcCreatePoPayload {
   return {
     DocNo: header.po_number,
@@ -338,7 +391,12 @@ export function composeCreatePo(
     Ref: header.ref,
     Description: header.notes,
     UDF: {},
-    Details: toDetails(lines, resolve),
+    /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
+       from the header so no caller can forget it. */
+    Details: composeDetails(lines, {
+      supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
+      itemIndex: opts.itemIndex,
+    }).details,
   };
 }
 
@@ -374,10 +432,15 @@ export function composeEdit(
   docNo: string,
   header: Record<string, string | null>,
   lines: ErpLine[],
-  resolve: ItemCodeResolver = identityResolver,
+  opts: ComposeOptions = {},
 ): AcEditPayload {
-  const keyed: Array<AcDetail & { DtlKey?: number }> = toDetails(lines, resolve).map((d, i) => {
-    const key = lines[i].linked_ac_dtlkey;
+  const { details, collapsed } = composeDetails(lines, opts);
+  /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
+     line has one DtlKey, and a sofa build's compartments only carry line
+     identity when every one of them holds the same key — anything else
+     collapses to null here and is refused below, which is the whole point. */
+  const keyed: Array<AcDetail & { DtlKey?: number }> = details.map((d, i) => {
+    const key = collapsed[i].linked_ac_dtlkey;
     const n = key == null ? null : Number(key);
     return n != null && Number.isFinite(n) ? { ...d, DtlKey: n } : d;
   });

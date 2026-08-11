@@ -12,7 +12,7 @@ import {
   KeylessLineError,
   parseCreatedLines,
   composeDescription2,
-  makeItemCodeResolver,
+  ItemCodeError,
   mapOrPassthrough,
   callAcService,
   acServiceConfig,
@@ -21,7 +21,21 @@ import {
   LOCATION_MAP,
   type ErpSoHeader,
   type ErpLine,
+  type ComposeOptions,
 } from './autocount-writeback';
+import { buildAcItemIndex } from './autocount-item-code';
+
+/* A stand-in cutover map. The real one is 1561 rows compiled from
+   autocount-erp-mapping-1561.csv and is exercised against the real corpus in
+   autocount-item-code.test.ts; here the point is the COMPOSER, so the map is
+   four rows the assertions can quote. Columns: ac, erp, category, supplier. */
+const TEST_INDEX = buildAcItemIndex([
+  'AC-CODE-1\tSKU-1\tMATTRESS\t400-H004',
+  'AC-CODE-2\tSKU-2\tMATTRESS\t400-H004',
+  'AC-CODE-B\tB\tMATTRESS\t400-H004',
+  'AC-CODE-C\tC\tMATTRESS\t400-H004',
+].join('\n'));
+const opts: ComposeOptions = { itemIndex: TEST_INDEX };
 
 const header: ErpSoHeader = {
   doc_no: 'HC-SO-1', so_date: '2026-08-10', debtor_name: 'Tan Ah Kow',
@@ -53,7 +67,7 @@ describe('master mapping', () => {
 });
 
 describe('composeCreateSo', () => {
-  const payload = composeCreateSo(header, [line()]);
+  const payload = composeCreateSo(header, [line()], opts);
 
   test('writes the fixed debtor account with the real customer name over it', () => {
     expect(payload.DebtorCode).toBe(AC_DEBTOR_CODE);
@@ -77,7 +91,7 @@ describe('composeCreateSo', () => {
   });
 
   test('a blank UDF is dropped, not sent as an empty option', () => {
-    const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()]);
+    const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()], opts);
     expect(p.UDF).toEqual({});
   });
 });
@@ -99,33 +113,37 @@ describe('Description 2 — where a variant goes, because AutoCount has no varia
   });
 });
 
-describe('ItemCode resolution', () => {
-  test('a direct binding wins', () => {
-    const resolve = makeItemCodeResolver(new Map([['SKU-1', 'AC-CODE-1']]));
-    expect(resolve('SKU-1').acItemCode).toBe('AC-CODE-1');
+describe('ItemCode resolution (D10) — no silent fallback to material_code', () => {
+  test('a mapped code is replaced by its AutoCount ItemCode', () => {
+    expect(composeCreateSo(header, [line()], opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
 
-  test('a sofa compartment with no binding of its own collapses to the parent sofa code', () => {
-    /* Owner's rule: every compartment of a sofa points at ONE AutoCount code
-       and the compartment itself travels in Desc 2. The parent is the SKU up to
-       the first hyphen, so ARIA-2SEAT rides on ARIA-3SEAT's binding. */
-    const resolve = makeItemCodeResolver(new Map([['ARIA-3SEAT', 'AC-SOFA-ARIA']]));
-    expect(resolve('ARIA-3SEAT').acItemCode).toBe('AC-SOFA-ARIA');
-    expect(resolve('ARIA-2SEAT').acItemCode).toBe('AC-SOFA-ARIA');
-    expect(resolve('ARIA-CHAISE').acItemCode).toBe('AC-SOFA-ARIA');
-    // A DIFFERENT model does not borrow it.
-    expect(resolve('BONA-2SEAT').acItemCode).toBeNull();
+  /* THE DEFECT THIS REPLACES. Until now the composer ran with identityResolver
+     and `resolve(...).acItemCode ?? l.item_code`, so an unmapped line was sent
+     to the live account book under its ERP code — an item AutoCount has never
+     heard of. Measured over the whole enumerable ERP catalogue, 1658 of 1834
+     codes (90.4%) are in that state. The document must not sync at all. */
+  test('an unmapped code REFUSES the whole document instead of sending the ERP code', () => {
+    expect(() => composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts))
+      .toThrow(ItemCodeError);
   });
 
-  test('the collapse is sofa-only — a non-sofa binding is never borrowed by a sibling SKU', () => {
-    const resolve = makeItemCodeResolver(new Map([['AKEMI-KING', 'AC-MATT-AKEMI']]));
-    expect(resolve('AKEMI-QUEEN').acItemCode).toBeNull();
+  test('one unmapped line among mapped ones still refuses — no partial document', () => {
+    expect(() => composeCreateSo(header, [
+      line(),
+      line({ item_code: 'SKU-NOT-IN-THE-BOOK' }),
+      line({ item_code: 'SKU-2' }),
+    ], opts)).toThrow(ItemCodeError);
   });
 
-  test('an unbound code resolves to null and the ERP code is sent as-is', () => {
-    const resolve = makeItemCodeResolver(new Map());
-    expect(resolve('SKU-9').acItemCode).toBeNull();
-    expect(composeCreateSo(header, [line({ item_code: 'SKU-9' })], resolve).Details[0].ItemCode).toBe('SKU-9');
+  test('the refusal names every failing line, so an operator does not fix them one at a time', () => {
+    let msg = '';
+    try {
+      composeCreateSo(header, [line({ item_code: 'NOPE-1' }), line({ item_code: 'NOPE-2' })], opts);
+    } catch (e) { msg = (e as Error).message; }
+    expect(msg).toContain('NOPE-1');
+    expect(msg).toContain('NOPE-2');
+    expect(msg).toContain('2 line(s)');
   });
 });
 
@@ -134,11 +152,12 @@ describe('composeCreatePo', () => {
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
       creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
-    }, [line({ unit_price_centi: 5000 })]);
+    }, [line({ unit_price_centi: 5000 })], opts);
     expect(p.DocNo).toBe('HC-PO-1');
     expect(p.CreditorCode).toBe('400-H004');
     expect(p.Description).toBe('N');
     expect(p.Details[0].UnitPrice).toBe(50);
+    expect(p.Details[0].ItemCode).toBe('AC-CODE-1');
   });
 });
 
@@ -177,7 +196,7 @@ describe('composeEdit', () => {
     const p = composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
       line({ linked_ac_dtlkey: 991 }),
       line({ item_code: 'SKU-2', linked_ac_dtlkey: 992 }),
-    ]);
+    ], opts);
     expect(p.DocType).toBe('SO');
     expect(p.DocNo).toBe('SO-000021');
     expect(p.Header).toEqual({ Ref: 'R2' });
@@ -194,17 +213,17 @@ describe('composeEdit', () => {
   test('a keyless line REFUSES the whole edit rather than appending a duplicate', () => {
     expect(() => composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
       line({ linked_ac_dtlkey: 991 }),
-      line({ item_code: 'SKU-NEW' }),
-    ])).toThrow(KeylessLineError);
+      line({ item_code: 'SKU-2' }),
+    ], opts)).toThrow(KeylessLineError);
   });
 
   test('the refusal names the document and the offending line, because an operator reads it', () => {
     let msg = '';
     try {
-      composeEdit('PO', 'PO-2608-004', {}, [line({ item_code: 'SKU-NEW' })]);
+      composeEdit('PO', 'PO-2608-004', {}, [line({ item_code: 'SKU-2' })], opts);
     } catch (e) { msg = (e as Error).message; }
     expect(msg).toContain('PO-2608-004');
-    expect(msg).toContain('SKU-NEW');
+    expect(msg).toContain('AC-CODE-2');
     expect(msg).toContain('1 of 1');
   });
 
@@ -213,14 +232,14 @@ describe('composeEdit', () => {
       line({ linked_ac_dtlkey: 1 }),
       line({ item_code: 'B' }),
       line({ item_code: 'C', linked_ac_dtlkey: 3 }),
-    ])).toThrow(/2 \(B\)/);
+    ], opts)).toThrow(/2 \(AC-CODE-B\)/);
   });
 
   /* A garbage key must never be coerced into a number and shipped: DtlKey is
      how AutoCount finds the row to overwrite, so a wrong one edits somebody
      else's line. It is treated as NO key, which now means the edit is refused. */
   test('a non-numeric key is treated as no key, and therefore refused', () => {
-    expect(() => composeEdit('SO', 'SO-1', {}, [line({ linked_ac_dtlkey: 'not-a-key' })]))
+    expect(() => composeEdit('SO', 'SO-1', {}, [line({ linked_ac_dtlkey: 'not-a-key' })], opts))
       .toThrow(KeylessLineError);
   });
 });

@@ -336,6 +336,96 @@ delete it replaces.
 
 ---
 
+## 7b. The two shape mismatches the composer resolves — D9 and D10
+
+Between the ERP's line list and AutoCount's, two things do not line up. Both are
+handled in `composeDetails` (`src/services/autocount-writeback.ts`), in this
+order, and **both refuse the WHOLE document rather than send part of it.**
+
+### D10 — `material_code` is not `ItemCode`
+
+The ERP calls a sofa `9028-1S`; the licensed book calls it `AMN-SF9028 SOFA`.
+The record of the cutover is
+`backend/scripts/data/autocount-erp-mapping-1561.csv`, compiled into
+`src/services/autocount-item-map.ts` because a Worker has no filesystem.
+Verified against the live `AED_HOUZS` `Item` table on 2026-08-11: 1561 rows both
+sides, zero codes missing either way.
+
+The map is **not invertible on its own**. The cutover collapsed supplier-specific
+AutoCount codes onto one ERP code, so of 1427 distinct ERP codes:
+
+| | count | |
+|---|---:|---|
+| resolve to exactly ONE `ItemCode` | 1310 | 91.8% |
+| resolve to SEVERAL | 117 | 8.2% — 102 BEDFRAME, 6 MATTRESS, 4 ACCESSORY, 4 SOFA, 1 ACC |
+| of those, separated by the creditor | 109 | a PO knows its supplier; an SO does not |
+| **still ambiguous with the supplier known** | **8** | **refused, never guessed** |
+
+`resolveAcItemCode` returns exactly one code or a named refusal
+(`unmapped` / `ambiguous`) carrying the candidates. **There is no fallback to
+`material_code`** — that fallback is what would put an item the book has never
+heard of onto a live document, and on a purchase invoice such a line can never
+be removed (the 2.2 SDK exposes neither `DeleteDetail` nor a line-level
+`Cancelled` for PI).
+
+### D9 — a sofa is N ERP lines and ONE AutoCount line
+
+The ERP models a build as one line per compartment (`{model}-1A(LHF)`,
+`{model}-CNR`, …); AutoCount holds one line per sofa with the build written into
+`Desc2` as free text. `collapseSofaLines`
+(`src/services/autocount-sofa-collapse.ts`) folds a run of consecutive
+compartment rows sharing a model and a `Desc2` back into one line carrying
+`{model}-1S`.
+
+Reconstructing the owner's `Desc2` grammar from a compartment list is **lossy**,
+so reconstruction is not the primary path:
+
+1. **ECHO.** Both cutover importers already wrote the original `Desc2` verbatim
+   onto every compartment row. If it still decodes to exactly the compartments
+   the ERP holds, the build has not been edited and the original text *is* the
+   faithful answer. Measured on the real corpus: **551 of 551 decodable builds
+   echo character-for-character**, whitespace excepted.
+2. **COMPOSE**, only when the stored text no longer decodes to what the ERP has
+   — i.e. the operator actually changed the build.
+3. **GATE, always.** Whatever text is about to be sent is fed back through the
+   *same* decoder the importers use (`scripts/lib/parse-sofa.mjs` — deliberately
+   the same module; a second copy that drifted would make the gate prove
+   nothing) and is refused unless it reproduces the compartment sequence, the
+   seat size, the colour and the specials.
+
+The gate is what stands between a reconstruction and the account book, and it is
+load-bearing rather than decorative: `autocount-sofa-collapse.test.ts` asserts
+that the composer is *known* to spell some real builds wrong and that **none of
+those escape the gate**. Deliberately reverting the inverse to its naive form
+(bare digits for armed ends) does not produce a single corrupted `Desc2` — it
+only raises the refusal rate.
+
+Refusals that reach the outbox as a `skipped` row:
+
+| reason | what to do |
+|---|---|
+| no `Desc2` on the compartment rows | the build has nothing to carry it; fix the line |
+| `Desc2` longer than 100 chars | `SODTL.Desc2` / `PODTL.Desc2` are `nvarchar(100)`; truncating would drop part of the build |
+| compartments disagree on quantity | the run is not one build |
+| cannot spell the compartment list | e.g. a solo `3S`, which decodes to a two-piece build |
+| composed text does not survive a decode | the gate fired |
+
+`Qty` is the **shared** compartment quantity, not the sum; `UnitPrice` is the sum
+of the compartments, because the importer put the AutoCount line price on the
+first compartment and zero on the rest.
+
+**One AutoCount line has ONE `DtlKey`.** A build carries line identity only when
+*every* compartment holds the same key; anything else collapses to `null` and is
+refused loudly by `composeEdit` (§7a). Half a build's keys present is evidence
+the mapping is broken, not evidence of identity.
+
+Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
+`npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
+export without regenerating cannot leave the composer resolving against last
+month's book while the suite stays green.
+
+---
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -383,7 +473,13 @@ SELECT doc_type, doc_no, op, attempts, last_error
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
+| `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |
+| `src/services/autocount-item-code.test.ts` | **D10**, driven by the real 1561-row cutover map. No corpus line resolves to the WRONG item; a collapsed code refuses without a supplier and resolves with one; an unmapped line throws rather than falling back to `material_code`; one bad line refuses the whole document |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
+
+The corpus fixture carries **input only** — no expected pieces, no expected
+output. The tests run the real decoder and the real collapse over the real text,
+so the fixture cannot encode a bug as an expectation.
 
 ---
 

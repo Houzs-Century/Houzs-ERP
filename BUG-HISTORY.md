@@ -63,6 +63,62 @@ rather than fail, when one exists at zero configuration.
 - **Test.** `backend/src/scm/lib/convert-ceilings.test.ts` — 42 cases covering the ceiling on all six paths, each with a partial (allowed) and an over-quantity (refused) case, plus cancel/draft release, the invoice-XOR-return exclusion, the amendment fail-safe, and the two unlinked-line exposures. **Mutation-verified, both numbers:** with the fix **42 pass**; with both production files reverted to `main`, **13 fail / 26 pass**; with the lib helper kept but ONLY the two call sites removed, exactly the **2** wiring cases fail (**2 fail / 37 pass**) — so the suite fails for the right reason, not merely because a new export is missing. The wiring cases assert the call sites against the router SOURCE (a `?raw` import, typed by `backend/src/raw-import.d.ts`) because scm routes cannot be exercised end to end in this harness: they ride Supabase Postgres and the harness rebuilds only the D1 side.
 - **NOT proven by test.** No case drives the two handlers over HTTP, for the harness reason above — the guard function is tested directly and its invocation is asserted structurally. Nothing was run against production data.
 - **Ref:** #1920. `chore/convert-guard-proof` 2026-08-11.
+
+### [HIGH] The write-back sent ERP item codes the account book has never heard of, and one sofa as N lines
+
+**Symptom** - nothing visible, because the write-back has never drained in
+production. On the first document that did drain, AutoCount would have received
+a Sales Order whose lines carried `9028-1S`, `AKEMI APEX MATT (SP)` and every
+other ERP `material_code` verbatim as `ItemCode` - codes the licensed
+`AED_HOUZS` book does not contain - and a sofa would have arrived as three or
+four lines (`{model}-1A(LHF)`, `{model}-CNR`, ...) where the book holds ONE.
+
+**Root cause (traced, not guessed)** - two separate defects that both end in the
+same place, `toDetails` in `backend/src/services/autocount-writeback.ts`:
+
+- **D10.** `composeCreateSo` was called with two arguments
+  (`autocount-outbox.ts`, SO create), so its third parameter defaulted to
+  `identityResolver` and `toDetails` emitted `ItemCode: l.item_code` - the raw
+  ERP code. `makeItemCodeResolver`, the function written to solve exactly this,
+  had no caller outside `autocount-writeback.test.ts`. Measured against the
+  cutover map: of the enumerable ERP catalogue only a small minority are real
+  AutoCount ItemCodes; the rest do not exist in the book.
+- **D9.** `toDetails` was a strict 1:1 `map` over the ERP rows. The ERP models a
+  sofa build as one line per COMPARTMENT and AutoCount holds one line per sofa
+  with the build in `Desc2`, so every sofa document was the wrong shape.
+  Compounding it, `PO_ITEM_COLS` did not select `description2`, so the PO side
+  threw away the original AutoCount build text that the cutover importer had
+  stored verbatim on every compartment row.
+
+**Fix** - `composeDetails` now runs COLLAPSE then RESOLVE, and refuses the whole
+document rather than sending part of it.
+
+- `autocount-sofa-collapse.ts` (pure) folds a compartment run into one line:
+  ECHO the stored `Desc2` when it still decodes to the compartments the ERP
+  holds (551 of 551 decodable builds in the real corpus), COMPOSE only when the
+  operator actually changed the build, and GATE always - re-decode with the same
+  `parse-sofa.mjs` the importers use and refuse unless pieces, size, colour and
+  specials all survive.
+- `autocount-item-code.ts` resolves against the compiled cutover map, using the
+  creditor to separate the 117 ERP codes the cutover collapsed onto several
+  AutoCount items. 109 separate; **8 do not, and are refused** rather than
+  guessed. No fallback to `material_code`.
+- `PO_ITEM_COLS` now selects `description2`.
+- Refusals land as `skipped` outbox rows, and the row now names the refusal
+  class (`KeylessLineError` / `SofaCollapseError` / `ItemCodeError`), because the
+  three have three different remedies and the `console.error` that carried the
+  name does not survive a Worker recycle.
+
+**The trap this leaves behind** - a test whose fixture uses an invented SKU no
+longer tests what its name says. `an edit whose line has no DtlKey is REFUSED`
+kept passing with `SKU-1`/`SKU-2` fixtures, but it was passing on an
+`ItemCodeError`, not the keyless guard, and its `toContain('SKU-2')` matched the
+wrong message. Outbox fixtures now use real cutover codes and that test asserts
+the refusal class explicitly.
+
+**Ref** - PR (feat/ac-writeback-sofa-collapse), 2026-08-11. Closes contract
+divergences D9 and D10.
+
 ## The array-shaped custom_specials are NOT the same damage, and NULLing them would have deleted correct data [med]
 
 **Symptom** - #1944 NULLed the 478 `custom_specials` values the old sofa
