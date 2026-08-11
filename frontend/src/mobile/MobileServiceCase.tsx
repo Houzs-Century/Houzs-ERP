@@ -87,7 +87,7 @@ const activeMStages = (method: string | null | undefined, currentStage: string):
 // stage so it survives the resolution filter (a phase whose stages all drop is
 // simply not rendered for that case).
 const PHASE_DEFS: { name: string; keys: string[] }[] = [
-  { name: "Intake", keys: ["pending_review", "under_verification", "pending_solution"] },
+  { name: "Intake", keys: ["pending_review", "pending_solution", "under_verification"] },
   { name: "Repair", keys: ["pending_supplier_pickup", "pending_item_ready"] },
   { name: "Return", keys: ["pending_delivery_service", "completed"] },
 ];
