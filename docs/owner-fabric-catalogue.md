@@ -58,6 +58,29 @@
 
 ---
 
+## 2B. 已经跑过什么 (production, company 1)
+
+| 时间 (UTC) | run | 做了什么 |
+|---|---|---|
+| 2026-08-11 04:18 | `probe-fabric-colours` **31458051902** | 动手前的库存快照:**140 系列 / 742 颜色** |
+| 2026-08-11 05:0x | `seed-owner-fabric-catalogue` **31460369953** | **PLAN**:create 88 / merge 39 / rename 34 / 已对 17 |
+| 2026-08-11 05:1x | `seed-owner-fabric-catalogue` **31460635442** | **APPLY**:开系列 2(TR、DE)、建 88、superseded 39、改名 70、**活跃单据行 repoint 225**(SO/PO/GRN/DO 四条 arm),VERIFY **PASS**,array-shaped variants **0** |
+| 2026-08-11 05:2x | `probe-fabric-colours` **31461158070** | 事后核对:ZL 20/20、MODENZA 8/8、BO315 24/24、GD2502 8/8、TR 21、DE 22、ORION 13 全部到位且带名字 |
+
+**第一次 APPLY 留下的两个尾巴**(核对时发现,不是猜的):`AM275-07` 留在带空格的系列
+`AM 275` 底下,`NX016` 留在一个叫 `NX016` 的单颜色垃圾系列底下 —— **颜色对了,系列不对**,
+所以在自己系列的 picker 里看不到。改名只动 `colour_id`,不会搬 `fabric_id`,这就是原因。
+
+**`merge-duplicate-fabric-series` 修不了这两个**,已经用 plan 验证过
+(run **31461314399**):它按引用数选边,`AM 275` 因为握着那 2 条活跃单据会**赢**,
+于是 16 个真颜色会被搬到带空格的名字底下 —— 反了;`NX` 和 `NX016` 则**一个颜色码都不共享**,
+它的探测器看不见这一对,log 里自己写了 "Owner decision, not merged here"。
+
+所以本脚本补了 **RE-PARENT**:把颜色搬到它**自己的码所指的系列**,顺手把指着旧系列的活跃行
+(`variants->>'fabricId'`)一起 repoint,旧系列如果因此空了就 `active = false` 退休 —— **不删**。
+
+---
+
 ## 3. 怎么跑
 
 Actions → **Seed the owner's fabric catalogue** → Run workflow
