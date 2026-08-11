@@ -65,18 +65,30 @@ async function main() {
       if (!erpGrp.has(k)) erpGrp.set(k, []);
       erpGrp.get(k).push(r);
     }
-    const updates = []; let noMatch = 0, countMismatch = 0, already = 0;
+    const updates = []; let noMatch = 0, countMismatch = 0, mismatchSkipped = 0, already = 0;
     for (const [k, list] of erpGrp) {
       const keys = acMap.get(k);
       if (!keys) { noMatch += list.length; continue; }
-      if (keys.length !== list.length) countMismatch += Math.abs(keys.length - list.length);
+      /* A group whose ERP line count and AutoCount line count DISAGREE is not
+         zipped at all. The zip's whole licence is the assumption that the two
+         sides list the same lines in the same order; once the counts differ
+         that assumption is already false, and taking the first N keys anyway
+         hands some ERP line a DtlKey belonging to a DIFFERENT AutoCount line.
+         A wrong key is strictly worse than no key: no key is refused loudly by
+         AcSyncService's keyless-line guard, while a wrong key silently edits
+         somebody else's line in a live account book. Left unset on purpose. */
+      if (keys.length !== list.length) {
+        countMismatch += Math.abs(keys.length - list.length);
+        mismatchSkipped += list.length;
+        continue;
+      }
       list.sort((a, b) => Number(a.line_no ?? 0) - Number(b.line_no ?? 0));
       for (let i = 0; i < list.length && i < keys.length; i++) {
         if (list[i].linked_ac_dtlkey != null) { already++; continue; }
         updates.push({ id: list[i].id, key: keys[i] });
       }
     }
-    log(`${label}: erp lines ${rows.length}; to set ${updates.length}; already set ${already}; no AC match ${noMatch}; count mismatch ${countMismatch}`);
+    log(`${label}: erp lines ${rows.length}; to set ${updates.length}; already set ${already}; no AC match ${noMatch}; count mismatch ${countMismatch} (skipped ${mismatchSkipped} lines in ambiguous groups)`);
     if (!APPLY) return;
     for (let i = 0; i < updates.length; i += 200) {
       const b = updates.slice(i, i + 200);

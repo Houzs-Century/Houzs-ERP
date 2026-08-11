@@ -1,0 +1,57 @@
+name: Cancelled SO line — reader check (read-only)
+
+# Answers one urgent question with evidence instead of argument: now that
+# production holds its FIRST `cancelled = true` sales-order lines (PR #1937 run
+# 31424084270 reinstated two hard-deleted sofa modules that way), can those two
+# documents still ship, and do the supplier-orphan and PDF readers handle the
+# cancelled row correctly?
+#
+# The dangerous one is sofa-batch-guard.findIncompleteSofaSets: it defines a
+# sofa set as every line of the SO with stock_status = 'READY' and applies NO
+# cancelled filter, so a cancelled READY sofa module would make EVERY delivery
+# order for that SO fail 409 sofa_partial_set. The verdict turns on a column the
+# restore script never wrote, so it has to be read from production.
+#
+# Strictly read-only — SELECT only, no writes, no DDL, no transaction. See
+# backend/scripts/check-cancelled-so-line-readers.mjs.
+#
+# Manual trigger only: this is a question, not a gate, and a production DB read
+# must never become scheduled CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      so_docs:
+        description: "comma-separated SO doc_no list to check"
+        required: false
+        default: "HC-SO-012624,HC-SO-013167"
+        type: string
+
+# Own group, never the deploy's: it touches nothing and must not queue behind or
+# displace a release.
+concurrency:
+  group: cancelled-so-line-readers-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-cancelled-so-line-readers.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOCS: ${{ inputs.so_docs }}
+          # GitHub-hosted runners have no IPv6 egress; mirror the deploy jobs and
+          # the sibling read-only checks so an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first
