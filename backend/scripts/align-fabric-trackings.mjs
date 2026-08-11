@@ -55,7 +55,19 @@
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
 import { parse, seriesToken, canonId } from "./lib/fabric-code.mjs";
-import { ARMS, sum } from "./lib/fabric-write.mjs";
+import { repointColour, busy } from "./lib/fabric-write.mjs";
+import { ARMS as BASE_ARMS, sum } from "./lib/fabric-write.mjs";
+
+/* The document number each arm shows a human, so an affected order can be
+   opened rather than counted. Kept here and not in lib/fabric-write because it
+   is a reporting concern, not part of the write contract. */
+const DOC = {
+  SO: "i.doc_no",
+  PO: "(SELECT h2.po_number FROM scm.purchase_orders h2 WHERE h2.id = i.purchase_order_id)",
+  GRN: "(SELECT h2.grn_number FROM scm.grns h2 WHERE h2.id = i.grn_id)",
+  DO: "(SELECT h2.do_number FROM scm.delivery_orders h2 WHERE h2.id = i.delivery_order_id)",
+};
+const ARMS = BASE_ARMS.map((a) => ({ ...a, doc: DOC[a.name] }));
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -118,6 +130,42 @@ async function main() {
   if (orphanCounts.size) {
     note("  each orphaned code, with how many lines sit on it:");
     for (const [code, n] of [...orphanCounts].sort((a, b) => b[1] - a[1])) note(`     ${String(code).padEnd(24)} ${n}`);
+  }
+
+  /* ---- 1B. THE ORPHANED LINES THAT CAN BE PUT BACK ---------------------
+     An orphaned code is not always a mystery. "CH141-1" is the pre-rename
+     spelling of "CH141-01": the shared rule resolves it, and the canonical code
+     is sitting in the library and in the Converter. Those lines were simply
+     written after the repoint pass had already counted them, so they were left
+     on the old string and stopped resolving to a price tier.
+
+     Only a code whose canonical form EXISTS as an active tracking row is moved.
+     Anything else stays orphaned and is reported - moving a line onto a code
+     that does not exist would trade one silent miss for another. */
+  const orphanFix = [];
+  for (const [code, n] of orphanCounts) {
+    const p = parse(code);
+    if (!p) continue;
+    const want = canonId(p);
+    if (normColour(want) === normColour(code)) continue;
+    if (!trkCodes.has(normColour(want))) continue;
+    orphanFix.push({ from: code, to: want, lines: n });
+  }
+  if (orphanFix.length) {
+    note("");
+    note(`--- ORPHANED LINES THAT RESOLVE (${orphanFix.length} code(s)) ---`);
+    for (const o of orphanFix) {
+      note(`  "${o.from}" -> "${o.to}"  (${o.lines} line(s))`);
+      for (const arm of ARMS) {
+        const docs = await sql.unsafe(
+          `SELECT ${arm.doc} AS doc, COUNT(*)::int AS n
+             FROM ${arm.t} i
+            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
+              AND i.variants->>'fabricCode' = $2
+            GROUP BY 1 ORDER BY 1`, [CO, o.from]);
+        for (const d of docs) note(`       ${arm.name} ${d.doc}  ${d.n} line(s)`);
+      }
+    }
   }
 
   /* ---- 2. WHAT THE TRACKING TABLE SHOULD SAY ---------------------------- */
@@ -187,7 +235,13 @@ async function main() {
   const merges = [];
   for (const [target, rows] of byTarget) {
     const existing = trk.filter((r) => normColour(r.fabric_code) === target && !rows.some((x) => x.id === r.id));
-    const all = [...rows, ...existing];
+    /* A row that is already is_active = false is SETTLED. Re-merging it stamps
+       "[merged into X on D]" onto a description that already says so, and the
+       note grows on every run. The 2026-08-11 re-plan reported all 67 pairs a
+       second time for exactly this reason - correct detection, corrupting
+       apply. Same guard the catalogue seeder needed. */
+    const all = [...rows, ...existing].filter((r) => r.is_active !== false);
+    if (all.length === 0) continue;
     if (all.length === 1) { keep.add(all[0].id); continue; }
     const tiers = new Set(all.map(tierOf).filter(Boolean));
     if (tiers.size > 1) {
@@ -272,8 +326,14 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let wrote = 0, filled = 0, mergedOff = 0, created = 0;
+  let wrote = 0, filled = 0, mergedOff = 0, created = 0, rescued = 0;
   await sql.begin(async (tx) => {
+    for (const o of orphanFix) {
+      const r = await repointColour(tx, CO, o.from, o.to);
+      const n = sum(r);
+      rescued += n;
+      note(`  rescued ${n} orphaned line(s): "${o.from}" -> "${o.to}" (${busy(r)})`);
+    }
     for (const x of doRewrite) {
       /* fabric_trackings.id is a text PK that HAPPENS to equal the code by
          minting convention. It is not rewritten: upserts and deletes key off
@@ -321,7 +381,7 @@ async function main() {
       created++;
     }
   });
-  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created}`);
+  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created} | orphaned lines rescued ${rescued}`);
 
   /* Verify on a SECOND, FRESH connection, and verify the thing that matters:
      the join is whole again. */
