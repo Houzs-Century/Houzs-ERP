@@ -367,7 +367,10 @@ soAmendments.get('/:id', async (c) => {
       .eq('id', id), c).maybeSingle(),
     sb.from('so_amendment_lines')
       .select('id, amendment_id, sales_order_item_id, change_type, new_item_code, ' +
-        'new_variants, new_qty, new_unit_price_sen, old_snapshot')
+        // mig 0280 — new_remark is the free-text instruction the requester typed
+        // onto the line. Omitting it here would leave the approver signing off a
+        // line whose whole point (a service line's job description) is invisible.
+        'new_variants, new_qty, new_unit_price_sen, new_remark, old_snapshot')
       .eq('amendment_id', id),
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
