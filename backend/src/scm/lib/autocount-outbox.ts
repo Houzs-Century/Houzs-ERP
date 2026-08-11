@@ -247,6 +247,7 @@ const PO_ITEM_COLS =
    later `const soLine` would be in its temporal dead zone and every import of
    this module would throw. */
 const soLine = (r: Record<string, unknown>): ErpLine => ({
+  id: r.id == null ? null : String(r.id),
   item_code: String(r.item_code ?? r.material_code ?? ''),
   item_group: (r.item_group as string) ?? null,
   description: (r.description as string) ?? null,
@@ -1110,6 +1111,16 @@ export async function enqueueEdit(
     docId?: string | null;
     createdBy?: number | null;
     /**
+     * ERP row ids this very request INSERTED.
+     *
+     * A keyless line means two opposite things - just added, or never
+     * backfilled - and guessing "added" appends a second copy of a line the
+     * account book already holds. The ERP is therefore not allowed to infer it:
+     * the route that did the adding says so, and composeEdit honours it only
+     * when every keyless line on the document is one of these.
+     */
+    newLineIds?: string[];
+    /**
      * Lines the ERP has just HARD-DELETED, named by the AutoCount key the row
      * carried. Composed from the document as it is now, so a deleted line is
      * simply absent — and /edit applies only the lines it is given, which would
@@ -1125,7 +1136,7 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
@@ -1292,7 +1303,7 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
@@ -1314,7 +1325,11 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
-    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines, {}, retired),
+    edit: () => composeEdit(
+      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines,
+      newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {},
+      retired,
+    ),
   };
 }
 

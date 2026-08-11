@@ -1020,3 +1020,47 @@ describe('an edit carries the fields a create carries', () => {
     expect(h).not.toHaveProperty('UDF');
   });
 });
+
+/* Adding a line to a document AutoCount already has. A keyless line means two
+   opposite things - just added, or never backfilled - and guessing "added"
+   appends a SECOND COPY of a line the account book already holds, permanently
+   on a purchase order. So the ERP is told, by the route that did the adding,
+   and only believed when the rest of the document proves the backfill is
+   complete. */
+describe('a line the ERP just added is declared, never inferred', () => {
+  const so = {
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
+    branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
+  };
+  const keyed = { id: 'row-old', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 991 };
+  const fresh = { id: 'row-new', doc_no: 'HC-SO-9', item_code: ERP_B, description: 'added', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null };
+
+  test('declared by the route, and every other line keyed: it goes as IsNewLine', async () => {
+    const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...keyed }, { ...fresh }] });
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'SO', docNo: 'HC-SO-9', newLineIds: ['row-new'],
+    })).toBe(true);
+    const lines = outbox(sb)[0].payload.body.Lines as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.DtlKey === 991)?.IsNewLine).toBeUndefined();
+    expect(lines.find((l) => l.ItemCode === AC_B)?.IsNewLine).toBe(true);
+  });
+
+  test('NOT declared: refused, exactly as before — this is the whole guard', async () => {
+    const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...keyed }, { ...fresh }] });
+    expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
+    expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+  });
+
+  test('another line is ALSO keyless: the document is not backfilled, so the declaration is not believed', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so }],
+      mfg_sales_order_items: [{ ...keyed, linked_ac_dtlkey: null, id: 'row-legacy' }, { ...fresh }],
+    });
+    expect(await enqueueEdit(sb as never, {
+      companyId: 1, docType: 'SO', docNo: 'HC-SO-9', newLineIds: ['row-new'],
+    })).toBe(false);
+    expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
+  });
+});

@@ -135,6 +135,8 @@ export interface ErpPoHeader {
 }
 
 export interface ErpLine {
+  /** The ERP row id. Only the add-a-line path needs it — see `newLineIds`. */
+  id?: string | null;
   item_code: string;
   item_group?: string | null;
   description: string | null;
@@ -308,6 +310,13 @@ export interface ComposeOptions {
    * book's own value alone".
    */
   requireLocation?: boolean;
+  /**
+   * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
+   * that a keyless line is genuinely new rather than un-backfilled. Honoured
+   * only when EVERY keyless line on the document is one of these; see the
+   * comment in composeEdit for why both halves are required.
+   */
+  newLineIds?: Set<string>;
 }
 
 /**
@@ -629,6 +638,40 @@ export function composeEdit(
 
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
+
+  /* ADDING A LINE to a document AutoCount already has.
+   *
+   * A keyless line has two possible meanings and they are opposite: it is a
+   * line the operator just added, or it is a legacy line whose key was never
+   * backfilled. Guess "new" and the second case appends a SECOND COPY of a line
+   * that is already in a live account book — permanently, on a purchase order.
+   * So the ERP is not allowed to infer it. It has to be TOLD, by the route that
+   * did the adding, and even then only when the rest of the document proves the
+   * backfill is complete.
+   *
+   * Both halves are required:
+   *   1. the caller named this ERP row as one it just inserted, and
+   *   2. EVERY OTHER line on the document already carries a key.
+   *
+   * (2) is what makes (1) safe to believe. A document with other keyless lines
+   * has not been backfilled, so "the rest are keyed" cannot vouch for this one
+   * and the whole edit is refused as before. */
+  const declaredNew = opts.newLineIds ?? null;
+  if (declaredNew && declaredNew.size && keyless.length) {
+    const isDeclared = (i: number) => {
+      const id = collapsed[i].sourceIndexes
+        .map((ix) => lines[ix]?.id)
+        .find((v) => v != null);
+      return id != null && declaredNew.has(String(id));
+    };
+    if (keyless.every(isDeclared)) {
+      for (const i of keyless) {
+        (keyed[i] as AcDetail & { IsNewLine?: true }).IsNewLine = true;
+      }
+      keyless.length = 0;
+    }
+  }
+
   if (keyless.length) {
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)

@@ -256,12 +256,22 @@ mfgSalesOrders.use('*', async (c, next) => {
 
    Only ever reached for an order the downstream lock let through, which is the
    same rule AutoCount enforces on its side. Never throws. */
-async function queueAcSoEdit(c: any, docNo: string, retire: AcRetiredLine[] = []): Promise<void> {
+async function queueAcSoEdit(
+  c: any,
+  docNo: string,
+  retire: AcRetiredLine[] = [],
+  /* Rows THIS request inserted. A line with no AutoCount key is otherwise
+     indistinguishable from a legacy line the backfill missed, and guessing
+     "new" appends a duplicate into a live account book. Only the route that
+     did the inserting can say, so only the route that did it passes this. */
+  newLineIds: string[] = [],
+): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'SO',
     docNo,
     retire,
+    newLineIds,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -7924,6 +7934,14 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       try { await recomputeSoStockAllocation(sb); }
       catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
 
+      /* The sofa branch RETURNED here and queued nothing, so adding a sofa to
+         an order AutoCount already holds never reached the account book at all.
+         The same shape as the guard-with-no-else class in BUG-HISTORY: an early
+         return past the hook. Every inserted compartment row is declared, so
+         the whole build can go as new lines rather than being refused. */
+      await queueAcSoEdit(c, docNo, [], ((moduleData ?? []) as Array<{ id?: unknown }>)
+        .map((r) => (r?.id == null ? '' : String(r.id))).filter(Boolean));
+
       return c.json({ item: firstRow }, 201);
     }
   }
@@ -7972,7 +7990,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   try { await recomputeSoStockAllocation(sb); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-line-add failed:', e); }
 
-  await queueAcSoEdit(c, docNo);
+  await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
 
   return c.json({ item: data }, 201);
 });
