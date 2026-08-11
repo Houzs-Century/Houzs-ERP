@@ -2,11 +2,20 @@
 // Public SCM image proxies — for the cross-origin POS.
 //
 // Houzs gates ALL of /api/scm/* behind the global `auth` + `requireScmAccess`
-// (main index.ts). The same-origin Houzs SPA passes that with its session
-// cookie, so its <img src="/api/scm/.../photo/..."> loads fine. But the 2990
-// POS is a DIFFERENT origin authenticating with a Bearer token — a plain
-// <img src> from there carries no Houzs cookie and no Authorization header, so
-// it 401s at the gate.
+// (main index.ts). NOTE (corrected 2026-08-10): this comment used to claim the
+// same-origin Houzs SPA passes that gate "with its session cookie", so its
+// <img src="/api/scm/.../photo/..."> loads fine. That is FALSE and it cost a
+// debugging session — there is no cookie session anywhere in this app. Auth is
+// bearer-token-only: the token lives in session/localStorage and is stamped
+// explicitly by authedFetch, `auth` reads ONLY the Authorization header, and
+// backend/src has zero Set-Cookie. A plain <img src> therefore 401s from the
+// SAME origin too, which is exactly why these two handlers are mounted OUTSIDE
+// the gate. An authed image elsewhere in the SPA must be blob-fetched and
+// handed to <img> as an object URL (see frontend slip.ts, lorries-queries.ts,
+// and SoLineCard's PhotoThumb proxy fallback).
+//
+// The 2990 POS is additionally a DIFFERENT origin authenticating with a Bearer
+// token — a plain <img src> from there carries no Authorization header either.
 //
 // 2990 solved the exact same cross-origin problem by serving Model photos from
 // an auth-free proxy (apps/api/src/routes/product-models.ts:35 — registered
