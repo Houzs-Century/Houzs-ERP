@@ -381,10 +381,19 @@ Reconstructing the owner's `Desc2` grammar from a compartment list is **lossy**,
 so reconstruction is not the primary path:
 
 1. **ECHO.** Both cutover importers already wrote the original `Desc2` verbatim
-   onto every compartment row. If it still decodes to exactly the compartments
-   the ERP holds, the build has not been edited and the original text *is* the
-   faithful answer. Measured on the real corpus: **551 of 551 decodable builds
-   echo character-for-character**, whitespace excepted.
+   onto every compartment row. If it still decodes to everything the ERP row
+   holds — the compartments **and** the seat size, the colour and the specials —
+   the build has not been edited and the original text *is* the faithful answer.
+   Measured on the real corpus: **551 of 551 decodable builds echo
+   character-for-character**, whitespace excepted.
+
+   The attribute half of that check is not belt-and-braces. Matching on the
+   piece list alone would echo the *old* colour of a re-coloured sofa into the
+   account book — a wrong line, not a missing one, with the ERP showing the new
+   value, nothing refused, and no marker anywhere that the edit was dropped.
+   Re-colouring every coloured build in the corpus and asking what comes out:
+   with the attribute check, **341 recomposed / 41 refused / 0 stale**; without
+   it, **382 of 382 still carry the colour the ERP no longer holds.**
 2. **COMPOSE**, only when the stored text no longer decodes to what the ERP has
    — i.e. the operator actually changed the build.
 3. **GATE, always.** Whatever text is about to be sent is fed back through the

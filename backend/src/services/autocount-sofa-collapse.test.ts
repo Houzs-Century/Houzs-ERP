@@ -334,6 +334,105 @@ describe('the two corrections that a naive inverse gets wrong', () => {
   });
 });
 
+/**
+ * THE ECHO MUST NOT OUTLIVE THE EDIT.
+ *
+ * Echo is safe only while the stored text is still TRUE of the row. The
+ * compartment list is not the whole build: a fabric colour, a seat height and a
+ * special order all live beside it and all get edited. Echoing on a piece-list
+ * match alone sends AutoCount the sofa this one USED to be — a stale line in a
+ * licensed account book, with the ERP showing the new value, nothing refused,
+ * and no marker anywhere that the edit was dropped. That is the exact shape of
+ * failure the write-back exists to make impossible.
+ */
+describe('ECHO stops being the answer the moment the row disagrees with it', () => {
+  const pair = (over: Partial<CollapsibleLine>, d2 = '1EL + 1ER (28") / COL: BEIGE'): CollapsibleLine[] =>
+    ['9028-1A(LHF)', '9028-1A(RHF)'].map((code, i) => ({
+      item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
+      description2: d2, qty: 1, unit_price_centi: i === 0 ? 500000 : 0,
+      variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: [] },
+      ...over,
+    }));
+
+  it('echoes while the row still agrees with the imported text', () => {
+    const res = collapseSofaLines(pair({}));
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0].via).toBe('echo');
+    expect(res.lines[0].description2).toBe('1EL + 1ER (28") / COL: BEIGE');
+  });
+
+  it('a COLOUR change with the same compartments never ships the old colour', () => {
+    const res = collapseSofaLines(pair({ variants: { seatHeight: '28', colourLabel: 'GREY', specials: [] } }));
+    const text = res.lines.map((l) => String(l.description2)).join(' ');
+    expect(text).not.toContain('BEIGE');
+    // and it is not silently dropped either: either the new colour, or a refusal
+    if (res.lines.length) {
+      expect(res.lines[0].via).toBe('compose');
+      expect(text).toContain('GREY');
+    } else {
+      expect(res.refusals).toHaveLength(1);
+    }
+  });
+
+  it('a SEAT SIZE change with the same compartments never ships the old size', () => {
+    const res = collapseSofaLines(pair({ variants: { seatHeight: '30', colourLabel: 'BEIGE', specials: [] } }));
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0].via).toBe('compose');
+    expect(String(res.lines[0].description2)).toContain('30');
+    expect(String(res.lines[0].description2)).not.toContain('28');
+  });
+
+  it('a SPECIAL ORDER added with the same compartments never ships without it', () => {
+    const res = collapseSofaLines(pair({
+      variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: ['FULLY COVER'] },
+    }));
+    if (res.lines.length) {
+      expect(res.lines[0].via).toBe('compose');
+      expect(String(res.lines[0].description2)).toContain('FULLY COVER');
+    } else {
+      expect(res.refusals).toHaveLength(1);
+    }
+  });
+
+  /**
+   * The same claim over the REAL corpus rather than one hand-built build: change
+   * the colour on every decomposed build and count what still carries the old
+   * one. The population is the measurement — if it collapses to nothing, the
+   * assertion has quietly stopped meaning anything.
+   */
+  it('no build in the corpus echoes a colour the ERP no longer holds', () => {
+    const stale: string[] = [];
+    let checked = 0;
+    let composed = 0;
+    let refused = 0;
+    for (const { row, ps } of DECODABLE) {
+      const old = ps.color;
+      if (!old || up(old) === 'MAGENTA') continue;
+      checked += 1;
+      const rows = erpRows(row, ps.pieces, ps).map((r) => ({
+        ...r, variants: { ...(r.variants ?? {}), colourLabel: 'MAGENTA' },
+      }));
+      const res = collapseSofaLines(rows);
+      refused += res.refusals.length;
+      for (const line of res.lines) {
+        if (line.via === 'compose') composed += 1;
+        const back = parseSofa(String(line.description2), row.model, row.recl);
+        if (up(back.color) === up(old)) {
+          stale.push(`${row.docNo}/${row.dtlKey}: still says ${old} (via ${line.via})`);
+        }
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `[D9 echo-staleness] ${checked} coloured builds re-coloured: ${composed} recomposed, `
+      + `${refused} refused, ${stale.length} still carrying the OLD colour.`,
+    );
+    expect(checked).toBeGreaterThan(200);
+    expect(stale.slice(0, 5)).toEqual([]);
+  });
+});
+
 describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   const build = (over: Partial<CollapsibleLine>[]): CollapsibleLine[] =>
     over.map((o) => ({

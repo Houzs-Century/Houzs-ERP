@@ -94,11 +94,23 @@ same place, `toDetails` in `backend/src/services/autocount-writeback.ts`:
 document rather than sending part of it.
 
 - `autocount-sofa-collapse.ts` (pure) folds a compartment run into one line:
-  ECHO the stored `Desc2` when it still decodes to the compartments the ERP
-  holds (551 of 551 decodable builds in the real corpus), COMPOSE only when the
+  ECHO the stored `Desc2` when it still decodes to everything the ERP row holds
+  (551 of 551 decodable builds in the real corpus), COMPOSE only when the
   operator actually changed the build, and GATE always - re-decode with the same
   `parse-sofa.mjs` the importers use and refuse unless pieces, size, colour and
   specials all survive.
+- **A third defect, found while verifying the second.** The first cut of the echo
+  matched on the COMPARTMENT LIST alone. But a fabric colour, a seat height and a
+  special order all change without the piece list changing, so an operator who
+  re-coloured a sofa in the ERP would have had the sofa's OLD colour echoed into
+  AutoCount - the ERP showing the new value, the account book showing the old
+  one, nothing refused, and no marker anywhere that the edit was dropped. That is
+  a wrong line, not a missing one, and it is the failure the write-back exists to
+  prevent. The echo now also requires the stored text to decode to the size,
+  colour and specials the row holds; anything else falls through to compose,
+  which spells the current build or refuses it visibly. Measured by re-colouring
+  every coloured build in the corpus: **341 recomposed / 41 refused / 0 stale**
+  with the check, **382 of 382 stale** without it.
 - `autocount-item-code.ts` resolves against the compiled cutover map, using the
   creditor to separate the 117 ERP codes the cutover collapsed onto several
   AutoCount items. 109 separate; **8 do not, and are refused** rather than

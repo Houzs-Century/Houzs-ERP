@@ -16,9 +16,12 @@
 //
 //   1. ECHO. The original AutoCount Desc2 is already stored verbatim on every
 //      compartment line (both importers write l.Desc2 into description2). If it
-//      still decodes to exactly the compartments the ERP holds, the build has
-//      not been edited and the ORIGINAL TEXT is by definition the faithful
-//      answer. Zero reconstruction, zero risk.
+//      still decodes to everything the ERP row holds — the compartments AND the
+//      seat size, the colour and the specials — the build has not been edited
+//      and the ORIGINAL TEXT is by definition the faithful answer. Zero
+//      reconstruction, zero risk. Matching on the piece list ALONE would echo a
+//      re-coloured sofa's old colour into the account book, which is a wrong
+//      line, not a missing one.
 //   2. COMPOSE, only when the echo no longer decodes to what the ERP has — i.e.
 //      the operator actually changed the build.
 //   3. GATE, always. Whatever text is about to be sent is fed back through the
@@ -371,16 +374,9 @@ function collapseRun(
     };
   };
 
-  // 1. ECHO — the stored text already decodes to exactly what the ERP holds.
-  if (reps > 0) {
-    const out: CollapsedLine[] = [];
-    for (let k = 0; k < reps; k += 1) {
-      out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));
-    }
-    return { lines: out };
-  }
-
-  // 2. COMPOSE — the build no longer matches the text it was imported with.
+  /* What the ERP row ACTUALLY holds, which is not always what the imported text
+     says. Absent fields fall back to the decode, so a row the importer never
+     enriched compares equal to its own Desc2 rather than looking edited. */
   const v = (run[0].line.variants ?? {}) as Record<string, unknown>;
   const sizeRaw = v.seatHeight != null ? String(v.seatHeight).trim() : (ps.size ?? null);
   const size = sizeRaw ? sizeRaw.replace(/["']+$/, '') : null;
@@ -389,6 +385,22 @@ function collapseRun(
     : (ps.color ?? null);
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
 
+  /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
+     THE COMPARTMENTS ARE NOT THE WHOLE BUILD. A fabric colour, a seat height or
+     a special order can change while the piece list does not, and echoing then
+     would send AutoCount the text the sofa USED to be — a stale line in the
+     account book with nothing anywhere recording that the edit was dropped.
+     Whatever the ERP disagrees with its own imported text about falls through to
+     compose, which either spells the current build or refuses it visibly. */
+  if (reps > 0 && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
+    const out: CollapsedLine[] = [];
+    for (let k = 0; k < reps; k += 1) {
+      out.push(mkLine(run.slice(k * build.length, (k + 1) * build.length), desc2, 'echo'));
+    }
+    return { lines: out };
+  }
+
+  // 2. COMPOSE — the build no longer matches the text it was imported with.
   const composed = composeSofaDesc2(compartments, { size, colour, specials });
   if (!composed) {
     return {
