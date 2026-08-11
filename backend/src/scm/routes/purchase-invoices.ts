@@ -23,7 +23,19 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
+   See queueAcDoEdit for the shape. */
+async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'PI',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -1097,6 +1109,21 @@ purchaseInvoices.post('/', async (c) => {
      record exactly one. */
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
+     of the standalone Sales Invoice: AcSyncService has no /create-pi, because
+     AutoCount builds a Purchase Invoice only by transferring a GRN's lines. The
+     two real conversion routes are POST /from-grn and /from-grn-items; anything
+     that arrives here is an invoice the account book will never hold, and it is
+     recorded so it can be found. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'PI',
+    docNo: h.invoice_number,
+    docId: h.id,
+    missing: 'no source Goods Received Note to transfer from',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN
      line (recomputeGrnInvoiced) nor re-cost (recostForPi). Both move to the
      confirm transition (PATCH /:id/post). GL/AP posting (postPiAccounting) is ALSO
@@ -1427,6 +1454,24 @@ purchaseInvoices.patch('/:id/cancel', async (c) => {
   // Costing B — a cancelled PI is no longer the authoritative price; re-cost the
   // GRN so its buckets fall back to the GR price (or Pending), and DOs/SIs follow.
   await recostForPi(sb, id);
+
+  /* ERP -> AutoCount cancel. The purchase-side mirror of the Sales Invoice
+     cancel: a PI cancelled in the ERP but left live in the account book keeps
+     consuming its GRN there, so the two sides' outstanding sets diverge by
+     exactly that document. AcSyncService.cs:426 is `case "PI"` and has always
+     been reachable — nothing ever called it.
+
+     Placed after the ATOMIC ACTIVE->CANCELLED flip won its race (the losing
+     concurrent call returned above), so exactly one cancel is queued per
+     invoice, the same guarantee the accounting reversal relies on. */
+  await enqueueCancel(sb, {
+    companyId: auditCompanyId ?? activeCompanyId(c),
+    docType: 'PI',
+    docNo: cancelled.invoice_number ?? id,
+    docId: id,
+    self: { table: 'purchase_invoices', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
   return c.json({ purchaseInvoice: { id: cancelled.id, status: cancelled.status } });
 });
 
@@ -1970,6 +2015,7 @@ purchaseInvoices.patch('/:id', async (c) => {
     await reallocatePiCharges(sb, id, undefined, activeCompanyId(c));
     try { await recostForPi(sb, id); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-patch] recost failed:', id, e); }
   }
+  await queueAcPiEdit(c, id);
   return c.json({ purchaseInvoice: data });
 });
 
@@ -2099,6 +2145,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
   // Costing B — a newly added PI line bills a GRN line: re-cost its lots / DO / SI.
   await recostForPi(sb, piId);
+  await queueAcPiEdit(c, piId);
   return c.json({ item: data }, 201);
 });
 
@@ -2229,6 +2276,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('purchase_invoices').select('invoice_number').eq('id', piId).maybeSingle();
     if (h) await resyncPiAccounting(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-accounting] post-line-edit resync failed:', e); }
+  await queueAcPiEdit(c, piId);
   return c.json({ ok: true });
 });
 
@@ -2250,6 +2298,11 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   if (!lineRow) return c.json({ error: 'not_found' }, 404);
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const line = lineRow as unknown as Record<string, unknown>;
+
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_invoice_items', itemId);
 
   const { error } = await sb.from('purchase_invoice_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -2302,5 +2355,6 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('purchase_invoices').select('invoice_number').eq('id', piId).maybeSingle();
     if (h) await resyncPiAccounting(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-accounting] post-line-delete resync failed:', e); }
+  await queueAcPiEdit(c, piId, retire);
   return c.body(null, 204);
 });

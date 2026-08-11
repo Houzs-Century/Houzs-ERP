@@ -150,6 +150,11 @@ type AmendmentLineRow = {
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  /* Mig 0280 — the requested REMARK. NULL = the request does not touch it (every
+     row created before 0280, and every line whose remark did not move); '' = a
+     real request to clear it. The `!= null` test at the write is the ONE gate,
+     so approving an old amendment can never blank a remark typed since. */
+  new_remark: string | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -276,7 +281,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, old_snapshot')
+      'new_qty, new_unit_price_sen, new_remark, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -435,9 +440,20 @@ export async function applySoAmendment(
         custom_specials:        rec.custom_specials ?? null,
         stock_status:           'PENDING',
         warehouse_id:           addLineWarehouseId,   // follows the SO — see above
+        /* Mig 0280 — the requested REMARK rides onto the added line. This insert
+           used to omit it entirely, so a SVC-ADDON line added purely to carry an
+           instruction ("Please take back Cody Bedframe (King Size) 2 units")
+           landed as an RM0 line saying nothing, and the person meant to execute
+           it had no way to read the job. NULL stays NULL. */
+        remark:                 diff.new_remark,
       });
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
+      /* The remark is its OWN audit row — an added line's note is the request in
+         a service line's case, so "qty 1" alone would not say what was approved. */
+      if ((diff.new_remark ?? '').trim()) {
+        lineChanges.push({ field: `line_added_${itemCode}_remark`, from: null, to: diff.new_remark });
+      }
       touched.push({ change, itemCode, qty });
       continue;
     }
@@ -506,6 +522,12 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
+      /* Mig 0280 — write the REMARK only when the request carries one. NULL is
+         "not requested", so spreading it conditionally is what stops an
+         amendment raised last week (or any row created before 0280, where the
+         column is NULL by definition) from blanking a remark somebody typed on
+         the line in the meantime. '' IS a request — clear it. */
+      ...(diff.new_remark != null ? { remark: diff.new_remark } : {}),
     }).eq('id', diff.sales_order_item_id);
     if (updErr) throw new Error(`applySoAmendment: ${change} update failed for line ${diff.sales_order_item_id}: ${updErr.message}`);
     /* Keyed by the line's ORIGINAL item code so the drawer reads as one line's
@@ -524,6 +546,8 @@ export async function applySoAmendment(
         buildVariantSummary(itemGroup, (row.variants as Record<string, unknown> | null) ?? null),
         buildVariantSummary(itemGroup, variants ?? null),
       );
+      // Mig 0280 — only when the request touched it (noteChange drops a no-op).
+      if (diff.new_remark != null) noteChange(`line_${key}_remark`, row.remark, diff.new_remark);
     }
     touched.push({ change, itemCode, qty });
   }
@@ -893,12 +917,22 @@ export async function reviseBoundPo(
   const poLinks = (snap?.poLinks ?? {}) as Record<string, string[]>;
 
   // (4) Current (post-Approve-SO) SO line ids.
+  /* CANCELLED IS REMOVED. `removed = prevLineIds \ currentIdSet` is what
+     orphans the PO line a since-deleted SO line was bound to, and it is the
+     only warning the supplier side ever gets. A retained cancelled row would
+     stay in currentIdSet forever, so the customer's cancellation would never
+     reach the supplier and the factory would keep building the item. The hard
+     delete gives this for free today; the filter is what keeps it true once a
+     removal becomes a soft cancel. Filtered in JS rather than SQL so a NULL —
+     which the column default forbids but a partial row shape does not — reads
+     as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb
     .from('mfg_sales_order_items')
-    .select('id')
+    .select('id, cancelled')
     .eq('doc_no', docNo);
   if (soItemErr) throw new Error(`reviseBoundPo: SO items load failed: ${soItemErr.message}`);
-  const soItemIds = ((soItemRows ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const soItemIds = ((soItemRows ?? []) as Array<{ id: string; cancelled?: boolean | null }>)
+    .filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
 
   /* ADDED   = a current line the pre-amendment snapshot did not have (an ADD diff

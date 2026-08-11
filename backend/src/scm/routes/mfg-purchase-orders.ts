@@ -35,7 +35,7 @@ import {
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { enqueuePoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -248,11 +248,12 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    add/edit/delete alike. Only ever reached for a PO the downstream lock let
    through, which is the same rule AutoCount enforces on its side. Never
    throws. */
-async function queueAcPoEdit(c: any, poId: string): Promise<void> {
+async function queueAcPoEdit(c: any, poId: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'PO',
     docId: poId,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -1624,7 +1625,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, ' +
+    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
@@ -1651,6 +1652,20 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
+      /* A retired line has no demand to purchase against. The line-level bind
+         (soLinkTargetRefusal) has refused this since it was written and the
+         From-SO picker never lists one, but THIS is the bulk create — reached by
+         POST /from-sos and by the MRP agent, neither of which goes through
+         either — so a cancelled line stayed purchasable here. Inert today
+         (production holds two cancelled lines, both with zero demand) and the
+         gate that has to exist before line retirement can ship. */
+      if ((row as { cancelled?: boolean | null }).cancelled) {
+        return c.json({
+          error: 'so_line_cancelled',
+          reason: `Sales Order line ${row.doc_no ?? ''} (${row.item_code ?? ''}) is cancelled — it has no demand to purchase against.`.trim(),
+          soItemId: p.soItemId,
+        }, 409);
+      }
       const remaining = row.qty - row.po_qty_picked;
       if (p.qty <= 0)         return c.json({ error: 'qty_must_be_positive', soItemId: p.soItemId }, 400);
       // Commander 2026-05-31 — MRP-origin converts skip the remaining cap: the
@@ -2381,6 +2396,33 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       supabase, c.get('houzsUser'), c.get('companyId'), header.id, bucket.lines.length,
       `Raised from Sales Order${bucket.soDocNos.size === 1 ? '' : 's'} ${[...bucket.soDocNos].join(', ')}`,
     );
+    /* ERP -> AutoCount PO create. THE LARGEST CREATE-SIDE HOLE IN THE SYSTEM
+       until now: this is the converter behind POST /from-sos and the MRP
+       agent's createDraftPosFromPicks, i.e. every purchase order the ERP raises
+       from a Sales Order — and it queued nothing. It is not covered by the
+       confirm-time hook either, because the status literal above writes
+       'SUBMITTED' directly whenever a warehouse resolved, so PATCH /:id/confirm
+       never runs for these and could not act as a backstop.
+
+       Same DRAFT rule as POST / : a draft PO is inert by design (mrp.ts's
+       PO_DEAD excludes it from supply, recomputeSoPicked ignores its lines), so
+       it does not belong in the account book until a human confirms it — and
+       confirm does queue it. Gated on headerPayload.status, the LITERAL that was
+       inserted, rather than on `asDraft` — because this route has a SECOND way
+       to become a draft that `asDraft` does not describe: a bucket whose SO line
+       resolved no warehouse is forced to DRAFT above (owner 2026-08-02).
+       Re-deriving the condition would have queued exactly those. */
+    if (headerPayload.status !== 'DRAFT') {
+      await enqueuePoCreate(supabase, {
+        companyId: activeCompanyId(c),
+        poId: header.id,
+        /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
+           SCM bridge gives every caller, and created_by here is a bigint staff
+           id. Undefined on the headless MRP-agent path, which degrades to an
+           unattributed row exactly as recordPoCreate does. */
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length });
   }
 
@@ -2687,6 +2729,17 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
       statusSnapshot: (before.status as string | null) ?? null,
       fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
     });
+    /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
+       and after `continue`s, so a PO that was skipped (not found, downstream-
+       locked, or a failed write) queues nothing. A bulk route that queued one
+       edit for the whole batch would be wrong in both directions: it would send
+       POs that did not change and would name only one of the ones that did.
+
+       This matters because `applyToLines` cascades the date down to every line
+       (purchase_order_items.delivery_date), and DeliveryDate is a real AutoCount
+       detail field — so the account book's own promised dates were left behind
+       by every bulk date change the ERP has ever made. */
+    await queueAcPoEdit(c, id);
     updated.push({ id, poNumber });
   }
 
@@ -3223,6 +3276,11 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const doomed = (doomedRow ?? null) as unknown as Record<string, unknown> | null;
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_order_items', itemId);
+
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -3260,7 +3318,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
     catch { /* line already deleted — don't fail on counter recount */ }
   }
 
-  await queueAcPoEdit(c, poId);
+  await queueAcPoEdit(c, poId, retire);
 
   return c.body(null, 204);
 });
@@ -3831,6 +3889,22 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // Recount po_qty_picked from the live PO lines for every converted SO line.
   try { await recomputeSoPicked(sb, toInsert.map((it) => it.id)); }
   catch { /* lines already inserted — don't fail on counter recount */ }
+
+  /* ERP -> AutoCount edit, NOT a convert. AutoCount has no SO->PO transfer at
+     all (Convert_ targets only DO/IV/GR/PI — AcSyncService.cs:305-353), so this
+     route is not a conversion in AutoCount's sense however it is named here: it
+     APPENDS lines to a purchase order that may already exist in the account
+     book, which is an edit of that document.
+
+     What happens next is deliberately loud rather than clever. A PO still in
+     DRAFT has no AutoCount counterpart, so this folds into the create that
+     confirm will queue. A PO already in the book gets a real edit — and because
+     these lines are brand new they carry no DtlKey, so composeEdit refuses the
+     whole document and writes a visible skipped row naming it. That refusal is
+     correct until IsNewLine is implemented: guessing a key would make
+     AcSyncService rewrite somebody else's line in a live book, and 0273's own
+     header says a wrong key is strictly worse than NULL. */
+  await queueAcPoEdit(c, poId);
 
   return c.json({
     copied: rows.length,

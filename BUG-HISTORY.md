@@ -1,3 +1,131 @@
+## The AutoCount write-back could not express an edit, a cancel or a create for most of the ERP's documents, and the gaps were invisible [high]
+
+**Symptom** - the owner's go-live criterion 1 is "every document type syncs to
+AutoCount - SO, PO, DO, GR, PI, SI - on create, convert AND edit, not just
+create". A matrix of the 24 cells (6 doc types x create/convert/edit/cancel)
+found 10 wired, 4 partial, 9 missing. `AcSyncService` could edit all six types
+and cancel all six; the ERP could ask for two edits and four cancels. Nothing
+reported the difference, and one test's NAME asserted the opposite.
+
+**Root cause (traced, not guessed)** - four separate causes, not one:
+
+1. **A type narrowing.** `enqueueEdit`'s `docType` was declared `'SO' | 'PO'`
+   (autocount-outbox.ts) and `composeEdit`'s first parameter likewise, so
+   `case "DO"`, `"IV"`, `"GR"` and `"PI"` in `AcSyncService.Edit()` were fully
+   built and unreachable from the ERP. `AcSyncService.Cancel()`'s `"IV"` and
+   `"PI"` cases had never been called by anything.
+2. **A missing column.** An edit addresses a detail row by AutoCount's `DtlKey`,
+   and 0273 put `linked_ac_dtlkey` only on the two line tables the ERP can
+   CREATE in AutoCount. The four downstream line tables had no column to read a
+   key from, so every downstream edit would have been refused for a reason that
+   looked like data and was actually schema.
+3. **A guard with no else.** `convertSosToPosCore` - the converter behind
+   `POST /from-sos` AND the MRP agent's `createDraftPosFromPicks`, i.e. every PO
+   the ERP raises from a Sales Order - recorded its audit row and queued
+   nothing. It was not covered by the confirm-time hook either, because it
+   writes `'SUBMITTED'` directly whenever a warehouse resolves, so
+   `PATCH /:id/confirm` never runs for these. The same shape appeared four more
+   times: a parentless DO / GRN / SI / PI fell out of an `if` writing no outbox
+   row at all, not even a `skipped` one, so a document that can never exist in
+   the account book left no trace of the fact.
+4. **A test that asserted a set and checked a list.** `tests/autocountWriteback
+   Wiring.test.ts`'s "every SO mutation path queues an edit" and "every PO
+   mutation path queues an edit" each pinned a handful of named anchors. Five
+   real mutation paths were outside them: the admin price `override` (which
+   writes `unit_price_centi`, an AutoCount field), `applySoAmendment` and
+   `applyPoAmendment` (the sanctioned ways to change a CONFIRMED document),
+   `bulk-supplier-date`, and `convert-from-so`.
+
+**Fix** - migration 0280 adds `linked_ac_dtlkey` to the four downstream line
+tables; `AcDocType` replaces the two narrowings; `queueAcDoEdit` /
+`queueAcGrnEdit` / `queueAcSiEdit` / `queueAcPiEdit` are wired to all sixteen
+downstream header/line routes; SI and PI cancel are wired inside their atomic
+CANCELLED branches; the five uncovered SO/PO paths queue an edit; the SO->PO
+converter queues a create gated on the status literal that was inserted; and
+`recordParentlessCreate` writes a visible `skipped` row for the four document
+shapes AutoCount cannot hold. Every edit is an EDIT - no path expresses a change
+as delete-and-recreate, which would also destroy AutoCount's own `DocTransfer`
+links.
+
+`tests/autocountWritebackCells.test.ts` is built the other way round from the
+test that failed us: it READS the `case` labels out of `AcSyncService.cs`'s
+`Cancel()` and `Edit()` switches and asserts the ERP asks for exactly that set,
+so a service capability the ERP cannot reach fails automatically. **17 of its 18
+tests fail against the pre-fix tree; 18 of 18 pass with the fix.**
+
+**Ref** - feat/ac-writeback-remaining-cells, 2026-08-11.
+
+## A partial conversion told AutoCount to transfer the WHOLE parent, moving stock in a live book that never moved here [high]
+
+**Symptom** - a delivery order shipping 2 of a sales order's 5 lines would
+produce an AutoCount DO carrying all 5. Same for a GRN receiving part of a PO, an
+invoice covering part of a DO, and a purchase invoice covering part of a GRN.
+Never observed live, because the write-back has never drained in production - but
+partial shipment is what the business does daily, so the first drain would have
+done it on the first document.
+
+**Root cause (traced, not guessed)** - `enqueueConvert` deliberately sent no
+`DtlKeys`, with a comment arguing that AutoCount's own book is the authority on
+which lines are still outstanding. It is, and that is beside the point.
+`AcSyncService.DtlKeys()` reads the payload first and **falls back to
+`SELECT d.DtlKey ... WHERE (d.Qty - ISNULL(d.TransferedQty,0)) > 0` over the
+whole parent** when the array is absent, then hands that set to
+`AddPartialTransferDetail`. "Let AutoCount answer" and "transfer everything" are
+the same instruction. The information to do better was already on hand: every
+downstream line carries its source line (`delivery_order_items.so_item_id`,
+`grn_items.purchase_order_item_id`, `sales_invoice_items.do_item_id`,
+`purchase_invoice_items.grn_item_id`), and 0273 + 0280 put `linked_ac_dtlkey` on
+all six line tables.
+
+**Fix** - `readConvertSourceKeys` resolves the subset and sends it. Three
+outcomes, not two: send the keys when every source line has one; **REFUSE** with
+a visible `skipped` row when the transfer is a strict subset and a key is missing
+(sending nothing there is precisely the defect); fall back to no `DtlKeys` only
+when the document covers every line of the parent, where "all outstanding" is the
+same set. A cancelled parent SO line does not count as one left behind. Six tests
+pin the three branches. **Not fixed and now written down** (module doc 7b): a
+partial QUANTITY on a line, which `AddPartialTransferDetail` cannot express at
+all - it takes line keys, not quantities.
+
+**Ref** - feat/writeback-all-six, 2026-08-11.
+
+## Removing a line in the ERP left it live, outstanding and transferable in the AutoCount book [high]
+
+**Symptom** - the owner widened the go-live gate to "SO DO SI PO GR PI, on create,
+edit AND deleting an SKU". Delete was the one verb with no implementation at all.
+A second, live-today variant: production has held two `cancelled = true`
+sales-order lines since 2026-08-10 (PR #1937), and the next edit of either
+document would have pushed them to AutoCount as ordinary lines at full quantity.
+
+**Root cause (traced, not guessed)** - `/edit` applies only the lines it is GIVEN
+(`AcSyncService.cs`, its `Lines` loop is a `foreach` over the payload). An edit is
+composed from the document AS IT IS NOW, so a hard-deleted row is simply absent -
+and absence is not an instruction. AutoCount kept the line, kept it outstanding
+under `Qty - TransferedQty > 0`, and kept it transferable into a later DO or GRN.
+The service half had been complete since it was written (`Retire: true` ->
+`Qty = 0`, `Transferable = false`, an `[ERP-CANCELLED]` Desc2 marker), and
+nothing in the ERP ever sent it. The cancelled-line half had the mirror cause:
+`SO_ITEM_COLS` did not select `cancelled`, so `soLine` could not see it and
+`composeEdit` had no way to tell a written-off line from a live one.
+
+**Fix** - `retiredLineOf(sb, table, itemId)` reads the row's `linked_ac_dtlkey`
+**before** the DELETE destroys it, and all six line-DELETE handlers hand it to
+their edit as `retire`. `composeEdit` emits `Retire: true` for those and for any
+retained line with `cancelled = true`, carrying only what identifies the line
+(`DtlKey`, `ItemCode`, `Desc2` when present) because the service's Retire branch
+`continue`s before it reads `Qty`. A cancelled line with no key is REFUSED, not
+dropped - a retirement we cannot name is a silent divergence. Retirements are
+appended last and deduplicated against the retained lines, so a re-added line
+that inherited the key is edited rather than zeroed. `composeCreateSo` /
+`composeCreatePo` drop cancelled lines entirely: on a create AutoCount holds
+nothing to retire. **Still not done, and deliberately** - the ERP-side soft
+cancel. Five of the six line tables have no `cancelled` column and all six routes
+still hard-delete; converting them needs their readers taught first, and a
+half-converted soft cancel is worse than the hard delete
+(`docs/autocount-line-retirement-plan.md`).
+
+**Ref** - feat/writeback-all-six, 2026-08-11.
+
 ## Photos still rendered "err" after the bucket-name fix — the SAME symptom, a SECOND missing config [high]
 
 **Symptom** — the entry below ("Every SO line photo rendered as `err`") was fixed
@@ -50,6 +178,63 @@ declaring it fixed. And a read path should degrade to a slower route that works
 rather than fail, when one exists at zero configuration.
 
 **Ref** — 2026-08-10, PR fix/photo-proxy-fallback.
+
+## Migrated data is not identical to AutoCount: three field-level import defects a per-line check found and every aggregate check missed [high]
+
+**Symptom** - the owner, 2026-08-11: *"怎么可以这样的 我们的数据居然是 migrate 的
+那就应该全部一模一样 migrate"*, on being shown that `HC-PO-009633` reads "ordered
+1, received 2" on both of its `HOK-1005 (Q)` lines. AutoCount does not permit an
+over-receipt; its own `PODTL.TransferedQty` says 1 and 1.
+
+**Why nothing caught it** - every verification the cutover had was AGGREGATE:
+document counts (2,710 = 2,710), document numbers (262 exact, 0 different),
+balances (2,696 of 2,708), the SO->PO->GR chain (427 agree, 0 disagree), stock
+status. All of them passed, because an aggregate can only see the sum and the
+sum was right. The defect lived one level down, in a per-line FIELD.
+
+**Root cause (traced, not guessed)** - `backend/scripts/check-migration-fidelity.mjs`
+against production + the live AED_HOUZS book (run **31458747829**, read-only)
+compared 15,295 migrated lines field by field and traced three defects to the
+line of code that writes the field:
+
+1. **`purchase_order_items.received_qty` came from a document-level aggregate.**
+   `export-received-pos-live.py` built its `GrQty` column as
+   `SUM(GRDTL.Qty)` over `(DocNo, ItemCode)`, and
+   `import-ac-so-linked-pos.mjs` wrote `recv = l.GrQty` straight into the line.
+   Every same-code line on one purchase order was handed the whole document's
+   receipt. **65 PO lines, 73 excess units, 29 purchase orders** - and **65
+   migrated GRN lines** inherit it, because `create-migrated-documents.mjs`
+   builds a GRN line from `received_qty`.
+
+2. **`import-ac-outstanding-po.mjs` reads a column that does not exist.** It
+   writes `deliv: l.DelivDate` in three places while the export column is
+   `DeliveryDate`, so the value is `undefined` and the line lands with no
+   delivery date. `import-ac-so-linked-pos.mjs` spells it correctly, which is
+   why only part of the estate is affected. **101 PO lines ERP-null against a
+   real AutoCount date, and 46 purchase orders then show no expected delivery**,
+   because the header date is derived as the earliest line date.
+
+3. **An AutoCount quantity of 0 becomes 1 in the ERP.** Both importers write
+   `Math.round(num(l.Qty)) || 1`; JavaScript's `||` treats `0` as absent, so a
+   deliberately zero-quantity AutoCount line is silently ordered once. **5
+   lines**, and the money follows it onto 2 PO line totals AutoCount puts at 0.
+
+**Fix** - none yet, deliberately. This entry records the DETECTION; the check is
+read-only and the repair is a separate, owner-approved change. What shipped is
+the thing that will not let it happen silently again: a field-by-field,
+per-line comparison with a printed field map (72 fields, tagged COMPARED /
+DERIVED / DECLARED / NOT-CHECKED), findings grouped BY FIELD so one systematic
+import bug is one finding, and a stated join coverage so rows it cannot pair are
+counted rather than dropped.
+
+**Lesson** - an aggregate check cannot find a per-line defect, and every check
+this cutover had was an aggregate. When the acceptance criterion is "identical",
+the comparison has to be at the grain the data is stored at. The first run of
+the check itself under-reported for the same reason: an exact-code match claimed
+one sofa compartment and orphaned its siblings, hiding 14 of the 65 lines, until
+the join was made to claim a sofa build as a group.
+
+**Ref** - PR #1981, 2026-08-11; runs 31457523779 / 31458441463 / 31458747829.
 
 ## 2026-08-11
 

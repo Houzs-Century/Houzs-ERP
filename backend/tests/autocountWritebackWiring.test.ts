@@ -127,8 +127,11 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
       .toContain('queueAcSoEdit(c, docNo)');
     expect(between(soSource, 'post-line-patch failed', 'return c.json({ ok: true });'))
       .toContain('queueAcSoEdit(c, docNo)');
+    /* The delete also RETIRES the removed line in AutoCount — without naming it
+       the account book keeps it live, because /edit applies only the lines it
+       is given. See autocountWritebackCells.test.ts for the all-six version. */
     expect(between(soSource, 'post-line-delete failed', 'return c.body(null, 204);'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo, retire)');
     /* Variant / SKU changes. These run inside runScmPgCommand, so the queue
        call must sit OUTSIDE the transaction and fire only on a 2xx. */
     for (const route of ['tbc-update', 'tbc-swap', 'tbc-swap-sofa']) {
@@ -146,7 +149,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     expect(between(poSource, "catch { /* don't fail the edit on a counter recount */ }", 'return c.json({ ok: true });'))
       .toContain('queueAcPoEdit(c, poId)');
     expect(between(poSource, "catch { /* line already deleted", 'return c.body(null, 204);'))
-      .toContain('queueAcPoEdit(c, poId)');
+      .toContain('queueAcPoEdit(c, poId, retire)');
   });
 
   test('the SO and PO routers use the SHARED downstream lock, not a private copy', () => {

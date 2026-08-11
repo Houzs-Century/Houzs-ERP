@@ -10,6 +10,7 @@ import {
   composeCreatePo,
   composeEdit,
   KeylessLineError,
+  SofaCollapseError,
   parseCreatedLines,
   composeDescription2,
   ItemCodeError,
@@ -293,5 +294,61 @@ describe('callAcService', () => {
   test('a 200 body that says ok:false is a failure, not a success', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: false, error: 'nope' }), { status: 200 })) as never;
     expect((await callAcService(env, 'edit', {}, fetchImpl)).ok).toBe(false);
+  });
+});
+
+/* A sofa build is ONE AutoCount line standing for several ERP compartment rows.
+   Retirement therefore has to be a property of the whole build, and the only
+   two honest answers are "all of it" and "refuse" — there is no line in the
+   account book that could carry half of it. */
+describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
+  const SOFA_INDEX = buildAcItemIndex(
+    ['AC-SOFA-9028', '9028-1S', 'SOFA', '400-H004'].join('\t'),
+  );
+  const sofaOpts: ComposeOptions = { itemIndex: SOFA_INDEX };
+
+  const compartment = (code: string, over: Partial<ErpLine> = {}): ErpLine => ({
+    item_code: code,
+    item_group: 'sofa',
+    description: `SOFA 9028 ${code}`,
+    description2: '1EL + 1ER (28") / COL: BEIGE',
+    qty: 1,
+    unit_price_centi: 0,
+    variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: [] },
+    linked_ac_dtlkey: 8801,
+    ...over,
+  });
+
+  test('every compartment cancelled retires the one AutoCount line', () => {
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      compartment('9028-1A(LHF)', { unit_price_centi: 500_000, cancelled: true }),
+      compartment('9028-1A(RHF)', { cancelled: true }),
+    ], sofaOpts);
+    expect(p.Lines).toHaveLength(1);
+    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801, Retire: true });
+  });
+
+  test('some cancelled and some not is REFUSED — AutoCount has no shape for half a build', () => {
+    let err: unknown;
+    try {
+      composeEdit('SO', 'SO-000021', {}, [
+        compartment('9028-1A(LHF)', { unit_price_centi: 500_000, cancelled: true }),
+        compartment('9028-1A(RHF)'),
+      ], sofaOpts);
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(SofaCollapseError);
+    const msg = (err as Error).message;
+    expect(msg).toContain('some compartments');
+    expect(msg).toContain('no shape for a partial retirement');
+  });
+
+  test('none cancelled is an ordinary keyed edit', () => {
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      compartment('9028-1A(LHF)', { unit_price_centi: 500_000 }),
+      compartment('9028-1A(RHF)'),
+    ], sofaOpts);
+    expect(p.Lines).toHaveLength(1);
+    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801, ItemCode: 'AC-SOFA-9028' });
+    expect((p.Lines[0] as { Retire?: boolean }).Retire).toBeUndefined();
   });
 });

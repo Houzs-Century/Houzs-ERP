@@ -49,6 +49,8 @@ export type SoAmendmentDetail = {
     new_qty?: number | null;
     new_unit_price_sen?: number | null;
     new_variants?: unknown;
+    /* mig 0280 — the requested line REMARK. null = not requested. */
+    new_remark?: string | null;
     old_snapshot?: Record<string, unknown> | null;
   }>;
   salesOrder: { doc_no?: string | null; revision?: number | null } | null;
@@ -107,6 +109,12 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
     }
     if (change === 'ADD') {
       rows.push({ item, field: 'Line', before: '—', after: `Qty ${str(l.new_qty)} @ ${money(l.new_unit_price_sen)}`, kind: 'ADD' });
+      /* mig 0280 — an added SERVICE line's remark IS the job ("Please take back
+         Cody Bedframe (King Size) 2 units"). Printing the qty and price alone
+         hands the supplier / approver a document that omits the instruction. */
+      if ((l.new_remark ?? '').trim()) {
+        rows.push({ item, field: 'Remark', before: '—', after: str(l.new_remark), kind: 'ADD' });
+      }
       continue;
     }
     // SPEC / VARIANT / QTY / PRICE — emit a row per changed field.
@@ -118,7 +126,8 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
     // false change (the same guard the on-screen diff uses).
     const chg = amendmentLineChangedFields({
       change_type: change, new_item_code: l.new_item_code, new_qty: l.new_qty,
-      new_unit_price_sen: l.new_unit_price_sen, new_variants: l.new_variants, old_snapshot: l.old_snapshot,
+      new_unit_price_sen: l.new_unit_price_sen, new_variants: l.new_variants,
+      new_remark: l.new_remark, old_snapshot: l.old_snapshot,
     });
     if (chg.variants) {
       const vs = amendmentVariantSummaries({
@@ -131,6 +140,18 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
     }
     if (l.new_unit_price_sen != null && String(l.new_unit_price_sen) !== String(snap.unit_price_sen ?? snap.unit_price_centi ?? '')) {
       rows.push({ item, field: 'Unit price', before: money((snap.unit_price_sen ?? snap.unit_price_centi) as number | null), after: money(l.new_unit_price_sen), kind: 'CHANGE' });
+    }
+    /* mig 0280 — routed through the shared changed-fields test above so the
+       printed document and the on-screen card never disagree about whether the
+       remark moved. An emptied remark prints as "Cleared", never as a blank
+       cell that reads like the row was left out. */
+    if (chg.remark) {
+      rows.push({
+        item, field: 'Remark',
+        before: str(snap.remark) || '—',
+        after: (l.new_remark ?? '').trim() ? str(l.new_remark) : 'Cleared',
+        kind: 'CHANGE',
+      });
     }
   }
   return rows;
