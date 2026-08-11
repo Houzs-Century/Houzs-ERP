@@ -211,7 +211,28 @@ async function main() {
         if (lab === nameless || cidFlat === nameless || lab.replace(/\s/g, "") === nameless) { hit = row; break; }
       }
     }
-    if (!hit) { unknown.push(r); continue; }
+    /* THE LIBRARY NOT KNOWING A CODE IS NOT A REASON TO LEAVE IT UNTIDY.
+       Owner, on the Converter screen: "不会说今天突然有字母，明天突然没有字母".
+       Tidiness is a property of the ROW - its code, its description, its series
+       - and it does not depend on whether a selling-library colour happens to
+       exist. Binding the two left 32 rows in the old shape, "LAMB VELVET-2002"
+       with a space and an empty Series among them, sitting next to 386 tidy
+       ones. That IS the inconsistency he is describing.
+
+       So a row the library does not know is still driven to the same shape by
+       the shared rule, and its library counterpart is minted so it becomes
+       pickable too. Only a row the RULE cannot read stays untouched - and those
+       are reported, as always. */
+    if (!hit) {
+      const own = parse(code);
+      if (!own) { unknown.push(r); continue; }
+      const target = canonId(own);
+      const label = own.name ? `${target} ${own.name}` : target;
+      if (!byTarget.has(target)) byTarget.set(target, []);
+      byTarget.get(target).push(r);
+      rewrite.push({ r, target, label, series: own.series, mintLibrary: !canonical.has(normColour(target)) });
+      continue;
+    }
     const target = normColour(hit.colour_id);
     if (!byTarget.has(target)) byTarget.set(target, []);
     byTarget.get(target).push(r);
@@ -280,7 +301,7 @@ async function main() {
   if (doRewrite.length) {
     note("");
     note(`--- REWRITE (${doRewrite.length}) ---`);
-    for (const x of doRewrite) note(`  "${x.r.fabric_code}" -> "${x.target}" / ${JSON.stringify(x.label)}  series="${x.series}"`);
+    for (const x of doRewrite) note(`  "${x.r.fabric_code}" -> "${x.target}" / ${JSON.stringify(x.label)}  series="${x.series}"${x.mintLibrary ? "  + mint the library colour" : ""}`);
   }
   if (fillSeries.length) {
     note("");
@@ -326,7 +347,7 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let wrote = 0, filled = 0, mergedOff = 0, created = 0, rescued = 0;
+  let wrote = 0, filled = 0, mergedOff = 0, created = 0, rescued = 0, mintedLib = 0;
   await sql.begin(async (tx) => {
     for (const o of orphanFix) {
       const r = await repointColour(tx, CO, o.from, o.to);
@@ -343,6 +364,18 @@ async function main() {
                   SET fabric_code = ${x.target}, fabric_description = ${x.label}, series = ${x.series}
                 WHERE company_id = ${CO} AND id = ${x.r.id}`;
       wrote++;
+      /* Mirror it into the selling library the way fabric-tracking.ts does on
+         create, so a fabric that exists in the master is also pickable on an
+         order. Without this the row is tidy and still invisible to sales. */
+      if (x.mintLibrary) {
+        await tx`INSERT INTO scm.fabric_library (id, label, tier, default_surcharge, active, sort_order, company_id)
+                 VALUES (${x.series}, ${x.series}, 'standard', 0, true, 0, ${CO})
+                 ON CONFLICT (id) DO NOTHING`;
+        await tx`INSERT INTO scm.fabric_colours (fabric_id, colour_id, label, active, sort_order, company_id)
+                 VALUES (${x.series}, ${x.target}, ${x.label}, true, 0, ${CO})
+                 ON CONFLICT (fabric_id, colour_id) DO NOTHING`;
+        mintedLib++;
+      }
     }
     for (const x of fillSeries) {
       await tx`UPDATE scm.fabric_trackings SET series = ${x.want}
@@ -381,7 +414,7 @@ async function main() {
       created++;
     }
   });
-  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created} | orphaned lines rescued ${rescued}`);
+  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created} | orphaned lines rescued ${rescued} | library colours minted ${mintedLib}`);
 
   /* Verify on a SECOND, FRESH connection, and verify the thing that matters:
      the join is whole again. */
