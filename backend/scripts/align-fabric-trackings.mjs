@@ -54,7 +54,7 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
-import { parse, seriesToken } from "./lib/fabric-code.mjs";
+import { parse, seriesToken, canonId } from "./lib/fabric-code.mjs";
 import { ARMS, sum } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -140,13 +140,28 @@ async function main() {
        the label the library kept - the rewrite preserved the colour NAME, so a
        tracking code "AM275-2-BEIGE" is findable as the library row whose label
        is "AM275-02 BEIGE". Nothing is guessed: no match means it is reported. */
-    const wantSeries = seriesOfCode(code);
-    const nameless = code.replace(/[^A-Z0-9]/g, "");
+    /* Ask the SHARED rule first. Stripping the brand is precisely what it does,
+       so "ARMANI J9226-02 BUTTER CREAM" resolves to J9226-02 in one step. The
+       label comparison below only ever matched codes WITHOUT a brand prefix,
+       which left all 303 brand-prefixed rows - ARMANI, AGAZZI, GIRONA, HIVE,
+       HIRRING, PIERRO, PALERMO, ROLANDO, SANSONE, SANDRO, MORENO - reported as
+       "the library does not know this", when the library knew every one of
+       them. That is the exact set the owner pointed at. */
     let hit = null;
-    for (const [cid, row] of canonical) {
-      const lab = normColour(row.label || "").replace(/[^A-Z0-9]/g, "");
-      const cidFlat = cid.replace(/[^A-Z0-9]/g, "");
-      if (lab === nameless || cidFlat === nameless || lab.replace(/\s/g, "") === nameless) { hit = row; break; }
+    const parsed = parse(code);
+    if (parsed) {
+      const want = canonId(parsed);
+      if (canonical.has(want)) hit = canonical.get(want);
+    }
+    /* Fallback: match on the label the rename preserved, for codes the parser
+       refuses (a colour number it cannot read, a name-only code). */
+    if (!hit) {
+      const nameless = code.replace(/[^A-Z0-9]/g, "");
+      for (const [cid, row] of canonical) {
+        const lab = normColour(row.label || "").replace(/[^A-Z0-9]/g, "");
+        const cidFlat = cid.replace(/[^A-Z0-9]/g, "");
+        if (lab === nameless || cidFlat === nameless || lab.replace(/\s/g, "") === nameless) { hit = row; break; }
+      }
     }
     if (!hit) { unknown.push(r); continue; }
     const target = normColour(hit.colour_id);
@@ -279,11 +294,15 @@ async function main() {
          code that only the losing row carried. */
       const donor = m.lose.find((l) => tierOf(l)) || null;
       const sup = m.lose.find((l) => l.supplier_code)?.supplier_code ?? null;
+      /* price_tier and its two siblings are scm.fabric_price_tier, an ENUM. A
+         bound string is text, and postgres will not coalesce text into an enum
+         column - the first apply died on exactly that and rolled the whole
+         transaction back. Cast explicitly; NULL casts fine too. */
       await tx`UPDATE scm.fabric_trackings
-                  SET sofa_price_tier     = COALESCE(${m.win.sofa_price_tier}, ${donor?.sofa_price_tier ?? null}),
-                      bedframe_price_tier = COALESCE(${m.win.bedframe_price_tier}, ${donor?.bedframe_price_tier ?? null}),
-                      price_tier          = COALESCE(${m.win.price_tier}, ${donor?.price_tier ?? null}),
-                      supplier_code       = COALESCE(${m.win.supplier_code}, ${sup})
+                  SET sofa_price_tier     = COALESCE(${m.win.sofa_price_tier}::scm.fabric_price_tier, ${donor?.sofa_price_tier ?? null}::scm.fabric_price_tier),
+                      bedframe_price_tier = COALESCE(${m.win.bedframe_price_tier}::scm.fabric_price_tier, ${donor?.bedframe_price_tier ?? null}::scm.fabric_price_tier),
+                      price_tier          = COALESCE(${m.win.price_tier}::scm.fabric_price_tier, ${donor?.price_tier ?? null}::scm.fabric_price_tier),
+                      supplier_code       = COALESCE(${m.win.supplier_code}::text, ${sup}::text)
                 WHERE company_id = ${CO} AND id = ${m.win.id}`;
       for (const l of m.lose) {
         await tx`UPDATE scm.fabric_trackings
