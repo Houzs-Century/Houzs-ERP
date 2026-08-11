@@ -539,6 +539,17 @@ async function sectionA(state) {
     notice(`  --- UNEXPLAINED: NONE. Every divergent cell reconciles exactly to AutoCount's own movement since the cutover. ---`);
   } else {
     notice(`  --- UNEXPLAINED DIVERGENCE (all ${unexplained.length}) — these do NOT reconcile to AutoCount activity since the cutover ---`);
+    /* The known cause, so the next reader does not re-derive it from scratch.
+       On 2026-08-11 all 6 unexplained cells were the SAME defect: the cutover
+       import (import-ac-stock-balance.mjs:129,137) routes any non-positive delta
+       into `negs` and writes it only when NEG is set — and the cutover ran
+       without it. Where a many-to-one item mapping folds a NEGATIVE AutoCount
+       row together with a positive one, the mapped total stays positive, so the
+       AC-NEGATIVE bucket above never fires and the dropped units surface here.
+       In every cell the unaccounted amount equalled the dropped row exactly.
+       Confirm against live AutoCount before assuming it is still the cause. */
+    notice(`      known cause (2026-08-11, all 6 cells): the cutover import wrote positive deltas only, so a NEGATIVE`);
+    notice(`      AutoCount row folded under a many-to-one mapping was dropped. See BUG-HISTORY.md. Re-confirm before assuming.`);
     for (const r of unexplained)
       notice(`    ${pad(r.delta > 0 ? `+${r.delta}` : r.delta, 7)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} ERP ${r.erp} vs AC ${r.ac}` +
              `${r.movedSinceCutover == null ? "   [no cutover row for this cell]" : `   [AutoCount moved ${r.movedSinceCutover} since cutover — ${r.unaccounted} unaccounted]`}   [AC: ${r.items.join(", ")}]`);
