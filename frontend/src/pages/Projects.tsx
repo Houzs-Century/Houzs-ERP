@@ -9740,44 +9740,47 @@ function ChecklistRow({
               if (f) uploadAttachment(f, cap);
             }}
           />
+          {/* Boxed Attach / Remark / N/A (owner 2026-08-11): the SAME bordered
+              icon+text treatment the Contract / Booth Layout document tables use,
+              so this action group looks identical across every desktop PMS
+              section. These card sections (Operation, Setup & Dismantle
+              Documents, Expo Map…) previously used a borderless icon-stack. */}
           {canManage && !readOnlyAttach && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
-              className="inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 text-ink-muted hover:text-accent disabled:opacity-50"
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface px-2 py-1 text-[8.5px] font-semibold text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"
               title="Attach file"
             >
-              <Paperclip size={13} />
-              <span className="text-[9px] font-semibold tracking-wide leading-none">
-                {uploading ? "…" : "Attach"}
-              </span>
+              <Paperclip size={12} />
+              <span className="leading-none">{uploading ? "…" : "Attach"}</span>
             </button>
           )}
           <button
             onClick={() => setExpanded((x) => !x)}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:text-accent",
-              expanded ? "text-accent" : "text-ink-muted"
+              "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[8.5px] font-semibold",
+              expanded
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title="Remark"
           >
-            <MessageSquare size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">
-              Remark
-            </span>
+            <MessageSquare size={12} />
+            <span className="leading-none">Remark</span>
           </button>
           <button
             onClick={() => onStatus(item.status === "na" ? "pending" : "na")}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:bg-surface-dim",
+              "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[8.5px] font-semibold",
               item.status === "na"
-                ? "text-accent"
-                : "text-ink-muted hover:text-accent"
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title={item.status === "na" ? "Mark applicable" : "Mark N/A"}
           >
-            <Ban size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">N/A</span>
+            <Ban size={12} />
+            <span className="leading-none">N/A</span>
           </button>
         </div>
       </div>
