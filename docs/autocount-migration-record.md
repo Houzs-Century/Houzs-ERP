@@ -295,13 +295,22 @@ file; anything that moved is either that drift or a regression, and you need to 
 
 Every one of these cost hours this week and would cost them again.
 
-**A log line saying APPLIED is not evidence.** Two separate defects reported success while writing
-nothing, or while writing damage. `refresh-sofa-colours.mjs` printed `APPLIED - stamped 146 sofa
-lines` on **three** separate runs; the write had landed and had destroyed the column
-(section 9). `create-migrated-documents.mjs` logged `removed 2` for a hard delete whose evidence
-then could not be recovered. The structural difference is one word: the API shim appends
-`RETURNING` and counts rows; a script reads a command tag and never re-checks. **Confirm every
-`APPLIED` with an independent read on a fresh connection.**
+**A log line saying APPLIED is not evidence, and neither is a green badge.** Both halves of that
+were demonstrated this week.
+
+- `refresh-sofa-colours.mjs` printed `APPLIED - stamped 146 sofa lines` on **three** separate runs.
+  A read 29 seconds later showed nothing had changed, so it was written down as a lost write. It
+  was worse than that: the write had landed and had **destroyed the column** (section 9).
+- Two `recompute-so-allocation` runs finished with GitHub `conclusion: success` while their own
+  output said `ok=false ... reason=ad.localeCompare is not a function` and **`NOT COMMITTED`**.
+  Read the notices, not the badge: `gh run view <id> --log | grep '##\[notice\]'`.
+- `apply-sofa-compartment-corrections.mjs` logged `removed 2`. The two rows really were gone, and
+  the record that a third piece had ever been on either order was gone with them — which was only
+  established by asking the **database** for the current rows, not by reading the log.
+
+The structural difference is one word: the API shim appends `RETURNING` and counts rows; a script
+reads a command tag and never re-checks. **Confirm every `APPLIED` with an independent read on a
+fresh connection.**
 
 **Verify schema claims against the live database, not migration files.** The partial unique index
 `uq_inv_mov_do_source` on `scm.inventory_movements` was believed not to exist — migration 0230's
