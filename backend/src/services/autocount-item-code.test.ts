@@ -11,7 +11,7 @@
  * reason and the candidates it could not choose between. A silent fallback to
  * material_code is the one behaviour that must be impossible.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import {
   AC_ITEM_MAP_ROWS,
   ItemCodeError,
@@ -289,5 +289,41 @@ describe('a sofa document refuses before it resolves', () => {
     expect(so.Details[0].ItemCode).toBe('RDS-5526 SOFA');
     expect(so.Details[0].Desc2).toBe(d2);
     expect(so.Details[0].UnitPrice).toBe(2500);
+  });
+});
+
+/* The compiled CSV is a SNAPSHOT of the book on 2026-08-05. The binding table
+   is this ERP's own live record of what AutoCount calls each product, and it is
+   the only one of the two that GROWS. Without it every post-cutover SKU was
+   refused - which refused the whole document, which meant /ensure-masters never
+   ran for the very case it exists for. */
+describe('the live supplier binding resolves what the cutover snapshot cannot', () => {
+  test('a SKU opened after the cutover resolves through its binding', () => {
+    const r = resolveAcItemCode('BRAND-NEW-SKU', {
+      bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]),
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('NB-BRANDNEW'); expect(r.via).toBe('binding'); }
+  });
+
+  test('and without one it is still REFUSED, never guessed from material_code', () => {
+    const r = resolveAcItemCode('BRAND-NEW-SKU', {});
+    expect(r.ok).toBe(false);
+  });
+
+  test('the binding WINS over the snapshot — the book can be renamed and the CSV cannot know', () => {
+    /* AERO-Y04 (K) is what the 2026-08-05 CSV holds for Y04-(K). */
+    const snapshot = resolveAcItemCode('Y04-(K)', {});
+    expect(snapshot.ok).toBe(true);
+    if (snapshot.ok) expect(snapshot.acItemCode).toBe('AERO-Y04 (K)');
+
+    const live = resolveAcItemCode('Y04-(K)', { bindings: new Map([['Y04-(K)', 'AERO-Y04-RENAMED']]) });
+    expect(live.ok).toBe(true);
+    if (live.ok) expect(live.acItemCode).toBe('AERO-Y04-RENAMED');
+  });
+
+  test('the lookup is case-insensitive on the ERP code, as every other one here is', () => {
+    const r = resolveAcItemCode('brand-new-sku', { bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]) });
+    expect(r.ok).toBe(true);
   });
 });
