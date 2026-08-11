@@ -25,6 +25,7 @@ a figure in a document ages, a workflow does not.
 - [7. Verification — what has and has not happened](#7-verification--what-has-and-has-not-happened)
 - [8. Coverage — six documents by four operations](#8-coverage--six-documents-by-four-operations)
 - [9. The defects this migration found](#9-the-defects-this-migration-found)
+  - [9.1 Is the migrated data identical to AutoCount? No — and here is the list](#91-is-the-migrated-data-identical-to-autocount-no--and-here-is-the-list)
 - [10. What was migrated, and from which AutoCount column](#10-what-was-migrated-and-from-which-autocount-column)
 - [11. Costing](#11-costing)
 - [12. What is left — owner, IT, code](#12-what-is-left--owner-it-code)
@@ -85,6 +86,50 @@ Three rollbacks, memorised before you start:
 | The service | Stop it, restore `C:\Temp\AcSyncService.prev.exe`, start it |
 | The sync | `UPDATE scm.app_config SET value = 'off' WHERE key = 'scm.autocount_writeback';` |
 | The freeze lift | `UPDATE scm.app_config SET value = '1', updated_at = now() WHERE key = 'scm.write_freeze';` — Houzs is completely frozen again inside 30 seconds |
+
+**Two tracks, and step 0 comes first.** Step 0 is data repair: it runs entirely under the freeze,
+touches no staff, and needs nobody at the office. Steps 1 to 6 are the sync, and step 3 needs a
+person standing at the AutoCount machine. Do step 0 first regardless, because syncing data you
+already know to be wrong just copies the error into a second system.
+
+### Step 0 — Under the freeze: re-sync the drift, measure per line, repair the losses
+
+**Who:** an agent. **Staff impact:** none, the freeze stays fully on. **Blocks:** nothing
+mechanically, but doing it after the sync is switched on means repairing AutoCount too.
+
+**0a. Re-export and top up first.** Both systems have been running, so the cutover snapshot is stale
+by however many documents AutoCount has moved since 2026-08-09. **Do this before touching anything
+else**, or you will be repairing new problems with old data. The 10 known post-migration receipts
+are the floor, not the number.
+
+**0b. Run `check-migration-fidelity` (PR #1981) and treat its output as the work list.** It is the
+only check that reads per line and per field. Every finding in section 9.1 came from it and **none
+of them was visible to the aggregate checks**, which were all passing at the time. Diff its numbers
+against section 9.1: anything new is either 0a's drift or a regression, and you need to know which
+before you repair anything.
+
+**0c. Re-run the other standing checks** (section 7.3) and diff them against the figures there.
+
+**0d. Repair the pure LOSSES first, in this order.** Each is a straight read of a column we already
+have — a copy, not a decision — so each carries the least risk and shrinks the surface of everything
+after it:
+
+| Order | Repair | Why it is safe |
+|---|---|---|
+| 1 | The **101 missing delivery dates** — one misspelled key (`l.DelivDate` against a column named `DeliveryDate`) | Nothing to judge. Pure loss, no wrong value |
+| 2 | The **130 over-received lines** — copy `PODTL.TransferedQty` to the PO line **and** to its migrated GRN line | Touches no inventory movement, because migrated GRNs never posted one. Repairing only the PO line leaves the GRN wrong |
+| 3 | The **5 zero-quantity lines written as 1** (`Math.round(num(l.Qty)) \|\| 1`) | Copy AutoCount's zero |
+| 4 | The **42 still-outstanding lines that never arrived** — import what is missing | The document is already there; the line is not |
+
+**Verify:** re-run `check-migration-fidelity` after each repair and read the per-field group, not the
+script's own `APPLIED` line. A repair that does not move its field's count did not happen.
+
+**Undo:** each of these writes a value AutoCount already holds, so the correction *is* the rollback —
+re-copy. Nothing here deletes anything, and none of it moves stock.
+
+**Then, and only then, D9 and D10** (the sofa round-trip, section 12). Step 0d before that is
+deliberate: a loss is cheap and safe to repair, a reconstruction is not. And the two are related —
+**24 of the 42 missing lines are sofa builds.**
 
 ### Step 1 — Rebuild the clean service on the office host
 
@@ -280,14 +325,6 @@ Then widen in the order the business needs, one stage per run, verifying between
 Do **not** enable the convert push before D14 is fixed (section 9): `enqueueConvert` sends no
 `DtlKeys`, so the service falls through to selecting **every** still-outstanding line on the
 parent, and an ERP DO shipping 2 of 5 lines would produce an AutoCount DO containing all 5.
-
-### Before any of it — re-sync the drift
-
-Both systems have been running. The cutover snapshot is stale by however many documents AutoCount
-has moved since 2026-08-09. **Re-export and top up before touching anything else**, or you will be
-repairing new problems with old data. The 10 known post-migration receipts are the floor, not the
-number. Then re-run the standing checks in section 7 and diff them against the figures in this
-file; anything that moved is either that drift or a regression, and you need to know which.
 
 ---
 
@@ -837,6 +874,50 @@ Four more, same class, same lesson:
 | **18 duplicate migrated DO lines** across 8 documents — `HC-SO-001920` ordered one item and showed four delivery lines | Diagnostic run **31431814091**, section D. They cost no stock (**0 movements**), but **11 sales-order lines read as over-delivered** |
 | **The migrated DO writer copied no classification**, so the whole SO-to-DO chain leg audited an empty set and read as clean | The cross-company contrast: company 2's 41 sofa/bedframe DO lines all carry their own tag, and company 2's DO lines were not made by this writer. That is what proves the NULLs are the writer's doing and not drift |
 
+### 9.1 Is the migrated data identical to AutoCount? No — and here is the list
+
+The owner asked it directly on being shown the over-receipt:
+
+> 我们的数据居然是 migrate 的，那就应该全部一模一样 migrate
+
+He was right to. `check-migration-fidelity` (**PR #1981**) now answers it on demand, per line and
+per field, against the live `AED_HOUZS` book:
+
+```
+migrated lines compared field by field against the live AED_HOUZS book : 15,295
+field values that DIFFER                                               :  2,397
+of those, with no already-decided reason                               :  1,765
+ERP lines that could not be paired at all (each one listed)            :     33 of 15,328
+```
+
+It prints a **72-field map** — 42 COMPARED, 6 DERIVED, 21 DECLARED, 3 NOT-CHECKED — so a field the
+check does not cover is *visible* rather than silently absent, and it groups findings **by field**,
+so one importer bug wrong on many rows reads as one finding instead of scattered noise.
+
+**Every finding below came from it, and none was visible to any aggregate check.** Document counts,
+numbering, balances, the SO to PO to GR chain and stock status were all passing while every one of
+these was true. That is the shape of the whole class: an aggregate agrees while a per-line field is
+wrong.
+
+| Finding | Detail |
+|---|---|
+| **The over-receipt is 130 lines, not 65** | `export-received-pos-live.py` computes `GrQty` as `SUM(GRDTL.Qty)` over `(DocNo, ItemCode)` — a document-level aggregate. On a document holding two lines of one item code (routine for sofa compartments) every line got the document's total, and `import-ac-so-linked-pos.mjs:167` wrote it into `received_qty`. **65 PO lines / 73 excess units / 29 POs, PLUS 65 migrated GRN lines that inherit the same number.** The GRN half was missed on the first pass: one wrong source produced two wrong rows, so **repairing the PO line alone would leave the GRN wrong** |
+| **A misspelled export key ate 101 delivery dates** | `import-ac-outstanding-po.mjs` reads `l.DelivDate` in three places. The export column is named **`DeliveryDate`**. The read silently yields `undefined`. **101 PO lines are ERP-null against a real AutoCount date; 46 POs show no expected delivery at all.** This is the root cause of the owner's own screenshot question — *"delivery date 全部没带来？"* — and the **second** time this exact key rename has cost data, the first having lost 76 line dates |
+| **AutoCount quantity 0 becomes 1** | `Math.round(num(l.Qty)) \|\| 1`. Zero is falsy in JavaScript, so a legitimate zero-quantity line is written as one. **5 lines**, plus 2 PO line totals AutoCount records as 0 |
+| **321 AutoCount lines sit on a document we hold, with no ERP line at all** | The document came in; the line did not. **245** already transferred (delivered or invoiced in AutoCount), **23** zero quantity, and **42 still outstanding** — of which **26** are purchase-order lines and **24** are sofa builds on recent POs. The 42 are a real gap in what staff can see and act on. The 245 are consistent with the deliberate decision not to migrate history, but had never been enumerated, so they had never been separated from the real gap |
+| **1,004 venue values the check cannot evidence** | The venue on those lines does not match AutoCount's raw value, and the check could not prove it is the post-import canonicalisation — it *could* prove exactly that for 593 others. Either the canonicalisation is under-recorded, or some venues were rewritten by something else. **Unresolved.** It needs the canonicalisation rule stated somewhere the check can read |
+
+**This is also what the "header amount differs" findings turn out to be.** The 39 SO and 7 PO
+headers flagged that way each agree with their own lines **to the cent**. Nothing is mispriced;
+there is simply less of the order in the ERP than in AutoCount.
+
+**The discipline note that produced the number, and it is the point of this whole section.** The
+check's first run found **51** over-received lines, not 65. Rather than explaining the gap away, the
+fault was traced to the check itself: matching a sofa build by exact item code claimed one
+compartment and orphaned its siblings, hiding 14 lines. Fixed to claim a build as a group, re-run,
+and it reproduced 65 exactly. **When a measurement disagrees with a measurement you trust, suspect
+the new instrument before you suspect the world.**
+
 ---
 
 ## 10. What was migrated, and from which AutoCount column
@@ -991,7 +1072,7 @@ price is strictly better and is still open.
 | # | Decision |
 |---|---|
 | 1 | **The go/no-go on lifting the freeze.** Nobody lifts without him: *"解冻我跟你说你才做."* |
-| 2 | **Apply the 65 over-receipt corrections?** 65 PO lines carry a received quantity AutoCount never recorded — the export column is aggregated on `(DocNo + ItemCode)`, so on a document with two lines of one code every line got the document's total. **AutoCount does not permit an over-receipt; we manufactured this.** The fix copies `PODTL.TransferedQty` per line and touches no movement. Written, not applied |
+| 2 | **Apply the four pure-loss repairs?** (section 9.1, runbook step 0d.) 130 lines carry a received quantity AutoCount never recorded — **AutoCount does not permit an over-receipt; we manufactured this** — plus 101 lost delivery dates, 5 zero quantities written as 1, and 42 outstanding lines that never arrived. Every one is a copy of a value AutoCount already holds, none touches a stock movement. Written, not applied |
 | 3 | **Is an ERP cancel irreversible once `linked_ac_docno` is set?** The SDK has no un-cancel. Recommendation: yes, because it is the only option that cannot silently diverge |
 | 4 | **Should the ERP charge for special add-ons at all?** AutoCount never did — it absorbed them into the negotiated line price. Today a priced SOFA add-on is **costed but never charged**, so it only reduces margin |
 | 5 | **Fabric library merges** — `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371`, and whether to merge the 32 duplicate series |
@@ -1025,7 +1106,8 @@ price is strictly better and is still open.
 | 8 | **DO / GR / SI / PI edit hooks** | M |
 | 9 | **Drift detection** — extend `check-autocount-parity.mjs` into a field-level diff over documents with `linked_ac_docno IS NOT NULL`. Detect from day one; lock AutoCount by permission only after the ERP path has been trusted for a couple of weeks | M |
 | 10 | **Cross-system doc-number collision detector.** The two series cannot collide today only because the formats happen to differ (`SO-2608-001` vs `SO-000021`) — nothing enforces it, and supplying our own `DocNo` does not advance AutoCount's counter | S |
-| 11 | Smaller, all real: **382 PO lines with no `so_item_id`** (the over-ship and over-receive ceilings are keyed on that link, so they are blind to unlinked lines — this is why `DO-2607-005` on `SO-2606-019` double-shipped); **46 migrated DO lines with no price or cost**; a genuine FIFO short is computed and never persisted; SO photo routes apply no company scoping while the PO and consignment routes do | |
+| 11 | **State the venue canonicalisation rule somewhere `check-migration-fidelity` can read it**, so the 1,004 unevidenced venue values resolve one way or the other. Today the check can prove the rule for 593 lines and not for 1,004, which is not an answer | S |
+| 12 | Smaller, all real: **382 PO lines with no `so_item_id`** (the over-ship and over-receive ceilings are keyed on that link, so they are blind to unlinked lines — this is why `DO-2607-005` on `SO-2606-019` double-shipped); **46 migrated DO lines with no price or cost**; a genuine FIFO short is computed and never persisted; SO photo routes apply no company scoping while the PO and consignment routes do | |
 
 ---
 
@@ -1048,3 +1130,4 @@ price is strictly better and is still open.
 | `docs/migrated-do-duplicate-lines.md` | the 18 duplicate migrated DO lines |
 | `docs/duplicate-fabric-series-merge.md` | the fabric library duplicates behind owner decision 5 |
 | `BUG-HISTORY.md` | the per-bug ledger. The most recent entries are this migration |
+| `backend/scripts/check-migration-fidelity.mjs` (**PR #1981**) | the per-line, per-field comparison against the live book. Section 9.1 is its output; run it before you repair anything |
