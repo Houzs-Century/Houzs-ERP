@@ -514,13 +514,22 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       padding-bottom: 5mm;
       border-bottom: 2px solid var(--c-orange);
     }
-    /* Equal logo WIDTH across entities is a hard requirement: the Houzs mark is
-       square and the 2990 mark is a wide wordmark, so without a fixed box the
-       text column jumps sideways when the entity is switched. */
-    .letterhead .logo-box { width: 26.7mm; flex: none; }
-    .letterhead .logo { display: block; width: 100%; }
-    .letterhead .logo.square { height: 27.8mm; object-fit: contain; }
-    .letterhead .logo.wide { height: auto; margin-top: 2mm; }
+    /* A FIXED logo column is the hard requirement — without it the text column
+       jumps sideways the moment the entity is switched, which is the one thing
+       a letterhead must never do.
+
+       The column is 34mm, not the spec's 26.7mm, because the two marks are
+       shaped very differently: Houzs is a square badge, 2990 is a 2.25:1
+       wordmark. Locking both to 26.7mm WIDE leaves 2990 only 11.9mm tall — a
+       thin strip beside a 27.8mm square (owner 2026-08-11: "2990 logo 高度拉长",
+       and a reference showing it at roughly the height of the text block).
+       Stretching it to match would distort the mark, so the column widens
+       instead and each mark is capped by HEIGHT within it. Aspect ratio is
+       never touched: both use object-fit: contain. */
+    .letterhead .logo-box { width: 34mm; flex: none; display: flex; align-items: flex-start; }
+    .letterhead .logo { display: block; max-width: 100%; object-fit: contain; }
+    .letterhead .logo.square { width: 26.7mm; height: 27.8mm; }
+    .letterhead .logo.wide { width: 100%; height: 15.1mm; margin-top: 2mm; }
     .letterhead .logo-fallback { font-weight: 700; font-size: 14pt; letter-spacing: .02em; color: var(--ink); text-transform: uppercase; }
     .letterhead .company { min-width: 0; }
     .letterhead .co-name { font-size: 14pt; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; }
@@ -758,6 +767,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     .sbox .row + .row { border-top: 1px solid var(--line); }
     .sbox .row .cap { font-size: 7pt; font-weight: 600; letter-spacing: .12em; color: var(--c-secondary-a); text-transform: uppercase; }
     .sbox .row .val { font-size: 9.5pt; font-weight: 600; color: var(--ink); }
+    /* Service reads one step louder than Sub-Status (owner 2026-08-11): it is
+       how the case gets fixed, the fact the reader is looking for. Sub-Status
+       keeps 9.5pt so the two stay ranked rather than competing. */
+    .sbox .row.lead .val { font-size: 11pt; }
     .ititle { display: grid; background: #f3f3f1; border-left: 0.4pt solid #d5d5d5; }
     .itable { display: grid; border-left: 0.4pt solid #d5d5d5; }
     .itable .th {
@@ -897,9 +910,13 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           ${docSubtitle ? `<div class="subtitle mono">${esc(docSubtitle)}</div>` : ""}
         </div>
         <div class="sbox">
-          <div class="main">${esc(statusPillLabel)}</div>${subStatusLabel ? `
-          <div class="row"><span class="cap mono">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
-          <div class="row"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}
+          <!-- Service ABOVE Sub-Status (owner 2026-08-11). Service is how the
+               case gets fixed — the stable, headline fact; Sub-Status is only
+               where inside the current stage it happens to sit today. Reading
+               the transient one first put them in the wrong order. -->
+          <div class="main">${esc(statusPillLabel)}</div>${!isSupplier && servicePillLabel && servicePillLabel !== "—" ? `
+          <div class="row lead"><span class="cap mono">Service</span><span class="val">${esc(servicePillLabel)}</span></div>` : ""}${subStatusLabel ? `
+          <div class="row"><span class="cap mono">Sub-Status</span><span class="val">${esc(subStatusLabel)}</span></div>` : ""}
         </div>
       </div>
       <div class="ref mono">
