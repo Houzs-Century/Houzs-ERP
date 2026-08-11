@@ -32,6 +32,11 @@ import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import {
   callAcService,
+  AGENT_MAP,
+  LOCATION_MAP,
+  BRANDING_MAP,
+  VENUE_MAP,
+  mapOrPassthrough,
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
@@ -40,6 +45,7 @@ import {
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
+  MissingLocationError,
   SofaCollapseError,
   type AcDocType,
   type AcOp,
@@ -197,7 +203,7 @@ const SO_HEADER_COLS =
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
    for a column a table does not have fails the whole query with 42703. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled';
+  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -207,7 +213,7 @@ const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_do
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -241,6 +247,7 @@ const PO_ITEM_COLS =
    later `const soLine` would be in its temporal dead zone and every import of
    this module would throw. */
 const soLine = (r: Record<string, unknown>): ErpLine => ({
+  id: r.id == null ? null : String(r.id),
   item_code: String(r.item_code ?? r.material_code ?? ''),
   item_group: (r.item_group as string) ?? null,
   description: (r.description as string) ?? null,
@@ -252,7 +259,43 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   /* undefined on the five tables that have no such column, which composeEdit
      reads as "live" — the same answer the column's own default gives. */
   cancelled: r.cancelled === true,
+  /* Filled in by withLocations below. The raw column is a warehouse UUID and
+     AutoCount wants the short code, so the line cannot carry it on its own. */
+  location: null,
 });
+
+/**
+ * Hang the AutoCount stock location on each line.
+ *
+ * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
+ * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
+ * the ids into codes. Lines share warehouses, so this is one `in` query, not
+ * one per line.
+ *
+ * A line with no warehouse keeps `location: null` and the caller decides:
+ * a create refuses it (MissingLocationError), an edit simply omits the key so
+ * the account book keeps its own value.
+ */
+async function withLocations(
+  sb: Sb,
+  rows: Record<string, unknown>[],
+  lines: ErpLine[],
+): Promise<ErpLine[]> {
+  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  if (!ids.length) return lines;
+  const wh = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').in('id', ids));
+  const byId = new Map<string, string>();
+  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
+    const code = (w.code as string | null) ?? (w.name as string | null);
+    if (w.id && code) byId.set(String(w.id), code);
+  }
+  return lines.map((l, i) => {
+    const id = rows[i]?.warehouse_id;
+    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
+    return code ? { ...l, location: code } : l;
+  });
+}
 
 interface AcDownstreamSpec {
   table: AcLinkTable;
@@ -406,7 +449,8 @@ async function noteReadFailure(
 ): Promise<void> {
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
-    || e instanceof ItemCodeError;
+    || e instanceof ItemCodeError
+    || e instanceof MissingLocationError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -457,7 +501,7 @@ export async function enqueueSoCreate(
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
        AutoCount detail (a sofa build is several rows and one detail), once for
        the payload itself. Both calls are pure and the document is already
@@ -540,7 +584,7 @@ export async function enqueuePoCreate(
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code });
     const body = composeCreatePo(header, lines);
     return await enqueueAcOp(sb, {
@@ -1067,6 +1111,16 @@ export async function enqueueEdit(
     docId?: string | null;
     createdBy?: number | null;
     /**
+     * ERP row ids this very request INSERTED.
+     *
+     * A keyless line means two opposite things - just added, or never
+     * backfilled - and guessing "added" appends a second copy of a line the
+     * account book already holds. The ERP is therefore not allowed to infer it:
+     * the route that did the adding says so, and composeEdit honours it only
+     * when every keyless line on the document is one of these.
+     */
+    newLineIds?: string[];
+    /**
      * Lines the ERP has just HARD-DELETED, named by the AutoCount key the row
      * carried. Composed from the document as it is now, so a deleted line is
      * simply absent — and /edit applies only the lines it is given, which would
@@ -1082,7 +1136,7 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
@@ -1099,7 +1153,7 @@ export async function enqueueEdit(
       if (composed.create) {
         const { error } = await sb.from('autocount_outbox')
           .update({
-            payload: { ...(pending.payload ?? {}), body: composed.create },
+            payload: { ...(pending.payload ?? {}), body: composed.create() },
             updated_at: new Date().toISOString(),
           })
           .eq('id', pending.id);
@@ -1242,41 +1296,40 @@ async function composeDownstreamState(
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
-    create: null as Record<string, unknown> | null,
+    create: null as (() => Record<string, unknown>) | null,
     edit: () => composeEdit(
       docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
     ),
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
     sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const soRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
-    create: composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
+    /* LAZY. An edit builds this same state, and composing a create it will
+       never send would refuse the edit for the create's reasons — a line with
+       no stock location is fatal to a create and irrelevant to an edit. */
+    create: () => composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
-    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), {
-      DebtorName: (h.debtor_name as string) ?? null,
-      Attention: (h.debtor_name as string) ?? null,
-      Ref: (h.ref as string) ?? null,
-      Phone1: (h.phone as string) ?? null,
-      InvAddr1: (h.address1 as string) ?? null,
-      InvAddr2: (h.address2 as string) ?? null,
-      InvAddr3: (h.address3 as string) ?? null,
-      InvAddr4: (h.address4 as string) ?? null,
-    }, lines, {}, retired),
+    edit: () => composeEdit(
+      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines,
+      newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {},
+      retired,
+    ),
   };
 }
 
@@ -1285,12 +1338,13 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const poRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, poRows, poRows.map(soLine));
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
-    create: composeCreatePo(header, lines) as unknown as Record<string, unknown>,
+    create: () => composeCreatePo(header, lines) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
@@ -1302,6 +1356,90 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
 }
 
 // ── drain ───────────────────────────────────────────────────────────────────
+
+/**
+ * The SO header fields an EDIT carries.
+ *
+ * A create sends the salesperson, the sales location, the document date and the
+ * three UDFs; an edit used to send none of them, so changing any one of those on
+ * a live order never reached AutoCount at all (divergence D8). The account book
+ * accepts every one of them on `/edit` — `AcSyncService.Edit()` has them in its
+ * allow-list and calls `ApplyUdf` — so this was the ERP declining to speak, not
+ * AutoCount refusing to listen.
+ *
+ * A NULL VALUE IS OMITTED, NEVER SENT. The service's header loop is
+ * `ContainsKey`-gated and `Str` turns a present-but-null into `""`, so sending
+ * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
+ * the account book has". The same rule as the line-level Location, one level up.
+ */
+function soEditHeader(h: Record<string, unknown>): Record<string, string | null | Record<string, string>> {
+  const out: Record<string, string | null | Record<string, string>> = {
+    DebtorName: (h.debtor_name as string) ?? null,
+    Attention: (h.debtor_name as string) ?? null,
+    Ref: (h.ref as string) ?? null,
+    Phone1: (h.phone as string) ?? null,
+    InvAddr1: (h.address1 as string) ?? null,
+    InvAddr2: (h.address2 as string) ?? null,
+    InvAddr3: (h.address3 as string) ?? null,
+    InvAddr4: (h.address4 as string) ?? null,
+  };
+  const agent = mapOrPassthrough((h.agent as string) ?? null, AGENT_MAP);
+  if (agent) out.Agent = agent;
+  const loc = mapOrPassthrough((h.sales_location as string) ?? null, LOCATION_MAP);
+  if (loc) out.SalesLocation = loc;
+  if (h.so_date) out.DocDate = String(h.so_date);
+
+  const udf: Record<string, string> = {};
+  const branding = mapOrPassthrough((h.branding as string) ?? null, BRANDING_MAP);
+  if (branding) udf.BRANDING = branding;
+  const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
+  if (venue) udf.VENUE = venue;
+  if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  if (Object.keys(udf).length) out.UDF = udf;
+
+  return out;
+}
+
+/**
+ * The masters a payload NAMES, in the shape /ensure-masters consumes.
+ *
+ * Read off the payload that is about to be sent, never recomposed from the
+ * database: the payload is the snapshot of what the user's save produced, and a
+ * master derived from anything else could differ from the one the document
+ * actually references.
+ *
+ * The debtor is deliberately absent. Houzs writes every order against ONE fixed
+ * AutoCount debtor and overwrites the name field per customer, so there is no
+ * per-customer account to open — and opening one would create an AR account
+ * nobody asked for. If that convention ever changes, this is where it changes.
+ */
+export function mastersOf(body: Record<string, unknown>): Record<string, unknown> | null {
+  const items = new Map<string, { ItemCode: string; Description: string; UOM?: string }>();
+  const details = [
+    ...(Array.isArray(body.Details) ? body.Details : []),
+    ...(Array.isArray(body.Lines) ? body.Lines : []),
+  ] as Array<Record<string, unknown>>;
+  for (const d of details) {
+    const code = typeof d?.ItemCode === 'string' ? d.ItemCode.trim() : '';
+    /* A retired line names a code the book already has, by construction — it is
+       addressed by a DtlKey AutoCount issued. Nothing to open. */
+    if (!code || d?.Retire === true) continue;
+    if (!items.has(code)) {
+      items.set(code, {
+        ItemCode: code,
+        Description: typeof d.Description === 'string' && d.Description ? d.Description : code,
+        ...(typeof d.UOM === 'string' && d.UOM ? { UOM: d.UOM } : {}),
+      });
+    }
+  }
+
+  const agents: Array<{ Agent: string }> = [];
+  const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
+  if (agent) agents.push({ Agent: agent });
+
+  if (!items.size && !agents.length) return null;
+  return { Items: [...items.values()], Agents: agents };
+}
 
 /** Read one ERP document's AutoCount counterpart number. */
 async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
@@ -1477,6 +1615,28 @@ export async function dispatchOne(
   }
 
   const attempts = (row.attempts ?? 0) + 1;
+
+  /* MASTERS FIRST, and only for the two operations that can introduce one.
+     A document naming an item, a salesperson or a customer the account book
+     does not have fails on a FOREIGN KEY and takes the whole document with it —
+     the live book proved the shape by answering FK_SODTL_Location to a create
+     whose lines carried no location. A conversion cannot introduce a master
+     (it transfers lines that are already there) and neither can a cancel. */
+  if (row.op === 'create_so' || row.op === 'create_po' || row.op === 'edit') {
+    const masters = mastersOf(body);
+    if (masters) {
+      const ensured = await callAcService(env, 'ensure_masters', masters, fetchImpl);
+      if (!ensured.ok) {
+        await mark(sb, row.id, {
+          attempts,
+          last_error: `masters not opened, document not sent: ${ensured.error ?? 'unknown'}`,
+          ...(ensured.retryable && attempts < MAX_ATTEMPTS ? {} : { status: 'failed' }),
+        });
+        return ensured.retryable && attempts < MAX_ATTEMPTS ? 'retry' : 'failed';
+      }
+    }
+  }
+
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {

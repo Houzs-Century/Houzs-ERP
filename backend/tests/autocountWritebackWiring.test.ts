@@ -121,12 +121,12 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
   test('every SO mutation path queues an edit — header, line add/edit/delete, and the variant/SKU swaps', () => {
     // Header CAS save.
     expect(between(soSource, 'header saved but edit lease was no longer ours', 'version: savedVersion,'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
     // Line add / edit / delete.
     expect(between(soSource, 'post-line-add failed', 'return c.json({ item: data }, 201);'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
     expect(between(soSource, 'post-line-patch failed', 'return c.json({ ok: true });'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
     /* The delete also RETIRES the removed line in AutoCount — without naming it
        the account book keeps it live, because /edit applies only the lines it
        is given. See autocountWritebackCells.test.ts for the all-six version. */
@@ -172,4 +172,20 @@ describe('the drain is wired to the cron', () => {
     expect(slot).toContain('[cron ac-writeback] FAILED');
     expect(slot).toContain('.catch((e) => console.error("[cron ac-writeback]", e))');
   });
+});
+
+/* The sofa branch of POST /:docNo/items inserted its compartment rows and
+   RETURNED - past the hook, queueing nothing. Adding a sofa to an order
+   AutoCount already holds never reached the account book at all. Same shape as
+   the guard-with-no-else class in BUG-HISTORY: an early return past the hook,
+   which a test that only greps the file as a whole cannot see. */
+test('the SOFA add-line branch queues an edit before it returns, and declares its rows', () => {
+  const branch = rawSo.slice(
+    rawSo.indexOf('const firstRow = (moduleData ?? [])[0]'),
+    rawSo.indexOf('return c.json({ item: firstRow }, 201);'),
+  );
+  expect(branch.length).toBeGreaterThan(0);
+  expect(branch).toContain('queueAcSoEdit(c, docNo');
+  /* Declared, not inferred: the ids come from the rows this insert returned. */
+  expect(branch).toContain('moduleData');
 });
