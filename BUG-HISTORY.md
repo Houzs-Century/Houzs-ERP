@@ -121,7 +121,7 @@ one row per group standing precisely so it survives.
 was wrong with inventory here, and an audit that only checked movements would
 have called this clean while staff read it as a stock problem daily.
 
-**Ref** - 2026-08-11, PR #1974 (fix/do-duplicates-and-fabric-merge). Prod
+**Ref** - 2026-08-11, PR #1971 (fix/do-duplicates-and-fabric-merge). Prod
 evidence: read-only diagnostic run 31450027318 (Section D), dry-run and apply
 runs recorded in `docs/migrated-do-duplicate-lines.md`.
 
