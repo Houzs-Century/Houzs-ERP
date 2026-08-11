@@ -208,6 +208,61 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
     expect(misdecoded.length).toBeGreaterThan(0);
   });
 
+  /**
+   * THE GATE MUST BE WIRED, NOT MERELY PRESENT. The measurement above calls
+   * composeSofaDesc2 and decodesTo directly, so it proves the gate FUNCTION
+   * works — it passes just as happily if collapseSofaLines never calls it.
+   * Removing the gate from collapseRun left that test green, which is exactly
+   * the failure mode the whole module is built against.
+   *
+   * So drive the real corpus through the REAL entry point on the compose path.
+   * Compose only runs when the stored Desc2 no longer decodes to the
+   * compartments the ERP holds — i.e. after an operator edits the build, which
+   * is the D9 edit case and the only way a reconstruction ever reaches the
+   * account book. That is simulated here by editing the compartment list while
+   * leaving the imported Desc2 stale, exactly as a real edit does.
+   *
+   * Reversing the pieces is the deliberate stressor: it inverts handedness, and
+   * a side-swapped sofa is the corrupting outcome that reads perfectly.
+   */
+  it('every line collapseSofaLines EMITS decodes back to the build it was given', () => {
+    let composed = 0;
+    let refused = 0;
+    const corrupt: string[] = [];
+
+    for (const { row, ps } of DECODABLE) {
+      if (ps.pieces.length < 2) continue;
+      const edits: string[][] = [[...ps.pieces].reverse(), ps.pieces.slice(0, -1)];
+      for (const pieces of edits) {
+        // the ORIGINAL Desc2 is left on the rows: stale, as a real edit leaves it
+        const res = collapseSofaLines(erpRows(row, pieces, ps));
+        refused += res.refusals.length;
+        for (const line of res.lines) {
+          if (line.via !== 'compose') continue;
+          composed += 1;
+          const again = parseSofa(String(line.description2), row.model, row.recl);
+          if (!sameSeq(again.pieces, pieces)) {
+            corrupt.push(
+              `${row.docNo}/${row.dtlKey}: ERP holds [${pieces}] -> emitted `
+              + `"${line.description2}" -> decodes [${again.pieces}]`,
+            );
+          }
+        }
+      }
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[D9 wired] ${composed} edited builds composed and emitted, ${refused} refused, `
+      + `${corrupt.length} emitted a line decoding to a DIFFERENT sofa.`,
+    );
+    // Nothing that reaches the account book may decode to another sofa.
+    expect(corrupt).toEqual([]);
+    // Both paths must be live, or this asserts over an empty set.
+    expect(composed).toBeGreaterThan(0);
+    expect(refused).toBeGreaterThan(0);
+  });
+
   it('the gate rejects text that decodes to a different build', () => {
     const two = ['1A(LHF)', '2A(RHF)'];
     const good = composeSofaDesc2(two, { size: '28', colour: 'BEIGE' });
