@@ -49,6 +49,7 @@ import { SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 import { acDeliveryDate, acDtlKey, acFromSoDtlKey, isoDate, mergeAcPoLines } from "./lib/ac-po-line.mjs";
 import { matchAcLinesToErpRows } from "./lib/ac-po-line-match.mjs";
 import { dedicationCandidates, makeSoLineTaker } from "./lib/so-line-dedication.mjs";
+import { codeMatchGapReason, compareStoredKey, isCompartmentSku } from "./lib/ac-line-key-audit.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -74,7 +75,9 @@ async function main() {
   /* ac-so-linked-pos first: it is the export cut FOR the PO<->SO link, so where
      the two files describe the same PODTL row its copy is the authoritative
      one. DtlKey de-duplicates them. */
-  const acByKey = mergeAcPoLines(gz("ac-so-linked-pos.json.gz"), gz("ac-outstanding-po.json.gz"));
+  const acSoLinked = gz("ac-so-linked-pos.json.gz");
+  const acOutstanding = gz("ac-outstanding-po.json.gz");
+  const acByKey = mergeAcPoLines(acSoLinked, acOutstanding);
   const soSnap = gz("ac-outstanding-so.json.gz");
   const soByDtl = new Map(soSnap.map((r) => [String(r.DtlKey), { doc: r.DocNo, code: r.ItemCode }]));
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
@@ -83,6 +86,21 @@ async function main() {
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
   log(`AutoCount PO lines in the snapshots: ${acByKey.size} (union by DtlKey); sales-order lines: ${soByDtl.size}`);
+
+  /* The OTHER rule's index, rebuilt here exactly as backfill-ac-line-keys.mjs
+     builds it — same single file (it never opens ac-so-linked-pos.json.gz),
+     same mapping CSV, same `${DocNo}|${ERP code}` key. Rebuilt rather than
+     imported because that script's index is a local inside its main(); the
+     point is that this census's "no AC match" is the SAME 589 that script
+     reported on production, not a re-scoped near-miss. */
+  const codeMatchIndex = new Set();
+  const docsInOutstanding = new Set();
+  for (const r of acOutstanding) {
+    docsInOutstanding.add(r.DocNo);
+    const erp = byAc.get(norm(r.ItemCode));
+    if (erp) codeMatchIndex.add(`${r.DocNo}|${norm(erp)}`);
+  }
+  const docsInSoLinked = new Set(acSoLinked.map((r) => r.DocNo));
 
   const acByDoc = new Map();
   for (const l of acByKey.values()) {
@@ -149,6 +167,10 @@ async function main() {
   const refusals = [];
   const crossProduct = [];    // dedications refused because the SO line is another product
   const noAcDoc = [];
+  /* Which AutoCount line this repair believes each ERP row descends from, kept
+     for the whole run so the two audits below can speak about rows the plan
+     never touches — including the ones already keyed by the other rule. */
+  const acByRowId = new Map();
   let sole = 0, split = 0, indistinguishable = 0, unmatchedErp = 0, unmatchedAc = 0, wouldKey = 0;
 
   for (const h of headers) {
@@ -201,6 +223,7 @@ async function main() {
 
     for (const { row, ac, how } of pairs) {
       if (how === "sole") sole++; else if (how === "split") split++; else indistinguishable++;
+      acByRowId.set(row.id, ac);
       /* Carries the evidence, not just the values: the DRY-RUN prints one line
          per planned write so a human can check any single one against
          AutoCount before the write happens. */
@@ -349,6 +372,84 @@ async function main() {
     log(`po_qty_picked NOT RECOMPUTED for the ${dedicated.length} sales-order line(s) this would newly dedicate:`);
     for (const p of plan.filter((x) => x.soItemId)) log(`   ${p.soItemId}  <- ${p.poNo} ${p.code ?? "-"} (AC SO ${p.soDoc})`);
   }
+
+  /* ------------------------------------------------------------------ *
+     AUDIT 1 — the keys this repair is FORBIDDEN to touch.
+
+     On 2026-08-10 backfill-ac-line-keys.mjs wrote 275 purchase-order line keys
+     against production by the (DocNo, ERP code) rule. The IS NULL guard means
+     this repair skips every one of them, which is correct — it must not
+     overwrite a value it did not write — but silence about them would be a
+     choice to not look. A stored key that disagrees with the derived one is a
+     live wrong value: AcSyncService dereferences it on the edit path and a
+     wrong DtlKey makes it APPEND a line to the account book rather than edit
+     the operator's. So: compare, never write, and print every disagreement.
+   * ------------------------------------------------------------------ */
+  const docNoByPoId = new Map(headers.map((h) => [h.id, h.linked_ac_docno]));
+  const poNoByPoId = new Map(headers.map((h) => [h.id, h.po_number]));
+  const already = rows.filter((r) => r.linked_ac_dtlkey != null);
+  const keyVerdicts = { agree: 0, disagree: 0, underived: 0, absent: 0 };
+  const disagreements = [];
+  for (const r of already) {
+    const derived = acByRowId.get(r.id)?.key ?? null;
+    const v = compareStoredKey(r.linked_ac_dtlkey, derived);
+    keyVerdicts[v]++;
+    if (v === "disagree") {
+      disagreements.push({ poNo: poNoByPoId.get(r.purchase_order_id), code: r.material_code, id: r.id, stored: r.linked_ac_dtlkey, derived });
+    }
+  }
+  log("");
+  log(`ALREADY-KEYED LINES — written by backfill-ac-line-keys.mjs on 2026-08-10 (prod run 31416597720, APPLY). This repair NEVER overwrites them; it only checks them: ${already.length}`);
+  log(`   agree with the key this repair derives: ${keyVerdicts.agree}; DISAGREE: ${keyVerdicts.disagree}; this repair derives no key for them (cannot check): ${keyVerdicts.underived}`);
+  if (disagreements.length) {
+    log("   EVERY DISAGREEMENT — each is a stored DtlKey this repair believes names a DIFFERENT AutoCount line.");
+    log("   Nothing here is written or reverted by this script. A wrong key makes AcSyncService APPEND instead of edit, so each needs an owner ruling.");
+    for (const d of disagreements) log(`   ${d.poNo}  ${d.code ?? "-"}  row ${d.id}: stored ${d.stored} vs derived ${d.derived}`);
+  } else if (already.length) {
+    log("   No disagreement. Where both rules reach a line they name the same AutoCount row.");
+  }
+
+  /* ------------------------------------------------------------------ *
+     AUDIT 2 — the composition of the lines the code match could not reach.
+
+     That run's "no AC match 589" is a count, and a count cannot be acted on.
+     Each of those lines is classified here against the same two files and the
+     same CSV that script reads, so the numbers are comparable, and cross-cut
+     by item_group because the standing hypothesis is about sofas.
+   * ------------------------------------------------------------------ */
+  const gapRows = [];
+  for (const r of rows) {
+    const doc = docNoByPoId.get(r.purchase_order_id);
+    const codeMatched = codeMatchIndex.has(`${doc}|${norm(r.material_code)}`);
+    const ac = acByRowId.get(r.id);
+    const reason = codeMatchGapReason({
+      codeMatched,
+      docInOutstandingPo: docsInOutstanding.has(doc),
+      docInSoLinkedPos: docsInSoLinked.has(doc),
+      skuBeyondItemCode: ac ? isCompartmentSku(r.supplier_sku, ac.itemCode) : false,
+      acItemMapped: ac ? Boolean(byAc.get(norm(ac.itemCode))) : false,
+    });
+    if (reason) gapRows.push({ r, reason, reachable: Boolean(ac) });
+  }
+  const gapByReason = new Map();
+  const gapByGroup = new Map();
+  for (const g of gapRows) {
+    gapByReason.set(g.reason, (gapByReason.get(g.reason) ?? 0) + 1);
+    const k = g.r.item_group ?? "(none)";
+    if (!gapByGroup.has(k)) gapByGroup.set(k, { total: 0, reachable: 0 });
+    const e = gapByGroup.get(k);
+    e.total++; if (g.reachable) e.reachable++;
+  }
+  const reachable = gapRows.filter((g) => g.reachable).length;
+  log("");
+  log(`THE LINES THE (DocNo, ERP code) MATCH COULD NOT REACH — its "no AC match" count, re-derived here: ${gapRows.length}`);
+  log("   by reason:");
+  for (const [reason, n] of [...gapByReason.entries()].sort((a, b) => b[1] - a[1])) log(`      ${n} x  ${reason}`);
+  log("   by item_group (reachable = this repair DOES find the AutoCount line for it):");
+  for (const [g, e] of [...gapByGroup.entries()].sort((a, b) => b[1].total - a[1].total)) {
+    log(`      ${g}: ${e.total} line(s), of which this repair reaches ${e.reachable}`);
+  }
+  log(`   TOTAL this repair reaches that the code match cannot: ${reachable} of ${gapRows.length}`);
 
   if (!APPLY) {
     log("");
