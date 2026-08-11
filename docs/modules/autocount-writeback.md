@@ -747,6 +747,34 @@ Two consequences worth knowing:
 The parent travels separately (`payload.fromDoc`, resolved at drain) and must
 never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
 parent's.
+## 7h. Editing a MIGRATED sofa order — why it was refused, and what fixes it
+
+An operator opens an existing sofa order, changes something, saves. The edit is
+**refused**, and the reason is line identity.
+
+`backfill-ac-line-keys.mjs` matches on `(AutoCount DocNo + ERP item code)`,
+translating AutoCount's `ItemCode` through the cutover mapping. For a sofa that
+translation lands on `9028-1S` — but the cutover **split** each sofa into
+compartment rows, so what the ERP holds is `9028-1A(LHF)`, `9028-2A(RHF)` and
+friends. The pair never matches. Every migrated sofa line kept a NULL
+`linked_ac_dtlkey`, which is the whole of the *"589 PO lines with no AutoCount
+match"* in the migration record, and `composeEdit` reads the key off the
+COLLAPSED build — a build with no key has no identity to address, so the whole
+document is refused.
+
+**Refused, not corrupted.** That is the guard working: the alternative was
+appending a duplicate set of lines into a live account book.
+
+`backfill-ac-sofa-line-keys.mjs` (workflow: **Backfill AutoCount line keys
+(SOFA)**) closes it by reproducing the D9 collapse the write-back itself uses:
+group the compartment rows into builds, resolve the build to the `<model>-1S`
+code the mapping knows, match THAT against AutoCount's lines, and give **every
+compartment row of a build the same DtlKey** — which is exactly the shape
+`composeEdit` requires.
+
+**Where the counts disagree it assigns nothing** and names the document. A wrong
+key is worse than a missing one: missing is refused loudly, wrong silently edits
+a different line in a live book.
 
 ## 8. Configuration
 
