@@ -53,7 +53,18 @@ const TIER_FIELD_TO_COL: Record<string, string> = {
    INSERT fabric_library/fabric_colours but not UPDATE/DELETE — so we never
    clobber a Master-Admin selling-tier edit, and re-syncing an existing fabric
    is a no-op instead of a 403/permission error. Selling tiers stay POS-only. */
-const seriesOf = (code: string): string => code.split('-')[0] || code;
+/* The series is everything BEFORE the trailing colour number, not everything
+   before the first dash. "AM275-02" -> AM275 either way, but "SF-AT-01" is
+   SF-AT and "ALPINE-5311-13" is ALPINE-5311; splitting on the first dash calls
+   them SF and ALPINE and mirrors the colour into the wrong series. Matches how
+   normalize-fabric-codes.mjs derives it, so a fabric created here and a fabric
+   normalised there land in the same place. */
+const seriesOf = (code: string): string => {
+  const v = (code || '').trim().toUpperCase();
+  const m = /^(.+)[\s-]+\d{1,3}$/.exec(v);
+  const head = (m ? m[1] : v.split('-')[0]) || v;
+  return head.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || v;
+};
 const colourLabelOf = (code: string, description: string | null): string => {
   const desc = (description ?? '').trim();
   const sp = desc.indexOf(' ');

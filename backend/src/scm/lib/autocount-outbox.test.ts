@@ -1064,3 +1064,31 @@ describe('a line the ERP just added is declared, never inferred', () => {
     expect(outbox(sb)[0].last_error).toContain('refused, nothing sent');
   });
 });
+
+/* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
+   unconditionally - so a supplier the account book does not have fails the same
+   foreign key a missing item does, and takes the whole PO with it. */
+describe('a purchase order opens its supplier too', () => {
+  test('mastersOf names the creditor a PO payload carries', () => {
+    const m = mastersOf({
+      CreditorCode: '400-N999', CreditorName: 'New Supplier Sdn Bhd',
+      Details: [{ ItemCode: 'A' }],
+    }) as { Creditors: Array<Record<string, unknown>> };
+    expect(m.Creditors).toEqual([{ AccNo: '400-N999', CompanyName: 'New Supplier Sdn Bhd' }]);
+  });
+
+  test('no creditor on a sales order — an SO names none, and one must not be invented', () => {
+    const m = mastersOf({ Details: [{ ItemCode: 'A' }] }) as { Creditors: unknown[] };
+    expect(m.Creditors).toEqual([]);
+  });
+
+  test('a nameless creditor falls back to its code, never to an empty company name', () => {
+    const m = mastersOf({ CreditorCode: '400-N999' }) as { Creditors: Array<Record<string, unknown>> };
+    expect(m.Creditors[0].CompanyName).toBe('400-N999');
+  });
+
+  test('the DEBTOR is still deliberately absent — one fixed account, name overwritten', () => {
+    const m = mastersOf({ DebtorCode: '300-C002', DebtorName: 'Whoever', Details: [{ ItemCode: 'A' }] });
+    expect(m).not.toHaveProperty('Debtors');
+  });
+});

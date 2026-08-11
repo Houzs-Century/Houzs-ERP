@@ -677,6 +677,48 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
 | It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
 | It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
+| It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
+
+### The one picker it will not touch: a UDF dropdown (BRANDING, VENUE)
+
+`AutoCount.UDF.UDFList` exposes `Add(name, items[])` and `Save()` — the API
+behind User Defined List Maintenance — so adding a branding or a venue option is
+technically reachable. **We do not call it.**
+
+`Add` takes the list NAME and an ITEM ARRAY, and whether that APPENDS or
+REPLACES the list is not something the reflected signature says. The downside of
+guessing wrong is wiping the owner's ~95 venue options out of a live book, which
+is far worse than the problem being solved. Same judgement as the warehouse: a
+value that governs what staff can pick is not something a sync invents at 3am.
+
+What happens today to a venue the dropdown does not have: the value is written
+onto the document's UDF field as free text — the list constrains AutoCount's own
+UI, not the column. So nothing fails; the value simply will not be pickable
+later. **That last sentence is reasoning from the field's shape, not a live
+observation — settle it on the throwaway document during runbook 4.1.**
+
+## 7f. A cancel that reached AutoCount is final
+
+The 2.2 SDK has **no un-cancel**. `CancelDocument` is a COMMAND, not a flag we
+could write back to false, and a whole-file grep of the reflected surface for
+`uncancel`, `set_Cancelled` and `Cancelled:Boolean` returns nothing — pinned by
+a test, so it is a checked premise rather than an assumption.
+
+So an ERP un-cancel has no push. Allowing one would leave the document live here
+and cancelled there, with nothing able to close the gap — the exact divergence
+the owner named (*"一边取消一边没取消"*).
+
+Once `linked_ac_docno` is set, leaving CANCELLED is refused with **409
+`cancel_is_final`**:
+
+| route | refuses |
+|---|---|
+| `PATCH /mfg-sales-orders/:docNo/status` | any transition out of CANCELLED |
+| `PATCH /mfg-purchase-orders/:id/reopen` | the reopen itself |
+
+A document with **no** `linked_ac_docno` is untouched — nothing was ever pushed
+for it, so nothing can diverge, and the reopen the Commander asked for in
+2026-06 still works exactly as before. **Raise a new document instead.**
 
 ## 8. Configuration
 
