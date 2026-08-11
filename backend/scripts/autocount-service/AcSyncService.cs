@@ -143,19 +143,40 @@ class AcSyncService {
     try { File.AppendAllText(@"C:\Temp\ac-sync-service.log", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
   }
 
+  /* Every real payload is one document; the largest sofa order in the cutover
+     is tens of KB. Reading an unbounded stream into a string is how a single
+     request takes the service down. */
+  const int MaxBody = 2 * 1024 * 1024;
+
   static void Handle(HttpListenerContext ctx) {
     var path = ctx.Request.Url.AbsolutePath;
+
+    /* FAIL CLOSED. This used to read
+           if (!IsNullOrEmpty(ApiKey) && header != ApiKey) -> 401
+       so NO KEY FILE meant NO CHECK AT ALL - every request accepted, including
+       /create-so and /cancel, straight into the licensed live book. One deleted
+       file, or one rebuild on a fresh machine, and the account book is open to
+       whoever reaches the port; behind a public hostname that is everyone. A
+       service with no key configured now serves nothing. */
+    if (string.IsNullOrEmpty(ApiKey)) { Json(ctx, 503, Err("no API key configured on the host - refusing every request")); return; }
+    if (!SameKey(ctx.Request.Headers["X-API-KEY"], ApiKey)) { Json(ctx, 401, Err("bad key")); return; }
+
+    /* AFTER the key, deliberately: which account book this is connected to is
+       not something to hand an anonymous caller on a public hostname. */
     if (path == "/health") {
       Json(ctx, 200, new Dictionary<string, object> { { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" } });
       return;
     }
     if (ctx.Request.HttpMethod != "POST") { Json(ctx, 405, Err("POST only")); return; }
-    if (!string.IsNullOrEmpty(ApiKey) && ctx.Request.Headers["X-API-KEY"] != ApiKey) { Json(ctx, 401, Err("bad key")); return; }
 
+    if (ctx.Request.ContentLength64 > MaxBody) { Json(ctx, 413, Err("body too large")); return; }
     string body;
     using (var sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8)) body = sr.ReadToEnd();
+    if (body.Length > MaxBody) { Json(ctx, 413, Err("body too large")); return; }
     var p = (Dictionary<string, object>) new JavaScriptSerializer().DeserializeObject(body);
-    Log(path + " " + (body.Length > 400 ? body.Substring(0, 400) + "..." : body));
+    /* The ROUTE and the DOCUMENT, never the payload. A payload carries the
+       customer's name, address and phone, and a log is a file people copy. */
+    Log(path + " " + Str(p, "DocType") + " " + Or(Str(p, "DocNo"), Str(p, "FromDocNo")));
 
     /* Every route that CREATES a document answers with the created line keys
        as well as the DocNo. The DocNo alone is not enough: without the DtlKeys
@@ -725,6 +746,14 @@ class AcSyncService {
     var d = Ok(docNo);
     if (lines != null) d["lines"] = lines;
     return d;
+  }
+  /* Length-independent comparison. A shared secret on a public hostname should
+     not also answer "how much of it did you get right". */
+  static bool SameKey(string given, string want) {
+    if (given == null) return false;
+    var diff = given.Length ^ want.Length;
+    for (int i = 0; i < given.Length && i < want.Length; i++) diff |= given[i] ^ want[i];
+    return diff == 0;
   }
   static Dictionary<string, object> Err(string m) { return new Dictionary<string, object> { { "ok", false }, { "error", m } }; }
   static string Str(Dictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) && v != null ? v.ToString() : ""; }
