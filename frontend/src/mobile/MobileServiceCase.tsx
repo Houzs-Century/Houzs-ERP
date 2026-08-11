@@ -269,11 +269,11 @@ function useSoSearch(q: string): { results: SoHit[]; loading: boolean } {
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // Human labels for the resolution_method slugs (mirrors desktop).
 const RESOLUTION_LABELS: Record<string, string> = {
-  replace_unit: "Replace unit",
-  supplier_repair: "Supplier repair",
-  field_service_own: "Field service (own)",
-  field_service_supplier: "Field service (supplier)",
-  return_visit: "Return visit",
+  replace_unit: "Replace Unit",
+  supplier_repair: "Supplier Service",
+  field_service_own: "On Site Service (Own Team)",
+  field_service_supplier: "On Site Service (Supplier)",
+  return_visit: "2nd Services",
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
 const prettyStage = (stage: string) => {

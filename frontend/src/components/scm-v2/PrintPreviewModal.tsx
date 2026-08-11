@@ -109,8 +109,8 @@ export function PrintPreviewModal({
   onClose,
   docTitle,
   docNo,
+  companyName,
   rows,
-  document: documentNode,
   onViewPdf,
   viewLabel = "View full PDF",
   onPrint,
@@ -122,15 +122,15 @@ export function PrintPreviewModal({
   docTitle: string;
   /** Document number in the band's right column. */
   docNo: string;
+  /* Override the band's company. Needed where the document does NOT print on
+     the active workspace's letterhead: a service case can be raised under one
+     entity and handed to the customer on the other's paper, and the band has to
+     name the one that will actually be printed — otherwise the picker says 2990
+     while the card says Houzs (owner 2026-08-11: "我选了2990但是Preview还是
+     Houzs"). Omit and the band follows the active company, which is right for
+     every document that cannot be re-headed. */
+  companyName?: string;
   rows: PrintPreviewRow[];
-  /* The real document, when the surface can show one cheaply. The ASSR service
-     case is server-rendered HTML we already hold, so its preview shows the page
-     itself rather than a summary of it — a card that only restates the copy you
-     just picked is a confirmation box wearing a preview's name, and it hid a
-     wrong SUB-STATUS line from the operator for weeks (owner 2026-08-07).
-     The PDF documents deliberately do NOT pass this: rendering one costs a jspdf
-     pass, which is what the summary card exists to avoid. */
-  document?: ReactNode;
   /** Render the real PDF in a new tab. Omit to hide the button. */
   onViewPdf?: PrintAction;
   /** Label for that button — HTML surfaces open a page, not a PDF. */
@@ -163,8 +163,6 @@ export function PrintPreviewModal({
       onClose={onClose}
       title="Print preview"
       icon={<Printer size={16} />}
-      /* A real document needs the room; a summary card does not. */
-      size={documentNode ? "lg" : "sm"}
       footer={
         <>
           {onViewPdf && (
@@ -207,7 +205,7 @@ export function PrintPreviewModal({
         <div className="flex items-start justify-between gap-3 bg-sidebar px-5 py-4 text-sidebar-ink">
           <div>
             <div className="font-display text-[14px] font-bold uppercase tracking-wider text-white">
-              {shortCompanyName(branding.companyName)}
+              {shortCompanyName(companyName ?? branding.companyName)}
             </div>
             <div className="mt-0.5 text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">
               {docTitle}
@@ -228,11 +226,6 @@ export function PrintPreviewModal({
           ))}
         </div>
       </div>
-      {documentNode && (
-        <div className="mt-3 overflow-hidden rounded-xl border border-border-subtle bg-surface-2">
-          {documentNode}
-        </div>
-      )}
     </ModalOverlay>
   );
 }
