@@ -33,13 +33,22 @@
    is the blast radius of the defect, taken from production rather than reasoned
    about.
 
-   WHAT IT WILL NOT DO. If two tracking rows normalise onto one code, only the
-   better-informed one is rewritten and the other is REPORTED, never merged and
-   never deleted. fabric_trackings has no active flag to supersede into, and
-   fabric_code carries a non-unique index - loadFabricByCode already warns that a
-   duplicate makes .maybeSingle() error and "the fabric tier surcharge silently
-   drops". Creating a duplicate to tidy a code would be trading a visible mess
-   for an invisible one, on the money path.
+   WHAT IT DOES, END TO END. Owner: tidy the Converter, merge what should be
+   merged, finish it.
+     1. measures the orphaned lines (above)
+     2. rewrites each tracking code to the library's canonical form
+     3. fills the series column, which is empty on every row today
+     4. MERGES duplicate rows - the loser goes is_active = false with a note
+        saying what absorbed it, never deleted, and the winner absorbs any tier
+        or supplier code only the loser carried
+     5. CREATES the master rows the library has no counterpart for - the 88
+        codes opened from the owner's catalogue today, TR and DE among them,
+        went into the library only and cannot be priced from the master screen
+
+   THE ONE THING IT REFUSES. Two rows carrying DIFFERENT tiers are not a
+   spelling difference, they are two answers to what the fabric costs. Printed,
+   never merged. And a created row gets NO tier: a tier is a price, and this
+   script does not know it.
 
    MODE=plan (default) prints and writes nothing.
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
@@ -56,6 +65,7 @@ if (APPLY && process.env.CONFIRM !== "I HAVE REVIEWED THE DRY-RUN") {
   console.error('apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN"');
   process.exit(1);
 }
+const STAMP = process.env.NOTE_DATE || "2026-08-11";
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
@@ -78,7 +88,7 @@ async function main() {
   note(`MODE=${MODE} company=${CO}`);
 
   const trk = await sql`SELECT id, fabric_code, fabric_description, series, supplier_code,
-                               price_tier, sofa_price_tier, bedframe_price_tier
+                               price_tier, sofa_price_tier, bedframe_price_tier, is_active
                           FROM scm.fabric_trackings WHERE company_id = ${CO}`;
   const cols = await sql`SELECT colour_id, label, active FROM scm.fabric_colours WHERE company_id = ${CO}`;
   note(`fabric_trackings: ${trk.length} rows | fabric_colours: ${cols.length} rows`);
@@ -146,26 +156,57 @@ async function main() {
     rewrite.push({ r, target, label: hit.label, series: seriesOfCode(target) });
   }
 
-  /* One target, two tracking rows - keep the better-informed one, report the
-     other. See the header: a duplicate fabric_code is worse than an untidy one. */
+  /* One target, several tracking rows: MERGE them. The owner asked for it
+     directly, and the table can carry it honestly because scm.fabric_trackings
+     has is_active. The loser is DEACTIVATED, never deleted, exactly like a
+     superseded colour, and the winner first absorbs anything the loser knew
+     that it does not - a tier, a supplier code. Nothing is lost by the merge.
+
+     The one case still refused: two rows carrying DIFFERENT tiers. That is not
+     a spelling difference, it is two answers to what the fabric costs, and
+     picking one silently is how a wrong price becomes a fact.
+
+     Deactivating also fixes the hazard by itself: loadFabricByCode warns that a
+     duplicate fabric_code makes .maybeSingle() error and the fabric tier
+     surcharge silently drops. ONE ACTIVE ROW PER CODE is what the join needs. */
   const keep = new Set();
+  const merges = [];
   for (const [target, rows] of byTarget) {
-    if (canonical.has(target) && trkCodes.has(target)) {
-      dupes.push({ target, rows, reason: "a tracking row already carries that code" });
+    const existing = trk.filter((r) => normColour(r.fabric_code) === target && !rows.some((x) => x.id === r.id));
+    const all = [...rows, ...existing];
+    if (all.length === 1) { keep.add(all[0].id); continue; }
+    const tiers = new Set(all.map(tierOf).filter(Boolean));
+    if (tiers.size > 1) {
+      dupes.push({ target, rows: all, reason: "TIERS DISAGREE - not merged, a person has to say which price is right" });
       continue;
     }
-    if (rows.length === 1) { keep.add(rows[0].id); continue; }
-    const sorted = [...rows].sort((a, b) => informedness(b) - informedness(a) || String(a.id).localeCompare(String(b.id)));
+    const sorted = [...all].sort((a, b) => informedness(b) - informedness(a) || String(a.id).localeCompare(String(b.id)));
     keep.add(sorted[0].id);
-    const tiers = new Set(rows.map(tierOf).filter(Boolean));
-    dupes.push({ target, rows: sorted.slice(1), reason: tiers.size > 1 ? "TIERS DISAGREE - do not merge blind" : "same colour, two rows" });
+    merges.push({ target, win: sorted[0], lose: sorted.slice(1) });
   }
   const doRewrite = rewrite.filter((x) => keep.has(x.r.id));
+
+  /* Every colour the library holds must exist in the Converter, because the
+     Converter is the MASTER: fabric-tracking.ts mints a tracking row and mirrors
+     it into the library, never the other way round. The 88 codes opened from the
+     owner's catalogue today - all of TR and DE among them - went into the
+     library only, so they cannot be found or priced on the master screen.
+     Created here with NO tier: a tier is a price and this script does not know
+     it. Every created row is printed so the owner can set them. */
+  const trkNow = new Set(trk.filter((r) => r.is_active !== false).map((r) => normColour(r.fabric_code)));
+  for (const x of doRewrite) trkNow.add(x.target);
+  const create = [];
+  for (const [cid, row] of canonical) {
+    if (trkNow.has(cid)) continue;
+    create.push({ code: cid, label: row.label || cid, series: seriesOfCode(cid) });
+  }
 
   note("");
   note("=== 2. PLAN ===");
   note(`  codes to rewrite: ${doRewrite.length} | series to fill: ${fillSeries.length}`);
-  note(`  duplicates left for a person: ${dupes.reduce((a, d) => a + d.rows.length, 0)}`);
+  note(`  duplicate rows to merge (loser deactivated, never deleted): ${merges.reduce((a, m) => a + m.lose.length, 0)}`);
+  note(`  master rows to CREATE for library colours that have none: ${create.length}`);
+  note(`  duplicates REFUSED because their tiers disagree: ${dupes.reduce((a, d) => a + d.rows.length, 0)}`);
   note(`  tracking codes the library does not know: ${unknown.length}`);
 
   if (doRewrite.length) {
@@ -178,6 +219,20 @@ async function main() {
     note(`--- SERIES FILLED, code already correct (${fillSeries.length}) ---`);
     for (const x of fillSeries.slice(0, 40)) note(`  ${String(x.r.fabric_code).padEnd(22)} series="${x.want}"${x.r.series ? ` (was ${JSON.stringify(x.r.series)})` : " (was empty)"}`);
     if (fillSeries.length > 40) note(`  ... and ${fillSeries.length - 40} more`);
+  }
+  if (merges.length) {
+    note("");
+    note(`--- MERGE (${merges.length} groups) - winner keeps the code, loser is deactivated ---`);
+    for (const m of merges) {
+      note(`  ${m.target}: keep id=${m.win.id} "${m.win.fabric_code}" tiers="${tierOf(m.win) || "-"}"`);
+      for (const l of m.lose) note(`      deactivate id=${l.id} "${l.fabric_code}" desc=${JSON.stringify(l.fabric_description)} tiers="${tierOf(l) || "-"}"`);
+    }
+  }
+  if (create.length) {
+    note("");
+    note(`--- CREATE IN THE CONVERTER (${create.length}) - no tier is invented, set them yourself ---`);
+    for (const x of create.slice(0, 60)) note(`  + ${x.code.padEnd(18)} ${JSON.stringify(x.label)} series="${x.series}"`);
+    if (create.length > 60) note(`  ... and ${create.length - 60} more`);
   }
   if (dupes.length) {
     note("");
@@ -203,7 +258,7 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let wrote = 0, filled = 0;
+  let wrote = 0, filled = 0, mergedOff = 0, created = 0;
   await sql.begin(async (tx) => {
     for (const x of doRewrite) {
       /* fabric_trackings.id is a text PK that HAPPENS to equal the code by
@@ -220,8 +275,35 @@ async function main() {
                 WHERE company_id = ${CO} AND id = ${x.r.id}`;
       filled++;
     }
+    for (const m of merges) {
+      /* The winner absorbs FIRST - a merge must not drop a tier or a supplier
+         code that only the losing row carried. */
+      const donor = m.lose.find((l) => tierOf(l)) || null;
+      const sup = m.lose.find((l) => l.supplier_code)?.supplier_code ?? null;
+      await tx`UPDATE scm.fabric_trackings
+                  SET sofa_price_tier     = COALESCE(${m.win.sofa_price_tier}, ${donor?.sofa_price_tier ?? null}),
+                      bedframe_price_tier = COALESCE(${m.win.bedframe_price_tier}, ${donor?.bedframe_price_tier ?? null}),
+                      price_tier          = COALESCE(${m.win.price_tier}, ${donor?.price_tier ?? null}),
+                      supplier_code       = COALESCE(${m.win.supplier_code}, ${sup})
+                WHERE company_id = ${CO} AND id = ${m.win.id}`;
+      for (const l of m.lose) {
+        await tx`UPDATE scm.fabric_trackings
+                    SET is_active = false,
+                        fabric_description = ${(l.fabric_description || l.fabric_code) + ' [merged into ' + m.target + ' on ' + STAMP + ']'}
+                  WHERE company_id = ${CO} AND id = ${l.id}`;
+        mergedOff++;
+      }
+    }
+    for (const x of create) {
+      /* id follows the minting convention in fabric-tracking.ts: the code,
+         uppercased. */
+      await tx`INSERT INTO scm.fabric_trackings (id, fabric_code, fabric_description, series, is_active, company_id)
+               VALUES (${x.code}, ${x.code}, ${x.label}, ${x.series}, true, ${CO})
+               ON CONFLICT (id) DO NOTHING`;
+      created++;
+    }
   });
-  note(`  codes rewritten ${wrote} | series filled ${filled}`);
+  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created}`);
 
   /* Verify on a SECOND, FRESH connection, and verify the thing that matters:
      the join is whole again. */
@@ -247,8 +329,16 @@ async function main() {
     note(`  TOTAL still orphaned: ${left} (was ${totalMiss} before this run)`);
     if (left > totalMiss) { fails++; bad("this run made the orphan count WORSE"); }
     const dupNow = await v`SELECT fabric_code, COUNT(*)::int AS n FROM scm.fabric_trackings
-                            WHERE company_id = ${CO} GROUP BY 1 HAVING COUNT(*) > 1`;
-    note(`  tracking codes carried by more than one row: ${dupNow.length}`);
+                            WHERE company_id = ${CO} AND is_active GROUP BY 1 HAVING COUNT(*) > 1`;
+    note(`  codes carried by more than one ACTIVE row (must be 0 for the tier join): ${dupNow.length}`);
+    if (dupNow.length) fails++;
+    const libOnly = await v`SELECT COUNT(*)::int AS n FROM scm.fabric_colours fc
+                             WHERE fc.company_id = ${CO} AND fc.active
+                               AND NOT EXISTS (SELECT 1 FROM scm.fabric_trackings t
+                                                WHERE t.company_id = ${CO} AND t.is_active
+                                                  AND upper(t.fabric_code) = upper(fc.colour_id))`;
+    note(`  library colours with no ACTIVE Converter row (must be 0): ${libOnly[0].n}`);
+    if (libOnly[0].n) fails++;
     for (const d of dupNow) note(`     "${d.fabric_code}" x${d.n}`);
     note(`  VERIFY ${fails === 0 ? "PASS" : `FAILED with ${fails} problem(s)`}`);
   } finally { await v.end({ timeout: 5 }); }
