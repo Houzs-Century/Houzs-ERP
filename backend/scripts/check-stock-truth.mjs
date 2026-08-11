@@ -314,6 +314,15 @@ async function sectionA(state) {
   } catch (e) {
     sofaMasterNote = ` (scm.mfg_products unreadable: ${e.message} — CSV only)`;
   }
+  /* Why a too-broad ERP-side list cannot hide a divergence. Excluding an ERP code
+     only removes it from erpBy; the AutoCount side still contributes the key, so
+     the now-missing ERP quantity surfaces as ERP LOWER rather than vanishing. A
+     cell disappears only if BOTH sides exclude it, and the AutoCount side
+     excludes strictly by the binding CSV's SOFA category. Checked against the
+     data: 0 AutoCount codes of a non-SOFA category map to an ERP code that any
+     SOFA row also maps to, and the surviving ERP LOWER list is a single mattress.
+     Sofa PILLOWS stay in the comparison, which is why AMN-SOFA PILLOW is still
+     reported below. */
   const erpSofa = new Set([...sofaErpCodes, ...erpSofaFromMaster]);
   notice(`  ERP sofa codes     : ${erpSofa.size} (${erpSofaFromMaster.size} from scm.mfg_products category SOFA, ${sofaErpCodes.size} from the binding CSV)${sofaMasterNote}`);
 
