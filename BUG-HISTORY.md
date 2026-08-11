@@ -178,8 +178,9 @@ optimises one axis, check what it silently trades away on another before you let
 it write.
 
 **Ref** - 2026-08-11, PR #1972 (fix/fabric-series-merge). Prod evidence:
-read-only run 31450029537 and the plan/apply runs recorded in
-`docs/duplicate-fabric-series-merge.md`.
+read-only run 31450029537, PLAN 31452278722, APPLY 31452408610 (29 of 32 pairs
+merged, 28 lines repointed, 140 -> 111 active series, 3 pairs HELD as lossy).
+Full numbers in `docs/duplicate-fabric-series-merge.md`.
 
 ## 11 sales orders read as over-delivered against delivery lines that never moved stock [med]
 
@@ -228,8 +229,10 @@ was wrong with inventory here, and an audit that only checked movements would
 have called this clean while staff read it as a stock problem daily.
 
 **Ref** - 2026-08-11, PR #1971 (fix/do-duplicates-and-fabric-merge). Prod
-evidence: read-only diagnostic run 31450027318 (Section D), dry-run and apply
-runs recorded in `docs/migrated-do-duplicate-lines.md`.
+evidence: read-only diagnostic run 31450027318 (Section D), DRY-RUN 31451629651, APPLY
+31451705673 - 18 rows zeroed, over-delivered 11 -> 7, every document total
+identical. Full numbers in `docs/migrated-do-duplicate-lines.md`.
+
 ## A special add-on was costed and never charged, and the exempt lines were the migrated ones [high]
 
 **Symptom** - the owner: *"让收费追上成本."* A priced special add-on on a sofa
