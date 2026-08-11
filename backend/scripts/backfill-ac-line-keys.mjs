@@ -106,7 +106,15 @@ async function main() {
 
   /* THE PO HALF IS RETIRED — repair-migrated-po-lines.mjs owns purchase-order
      linked_ac_dtlkey now, and two writers with different rules would fight.
-     This one was the weaker rule and it never ran, so nothing is lost:
+     An earlier version of this comment said the PO half had never run, so
+     nothing was lost. THAT IS NO LONGER TRUE and the correction matters more
+     than the retirement: on 2026-08-10 this script ran against PRODUCTION in
+     APPLY mode (workflow run 31416597720) and wrote 275 purchase-order line
+     keys — `PO lines: erp lines 864; to set 275; already set 0; no AC match
+     589`. Retiring it stops the 276th, it does not undo the 275. Those rows are
+     AUDITED, not overwritten, by repair-migrated-po-lines.mjs, which reports
+     every one whose stored key disagrees with the key it derives.
+     The rule retired here is the weaker one:
        - it matched on (DocNo, ERP item code), which cannot tell apart two PO
          lines of the same code, where the repair splits them on (qty, Desc2)
          and REFUSES what that does not separate;

@@ -28,6 +28,7 @@ import {
 } from "../scripts/lib/ac-po-line.mjs";
 import { dedicationCandidates, makeSoLineTaker } from "../scripts/lib/so-line-dedication.mjs";
 import { matchAcLinesToErpRows } from "../scripts/lib/ac-po-line-match.mjs";
+import { codeMatchGapReason, compareStoredKey, isCompartmentSku } from "../scripts/lib/ac-line-key-audit.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const gz = (f) =>
@@ -397,4 +398,81 @@ test("HC-PO-009830 walks back to its sales order, which is what the finding clai
     assert.equal(so.DocNo, "SO-011207");
     assert.ok(acDeliveryDate(l), "and it carries a delivery date");
   }
+});
+
+// ── the audits that exist because backfill-ac-line-keys.mjs ran on prod ──────
+//
+// 275 purchase-order lines were keyed by the other rule on 2026-08-10. This
+// repair may not overwrite them, so its only remaining duty toward them is to
+// CHECK them — and a check that cannot report a disagreement is worse than no
+// check, because it reads as an all-clear.
+
+test("a stored key that names a different AutoCount line is a DISAGREEMENT", () => {
+  assert.equal(compareStoredKey(61216, 61217), "disagree");
+  assert.equal(compareStoredKey(61216, 61216), "agree");
+});
+
+test("bigint comes back as a string on some driver paths, and that is NOT a disagreement", () => {
+  /* The whole audit is worthless if it cries wolf: 275 false disagreements
+     would bury a real one. `===` on "829688" vs 829688 is false. */
+  assert.equal(compareStoredKey("829688", 829688), "agree");
+  assert.equal(compareStoredKey(829688, "829688"), "agree");
+  assert.equal(compareStoredKey("829688", "829690"), "disagree");
+});
+
+test("a row with no stored key, and a stored key this repair cannot check, are distinct outcomes", () => {
+  assert.equal(compareStoredKey(null, 123), "absent");
+  assert.equal(compareStoredKey(undefined, 123), "absent");
+  // keyed by the other rule on a document this repair finds no AutoCount line
+  // for: reporting that as "agree" would be a lie, and as "disagree" a false alarm.
+  assert.equal(compareStoredKey(123, null), "underived");
+});
+
+test("a compartment sku is the ItemCode plus a compartment, not merely a prefix collision", () => {
+  assert.equal(isCompartmentSku("DSL-8030 SOFA 1A(LHF)", "DSL-8030 SOFA"), true);
+  assert.equal(isCompartmentSku("DSL-8030 SOFA", "DSL-8030 SOFA"), false, "the bare ItemCode is not a compartment");
+  assert.equal(isCompartmentSku("DSL-8030 SOFAX", "DSL-8030 SOFA"), false, "no space at the boundary is a different item");
+  assert.equal(isCompartmentSku("", "DSL-8030 SOFA"), false);
+});
+
+test("the compartment is reported as the CAUSE, ahead of the missing mapping row it causes", () => {
+  /* A decomposed sofa line fails both tests at once. Naming the missing CSV row
+     would send the reader to add one, which cannot work — there is no AutoCount
+     item for a compartment to map to. */
+  const r = codeMatchGapReason({
+    codeMatched: false, docInOutstandingPo: true, docInSoLinkedPos: true,
+    skuBeyondItemCode: true, acItemMapped: false,
+  });
+  assert.match(r, /COMPARTMENT/);
+});
+
+test("a document the code match never opens is named as such, not blamed on the item", () => {
+  const r = codeMatchGapReason({
+    codeMatched: false, docInOutstandingPo: false, docInSoLinkedPos: true,
+    skuBeyondItemCode: true, acItemMapped: true,
+  });
+  assert.match(r, /only in ac-so-linked-pos/);
+  assert.equal(codeMatchGapReason({
+    codeMatched: false, docInOutstandingPo: false, docInSoLinkedPos: false,
+    skuBeyondItemCode: false, acItemMapped: false,
+  }), "the AutoCount document is in NEITHER committed PO export");
+});
+
+test("a line the code match DID reach has no gap to explain", () => {
+  assert.equal(codeMatchGapReason({
+    codeMatched: true, docInOutstandingPo: true, docInSoLinkedPos: true,
+    skuBeyondItemCode: true, acItemMapped: false,
+  }), null);
+});
+
+test("the two PO exports really do differ, which is why the single-file rule under-reaches", () => {
+  /* Not a fixture: the code match reads ac-outstanding-po.json.gz alone, so
+     every document only in the other export is unreachable to it by
+     construction. If this ever became 0 the census's second reason would be
+     dead code and should be removed rather than left to reassure. */
+  const outstandingDocs = new Set(OUTSTANDING.map((r) => r.DocNo));
+  const onlyInSoLinked = new Set(
+    SO_LINKED.map((r) => r.DocNo).filter((d) => !outstandingDocs.has(d)),
+  );
+  assert.ok(onlyInSoLinked.size > 0, `documents only in ac-so-linked-pos.json.gz: ${onlyInSoLinked.size}`);
 });
