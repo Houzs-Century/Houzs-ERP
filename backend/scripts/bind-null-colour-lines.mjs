@@ -46,7 +46,8 @@
    pre-serialized string and the double-encoding defect cannot recur. */
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
-import { buildFabricColourIndex, isPendingColour, markColour } from "./lib/fabric-colour-match.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { colourNumberRuns, colourNumberCompatible, showColourNumber } from "./lib/colour-digit-guard.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -58,10 +59,11 @@ const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
 
-// the matcher's own digit rule, re-derived so this script can refuse independently
-const digitsOf = (s) => (markColour(s).match(/\d+/g) || []).join("-");
-const digitsCompatible = (a, b) =>
-  a === b || a.replace(/(.)$/, "0$1") === b || b.replace(/(.)$/, "0$1") === a;
+/* The digit guard lives in its own file, with the production run that disproved
+   its first version, and is covered by tests. See lib/colour-digit-guard.mjs. */
+const runsOf = colourNumberRuns;
+const runsCompatible = colourNumberCompatible;
+const showRuns = showColourNumber;
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"} company=${CO} docs=${DOCS.join(",")}`);
@@ -95,9 +97,9 @@ async function main() {
     if (isPendingColour(colourText)) { refuse.push({ r, why: `colour is TBC/KIV ("${colourText}") - not chosen yet, NULL is correct`, colourText }); continue; }
     const hit = findColour(colourText);
     if (!hit) { refuse.push({ r, why: `matcher does not resolve "${colourText}" against the live library`, colourText }); continue; }
-    const dq = digitsOf(colourText), dh = digitsOf(hit.colour_id);
-    if (!digitsCompatible(dq, dh)) {
-      refuse.push({ r, why: `DIGIT MOVE refused: "${colourText}" (digits ${dq || "-"}) -> "${hit.colour_id}" (digits ${dh || "-"})`, colourText, hit });
+    const dq = runsOf(colourText), dh = runsOf(hit.colour_id);
+    if (!runsCompatible(dq, dh)) {
+      refuse.push({ r, why: `DIGIT MOVE refused: "${colourText}" (number ${showRuns(dq)}) -> "${hit.colour_id}" (number ${showRuns(dh)})`, colourText, hit });
       continue;
     }
     bind.push({ r, colourText, hit });
@@ -108,7 +110,7 @@ async function main() {
   for (const b of bind) {
     log(`  ${b.r.doc_no} ${b.r.item_code} [${b.r.item_group ?? "-"}] line ${b.r.id}`);
     log(`     text ${JSON.stringify(b.r.description2)}`);
-    log(`     colour axis ${JSON.stringify(b.colourText)} -> fabricId "${b.hit.fabric_id}" colourId "${b.hit.colour_id}" label ${JSON.stringify(b.hit.label)}  digits ${digitsOf(b.colourText) || "-"} = ${digitsOf(b.hit.colour_id) || "-"}`);
+    log(`     colour axis ${JSON.stringify(b.colourText)} -> fabricId "${b.hit.fabric_id}" colourId "${b.hit.colour_id}" label ${JSON.stringify(b.hit.label)}  number ${showRuns(runsOf(b.colourText))} = ${showRuns(runsOf(b.hit.colour_id))}`);
   }
   log("");
   log(`=== REFUSED: ${refuse.length} ===`);
