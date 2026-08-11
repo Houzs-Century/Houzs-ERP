@@ -1136,3 +1136,41 @@ describe('a purchase order opens its supplier too', () => {
     expect(m).not.toHaveProperty('Debtors');
   });
 });
+
+/* Owner 2026-08-11: "Branding 和 Venue 也是要跟着开，然后仓库 Location 也是要
+   跟着开。最好全部都一起开". Everything a document names is opened. */
+describe('a document opens every master it names — warehouse and dropdowns too', () => {
+  test('the warehouse on the header AND on each line', () => {
+    const m = mastersOf({
+      SalesLocation: 'KL',
+      Details: [{ ItemCode: 'A', Location: 'PG' }, { ItemCode: 'B', Location: 'KL' }],
+    }) as { Locations: Array<Record<string, unknown>> };
+    /* Deduped, and the header's counts too. */
+    expect(m.Locations.map((l) => l.Location).sort()).toEqual(['KL', 'PG']);
+  });
+
+  test('a RETIRED line names no warehouse — it is leaving, not arriving', () => {
+    const m = mastersOf({
+      Details: [{ DtlKey: 1, ItemCode: 'A', Location: 'NOWHERE', Retire: true }],
+    });
+    expect(m).toBeNull();
+  });
+
+  test('branding and venue are taken from the UDF block actually being sent', () => {
+    const m = mastersOf({
+      Details: [{ ItemCode: 'A', Location: 'KL' }],
+      UDF: { BRANDING: 'HOUZS', VENUE: 'SOME NEW MALL', ToPONo: 'CUST-1' },
+    }) as { UdfOptions: Array<Record<string, string>> };
+    expect(m.UdfOptions).toEqual([
+      { List: 'BRANDING', Value: 'HOUZS' },
+      { List: 'VENUE', Value: 'SOME NEW MALL' },
+    ]);
+    /* ToPONo is a free-text UDF, not a dropdown — it has no option list to open. */
+    expect(m.UdfOptions.find((o) => o.List === 'ToPONo')).toBeUndefined();
+  });
+
+  test('no UDF block, no options — nothing is invented from an absent field', () => {
+    const m = mastersOf({ Details: [{ ItemCode: 'A', Location: 'KL' }] }) as { UdfOptions: unknown[] };
+    expect(m.UdfOptions).toEqual([]);
+  });
+});

@@ -693,27 +693,26 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | | |
 |---|---|
 | It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
-| It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
+| It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human |
 | It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 | It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
+| It DOES add a BRANDING / VENUE option | Owner 2026-08-11. **Read, append, write back the whole set** — see below |
 
-### The one picker it will not touch: a UDF dropdown (BRANDING, VENUE)
+### The dropdown lists are edited by READ-APPEND-WRITE, never by Add()
 
-`AutoCount.UDF.UDFList` exposes `Add(name, items[])` and `Save()` — the API
-behind User Defined List Maintenance — so adding a branding or a venue option is
-technically reachable. **We do not call it.**
+`AutoCount.UDF.List` exposes `GetItems()` and `SetItems()`, so the current
+options are read first and the new value appended to them. The obvious call —
+`UDFList.Add(name, new[]{ value })` — is NOT used: whether it appends or
+REPLACES is not something the reflected signature says, and if it replaces it
+deletes every other option in a live book, roughly 95 of them on VENUE. The
+read-modify-write shape makes that impossible rather than unlikely.
 
-`Add` takes the list NAME and an ITEM ARRAY, and whether that APPENDS or
-REPLACES the list is not something the reflected signature says. The downside of
-guessing wrong is wiping the owner's ~95 venue options out of a live book, which
-is far worse than the problem being solved. Same judgement as the warehouse: a
-value that governs what staff can pick is not something a sync invents at 3am.
+**A list that does not exist is not created.** An unknown list NAME is a
+spelling mistake on our side, not a missing option, and inventing the list would
+hide it — it comes back as a `failed` entry naming the list.
 
-What happens today to a venue the dropdown does not have: the value is written
-onto the document's UDF field as free text — the list constrains AutoCount's own
-UI, not the column. So nothing fails; the value simply will not be pickable
-later. **That last sentence is reasoning from the field's shape, not a live
-observation — settle it on the throwaway document during runbook 4.1.**
+Only `BRANDING` and `VENUE` are treated as dropdowns. `ToPONo` is free text and
+has no option list to open.
 
 ## 7f. A cancel that reached AutoCount is final
 
