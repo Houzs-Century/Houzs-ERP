@@ -223,7 +223,7 @@ async function main() {
 
     for (const { row, ac, how } of pairs) {
       if (how === "sole") sole++; else if (how === "split") split++; else indistinguishable++;
-      acByRowId.set(row.id, ac);
+      acByRowId.set(row.id, { ac, how });
       /* Carries the evidence, not just the values: the DRY-RUN prints one line
          per planned write so a human can check any single one against
          AutoCount before the write happens. */
@@ -391,11 +391,24 @@ async function main() {
   const keyVerdicts = { agree: 0, disagree: 0, underived: 0, absent: 0 };
   const disagreements = [];
   for (const r of already) {
-    const derived = acByRowId.get(r.id)?.key ?? null;
-    const v = compareStoredKey(r.linked_ac_dtlkey, derived);
+    const hit = acByRowId.get(r.id);
+    const v = compareStoredKey(r.linked_ac_dtlkey, hit?.ac?.key ?? null);
     keyVerdicts[v]++;
     if (v === "disagree") {
-      disagreements.push({ poNo: poNoByPoId.get(r.purchase_order_id), code: r.material_code, id: r.id, stored: r.linked_ac_dtlkey, derived });
+      disagreements.push({
+        poNo: poNoByPoId.get(r.purchase_order_id), code: r.material_code, id: r.id,
+        stored: r.linked_ac_dtlkey, derived: hit.ac.key, how: hit.how,
+        /* The evidence, inline. "split" means the ERP row's OWN (qty, Desc2) —
+           copied verbatim by the import — partitioned this document's lines
+           1:1, so the derived key is determined by the row's content rather
+           than by an ordering. That is the difference that makes a
+           disagreement actionable instead of a matter of opinion: the other
+           rule had no such evidence, because it selected line_no as
+           `NULL::int` and zipped in whatever order postgres returned. */
+        desc2: (r.description2 ?? "").trim(),
+        acDesc2: (hit.ac.desc2 ?? "").trim(),
+        fromSoKey: hit.ac.fromSoKey ?? null,
+      });
     }
   }
   log("");
@@ -404,7 +417,11 @@ async function main() {
   if (disagreements.length) {
     log("   EVERY DISAGREEMENT — each is a stored DtlKey this repair believes names a DIFFERENT AutoCount line.");
     log("   Nothing here is written or reverted by this script. A wrong key makes AcSyncService APPEND instead of edit, so each needs an owner ruling.");
-    for (const d of disagreements) log(`   ${d.poNo}  ${d.code ?? "-"}  row ${d.id}: stored ${d.stored} vs derived ${d.derived}`);
+    log("   match=split means the ERP row's own (qty, Desc2) — copied verbatim by the import — picked the derived line 1:1, so it is evidence, not an ordering.");
+    for (const d of disagreements) {
+      log(`   ${d.poNo}  ${d.code ?? "-"}  row ${d.id}: stored ${d.stored} vs derived ${d.derived}  [match=${d.how}]`);
+      log(`         ERP row Desc2 "${d.desc2}"  ==  AutoCount ${d.derived} Desc2 "${d.acDesc2}"  (FromSODtlKey ${d.fromSoKey ?? "-"})`);
+    }
   } else if (already.length) {
     log("   No disagreement. Where both rules reach a line they name the same AutoCount row.");
   }
@@ -421,7 +438,7 @@ async function main() {
   for (const r of rows) {
     const doc = docNoByPoId.get(r.purchase_order_id);
     const codeMatched = codeMatchIndex.has(`${doc}|${norm(r.material_code)}`);
-    const ac = acByRowId.get(r.id);
+    const ac = acByRowId.get(r.id)?.ac ?? null;
     const reason = codeMatchGapReason({
       codeMatched,
       docInOutstandingPo: docsInOutstanding.has(doc),
