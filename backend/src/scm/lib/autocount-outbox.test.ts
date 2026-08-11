@@ -1065,6 +1065,50 @@ describe('a line the ERP just added is declared, never inferred', () => {
   });
 });
 
+/* The ERP numbers its own documents, on every type. A create always sent its
+   DocNo and AutoCount took it; a conversion sent none, so AutoCount
+   auto-numbered the DO, the GRN, the invoice and the purchase invoice - four of
+   the six types carrying a number nobody here would recognise. */
+describe('every document the ERP creates carries the ERP number', () => {
+  const env = { AC_SYNC_URL: 'http://ac.local:8900', AC_SYNC_KEY: 'k' } as never;
+
+  test('a conversion sends the CHILD document number, not the parent', async () => {
+    const sb = withFlag('1', {
+      delivery_orders: [{ id: 'do-1', do_number: 'DO-2608-004', linked_ac_docno: null }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000021' }],
+      delivery_order_items: [],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO',
+      docNo: 'DO-2608-004',
+      docId: 'do-1',
+    })).toBe(true);
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(body.DocNo).toBe('DO-2608-004');
+    /* The PARENT travels separately and is resolved at drain — confusing the
+       two would ask AutoCount to number the child after the sales order. */
+    expect(body.FromDocNo).toBeUndefined();
+    expect(outbox(sb)[0].payload.fromDoc).toBeTruthy();
+  });
+
+  test('a create still sends its own number, unchanged', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{
+        doc_no: 'HC-SO-9', so_date: null, debtor_name: 'A', agent: null, sales_location: 'KL',
+        branding: null, venue: null, address1: null, address2: null, address3: null,
+        address4: null, phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
+      }],
+      mfg_sales_order_items: [{ id: 'i1', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_centi: 100 }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((outbox(sb)[0].payload.body as Record<string, unknown>).DocNo).toBe('HC-SO-9');
+  });
+});
+
 /* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
    unconditionally - so a supplier the account book does not have fails the same
    foreign key a missing item does, and takes the whole PO with it. */
