@@ -1453,8 +1453,35 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     });
   }
 
-  if (!items.size && !agents.length && !creditors.length) return null;
-  return { Items: [...items.values()], Agents: agents, Creditors: creditors };
+  /* THE STOCK LOCATIONS THE DOCUMENT ACTUALLY USES — the header's sales
+     location and every line's own. This is the one the live book already
+     proved: FK_SODTL_Location, on a line whose Location was empty. */
+  const locations = new Map<string, { Location: string }>();
+  const addLoc = (v: unknown) => {
+    const code = typeof v === 'string' ? v.trim() : '';
+    if (code && !locations.has(code)) locations.set(code, { Location: code });
+  };
+  addLoc(body.SalesLocation);
+  for (const d of details) if (d?.Retire !== true) addLoc(d?.Location);
+
+  /* THE DROPDOWN OPTIONS. Read off the UDF block the payload is sending, so
+     the list only ever learns a value a real document is carrying. */
+  const udfOptions: Array<{ List: string; Value: string }> = [];
+  const udf = (body.UDF ?? null) as Record<string, unknown> | null;
+  for (const listName of ['BRANDING', 'VENUE']) {
+    const v = udf && typeof udf[listName] === 'string' ? (udf[listName] as string).trim() : '';
+    if (v) udfOptions.push({ List: listName, Value: v });
+  }
+
+  if (!items.size && !agents.length && !creditors.length
+      && !locations.size && !udfOptions.length) return null;
+  return {
+    Items: [...items.values()],
+    Agents: agents,
+    Creditors: creditors,
+    Locations: [...locations.values()],
+    UdfOptions: udfOptions,
+  };
 }
 
 /** Read one ERP document's AutoCount counterpart number. */
