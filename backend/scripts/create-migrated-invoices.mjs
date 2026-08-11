@@ -121,6 +121,12 @@ async function loadGrnSources() {
          whichever source document sorts first. Hand the planner the party so a
          disagreement is refused instead of resolved by sort order. */
       partyKey: g.supplier_id ?? null,
+      /* One ERP receipt can fold SEVERAL AutoCount receipts — HC-GR-004996-PO-009304
+         holds 172 units that AutoCount split across GR-004996 (14) and GR-005018
+         (158), both billed on PI-007471. The invoice is still right, because the
+         total gate reconciles the money end to end, but the plan must SAY so
+         rather than let a reader think one receipt maps to one receipt. */
+      _acGrsAll: (g.ac_grs ?? []).filter(Boolean),
       lines, _head: g,
     };
   });
@@ -190,7 +196,7 @@ async function loadDoSources() {
 
 /* ── Report ───────────────────────────────────────────────────────────────── */
 
-function report(kind, sources, plans, blocked, already, lineIndex) {
+function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) {
   const label = kind === "PI" ? "PURCHASE INVOICES (from migrated goods receipts)"
     : "SALES INVOICES (from migrated delivery orders)";
   log("");
@@ -209,9 +215,11 @@ function report(kind, sources, plans, blocked, already, lineIndex) {
     /* A zero-value invoice is called out rather than left to look like a bug:
        AutoCount really did bill RM 0.00 on it, and the gate passed BECAUSE both
        sides agree, not because both are missing. */
+    const folded = [...new Set(p.sourceDocNos.flatMap((d) => extraAcDocs?.get(d) ?? []))];
     const notes = [
       p.valueCenti === 0 ? "ZERO-VALUE — AutoCount billed RM 0.00 on this invoice too" : null,
       recovered ? `${recovered} line price(s) recovered from the sales order` : null,
+      folded.length ? `folds AutoCount receipts ${folded.join(" + ")} into one ERP receipt — the total still reconciles` : null,
     ].filter(Boolean);
     log(`  ${APPLY ? "CREATE" : "WOULD CREATE"} ${p.invoiceNumber}  (AutoCount ${p.acInvoiceNo})  `
       + `${rm(p.valueCenti)}  ${p.lineCount} line(s), ${p.qty} unit(s)  from ${p.sourceDocNos.join(" + ")}`
@@ -237,6 +245,27 @@ function report(kind, sources, plans, blocked, already, lineIndex) {
     if (list.length > (reason === "total_disagrees_with_autocount" ? 25 : 8)) {
       log(`     ... and ${list.length - (reason === "total_disagrees_with_autocount" ? 25 : 8)} more`);
     }
+  }
+
+  /* THE TOTAL-MISMATCH BUCKET IS TWO DIFFERENT PROBLEMS AND MUST NOT READ AS
+     ONE. A refusal where OUR side is RM 0.00 is a missing price, not a
+     disagreement — the cutover carried the quantity and dropped the money (483
+     of 496 migrated GRN lines have no price), and every one of those becomes
+     writable the moment the AutoCount purchase-invoice price is stamped onto
+     the receipt lines. A refusal where BOTH sides are priced and differ is a
+     real disagreement and needs a human. Reported apart so nobody reads the
+     first number as work that is stuck. */
+  const mismatches = blocked.filter((b) => b.reason === "total_disagrees_with_autocount");
+  const awaitingPrice = mismatches.filter((b) => (b.valueCenti ?? 0) === 0);
+  const genuinelyDiffer = mismatches.filter((b) => (b.valueCenti ?? 0) !== 0);
+  if (mismatches.length) {
+    log(`  of the ${mismatches.length} total mismatches: ${awaitingPrice.length} are ours RM 0.00 `
+      + `(a price the cutover dropped — writable once the AutoCount invoice price is stamped on the source lines), `
+      + `${genuinelyDiffer.length} have both sides priced and genuinely differ (needs a human):`);
+    for (const b of genuinelyDiffer.slice(0, 25)) {
+      log(`     DIFFERS ${b.docNo} -> ${b.acInvoiceNos.join(", ")}  ours ${rm(b.valueCenti)} vs AutoCount ${rm(b.acValueCenti)}`);
+    }
+    if (genuinelyDiffer.length > 25) log(`     ... and ${genuinelyDiffer.length - 25} more`);
   }
 
   /* Rule 4 of the brief, reported explicitly rather than left inside a bucket
@@ -368,7 +397,12 @@ async function run(kind) {
       + "written now could not be marked as carried over and WOULD post to the GL.");
     process.exit(3);
   }
-  const { writes } = report(kind, sources, plans, blocked, already ?? new Set(), lineIndex);
+  /* docNo -> the AutoCount receipts this one ERP receipt folds BEYOND the one its
+     number names, so the plan line can say so. */
+  const extraAcDocs = new Map(sources.map((s) => [
+    s.docNo, (s._acGrsAll ?? []).filter((x) => x !== s.acDocNo),
+  ]));
+  const { writes } = report(kind, sources, plans, blocked, already ?? new Set(), lineIndex, extraAcDocs);
 
   if (!APPLY) return writes.length;
   for (const p of writes) {
