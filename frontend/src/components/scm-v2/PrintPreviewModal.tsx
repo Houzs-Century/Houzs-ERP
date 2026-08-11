@@ -110,7 +110,9 @@ export function PrintPreviewModal({
   docTitle,
   docNo,
   rows,
+  document: documentNode,
   onViewPdf,
+  viewLabel = "View full PDF",
   onPrint,
   onDownload,
 }: {
@@ -121,8 +123,18 @@ export function PrintPreviewModal({
   /** Document number in the band's right column. */
   docNo: string;
   rows: PrintPreviewRow[];
+  /* The real document, when the surface can show one cheaply. The ASSR service
+     case is server-rendered HTML we already hold, so its preview shows the page
+     itself rather than a summary of it — a card that only restates the copy you
+     just picked is a confirmation box wearing a preview's name, and it hid a
+     wrong SUB-STATUS line from the operator for weeks (owner 2026-08-07).
+     The PDF documents deliberately do NOT pass this: rendering one costs a jspdf
+     pass, which is what the summary card exists to avoid. */
+  document?: ReactNode;
   /** Render the real PDF in a new tab. Omit to hide the button. */
   onViewPdf?: PrintAction;
+  /** Label for that button — HTML surfaces open a page, not a PDF. */
+  viewLabel?: string;
   onPrint: PrintAction;
   /** Omit on surfaces with no PDF to download — the HTML-printed pages (fleet
    *  run sheet, portal case, listing shell, org chart) print the page itself,
@@ -151,6 +163,8 @@ export function PrintPreviewModal({
       onClose={onClose}
       title="Print preview"
       icon={<Printer size={16} />}
+      /* A real document needs the room; a summary card does not. */
+      size={documentNode ? "lg" : "sm"}
       footer={
         <>
           {onViewPdf && (
@@ -162,7 +176,7 @@ export function PrintPreviewModal({
               disabled={pending !== null}
               onClick={run("view", onViewPdf)}
             >
-              {pending === "view" ? "Preparing…" : "View full PDF"}
+              {pending === "view" ? "Preparing…" : viewLabel}
             </Button>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -214,6 +228,11 @@ export function PrintPreviewModal({
           ))}
         </div>
       </div>
+      {documentNode && (
+        <div className="mt-3 overflow-hidden rounded-xl border border-border-subtle bg-surface-2">
+          {documentNode}
+        </div>
+      )}
     </ModalOverlay>
   );
 }

@@ -739,6 +739,25 @@ export const api = {
     });
   },
 
+  /* The server-rendered print views (ASSR case, project sheet) as TEXT, so the
+     caller can show the document BEFORE committing to a tab — the Print preview
+     dialog renders this in an iframe. openHtml below is the same read, opened
+     straight into a tab; both go through the authenticated binaryFetch because
+     these routes need the bearer token (an <iframe src="/api/…"> would not carry
+     it). */
+  async getHtml(path: string): Promise<string> {
+    const token = tokenStore.get();
+    const res = await binaryFetch(`${baseUrl}${path}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+    }, BINARY_GET_TIMEOUT_MS);
+    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
+    let html = "";
+    await consumeCorrelated(res, async () => {
+      html = await res.text();
+    });
+    return html;
+  },
+
   async openHtml(path: string): Promise<void> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {

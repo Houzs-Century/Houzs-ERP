@@ -265,12 +265,17 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const voidReason = cs.stage === "voided" && (cs as any).void_reason
     ? String((cs as any).void_reason)
     : null;
-  // Switchable sub-status (mig 0116) — the supplier copy shows it as a
-  // second pill so the workshop sees where inside the stage the case
-  // sits (e.g. Pending Supplier Return = bring it back).
+  /* Switchable sub-status (mig 0116) — where inside the stage the case sits.
+     The comment here used to say "the supplier copy shows it", but the render
+     never gated on the variant, so it has always printed on the CUSTOMER copy
+     too. Owner 2026-08-07 kept it there and asked that it say who is holding
+     the case: "Pending Inspection" alone reads as though the customer's sofa is
+     waiting on the supplier when it is in fact sitting with us. The two
+     supplier states already name the supplier; the two internal ones named
+     nobody. */
   const SUB_STATUS_LABEL: Record<string, string> = {
-    pending_inspection: "Pending Inspection",
-    qc_issue_result: "QC Issue Result",
+    pending_inspection: "Pending Inspection — our team",
+    qc_issue_result: "QC Issue Result — our team",
     pending_supplier_pickup: "Pending Supplier Pickup",
     pending_supplier_return: "Pending Supplier Return",
   };
