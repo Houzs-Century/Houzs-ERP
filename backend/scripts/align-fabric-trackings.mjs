@@ -54,6 +54,7 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
+import { parse, seriesToken } from "./lib/fabric-code.mjs";
 import { ARMS, sum } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -69,14 +70,12 @@ const STAMP = process.env.NOTE_DATE || "2026-08-11";
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
-/* The series token, exactly as normalize-fabric-codes derives it: separators
-   collapse to one dash, nothing is added or removed. Deriving it any other way
-   here is how the two halves drift apart again. */
+/* The series token comes from lib/fabric-code, never from a local copy. Its
+   own copy of this rule is what called NOVENA-1003's series "NOVENA-1" after
+   the number rule had already been fixed in the other script. */
 const seriesOfCode = (code) => {
-  const v = normColour(code);
-  const m = /^(.+)[\s\-]+\d{1,3}$/.exec(v) || /^([A-Z][A-Z0-9\- ]*?)[\s\-]*\d{1,3}$/.exec(v);
-  const head = m ? m[1] : v;
-  return head.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const p = parse(code);
+  return p ? p.series : seriesToken(code);
 };
 
 const tierOf = (r) => [r.sofa_price_tier, r.bedframe_price_tier, r.price_tier].filter(Boolean).join("/");
