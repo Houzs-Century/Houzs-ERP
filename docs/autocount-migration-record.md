@@ -516,6 +516,11 @@ read off a screen.
 **This mechanism is documented here and nowhere else.** It exists in no other file in the
 repository, which is exactly why it is written down.
 
+*Provenance: established at the host on 2026-08-11. There is no Actions run to point at, because
+none of it runs in CI — the bridge and the LINQPad query live on the office machine. The
+corroborating artefact in this repository is the self-test block, which writes its verdicts to the
+same table at `seq = -4` using the same `INSERT INTO ac_src_bridge (seq, part)` shape.*
+
 ---
 
 ## 5. The gates — what is holding, verified 2026-08-11
@@ -591,6 +596,13 @@ verdicts were being chased:
 **Step 1 of the Friday runbook replaces it with a clean build.** The clean source is already in the
 bridge; the rebuild is one click on Query 2.
 
+*Provenance for this whole section: the office host, 2026-08-11. None of it is in git and none of
+it has an Actions run, because none of it runs in CI. What this repository does hold is the
+generator — the injected block and the script that injects it into `AcSyncService.cs` — so the
+behaviour described above can be read rather than taken on trust. Anyone who changes what is on
+that host should edit this section in the same sitting; it is the only inventory of that machine
+that exists.*
+
 ### The two service-side fixes that are in the source but not yet in the running exe
 
 Both are in `AcSyncService.cs` on the branch `fix/acsync-overqty-uncompilable` and both matter on
@@ -622,8 +634,14 @@ what `docs/autocount-service-deploy.md` section 4 tells you to do, and what
 to happen on the live book, on a throwaway document, cancelled afterwards.
 
 **The live book enforces master-data foreign keys the test book does not.** Two were hit in
-succession, each only revealing the next: `FK_SO_SalesAgent`, then `FK_SO_SalesLocation`. The
+succession, each only revealing the next: `FK_SO_SalesAgent`, then `FK_SO_SalesLocation`. A create
+that satisfies the first fails on the second, so fixing one and retrying buys one attempt. The
 values that exist are in section 1 step 2. Use them.
+
+*Provenance: both constraint names, and the master-data values beside them, were read off the live
+`AED_HOUZS` book on 2026-08-11 over the SQL link. Like the ledger's own whole-book counts, they are
+re-runnable but cannot be pulled out of the Actions history, because they were not produced by a
+workflow. That is the reason they are written down here rather than left to be rediscovered.*
 
 ### 7.2 What HAS been proved
 
