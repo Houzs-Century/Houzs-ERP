@@ -35,6 +35,7 @@ import {
   splitSofaCode,
   type CollapsibleLine,
 } from './autocount-sofa-collapse';
+import { AC_ITEM_MAP_TSV } from './autocount-item-map';
 
 const up = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
 const sameSeq = (a: string[], b: string[]) =>
@@ -430,5 +431,32 @@ describe('splitSofaCode', () => {
     expect(splitSofaCode('9028')).toBeNull();
     expect(splitSofaCode('')).toBeNull();
     expect(splitSofaCode('9028-1S')).toEqual({ model: '9028', compartment: '1S' });
+  });
+
+  /**
+   * THE HOLE THIS CLOSES. collapseSofaLines folds a line when the code parses as
+   * a compartment AND item_group is 'sofa' OR NULL. The null branch exists
+   * because a hand-built line may not carry a group at all — but it means a
+   * NON-sofa product whose code happened to end in '-2S' would be folded into
+   * somebody's sofa build and vanish from the document.
+   *
+   * Measured against the whole cutover map: of 1561 ERP codes, 84 parse as a
+   * compartment and ALL 84 are category SOFA. Zero bedframes, mattresses or
+   * accessories collide with the compartment vocabulary. Asserted rather than
+   * noted, because the day a supplier opens "SLAT-2S" the null branch stops
+   * being safe and this is what says so.
+   */
+  it('no NON-sofa item in the cutover map parses as a compartment', () => {
+    const offenders: string[] = [];
+    let compartmentLike = 0;
+    for (const line of AC_ITEM_MAP_TSV.split('\n')) {
+      if (!line) continue;
+      const [, erp, category] = line.split('\t');
+      if (!erp || !splitSofaCode(erp)) continue;
+      compartmentLike += 1;
+      if (up(category) !== 'SOFA') offenders.push(`${erp} [${category}]`);
+    }
+    expect(compartmentLike).toBeGreaterThan(50);
+    expect(offenders).toEqual([]);
   });
 });

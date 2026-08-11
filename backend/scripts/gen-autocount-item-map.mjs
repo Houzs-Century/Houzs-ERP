@@ -62,7 +62,12 @@ export const AC_ITEM_MAP_TSV = \`${body.replace(/\\/g, "\\\\").replace(/`/g, "\\
 
 if (process.argv.includes("--check")) {
   const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-  if (current !== text) {
+  /* Compare CONTENT, not line endings. This repo is developed on Windows with
+     core.autocrlf=true, so the checkout carries CRLF while the generator writes
+     LF — an exact compare fails on every developer machine and passes on the
+     Linux runner. A gate that cries wolf locally is a gate somebody deletes. */
+  const lf = (s) => s.replace(/\r\n/g, "\n");
+  if (lf(current) !== lf(text)) {
     console.error(
       "autocount-item-map.ts is STALE. Run: node scripts/gen-autocount-item-map.mjs",
     );
