@@ -421,6 +421,24 @@ order, and **both refuse the WHOLE document rather than send part of it.**
 
 ### D10 — `material_code` is not `ItemCode`
 
+**Two sources, and the LIVE one wins.** `scm.supplier_material_bindings` is this
+ERP's own record of the cross-ref — `material_code` is our internal code,
+`supplier_sku` is AutoCount's, one row per supplier — populated at the cutover
+precisely so ERP codes could be pushed back. It is consulted FIRST, because it
+is the only one of the two that GROWS: the compiled CSV below is a snapshot of
+the book on 2026-08-05 and cannot know a product opened since.
+
+That was not a nicety. Without it the resolver refused every post-cutover SKU; a
+refused line refuses the whole document; and the document never reached the
+drain — so `/ensure-masters` never ran for the very case it was built for. A new
+product was unwritable and the feature meant to fix that was unreachable.
+
+`is_main_supplier` orders the lookup, and **a purchase order narrows further**:
+it knows its own creditor, and that supplier's binding beats the main one. One
+internal code bound to several suppliers is the normal case, not the edge.
+
+
+
 The ERP calls a sofa `9028-1S`; the licensed book calls it `AMN-SF9028 SOFA`.
 The record of the cutover is
 `backend/scripts/data/autocount-erp-mapping-1561.csv`, compiled into
