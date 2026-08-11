@@ -169,11 +169,55 @@ async function main() {
     }
   }
 
+  /* THE CONSISTENCY GUARD, and the reason it exists.
+
+     The first production plan (run 31465598454) proposed 37 series renames.
+     Thirty-four were right - the brand extractions, NB01..NB10 -> NB,
+     NINJA 0x -> NINJA, STAR 0x -> STAR. Three were garbage:
+
+       "SF"        -> "SFAT"
+       "J9883"     -> "J98831"
+       "UNMATCHED" -> "UNMATCHEDPICCOFG66151"
+
+     Every one of those is a series whose colours do NOT agree on what the
+     series is. "UNMATCHED" is a junk bucket holding unrelated codes; a rename
+     driven by whichever colour happened to be scored first would have renamed a
+     real, referenced series to a string nobody will ever type.
+
+     So a rename needs CORROBORATION: every active colour under the series must
+     derive the same series token. One disagreement and the rename is refused
+     and printed - the colours still get their own code and label fixed, which
+     is the part that is unambiguous. This is the same principle the colour
+     matcher already applies with its digit guard: correct what is provable,
+     refuse what is not, never pick one of two answers. */
+  const derived = new Map();
+  for (const r of cols) {
+    if (r.active === false) continue;
+    const p = parse(r.colour_id);
+    if (!p) continue;
+    if (!derived.has(r.fabric_id)) derived.set(r.fabric_id, new Set());
+    derived.get(r.fabric_id).add(p.series);
+  }
+  const refused = [];
+  for (const [from, s] of [...plan.seriesRename]) {
+    const seen = derived.get(from) || new Set();
+    if (seen.size > 1) {
+      refused.push({ from, to: s.to, seen: [...seen] });
+      plan.seriesRename.delete(from);
+    }
+  }
+  plan.refusedSeries = refused;
+
   note("");
   note(`PLAN  code/label rewrites ${plan.change.length} | duplicate colours merged ${plan.merge.reduce((a, m) => a + m.lose.length, 0)} | series renamed ${plan.seriesRename.size} | already right ${plan.ok}`);
   note(`      skipped, the owner's own 12 series: ${skipped.length} colours`);
   note(`      could not be parsed into series+number, LEFT ALONE: ${unparsed.length}`);
 
+  if (plan.refusedSeries.length) {
+    note("");
+    note(`--- SERIES RENAME REFUSED (${plan.refusedSeries.length}) — its colours disagree on what the series is ---`);
+    for (const r of plan.refusedSeries) note(`  "${r.from}" left alone; its colours derive ${r.seen.map((x) => `"${x}"`).join(", ")}`);
+  }
   if (plan.seriesRename.size) {
     note("");
     note(`--- SERIES RENAMED (${plan.seriesRename.size}) — the brand moves to the NAME ---`);
