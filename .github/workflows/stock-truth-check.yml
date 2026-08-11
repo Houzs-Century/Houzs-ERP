@@ -3,9 +3,15 @@ name: Stock truth check (read-only)
 # Answers, on demand, the three questions the owner asked on 2026-08-11:
 #   (A) is the stock BALANCE right?  ERP on-hand vs AutoCount's own vItemBalQty,
 #       cell by cell, per item AND per location — agree / ERP higher / ERP lower /
-#       item-not-mapped / location-not-mapped / ERP-only. Sofa FURNITURE is
-#       EXCLUDED by his ruling and the report says so with counts, rather than
-#       skipping it quietly.
+#       item-not-mapped / location-not-mapped / ERP-only. Three things are held
+#       OUT of that comparison because they are not commensurable, and each is
+#       printed with its counts rather than skipped quietly: sofa FURNITURE (the
+#       owner's ruling, excluded on BOTH sides since AutoCount counts one sofa
+#       where the ERP counts its compartments), NON-STOCK charge items
+#       (DISPOSE / TRANSPORTATION CHARGES / STORAGE, which AutoCount carries as
+#       items with an ever-more-negative balance), and AC-NEGATIVE cells (the ERP
+#       ledger cannot hold a negative on-hand). Those three were 4,118 of the
+#       4,209 units the first version of this check headlined as "ERP HIGHER".
 #   (B) is the FIFO ledger sound?  Layer arithmetic, no impossible layers, every
 #       consumed unit costed, layers reconcile to movements, total value equals
 #       the sum of the layers. Zero-cost open layers reported with their units

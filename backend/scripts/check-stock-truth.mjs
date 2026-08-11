@@ -16,18 +16,42 @@
 //   (A) BALANCE vs AutoCount — cell by cell, per item AND per location, the ERP
 //       on-hand against AutoCount's own vItemBalQty. Split into agree / ERP
 //       higher / ERP lower / item-not-mapped / location-not-mapped / ERP-only.
-//       Sofa FURNITURE is EXCLUDED by the owner's ruling ("沙发库存不准的,因为
-//       我们接下来跑 compartment 了 ... pillow 就ok", 2026-08-10) — the whole-sofa
-//       balance was deliberately never imported, so comparing it would report a
-//       divergence that is a decision, not a defect. The exclusion is PRINTED
-//       with its item and unit counts rather than silently applied: the report
-//       says what it did not look at.
+//
+//       THREE THINGS ARE HELD OUT OF THAT COMPARISON, and each is PRINTED with
+//       its cell and unit counts rather than silently dropped — the report says
+//       what it did not look at. Every one of them was found by running the
+//       check and disbelieving its own headline:
+//
+//         SOFA FURNITURE, on BOTH sides. The owner's ruling ("沙发库存不准的,因为
+//           我们接下来跑 compartment 了 ... pillow 就ok", 2026-08-10) — the
+//           whole-sofa balance was deliberately never imported. The exclusion
+//           must be symmetric: AutoCount counts ONE sofa where the ERP counts its
+//           compartments, so holding out only AutoCount's side leaves every ERP
+//           compartment cell reporting as ERP-only. The first run of this check
+//           did exactly that and invented 12 phantom cells. Sofa PILLOWS are
+//           category ACC and are NOT excluded.
+//         NON-STOCK charge items (categories SERVICE and TRANS). AutoCount books
+//           DISPOSE, TRANSPORTATION CHARGES and STORAGE as items whose balance
+//           runs ever more negative as they are billed out. They are not goods.
+//           They contributed 4,048 of the 4,209 units the first run headlined as
+//           "ERP HIGHER" — 96% of a number that read as phantom stock.
+//         AC-NEGATIVE cells. A negative AutoCount on-hand is an over-issue; the
+//           ERP's ledger cannot represent one, so the difference is arithmetic
+//           rather than missing stock.
+//
+//       What survives all three is the real divergence, and that is what the
+//       VERDICT line counts.
 //
 //   (B) FIFO INTEGRITY — four invariants that must hold if the layer ledger is
 //       trustworthy:
 //         B1 every layer's remaining = received - consumed;
 //         B2 no layer negative, none remaining more than it received;
-//         B3 every consumed unit carries a cost;
+//         B3 every SHIPPED unit carries a cost — shipments only. The cutover
+//            relayer reversed the whole opening balance with negative
+//            adjustments, and those consume their lots without shipping
+//            anything; counting them made the first run declare FIFO NOT SOUND
+//            on 8,295 units while its own section C found 0 units actually
+//            shipped from a zero-cost layer;
 //         B4 layer quantity reconciles to the movement ledger (per bucket);
 //         B5 total inventory value equals the sum of the layers.
 //       Zero-cost OPEN layers are reported separately, with units and the
@@ -174,18 +198,31 @@ function loadAcSnapshot() {
   return { rows: j.rows ?? j, pulledAt: j.pulled_at ?? null, source: j.source ?? "unknown" };
 }
 
+/* Categories that are not stock at all. AutoCount books a delivery charge, a
+   disposal fee and a storage fee as ITEMS, so they appear in vItemBalQty with a
+   running balance that goes ever more negative as they are charged out. They are
+   not goods, the ERP holds no stock row for them, and comparing them produces a
+   difference for every one. See NON-STOCK in section A. */
+const NON_STOCK_CATS = new Set(["SERVICE", "TRANS"]);
+
 function loadMapping() {
   const csv = readFileSync(path.join(DATA, "autocount-erp-mapping-1561.csv"), "utf8")
     .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
   csv.shift(); // header: ac_code,erp_code,status,category,supplier
   const acToErp = new Map();
   const sofaCodes = new Set();
+  const nonStockCodes = new Set();
+  // The ERP-side twins, so an exclusion applied to AutoCount can be applied to
+  // the ERP as well. Without these the exclusion is one-sided and invents cells.
+  const sofaErpCodes = new Set();
+  const nonStockErpCodes = new Set();
   const category = new Map();
   for (const ln of csv) {
     const f = parseCsvLine(ln);
     if (!f[0]) continue;
     const ac = norm(f[0]);
-    if (f[1]?.trim()) acToErp.set(ac, f[1].trim());
+    const erp = f[1]?.trim();
+    if (erp) acToErp.set(ac, erp);
     const cat = (f[3] || "").trim().toUpperCase();
     category.set(ac, cat);
     /* Category, not spelling. "AMN-SOFA PILLOW" and "THL-SOFA PILLOW" carry SOFA
@@ -194,9 +231,10 @@ function loadMapping() {
        furniture, which is recorded in docs/autocount-cutover-ledger.md §3 as a
        known consequence. The owner's exclusion is about sofa FURNITURE only:
        "pillow 就ok". */
-    if (cat === "SOFA") sofaCodes.add(ac);
+    if (cat === "SOFA") { sofaCodes.add(ac); if (erp) sofaErpCodes.add(norm(erp)); }
+    if (NON_STOCK_CATS.has(cat)) { nonStockCodes.add(ac); if (erp) nonStockErpCodes.add(norm(erp)); }
   }
-  return { acToErp, sofaCodes, category };
+  return { acToErp, sofaCodes, nonStockCodes, sofaErpCodes, nonStockErpCodes, category };
 }
 
 /* ── schema discovery ─────────────────────────────────────────────────────── */
@@ -231,7 +269,7 @@ async function sectionA(state) {
   }
   notice(`  AutoCount rows     : ${snap.rows.length}`);
 
-  const { acToErp, sofaCodes } = loadMapping();
+  const { acToErp, sofaCodes, nonStockCodes, sofaErpCodes, nonStockErpCodes } = loadMapping();
 
   // Naming the company is a courtesy, not a dependency — if the master is not
   // where this expects it, the check still runs and just says so.
@@ -251,6 +289,34 @@ async function sectionA(state) {
   };
   notice(`  ERP warehouses     : ${whs.length} (${whs.map((w) => w.code).join(", ")})`);
 
+  /* The ERP's own sofa list. The exclusion has to be SYMMETRIC: AutoCount counts
+     ONE whole sofa where the ERP counts its compartments (AMN-SF9028 SOFA is
+     9028-1S, 9028-CNR, ... in here), so the two sides are not commensurable at
+     all. Holding sofa out on the AutoCount side alone leaves every ERP
+     compartment cell with nothing to compare against, and it reports as ERP-only
+     — a gap invented by the filter rather than found by it. That is exactly what
+     the previous run did: all 12 of its "ERP-only" cells were compartment codes.
+     Two independent sources are unioned because neither is complete on its own:
+     the binding CSV knows the whole-sofa -> lead-compartment mapping, and the ERP
+     product master knows the compartments the CSV never named. */
+  let erpSofaFromMaster = new Set();
+  let sofaMasterNote = "";
+  try {
+    const mpCols = await cols("scm", "mfg_products");
+    if (!mpCols.has("code") || !mpCols.has("category")) {
+      sofaMasterNote = " (scm.mfg_products lacks code/category — CSV only)";
+    } else {
+      const co = mpCols.has("company_id") ? sql`AND company_id = ${COMPANY}` : sql``;
+      const rows = await sql`SELECT DISTINCT code FROM scm.mfg_products
+                              WHERE UPPER(COALESCE(category::text, '')) = 'SOFA' ${co}`;
+      erpSofaFromMaster = new Set(rows.map((r) => norm(r.code)));
+    }
+  } catch (e) {
+    sofaMasterNote = ` (scm.mfg_products unreadable: ${e.message} — CSV only)`;
+  }
+  const erpSofa = new Set([...sofaErpCodes, ...erpSofaFromMaster]);
+  notice(`  ERP sofa codes     : ${erpSofa.size} (${erpSofaFromMaster.size} from scm.mfg_products category SOFA, ${sofaErpCodes.size} from the binding CSV)${sofaMasterNote}`);
+
   // ERP on-hand per (warehouse, product), summed over every variant_key — the
   // AutoCount side has no variant dimension, so the comparison can only be made
   // at product granularity. inventory_balances is a VIEW over the movement
@@ -260,7 +326,14 @@ async function sectionA(state) {
                              WHERE company_id = ${COMPANY}
                              GROUP BY warehouse_id, product_code`;
   const erpBy = new Map();
-  for (const r of erpRows) erpBy.set(`${norm(r.product_code)}|${r.warehouse_id}`, n(r.qty));
+  let erpSofaCells = 0, erpSofaUnits = 0, erpNonStockCells = 0, erpNonStockUnits = 0;
+  for (const r of erpRows) {
+    const code = norm(r.product_code);
+    const qty = n(r.qty);
+    if (erpSofa.has(code)) { if (qty !== 0) { erpSofaCells++; erpSofaUnits += qty; } continue; }
+    if (nonStockErpCodes.has(code)) { if (qty !== 0) { erpNonStockCells++; erpNonStockUnits += qty; } continue; }
+    erpBy.set(`${code}|${r.warehouse_id}`, qty);
+  }
 
   /* Fold the AutoCount side onto ERP keys FIRST. The mapping is many-to-one —
      NB-KHJ21(Q) and HOK-1041 (Q) both resolve to ERP VICTORIA-(Q) — so comparing
@@ -270,6 +343,7 @@ async function sectionA(state) {
   const unmappedItem = new Map();  // ac code -> units (non-zero only)
   const unmappedLoc = new Map();   // ac location -> {cells, units}
   let sofaCells = 0, sofaUnits = 0, sofaCodesSeen = new Set();
+  let nonStockCells = 0, nonStockUnits = 0, nonStockSeen = new Set();
   let acRowsConsidered = 0;
 
   for (const r of snap.rows) {
@@ -278,6 +352,16 @@ async function sectionA(state) {
     if (sofaCodes.has(ac)) {
       if (qty !== 0) { sofaCells++; sofaUnits += qty; sofaCodesSeen.add(ac); }
       continue;                                   // owner's ruling — excluded, and said so above
+    }
+    /* NON-STOCK. A charge item is not goods. AutoCount carries DISPOSE,
+       TRANSPORTATION CHARGES and STORAGE as items whose balance runs negative as
+       they are billed out, so every one of them differs from the ERP's (correct)
+       absence of a stock row. In the previous run these four codes alone
+       contributed 4,048 of the 4,209 units reported as "ERP HIGHER" — 96% of a
+       headline that read as missing stock and was nothing of the kind. */
+    if (nonStockCodes.has(ac)) {
+      if (qty !== 0) { nonStockCells++; nonStockUnits += qty; nonStockSeen.add(ac); }
+      continue;
     }
     acRowsConsidered++;
     const erpCode = acToErp.get(ac);
@@ -303,13 +387,20 @@ async function sectionA(state) {
   // has no row for is not "agreement by absence" — it is ERP-only stock, and it
   // gets its own bucket.
   const keys = new Set([...acBy.keys(), ...erpBy.keys()]);
-  const agree = [], higher = [], lower = [], erpOnly = [];
+  const agree = [], higher = [], lower = [], erpOnly = [], acNegative = [];
   for (const key of keys) {
     const [code, whId] = key.split("|");
     const a = acBy.get(key);
     const e = erpBy.get(key) ?? 0;
     if (!a) { if (e !== 0) erpOnly.push({ code, whId, erp: e }); continue; }
     const row = { code, whId, ac: a.qty, erp: e, delta: e - a.qty, items: [...a.items] };
+    /* A NEGATIVE AutoCount balance is not a quantity the ERP can be wrong about.
+       It means AutoCount issued more than it received — an over-issue or a
+       not-yet-received receipt — and the ERP's stock ledger cannot represent it,
+       so the difference is arithmetic, not a defect. Left in the ERP-HIGHER
+       bucket it inflates the headline by its full magnitude and reads as stock
+       the ERP invented. Reported on its own line instead. */
+    if (row.ac < 0) { acNegative.push(row); continue; }
     if (row.delta === 0) agree.push(row);
     else if (row.delta > 0) higher.push(row);
     else lower.push(row);
@@ -318,6 +409,7 @@ async function sectionA(state) {
   higher.sort((x, y) => y.delta - x.delta);
   lower.sort((x, y) => x.delta - y.delta);
   erpOnly.sort((x, y) => Math.abs(y.erp) - Math.abs(x.erp));
+  acNegative.sort((x, y) => x.ac - y.ac);
 
   const agreeNonZero = agree.filter((r) => r.ac !== 0 || r.erp !== 0);
   notice("");
@@ -329,10 +421,22 @@ async function sectionA(state) {
   notice(`  ITEM NOT MAPPED (AC -> ERP)       : ${unmappedItem.size} AutoCount codes, ${[...unmappedItem.values()].reduce((s, v) => s + v, 0)} units`);
   notice(`  LOCATION NOT MAPPED (AC -> ERP)   : ${unmappedLoc.size} AutoCount locations, ${[...unmappedLoc.values()].reduce((s, v) => s + v.units, 0)} units`);
   notice("");
+  notice(`  NOT COMPARABLE — reported, not counted as divergence:`);
+  notice(`    AC NEGATIVE BALANCE             : ${acNegative.length} cells, AutoCount ${sumBy(acNegative, (r) => r.ac)} units vs ERP ${sumBy(acNegative, (r) => r.erp)} units`);
+  notice(`      AutoCount issued more than it received on these; the ERP's ledger cannot hold a negative on-hand,`);
+  notice(`      so the difference is arithmetic rather than missing stock.`);
+  notice(`    NON-STOCK (SERVICE / TRANS)     : ${nonStockSeen.size} AutoCount codes / ${nonStockCells} cells / ${nonStockUnits} units held out on the AutoCount side;`);
+  notice(`                                      ${erpNonStockCells} cells / ${erpNonStockUnits} units held out on the ERP side.`);
+  notice(`      Charge items (DISPOSE, TRANSPORTATION CHARGES, STORAGE), not goods. AutoCount books them as items`);
+  notice(`      whose balance runs negative as they are billed; the ERP holds no stock row for them, correctly.`);
+  notice("");
   notice(`  SOFA FURNITURE EXCLUDED — owner's ruling 2026-08-10 ("沙发库存不准的 ... pillow 就ok"):`);
-  notice(`    ${sofaCodesSeen.size} AutoCount sofa codes / ${sofaCells} non-zero cells / ${sofaUnits} units were NOT compared.`);
-  notice(`    The whole-sofa opening balance was deliberately never imported (cutover ledger §3), so any`);
-  notice(`    divergence there is a decision, not a defect. Sofa PILLOW accessories are NOT excluded.`);
+  notice(`    AutoCount side: ${sofaCodesSeen.size} sofa codes / ${sofaCells} non-zero cells / ${sofaUnits} units NOT compared.`);
+  notice(`    ERP side      : ${erpSofaCells} compartment cells / ${erpSofaUnits} units NOT compared.`);
+  notice(`    The exclusion is SYMMETRIC on purpose. AutoCount counts one whole sofa where the ERP counts its`);
+  notice(`    compartments, so the two sides are not commensurable; excluding only AutoCount's would leave every`);
+  notice(`    ERP compartment cell reporting as ERP-only — a gap invented by the filter, not found by it.`);
+  notice(`    Sofa PILLOW accessories are NOT excluded (category ACC, real countable stock).`);
 
   if (higher.length) {
     notice("");
@@ -351,6 +455,12 @@ async function sectionA(state) {
     notice(`  --- ERP-ONLY cells (top ${Math.min(SAMPLE, erpOnly.length)} of ${erpOnly.length}) — the ERP holds stock AutoCount has no row for ---`);
     for (const r of erpOnly.slice(0, SAMPLE))
       notice(`    ${pad(r.erp, 7)} ${pad(r.code, 34)} @ ${whById.get(r.whId)?.code ?? r.whId}`);
+  }
+  if (acNegative.length) {
+    notice("");
+    notice(`  --- AC NEGATIVE BALANCE (top ${Math.min(SAMPLE, acNegative.length)} of ${acNegative.length}) — AutoCount is below zero, the ERP cannot be ---`);
+    for (const r of acNegative.slice(0, SAMPLE))
+      notice(`    AC ${pad(r.ac, 8)} ERP ${pad(r.erp, 6)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} [AC: ${r.items.join(", ")}]`);
   }
   if (unmappedItem.size) {
     notice("");
@@ -373,7 +483,9 @@ async function sectionA(state) {
     erpOnly: erpOnly.length, erpOnlyUnits: sumBy(erpOnly, (r) => r.erp),
     unmappedItems: unmappedItem.size, unmappedItemUnits: [...unmappedItem.values()].reduce((s, v) => s + v, 0),
     unmappedLocs: unmappedLoc.size, unmappedLocUnits: [...unmappedLoc.values()].reduce((s, v) => s + v.units, 0),
-    sofaCodes: sofaCodesSeen.size, sofaCells, sofaUnits,
+    sofaCodes: sofaCodesSeen.size, sofaCells, sofaUnits, erpSofaCells, erpSofaUnits,
+    acNegative: acNegative.length, acNegativeAcUnits: sumBy(acNegative, (r) => r.ac),
+    nonStockCodes: nonStockSeen.size, nonStockCells, nonStockUnits,
     acRowsConsidered,
   };
 }
@@ -429,17 +541,34 @@ async function sectionB(state) {
   notice(`  B2 no impossible layer             : negative remaining ${n(B2.negative)} (${n(B2.negative_units)} units); remaining > received ${n(B2.over_remaining)}; negative received ${n(B2.negative_received)}`);
 
   /* B3 — every consumed unit carries a cost. A consumption at unit_cost_sen = 0
-     IS the COGS of a shipped unit: zero here is money that left the building
-     with nothing booked against it. */
+     on a SHIPMENT is the COGS of a unit that left the building with nothing
+     booked against it, and that is the defect this invariant is for.
+
+     But not every consumption is a shipment. The cutover relayer
+     (import-ac-stock-layers.mjs) reversed the whole flat opening balance with
+     negative ADJUSTMENTs before re-opening it as real FIFO layers, and every one
+     of those reversals consumes its lot. They are bookkeeping, they ship
+     nothing, and the flat lots they unwound were the zero-cost ones by
+     definition. Counting them as uncosted COGS is what made the previous run
+     report "865 rows / 8,295 units" and declare FIFO NOT SOUND, while section C
+     of the very same run found 0 units actually shipped from a zero-cost layer.
+     Split by document type, and let only shipments decide the verdict. */
   const b3 = await sql.unsafe(`
     SELECT COUNT(*)::bigint AS rows_all, COALESCE(SUM(c.qty_consumed),0)::bigint AS units_all,
            COUNT(*) FILTER (WHERE c.unit_cost_sen <= 0)::bigint AS rows_zero,
            COALESCE(SUM(c.qty_consumed) FILTER (WHERE c.unit_cost_sen <= 0),0)::bigint AS units_zero,
+           COUNT(*) FILTER (WHERE c.unit_cost_sen <= 0 AND COALESCE(c.source_doc_type,'') = 'DO')::bigint AS rows_zero_ship,
+           COALESCE(SUM(c.qty_consumed) FILTER (WHERE c.unit_cost_sen <= 0 AND COALESCE(c.source_doc_type,'') = 'DO'),0)::bigint AS units_zero_ship,
            COALESCE(SUM(c.total_cost_sen),0)::bigint AS cogs_sen
       FROM ${consSchema}.inventory_lot_consumptions c
       JOIN ${lotSchema}.inventory_lots l ON l.id = c.lot_id ${coFilter}`);
   const B3 = b3[0];
-  notice(`  B3 every consumed unit has a cost  : ${n(B3.rows_zero) === 0 ? "OK" : `${n(B3.rows_zero)} consumption rows at cost 0 (${n(B3.units_zero)} units)`}   [total consumed ${n(B3.units_all)} units over ${n(B3.rows_all)} rows, booked COGS ${rm(B3.cogs_sen)}]`);
+  const zeroShipRows = n(B3.rows_zero_ship), zeroShipUnits = n(B3.units_zero_ship);
+  const zeroNonShipRows = n(B3.rows_zero) - zeroShipRows, zeroNonShipUnits = n(B3.units_zero) - zeroShipUnits;
+  notice(`  B3 every SHIPPED unit has a cost   : ${zeroShipRows === 0 ? "OK — no shipment drew from a zero-cost layer" : `BROKEN — ${zeroShipRows} shipment consumption rows at cost 0 (${zeroShipUnits} units)`}`);
+  notice(`     [total consumed ${n(B3.units_all)} units over ${n(B3.rows_all)} rows, booked COGS ${rm(B3.cogs_sen)}]`);
+  if (zeroNonShipRows > 0)
+    notice(`     NOT COUNTED — ${zeroNonShipRows} zero-cost consumption rows (${zeroNonShipUnits} units) are non-shipment: cutover reversals and adjustments, which ship nothing.`);
   if (n(B3.rows_zero) > 0) {
     const b3d = await sql.unsafe(`
       SELECT COALESCE(c.source_doc_type,'(none)') AS src, COUNT(*)::bigint AS rows,
@@ -448,7 +577,7 @@ async function sectionB(state) {
         JOIN ${lotSchema}.inventory_lots l ON l.id = c.lot_id ${coFilter}
        ${hasCo ? "AND" : "WHERE"} c.unit_cost_sen <= 0
        GROUP BY 1 ORDER BY 3 DESC`);
-    for (const r of b3d) notice(`     by document type: ${pad(r.src, 14)} ${pad(n(r.rows), 6)} rows / ${n(r.units)} units`);
+    for (const r of b3d) notice(`     by document type: ${pad(r.src, 14)} ${pad(n(r.rows), 6)} rows / ${n(r.units)} units${r.src === "DO" ? "   <-- SHIPMENTS, these are real uncosted COGS" : "   (not a shipment)"}`);
   }
 
   /* B4 — the layer ledger against the movement ledger, per bucket. These are two
@@ -544,6 +673,7 @@ async function sectionB(state) {
     negative: n(B2.negative), negativeUnits: n(B2.negative_units), overRemaining: n(B2.over_remaining),
     consumedRows: n(B3.rows_all), consumedUnits: n(B3.units_all), cogsSen: n(B3.cogs_sen),
     zeroCostConsRows: n(B3.rows_zero), zeroCostConsUnits: n(B3.units_zero),
+    zeroShipRows, zeroShipUnits, zeroNonShipRows, zeroNonShipUnits,
     b4Buckets: b4.length, b4Units,
     layerValueSen: n(b5[0].value_sen), openUnits: n(b5[0].units), viewValueSen: viewValue,
     zeroCostLots: b6Lots, zeroCostUnits: b6Units,
@@ -597,17 +727,37 @@ async function sectionC(state) {
      GROUP BY 1 ORDER BY 1`);
 
   let tLines = 0, tUnits = 0, zLines = 0, zUnits = 0, zRev = 0, booked = 0;
+  const byOrigin = new Map(c1.map((r) => [String(r.migrated), r]));
   notice("");
   notice(`  delivered lines by origin (statuses ${SHIPPED_STATES.join("/")}, service lines excluded):`);
-  for (const r of c1) {
+  /* Both rows print even at zero. The previous run emitted only the MIGRATED row,
+     so "70 of 70 delivered units carry zero COGS" read as a total failure of
+     costing when what it actually meant was that this company has not shipped a
+     single NORMAL delivery order yet. An absent row is an answer; a missing row
+     is a trap. */
+  for (const key of ["false", "true"]) {
+    const r = byOrigin.get(key);
+    const label = key === "true" ? "MIGRATED (no movements posted)" : "NORMAL   (movements posted)   ";
+    if (!r) { notice(`    ${label} : ${pad(0, 6)} lines / ${pad(0, 7)} units | none exist`); continue; }
     tLines += n(r.lines); tUnits += n(r.units); zLines += n(r.zero_lines);
     zUnits += n(r.zero_units); zRev += n(r.zero_revenue_centi); booked += n(r.booked_cost_centi);
-    notice(`    ${r.migrated ? "MIGRATED (no movements posted)" : "NORMAL   (movements posted)     "} : ${pad(n(r.lines), 6)} lines / ${pad(n(r.units), 7)} units | zero-cost ${n(r.zero_lines)} lines / ${n(r.zero_units)} units | revenue behind them ${rm(n(r.zero_revenue_centi))}`);
+    notice(`    ${label} : ${pad(n(r.lines), 6)} lines / ${pad(n(r.units), 7)} units | zero-cost ${n(r.zero_lines)} lines / ${n(r.zero_units)} units | revenue behind them ${rm(n(r.zero_revenue_centi))}`);
   }
+  const migOnly = !byOrigin.has("false") && byOrigin.has("true");
   notice("");
   notice(`  DELIVERED UNITS WITH ZERO COGS     : ${zUnits} units on ${zLines} lines (of ${tUnits} units on ${tLines} lines delivered)`);
   notice(`  RM IMPACT (revenue booked at 100% margin, EXACT from line_total_centi): ${rm(zRev)}`);
   notice(`  cost actually booked on delivered lines: ${rm(booked)}`);
+  if (migOnly)
+    notice(`  READ THIS BEFORE THE RATIO: every delivered line here is MIGRATED. Company ${COMPANY} has shipped NO normal`);
+  if (migOnly)
+    notice(`        delivery order yet, so "${zUnits} of ${tUnits}" is 100% by construction, not a costing collapse.`);
+  if (zRev === 0 && zLines > 0)
+    notice(`  WHY THE RM IMPACT IS ZERO: those lines carry no PRICE either — the migration wrote neither cost nor`);
+  if (zRev === 0 && zLines > 0)
+    notice(`        price (create-migrated-documents.mjs). That is its own finding: converted as-is they become`);
+  if (zRev === 0 && zLines > 0)
+    notice(`        zero-value sales invoices. It is NOT evidence that the uncosted units are harmless.`);
   notice(`  NOTE: the true cost of those units is UNKNOWN — that is the defect. The figure above is the revenue`);
   notice(`        carrying no cost, which is exact. No estimate of "what it should have cost" is asserted here.`);
 
@@ -648,6 +798,7 @@ async function sectionC(state) {
   notice(`  units shipped FROM a zero-cost layer: ${n(c3[0].units)} units over ${n(c3[0].rows)} consumption rows`);
 
   state.C = {
+    migOnly,
     lines: tLines, units: tUnits, zeroLines: zLines, zeroUnits: zUnits,
     zeroRevenueCenti: zRev, bookedCostCenti: booked,
     zeroOuts: n(C2.zero_outs), outs: n(C2.outs), zeroOutUnits: n(C2.zero_units),
@@ -668,13 +819,15 @@ async function main() {
   notice("");
   notice("================ VERDICT ================");
   const balOk = A.higher === 0 && A.lower === 0 && A.erpOnly === 0;
-  notice(`VERDICT BALANCE : ${balOk ? "AGREES" : "DIVERGES"} — ${A.agree}/${A.cells} cells agree; ERP higher ${A.higher} (+${A.higherUnits}u); ERP lower ${A.lower} (${A.lowerUnits}u); ERP-only ${A.erpOnly} (${A.erpOnlyUnits}u); unmapped items ${A.unmappedItems} (${A.unmappedItemUnits}u); unmapped locations ${A.unmappedLocs} (${A.unmappedLocUnits}u); SOFA EXCLUDED ${A.sofaCells} cells (${A.sofaUnits}u)${A.stale ? "; SNAPSHOT STALE" : ""}`);
-  const fifoOk = B.b1Broken === 0 && B.negative === 0 && B.overRemaining === 0 && B.zeroCostConsRows === 0 && B.b4Buckets === 0;
-  notice(`VERDICT FIFO    : ${fifoOk ? "SOUND" : "NOT SOUND"} — B1 layer-arithmetic broken on ${B.b1Broken} of ${B.lots} layers; B2 negative ${B.negative}, over-remaining ${B.overRemaining}; B3 zero-cost consumptions ${B.zeroCostConsRows} rows (${B.zeroCostConsUnits}u); B4 layer-vs-movement buckets diverging ${B.b4Buckets} (${B.b4Units}u); B5 layer value ${rm(B.layerValueSen)} vs reported ${B.viewValueSen == null ? "n/a" : rm(B.viewValueSen)}; B6 zero-cost open layers ${B.zeroCostLots} (${B.zeroCostUnits}u)`);
+  notice(`VERDICT BALANCE : ${balOk ? "AGREES" : "DIVERGES"} — ${A.agreeNonZero} of ${A.cells - (A.agree - A.agreeNonZero)} non-zero cells agree; ERP higher ${A.higher} (+${A.higherUnits}u); ERP lower ${A.lower} (${A.lowerUnits}u); ERP-only ${A.erpOnly} (${A.erpOnlyUnits}u); unmapped items ${A.unmappedItems} (${A.unmappedItemUnits}u); unmapped locations ${A.unmappedLocs} (${A.unmappedLocUnits}u)${A.stale ? "; SNAPSHOT STALE" : ""}`);
+  notice(`                  NOT COMPARABLE (excluded from the above, by design): AC-negative ${A.acNegative} cells (AC ${A.acNegativeAcUnits}u); non-stock SERVICE/TRANS ${A.nonStockCells} cells (${A.nonStockUnits}u); SOFA ${A.sofaCells} AC cells (${A.sofaUnits}u) / ${A.erpSofaCells} ERP cells (${A.erpSofaUnits}u)`);
+  const fifoOk = B.b1Broken === 0 && B.negative === 0 && B.overRemaining === 0 && B.zeroShipRows === 0 && B.b4Buckets === 0;
+  notice(`VERDICT FIFO    : ${fifoOk ? "SOUND" : "NOT SOUND"} — B1 layer-arithmetic broken on ${B.b1Broken} of ${B.lots} layers; B2 negative ${B.negative}, over-remaining ${B.overRemaining}; B3 zero-cost SHIPMENT consumptions ${B.zeroShipRows} rows (${B.zeroShipUnits}u) [+${B.zeroNonShipRows} non-shipment rows (${B.zeroNonShipUnits}u) not counted]; B4 layer-vs-movement buckets diverging ${B.b4Buckets} (${B.b4Units}u); B5 layer value ${rm(B.layerValueSen)} vs reported ${B.viewValueSen == null ? "n/a" : rm(B.viewValueSen)}; B6 zero-cost open layers ${B.zeroCostLots} (${B.zeroCostUnits}u)`);
   if (C.unavailable) notice(`VERDICT COGS    : UNMEASURABLE — the delivered-cost columns are absent on this database.`);
   else {
     const cogsOk = C.zeroUnits === 0;
     notice(`VERDICT COGS    : ${cogsOk ? "FULLY COSTED" : "PARTLY UNCOSTED"} — ${C.zeroUnits} of ${C.units} delivered units carry zero COGS on ${C.zeroLines} of ${C.lines} lines; RM impact (revenue with no cost behind it) ${rm(C.zeroRevenueCenti)}; stock-side ${C.zeroOutUnits} units on ${C.zeroOuts} zero-cost DO OUT movements; ${C.zeroLayerUnits} units shipped from a zero-cost layer`);
+    if (C.migOnly) notice(`                  ALL of them are MIGRATED lines — this company has shipped no normal delivery order yet, so the ratio is 100% by construction.`);
   }
   notice("");
   notice("This check measured. It repaired nothing. Re-run it after any repair and compare the three VERDICT lines.");
