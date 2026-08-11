@@ -240,6 +240,225 @@ narrow one, not the broad one.
 **Ref** - 2026-08-11, census tool PR #1953, finding + refusal PR #1960
 (fix/census-codes-are-not-damage). Prod evidence: read-only run 31428435434.
 
+## A digit guard that joined its digit runs together let the one binding it existed to refuse straight through [high]
+
+**Symptom** - `bind-null-colour-lines.mjs` was written with an explicit digit
+guard whose entire purpose was to refuse `PC151-101` -> `PC151-11`, the binding
+#1964 named as the reason the 7 NULL-colour lines were not auto-filled. Its
+first production DRY-RUN (**31452652036**) printed that binding under
+`=== WOULD BIND ===`, with the guard reporting `digits 151101 = 15111` as
+though the two agreed.
+
+**Root cause (traced, not guessed)** - the guard collapsed every digit run into
+one string before comparing, then allowed a single padding zero on the tail:
+
+```
+"PC151-101" -> 151101      "PC151-11" -> 15111
+pad("15111") = "151101"    -> declared the same number
+```
+
+The padding rule is real and necessary - the library stores
+`ARMANI J9226-01 SAND` while documents write `J9226-1`. But it is only sound
+while the SEPARATOR still tells the series number from the colour number. Once
+the runs are joined, a one-zero pad on the tail is indistinguishable from a
+digit moving across the boundary. This is the identical hazard
+`merge-duplicate-fabric-series.mjs` documents from the other side, and its
+comment says so in as many words: after folding, "nothing downstream can then
+tell which digits are which".
+
+**Fix** - `backend/scripts/lib/colour-digit-guard.mjs`, extracted so it is one
+implementation with one set of tests rather than a helper inlined in whatever
+script needs it next. It compares digit RUNS with the separator intact:
+`["151","101"]` against `["151","11"]`. Every run but the last must be equal;
+the last may differ by one leading zero. A document that writes no number at all
+is exempt, because there is no digit to move - `Cream` -> `KS-02` and the
+misspelt `sliver` -> `KS-15` are hits on the colour's NAME, and the matcher
+already drops any fold key two library rows share, so a name-only hit is unique
+by construction.
+
+`backend/tests/colourDigitGuard.test.ts` pins the regression plus every silent
+swap the matcher's own docstring names (`B0315-27` -> `BO315-2`, `HR805-20` ->
+`HR805-40`, `GD8371-03` -> `GD8371-02`, `STAR-10` -> `STAR 01`).
+
+**Lesson** - a guard is not verified by existing. This one was written
+deliberately, for one named case, and still passed that exact case; the only
+reason it did not reach production is that the run was a DRY-RUN and its output
+was read line by line rather than trusted for its summary. Write the guard, then
+make the tool print the specific case it exists to refuse, and go look.
+
+**Ref** - 2026-08-11, PR #1976 (fix/colour-bind-digit-runs). Prod evidence: the
+DRY-RUN that caught it, run 31452652036.
+
+## One physical fabric series, two library rows, and a merge that would have deleted the better half [med]
+
+**Symptom** - the fabric picker offered the same series twice (`HR805` and
+`FABRIC HR805`, `ARMANI J9226` and `J9226`), and any report grouping by
+`fabric_id` split one series' history down the middle. 32 duplicate pairs across
+a 140-series library.
+
+**Root cause (traced, not guessed)** - `refresh-sofa-colours.mjs` bound
+`HR805-90` to `FABRIC HR805` and `HR805-30` to `HR805` in the same run: the
+library already held both spellings, and nothing forced a writer to pick one.
+Detection is by shared colour CODE, never by series name - naming alone misses
+`AVANI` / `AVANI 01` and proves nothing the colours do not already prove.
+
+**Fix** - the owner decided on 2026-08-11: "合并，按引用数多的那边" - merge, and
+the side production references more survives.
+`backend/scripts/merge-duplicate-fabric-series.mjs` gained a `MODE=apply` path
+it deliberately did not have before.
+
+**The trap the implementation had to avoid, and this is the entry.** A merge
+that removes the losing `fabric_library` row is a DELETE, and the owner's rule
+is that nothing is deleted, only cancelled. So the loser is **superseded**:
+`active = false`, its label stamped with what absorbed it, its colour rows left
+attached so a historical document still resolves.
+
+That alone is not enough. Superseding also hides every colour hanging off the
+loser from the picker, and **reference count does not know which side is better
+curated**. `GD8371` wins over `HIRRING GD8371` on 14 live lines to 9 - but
+`GD8371` holds ONE colour, labelled literally `FABRIC`, while `HIRRING GD8371`
+holds TEN properly named ones, and only one colour code is shared. A naive
+"follow the reference count" merge would have removed nine named colours from
+the picker and repointed the live lines sitting on them to a series that cannot
+express them.
+
+So every pair is classified from the data before anything is written: `LOSSLESS`
+(every losing colour has a counterpart on the winner) applies; `REFUSED-LOSSY`
+(the loser holds colours the winner does not) is **held and reported**, and only
+merges under an explicit `MOVE_COLOURS=1` that re-parents those colours onto the
+winner first. The repoint reaches all four arms that can name a series - SO, PO,
+GRN and DO - because a merge that writes two of them leaves the other two
+pointing at a superseded row, which is the same unswept-arm shape #1964 found in
+the GRN snapshot.
+
+**What is NOT in the 32, and is not being guessed at** - `CH141` vs `CHANTIC`
+and `NX` vs `NX016` share ZERO colour codes, so a colour-code detector is
+structurally blind to them. Folding them in on a naming hunch is exactly the
+"let a query match a key it shares no number with" move the digit guard exists
+to prevent. They are printed as STILL OPEN on every run and left to the owner.
+
+**Lesson** - "the side with more references wins" is a rule about *documents*,
+and it says nothing about which row a human curated better. When a tie-break
+optimises one axis, check what it silently trades away on another before you let
+it write.
+
+**Ref** - 2026-08-11, PR #1972 (fix/fabric-series-merge). Prod evidence:
+read-only run 31450029537, PLAN 31452278722, APPLY 31452408610 (29 of 32 pairs
+merged, 28 lines repointed, 140 -> 111 active series, 3 pairs HELD as lossy).
+Full numbers in `docs/duplicate-fabric-series-merge.md`.
+
+## 11 sales orders read as over-delivered against delivery lines that never moved stock [med]
+
+**Symptom** - staff looking at `HC-SO-001920` saw one `ELEPAHNE-(SK)` ordered
+and four delivered. Ten other sales-order lines read the same way. Nothing was
+missing from the warehouse.
+
+**Root cause (traced, not guessed)** - not a stock fault at all, an arithmetic
+one. `create-migrated-documents.mjs` inserted 18 surplus delivery lines across 8
+migrated documents (the writer defect logged below, fixed in #1964). Every one
+is an EXACT duplicate of its twin on `(so_item_id, item_code, qty)`, every one
+sits on a `migrated_no_stock` document, and prod run **31450027318** measured
+**0 inventory movements** against any of them. But `delivered` is the DO line's
+own `qty` (`do-line-remaining.ts:199`) and every delivered sum is `SUM(qty)`
+over non-cancelled lines, so a duplicate inflates "delivered" with nothing
+behind it.
+
+**Fix** - `backend/scripts/zero-duplicate-do-lines.mjs` +
+`.github/workflows/zero-duplicate-do-lines.yml`, the owner's Option B
+(`docs/migrated-do-duplicate-lines.md`, decided 2026-08-11): set `qty = 0` and
+append an audit note naming the original quantity and the twin. **The row is
+retained** - the owner's rule is that nothing is deleted, and
+`scm.delivery_order_items` has no line-level cancel column, so a zero quantity
+is how a line is retired until the deferred line-retirement work lands. No
+migration, no new column, no reader taught a new flag.
+
+The guards are the entry: it refuses a document that is not
+`migrated_no_stock`, a document with any inventory movement, a surplus line
+carrying money, and a surplus line an invoice or a return already points at
+(remaining-to-invoice is `delivered − invoiced − returned`, so zeroing one of
+those drives it negative). `qty <> 0` in the grouping query makes a re-run inert
+and stops the five zeroed `HC-DO-007525` rows from re-grouping with each other
+at quantity 0.
+
+**What zeroing does NOT fix, deliberately** - the duplicate half of the
+over-delivery, not all of it. Where the surviving quantity still exceeds the
+ordered quantity, the cause is the *mis-link* half of the same writer defect (a
+second AutoCount row of one code pointed at the FIRST sales-order line), plus
+`HC-DO-006224`, which genuinely delivered a second unit two months after
+`DO-005452` against a 1-unit order. That last one is a commercial question for
+the owner about a real shipment, **not an ERP defect**, and the script leaves
+one row per group standing precisely so it survives.
+
+**Lesson** - a rowcount and a stock ledger answer different questions. Nothing
+was wrong with inventory here, and an audit that only checked movements would
+have called this clean while staff read it as a stock problem daily.
+
+**Ref** - 2026-08-11, PR #1971 (fix/do-duplicates-and-fabric-merge). Prod
+evidence: read-only diagnostic run 31450027318 (Section D), DRY-RUN 31451629651, APPLY
+31451705673 - 18 rows zeroed, over-delivered 11 -> 7, every document total
+identical. Full numbers in `docs/migrated-do-duplicate-lines.md`.
+
+## A special add-on was costed and never charged, and the exempt lines were the migrated ones [high]
+
+**Symptom** - the owner: *"让收费追上成本."* A priced special add-on on a sofa
+line moved `unit_cost_sen` and never moved `unit_price_sen`. It could only ever
+reduce margin. The same was true of any line whose product carried
+`sell_price_sen = 0`, in any category.
+
+**Root cause (traced, not guessed)** - the selling surcharge reached the
+customer through exactly one expression in `mfg-pricing-recompute.ts`,
+`effectiveBaseSen + breakdown.unitPriceSen`, behind one gate:
+
+```
+const hasAuthoritativeSelling = category !== 'SOFA' && effectiveBaseSen > 0;
+```
+
+Both halves of that gate were an exemption. `category !== 'SOFA'` sent every
+sofa to a branch that rebuilt the price as `sofaSellingSen + fabricAddonCenti +
+extraSen` and never re-added the surcharges - while the COST branch six lines
+above it DID re-add its own, as `costSurchargesSen = costBreakdown.unitPriceSen
+- costBreakdown.basePriceSen` on top of the module costs. One side of the same
+function re-added the surcharge and the other dropped it. `effectiveBaseSen > 0`
+then exempted every 0-priced product regardless of category.
+
+**The trap in fixing it.** The exempt populations and the MIGRATED corpus are
+very nearly the same set: 10,856 of 13,909 migrated lines are priced 0 and 549
+of those are SOFA. A naive `|| surcharges > 0` therefore lands precisely on the
+documents the owner's standing "A" ruling protects, and it lands there through
+the CREATE path, which passes plain `true` rather than the `'including-zero'`
+that #1954 gave the amendment path - and plain `true` reads a stored 0 as "not
+provided" and fills a catalogue price anyway.
+
+**Fix** - name the surcharge once as `breakdown.unitPriceSen -
+breakdown.basePriceSen` (a subtraction, not a bare `unitPriceSen`, so a
+future non-zero selling base cannot silently double-charge), add it to the sofa
+branch so both sides of the function agree, and admit a 0-priced line to the
+authoritative path when it carries a surcharge. The new arm is made **inert
+under `trustOperatorSelling === 'including-zero'`** rather than relying on the
+trust overwrite at the end of the function, so the migrated marker blocks it
+structurally.
+
+**Lesson** - when one function computes the same quantity twice, once for cost
+and once for price, the two expressions must be written so that they cannot
+drift - here, literally the same subtraction. And before widening a pricing
+gate, count the rows the widened arm newly admits: the exemption you are
+removing may be the only thing that was protecting history.
+
+**Also settled** - `specialAddonsSurchargeSen` has no caller in either tree.
+It is a WIRING GAP, not dead code: it is what a price-SUBMITTING client (the
+drift-gated POS) must call now that the surcharge is charged, and it is inert
+only while every add-on is priced 0. Deleting it would remove the fix for a
+400 that the first priced add-on will cause.
+
+**Ref** - 2026-08-11, owner decision in person, PR #1973. Pinned in
+`backend/src/scm/lib/mfg-pricing-recompute.surcharge.test.ts`. Prod evidence:
+read-only run **31452346210** measured the blast radius as **zero live
+documents** - 11 of 36 catalogue codes ARE priced, but not one document line
+carries any of them in `variants.specials` (SO migrated 0, SO live 0, PO
+migrated 0, PO live 0). The same run states the old asymmetry in money: REAL
+SELLING exposure 0 sen against REAL COST exposure 755,000 sen on all 27
+candidate lines - the margin moved and the price never did.
+
 ## A fabric code was read as a bed height, because a measurement rule had no left boundary [high]
 
 **Symptom** - `HC-GR-005122-PO-009576` recorded `divanHeight 151"` and

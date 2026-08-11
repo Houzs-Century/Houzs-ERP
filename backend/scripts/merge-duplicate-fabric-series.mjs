@@ -22,16 +22,83 @@
    the series holding more colours, then to the shorter id. The point is to move
    the fewest live rows.
 
-   THIS SCRIPT NEVER WRITES. Merging a series repoints which colour a live
-   document names, so it is the owner's call, not a script's. There is no APPLY
-   path here on purpose: it prints the plan, the counts and the exposure, and
-   stops. Read-only, one connection, no transaction. */
+   THE OWNER CALLED IT on 2026-08-11: "合并，按引用数多的那边" - merge, and the
+   side with more references wins. So this script now has an APPLY path. It did
+   not before, deliberately, because merging repoints which colour a live
+   document names and that was not a script's decision to make.
+
+   WHAT "MERGE" MEANS HERE, GIVEN THAT NOTHING MAY BE DELETED.
+   A merge that removes the losing `fabric_library` row is a DELETE, and the
+   owner's rule is that nothing is deleted, only cancelled. So the losing series
+   is SUPERSEDED, never dropped: `active = false`, and its label records which
+   series absorbed it and when. The row stays, its colours stay attached to it,
+   and a historical document that still names it still resolves for display.
+
+   AND NOTHING MAY BECOME UNREACHABLE EITHER. Superseding a series hides every
+   colour hanging off it from the picker. That is harmless when the losing side
+   only holds colours the winner already has - the usual case, where the pair is
+   two spellings of one series - and it is a real loss when the loser holds
+   colours the winner does not. Each pair is therefore classified by evidence
+   before anything is written:
+
+     LOSSLESS  every colour on the losing side has a counterpart on the winning
+               side, so superseding hides nothing that is not already there.
+               Live lines are repointed and the series is superseded.
+
+     LOSSY     the losing side holds colours the winner does not. Applying would
+               remove a named colour from the picker, and any live line sitting
+               on one of those colours would be repointed to a series that
+               cannot express it. REFUSED and reported - never applied by
+               default. MOVE_COLOURS=1 makes it lossless instead, by
+               re-parenting those colours onto the winner first; that changes
+               the library's CONTENT, not just its shape, so it is opt-in.
+
+   FOUR DOCUMENT ARMS, NOT TWO. The reference COUNT above is taken off SO and PO
+   lines, which is what decides the canonical side. The REPOINT has to reach
+   every table whose variants block can name a series, or a merge leaves an arm
+   pointing at a superseded row - which is exactly the unswept-arm bug #1964
+   found in the GRN snapshot. All four are measured and written.
+
+   THE JSONB WRITE USES jsonb_set + to_jsonb(text), NOT a bound object. Binding
+   a pre-serialized string to a jsonb parameter is what destroyed the variants
+   column three times on 2026-08-10 (docs/jsonb-double-encoding-coe.md).
+   to_jsonb($1::text) is built server-side from a plain text parameter, so no
+   json serializer can run over it and there is no `||` merge to turn an
+   unexpected shape into an array.
+
+   MODE=plan (default) prints and writes nothing. MODE=apply writes, one
+   transaction per pair, and verifies on a SECOND, FRESH connection. */
 import postgres from "postgres";
 import { normColour, foldColour, markColour } from "./lib/fabric-colour-match.mjs";
 
-const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
+const DSN = process.env.DATABASE_URL;
+const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
+const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 const CO = Number(process.env.COMPANY || 1);
+const APPLY = (process.env.MODE || "plan").toLowerCase() === "apply";
+const MOVE_COLOURS = process.env.MOVE_COLOURS === "1";
+const ONLY = (process.env.PAIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const STAMP = process.env.NOTE_DATE || new Date().toISOString().slice(0, 10);
+
+/* Every table whose `variants` can name a fabric series, with how each row
+   reaches its company. These are literal constants, never user input - they are
+   interpolated as identifiers because a table name cannot be a bind parameter.
+   Every VALUE below is still a bind parameter, and none of them is jsonb. */
+const ARMS = [
+  { name: "SO", t: "scm.mfg_sales_order_items", join: "JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no" },
+  { name: "PO", t: "scm.purchase_order_items", join: "JOIN scm.purchase_orders h ON h.id = i.purchase_order_id" },
+  { name: "GRN", t: "scm.grn_items", join: "JOIN scm.grns h ON h.id = i.grn_id" },
+  { name: "DO", t: "scm.delivery_order_items", join: "JOIN scm.delivery_orders h ON h.id = i.delivery_order_id" },
+];
+
+/* live lines on a series, per colour, across one arm */
+const armLines = (client, arm, series) => client.unsafe(
+  `SELECT i.variants->>'fabricCode' AS colour, COUNT(*)::int AS n
+     FROM ${arm.t} i ${arm.join}
+    WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object'
+      AND i.variants->>'fabricId' = $2
+    GROUP BY 1 ORDER BY 1`, [CO, series]);
 
 // the matcher's rung 3, re-derived: peel trailing colour NAMES off a code
 const dropName = (s) => {
@@ -71,7 +138,7 @@ const codeKeys = (r) => {
 
 async function main() {
   const cols = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
-  const libs = await sql`SELECT id, label, tier, default_surcharge FROM scm.fabric_library WHERE company_id = ${CO}`;
+  const libs = await sql`SELECT id, label, tier, default_surcharge, active FROM scm.fabric_library WHERE company_id = ${CO}`;
   note(`library: ${libs.length} series / ${cols.length} colours (company ${CO})`);
 
   /* live references, per series and per colour. These are the five keys the SO
@@ -150,10 +217,77 @@ async function main() {
 
   const movedLines = plan.reduce((a, p) => a + p.dropRefs, 0);
   const droppedSeries = new Set(plan.map((p) => p.drop));
-  note(`\n=== EXPOSURE IF MERGED ===`);
-  note(`  series removed:                 ${droppedSeries.size} of ${libs.length}`);
+  note(`\n=== EXPOSURE IF MERGED (SO+PO reference count, the canonical-side rule) ===`);
+  note(`  series superseded:              ${droppedSeries.size} of ${libs.length}`);
   note(`  live document lines repointed:  ${movedLines} of ${totalRefs}`);
   note(`  lines NOT touched:              ${totalRefs - movedLines}`);
+
+  /* ── THE PER-COLOUR PLAN ──────────────────────────────────────────────────
+     The summary above says how many lines move. It does NOT say whether the
+     losing side holds a colour the winner cannot express, and that is the only
+     question that decides whether a merge is safe to apply. Answer it colour by
+     colour, across all four document arms, before writing anything. */
+  const keysOf = new Map(cols.map((r) => [pk2(r.fabric_id, r.colour_id), codeKeys(r)]));
+  const bothSides = new Set([...droppedSeries].filter((d) => plan.some((p) => p.keep === d)));
+  for (const s of bothSides) bad(`series "${s}" is KEEP in one pair and DROP in another - chained merge, refused`);
+
+  note(`\n=== PER-PAIR PLAN ===`);
+  for (const p of plan) {
+    p.skip = null;
+    if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; continue; }
+    if (bothSides.has(p.drop) || bothSides.has(p.keep)) { p.skip = "chained merge"; continue; }
+
+    const keepCols = colsBySeries.get(p.keep) || [];
+    const dropCols = colsBySeries.get(p.drop) || [];
+    // a losing colour is "covered" when the winner holds a colour sharing a code key
+    const keepKey = new Map();
+    for (const r of keepCols) for (const k of keysOf.get(pk2(r.fabric_id, r.colour_id)) || []) if (!keepKey.has(k)) keepKey.set(k, r);
+    p.cover = new Map();   // drop colour_id -> keep colour row (or null)
+    for (const r of dropCols) {
+      const hit = (keysOf.get(pk2(r.fabric_id, r.colour_id)) || []).map((k) => keepKey.get(k)).find(Boolean) || null;
+      p.cover.set(r.colour_id, hit);
+    }
+    p.uncovered = dropCols.filter((r) => !p.cover.get(r.colour_id));
+
+    // live lines on the losing series, per arm, per colour
+    p.live = new Map();  // colour string (may be null) -> {n, byArm}
+    for (const arm of ARMS) {
+      for (const r of await armLines(sql, arm, p.drop)) {
+        const cur = p.live.get(r.colour) || { n: 0, byArm: {} };
+        cur.n += r.n; cur.byArm[arm.name] = (cur.byArm[arm.name] || 0) + r.n;
+        p.live.set(r.colour, cur);
+      }
+    }
+    p.liveTotal = [...p.live.values()].reduce((a, v) => a + v.n, 0);
+    // a live line whose colour is not a row of the losing series at all
+    p.unmapped = [...p.live.entries()].filter(([c]) => c == null || !p.cover.has(c));
+    p.orphan = [...p.live.entries()].filter(([c]) => c != null && p.cover.has(c) && !p.cover.get(c));
+
+    p.verdict = p.uncovered.length === 0 && p.unmapped.length === 0 ? "LOSSLESS"
+      : p.unmapped.length ? "REFUSED-UNMAPPED" : (MOVE_COLOURS ? "LOSSY-MOVE" : "REFUSED-LOSSY");
+
+    note(`\n  "${p.keep}"  <=  "${p.drop}"     ${p.verdict}`);
+    note(`      winner holds ${keepCols.length} colour(s); loser holds ${dropCols.length}, of which ${p.uncovered.length} the winner does NOT have`);
+    note(`      live lines on the loser, all four arms: ${p.liveTotal}`);
+    for (const [c, v] of [...p.live].sort()) {
+      const tgt = c == null ? null : p.cover.get(c);
+      const where = Object.entries(v.byArm).map(([k, n]) => `${k}=${n}`).join(" ");
+      note(`        ${v.n} line(s) on "${c ?? "(no fabricCode)"}"  [${where}]  -> ${tgt ? `"${tgt.colour_id}"` : c != null && p.cover.has(c) ? "NO TARGET on the winner" : "colour is not a row of the loser"}`);
+    }
+    if (p.uncovered.length) {
+      note(`      colours that would leave the picker unless re-parented:`);
+      for (const r of p.uncovered) note(`        "${r.colour_id}"${r.label && r.label !== r.colour_id ? `  label "${r.label}"` : ""}`);
+    }
+  }
+
+  const doable = plan.filter((p) => !p.skip && (p.verdict === "LOSSLESS" || p.verdict === "LOSSY-MOVE"));
+  const held = plan.filter((p) => !p.skip && p.verdict !== "LOSSLESS" && p.verdict !== "LOSSY-MOVE");
+  note(`\n=== VERDICT ===`);
+  note(`  pairs that merge with nothing lost:   ${plan.filter((p) => p.verdict === "LOSSLESS").length}`);
+  note(`  pairs needing a colour re-parent:     ${plan.filter((p) => p.verdict === "LOSSY-MOVE" || p.verdict === "REFUSED-LOSSY").length}${MOVE_COLOURS ? " (MOVE_COLOURS=1, they will be moved)" : " (HELD - re-run with MOVE_COLOURS=1 to move them)"}`);
+  note(`  pairs refused, a live line names a colour the loser does not hold: ${plan.filter((p) => p.verdict === "REFUSED-UNMAPPED").length}`);
+  note(`  pairs skipped:                        ${plan.filter((p) => p.skip).length}`);
+  for (const p of held) bad(`HELD "${p.keep}" <= "${p.drop}": ${p.verdict}. ${p.uncovered.length} colour(s) the winner does not hold, ${p.liveTotal} live line(s) on the loser.`);
 
   /* the same disease inside ONE series: two rows for one colour code. Not a
      series merge, so not in the plan above - but it is why a picker shows
@@ -175,6 +309,135 @@ async function main() {
   for (const e of withinEg) note(`  ${e}`);
   if (within > withinEg.length) note(`  ... and ${within - withinEg.length} more`);
 
-  note(`\nREAD-ONLY: nothing was written. Merging is an owner decision.`);
+  /* CH141 / CHANTIC and NX / NX016 are NOT in the pairs above and are not an
+     oversight: this detector recognises a duplicate by a SHARED COLOUR CODE,
+     and those two pairs share none, so nothing here can see them. They are
+     reported as still-open rather than folded in on a naming hunch. */
+  note(`\n=== STILL OPEN - suspected duplicates this detector CANNOT see ===`);
+  for (const [a, b] of [["CH141", "CHANTIC"], ["NX", "NX016"]]) {
+    const ea = libs.some((l) => l.id === a), eb = libs.some((l) => l.id === b);
+    note(`  "${a}" vs "${b}": ${ea && eb ? "both series exist" : `${ea ? a : b} only`}; share ZERO colour codes, so the detector is blind to them. Owner decision, not merged here.`);
+    for (const s of [a, b]) if (libs.some((l) => l.id === s)) {
+      const cs = colsBySeries.get(s) || [];
+      note(`     "${s}": ${bySeries.get(s) || 0} live line(s), ${cs.length} colour(s)${cs.length ? ` - ${cs.slice(0, 6).map((r) => `"${r.colour_id}"`).join(", ")}${cs.length > 6 ? ", ..." : ""}` : ""}`);
+    }
+  }
+
+  if (!APPLY) {
+    note(`\nPLAN ONLY: nothing was written. ${doable.length} pair(s) would merge. Re-run with MODE=apply.`);
+    return;
+  }
+
+  // ── APPLY ────────────────────────────────────────────────────────────────
+  note(`\n=== APPLYING ${doable.length} PAIR(S) ===`);
+  const done = [];
+  for (const p of doable) {
+    const moved = [], repointed = [];
+    await sql.begin(async (tx) => {
+      /* 1. re-parent the colours the winner does not hold. Not a copy: the row
+            keeps its id and its name and changes parent, so nothing is
+            duplicated and nothing is lost. */
+      if (p.uncovered.length) {
+        if (!MOVE_COLOURS) throw new Error(`${p.drop}: uncovered colours without MOVE_COLOURS`);
+        for (const r of p.uncovered) {
+          const clash = await tx`SELECT 1 FROM scm.fabric_colours
+             WHERE company_id = ${CO} AND fabric_id = ${p.keep} AND colour_id = ${r.colour_id}`;
+          if (clash.length) throw new Error(`${p.keep} already holds colour_id "${r.colour_id}" - refusing to re-parent`);
+          const back = await tx`UPDATE scm.fabric_colours SET fabric_id = ${p.keep}
+             WHERE company_id = ${CO} AND fabric_id = ${p.drop} AND colour_id = ${r.colour_id}
+            RETURNING colour_id`;
+          if (back.length !== 1) throw new Error(`re-parent of "${r.colour_id}" matched ${back.length} rows`);
+          moved.push(r.colour_id);
+        }
+      }
+
+      /* 2. repoint every live line, on every arm. jsonb_set + to_jsonb($::text)
+            keeps the value a plain text bind - no json serializer can run over
+            it, so the 2026-08-10 double-encoding cannot recur here. */
+      for (const [colour] of p.live) {
+        if (colour == null) continue;
+        const tgt = p.cover.get(colour);
+        const toColour = tgt ? tgt.colour_id : colour; // a re-parented colour keeps its name
+        for (const arm of ARMS) {
+          const back = await tx.unsafe(
+            `UPDATE ${arm.t} SET variants =
+                jsonb_set(jsonb_set(variants, '{fabricId}', to_jsonb($1::text)),
+                          '{fabricCode}', to_jsonb($2::text))
+              WHERE id IN (SELECT i.id FROM ${arm.t} i ${arm.join}
+                            WHERE h.company_id = $3 AND jsonb_typeof(i.variants) = 'object'
+                              AND i.variants->>'fabricId' = $4
+                              AND i.variants->>'fabricCode' = $5)
+             RETURNING id::text AS id`, [p.keep, toColour, CO, p.drop, colour]);
+          if (back.length) repointed.push(`${arm.name}:${colour}->${toColour}=${back.length}`);
+        }
+      }
+
+      /* 3. nothing may still name the losing series before it is superseded */
+      for (const arm of ARMS) {
+        const left = await tx.unsafe(
+          `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
+            WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object'
+              AND i.variants->>'fabricId' = $2`, [CO, p.drop]);
+        if (left[0].n) throw new Error(`${arm.name} still has ${left[0].n} line(s) naming "${p.drop}" - not superseding`);
+      }
+
+      /* 4. SUPERSEDE, never delete. The row stays; `active = false` takes it
+            out of the picker and the label records what absorbed it. */
+      const tag = `[MERGED into ${p.keep} on ${STAMP} - superseded, not deleted]`;
+      const sup = await tx`UPDATE scm.fabric_library
+           SET active = false,
+               label = CASE WHEN COALESCE(label,'') LIKE '%[MERGED into %' THEN label
+                            ELSE TRIM(BOTH ' ' FROM COALESCE(label,'') || ' ' || ${tag}) END
+         WHERE company_id = ${CO} AND id = ${p.drop}
+        RETURNING id, label, active`;
+      if (sup.length !== 1) throw new Error(`supersede of "${p.drop}" matched ${sup.length} rows`);
+    });
+    done.push({ p, moved, repointed });
+    note(`  "${p.keep}" <= "${p.drop}": ${moved.length} colour(s) re-parented, repointed ${repointed.join(", ") || "(no live lines)"}, series superseded`);
+  }
+
+  // ── VERIFY, ON A FRESH CONNECTION ────────────────────────────────────────
+  const v = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
+  let fails = 0;
+  try {
+    note(`\n=== INDEPENDENT READ-BACK (fresh connection) ===`);
+    for (const { p, moved } of done) {
+      const lib = await v`SELECT id, label, active FROM scm.fabric_library WHERE company_id = ${CO} AND id IN (${p.keep}, ${p.drop})`;
+      const dropRow = lib.find((l) => l.id === p.drop), keepRow = lib.find((l) => l.id === p.keep);
+      if (!dropRow) { fails++; bad(`"${p.drop}" is GONE from fabric_library - it must be superseded, not deleted`); }
+      else if (dropRow.active !== false) { fails++; bad(`"${p.drop}" still active`); }
+      if (!keepRow || keepRow.active === false) { fails++; bad(`"${p.keep}" is missing or inactive`); }
+      let left = 0;
+      for (const arm of ARMS) {
+        const r = await v.unsafe(
+          `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
+            WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object' AND i.variants->>'fabricId' = $2`,
+          [CO, p.drop]);
+        left += r[0].n;
+      }
+      if (left) { fails++; bad(`${left} line(s) still name "${p.drop}"`); }
+      const nowKeep = await v`SELECT COUNT(*)::int AS n FROM scm.fabric_colours WHERE company_id = ${CO} AND fabric_id = ${p.keep}`;
+      const nowDrop = await v`SELECT COUNT(*)::int AS n FROM scm.fabric_colours WHERE company_id = ${CO} AND fabric_id = ${p.drop}`;
+      note(`  "${p.keep}" <= "${p.drop}": superseded=${dropRow?.active === false} label=${JSON.stringify(dropRow?.label)} lines-still-naming-loser=${left} colours now keep=${nowKeep[0].n} loser-retains=${nowDrop[0].n} re-parented=${moved.length}`);
+      for (const c of moved) {
+        const r = await v`SELECT fabric_id FROM scm.fabric_colours WHERE company_id = ${CO} AND colour_id = ${c}`;
+        if (!r.some((x) => x.fabric_id === p.keep)) { fails++; bad(`re-parented colour "${c}" is not under "${p.keep}"`); }
+      }
+    }
+    /* the whole point: no variants block anywhere may have been turned into an
+       array by a bad jsonb write. This is the shape the 2026-08-10 COE is about. */
+    for (const arm of ARMS) {
+      const r = await v.unsafe(
+        `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
+          WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'array'`, [CO]);
+      note(`  ${arm.name}: variants blocks of ARRAY shape (must be 0): ${r[0].n}`);
+      if (r[0].n) { fails++; bad(`${arm.name} holds ${r[0].n} array-shaped variants block(s)`); }
+    }
+    const stillDup = await v`SELECT COUNT(*)::int AS n FROM scm.fabric_library WHERE company_id = ${CO} AND active`;
+    note(`  active series remaining: ${stillDup[0].n} (was ${libs.filter((l) => l.active !== false).length})`);
+  } finally { await v.end({ timeout: 5 }); }
+
+  if (fails) { bad(`${fails} verification failure(s)`); process.exit(1); }
+  note(`\nVERIFIED on a fresh connection: ${done.length} pair(s) merged, losers superseded and still present, no colour deleted, no variants block reshaped.`);
 }
 main().then(() => sql.end({ timeout: 5 })).catch(async (e) => { console.error("FAIL", e.message); await sql.end({ timeout: 5 }); process.exit(1); });
