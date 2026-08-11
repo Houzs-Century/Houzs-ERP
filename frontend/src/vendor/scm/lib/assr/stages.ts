@@ -39,8 +39,10 @@ export interface AssrStageDef {
 
 export const ASSR_STAGES: AssrStageDef[] = [
   { key: "pending_review",           short: "Review",      long: "Pending Review",             owner: "Service Admin" },
-  { key: "under_verification",       short: "Verify",      long: "Under Verification",         owner: "Service Admin" },
+  // Order change (Nico 2026-08-11): Solution comes BEFORE Verification —
+  // decide the fix first, then inspect/verify.
   { key: "pending_solution",         short: "Solution",    long: "Pending Solution",           owner: "Service Admin" },
+  { key: "under_verification",       short: "Verify",      long: "Under Verification",         owner: "Service Admin" },
   { key: "pending_supplier_pickup",  short: "Supplier",    long: "Supplier Pickup / Return",   owner: "Service Admin" },
   { key: "pending_item_ready",       short: "Pending Item Ready", long: "Pending Item Ready",  owner: "Service Admin" },
   { key: "pending_delivery_service", short: "Delivery",    long: "Pending Delivery / Service", owner: "Logistic Admin" },

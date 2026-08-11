@@ -199,7 +199,7 @@ import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transac
 import {
   applySoCancelVouchers, planSoCancelVouchers, soCancelVoucherAuditChanges,
 } from '../lib/so-cancel-vouchers';
-import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
+import { deferAllocationRecompute, scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 export const mfgSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrders.use('*', supabaseAuth);
@@ -7083,9 +7083,27 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   /* SO header edit may have changed customer_delivery_date or
      allocation_warehouse_id — both reshuffle the allocation queue. Recompute.
-     Best-effort. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-header-patch failed:', e); }
+     Best-effort, and DEFERRED: this sweep is global (2,784 SOs / 14,076 lines,
+     ~25-30 PostgREST pages) and was 10 of the 10.6 seconds an operator waited
+     for a one-field save. The save answers immediately and the projection
+     settles behind it. See deferAllocationRecompute for what that does and does
+     not buy.
+
+     WHY THIS IS SAFE NEXT TO THE LEASE RELEASE BELOW, which keys off
+     `version = savedVersion` and so would break if the sweep bumped the version
+     first. It cannot. The sweep's only header write is advanceSoGeneration,
+     which both refuses when a lease is active AND carries
+     `edit_lease_token IS NULL OR expired` in its UPDATE predicate — so while we
+     still hold the lease it cannot touch this row, and once the release below
+     has run there is no longer a version for it to invalidate. Both
+     interleavings are correct.
+
+     One behaviour change falls out of that, and it is an improvement: the
+     awaited version ALWAYS ran while our own lease was held, so this SO's
+     header was always skipped ('lease' deferral) and left to the 5-minute cron.
+     The deferred sweep reaches its header pass after the release, so the order
+     now advances to READY_TO_SHIP in its own save's pass. */
+  deferAllocationRecompute(c, sb, 'post-header-patch');
 
   const { data: releasedLease, error: releaseLeaseError } = await sb.from('mfg_sales_orders')
     .update({ edit_lease_token: null, edit_lease_expires_at: null })
