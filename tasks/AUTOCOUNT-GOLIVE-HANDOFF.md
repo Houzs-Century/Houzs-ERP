@@ -1,5 +1,35 @@
 # AutoCount cutover — go-live handoff
 
+## PAUSED until Friday. Staff stay on AutoCount.
+
+Owner's call, 2026-08-11: *"不行了，让他们继续用 autocount 先，我们星期五再继续做."*
+
+The ERP is **not** the system of record and nobody has been moved onto it. Company 1
+is frozen (`scm.write_freeze = '1'`, every area, 0 areas lifted), the write-back is
+off (`scm.autocount_writeback = 'off'`), `AC_SYNC_URL` is unset, and
+`scm.autocount_outbox` holds **0 rows** — not zero pending, zero rows, so no ERP
+document has ever been offered to AutoCount. That is the intended state. 2990
+(company 2) is unaffected and trades normally.
+
+**Do not lift anything without the owner.** His standing instruction:
+*"解冻我跟你说你才做."*
+
+> ### Resuming on Friday? Read `docs/autocount-migration-record.md` first.
+>
+> That is the record of the whole migration and it carries the **Friday execution
+> runbook** — a numbered, strictly-ordered checklist where every step names who does
+> it, how you know it worked, and how to undo it. It also carries the three things
+> that exist nowhere else in this repository: the state of the office host right now
+> (the running `AcSyncService.exe` is a temporary self-test build and must be
+> replaced), the `tempdb.ac_src_bridge` channel that moves source to and from that
+> host without a remote desktop, and why runbook 4.1-4.5 have not passed —
+> `AED_TESTING` has exhausted its 500-transaction evaluation limit, and the live book
+> enforces master-data foreign keys the test book does not.
+>
+> This file stays the index. That file is the instruction.
+
+---
+
 Status as of 2026-08-11. This is the index: one place to see where the cutover
 stands against the owner's own acceptance criteria, what landed, and what is
 still owed. Every number here came from a production read, not from a script's
@@ -188,15 +218,32 @@ its comment already named the trap.
 
 ## Sequence to go live
 
+**The executable version of this, with a verification and a rollback beside every
+step, is the Friday execution runbook in `docs/autocount-migration-record.md` section 1.
+Follow that. This is the summary.**
+
 1. **Freeze stays ON.** It is already per-company (`value` is a company id list,
-   which is why 2990 never stopped trading). Per-module staging is being built.
+   which is why 2990 never stopped trading). Per-module staging now exists
+   (`set-write-freeze`, PR #1967) and **zero areas have been lifted**.
 2. Finish criterion 3 residue, then criterion 2 residue.
-3. Stand up the tunnel and deploy the C# service — **needs the owner or IT**;
-   nothing else blocks it.
-4. Lift the freeze for `scm.sales.orders`, company 1 only, one pilot cohort,
+3. Rebuild the clean service on the office host from the SQL bridge, and run
+   runbook 4.1-4.5 against the live book on a throwaway document — cancelled, never
+   deleted. Neither has happened yet.
+4. Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY` — **needs IT physically
+   at the office machine**; nothing else blocks it, and everything after it does.
+5. Turn on `scm.autocount_writeback` for company 1.
+6. Lift the freeze for `scm.sales.orders`, company 1 only, one pilot cohort,
    and watch a document reach AutoCount.
-5. Widen one area at a time.
+7. Widen one area at a time.
 
 The freeze lift is last because it is the only step that is hard to reverse:
 once staff edit, rolling back means reconciling human work, not re-running a
 script.
+
+## See also
+
+- `docs/autocount-migration-record.md` — **the record and the Friday runbook.** How the
+  migration was done, what went wrong, what to do next, in order
+- `docs/autocount-cutover-ledger.md` — the chronological run log, W0 to W18
+- `docs/write-freeze-staged-lift.md` — the freeze grammar, the area table, the rollback
+- `docs/autocount-service-deploy.md` — build and deploy on the AutoCount host
