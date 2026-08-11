@@ -41,6 +41,7 @@ if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+const norm = (s) => String(s ?? "").trim().toUpperCase();
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 async function main() {
@@ -58,21 +59,34 @@ async function main() {
   const byId = new Map(so.map((r) => [r.id, r]));
 
   const fix = [], create = [];
-  let agree = 0, noLink = 0, noSoLine = 0;
+  let agree = 0, noLink = 0, noSoLine = 0, pieceUnresolved = 0;
   for (const r of po) {
     const fk = fromSo.get(String(r.k));
     if (!fk) { noLink++; continue; }
     const tgt = byKey.get(fk);
     if (!tgt) { noSoLine++; continue; }
-    if (!r.so_item_id) { create.push({ ...r, tgt }); continue; }
-    if (r.so_item_id === tgt.id) { agree++; continue; }
-    fix.push({ ...r, was: byId.get(r.so_item_id), tgt });
+    /* AutoCount holds ONE line for a whole sofa, so its pointer identifies the
+       DOCUMENT and the build, not the piece. Where we split that build into
+       compartments, the pointer can only ever land on one of them. So let
+       AutoCount choose the sales order and let the compartment code choose the
+       piece within it - pieces are unambiguous inside one build, and a code
+       mismatch is never a legitimate dedication. */
+    let dest = tgt;
+    if (norm(r.code) !== norm(tgt.item_code)) {
+      const sib = so.filter((x) => x.doc_no === tgt.doc_no && norm(x.item_code) === norm(r.code));
+      if (sib.length !== 1) { pieceUnresolved++; continue; }
+      dest = sib[0];
+    }
+    if (!r.so_item_id) { create.push({ ...r, tgt: dest }); continue; }
+    if (r.so_item_id === dest.id) { agree++; continue; }
+    fix.push({ ...r, was: byId.get(r.so_item_id), tgt: dest });
   }
 
   log("");
   log(`agrees with AutoCount            ${agree}`);
   log(`AutoCount states no link          ${noLink}`);
   log(`its SO line has no key here       ${noSoLine}`);
+  log(`piece not resolvable in that SO   ${pieceUnresolved}`);
   log(`WRONG SIBLING, to re-point        ${fix.length}`);
   for (const f of fix) log(`   ${f.doc} ${String(f.code).padEnd(26)} ${f.was ? `${f.was.doc_no}` : "?"}: sibling ${f.was ? f.was.id.slice(0, 8) : "?"} -> ${f.tgt.id.slice(0, 8)}`);
   log(`MISSING, to create from AutoCount ${create.length}`);
