@@ -1,3 +1,69 @@
+## Adding a SOFA to an existing order queued nothing for AutoCount - an early return past the hook [high]
+
+**Symptom** - none visible: the order saves, the compartments appear, and the
+account book simply never hears about them. It would have surfaced after go-live
+as sofas silently missing from AutoCount on orders that were otherwise syncing.
+
+**Root cause (traced, not guessed)** - `POST /:docNo/items` has TWO insert paths.
+The ordinary one inserts a row and calls `queueAcSoEdit`. The SOFA branch inserts
+its N compartment rows, reconciles the free gift, re-derives the delivery fee,
+records the audit row, recomputes allocation - and then
+`return c.json({ item: firstRow }, 201)`. There is no `queueAcSoEdit` anywhere
+between the insert and that return.
+
+The same shape as the `convertSosToPosCore` gap already in this ledger: an early
+return past the hook. It survived `tests/autocountWritebackWiring.test.ts`
+because that suite greps the ROUTER FILE as a whole for its anchors, and the
+anchor is present - in the other branch.
+
+**Fix** - the sofa branch queues an edit before returning, declaring every row
+the insert returned so the whole build can go as new lines. The pin is a test
+that slices the branch out of the router source and asserts the call is INSIDE
+it - a file-wide grep cannot tell one branch from another.
+
+**Ref** - feat/ac-ensure-masters, 2026-08-11.
+
+## Every ERP-created Sales Order and Purchase Order would have failed in the live account book, on a foreign key nobody had hit [high]
+
+**Symptom** - none yet, and that is the point: the write-back has never been
+switched on, so this would have surfaced as EVERY create failing on the first
+day of go-live, on the owner's own P0 slice.
+
+**Root cause (traced, not guessed)** - read off the AutoCount host's own log,
+which the cutover file server happens to publish:
+
+```
+2026-08-11 11:54:59  /create-so  (no Location on either line)
+  -> AutoCount.Data.ForeignKeyException  FK_SODTL_Location
+     "dbo.Location", column 'Location'
+2026-08-11 11:57:43  /create-so  (Location "KL" on both lines)  -> saved
+```
+
+`AcSyncService`'s create path applies the key unconditionally
+(`Set(() => d.Location = Str(it, "Location"))`) and `Str` turns an ABSENT key
+into `""`, which is not a row in `dbo.Location`. Meanwhile the ERP composer
+could not send a location at all: `SO_ITEM_COLS` and `PO_ITEM_COLS` never
+selected `warehouse_id`, so every `ErpLine.location` was `undefined` and the
+omit-don't-null rule (correct for an edit) dropped the key on every create.
+
+The omit rule arrived with a comment asserting it was "a NO-OP on the create
+routes ... so one rule serves both". The two paths need OPPOSITE rules, and the
+comment was wrong in the direction that fails every create.
+
+**Fix** - the composer resolves a location per line: the line's own
+`warehouse_id` -> the `scm.warehouses` CODE -> `LOCATION_MAP`; then the
+document's `sales_location` (a PO has none, its ship-to warehouse being per
+line); then REFUSES with `MissingLocationError`, a visible skipped row, rather
+than sending `""`. An edit still omits the key, because a blank would erase the
+location the account book owns. `composeSoState` / `composePoState` now compose
+`create` LAZILY - an edit builds the same state object, and eagerly composing a
+create it will never send refused the edit for the create's reasons.
+
+**Mutation-verified**: removing the refusal fails exactly the two tests that
+assert it; removing nothing else changes. 84 tests pass across the two suites.
+
+**Ref** - feat/ac-writeback-sofa-collapse, 2026-08-11.
+
 ## The AutoCount write-back could not express an edit, a cancel or a create for most of the ERP's documents, and the gaps were invisible [high]
 
 **Symptom** - the owner's go-live criterion 1 is "every document type syncs to

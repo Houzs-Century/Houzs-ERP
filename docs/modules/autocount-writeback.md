@@ -32,6 +32,7 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |
 | `/cancel` | `cancel` | cancel — all six types (SO, PO, DO, GR, IV, PI) |
 | `/edit` | `edit` | edit — all six types: header, lines, variant/SKU changes |
+| `/ensure-masters` | `ensure_masters` | opens the items and salespeople a document names, BEFORE it is sent |
 
 There is deliberately **no create route for DO / GRN / Invoice / Purchase
 Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
@@ -520,6 +521,37 @@ The refusal is raised **before** the keyless-line check, because a half-cancelle
 build is a question about what the operator meant, not a missing backfill —
 telling them to backfill a key would send them after the wrong thing.
 
+### The stock location — mandatory on a CREATE, untouched on an EDIT
+
+The two paths need OPPOSITE rules for the same field, which is why this has its
+own heading.
+
+`AcSyncService`'s create applies the key unconditionally
+(`Set(() => d.Location = Str(it, "Location"))`) and `Str` turns an absent key
+into `""`. `""` is not a row in `dbo.Location`, so the live book rejects it:
+
+```
+2026-08-11 11:54:59  /create-so  (no Location on either line)
+  -> AutoCount.Data.ForeignKeyException  FK_SODTL_Location
+     table "dbo.Location", column 'Location'
+2026-08-11 11:57:43  /create-so  (Location "KL" on both lines)  -> saved
+```
+
+So a create resolves a location per line, in this order, and **refuses when it
+runs out** (`MissingLocationError`, a visible `skipped` row — never `""`):
+
+| | source |
+|---|---|
+| 1 | the line's own `warehouse_id`, resolved to the warehouse CODE (`scm.warehouses`), then through `LOCATION_MAP` |
+| 2 | the document — `mfg_sales_orders.sales_location`. A purchase order has none: its ship-to warehouse is per LINE, so there is nothing to inherit and step 2 does not apply |
+| 3 | refuse, naming the line |
+
+An **edit** does the opposite: no location means OMIT the key, because the
+account book already holds one and a blank would erase it. The same asymmetry
+is why `create` is composed LAZILY in `composeSoState` / `composePoState` — an
+edit builds the same state object, and eagerly composing a create it will never
+send would refuse the edit for the create's reasons.
+
 Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
 `npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
 export without regenerating cannot leave the composer resolving against last
@@ -587,6 +619,64 @@ a parent" guard is not needed** — the practice already respects the shape. Two
 things the census did surface and neither is this gap: 4 company-2 DOs have **no
 lines at all**, and 0 documents of any type are PARTIALLY parented (which would
 give AutoCount a document missing its ad-hoc lines).
+
+## 7d2. An edit carries the fields a create carries (D8)
+
+A create sent the salesperson, the sales location, the document date and the
+three UDFs. An edit sent none of them — so changing the salesperson, the sales
+location, the order date, the branding or the venue on a live order **never
+reached AutoCount at all**.
+
+The account book was never the obstacle: `AcSyncService.Edit()` has `Agent`,
+`SalesLocation` and `DocDate` in its header allow-list and calls `ApplyUdf`.
+This was the ERP declining to speak.
+
+| field | source | shape |
+|---|---|---|
+| `Agent` | `mfg_sales_orders.agent` through `AGENT_MAP` | header |
+| `SalesLocation` | `sales_location` through `LOCATION_MAP` | header |
+| `DocDate` | `so_date` | header |
+| `BRANDING` / `VENUE` / `ToPONo` | `branding` / `venue` / `po_doc_no` | **nested `UDF` object** |
+
+`UDF` is nested because that is the only place the service reads it
+(`ApplyUdf` -> `Dict(h, "UDF")`); a flat `SOUDF_*` key at header level is
+silently ignored.
+
+**A field the ERP does not have is OMITTED, never sent as null.** The service's
+header loop is `ContainsKey`-gated and `Str` turns a present-but-null into `""`,
+so `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
+the account book has". Same rule as the line-level Location, one level up.
+
+## 7e. The masters a document names are opened first
+
+A document naming a master AutoCount does not have does not fail politely: it
+fails on a FOREIGN KEY and the whole document is lost. That is not a theory —
+the live book answered `FK_SODTL_Location` to a create whose lines carried no
+stock location, and the same shape waits behind every new SKU and every new
+salesperson the ERP opens.
+
+So the drain sends `/ensure-masters` FIRST, for `create_so`, `create_po` and
+`edit` — the three operations that can introduce one. A conversion cannot (it
+transfers lines the book already holds) and neither can a cancel, so neither
+pays for the call.
+
+`mastersOf(body)` reads the PAYLOAD that is about to be sent, never the
+database: the payload is the snapshot of what the user's save produced, and a
+master derived from anything else could differ from the one the document
+actually references. It dedupes by item code and **skips a retired line**, which
+is addressed by a DtlKey AutoCount itself issued and therefore names nothing new.
+
+**If the masters cannot be opened, the document is NOT sent.** A row that
+half-populated a live account book is worse than a row that waited.
+
+The service side is idempotent by construction — each master is looked up and
+created only when the lookup comes back empty — and it is deliberately narrow:
+
+| | |
+|---|---|
+| It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
+| It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
+| It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 
 ## 8. Configuration
 

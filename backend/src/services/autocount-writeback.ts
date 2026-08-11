@@ -135,6 +135,8 @@ export interface ErpPoHeader {
 }
 
 export interface ErpLine {
+  /** The ERP row id. Only the add-a-line path needs it — see `newLineIds`. */
+  id?: string | null;
   item_code: string;
   item_group?: string | null;
   description: string | null;
@@ -250,7 +252,11 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
-  Header: Record<string, string | null>;
+  /* `UDF` is a NESTED object, because that is how AcSyncService reads it
+     (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
+     silently ignored — the connector's own decompiled source made the same
+     point about its create path, and it cost a round of blind pushes then. */
+  Header: Record<string, string | null | Record<string, string>>;
   Lines: AcEditLine[];
 }
 
@@ -292,6 +298,25 @@ export interface ComposeOptions {
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
+  /**
+   * The document's own location, used for a line that carries none of its own.
+   * A sales order knows where it sells from even when a line does not.
+   */
+  defaultLocation?: string | null;
+  /**
+   * CREATE only. A line that still resolves to no location is REFUSED rather
+   * than sent — see MissingLocationError for the live-book evidence. An edit
+   * must never set this: there, an absent location means "leave the account
+   * book's own value alone".
+   */
+  requireLocation?: boolean;
+  /**
+   * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
+   * that a keyless line is genuinely new rather than un-backfilled. Honoured
+   * only when EVERY keyless line on the document is one of these; see the
+   * comment in composeEdit for why both halves are required.
+   */
+  newLineIds?: Set<string>;
 }
 
 /**
@@ -307,6 +332,39 @@ export class SofaCollapseError extends Error {
     );
     this.name = 'SofaCollapseError';
     this.refusals = refusals;
+  }
+}
+
+/**
+ * A CREATE with no stock location is refused, because AutoCount refuses it too.
+ *
+ * MEASURED ON THE LIVE BOOK, 2026-08-11 11:54:59: a `/create-so` whose lines
+ * carried no `Location` came back
+ * `AutoCount.Data.ForeignKeyException ... FK_SODTL_Location ... table
+ * "dbo.Location", column 'Location'`. The same document at 11:57:43 with
+ * `Location: "KL"` on both lines saved. AcSyncService's create path applies the
+ * key unconditionally (`Set(() => d.Location = Str(it, "Location"))`) and `Str`
+ * turns an absent key into `""` — and `""` is not a row in `dbo.Location`.
+ *
+ * The omission rule was introduced with a comment claiming it was "a NO-OP on
+ * the create routes". It is not, and it was wrong in the direction that fails
+ * EVERY create. The rule stays correct for an EDIT, where a blank would
+ * overwrite the location the account book already holds; on a CREATE there is
+ * nothing to preserve and a foreign key to satisfy.
+ */
+export class MissingLocationError extends Error {
+  readonly lines: ReadonlyArray<{ index: number; itemCode: string }>;
+  constructor(lines: Array<{ index: number; itemCode: string }>) {
+    super(
+      `${lines.length} line(s) carry no stock location and none can be inherited from the `
+      + `document: ${lines.map((l) => `${l.index + 1} (${l.itemCode})`).join(', ')}. `
+      + 'AutoCount rejects a document line whose Location is not in dbo.Location, and an '
+      + 'absent key reaches it as the empty string — so this create would fail on '
+      + 'FK_SODTL_Location. Set the warehouse on the line, or the sales location on the '
+      + 'document, then save again.',
+    );
+    this.name = 'MissingLocationError';
+    this.lines = lines;
   }
 }
 
@@ -358,6 +416,7 @@ export function composeDetails(
   if (refusals.length) throw new SofaCollapseError(refusals);
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
+  const locationless: Array<{ index: number; itemCode: string }> = [];
   const details: AcDetail[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
@@ -368,7 +427,12 @@ export function composeDetails(
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
-    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
+    const raw = l.location ?? opts.defaultLocation ?? null;
+    const location = raw ? mapOrPassthrough(raw, LOCATION_MAP) ?? raw : null;
+    if (!location && opts.requireLocation) {
+      locationless.push({ index: i, itemCode: r.acItemCode });
+      return;
+    }
     const d: AcDetail = {
       ItemCode: r.acItemCode,
       Description: l.description ?? null,
@@ -389,6 +453,7 @@ export function composeDetails(
     details.push(d);
   });
   if (failures.length) throw new ItemCodeError(failures);
+  if (locationless.length) throw new MissingLocationError(locationless);
 
   return { details, collapsed };
 }
@@ -435,7 +500,11 @@ export function composeCreateSo(
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
     }),
-    Details: composeDetails(live(lines), opts).details,
+    Details: composeDetails(live(lines), {
+      ...opts,
+      defaultLocation: opts.defaultLocation ?? header.sales_location,
+      requireLocation: true,
+    }).details,
   };
 }
 
@@ -458,6 +527,11 @@ export function composeCreatePo(
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
+      /* A purchase order has no location of its own — the ship-to warehouse is
+         per LINE (purchase_order_items.warehouse_id). There is nothing to
+         inherit, so a line without one is refused rather than guessed at. */
+      defaultLocation: opts.defaultLocation ?? null,
+      requireLocation: true,
     }).details,
   };
 }
@@ -509,7 +583,7 @@ export function composeCreatePo(
 export function composeEdit(
   docType: AcDocType,
   docNo: string,
-  header: Record<string, string | null>,
+  header: Record<string, string | null | Record<string, string>>,
   lines: ErpLine[],
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
@@ -564,6 +638,40 @@ export function composeEdit(
 
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
+
+  /* ADDING A LINE to a document AutoCount already has.
+   *
+   * A keyless line has two possible meanings and they are opposite: it is a
+   * line the operator just added, or it is a legacy line whose key was never
+   * backfilled. Guess "new" and the second case appends a SECOND COPY of a line
+   * that is already in a live account book — permanently, on a purchase order.
+   * So the ERP is not allowed to infer it. It has to be TOLD, by the route that
+   * did the adding, and even then only when the rest of the document proves the
+   * backfill is complete.
+   *
+   * Both halves are required:
+   *   1. the caller named this ERP row as one it just inserted, and
+   *   2. EVERY OTHER line on the document already carries a key.
+   *
+   * (2) is what makes (1) safe to believe. A document with other keyless lines
+   * has not been backfilled, so "the rest are keyed" cannot vouch for this one
+   * and the whole edit is refused as before. */
+  const declaredNew = opts.newLineIds ?? null;
+  if (declaredNew && declaredNew.size && keyless.length) {
+    const isDeclared = (i: number) => {
+      const id = collapsed[i].sourceIndexes
+        .map((ix) => lines[ix]?.id)
+        .find((v) => v != null);
+      return id != null && declaredNew.has(String(id));
+    };
+    if (keyless.every(isDeclared)) {
+      for (const i of keyless) {
+        (keyed[i] as AcDetail & { IsNewLine?: true }).IsNewLine = true;
+      }
+      keyless.length = 0;
+    }
+  }
+
   if (keyless.length) {
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
@@ -607,6 +715,7 @@ export const AC_ROUTE = {
   gr_to_pi: '/gr-to-pi',
   cancel: '/cancel',
   edit: '/edit',
+  ensure_masters: '/ensure-masters',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;

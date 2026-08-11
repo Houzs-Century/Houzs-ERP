@@ -10,6 +10,7 @@ import {
   composeCreatePo,
   composeEdit,
   KeylessLineError,
+  MissingLocationError,
   SofaCollapseError,
   parseCreatedLines,
   composeDescription2,
@@ -153,8 +154,9 @@ describe('composeCreatePo', () => {
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
       creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
-    }, [line({ unit_price_centi: 5000 })], opts);
+    }, [line({ unit_price_centi: 5000, location: 'KL' })], opts);
     expect(p.DocNo).toBe('HC-PO-1');
+    expect(p.Details[0].Location).toBe('KL');
     expect(p.CreditorCode).toBe('400-H004');
     expect(p.Description).toBe('N');
     expect(p.Details[0].UnitPrice).toBe(50);
@@ -350,5 +352,46 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
     expect(p.Lines).toHaveLength(1);
     expect(p.Lines[0]).toMatchObject({ DtlKey: 8801, ItemCode: 'AC-SOFA-9028' });
     expect((p.Lines[0] as { Retire?: boolean }).Retire).toBeUndefined();
+  });
+});
+
+/* The live book, 2026-08-11 11:54:59: a create with no Location came back
+   FK_SODTL_Location; the same document at 11:57:43 with Location "KL" saved.
+   AcSyncService's create applies the key unconditionally and an absent key
+   reaches it as "", which is not a row in dbo.Location. So a CREATE must carry
+   one and an EDIT must not invent one. */
+describe('a stock location is mandatory on a CREATE and untouched on an EDIT', () => {
+  const soHeader: ErpSoHeader = { ...header, sales_location: 'PETALING JAYA' };
+
+  test("the line's own warehouse wins, mapped to the code AutoCount knows", () => {
+    const p = composeCreateSo(soHeader, [line({ location: 'PG WAREHOUSE' })], opts);
+    expect(p.Details[0].Location).toBe('PG');
+  });
+
+  test('a line with no warehouse inherits the document, because an order sells from somewhere', () => {
+    const p = composeCreateSo(soHeader, [line()], opts);
+    expect(p.Details[0].Location).toBe('KL');
+  });
+
+  test('neither one is REFUSED, naming the line — sending "" would fail FK_SODTL_Location', () => {
+    let err: unknown;
+    try {
+      composeCreateSo({ ...header, sales_location: null }, [line()], opts);
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(MissingLocationError);
+    expect((err as Error).message).toContain('AC-CODE-1');
+    expect((err as Error).message).toContain('FK_SODTL_Location');
+  });
+
+  test('a PO has no document location to inherit, so a warehouse-less line is refused', () => {
+    expect(() => composeCreatePo({
+      po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',
+      creditor_name: 'S', agent: null, ref: null, notes: null,
+    }, [line()], opts)).toThrow(MissingLocationError);
+  });
+
+  test('an EDIT omits the key entirely rather than blanking the book, and never refuses', () => {
+    const p = composeEdit('SO', 'SO-000021', {}, [line({ linked_ac_dtlkey: 991 })], opts);
+    expect(p.Lines[0]).not.toHaveProperty('Location');
   });
 });

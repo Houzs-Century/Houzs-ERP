@@ -173,6 +173,7 @@ class AcSyncService {
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
       case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
+      case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -436,6 +437,127 @@ class AcSyncService {
     }
     if (!ok) throw new Exception("AutoCount refused to cancel " + type + " " + docNo +
       " (already transferred to a downstream document, or already cancelled)");
+  }
+
+  /* ── masters ────────────────────────────────────────────────────────────────
+     A document naming a master AutoCount does not have does not fail politely:
+     it fails on a FOREIGN KEY, and the whole document is lost. That is not a
+     theory — the live book answered FK_SODTL_Location to a create whose lines
+     carried no stock location, and the same shape is waiting behind every new
+     SKU, every new salesperson and every new customer the ERP opens.
+
+     So the ERP declares the masters a document needs and this route makes them
+     exist FIRST. It is idempotent by construction: each one is looked up and
+     only created when the lookup comes back empty, so the ERP may declare the
+     same set on every push without inventing anything.
+
+     WHAT IT DELIBERATELY WILL NOT DO:
+     - It never EDITS a master that already exists. An item's costing method or
+       a debtor's credit limit is Finance's, not the sync's, and overwriting one
+       from an ERP field would be a silent business change. Existing masters are
+       reported as `existed` and left exactly as they are.
+     - It never creates a LOCATION. A new warehouse is a real business decision
+       with stock consequences; a create that names an unknown one is refused on
+       the ERP side instead (MissingLocationError).
+     - Everything it creates is stamped in Desc2/Description so Finance can find
+       them: an auto-opened master is a thing to review, not a thing to hide. */
+  static Dictionary<string, object> EnsureMasters(Dictionary<string, object> p) {
+    var s = Session();
+    var created = new List<string>();
+    var existed = new List<string>();
+    var failed = new List<Dictionary<string, object>>();
+
+    foreach (var o in List(p, "Items")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "ItemCode");
+      if (code.Length == 0) continue;
+      try {
+        var da = AutoCount.Stock.Item.ItemDataAccess.Create(s, s.DBSetting);
+        if (ItemExists(da, code)) { existed.Add("item:" + code); continue; }
+        var e = da.NewItem();
+        e.ItemCode = code;
+        e.Description = Or(Str(it, "Description"), code);
+        Set(() => e.Desc2 = Str(it, "Desc2"));
+        Set(() => e.ItemGroup = Str(it, "ItemGroup"));
+        Set(() => e.StockControl = true);
+        Set(() => e.IsSalesItem = true);
+        Set(() => e.IsPurchaseItem = true);
+        /* An item with no UOM cannot be put on a document line: the detail's
+           own UOM foreign-keys to ItemUOM. One base UOM at rate 1. */
+        var uom = Or(Str(it, "UOM"), "UNIT");
+        Set(() => e.NewUom(uom, 1m));
+        Set(() => e.BaseUom = uom);
+        da.SaveData(e, USER);
+        created.Add("item:" + code);
+        Log("  ensure-masters CREATED item " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "item:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    foreach (var o in List(p, "Agents")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "Agent");
+      if (code.Length == 0) continue;
+      try {
+        var cmd = AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand.Create(s, s.DBSetting);
+        if (AgentExists(cmd, code)) { existed.Add("agent:" + code); continue; }
+        var e = cmd.NewSalesAgent();
+        e.SalesAgent = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        cmd.SaveSalesAgent(e);
+        created.Add("agent:" + code);
+        Log("  ensure-masters CREATED agent " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "agent:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    foreach (var o in List(p, "Debtors")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var acc = Str(it, "AccNo");
+      if (acc.Length == 0) continue;
+      try {
+        var da = AutoCount.ARAP.Debtor.DebtorDataAccess.Create(s, s.DBSetting);
+        if (DebtorExists(da, acc)) { existed.Add("debtor:" + acc); continue; }
+        var e = da.NewDebtor();
+        e.AccNo = acc;
+        Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
+        Set(() => e.ControlAccount = Str(it, "ControlAccount"));
+        da.SaveDebtor(e, USER);
+        created.Add("debtor:" + acc);
+        Log("  ensure-masters CREATED debtor " + acc);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "debtor:" + acc }, { "error", ex.Message } });
+      }
+    }
+
+    var res = new Dictionary<string, object> {
+      { "ok", failed.Count == 0 },
+      { "created", created },
+      { "existed", existed },
+      { "failed", failed },
+    };
+    /* A partial answer is still an answer: the caller needs to know WHICH master
+       it may not name, and a bare 500 would lose that. */
+    if (failed.Count > 0) res["error"] = failed.Count + " master(s) could not be opened";
+    return res;
+  }
+
+  /* Existence is asked of the SDK, not of a table name we would have to guess.
+     A getter that throws means "not there" — the same answer as a null. */
+  static bool ItemExists(AutoCount.Stock.Item.ItemDataAccess da, string code) {
+    try { return da.LoadItem(code, AutoCount.Stock.Item.ItemEntryAction.Edit) != null; }
+    catch { return false; }
+  }
+  static bool AgentExists(AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand cmd, string code) {
+    try { return cmd.GetSalesAgent(code) != null; } catch { return false; }
+  }
+  static bool DebtorExists(AutoCount.ARAP.Debtor.DebtorDataAccess da, string acc) {
+    try { return da.GetDebtor(acc) != null; } catch { return false; }
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
