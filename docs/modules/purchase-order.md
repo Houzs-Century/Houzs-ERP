@@ -140,7 +140,8 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK). seq auto-assigned dense. |
 | PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
-| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ signedUrl, thumbUrl, expiresAt }`). READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -454,6 +455,31 @@ The importer's append (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') |
 R2 objects — one photo, two documents, no duplicated bytes and no R2 round-trip
 inside the convert. Consequence, deliberate: deleting a photo from the SO line
 removes the object, so it also leaves any PO raised from that line.
+
+**Reading a photo: signed first, proxy fallback (2026-08-10).** There are two
+read routes and the difference is not cosmetic.
+
+| Route | Mints | Needs | Usable as `<img src>`? |
+|---|---|---|---|
+| `/photos/:photoKey/signed` | presigned S3 URL | `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` + `R2_ENDPOINT` (wrangler SECRETS) | YES — signature travels in the query string |
+| `/photos/:photoKey` (proxy) | the bytes | the `SO_ITEM_PHOTOS` binding only | **NO** — see below |
+
+Those three secrets have never been provisioned in production, so
+`soItemPhotoBindings()` throws and `/signed` used to answer
+`500 {"error":"signing_failed"}` for every photo. It now falls back to the proxy
+and returns `200 { mode: 'proxy', proxyPath, thumbProxyPath, expiresAt: null,
+reason }`. Signing is still attempted first and still used when it works —
+signed URLs exist so a grid of thumbnails does not pay a Worker invocation per
+tile, and the fallback must not become the default read path.
+
+**The proxy path is NOT an `<img src>`.** It sits behind the global auth gate,
+which reads the bearer token from the `Authorization` HEADER only; there is no
+cookie session in this app. A browser attaches no header to an `<img>`, so
+pointing one at the proxy 401s. The client must fetch it with the authed client,
+read the response as a Blob, and hand `URL.createObjectURL(blob)` to the `<img>`
+(revoking it on unmount). This is why the fallback returns `proxyPath` and
+deliberately leaves `signedUrl` undefined — populating it would swap a visible
+500 for an invisible 401. See `backend/src/scm/lib/photoProxyFallback.ts`.
 
 **Per line, never deduplicated across a PO.** One sofa build is several
 compartment lines that legitimately share one build photo; folding them would
