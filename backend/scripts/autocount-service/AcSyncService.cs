@@ -582,6 +582,86 @@ class AcSyncService {
       }
     }
 
+    /* A STOCK LOCATION. The live book answered FK_SODTL_Location to a line
+       whose Location was empty, so a warehouse the book does not have fails the
+       document the same way a missing item does. Opening one has real
+       consequences - it is a place stock can sit - so it is created EMPTY:
+       a code and a description, nothing else. Everything a warehouse actually
+       needs (addresses, payment accounts, defaults) stays for a human. */
+    foreach (var o in List(p, "Locations")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "Location");
+      if (code.Length == 0) continue;
+      try {
+        var lm = AutoCount.Stock.Location.LocationMaintenance.CreateLocationMaint(s, s.DBSetting);
+        if (LocationExists(lm, code)) { existed.Add("location:" + code); continue; }
+        var e = lm.NewLocation();
+        e.Location = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        lm.SaveLocation(e);
+        created.Add("location:" + code);
+        Log("  ensure-masters CREATED location " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "location:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A UDF DROPDOWN OPTION (BRANDING, VENUE).
+       READ, APPEND, WRITE BACK THE WHOLE SET - never Add() with just the new
+       one. AutoCount.UDF.List exposes GetItems() and SetItems(), so the current
+       options can be read first and the new value appended to them. Calling
+       Add(name, new[]{ value }) and hoping it appends would, if it replaces,
+       delete every other option in a live book - roughly 95 of them on VENUE.
+       The read-modify-write shape makes that impossible rather than unlikely.
+
+       A list that does not exist at all is NOT created: an unknown list NAME is
+       a spelling mistake on our side, not a missing option, and inventing one
+       would hide it. */
+    var udfWanted = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var o in List(p, "UdfOptions")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var listName = Str(it, "List");
+      var val = Str(it, "Value");
+      if (listName.Length == 0 || val.Length == 0) continue;
+      if (!udfWanted.ContainsKey(listName)) udfWanted[listName] = new List<string>();
+      if (!udfWanted[listName].Contains(val)) udfWanted[listName].Add(val);
+    }
+    if (udfWanted.Count > 0) {
+      try {
+        var udfl = new AutoCount.UDF.UDFList(s.DBSetting);
+        var names = new List<string>(udfl.GetNames());
+        var dirty = false;
+        foreach (var kv in udfWanted) {
+          var listName = names.Find(n => string.Equals(n, kv.Key, StringComparison.OrdinalIgnoreCase));
+          if (listName == null) {
+            failed.Add(new Dictionary<string, object> {
+              { "master", "udf-list:" + kv.Key },
+              { "error", "no such user-defined list in this book - check the name, do not invent the list" },
+            });
+            continue;
+          }
+          var list = udfl[listName];
+          var items = new List<string>(list.GetItems() ?? new string[0]);
+          foreach (var v in kv.Value) {
+            if (items.Exists(x => string.Equals(x, v, StringComparison.OrdinalIgnoreCase))) {
+              existed.Add("udf:" + listName + "=" + v);
+              continue;
+            }
+            items.Add(v);
+            created.Add("udf:" + listName + "=" + v);
+            dirty = true;
+            Log("  ensure-masters ADDED udf option " + listName + " = " + v);
+          }
+          list.SetItems(items.ToArray());
+        }
+        if (dirty) udfl.Save();
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "udf-options" }, { "error", ex.Message } });
+      }
+    }
+
     var res = new Dictionary<string, object> {
       { "ok", failed.Count == 0 },
       { "created", created },
@@ -608,6 +688,9 @@ class AcSyncService {
   }
   static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
     try { return da.GetCreditor(acc) != null; } catch { return false; }
+  }
+  static bool LocationExists(AutoCount.Stock.Location.LocationMaintenance lm, string code) {
+    try { return lm.GetLocation(code) != null; } catch { return false; }
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
