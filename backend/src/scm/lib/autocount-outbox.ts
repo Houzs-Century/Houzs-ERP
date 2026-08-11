@@ -1303,6 +1303,47 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
 
 // ── drain ───────────────────────────────────────────────────────────────────
 
+/**
+ * The masters a payload NAMES, in the shape /ensure-masters consumes.
+ *
+ * Read off the payload that is about to be sent, never recomposed from the
+ * database: the payload is the snapshot of what the user's save produced, and a
+ * master derived from anything else could differ from the one the document
+ * actually references.
+ *
+ * The debtor is deliberately absent. Houzs writes every order against ONE fixed
+ * AutoCount debtor and overwrites the name field per customer, so there is no
+ * per-customer account to open — and opening one would create an AR account
+ * nobody asked for. If that convention ever changes, this is where it changes.
+ */
+export function mastersOf(body: Record<string, unknown>): Record<string, unknown> | null {
+  const items = new Map<string, { ItemCode: string; Description: string; UOM?: string }>();
+  const details = [
+    ...(Array.isArray(body.Details) ? body.Details : []),
+    ...(Array.isArray(body.Lines) ? body.Lines : []),
+  ] as Array<Record<string, unknown>>;
+  for (const d of details) {
+    const code = typeof d?.ItemCode === 'string' ? d.ItemCode.trim() : '';
+    /* A retired line names a code the book already has, by construction — it is
+       addressed by a DtlKey AutoCount issued. Nothing to open. */
+    if (!code || d?.Retire === true) continue;
+    if (!items.has(code)) {
+      items.set(code, {
+        ItemCode: code,
+        Description: typeof d.Description === 'string' && d.Description ? d.Description : code,
+        ...(typeof d.UOM === 'string' && d.UOM ? { UOM: d.UOM } : {}),
+      });
+    }
+  }
+
+  const agents: Array<{ Agent: string }> = [];
+  const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
+  if (agent) agents.push({ Agent: agent });
+
+  if (!items.size && !agents.length) return null;
+  return { Items: [...items.values()], Agents: agents };
+}
+
 /** Read one ERP document's AutoCount counterpart number. */
 async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
   const { data } = await sb.from(ref.table)
@@ -1477,6 +1518,28 @@ export async function dispatchOne(
   }
 
   const attempts = (row.attempts ?? 0) + 1;
+
+  /* MASTERS FIRST, and only for the two operations that can introduce one.
+     A document naming an item, a salesperson or a customer the account book
+     does not have fails on a FOREIGN KEY and takes the whole document with it —
+     the live book proved the shape by answering FK_SODTL_Location to a create
+     whose lines carried no location. A conversion cannot introduce a master
+     (it transfers lines that are already there) and neither can a cancel. */
+  if (row.op === 'create_so' || row.op === 'create_po' || row.op === 'edit') {
+    const masters = mastersOf(body);
+    if (masters) {
+      const ensured = await callAcService(env, 'ensure_masters', masters, fetchImpl);
+      if (!ensured.ok) {
+        await mark(sb, row.id, {
+          attempts,
+          last_error: `masters not opened, document not sent: ${ensured.error ?? 'unknown'}`,
+          ...(ensured.retryable && attempts < MAX_ATTEMPTS ? {} : { status: 'failed' }),
+        });
+        return ensured.retryable && attempts < MAX_ATTEMPTS ? 'retry' : 'failed';
+      }
+    }
+  }
+
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {

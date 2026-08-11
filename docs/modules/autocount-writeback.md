@@ -32,6 +32,7 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |
 | `/cancel` | `cancel` | cancel — all six types (SO, PO, DO, GR, IV, PI) |
 | `/edit` | `edit` | edit — all six types: header, lines, variant/SKU changes |
+| `/ensure-masters` | `ensure_masters` | opens the items and salespeople a document names, BEFORE it is sent |
 
 There is deliberately **no create route for DO / GRN / Invoice / Purchase
 Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
@@ -587,6 +588,37 @@ a parent" guard is not needed** — the practice already respects the shape. Two
 things the census did surface and neither is this gap: 4 company-2 DOs have **no
 lines at all**, and 0 documents of any type are PARTIALLY parented (which would
 give AutoCount a document missing its ad-hoc lines).
+
+## 7e. The masters a document names are opened first
+
+A document naming a master AutoCount does not have does not fail politely: it
+fails on a FOREIGN KEY and the whole document is lost. That is not a theory —
+the live book answered `FK_SODTL_Location` to a create whose lines carried no
+stock location, and the same shape waits behind every new SKU and every new
+salesperson the ERP opens.
+
+So the drain sends `/ensure-masters` FIRST, for `create_so`, `create_po` and
+`edit` — the three operations that can introduce one. A conversion cannot (it
+transfers lines the book already holds) and neither can a cancel, so neither
+pays for the call.
+
+`mastersOf(body)` reads the PAYLOAD that is about to be sent, never the
+database: the payload is the snapshot of what the user's save produced, and a
+master derived from anything else could differ from the one the document
+actually references. It dedupes by item code and **skips a retired line**, which
+is addressed by a DtlKey AutoCount itself issued and therefore names nothing new.
+
+**If the masters cannot be opened, the document is NOT sent.** A row that
+half-populated a live account book is worse than a row that waited.
+
+The service side is idempotent by construction — each master is looked up and
+created only when the lookup comes back empty — and it is deliberately narrow:
+
+| | |
+|---|---|
+| It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
+| It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
+| It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 
 ## 8. Configuration
 

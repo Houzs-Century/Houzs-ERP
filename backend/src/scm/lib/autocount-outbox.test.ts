@@ -13,6 +13,7 @@ import {
   recordConvertSkipped,
   enqueueCancel,
   enqueueEdit,
+  mastersOf,
   dispatchOne,
   MAX_ATTEMPTS,
   type AcOutboxRow,
@@ -890,5 +891,85 @@ describe('a removed line is retired in AutoCount, never just left out', () => {
     const [row] = outbox(sb);
     expect(row.payload.body.Details).toHaveLength(1);
     expect(row.payload.body.Details[0].ItemCode).toBe('AERO-Y04 (K)');
+  });
+});
+
+/* A document naming a master the account book does not have does not fail
+   politely - it fails on a FOREIGN KEY and takes the whole document with it.
+   The live book proved the shape on 2026-08-11 by answering FK_SODTL_Location
+   to a create whose lines carried no stock location. */
+describe('the masters a document names are opened BEFORE the document is sent', () => {
+  const env = { AC_SYNC_URL: 'http://ac.local:8900', AC_SYNC_KEY: 'k' } as never;
+  const jsonRes = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const createRow = (body: Record<string, unknown>): AcOutboxRow => ({
+    id: 'ob-1', company_id: 1, op: 'create_so', doc_type: 'SO', doc_no: 'HC-SO-9',
+    doc_id: null, payload: { body }, status: 'pending', attempts: 0, dedupe_key: null,
+  });
+
+  test('mastersOf reads the payload that is about to be sent, and dedupes it', () => {
+    const m = mastersOf({
+      Agent: 'WW',
+      Details: [
+        { ItemCode: 'A', Description: 'first' },
+        { ItemCode: 'A', Description: 'same code again' },
+        { ItemCode: 'B', UOM: 'SET' },
+      ],
+    }) as { Items: Array<Record<string, unknown>>; Agents: Array<Record<string, unknown>> };
+    expect(m.Items.map((i) => i.ItemCode)).toEqual(['A', 'B']);
+    expect(m.Items[0].Description).toBe('first');
+    expect(m.Items[1].UOM).toBe('SET');
+    expect(m.Agents).toEqual([{ Agent: 'WW' }]);
+  });
+
+  test('a RETIRED line names nothing: it is addressed by a key AutoCount itself issued', () => {
+    const m = mastersOf({ Lines: [{ DtlKey: 7001, ItemCode: 'GONE', Retire: true }] });
+    expect(m).toBeNull();
+  });
+
+  test('the masters call happens FIRST, and the document goes second', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return jsonRes(200, { ok: true, docNo: 'SO-000123' });
+    }) as never;
+    expect(await dispatchOne(env, sb as never, createRow({
+      DocNo: 'HC-SO-9', Details: [{ ItemCode: 'NEW-SKU', Description: 'a new one' }],
+    }), fetchImpl)).toBe('sent');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain('/ensure-masters');
+    expect(calls[1]).toContain('/create-so');
+  });
+
+  test('masters that cannot be opened stop the document — a half-created book is worse', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return String(url).includes('/ensure-masters')
+        ? jsonRes(200, { ok: false, error: '1 master(s) could not be opened' })
+        : jsonRes(200, { ok: true, docNo: 'SO-000123' });
+    }) as never;
+    const outcome = await dispatchOne(env, sb as never, createRow({
+      DocNo: 'HC-SO-9', Details: [{ ItemCode: 'NEW-SKU' }],
+    }), fetchImpl);
+    expect(outcome).not.toBe('sent');
+    /* The create was never attempted. */
+    expect(calls.filter((c) => c.includes('/create-so'))).toHaveLength(0);
+    expect(outbox(sb)[0].last_error).toContain('masters not opened');
+  });
+
+  test('a conversion opens nothing — it transfers lines the book already holds', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return jsonRes(200, { ok: true, docNo: 'DO-0001' });
+    }) as never;
+    await dispatchOne(env, sb as never, {
+      ...createRow({ Details: [{ ItemCode: 'X' }] }), op: 'so_to_do', doc_type: 'DO',
+    }, fetchImpl);
+    expect(calls.filter((c) => c.includes('/ensure-masters'))).toHaveLength(0);
   });
 });

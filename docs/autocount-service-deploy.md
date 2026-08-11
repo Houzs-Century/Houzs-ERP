@@ -1,10 +1,22 @@
 # AcSyncService — build and deploy on the AutoCount host
 
-`backend/scripts/autocount-service/AcSyncService.cs` is the only piece of this
-repository that does **not** build in CI. It references the licensed AutoCount
-2.2 assemblies, which exist only on the AutoCount host, so CI cannot compile it
-and no automated test covers it. It is reviewed as source here and built by hand
-there.
+`backend/scripts/autocount-service/AcSyncService.cs` does not build in CI: it
+references the licensed AutoCount 2.2 assemblies, which no GitHub runner has.
+
+**But "only the office host can compile it" was FALSE, and believing it cost us
+a defect.** The assemblies ship with the ordinary AutoCount 2.2 desktop install
+and `csc.exe` ships with the .NET Framework, so any workstation with AutoCount
+installed compiles this file - the owner's desktop included. Verified
+2026-08-11: a clean build, byte-size identical to the `AcSyncService.prev.exe`
+already on the host.
+
+**Run `backend/scripts/autocount-service/build-local.ps1` before you push a C#
+change.** It substitutes a dummy connection line, compiles, prints the size and
+throws the binary away - it answers the one question CI cannot, which is DOES IT
+COMPILE. The migration record's defect 4 (an over-transfer handler that could
+never compile, sitting on `main`) is exactly what that check would have caught,
+and the reason recorded for missing it - "a file that compiles on exactly one
+machine in the building gets no CI" - was a premise nobody tested.
 
 This page is the whole procedure. It is written to be followed in one sitting by
 someone who did not write the change.
@@ -131,13 +143,17 @@ csc.exe /platform:x64 ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Purchase.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Accounting.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Stock.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.ARAP.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.GeneralMaint.dll" ^
   /r:System.Web.Extensions.dll /r:System.Data.dll ^
   /out:AcSyncService.exe AcSyncService.build.cs
 ```
 
-No new assembly references are needed. `CreatedLines()` uses
-`System.Data.SqlClient`, already referenced via `System.Data.dll`, and the same
-`db.ConnectionString` that `DtlKeys()` has always used.
+**THREE new assembly references** since `/ensure-masters` landed - `Stock`,
+`ARAP` and `GeneralMaint` carry `ItemDataAccess`, `DebtorDataAccess` and
+`SalesAgentCommand`. A build without them fails with CS0234 on the master-data
+namespaces. `CreatedLines()` still needs nothing beyond `System.Data.dll`.
 
 ### 2.3 Delete the substituted source
 

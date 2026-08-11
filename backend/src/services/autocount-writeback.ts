@@ -607,6 +607,7 @@ export const AC_ROUTE = {
   gr_to_pi: '/gr-to-pi',
   cancel: '/cancel',
   edit: '/edit',
+  ensure_masters: '/ensure-masters',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;
