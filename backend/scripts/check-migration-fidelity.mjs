@@ -53,9 +53,9 @@ const n0 = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 const centi = (v) => Math.round(n0(v) * 100);
 /* Date columns are cast to text in SQL rather than parsed here: postgres.js
    hands back a JS Date for `date`, and String(Date) is a locale string, so a
-   naive slice(0,10) silently turned every date comparison into a mismatch. */
+   naive slice(0,10) would turn every date comparison into a false mismatch. */
 const day = (v) => (v == null ? null : String(v).slice(0, 10));
-const isSofaAc = (c) => /SOFA/i.test(c || "");
+const push = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
 
 function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -88,13 +88,13 @@ const FIELD_MAP = [
   ["SO header", "sales_location", "SO.SalesLocation via SALESLOC map", "COMPARED", "short code -> full warehouse name"],
   ["SO header", "ref", "SO.Ref", "COMPARED", ""],
   ["SO header", "customer_so_no", "SO.Ref", "COMPARED", "same source as ref"],
-  ["SO header", "venue", "SO.UDF_VENUE", "COMPARED", ""],
+  ["SO header", "venue", "SO.UDF_VENUE", "COMPARED", "canonicalised post-migration; the check separates label canonicalisation from a different place"],
   ["SO header", "branding", "SO.UDF_BRANDING", "COMPARED", ""],
   ["SO header", "address1..address4", "SO.InvAddr1..InvAddr4", "COMPARED", ""],
   ["SO header", "phone", "SO.Phone1", "COMPARED", ""],
   ["SO header", "balance_centi", "SO.UDF_BALANCE x 100", "COMPARED", ""],
   ["SO header", "proceeded_at", "SO.UDF_PDate", "COMPARED", ""],
-  ["SO header", "local_total_centi", "SUM over SODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", ""],
+  ["SO header", "local_total_centi", "SUM over SODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", "the ERP's own line sum is printed beside it, so a header/line disagreement is distinguishable from a missing line"],
   ["SO header", "paid_centi / deposit_centi", "local_total - UDF_BALANCE", "DERIVED", ""],
   ["SO header", "salesperson_id", "SO.SalesAgent via agent-staff-binding.csv", "DECLARED", "a UUID, not an AutoCount value; the source text is compared as `agent`"],
   ["SO header", "venue_id", "SO.UDF_VENUE resolved to scm.venues", "DECLARED", "a UUID; the source text is compared as `venue`"],
@@ -104,7 +104,7 @@ const FIELD_MAP = [
   ["SO header", "status / currency / company_id", "constant", "DECLARED", "not from AutoCount"],
   ["SO header", "line_count / category subtotals", "counted over the ERP's own lines", "DECLARED", "sofa decomposition changes the line count by design"],
   // ---- sales order line ----
-  ["SO line", "linked_ac_dtlkey", "SODTL.DtlKey", "COMPARED", "backfilled 2026-08-11; the exact join key where present"],
+  ["SO line", "linked_ac_dtlkey", "SODTL.DtlKey", "COMPARED", "the exact join key where present; a key pointing at no AutoCount row is reported"],
   ["SO line", "item_code", "SODTL.ItemCode via autocount-erp-mapping-1561.csv", "COMPARED", "sofa compared by model prefix only - see declared differences"],
   ["SO line", "qty", "round(SODTL.Qty)", "COMPARED", "importer floors at 1 (`Math.round(qty) || 1`)"],
   ["SO line", "unit_price_centi", "round(SODTL.UnitPrice x 100)", "COMPARED", "sofa: price rides the lead compartment, compared as a group total"],
@@ -135,7 +135,7 @@ const FIELD_MAP = [
   ["PO line", "line_total_centi", "unit_price_centi x qty", "COMPARED", ""],
   ["PO line", "description2", "PODTL.Desc2", "COMPARED", ""],
   ["PO line", "delivery_date", "PODTL.DeliveryDate", "COMPARED", ""],
-  ["PO line", "description", "PODTL.Description", "COMPARED", "outstanding-PO import writes the ERP product name instead; both accepted"],
+  ["PO line", "description", "PODTL.Description", "NOT-CHECKED", "one importer writes AutoCount's text, the other the ERP product name; both are legitimate, so a comparison here only measures which importer ran"],
   ["PO line", "material_name", "the ERP product NAME", "DECLARED", "deliberately the ERP catalogue name"],
   ["PO line", "warehouse_id", "PODTL.Location via SALESLOC map", "DECLARED", "a UUID; source text compared as location on the AutoCount side"],
   ["PO line", "so_item_id", "PODTL.FromSODtlKey -> the ERP SO line", "NOT-CHECKED", "a dedication link, verified separately by the SO->PO->GR chain audit"],
@@ -154,7 +154,7 @@ const FIELD_MAP = [
   ["DO header", "debtor_name", "DO.DebtorName", "COMPARED", "falls back to the sales order's name when AutoCount is blank"],
   ["DO line", "qty", "DODTL.Qty", "COMPARED", "sofa: one AutoCount line becomes one ERP line per compartment, each carrying that qty"],
   ["DO line", "item_code", "the ERP sales-order line's code", "DECLARED", "taken from the SO line it delivers, not from DODTL.ItemCode"],
-  ["DO line", "description", "DODTL.Description", "COMPARED", ""],
+  ["DO line", "description", "DODTL.Description", "NOT-CHECKED", "the AutoCount line text rides through unchanged; not a quantitative field"],
   ["DO", "inventory movement", "none", "DECLARED", "migrated_no_stock (migration 0276)"],
 ];
 
@@ -166,6 +166,8 @@ const DECLARED_DIFFERENCES = [
   ["Item codes are translated", "AutoCount ItemCode -> ERP code through data/autocount-erp-mapping-1561.csv, and free-text AutoCount lines are name-resolved against the ERP pick list. A translated code is not a changed value."],
   ["SO line description is the ERP product name", "A picker-selected line stores the ERP catalogue name; writing AutoCount's Description there would make the list and the edit screen disagree. The AutoCount text is preserved in description2 / Desc2, which IS compared."],
   ["Only outstanding sales orders were imported", "An order every line of which AutoCount had already delivered is not outstanding, and was deliberately left behind. Documents in the AutoCount snapshot with no ERP counterpart are therefore expected and are not counted as divergences - this check walks the ERP's migrated rows outward."],
+  ["Venue labels were canonicalised AFTER the import", "backfill-canonicalize-venue.mjs / normalize-venue-aliases.mjs / standardize-venues rewrote SO.venue to the ERP's canonical venue name. Where the ERP value is a prefix or extension of AutoCount's the check labels it canonicalisation; where it names a different place it is reported as unexplained."],
+  ["18 surplus migrated DO lines were zeroed, not deleted", "zero-duplicate-do-lines.mjs (#1964, owner-approved, docs/migrated-do-duplicate-lines.md). create-migrated-documents.mjs inserted some delivery lines twice; the duplicate row STAYS with qty 0 because the owner's rule is nothing is deleted, only cancelled. An ERP DO line at qty 0 against a non-zero AutoCount line is that repair, and is labelled as such rather than counted as a migration defect."],
 ];
 
 // AutoCount location/sales-location short code -> ERP warehouse name, verbatim
@@ -184,25 +186,30 @@ const C1_ALIAS = { "SVC-DELIVERY": "TRANSPORTATION CHARGES", "SVC-DELIVERY-ADD":
 
 /* A finding is a FIELD, not a row. One systematic import bug shows up as one
    line in the verdict table with its example rows underneath, which is the
-   shape the received_qty defect has and the shape an aggregate check destroys. */
+   shape the received_qty defect has and the shape an aggregate check destroys.
+
+   `cause` names a KNOWN, already-decided reason for a row's divergence. Rows
+   with a cause are still printed - the owner asked whether the data is
+   identical, and the honest answer includes the deliberate changes - but they
+   are counted apart from the unexplained ones, which are the defects. */
 class Findings {
   constructor() { this.byField = new Map(); }
-  add(scope, field, key, erpVal, acVal, note) {
+  add(scope, field, key, erpVal, acVal, cause = null, how = null) {
     const k = `${scope}.${field}`;
     if (!this.byField.has(k)) this.byField.set(k, { scope, field, rows: [], units: 0 });
     const f = this.byField.get(k);
-    f.rows.push({ key, erp: erpVal, ac: acVal, note });
+    f.rows.push({ key, erp: erpVal, ac: acVal, cause, how });
     const d = Number(erpVal) - Number(acVal);
     if (Number.isFinite(d)) f.units += Math.abs(d);
   }
-  count(scope, field) { return this.byField.get(`${scope}.${field}`)?.rows.length ?? 0; }
   total() { let n = 0; for (const f of this.byField.values()) n += f.rows.length; return n; }
+  unexplained() { let n = 0; for (const f of this.byField.values()) n += f.rows.filter((r) => !r.cause).length; return n; }
 }
 
 const F = new Findings();
-const cmpText = (scope, field, key, erp, ac) => { if (norm(erp) !== norm(ac)) F.add(scope, field, key, txt(erp), txt(ac)); };
-const cmpNum = (scope, field, key, erp, ac) => { if (Math.round(n0(erp)) !== Math.round(n0(ac))) F.add(scope, field, key, Math.round(n0(erp)), Math.round(n0(ac))); };
-const cmpDate = (scope, field, key, erp, ac) => { if ((day(erp) ?? "") !== (day(ac) ?? "")) F.add(scope, field, key, day(erp) ?? "(null)", day(ac) ?? "(null)"); };
+const cmpText = (scope, field, key, erp, ac, how) => { if (norm(erp) !== norm(ac)) F.add(scope, field, key, txt(erp), txt(ac), null, how); };
+const cmpNum = (scope, field, key, erp, ac, how) => { if (Math.round(n0(erp)) !== Math.round(n0(ac))) F.add(scope, field, key, Math.round(n0(erp)), Math.round(n0(ac)), null, how); };
+const cmpDate = (scope, field, key, erp, ac, how) => { if ((day(erp) ?? "") !== (day(ac) ?? "")) F.add(scope, field, key, day(erp) ?? "(null)", day(ac) ?? "(null)", null, how); };
 
 async function main() {
   const started = Date.now();
@@ -221,12 +228,16 @@ async function main() {
   const mapAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) mapAc.set(norm(f[0]), (f[1] || "").trim()); }
   const erpCodeOf = (acItem) => { let e = mapAc.get(norm(acItem)) || null; if (e && C1_ALIAS[norm(e)]) e = C1_ALIAS[norm(e)]; return e; };
-  // an AutoCount sofa code resolves to a MODEL; the ERP holds MODEL-COMPARTMENT
+  /* An AutoCount sofa line names a MODEL; the ERP holds MODEL-COMPARTMENT. The
+     AutoCount side is sofa when its code says so OR when the code it maps to is
+     a sofa base SKU - "RDS-8133 SOFA" and a mapped "8133-1S" are the same fact
+     said two ways, and testing only the first misses the second. */
   const sofaModelOf = (acItem) => {
     const e = erpCodeOf(acItem); if (!e) return null;
-    let m = e.replace(/-1S$/i, "").toUpperCase();
+    const m = e.replace(/-1S$/i, "").toUpperCase();
     return SOFA_MODEL_ALIAS[m] || m;
   };
+  const acIsSofa = (r) => /SOFA/i.test(r.ItemCode || "") || /-1S$/i.test(erpCodeOf(r.ItemCode) || "");
 
   // ────────────────────────── report preamble ──────────────────────────
   log("═".repeat(96));
@@ -253,7 +264,7 @@ async function main() {
   for (const [t, why] of DECLARED_DIFFERENCES) { log(`* ${t}`); log(`    ${why}`); }
   log("");
 
-  // ───────────────────────── ERP: sales orders ─────────────────────────
+  // ───────────────────────────── ERP scope ─────────────────────────────
   const erpSoH = await sql`
     SELECT doc_no, linked_ac_docno, so_date::text AS so_date, debtor_name, debtor_code, agent, sales_location,
            ref, customer_so_no, venue, branding, address1, address2, address3, address4,
@@ -268,30 +279,25 @@ async function main() {
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no AND h.company_id = i.company_id
      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL
      ORDER BY h.linked_ac_docno, i.line_no`;
-
-  // ──────────────────────── ERP: purchase orders ────────────────────────
   const erpPoH = await sql`
-    SELECT p.id, p.po_number, p.linked_ac_docno, p.po_date::text AS po_date, p.expected_at::text AS expected_at, p.status,
-           p.subtotal_centi, p.total_centi, s.code AS supplier_code
+    SELECT p.id, p.po_number, p.linked_ac_docno, p.po_date::text AS po_date, p.expected_at::text AS expected_at,
+           p.status, p.subtotal_centi, p.total_centi, s.code AS supplier_code
       FROM scm.purchase_orders p
       LEFT JOIN scm.suppliers s ON s.id = p.supplier_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const erpPoL = await sql`
-    SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.description, i.description2,
+    SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.description2,
            i.qty, i.received_qty, i.unit_price_centi, i.line_total_centi, i.delivery_date::text AS delivery_date,
            i.item_group, i.linked_ac_dtlkey, p.linked_ac_docno AS ac
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
      ORDER BY p.linked_ac_docno, i.id`;
-
-  // ───────────────────── ERP: migrated GRNs and DOs ─────────────────────
   const erpGrnL = await sql`
     SELECT g.grn_number, g.linked_ac_docno AS ac_po, gi.material_code, gi.qty_received, gi.qty_accepted,
-           gi.purchase_order_item_id, pi.linked_ac_dtlkey, pi.received_qty AS po_received_qty
+           gi.purchase_order_item_id
       FROM scm.grns g
       JOIN scm.grn_items gi ON gi.grn_id = g.id
-      LEFT JOIN scm.purchase_order_items pi ON pi.id = gi.purchase_order_item_id
      WHERE g.company_id = ${CO} AND g.migrated_no_stock = true`;
   const erpGrnCount = await sql`
     SELECT COUNT(*)::int AS n FROM scm.grns g
@@ -315,13 +321,150 @@ async function main() {
   log(`  migrated delivery orders${String(erpDoH.length).padStart(6)}   lines ${String(erpDoL.length).padStart(6)}`);
   log("");
 
+  // ═════════════════════ LINE JOIN (SO + PO) ═════════════════════
+  /* Join order, and it is reported:
+       1. SOFA FIRST, as a group. A build's compartments must be claimed
+          together, before an exact-code match on one of them can steal the
+          AutoCount row and orphan its siblings - that is precisely what hid 14
+          over-received sofa lines on the first run of this check.
+       2. linked_ac_dtlkey, exact.
+       3. (document, mapped item code, Desc2) where that pair is unambiguous.
+       4. (document, mapped item code) positionally when the codes repeat and
+          Desc2 does not separate them. AMBIGUOUS, counted and labelled apart,
+          because a positional guess can pair the wrong two rows.
+     Anything left is its own bucket and is never silently dropped. */
+  function joinLines(erpRows, acRows, opts) {
+    const { codeOf, docOf, keyOf, desc2Of, isSofaErp, modelOf } = opts;
+    const acByKey = new Map(), acByDocCode = new Map(), acByDocModel = new Map();
+    for (const r of acRows) {
+      acByKey.set(Number(r.DtlKey), r);
+      const e = erpCodeOf(r.ItemCode);
+      if (e) push(acByDocCode, `${r.DocNo}|${norm(e)}`, r);
+      if (acIsSofa(r)) { const m = sofaModelOf(r.ItemCode); if (m) push(acByDocModel, `${r.DocNo}|${m}`, r); }
+    }
+    const claimed = new Set();
+    const claim = (r) => claimed.add(Number(r.DtlKey));
+    const pairs = [], unjoined = [], danglingKeys = [];
+    const stats = { sofaGroup: 0, sofaIndistinct: 0, key: 0, desc2: 0, positional: 0, unjoined: 0 };
+
+    for (const e of erpRows) { const k = keyOf(e); if (k != null && !acByKey.has(Number(k))) danglingKeys.push(e); }
+
+    // 1. sofa builds
+    const bySofa = new Map();
+    const plain = [];
+    for (const e of erpRows) {
+      if (!isSofaErp(e)) { plain.push(e); continue; }
+      const m = modelOf(e);
+      if (!m) { unjoined.push(e); continue; }
+      push(bySofa, `${docOf(e)}|${m}`, e);
+    }
+    for (const [k, list] of bySofa) {
+      const cands = acByDocModel.get(k) ?? [];
+      if (!cands.length) { unjoined.push(...list); continue; }
+      if (cands.length === 1) { claim(cands[0]); pairs.push({ erp: list, ac: cands[0], how: "sofaGroup" }); stats.sofaGroup += list.length; continue; }
+      // several AutoCount builds of one model on one document: split on Desc2
+      const acByD2 = new Map(); for (const c of cands) push(acByD2, norm(c.Desc2), c);
+      const erpByD2 = new Map(); for (const e of list) push(erpByD2, norm(desc2Of(e)), e);
+      const splittable = [...erpByD2.keys()].every((d2) => (acByD2.get(d2) ?? []).length === 1);
+      if (splittable) {
+        for (const [d2, es] of erpByD2) { const c = acByD2.get(d2)[0]; claim(c); pairs.push({ erp: es, ac: c, how: "sofaGroup" }); stats.sofaGroup += es.length; }
+        continue;
+      }
+      /* Desc2 does not separate them. If every candidate is INDISTINGUISHABLE
+         on all compared fields, which build a compartment belongs to cannot be
+         determined AND cannot change any comparison - so pair against the first
+         and label it, rather than dropping real rows over a distinction with no
+         consequence. Otherwise the rows stay unjoined and are reported. */
+      const sig = (c) => [norm(c.Desc2), Math.round(n0(c.Qty)), Math.round(n0(c.TransferedQty ?? 0)), centi(c.UnitPrice), day(c.DeliveryDate) ?? "", norm(c.Location)].join("|");
+      if (new Set(cands.map(sig)).size === 1) {
+        for (const c of cands) claim(c);
+        pairs.push({ erp: list, ac: cands[0], how: "sofaIndistinct" }); stats.sofaIndistinct += list.length;
+      } else unjoined.push(...list);
+    }
+
+    // 2. exact detail key
+    const rest = [];
+    for (const e of plain) {
+      const dk = keyOf(e);
+      if (dk != null && acByKey.has(Number(dk)) && !claimed.has(Number(dk))) {
+        const a = acByKey.get(Number(dk)); claim(a); pairs.push({ erp: [e], ac: a, how: "key" }); stats.key++;
+      } else rest.push(e);
+    }
+
+    // 3/4. (doc, code) with Desc2, then positional
+    const byDocCode = new Map();
+    for (const e of rest) push(byDocCode, `${docOf(e)}|${norm(codeOf(e))}`, e);
+    for (const [k, list] of byDocCode) {
+      const cands = (acByDocCode.get(k) ?? []).filter((r) => !claimed.has(Number(r.DtlKey)));
+      if (!cands.length) { unjoined.push(...list); continue; }
+      const used = new Set(); const remaining = [];
+      for (const e of list) {
+        const hits = cands.filter((c) => !used.has(c.DtlKey) && norm(c.Desc2) === norm(desc2Of(e)));
+        if (hits.length === 1) { used.add(hits[0].DtlKey); claim(hits[0]); pairs.push({ erp: [e], ac: hits[0], how: "desc2" }); stats.desc2++; }
+        else remaining.push(e);
+      }
+      const free = cands.filter((c) => !used.has(c.DtlKey));
+      for (let i = 0; i < remaining.length; i++) {
+        if (i < free.length) { claim(free[i]); pairs.push({ erp: [remaining[i]], ac: free[i], how: "positional" }); stats.positional++; }
+        else unjoined.push(remaining[i]);
+      }
+    }
+    stats.unjoined = unjoined.length;
+    return { pairs, stats, unjoined, claimed, danglingKeys };
+  }
+
+  const soJoin = joinLines(erpSoL, acSoL, {
+    codeOf: (e) => e.item_code, docOf: (e) => e.ac, keyOf: (e) => e.linked_ac_dtlkey,
+    desc2Of: (e) => e.description2,
+    isSofaErp: (e) => e.item_group === "sofa",
+    modelOf: (e) => String(e.item_code || "").split("-")[0].toUpperCase() || null,
+  });
+  const poJoin = joinLines(erpPoL, acPoL, {
+    codeOf: (e) => e.material_code, docOf: (e) => e.ac, keyOf: (e) => e.linked_ac_dtlkey,
+    desc2Of: (e) => e.description2,
+    isSofaErp: (e) => e.item_group === "sofa",
+    modelOf: (e) => String(e.material_code || "").split("-")[0].toUpperCase() || null,
+  });
+
+  // ═════════════════════ SO LINES ═════════════════════
+  for (const p of soJoin.pairs) {
+    const a = p.ac, how = p.how;
+    const acQty = Math.round(n0(a.Qty)), acUp = centi(a.UnitPrice);
+    const isSofa = how === "sofaGroup" || how === "sofaIndistinct";
+    const k0 = `${a.DocNo}#${a.DtlKey}`;
+    for (const e of p.erp) {
+      const kk = `${k0} ${e.item_code}`;
+      cmpNum("SO line", "qty", kk, e.qty, acQty, how);
+      cmpText("SO line", "description2", kk, e.description2, a.Desc2, how);
+      cmpText("SO line", "location", kk, e.location, a.Location, how);
+      cmpNum("SO line", "balance_centi (must equal total_centi)", kk, e.balance_centi, e.total_centi, how);
+    }
+    if (isSofa) {
+      const gTotal = p.erp.reduce((s, e) => s + n0(e.total_centi), 0);
+      cmpNum("SO line", "sofa build total_centi", k0, gTotal, acUp * acQty, how);
+      const model = sofaModelOf(a.ItemCode);
+      for (const e of p.erp) {
+        const pref = String(e.item_code || "").split("-")[0].toUpperCase();
+        if (model && pref !== model) F.add("SO line", "sofa model prefix", `${k0} ${e.item_code}`, pref, model, null, how);
+      }
+    } else {
+      const e = p.erp[0];
+      cmpNum("SO line", "unit_price_centi", `${k0} ${e.item_code}`, e.unit_price_centi, acUp, how);
+      cmpNum("SO line", "total_centi", `${k0} ${e.item_code}`, e.total_centi, acUp * acQty, how);
+      const want = erpCodeOf(a.ItemCode);
+      if (want && norm(want) !== norm(e.item_code)) F.add("SO line", "item_code", k0, e.item_code, `${want} (from ${a.ItemCode})`, null, how);
+    }
+  }
+  for (const e of soJoin.danglingKeys) F.add("SO line", "linked_ac_dtlkey points at no AutoCount row", `${e.ac} line ${e.line_no} ${e.item_code}`, e.linked_ac_dtlkey, "(no such DtlKey)");
+
   // ═════════════════════ SO HEADERS ═════════════════════
-  let soHdrNoAc = 0;
   const acLinesBySoDoc = new Map();
-  for (const r of acSoL) { if (!acLinesBySoDoc.has(r.DocNo)) acLinesBySoDoc.set(r.DocNo, []); acLinesBySoDoc.get(r.DocNo).push(r); }
+  for (const r of acSoL) push(acLinesBySoDoc, r.DocNo, r);
+  const erpLinesBySoDoc = new Map();
+  for (const r of erpSoL) push(erpLinesBySoDoc, r.ac, r);
   for (const h of erpSoH) {
     const a = acSoH.get(h.linked_ac_docno);
-    if (!a) { soHdrNoAc++; F.add("SO header", "(no AutoCount document)", h.doc_no, h.linked_ac_docno, "(absent from snapshot)"); continue; }
+    if (!a) { F.add("SO header", "(no AutoCount document)", h.doc_no, h.linked_ac_docno, "(absent from snapshot)"); continue; }
     const k = h.doc_no;
     cmpDate("SO header", "so_date", k, h.so_date, a.DocDate);
     if (txt(a.DebtorName) !== "" || norm(h.debtor_name) !== "CUSTOMER") cmpText("SO header", "debtor_name", k, h.debtor_name, a.DebtorName);
@@ -330,7 +473,6 @@ async function main() {
     cmpText("SO header", "sales_location", k, h.sales_location, salesLoc(a.SalesLocation));
     cmpText("SO header", "ref", k, h.ref, a.Ref);
     cmpText("SO header", "customer_so_no", k, h.customer_so_no, a.Ref);
-    cmpText("SO header", "venue", k, h.venue, a.UDF_VENUE);
     cmpText("SO header", "branding", k, h.branding, a.UDF_BRANDING);
     cmpText("SO header", "address1", k, h.address1, a.InvAddr1);
     cmpText("SO header", "address2", k, h.address2, a.InvAddr2);
@@ -339,133 +481,71 @@ async function main() {
     cmpText("SO header", "phone", k, h.phone, a.Phone1);
     cmpNum("SO header", "balance_centi", k, h.balance_centi, centi(a.UDF_BALANCE));
     cmpDate("SO header", "proceeded_at", k, h.proceeded_at, a.UDF_PDate);
+    // venue: separate a canonicalised LABEL from a different PLACE
+    if (norm(h.venue) !== norm(a.UDF_VENUE)) {
+      const e = norm(h.venue), c = norm(a.UDF_VENUE);
+      const canon = e && c && (c.startsWith(e) || e.startsWith(c));
+      F.add("SO header", canon ? "venue (label canonicalised)" : "venue", k, txt(h.venue), txt(a.UDF_VENUE),
+        canon ? "post-import venue canonicalisation" : null);
+    }
+    // derived money, with the ERP's OWN line sum beside it so a header/line
+    // disagreement is distinguishable from a missing or extra line
+    const acLs = acLinesBySoDoc.get(h.linked_ac_docno) ?? [];
+    const erpLs = erpLinesBySoDoc.get(h.linked_ac_docno) ?? [];
+    if (acLs.length) {
+      const acTotal = acLs.reduce((s, l) => s + centi(l.UnitPrice) * Math.round(n0(l.Qty)), 0);
+      const erpLineSum = erpLs.reduce((s, l) => s + n0(l.total_centi), 0);
+      if (Math.round(n0(h.local_total_centi)) !== acTotal)
+        F.add("SO header", "local_total_centi (derived)", k, `${Math.round(n0(h.local_total_centi))} (its own lines sum to ${erpLineSum})`, acTotal);
+      const wantPaid = Math.max(0, acTotal - n0(h.balance_centi));
+      cmpNum("SO header", "paid_centi (derived)", k, h.paid_centi, wantPaid);
+    }
   }
 
-  // ═════════════════════ LINE JOIN (SO + PO) ═════════════════════
-  /* Join order, and it is reported: (1) linked_ac_dtlkey, exact, backfilled
-     2026-08-11; (2) (document, mapped item code, Desc2) where that pair is
-     unambiguous; (3) (document, mapped item code) positionally when the codes
-     repeat and Desc2 does not separate them - AMBIGUOUS, counted apart because
-     a positional guess can pair the wrong two rows; (4) for sofa, (document,
-     model prefix) as a GROUP. Anything left is its own bucket and is never
-     silently dropped. */
-  function joinLines(erpRows, acRows, opts) {
-    const { codeOf, docOf, keyOf, desc2Of, groupOf } = opts;
-    const acByKey = new Map();
-    const acByDocCode = new Map();
-    const acByDocModel = new Map();
-    for (const r of acRows) {
-      acByKey.set(Number(r.DtlKey), r);
-      const e = erpCodeOf(r.ItemCode);
-      if (e) {
-        const k = `${r.DocNo}|${norm(e)}`;
-        if (!acByDocCode.has(k)) acByDocCode.set(k, []); acByDocCode.get(k).push(r);
-      }
-      if (isSofaAc(r.ItemCode)) {
-        const m = sofaModelOf(r.ItemCode);
-        if (m) { const k = `${r.DocNo}|${m}`; if (!acByDocModel.has(k)) acByDocModel.set(k, []); acByDocModel.get(k).push(r); }
-      }
-    }
-    const pairs = []; const stats = { key: 0, desc2: 0, positional: 0, sofaGroup: 0, unjoined: 0 };
-    const unjoined = [];
-    const claimed = new Set();
-    const rest = [];
-    for (const e of erpRows) {
-      const dk = keyOf(e);
-      if (dk != null && acByKey.has(Number(dk))) {
-        pairs.push({ erp: [e], ac: acByKey.get(Number(dk)), how: "key" }); stats.key++; claimed.add(Number(dk));
-      } else rest.push(e);
-    }
-    // group the remainder by (doc, erp code) and consume unclaimed AutoCount rows
-    const byDocCode = new Map();
-    for (const e of rest) { const k = `${docOf(e)}|${norm(codeOf(e))}`; if (!byDocCode.has(k)) byDocCode.set(k, []); byDocCode.get(k).push(e); }
-    const stillLeft = [];
-    for (const [k, list] of byDocCode) {
-      const cands = (acByDocCode.get(k) ?? []).filter((r) => !claimed.has(Number(r.DtlKey)));
-      if (!cands.length) { stillLeft.push(...list); continue; }
-      const used = new Set();
-      const remaining = [];
-      for (const e of list) {
-        const exact = cands.find((c) => !used.has(c.DtlKey) && norm(c.Desc2) === norm(desc2Of(e)));
-        const unique = cands.filter((c) => !used.has(c.DtlKey) && norm(c.Desc2) === norm(desc2Of(e))).length === 1;
-        if (exact && unique) { used.add(exact.DtlKey); claimed.add(Number(exact.DtlKey)); pairs.push({ erp: [e], ac: exact, how: "desc2" }); stats.desc2++; }
-        else remaining.push(e);
-      }
-      const free = cands.filter((c) => !used.has(c.DtlKey));
-      for (let i = 0; i < remaining.length; i++) {
-        if (i < free.length) { claimed.add(Number(free[i].DtlKey)); pairs.push({ erp: [remaining[i]], ac: free[i], how: "positional" }); stats.positional++; }
-        else stillLeft.push(remaining[i]);
-      }
-    }
-    // sofa: N ERP compartment lines <- 1 AutoCount build line, matched as a group
-    const byDocModel = new Map();
-    for (const e of stillLeft) {
-      const g = groupOf(e);
-      if (!g) { unjoined.push(e); continue; }
-      const k = `${docOf(e)}|${g}`;
-      if (!byDocModel.has(k)) byDocModel.set(k, []); byDocModel.get(k).push(e);
-    }
-    for (const [k, list] of byDocModel) {
-      const cands = (acByDocModel.get(k) ?? []).filter((r) => !claimed.has(Number(r.DtlKey)));
-      if (cands.length === 1) { claimed.add(Number(cands[0].DtlKey)); pairs.push({ erp: list, ac: cands[0], how: "sofaGroup" }); stats.sofaGroup += list.length; }
-      else unjoined.push(...list);
-    }
-    stats.unjoined = unjoined.length;
-    return { pairs, stats, unjoined };
-  }
-
-  // ═════════════════════ SO LINES ═════════════════════
-  const soJoin = joinLines(erpSoL, acSoL, {
-    codeOf: (e) => e.item_code,
-    docOf: (e) => e.ac,
-    keyOf: (e) => e.linked_ac_dtlkey,
-    desc2Of: (e) => e.description2,
-    groupOf: (e) => (e.item_group === "sofa" ? String(e.item_code || "").split("-")[0].toUpperCase() : null),
-  });
-  for (const p of soJoin.pairs) {
-    const a = p.ac;
-    const acQty = Math.round(n0(a.Qty));
-    const acUp = centi(a.UnitPrice);
-    const isSofa = p.how === "sofaGroup" || p.erp.some((e) => e.item_group === "sofa");
+  // ═════════════════════ PO LINES ═════════════════════
+  const overReceipt = [];
+  const acPoByDtl = new Map(acPoL.map((r) => [Number(r.DtlKey), r]));
+  const poItemToAc = new Map();
+  for (const p of poJoin.pairs) {
+    const a = p.ac, how = p.how;
+    const acQty = Math.round(n0(a.Qty)), acRecv = Math.round(n0(a.TransferedQty)), acUp = centi(a.UnitPrice);
+    const isSofa = how === "sofaGroup" || how === "sofaIndistinct";
     const k0 = `${a.DocNo}#${a.DtlKey}`;
     for (const e of p.erp) {
-      cmpNum("SO line", "qty", `${k0} ${e.item_code}`, e.qty, acQty);
-      cmpText("SO line", "description2", `${k0} ${e.item_code}`, e.description2, a.Desc2);
-      cmpText("SO line", "location", `${k0} ${e.item_code}`, e.location, a.Location);
-      if (e.linked_ac_dtlkey != null && Number(e.linked_ac_dtlkey) !== Number(a.DtlKey))
-        F.add("SO line", "linked_ac_dtlkey", k0, e.linked_ac_dtlkey, a.DtlKey);
-      cmpNum("SO line", "balance_centi (must equal total_centi)", `${k0} ${e.item_code}`, e.total_centi, e.balance_centi);
+      poItemToAc.set(e.id, a);
+      const kk = `${k0} ${e.material_code}`;
+      cmpNum("PO line", "qty", kk, e.qty, acQty, how);
+      cmpNum("PO line", "received_qty", kk, e.received_qty, acRecv, how);
+      if (Math.round(n0(e.received_qty)) > acRecv)
+        overReceipt.push({ po: a.DocNo, dtl: a.DtlKey, item: a.ItemCode, code: e.material_code, erp: Math.round(n0(e.received_qty)), ac: acRecv, qty: acQty, how });
+      cmpText("PO line", "description2", kk, e.description2, a.Desc2, how);
+      cmpDate("PO line", "delivery_date", kk, e.delivery_date, a.DeliveryDate, how);
+      const sku = txt(e.supplier_sku);
+      if (sku && !norm(sku).startsWith(norm(a.ItemCode))) F.add("PO line", "supplier_sku", kk, sku, a.ItemCode, null, how);
     }
     if (isSofa) {
-      // shapes are not commensurable: compare the group's money and the model
-      const gTotal = p.erp.reduce((s, e) => s + n0(e.total_centi), 0);
-      cmpNum("SO line", "sofa group total_centi", k0, gTotal, acUp * acQty);
+      const gTotal = p.erp.reduce((s, e) => s + n0(e.line_total_centi), 0);
+      cmpNum("PO line", "sofa build line_total_centi", k0, gTotal, acUp * acQty, how);
       const model = sofaModelOf(a.ItemCode);
       for (const e of p.erp) {
-        const pref = String(e.item_code || "").split("-")[0].toUpperCase();
-        if (model && pref !== model) F.add("SO line", "sofa model prefix", `${k0} ${e.item_code}`, pref, model);
+        const pref = String(e.material_code || "").split("-")[0].toUpperCase();
+        if (model && pref !== model) F.add("PO line", "sofa model prefix", `${k0} ${e.material_code}`, pref, model, null, how);
       }
     } else {
       const e = p.erp[0];
-      cmpNum("SO line", "unit_price_centi", `${k0} ${e.item_code}`, e.unit_price_centi, acUp);
-      cmpNum("SO line", "total_centi", `${k0} ${e.item_code}`, e.total_centi, acUp * acQty);
+      cmpNum("PO line", "unit_price_centi", `${k0} ${e.material_code}`, e.unit_price_centi, acUp, how);
+      cmpNum("PO line", "line_total_centi", `${k0} ${e.material_code}`, e.line_total_centi, acUp * acQty, how);
       const want = erpCodeOf(a.ItemCode);
-      if (want && norm(want) !== norm(e.item_code)) F.add("SO line", "item_code", k0, e.item_code, `${want} (from ${a.ItemCode})`);
+      if (want && norm(want) !== norm(e.material_code)) F.add("PO line", "material_code", k0, e.material_code, `${want} (from ${a.ItemCode})`, null, how);
     }
   }
-
-  // ═════════════════════ SO HEADER DERIVED TOTALS ═════════════════════
-  for (const h of erpSoH) {
-    const ls = acLinesBySoDoc.get(h.linked_ac_docno);
-    if (!ls) continue;
-    const acTotal = ls.reduce((s, l) => s + centi(l.UnitPrice) * Math.round(n0(l.Qty)), 0);
-    cmpNum("SO header", "local_total_centi (derived)", h.doc_no, h.local_total_centi, acTotal);
-    cmpNum("SO header", "paid_centi (derived)", h.doc_no, h.paid_centi, Math.max(0, acTotal - n0(h.balance_centi)));
-  }
+  for (const e of poJoin.danglingKeys) F.add("PO line", "linked_ac_dtlkey points at no AutoCount row", `${e.ac} ${e.material_code}`, e.linked_ac_dtlkey, "(no such DtlKey)");
 
   // ═════════════════════ PO HEADERS ═════════════════════
   const acLinesByPoDoc = new Map();
-  for (const r of acPoL) { if (!acLinesByPoDoc.has(r.DocNo)) acLinesByPoDoc.set(r.DocNo, []); acLinesByPoDoc.get(r.DocNo).push(r); }
+  for (const r of acPoL) push(acLinesByPoDoc, r.DocNo, r);
+  const erpLinesByPoDoc = new Map();
+  for (const r of erpPoL) push(erpLinesByPoDoc, r.ac, r);
   for (const h of erpPoH) {
     const a = acPoH.get(h.linked_ac_docno);
     if (!a) { F.add("PO header", "(no AutoCount document)", h.po_number, h.linked_ac_docno, "(absent from snapshot)"); continue; }
@@ -475,74 +555,54 @@ async function main() {
     const ls = acLinesByPoDoc.get(h.linked_ac_docno) ?? [];
     if (ls.length) {
       const acTotal = ls.reduce((s, l) => s + centi(l.UnitPrice) * Math.round(n0(l.Qty)), 0);
-      cmpNum("PO header", "subtotal_centi (derived)", k, h.subtotal_centi, acTotal);
+      const erpLineSum = (erpLinesByPoDoc.get(h.linked_ac_docno) ?? []).reduce((s, l) => s + n0(l.line_total_centi), 0);
+      if (Math.round(n0(h.subtotal_centi)) !== acTotal)
+        F.add("PO header", "subtotal_centi (derived)", k, `${Math.round(n0(h.subtotal_centi))} (its own lines sum to ${erpLineSum})`, acTotal);
       cmpNum("PO header", "total_centi (derived)", k, h.total_centi, acTotal);
       const eta = ls.map((l) => day(l.DeliveryDate)).filter(Boolean).sort()[0] ?? null;
       cmpDate("PO header", "expected_at (derived)", k, h.expected_at, eta);
-      const allRecv = ls.every((l) => n0(l.TransferedQty) >= n0(l.Qty));
-      const anyRecv = ls.some((l) => n0(l.TransferedQty) > 0);
-      const want = allRecv ? "RECEIVED" : anyRecv ? "PARTIALLY_RECEIVED" : "SUBMITTED";
-      // the outstanding-PO import never mints RECEIVED; treat that pair as equal
-      const ok = norm(h.status) === want || (want === "RECEIVED" && norm(h.status) === "PARTIALLY_RECEIVED");
-      if (!ok) F.add("PO header", "status (derived)", k, h.status, want);
+      /* Ordered quantity 0 is not "fully received"; counting it as such made
+         three zero-quantity purchase orders read RECEIVED. Only lines that
+         actually order something decide the status. */
+      const real = ls.filter((l) => n0(l.Qty) > 0);
+      if (real.length) {
+        const want = real.every((l) => n0(l.TransferedQty) >= n0(l.Qty)) ? "RECEIVED"
+          : real.some((l) => n0(l.TransferedQty) > 0) ? "PARTIALLY_RECEIVED" : "SUBMITTED";
+        const ok = norm(h.status) === want || (want === "RECEIVED" && norm(h.status) === "PARTIALLY_RECEIVED");
+        if (!ok) F.add("PO header", "status (derived)", k, h.status, want);
+      }
     }
   }
 
-  // ═════════════════════ PO LINES ═════════════════════
-  const poById = new Map(erpPoH.map((p) => [p.id, p]));
-  const poJoin = joinLines(erpPoL, acPoL, {
-    codeOf: (e) => e.material_code,
-    docOf: (e) => e.ac,
-    keyOf: (e) => e.linked_ac_dtlkey,
-    desc2Of: (e) => e.description2,
-    groupOf: (e) => (e.item_group === "sofa" ? String(e.material_code || "").split("-")[0].toUpperCase() : null),
-  });
-  const overReceipt = [];
-  for (const p of poJoin.pairs) {
-    const a = p.ac;
-    const acQty = Math.round(n0(a.Qty));
-    const acRecv = Math.round(n0(a.TransferedQty));
-    const acUp = centi(a.UnitPrice);
-    const isSofa = p.how === "sofaGroup" || p.erp.some((e) => e.item_group === "sofa");
-    const k0 = `${a.DocNo}#${a.DtlKey}`;
-    for (const e of p.erp) {
-      const kk = `${k0} ${e.material_code}`;
-      cmpNum("PO line", "qty", kk, e.qty, acQty);
-      cmpNum("PO line", "received_qty", kk, e.received_qty, acRecv);
-      if (Math.round(n0(e.received_qty)) > acRecv) {
-        overReceipt.push({ po: a.DocNo, dtl: a.DtlKey, code: e.material_code, erp: Math.round(n0(e.received_qty)), ac: acRecv, qty: acQty });
-      }
-      cmpText("PO line", "description2", kk, e.description2, a.Desc2);
-      cmpDate("PO line", "delivery_date", kk, e.delivery_date, a.DeliveryDate);
-      if (e.linked_ac_dtlkey != null && Number(e.linked_ac_dtlkey) !== Number(a.DtlKey))
-        F.add("PO line", "linked_ac_dtlkey", k0, e.linked_ac_dtlkey, a.DtlKey);
-      // supplier_sku is AutoCount's own code (sofa appends the compartment)
-      const sku = txt(e.supplier_sku);
-      if (sku && !norm(sku).startsWith(norm(a.ItemCode))) F.add("PO line", "supplier_sku", kk, sku, a.ItemCode);
-    }
-    if (isSofa) {
-      const gTotal = p.erp.reduce((s, e) => s + n0(e.line_total_centi), 0);
-      cmpNum("PO line", "sofa group line_total_centi", k0, gTotal, acUp * acQty);
-      const model = sofaModelOf(a.ItemCode);
-      for (const e of p.erp) {
-        const pref = String(e.material_code || "").split("-")[0].toUpperCase();
-        if (model && pref !== model) F.add("PO line", "sofa model prefix", `${k0} ${e.material_code}`, pref, model);
-      }
-    } else {
-      const e = p.erp[0];
-      cmpNum("PO line", "unit_price_centi", `${k0} ${e.material_code}`, e.unit_price_centi, acUp);
-      cmpNum("PO line", "line_total_centi", `${k0} ${e.material_code}`, e.line_total_centi, acUp * acQty);
-      const want = erpCodeOf(a.ItemCode);
-      if (want && norm(want) !== norm(e.material_code)) F.add("PO line", "material_code", k0, e.material_code, `${want} (from ${a.ItemCode})`);
-    }
+  // ═════════ AutoCount lines on a migrated document with NO ERP line ═════════
+  /* The counterpart of the unjoined bucket, and the thing a header total gap
+     usually turns out to be. Only documents the ERP actually holds are looked
+     at - an unimported document is a decision, not a gap. */
+  const migratedSoDocs = new Set(erpSoH.map((h) => h.linked_ac_docno));
+  const migratedPoDocs = new Set(erpPoH.map((h) => h.linked_ac_docno));
+  let missingSo = 0, missingPo = 0;
+  for (const r of acSoL) {
+    if (!migratedSoDocs.has(r.DocNo) || soJoin.claimed.has(Number(r.DtlKey))) continue;
+    missingSo++;
+    F.add("SO line", "(AutoCount line with no ERP line)", `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
+      "(absent)", `qty ${Math.round(n0(r.Qty))} @ ${centi(r.UnitPrice)} "${txt(r.Desc2).slice(0, 30)}"`);
+  }
+  for (const r of acPoL) {
+    if (!migratedPoDocs.has(r.DocNo) || poJoin.claimed.has(Number(r.DtlKey))) continue;
+    missingPo++;
+    F.add("PO line", "(AutoCount line with no ERP line)", `${r.DocNo}#${r.DtlKey} ${r.ItemCode}`,
+      "(absent)", `qty ${Math.round(n0(r.Qty))} recv ${Math.round(n0(r.TransferedQty))} @ ${centi(r.UnitPrice)}`);
   }
 
   // ═════════════════════ MIGRATED GRN LINES ═════════════════════
-  const acPoByDtl = new Map(acPoL.map((r) => [Number(r.DtlKey), r]));
+  /* A GRN line joins through the PURCHASE ORDER LINE it received, using
+     whatever method that line joined by - requiring the PO line to carry a
+     linked_ac_dtlkey compared only 10 of 496 lines on the first run, because
+     only 275 of 864 PO lines have one. */
   let grnNoKey = 0;
   for (const g of erpGrnL) {
-    if (g.linked_ac_dtlkey == null || !acPoByDtl.has(Number(g.linked_ac_dtlkey))) { grnNoKey++; continue; }
-    const a = acPoByDtl.get(Number(g.linked_ac_dtlkey));
+    const a = poItemToAc.get(g.purchase_order_item_id);
+    if (!a) { grnNoKey++; continue; }
     const k = `${g.grn_number} ${g.material_code}`;
     cmpNum("GRN line", "qty_received", k, g.qty_received, Math.round(n0(a.TransferedQty)));
     cmpNum("GRN line", "qty_accepted", k, g.qty_accepted, Math.round(n0(a.TransferedQty)));
@@ -557,20 +617,25 @@ async function main() {
     if (txt(a.DebtorName)) cmpText("DO header", "debtor_name", d.do_number, d.debtor_name, a.DebtorName);
   }
   const acDoByDoc = new Map();
-  for (const r of acDoL) { if (!acDoByDoc.has(r.DocNo)) acDoByDoc.set(r.DocNo, []); acDoByDoc.get(r.DocNo).push(r); }
+  for (const r of acDoL) push(acDoByDoc, r.DocNo, r);
   let doNoAc = 0, doQtyChecked = 0;
-  for (const [ac, list] of groupBy(erpDoL, (r) => r.ac)) {
+  const byDoDoc = new Map();
+  for (const r of erpDoL) push(byDoDoc, r.ac, r);
+  for (const [ac, list] of byDoDoc) {
     const cands = acDoByDoc.get(ac);
     if (!cands) { doNoAc += list.length; continue; }
     /* One AutoCount delivery line becomes one ERP line per sofa compartment,
-       each carrying the same quantity, so ERP line COUNT is not comparable.
-       What is: for each distinct quantity the ERP claims to have delivered on
-       this document, AutoCount must carry that quantity too. */
+       each carrying the same quantity, so the ERP line COUNT is not comparable.
+       What is: every quantity the ERP claims to have delivered on this document
+       must be a quantity AutoCount also carries on it. */
     const acQtys = cands.map((c) => Math.round(n0(c.Qty)));
     for (const e of list) {
       doQtyChecked++;
-      if (!acQtys.includes(Math.round(n0(e.qty))))
-        F.add("DO line", "qty", `${ac} ${e.item_code}`, Math.round(n0(e.qty)), `not among AutoCount's line quantities [${acQtys.join(",")}]`);
+      const q = Math.round(n0(e.qty));
+      if (!acQtys.includes(q)) {
+        F.add("DO line", "qty", `${ac} ${e.item_code}`, q, `not among AutoCount's line quantities [${acQtys.join(",")}]`,
+          q === 0 ? "surplus migrated DO line zeroed by #1964 (owner-approved; the row stays, nothing is deleted)" : null);
+      }
     }
   }
 
@@ -578,19 +643,22 @@ async function main() {
   log("JOIN ACCOUNTING — how each ERP line was matched to its AutoCount row");
   log("-".repeat(96));
   const jrow = (label, s, total) => log(
-    `  ${label.padEnd(24)} exact linked_ac_dtlkey ${String(s.key).padStart(6)}   ` +
-    `fallback (doc,code,Desc2) ${String(s.desc2).padStart(5)}   ` +
-    `fallback positional ${String(s.positional).padStart(5)}   ` +
-    `sofa group ${String(s.sofaGroup).padStart(5)}   ` +
-    `UNJOINED ${String(s.unjoined).padStart(5)}   of ${total}`);
+    `  ${label.padEnd(22)} sofa build ${String(s.sofaGroup).padStart(5)}  sofa indistinct ${String(s.sofaIndistinct).padStart(4)}  ` +
+    `dtlkey ${String(s.key).padStart(6)}  (doc,code,Desc2) ${String(s.desc2).padStart(5)}  ` +
+    `positional ${String(s.positional).padStart(4)}  UNJOINED ${String(s.unjoined).padStart(5)}   of ${total}`);
   jrow("sales order lines", soJoin.stats, erpSoL.length);
   jrow("purchase order lines", poJoin.stats, erpPoL.length);
-  log(`  GRN lines                linked through the PO line's dtlkey ${String(erpGrnL.length - grnNoKey).padStart(5)}   UNJOINED ${String(grnNoKey).padStart(5)}   of ${erpGrnL.length}`);
-  log(`  delivery order lines     matched by document ${String(doQtyChecked).padStart(5)}   UNJOINED ${String(doNoAc).padStart(5)}   of ${erpDoL.length}`);
+  log(`  GRN lines              joined through their purchase order line ${String(erpGrnL.length - grnNoKey).padStart(5)}  UNJOINED ${String(grnNoKey).padStart(5)}   of ${erpGrnL.length}`);
+  log(`  delivery order lines   matched by document ${String(doQtyChecked).padStart(5)}  UNJOINED ${String(doNoAc).padStart(5)}   of ${erpDoL.length}`);
   log("");
-  log("  'fallback positional' means the document carried several lines of the same code that Desc2 did");
-  log("  not separate. Those pairings can be wrong, so any divergence they produce is weaker evidence than");
-  log("  a dtlkey match. UNJOINED rows are compared against nothing and are counted, never dropped.");
+  log("  'positional' means the document carried several lines of the same code that Desc2 did not");
+  log("  separate; those pairings can be wrong, so a divergence they produce is weaker evidence than a");
+  log("  dtlkey match and is tagged [positional] in the listing below. 'sofa indistinct' means several");
+  log("  AutoCount builds of one model on one document were identical on every compared field, so which");
+  log("  one a compartment belongs to cannot be determined and cannot change the answer.");
+  log("  UNJOINED rows are compared against nothing and are counted here, never dropped.");
+  log("");
+  log(`  AutoCount lines on a MIGRATED document with no ERP line at all:  SO ${missingSo}   PO ${missingPo}`);
   log("");
   if (soJoin.unjoined.length) {
     log(`  UNJOINED sales order lines (${soJoin.unjoined.length}), first ${Math.min(TOP, soJoin.unjoined.length)}:`);
@@ -606,21 +674,20 @@ async function main() {
   log("KNOWN DEFECT — received_qty above AutoCount's own PODTL.TransferedQty");
   log("-".repeat(96));
   if (!overReceipt.length) {
-    log("  NOT FOUND. This check is wrong until it reproduces the 65 known lines - do not read this as clean.");
+    log("  NOT FOUND. This check is wrong until it reproduces the known lines - do not read this as clean.");
   } else {
     const units = overReceipt.reduce((s, r) => s + (r.erp - r.ac), 0);
-    log(`  ${overReceipt.length} PO lines carry more received than AutoCount ever recorded; ${units} excess units.`);
-    log("  AutoCount does not permit an over-receipt. These were manufactured during migration by an export");
-    log("  column aggregated on (DocNo + ItemCode) - see export-received-pos-live.py's GrQty subquery, which");
-    log("  hands every same-code line on a document the document's total.");
-    const byPo = new Map();
-    for (const r of overReceipt) byPo.set(r.po, (byPo.get(r.po) ?? 0) + 1);
+    const byPo = new Set(overReceipt.map((r) => r.po));
+    log(`  ${overReceipt.length} PO lines carry more received than AutoCount ever recorded; ${units} excess units,`);
     log(`  spread over ${byPo.size} purchase orders.`);
+    log("  AutoCount does not permit an over-receipt. These were manufactured during migration by an export");
+    log("  column aggregated on (DocNo + ItemCode) - export-received-pos-live.py's GrQty subquery, which");
+    log("  hands every same-code line on a document the document's total.");
     log("  Proof, showing the aggregate the importer used next to AutoCount's per-line truth:");
     for (const r of overReceipt.slice(0, TOP)) {
-      const agg = acGrAgg.get(`${norm(r.po)}|${norm(acPoByDtl.get(Number(r.dtl))?.ItemCode ?? "")}`);
+      const agg = acGrAgg.get(`${norm(r.po)}|${norm(r.item)}`);
       log(`     ${r.po} dtl ${r.dtl} ${r.code}: ordered ${r.qty}, ERP received ${r.erp}, AutoCount TransferedQty ${r.ac}` +
-          (agg ? `   [GRDTL SUM over (${r.po},${acPoByDtl.get(Number(r.dtl)).ItemCode}) = ${Math.round(n0(agg.GrQtySum))} across ${agg.GrLines} receipt lines]` : ""));
+        (agg ? `   [GRDTL SUM over (${r.po},${r.item}) = ${Math.round(n0(agg.GrQtySum))} across ${agg.GrLines} receipt lines]` : ""));
     }
     if (overReceipt.length > TOP) log(`     ... and ${overReceipt.length - TOP} more`);
   }
@@ -629,8 +696,6 @@ async function main() {
   // ═════════════════════ VERDICT ═════════════════════
   const comparableLines = soJoin.pairs.reduce((s, p) => s + p.erp.length, 0) + poJoin.pairs.reduce((s, p) => s + p.erp.length, 0)
     + (erpGrnL.length - grnNoKey) + doQtyChecked;
-  const divergentKeys = new Set();
-  for (const f of F.byField.values()) for (const r of f.rows) divergentKeys.add(`${f.scope}|${r.key}`);
 
   log("═".repeat(96));
   log("VERDICT");
@@ -639,19 +704,29 @@ async function main() {
   log(`  LINES COMPARED            ${comparableLines}`);
   log(`  LINES NOT COMPARABLE      ${soJoin.stats.unjoined + poJoin.stats.unjoined + grnNoKey + doNoAc}  (no AutoCount row could be joined; listed above)`);
   log(`  FIELD-LEVEL DIVERGENCES   ${F.total()}   across ${F.byField.size} distinct fields`);
+  log(`    of which UNEXPLAINED    ${F.unexplained()}   (the rest have a named, already-decided cause)`);
   log("");
-  log(`  ${"scope".padEnd(11)} ${"field".padEnd(34)} ${"rows".padStart(7)}  ${"units".padStart(8)}`);
-  log("  " + "-".repeat(66));
+  log(`  ${"scope".padEnd(11)} ${"field".padEnd(46)} ${"rows".padStart(6)} ${"unexpl".padStart(7)} ${"units".padStart(9)}`);
+  log("  " + "-".repeat(84));
   const sorted = [...F.byField.values()].sort((a, b) => b.rows.length - a.rows.length);
-  for (const f of sorted) log(`  ${f.scope.padEnd(11)} ${f.field.padEnd(34)} ${String(f.rows.length).padStart(7)}  ${String(Math.round(f.units)).padStart(8)}`);
+  for (const f of sorted) {
+    const un = f.rows.filter((r) => !r.cause).length;
+    log(`  ${f.scope.padEnd(11)} ${f.field.padEnd(46)} ${String(f.rows.length).padStart(6)} ${String(un).padStart(7)} ${String(Math.round(f.units)).padStart(9)}`);
+  }
   if (!sorted.length) log("  (none)");
   log("");
 
   log("EVERY DIVERGENCE, BY FIELD");
   log("-".repeat(96));
   for (const f of sorted) {
+    const causes = new Map();
+    for (const r of f.rows) if (r.cause) causes.set(r.cause, (causes.get(r.cause) ?? 0) + 1);
     log(`\n### ${f.scope}.${f.field} — ${f.rows.length} row(s)`);
-    for (const r of f.rows.slice(0, TOP)) log(`   ${String(r.key).padEnd(46)} ERP="${r.erp}"   AutoCount="${r.ac}"`);
+    for (const [c, n] of causes) log(`    cause: ${n} of them — ${c}`);
+    for (const r of f.rows.slice(0, TOP)) {
+      const tag = r.how && r.how !== "key" ? ` [${r.how}]` : "";
+      log(`   ${String(r.key).padEnd(46)} ERP="${r.erp}"   AutoCount="${r.ac}"${tag}`);
+    }
     if (f.rows.length > TOP) log(`   ... and ${f.rows.length - TOP} more`);
   }
   log("");
@@ -660,17 +735,11 @@ async function main() {
     ? "INCONCLUSIVE — no migrated line could be compared. Check the scope query and the snapshot, do not read this as clean."
     : F.total() === 0
       ? "YES — every compared field on every joinable migrated line matches AutoCount."
-      : `NO — ${F.total()} field values on migrated documents do not match AutoCount, across ${F.byField.size} fields.`;
+      : `NO — ${F.total()} field values on migrated documents do not match AutoCount, across ${F.byField.size} fields; ${F.unexplained()} of them have no already-decided cause.`;
   log(`ANSWER: ${answer}`);
   log("Read-only check. Repairing anything found here is a separate, owner-approved change.");
   log(`(${((Date.now() - started) / 1000).toFixed(1)}s)`);
   await sql.end();
-}
-
-function groupBy(rows, keyFn) {
-  const m = new Map();
-  for (const r of rows) { const k = keyFn(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
-  return m;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
