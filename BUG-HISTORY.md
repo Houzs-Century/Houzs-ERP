@@ -88,25 +88,31 @@ existing caller changes. `backfill-sofa-variants-from-desc2.mjs` is the sweep
 sofa never had: fill-only (an operator's correction outranks a re-parse),
 exact-match by default, `variants || patch` through `db.json()`.
 
-**What this did NOT fix, and it is the more important half.** Only **14** lines
-can be filled on exact matches. **80** are blocked because their colour resolves
-only through the fuzzy matcher, and the hold list shows why that must not be
-auto-applied:
+**What this did NOT fix.** Only **14** lines can be filled on exact matches.
+**80** more are blocked because their colour resolves only through the fuzzy
+matcher, and a match is not a copy, so they are held for the owner rather than
+written. The blocking set is benign - 17 distinct mappings, every one a
+formatting difference on the same fabric:
 
 ```
-"Harring 02# Beige"                  ->  HIRRING GD8371 / HIRRING GD8371-02# BEIGE
-"HARRING GD8371 02# BEIGE"           ->  GD8371        / GD8371-02
-"Beetex Harring GD 8371 - 02# Beige" ->  GD8371        / GD8371-02
+"BO315-21 (PEARL)"          ->  BO315  / BO315-21          (the bracket is the colour name)
+"B0315-1 pearl"             ->  BO315  / BO315-1-PEARL     (zero for the letter O)
+"GD2502#04-OAK"             ->  GD2502 / GD2502-04
+"MODENZA 01-HOUSTON CREAM"  ->  MODENZA / MODENZA-01
 ```
 
-One physical fabric, two library rows. Applying the matcher would stamp two
-different `fabricId` values for the same fabric and entrench the duplication.
-That is the same duplicate-series decision already open with the owner.
+A FIRST version of this script reported 338 held colours and a frightening
+`Harring 02# Beige -> HIRRING GD8371` beside `HARRING GD8371 02# BEIGE ->
+GD8371` - one physical fabric resolving to two library rows. That reading was
+an artefact of the script, which pushed to the hold list before asking whether
+the line had a blank axis at all: those rows were already filled and nothing
+would have touched them. The duplicate-series problem is real and still open
+with the owner, but it does NOT block this backfill.
 
-**Also visible in the hold list, and a second defect:** the labelled-colour rule
-captures to end of line, so it swallows instructions -
-`"B0315-5 FOSIL request to normal leg and not fully cover"` and
-`"BO315-2 (24inch)"` are being carried as colour values.
+**A second defect the hold list did expose:** the labelled-colour rule captures
+to end of line, so it carries instructions as colour values -
+`"B0315-5 FOSIL request to normal leg and not fully cover"`, `"BO315-2 (24inch)"`.
+Not fixed here.
 
 **Lesson** - a check that says a field is empty does not say WHY. "The library is
 missing the code" and "nothing ever wrote the code" produce the identical
