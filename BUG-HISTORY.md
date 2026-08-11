@@ -285,8 +285,14 @@ drift-gated POS) must call now that the surcharge is charged, and it is inert
 only while every add-on is priced 0. Deleting it would remove the fix for a
 400 that the first priced add-on will cause.
 
-**Ref** - 2026-08-11, owner decision in person. Pinned in
-`backend/src/scm/lib/mfg-pricing-recompute.surcharge.test.ts`.
+**Ref** - 2026-08-11, owner decision in person, PR #1973. Pinned in
+`backend/src/scm/lib/mfg-pricing-recompute.surcharge.test.ts`. Prod evidence:
+read-only run **31452346210** measured the blast radius as **zero live
+documents** - 11 of 36 catalogue codes ARE priced, but not one document line
+carries any of them in `variants.specials` (SO migrated 0, SO live 0, PO
+migrated 0, PO live 0). The same run states the old asymmetry in money: REAL
+SELLING exposure 0 sen against REAL COST exposure 755,000 sen on all 27
+candidate lines - the margin moved and the price never did.
 
 ## A fabric code was read as a bed height, because a measurement rule had no left boundary [high]
 
