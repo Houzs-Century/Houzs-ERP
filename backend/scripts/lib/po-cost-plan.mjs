@@ -19,10 +19,14 @@
 
    THE THREE ROUTES TO A TARGET, most exact first.
      1. linked_ac_dtlkey (migration 0273) is the line's own AutoCount identity,
-        so it is a 1:1 match needing no signature at all. Measured against
-        production on 2026-08-10 it is populated on 0 of 864 imported PO lines,
-        so today it never fires -- it is here because the backfill workflow
-        exists and this script must not silently mis-key the day it runs.
+        so it is a 1:1 match needing no signature at all. It IS populated in
+        production: backfill-ac-line-keys.mjs ran with mode=APPLY on 2026-08-10
+        (Actions run 31416597720) and set 275 of 864 imported PO lines, leaving
+        589 with no AutoCount match. So this route fires today for the lines it
+        reaches, and routes 2-3 carry the rest. Do not re-add the old claim that
+        the key "was never stored" -- that was true only before that run, and
+        the stamp script's header repeated it for a while after it stopped
+        being true.
      2. supplier_sku holds the RAW AutoCount ItemCode: import-ac-outstanding-po
         stores `sku: l.ItemCode` into it verbatim. That makes it a better key
         than the mapping CSV, because a sofa line whose ERP code was MINTED

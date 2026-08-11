@@ -38,8 +38,12 @@
 //
 // The waterfall, best evidence first:
 //   T1  the goods-received line raised against THIS VERY PO line, matched on
-//       FromDocNo + ItemCode + Desc2. (GRDTL.FromDocDtlKey is unpopulated in
-//       AED_HOUZS -- 0 of 21,001 rows -- so the PO->GR link is the doc number.)
+//       FromDocNo + ItemCode + Desc2. (GRDTL.FromDocDtlKey -- the AutoCount GR
+//       line's own pointer back to the PO line, INSIDE the AutoCount book -- is
+//       unpopulated in AED_HOUZS, 0 of 21,001 rows, so the PO->GR link is the
+//       doc number. Do not confuse it with scm.purchase_order_items
+//       .linked_ac_dtlkey, which is the ERP-side key, IS populated, and is used
+//       for TARGETING rather than pricing. Two different keys, one name.)
 //   T2  the same item + the same Desc2 signature anywhere in the book, most
 //       recent. Measured 97.3% exact, 0.4% MAPE.
 //   T3  the item is PRICE-STABLE: at least 4 priced purchases in the last 24
