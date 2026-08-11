@@ -163,6 +163,13 @@ export const COLOUR_ALIAS = [
   ["922613", ["ARMANI J9226", "ARMANI J9226-13 WARM GREY"], "9226-13 (2)"],
   ["HARING02BEIGE", ["HIRRING GD8371", "HIRRING GD8371-02# BEIGE"], "Harring 02# Beige / beige (3)"],
   ["PH0ENIX0YSTER1", ["PHOENIX", "PHOENIX-1"], "Phoenix-oyster1 (2)"],
+  /* A transposition inside the series number, which the digit guard blocks on
+     purpose - it cannot tell a typo from a different colour. This one is
+     evidenced rather than guessed: the library holds no J9833 series at all,
+     and the SAME supplier's documents spell the series correctly elsewhere
+     (PO-000254 carries "COL: J9883-1-1 PAMA"). So the alias maps a misspelling
+     onto a row that exists instead of minting a duplicate fabric for it. */
+  ["J98332", ["J9883", "J9883-2"], "J9833-2 on PO-000162, a transposition of J9883-2 CHIC (1)"],
 ];
 
 /* rows: [{ fabric_id, colour_id, label }] straight out of scm.fabric_colours. */

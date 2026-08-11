@@ -55,6 +55,34 @@ tests fail against the pre-fix tree; 18 of 18 pass with the fix.**
 
 **Ref** - feat/ac-writeback-remaining-cells, 2026-08-11.
 
+## A misspelled fabric code was about to be minted as a NEW fabric instead of matched to the row it is a typo of [med]
+
+**Symptom** - the sofa backfill reported one code absent from the library:
+`J9833-2`, on `HC-PO-000162` (`[DAYBED/COL:J9833-2]`). Asked whether to create it,
+the owner said yes - reasonably, since his instruction was "查不到的可能就需要
+create 了".
+
+**Root cause (evidence, not a hunch)** - it is not a missing fabric, it is a
+transposition. `scm.fabric_colours` holds **no J9833 series at all**; it holds
+`J9883` with `J9883-1-1 PAMA` and `J9883-2 CHIC`. And the same supplier's own
+documents spell the series correctly elsewhere - `PO-000254` carries
+`COL: J9883-1-1 PAMA`. The fuzzy matcher refuses it on purpose: its digit guard
+compares digit RUNS, because relaxing that is exactly how a real `BO315-2`
+becomes a wrong `BO315-21`.
+
+**Fix** - one entry in `COLOUR_ALIAS`, which is the place a human-evidenced
+exception is allowed to live, mapping the misspelling onto the row that exists.
+No new fabric is minted. Creating one would have added a typo-spelled duplicate
+to a library the owner has been repeatedly tidying, and under the cancel-only
+rule it could not simply be removed afterwards.
+
+**Lesson** - "the library cannot find it" and "the library does not have it" are
+different findings, and only the second justifies a create. Check whether the
+code is one edit away from a row that already exists before minting anything -
+especially when the same document family spells it correctly.
+
+**Ref** - fix/j9833-alias, 2026-08-11.
+
 ## A sofa line's colour was never written, because nothing swept sofa and the parser could not read an unlabelled code [high]
 
 **Symptom** - the owner, 2026-08-11: *"可是我明明之前已经整理了很多次，为什么还是没有
