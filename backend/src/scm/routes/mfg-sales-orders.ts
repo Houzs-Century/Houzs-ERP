@@ -5626,11 +5626,29 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: prev } = await sb.from('mfg_sales_orders')
-    .select('status, version, edit_lease_token, edit_lease_expires_at')
+    .select('status, version, edit_lease_token, edit_lease_expires_at, linked_ac_docno')
     .eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
   const fromNorm = fromStatus == null ? null : String(fromStatus).toUpperCase();
+
+  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK.
+     The 2.2 SDK has no un-cancel: a whole-file grep of the reflected surface
+     for `uncancel`, `Cancelled:Boolean` and `set_Cancelled` returns nothing,
+     and CancelDocument is a COMMAND, not a flag we could write back to false.
+     So an ERP un-cancel has no push - it would leave the order live here and
+     cancelled there, which is exactly the divergence the owner named
+     ("一边取消一边没取消"). Refusing is the only option that cannot silently
+     diverge, and it matches what AutoCount itself enforces. */
+  if (fromNorm === 'CANCELLED' && toStatus !== 'CANCELLED'
+      && (prev as { linked_ac_docno?: string | null }).linked_ac_docno) {
+    return c.json({
+      error: 'cancel_is_final',
+      reason: 'This order was cancelled in AutoCount too, and AutoCount has no un-cancel. '
+        + 'Raise a new sales order instead.',
+      acDocNo: (prev as { linked_ac_docno?: string | null }).linked_ac_docno,
+    }, 409);
+  }
   const currentVersion = Number((prev as { version?: number | string }).version ?? 1);
   const expectedVersionRaw = Number(body.version);
   const statusGrace = !Number.isInteger(expectedVersionRaw) || expectedVersionRaw < 1;

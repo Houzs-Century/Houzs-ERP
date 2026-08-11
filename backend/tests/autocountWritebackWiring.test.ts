@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import rawSdk from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
@@ -188,4 +189,32 @@ test('the SOFA add-line branch queues an edit before it returns, and declares it
   expect(branch).toContain('queueAcSoEdit(c, docNo');
   /* Declared, not inferred: the ids come from the rows this insert returned. */
   expect(branch).toContain('moduleData');
+});
+
+/* The SDK has NO un-cancel: CancelDocument is a command, not a flag, and a
+   whole-file grep of the reflected surface for uncancel / Cancelled:Boolean /
+   set_Cancelled returns nothing. So an ERP un-cancel has no push - it would
+   leave the document live here and cancelled there, which is the divergence the
+   owner named. Refusing is the only option that cannot silently diverge. */
+describe('a cancel that reached AutoCount is final', () => {
+  test('the SDK really has no un-cancel — the premise, not an assumption', () => {
+    expect(/uncancel|set_Cancelled|Cancelled:Boolean/i.test(rawSdk)).toBe(false);
+    /* And the one thing it DOES have is a command. */
+    expect(rawSdk).toContain('CancelDocument');
+  });
+
+  test('the SO status route refuses to leave CANCELLED once linked_ac_docno is set', () => {
+    const h = rawSo.slice(rawSo.indexOf("mfgSalesOrders.patch('/:docNo/status'"));
+    const guard = h.slice(0, h.indexOf('const currentVersion'));
+    expect(guard).toContain('cancel_is_final');
+    expect(guard).toContain("fromNorm === 'CANCELLED'");
+    expect(guard).toContain('linked_ac_docno');
+  });
+
+  test('the PO reopen route refuses the same way', () => {
+    const h = rawPo.slice(rawPo.indexOf("mfgPurchaseOrders.patch('/:id/reopen'"));
+    const guard = h.slice(0, h.indexOf('cannot_reopen'));
+    expect(guard).toContain('cancel_is_final');
+    expect(guard).toContain('linked_ac_docno');
+  });
 });

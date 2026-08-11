@@ -4377,12 +4377,27 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, po_number, company_id')
+    .select('id, status, po_number, company_id, linked_ac_docno')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
+
+  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK. The 2.2 SDK has no
+     un-cancel - CancelDocument is a command, not a flag, and a whole-file grep
+     of the reflected surface for uncancel / set_Cancelled returns nothing. A
+     reopen here would leave the PO live in the ERP and cancelled in the account
+     book, with nothing able to close the gap. Raise a new PO instead. */
+  const acDocNo = (cur as { linked_ac_docno?: string | null }).linked_ac_docno;
+  if (curStatus === 'CANCELLED' && acDocNo) {
+    return c.json({
+      error: 'cancel_is_final',
+      message: 'This purchase order was cancelled in AutoCount too, and AutoCount has no '
+        + 'un-cancel. Raise a new purchase order instead.',
+      acDocNo,
+    }, 409);
+  }
   // Idempotent — a live PO is already open, echo back.
   if (curStatus === 'SUBMITTED' || curStatus === 'PARTIALLY_RECEIVED') {
     return c.json({ purchaseOrder: { id, status: curStatus } });

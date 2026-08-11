@@ -678,6 +678,29 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
 | It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 
+## 7f. A cancel that reached AutoCount is final
+
+The 2.2 SDK has **no un-cancel**. `CancelDocument` is a COMMAND, not a flag we
+could write back to false, and a whole-file grep of the reflected surface for
+`uncancel`, `set_Cancelled` and `Cancelled:Boolean` returns nothing — pinned by
+a test, so it is a checked premise rather than an assumption.
+
+So an ERP un-cancel has no push. Allowing one would leave the document live here
+and cancelled there, with nothing able to close the gap — the exact divergence
+the owner named (*"一边取消一边没取消"*).
+
+Once `linked_ac_docno` is set, leaving CANCELLED is refused with **409
+`cancel_is_final`**:
+
+| route | refuses |
+|---|---|
+| `PATCH /mfg-sales-orders/:docNo/status` | any transition out of CANCELLED |
+| `PATCH /mfg-purchase-orders/:id/reopen` | the reopen itself |
+
+A document with **no** `linked_ac_docno` is untouched — nothing was ever pushed
+for it, so nothing can diverge, and the reopen the Commander asked for in
+2026-06 still works exactly as before. **Raise a new document instead.**
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
