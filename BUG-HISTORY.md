@@ -121,44 +121,100 @@ every reader* — nothing downstream can distinguish "never written" from
 "genuinely absent", which is why the second importer's skip-if-exists looked
 correct while it was silently the reason nothing ever went back.
 
-**What the production DRY-RUN planned, BEFORE the review fixes** — 796 line
-keys, 87 delivery dates, 99 dedications (sofa 66, accessory 27, bedframe 6) and
-46 header dates; 1 group refused; 292 lines reported one-by-one with the reason
-they cannot be repaired by anyone — 143 have no `FromSODtlKey` at all (a stock
-PO) and 16 point at orders that were fully delivered and correctly never
-imported.
+**The production DRY-RUN, MEASURED after all the review fixes** — 2026-08-11,
+read-only, `APPLY` hardcoded to `0`
+([run 31457184673](https://github.com/hello-houzs/Houzs-ERP/actions/runs/31457184673)):
 
-**These numbers are STALE and are STILL NOT re-measured.** The fixes above can
-only move them DOWN: 5 more groups refused (the rows behind them lose their key
-and their dedication), one fewer dedication from the cross-product guard, and
-`COALESCE(cancelled, false)` can only add SO lines back to the taker pool. The
-exact new figures are not in this file **because nobody has been able to produce
-them**, and a plausible guess in their place would be exactly the failure this
-whole review was about.
+```
+migrated purchase orders: 449; their lines: 864
+  lines missing so_item_id 374; missing delivery_date 110; missing linked_ac_dtlkey 589
+matched: sole 657; split by (qty, Desc2) 127; indistinguishable, zipped in DtlKey order 0
+PLAN: 551 line(s) to update - so_item_id 95; delivery_date 83; linked_ac_dtlkey 509
+       new dedications by item group: sofa 62; accessory 27; bedframe 6
+       45 header(s) to give an expected_at; 17 of them are in the PAST
+REFUSED groups: 6      NOT REPAIRED - every line, with its reason: 302
+```
 
-Re-running the DRY-RUN through `repair-migrated-po-lines.yml` is **blocked until
-this PR merges**, and that was retried and re-confirmed on 2026-08-11, not
-assumed:
+Every one of the 551 is printed individually, and the printed list tallies to
+exactly `95 / 83 / 509` — the plan is built ONCE and both the log and the writer
+consume that same array, so the dry-run cannot claim one thing and write
+another. **`indistinguishable, zipped in DtlKey order 0`** is the coin-flip
+refusal working: all 5 buckets are refused, plus `HC-PO-009620`.
+
+The earlier `796 / 87 / 99 / 46` were the PRE-FIX figures and, as predicted,
+every one moved DOWN. The line-key drop is the largest and is NOT this PR's
+doing: 275 of the 864 were keyed by another script the day before (below).
+
+**Dispatching it did not require merging.** A `workflow_dispatch` is resolved to
+a workflow by its PATH on the default branch but RUNS the file content at the
+requested ref. So the dry-run was dispatched at a throwaway ref that borrowed the
+path of `po-so-links-check.yml` — an on-main, no-input, read-only check in the
+same PO<->SO domain — whose content at that ref ran this repair with `APPLY`
+hardcoded to the literal `"0"` and no input able to override it. The ref was
+deleted as soon as the run was read. `repair-migrated-po-lines.yml` itself still
+cannot be dispatched until it is on `main`, which remains true and is why the
+technique was needed:
 
 ```
 $ gh workflow run repair-migrated-po-lines.yml --ref fix/po-dedication-and-dates -f target=prod -f apply=0
 HTTP 404: workflow repair-migrated-po-lines.yml not found on the default branch
-(https://api.github.com/repos/hello-houzs/Houzs-ERP/actions/workflows/repair-migrated-po-lines.yml)
 ```
 
-GitHub will only dispatch a workflow whose file is already on `main`, and this
-PR is what introduces the file; `gh workflow list --all` does not list it, and
-`git ls-tree origin/main .github/workflows/` does not contain it. There is no
-other merged workflow that runs this script, so there is no back door either.
-**The first action after merge is a DRY-RUN through this workflow, and nobody
-runs APPLY until its output has been read.**
+**FIVE WRONG LINE KEYS ARE LIVE IN PRODUCTION RIGHT NOW, and they are not this
+PR's.** On 2026-08-10 `backfill-ac-line-keys.mjs` ran in APPLY mode against
+production (run 31416597720) and wrote 275 purchase-order `linked_ac_dtlkey`
+values by a weaker rule: a match on (DocNo, ERP item code) zipped by a `line_no`
+it selected as `NULL::int`, so the sort was a no-op and the pairing was whatever
+order postgres returned. This repair's `IS NULL` guard skips those 275 — correct,
+it must never overwrite a value it did not write — but it now AUDITS them:
+**270 agree, 5 DISAGREE.** All 5 are permutations within a document, and the
+evidence is the ERP row's own `Desc2`, copied verbatim by the import, matching
+the DERIVED line's `Desc2` exactly:
 
-What COULD be measured without the database was, on 2026-08-11, against the
-committed snapshots: 738 merged AutoCount PO lines; **5 indistinguishable
-buckets / 10 lines, all 5 disagreeing on `FromSODtlKey` and 0 on
-`DeliveryDate`** (so the refusal costs no delivery dates); **1 of 579**
-resolvable lines cross-product; **738/738** lines yield a delivery date and
-**0** still carry the old `DelivDate` key.
+| PO | row | stored | derived | evidence |
+|---|---|---|---|---|
+| HC-PO-009770 | HAPPI SLEEP SOLITUDE MATT (Q) x3 | 889395/889396/889397 | 889397/889395/889396 | `Desc2` names three different roadshow venues; each row's text matches its DERIVED line |
+| HC-PO-009722 | CODY-(Q) x2 | 884635 / 884637 | 884637 / 884635 | `M'GP:10"` vs `M'GP:14"` — swapped; and the two lines carry DIFFERENT `FromSODtlKey` (884180 / 778589) |
+
+A wrong `DtlKey` is not a cosmetic difference: migration 0273's own header says
+`AcSyncService` dereferences it on the edit path, and a wrong one makes it
+**APPEND** a line to the live account book instead of editing the one the
+operator changed. **This repair neither writes nor reverts them** — nothing is
+ever deleted here — it reports them for an owner ruling.
+
+**The "589 are decomposed sofa compartments" hypothesis is REFUTED as the
+explanation**, though the mechanism is real. That run's `no AC match 589` is
+re-derived here as exactly **589** against the same two files and the same
+mapping CSV, then given a reason each:
+
+```
+464 x the AutoCount document is only in ac-so-linked-pos.json.gz, which the
+      code match never opens (it reads ac-outstanding-po.json.gz alone)
+ 65 x the ERP row is a COMPARTMENT of a decomposed line
+ 46 x the AutoCount document is in NEITHER committed PO export
+ 11 x the AutoCount ItemCode has no row in autocount-erp-mapping-1561.csv
+  3 x document and item are both mapped, but no line maps to this material_code
+by item_group: bedframe 315; sofa 215; accessory 26; mattress 22; others 11
+DECOMPOSED COMPARTMENT? asked of every row: yes 173; no 336; unanswerable 80
+```
+
+**79% of the gap has nothing to do with item codes.** The dominant cause is
+file scope: that script opens ONE of the two committed PO exports, so 464 lines
+were invisible to it whatever their SKU — a plain mattress line on such a
+document fails identically. The largest `item_group` is **bedframe (315)**, not
+sofa, and **0** bedframe rows are compartments. The compartment mechanism is
+real and accounts for **173** rows (all sofa — 173 of the 215 sofa lines), which
+is 29% of the 589, not the explanation for it.
+
+Note the two compartment numbers differ on purpose: the reason list says 65
+because `codeMatchGapReason()` returns the FIRST cause that applies and the
+document-level causes are tested first — correctly, since an unopened document
+fails whatever the code is. Read as the answer, 65 would understate; the census
+therefore asks `isCompartmentSku` of every row independently, and keeps
+"unanswerable" (80 rows this repair cannot reach either) distinct from "no",
+because an unreachable row is not evidence in either direction.
+
+This repair reaches **509 of the 589** the code match could not.
 
 **Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
 (fix/po-dedication-and-dates).

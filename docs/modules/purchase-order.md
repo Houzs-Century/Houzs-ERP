@@ -438,7 +438,22 @@ Every UPDATE re-asserts that the column is still NULL, so the repair is
 idempotent and never overwrites a value a human has set by hand. It does NOT
 recompute `po_qty_picked` — `recomputeSoPicked` only ever runs from a route
 handler — so the SO lines it dedicates keep reading as still-needing-ordering in
-the From-SO picker until something touches them. The DRY-RUN lists every one.
+the From-SO picker (`qty - po_qty_picked > 0`, `/outstanding-so-items`) until
+something touches them. **That is a duplicate-PO risk**: the line is now bound to
+a purchase order, but the picker still offers it, so a second PO can be raised
+for stock already on order. `backfill-po-so-item-links.mjs` has the identical
+gap, so this is precedent rather than a regression. The DRY-RUN lists every
+affected SO line by id, so the exposure is enumerable rather than estimated.
+
+Because it may only write into a NULL, the repair is **silent about rows another
+writer already filled** — and on 2026-08-10 `backfill-ac-line-keys.mjs` filled
+275 of them by a weaker rule. Silence there would be a choice not to look, so the
+script also AUDITS what it may not touch: it compares every stored
+`linked_ac_dtlkey` against the one it derives and prints each disagreement with
+the ERP row's own `Desc2` beside the AutoCount line's. It never writes or reverts
+them. A wrong `DtlKey` makes `AcSyncService` APPEND a line to the live account
+book instead of editing the operator's, so each disagreement is an owner ruling,
+not a thing for a script to decide.
 
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
