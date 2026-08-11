@@ -1,0 +1,59 @@
+name: Stamp real PO costs from the purchase invoice
+
+# Fills the unit price on purchase lines that carry NO price, using the price on
+# the actual AutoCount PURCHASE INVOICE (backend/scripts/data/ac-invoice-prices.json.gz),
+# not an inferred one. Every price names the PI document it came from.
+#
+# DRY-RUN BY DEFAULT. The dry run prints ONE LINE PER PLANNED WRITE, each with its
+# PI number, so APPLY can hold no surprises. Set apply=1 only after reading that list.
+#
+# Deliberately does NOT touch inventory_lots.unit_cost_sen. Almost every zero-cost
+# cutover layer has a receipt whose invoice also says 0.00, so there is no truthful
+# number to write. The run PRINTS that split, measured from the committed extracts
+# rather than quoted, and lists the handful that do resolve. Reported, not guessed at.
+#
+# Manual trigger only — a production write is never a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Set to "1" to WRITE. Anything else is a dry run.'
+        required: false
+        default: "0"
+      company_id:
+        description: "Company scope (default 1 = Houzs)"
+        required: false
+        default: "1"
+
+# Own concurrency group — must never queue behind or displace a release.
+concurrency:
+  group: stamp-real-po-costs
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # The refusal rules (never overwrite, ambiguous is a refusal, idempotent)
+      # are unit-tested. Never let a write run against a tree where they fail.
+      - run: node --test tests/invoiceRealCost.node.mjs
+      - run: node scripts/stamp-real-po-costs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ github.event.inputs.apply }}
+          COMPANY_ID: ${{ github.event.inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks.
+          NODE_OPTIONS: --dns-result-order=ipv4first
