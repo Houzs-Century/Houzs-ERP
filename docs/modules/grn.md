@@ -332,7 +332,7 @@ anyway (`default_free_gifts` is entirely sales-side). A SKU that has **never**
 been received at a non-zero cost is genuinely free — GWP pillows, demo units,
 display furniture — and posts silently; a SKU that **has** carried money before
 is refused, because on that one a zero is a missing price. `grn_items.zero_cost_ack`
-(migration 0277) is the per-line override for the rare genuine freebie of an
+(migration 0280) is the per-line override for the rare genuine freebie of an
 item that normally costs money; it exists so nobody types a fake price to get
 past the gate. A GRN carrying a non-zero service/freight pool is skipped, since
 the landed allocation can lift a zero-priced goods line off zero and the

@@ -164,7 +164,7 @@ describe('zeroCostAckColumns — what the write paths persist', () => {
   });
 
   test('the columns it emits are exactly the ones the gate and the read use', () => {
-    // Guards the whitelist: a column added here but not to migration 0277 (or
+    // Guards the whitelist: a column added here but not to migration 0280 (or
     // to ITEM) fails the insert at runtime, where nothing else would catch it.
     const cols = Object.keys(zeroCostAckColumns({ zeroCostAck: true, zeroCostReason: 'x' }, 'u', NOW)).sort();
     expect(cols).toEqual(['zero_cost_ack', 'zero_cost_ack_at', 'zero_cost_ack_by', 'zero_cost_reason']);

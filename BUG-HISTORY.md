@@ -1,3 +1,33 @@
+## The zero-cost ack migration took 0277, which main had already spent [med]
+
+**Symptom** — `backend/tests/migrationNumbers.test.ts` fails on this branch:
+`src/db/migrations-pg: 0277 is taken twice — rename your file to 0280_*.sql`.
+CI red, and `main` requires that check to merge.
+
+**Root cause (traced, not guessed)** — the branch numbered its migration `0277`
+against the tree it BRANCHED from. While it was open, #1855 merged
+`0277_scm_autocount_outbox.sql`, and 0278/0279 landed behind it. This is the
+exact failure mode CLAUDE.md already names — *take migration numbers at MERGE
+time by re-listing the tree, not when you branch* — and the same shape as the
+0171 and 0230 collisions that each blocked a deploy for hours. It stayed
+invisible here until the rebase, because the duplicate only exists in a tree
+that contains BOTH branches.
+
+**Fix** — renamed to `0280_scm_grn_zero_cost_ack.sql`, the number the failing
+test itself names. **Rename only, body untouched**, per the runner's own rule:
+`pg-migrate` tracks by full filename, so an edited body would read to it as an
+orphaned tracker row plus an unknown file to apply. The migration has never been
+applied anywhere — it ships only on this unmerged branch — so there is no
+tracker row to reconcile. The `Migration 0277` code comments that pointed at it
+were repointed to 0280; the ones naming `scm.autocount_outbox` are genuinely
+0277 and were left alone.
+
+**Verified** — with the collision present, `migrationNumbers.test.ts` is
+`1 failed | 7 passed`; renamed, that file is `8 passed`, and it plus
+`zero-cost-receipt-guard.test.ts` are `33 passed` together.
+
+**Ref** — PR #1907 `fix/zero-cost-po-exposure`, 2026-08-11.
+
 ## The cost-stamping script priced a queen bed from a king's purchase line [high, money]
 
 **Symptom** — `stamp-po-line-costs.mjs` planned to write RM470.00 onto
@@ -34,6 +64,19 @@ inflated by double-counting. The dry-run prints one line per planned write —
 the same list APPLY walks — plus the complement (`plan` and `skipped` partition
 the rows read, asserted by a test), so the log and the write can no longer
 disagree.
+
+That partition test proves the DECISION partitions the rows; it cannot catch a
+script that prints one list and writes another, which is the half that actually
+shipped. Three further tests assert the SCRIPT's traversal against its own
+source: exactly two `for (const p of plan)` blocks — one printing, one writing —
+with the single `UPDATE` inside the second; no loop over `book.*` and no
+`unmatchedUnits` counter, the walk that produced the false narration; and every
+iteration in `main()` drawing from `plan`/`skipped` or a grouping of them, so no
+third tally can be printed. Structural because `main()` opens a database
+connection on import and cannot run in this harness. **Mutation-verified:** clean
+**18 pass**; reintroduce the `book.poLines` narration loop and it is
+**16 pass / 2 fail**; filter the printed list while APPLY keeps the full plan and
+it is **17 pass / 1 fail**.
 
 **Provenance of the footprint numbers — read this before quoting them.** Pre-fix
 32 lines / 65 units / RM 9,482.00, post-fix 30 lines / 61 units / RM 7,430.50,

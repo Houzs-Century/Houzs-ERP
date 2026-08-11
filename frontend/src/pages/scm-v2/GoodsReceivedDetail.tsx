@@ -136,7 +136,7 @@ type LineDraft = {
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
-  /* Migration 0277 — the zero-cost receipt gate's escape hatch. The gate
+  /* migration 0280 — the zero-cost receipt gate's escape hatch. The gate
      refuses a receipt that would open a zero-cost stock layer for a SKU the
      company has bought at a real price before; this tick is the operator
      saying the line genuinely arrived free (GWP, demo, display). It is the
@@ -165,7 +165,7 @@ type GrnItemRow = Record<string, unknown> & {
   /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
      Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
-  /* Migration 0277 — zero-cost receipt acknowledgement + who set it. */
+  /* migration 0280 — zero-cost receipt acknowledgement + who set it. */
   zero_cost_ack?: boolean | null;
   zero_cost_reason?: string | null;
   /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
@@ -383,7 +383,7 @@ export const GoodsReceivedDetail = () => {
             description:  d.materialName,
             itemGroup:    d.itemGroup ?? undefined,
             variants:     d.variants ?? {},
-            /* Migration 0277 — the server stamps who and when from the session;
+            /* migration 0280 — the server stamps who and when from the session;
                the client only ever sends the decision and the reason. */
             zeroCostAck:    d.zeroCostAck,
             zeroCostReason: d.zeroCostReason.trim() || null,
@@ -806,7 +806,7 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
-                    {/* Zero-cost acknowledgement (migration 0277). Rendered only
+                    {/* Zero-cost acknowledgement (migration 0280). Rendered only
                         while the line actually carries no price — on a priced
                         line the gate cannot fire, and a permanent "received
                         free" tick next to every line is exactly the kind of

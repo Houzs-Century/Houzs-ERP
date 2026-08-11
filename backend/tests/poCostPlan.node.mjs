@@ -297,3 +297,75 @@ test("qty on the plan is the OPEN quantity, so the reported value is the exposur
   const { plan } = planStamps({ book: b, erpRows: rows, codeMap: CODE_MAP });
   assert.equal(plan[0].qty, 3);
 });
+
+/* ── The log and the writer must consume ONE list ──────────────────────────
+   The tests above prove the DECISION is right. This one proves the SCRIPT
+   cannot misreport it, which is a separate failure and the one that actually
+   shipped: the first version printed a narrative walked from the AutoCount
+   lines while APPLY walked a plan built from a different key, so the dry-run
+   said "LEFT AT ZERO ... x3" about the very lines it then stamped at RM2,051.50.
+   A reviewer who reads a dry-run is trusting that the printed footprint IS the
+   written footprint, and nothing in the partition test above can catch a script
+   that prints one list and writes another.
+
+   Asserted against the script SOURCE because the script's own main() opens a
+   database connection on import and cannot be exercised in this harness. That
+   makes these assertions structural, and they are deliberately narrow: they
+   pin the traversal, not the wording. */
+const STAMP = path.join(HERE, "..", "scripts", "stamp-po-line-costs.mjs");
+const stampSrc = () => fs.readFileSync(STAMP, "utf8");
+
+test("the dry-run's printed list and APPLY's written list are the same array", () => {
+  const src = stampSrc();
+  // Exactly two traversals of `plan`: the one that prints and the one that writes.
+  const loops = src.match(/for \(const p of plan\) \{/g) ?? [];
+  assert.equal(loops.length, 2,
+    "expected exactly two `for (const p of plan) {` blocks — one printing the planned " +
+    "writes, one performing them. A third traversal, or a loop over anything else, is " +
+    "how the log and the write drift apart.");
+
+  // The printing loop is the one introduced by the "planned writes" banner.
+  const banner = src.indexOf("-- planned writes");
+  assert.ok(banner > 0, "the dry-run must announce its planned-writes list");
+  const afterBanner = src.slice(banner);
+  assert.ok(/^[^\n]*\n\s*for \(const p of plan\) \{/.test(afterBanner),
+    "the planned-writes banner must be immediately followed by the traversal of `plan`");
+
+  // There is exactly one write, and it sits inside a `plan` traversal.
+  const updates = src.match(/UPDATE scm\.\w+/g) ?? [];
+  assert.deepEqual(updates, ["UPDATE scm.purchase_order_items"],
+    "the script must contain exactly one UPDATE, against purchase_order_items");
+  const writeLoop = src.lastIndexOf("for (const p of plan) {");
+  assert.ok(writeLoop < src.indexOf("UPDATE scm.purchase_order_items"),
+    "the UPDATE must sit inside the final `plan` traversal, not in a loop of its own");
+});
+
+test("the script never re-walks the AutoCount lines to narrate an outcome", () => {
+  /* The original contradiction came from the script counting `unmatchedUnits`
+     while walking `book.poLines` itself. That traversal now belongs to
+     po-cost-plan.mjs, which returns `plan` and `skipped`; the script's job is to
+     print them and write one of them. If a loop over the AutoCount evidence ever
+     reappears here, the two views of the run can disagree again. */
+  const src = stampSrc();
+  const body = src.slice(src.indexOf("async function main()"));
+  assert.ok(!/for \(const \w+ of book\./.test(body),
+    "the script must not iterate the AutoCount snapshot — the plan module owns that walk");
+  assert.ok(!/unmatchedUnits/.test(src),
+    "`unmatchedUnits` was the counter that produced the false LEFT AT ZERO line");
+});
+
+test("every reported bucket comes from `plan` or `skipped`, never a third tally", () => {
+  const src = stampSrc();
+  const body = src.slice(src.indexOf("async function main()"));
+  /* Each iteration inside main() must draw from the partition APPLY acts on —
+     `plan`, `skipped`, or a grouping derived from them (`tiers`, `byReason`,
+     and the `list` those yield). An iteration over anything else is a third
+     tally, and a third tally is free to disagree with both. */
+  const sources = [...body.matchAll(/for \(const (?:\w+|\[[^\]]+\]) of ([^)]*?)\)\s*\{/g)]
+    .map((m) => m[1].trim());
+  assert.ok(sources.length > 0, "no iterations found in main() — the regex stopped matching");
+  const strays = sources.filter((expr) => !/\b(plan|skipped|tiers|byReason)\b/.test(expr));
+  assert.deepEqual(strays, [],
+    `main() iterates ${JSON.stringify(strays)}; every printed number must be derived from ` +
+    "the same `plan`/`skipped` partition APPLY acts on");
+});
