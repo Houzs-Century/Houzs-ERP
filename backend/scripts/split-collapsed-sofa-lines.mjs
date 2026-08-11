@@ -27,7 +27,8 @@
  * REFUSALS, each one a stop rather than a guess:
  *   - the document does not hold exactly one bare -1S sofa line
  *   - a piece SKU is not minted in scm.mfg_products
- *   - the line already has a downstream receipt/delivery against it
+ *   - a goods receipt against the line REALLY moved stock (a migrated receipt
+ *     that moved none splits with the line instead, which is the normal case)
  *   - the document total would move
  *
  *   DATABASE_URL   required
@@ -70,6 +71,7 @@ async function main() {
 
   for (const p of PLAN) {
     const isPo = p.doc.startsWith("HC-PO-");
+    let grnLines = [];
     const rows = isPo
       ? await sql`SELECT i.id, i.material_code code, i.qty, i.unit_price_centi price, i.received_qty, i.purchase_order_id pid
                     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
@@ -81,28 +83,21 @@ async function main() {
     if (target.length !== 1) { log(`REFUSED ${p.doc}: expected exactly one bare -1S sofa line, found ${target.length}`); continue; }
     const missing = p.pieces.filter((c) => !prods.has(c));
     if (missing.length) { log(`REFUSED ${p.doc}: piece SKU not minted - ${missing.join(", ")}`); continue; }
-    if (isPo && Number(target[0].received_qty || 0) > 0) { log(`REFUSED ${p.doc}: the line already has ${target[0].received_qty} received`); continue; }
-    plan.push({ ...p, isPo, row: target[0], siblings: rows.length });
-  }
-
-  /* A sales order whose DEDICATED purchase-order line cannot be split must not
-     be split either. Splitting one side of a pair is how this session created
-     four fresh SO-to-PO disagreements earlier today: the owner's goal is that
-     related documents hold IDENTICAL data, so a repair that can only reach one
-     side is not a repair. */
-  const refusedPo = new Set(PLAN.map((p) => p.doc).filter((d) => d.startsWith("HC-PO-") && !plan.some((q) => q.doc === d)));
-  if (refusedPo.size) {
-    const links = await sql`SELECT h.doc_no so_doc, p.po_number po_doc
-        FROM scm.mfg_sales_order_items s
-        JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
-        JOIN scm.purchase_order_items i ON i.so_item_id = s.id
-        JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-       WHERE h.doc_no = ANY(${plan.filter((q) => !q.isPo).map((q) => q.doc)})`;
-    for (const l of links) {
-      if (!refusedPo.has(l.po_doc)) continue;
-      const i = plan.findIndex((q) => q.doc === l.so_doc);
-      if (i >= 0) { log(`REFUSED ${l.so_doc}: its dedicated purchase order ${l.po_doc} cannot be split, and the pair must stay identical`); plan.splice(i, 1); }
+    /* A received line is NOT a refusal any more. Owner, 2026-08-11: "全部有联动
+       性的文件都是一起换的，而不是单独换而已" - the goods receipt raised against
+       this line is part of the same physical sofa, so it splits with it, in the
+       same transaction. Measured before writing this: all four GRNs involved are
+       migrated_no_stock with ZERO inventory movements between them, so the chain
+       is paperwork only and no stock can move. The script re-asserts that inside
+       the transaction rather than trusting the measurement. */
+    if (isPo) {
+      grnLines = await sql`SELECT gi.id, gr.grn_number, gi.qty_received, gi.qty_accepted, gr.migrated_no_stock
+          FROM scm.grn_items gi JOIN scm.grns gr ON gr.id = gi.grn_id
+         WHERE gi.purchase_order_item_id = ${target[0].id}`;
+      const live = grnLines.filter((g) => !g.migrated_no_stock);
+      if (live.length) { log(`REFUSED ${p.doc}: ${live.length} goods receipt line(s) really moved stock - splitting those needs a compensating movement, not a re-code`); continue; }
     }
+    plan.push({ ...p, isPo, row: target[0], siblings: rows.length, grnLines });
   }
 
   log("");
@@ -113,11 +108,12 @@ async function main() {
   }
   const newLines = plan.reduce((n, p) => n + p.pieces.length - 1, 0);
   log("");
-  log(`documents to split ${plan.length} of ${PLAN.length}; lines re-coded ${plan.length}; new lines ${newLines}; deletions 0`);
+  const newGrn = plan.reduce((n, q) => n + q.grnLines.length * (q.pieces.length - 1), 0);
+  log(`documents to split ${plan.length} of ${PLAN.length}; lines re-coded ${plan.length}; new order lines ${newLines}; new goods-receipt lines ${newGrn}; deletions 0`);
 
   if (!APPLY) { log("\nDRY-RUN - set APPLY=1 to write."); await sql.end(); return; }
 
-  let recoded = 0, inserted = 0;
+  let recoded = 0, inserted = 0, grnInserted = 0;
   await sql.begin(async (tx) => {
     const totBefore = await tx`SELECT COALESCE(SUM(total_centi),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
     for (const p of plan) {
@@ -129,6 +125,25 @@ async function main() {
            WHERE id = ${p.row.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'
            RETURNING id`;
         recoded += r.length;
+        for (const g of p.grnLines) {
+          await tx`UPDATE scm.grn_items SET material_code = ${first},
+                     variants = COALESCE(variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })}
+                   WHERE id = ${g.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'`;
+          for (const code of rest) {
+            const gi = await tx`INSERT INTO scm.grn_items
+              (grn_id, purchase_order_item_id, material_kind, material_code, material_name, item_group,
+               qty_received, qty_accepted, qty_rejected, uom, unit_price_centi, line_total_centi,
+               description, description2, variants, company_id, linked_ac_dtlkey)
+              SELECT x.grn_id, x.purchase_order_item_id, x.material_kind, ${code}, x.material_name, x.item_group,
+                     x.qty_received, x.qty_accepted, 0, x.uom, 0, 0,
+                     x.description, x.description2,
+                     COALESCE(x.variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })},
+                     x.company_id, x.linked_ac_dtlkey
+                FROM scm.grn_items x WHERE x.id = ${g.id}
+              RETURNING id`;
+            grnInserted += gi.length;
+          }
+        }
         for (const code of rest) {
           const c2 = await tx`INSERT INTO scm.purchase_order_items
             (purchase_order_id, material_kind, material_code, material_name, item_group, qty, uom,
@@ -164,6 +179,12 @@ async function main() {
         }
       }
     }
+    const grnNos = plan.flatMap((q) => q.grnLines.map((g) => g.grn_number));
+    if (grnNos.length) {
+      const mv = await tx`SELECT COUNT(*)::int n FROM scm.inventory_movements WHERE source_doc_no = ANY(${grnNos})`;
+      if (mv[0].n !== 0) throw new Error(`REFUSED: those goods receipts carry ${mv[0].n} inventory movements. Rolled back.`);
+      log(`stock check: the goods receipts touched carry 0 inventory movements, as measured`);
+    }
     const totAfter = await tx`SELECT COALESCE(SUM(total_centi),0)::bigint t FROM scm.mfg_sales_order_items WHERE doc_no = ANY(${plan.filter(p=>!p.isPo).map(p=>p.doc)})`;
     if (String(totBefore[0].t) !== String(totAfter[0].t)) {
       throw new Error(`REFUSED: the sales-order total moved ${totBefore[0].t} -> ${totAfter[0].t}. Rolled back.`);
@@ -171,7 +192,7 @@ async function main() {
     log(`money check: sales-order total unchanged at ${totBefore[0].t} centi`);
   });
 
-  log(`APPLIED - re-coded ${recoded}, inserted ${inserted}, deleted 0.`);
+  log(`APPLIED - re-coded ${recoded}, order lines inserted ${inserted}, goods-receipt lines inserted ${grnInserted}, deleted 0.`);
   log("Counts are RETURNING. Confirm with an independent read before believing them.");
   await sql.end();
 }
