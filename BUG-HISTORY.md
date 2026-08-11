@@ -137,7 +137,7 @@ invariant that actually matters.
 The three COE protections are independent, and a script can pass the one the
 last incident was about while failing the two it was not.
 
-**Ref** - 2026-08-11, PR #1969 (chore/po-variant-text-check).
+**Ref** - 2026-08-11, PR #1970 (chore/po-variant-text-check).
 
 ## A fabric code was read as a bed height, because a measurement rule had no left boundary [high]
 
