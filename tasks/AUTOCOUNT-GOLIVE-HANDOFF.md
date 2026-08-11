@@ -36,6 +36,36 @@ still owed. Every number here came from a production read, not from a script's
 own log line — see *The three things that were wrong about what we believed*
 below for why that distinction is load-bearing.
 
+## Where this actually stands, 2026-08-12 01:45
+
+The service on the office host was **rebuilt from current `main` and swapped**,
+and five coverage cells went from never-run to PROVEN against the live
+`AED_HOUZS` book. What is left is small, named, and no longer needs anybody
+standing at that machine except to run one command.
+
+| | |
+|---|---|
+| Running exe | rebuilt 2026-08-12, 46,592 bytes, `/health` names `AED_HOUZS`, **database reachable** (`/ensure-masters` 200, and it read `agent:OTHERS` + `location:KL` back out of the book) |
+| Rollback | `C:\Temp\AcSyncService.prev.exe` |
+| PROVEN | `create-so`, all four `/edit` guards, `so-to-do` (**DO-011260**, cancelled), `cancel` SO + DO |
+| BLOCKED | `create-po` and therefore `po-to-gr` — `FK_PO_PurchaseAgent`. **Fixed in code, NOT yet on the host** |
+| Write-back toggle | still `off`; `scm.autocount_outbox` still holds **zero rows of any status** |
+| Freeze | still on, every area — **and it does not need lifting.** The bypass works (`write-freeze.ts:244`, `BYPASS_PERMS = ['*','scm.admin']`); the owner's position is Super Admin, which `auth.ts:383` grants `*`. He and Nico write through a fully frozen system |
+
+**The remaining sequence, in order.** Only step 1 touches the office machine.
+
+1. Redeploy the service with the master-data fix:
+   `powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -Server ".\A2006"`
+   The `-Server` matters: `setup.json` says `192.168.1.198\A2006`, which this host
+   does not resolve, and it names database **`AED_DEMO`** — neither value can be
+   trusted, and the script now warns about the second.
+2. Re-run `qa-convert.ps1` to close `create-po` and `po-to-gr`.
+3. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
+   `companies=1`. **Before anyone creates a document, not after**: the flag is
+   checked at enqueue, so anything saved while it is off is never sent and cannot
+   be backfilled.
+4. One real order, watched into the outbox.
+
 ## The owner's acceptance criteria
 
 He set these himself. Nothing ships until all three pass.

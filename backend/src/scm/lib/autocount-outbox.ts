@@ -1507,9 +1507,22 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     }
   }
 
+  /* A PURCHASE agent is a different master from a sales one: different table
+     (dbo.PurchaseAgent), different foreign key (FK_PO_PurchaseAgent), different
+     SDK command. Opening 'OTHERS' as a sales agent does nothing for a purchase
+     order that names it — /create-po is refused and the whole document is lost.
+     Proved on the live book 2026-08-12, after ensure-masters had already
+     reported agent:OTHERS as existing.
+     CreditorCode is the discriminator because it is the one field only a
+     purchase document carries; CreatePo applies it unconditionally. */
+  const isPurchase = typeof body.CreditorCode === 'string' && body.CreditorCode.trim().length > 0;
   const agents: Array<{ Agent: string }> = [];
+  const purchaseAgents: Array<{ PurchaseAgent: string }> = [];
   const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
-  if (agent) agents.push({ Agent: agent });
+  if (agent) {
+    if (isPurchase) purchaseAgents.push({ PurchaseAgent: agent });
+    else agents.push({ Agent: agent });
+  }
 
   /* A PURCHASE ORDER NAMES A CREDITOR, and CreatePo applies CreditorCode
      unconditionally — so a supplier the account book does not have fails the
@@ -1547,11 +1560,12 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     if (v) udfOptions.push({ List: listName, Value: v });
   }
 
-  if (!items.size && !agents.length && !creditors.length
+  if (!items.size && !agents.length && !purchaseAgents.length && !creditors.length
       && !locations.size && !udfOptions.length) return null;
   return {
     Items: [...items.values()],
     Agents: agents,
+    PurchaseAgents: purchaseAgents,
     Creditors: creditors,
     Locations: [...locations.values()],
     UdfOptions: udfOptions,

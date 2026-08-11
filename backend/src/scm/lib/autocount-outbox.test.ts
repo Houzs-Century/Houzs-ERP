@@ -1109,6 +1109,37 @@ describe('every document the ERP creates carries the ERP number', () => {
   });
 });
 
+/* A PURCHASE agent is a different master from a sales one - a different table
+   (dbo.PurchaseAgent) behind a different foreign key (FK_PO_PurchaseAgent).
+   Opening OTHERS as a SALES agent does nothing for a purchase order naming it,
+   and /create-po is refused with the whole document. Proved on the live book
+   2026-08-12, after ensure-masters had already reported agent:OTHERS existing. */
+describe('the agent a PO names goes to the PURCHASE agent master, not the sales one', () => {
+  test('a purchase payload sends PurchaseAgents and no sales Agents', () => {
+    const m = mastersOf({
+      CreditorCode: '400-N002', Agent: 'OTHERS', Details: [{ ItemCode: 'A' }],
+    }) as { Agents: unknown[]; PurchaseAgents: Array<Record<string, unknown>> };
+    expect(m.PurchaseAgents).toEqual([{ PurchaseAgent: 'OTHERS' }]);
+    expect(m.Agents).toEqual([]);
+  });
+
+  test('a sales payload still sends Agents and no PurchaseAgents', () => {
+    const m = mastersOf({
+      DebtorCode: '300-C002', Agent: 'OTHERS', Details: [{ ItemCode: 'A' }],
+    }) as { Agents: Array<Record<string, unknown>>; PurchaseAgents: unknown[] };
+    expect(m.Agents).toEqual([{ Agent: 'OTHERS' }]);
+    expect(m.PurchaseAgents).toEqual([]);
+  });
+
+  test('an agent-less purchase payload invents neither', () => {
+    const m = mastersOf({ CreditorCode: '400-N002', Details: [{ ItemCode: 'A' }] }) as {
+      Agents: unknown[]; PurchaseAgents: unknown[];
+    };
+    expect(m.Agents).toEqual([]);
+    expect(m.PurchaseAgents).toEqual([]);
+  });
+});
+
 /* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
    unconditionally - so a supplier the account book does not have fails the same
    foreign key a missing item does, and takes the whole PO with it. */
