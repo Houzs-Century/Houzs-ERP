@@ -61,6 +61,42 @@ async function main() {
   for (const r of noRef.slice(0, 5)) log(`   no AutoCount receipt recorded for the PO behind ${r.grn_number} — re-run the GR reference stamp before renumbering`);
   bad += wrong.length;
 
+  /* Invoices (migration 0280). Written only by create-migrated-invoices.mjs,
+     one per AutoCount invoice, numbered HC-<AutoCount's number> — the same rule
+     as the four document types above, and the same failure if it drifts: a
+     human holding AutoCount's PI-000658 finds nothing in the ERP.
+
+     Checked with a column guard rather than assumed, so this script still runs
+     against an environment where 0280 has not been applied. Reporting "0
+     migrated invoices" when the column is missing would be a lie of omission —
+     it reads as "checked and clean". */
+  for (const [table, col, label] of [
+    ["purchase_invoices", "invoice_number", "PURCHASE INVOICES"],
+    ["sales_invoices", "invoice_number", "SALES INVOICES"],
+  ]) {
+    const [{ present }] = await sql`
+      SELECT COUNT(*)::int AS present FROM information_schema.columns
+      WHERE table_schema = 'scm' AND table_name = ${table} AND column_name = 'migrated_no_stock'`;
+    if (!present) {
+      log(`${label}: scm.${table}.migrated_no_stock does not exist — migration 0280 not applied, nothing to check yet`);
+      continue;
+    }
+    const rows = await sql.unsafe(
+      `SELECT ${col} AS doc_no, linked_ac_docno FROM scm.${table}
+       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL
+         AND ${col} <> 'HC-' || linked_ac_docno`);
+    const [{ n: total }] = await sql.unsafe(
+      `SELECT COUNT(*)::int n FROM scm.${table} WHERE company_id = ${CO} AND migrated_no_stock = true`);
+    const noRef = await sql.unsafe(
+      `SELECT ${col} AS doc_no FROM scm.${table}
+       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NULL`);
+    log(`${label}: ${total} migrated; not carrying their AutoCount number: ${rows.length}`
+      + `; with NO AutoCount invoice number recorded: ${noRef.length}`);
+    for (const r of rows.slice(0, 10)) log(`   ${r.doc_no} should be HC-${r.linked_ac_docno}`);
+    for (const r of noRef.slice(0, 5)) log(`   ${r.doc_no} is flagged migrated but names no AutoCount invoice`);
+    bad += rows.length + noRef.length;
+  }
+
   log("");
   log(bad === 0
     ? "VERDICT: every migrated document carries the AutoCount number it came from."

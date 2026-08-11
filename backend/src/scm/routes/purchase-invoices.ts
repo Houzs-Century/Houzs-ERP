@@ -24,6 +24,7 @@ import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { refuseMigratedSources } from '../lib/migrated-chain';
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -469,6 +470,41 @@ async function piLocked(sb: any, piId: string): Promise<{ error: string; message
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };
   if ((row.paid_centi ?? 0) > 0) return { error: 'pi_locked', message: 'Invoice has a payment recorded — locked' };
   return null;
+}
+
+/* The migrated refusal for the paths that attach GRN LINES rather than a whole
+   receipt — POST / (the ?grnId= draft path) and POST /:id/items. /from-grn and
+   /from-grn-items resolve the receipt themselves and call refuseMigratedSources
+   directly; these two only ever see a grn_item_id, so the receipt has to be
+   looked up before the rule can be applied. Same rule either way, so a caller
+   cannot pick a softer door.
+
+   A FAILED LOOKUP IS NOT A PASS. `ok: false` makes the caller refuse rather
+   than proceed blind: a guard that fails open is not a guard, and the thing it
+   would let through is a duplicated payable in the owner's live account book. */
+async function migratedRefusalForGrnItems(
+  sb: any,
+  grnItemIds: Array<string | null | undefined>,
+): Promise<
+  | { ok: true; refusal: { error: string; message: string; docNumbers: string[] } | null }
+  | { ok: false; reason: string }
+> {
+  const ids = [...new Set(grnItemIds.filter((x): x is string => typeof x === 'string' && x.length > 0))];
+  if (ids.length === 0) return { ok: true, refusal: null };
+  const { data, error } = await sb.from('grn_items')
+    .select('id, grn:grns!inner ( grn_number, migrated_no_stock )')
+    .in('id', ids);
+  if (error) return { ok: false, reason: error.message };
+  const rows = (data ?? []) as unknown as Array<{
+    grn: { grn_number: string; migrated_no_stock: boolean | null } | null;
+  }>;
+  return {
+    ok: true,
+    refusal: refuseMigratedSources(rows.map((r) => ({
+      docNo: r.grn?.grn_number ?? '(unknown receipt)',
+      migrated: r.grn?.migrated_no_stock === true,
+    }))),
+  };
 }
 
 /* Filter-pill bucket → the raw purchase_invoices.status values it covers. Single
@@ -968,6 +1004,16 @@ purchaseInvoices.post('/', async (c) => {
       wantByGrnItem.set(gid, (wantByGrnItem.get(gid) ?? 0) + Number(it.qty ?? 0));
     }
     const gids = [...wantByGrnItem.keys()];
+    /* A receipt carried over from AutoCount is invoiced by the migrated-invoice
+       converter, never by hand — see lib/migrated-chain.ts. Checked HERE and
+       not only on /from-grn, because this path reaches the same GRN lines
+       through a line id and would otherwise be the open gate beside the
+       fence. */
+    {
+      const mig = await migratedRefusalForGrnItems(sb, gids);
+      if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+      if (mig.refusal) return c.json(mig.refusal, 409);
+    }
     if (gids.length > 0) {
       const { data: giRows } = await sb.from('grn_items')
         .select('id, qty_accepted, invoiced_qty, returned_qty').in('id', gids);
@@ -1471,7 +1517,7 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
       variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
       special_order_price_sen, discount_centi,
-      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate )
+      grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock )
     `)
     .in('id', ids);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
@@ -1485,12 +1531,24 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
     discount_centi: number;
-    grn: { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null };
+    grn: { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null };
   };
 
   const itemList = (itemsData ?? []) as unknown as ItemRow[];
   const byId = new Map<string, ItemRow>();
   for (const r of itemList) byId.set(r.id, r);
+
+  /* Same refusal as POST /from-grn, and for the same three reasons (wrong
+     number, double-posted payable, duplicated AutoCount invoice) — with one
+     extra that is specific to picking LINES: a migrated receipt's invoice must
+     mirror AutoCount's one-for-one, and a hand-picked subset of its lines
+     cannot. See lib/migrated-chain.ts. */
+  {
+    const refusal = refuseMigratedSources(itemList.map((r) => ({
+      docNo: r.grn?.grn_number ?? r.grn_id, migrated: r.grn?.migrated_no_stock === true,
+    })));
+    if (refusal) return c.json(refusal, 409);
+  }
 
   for (const p of picks) {
     const row = byId.get(p.grnItemId);
@@ -1731,12 +1789,24 @@ purchaseInvoices.post('/from-grn', async (c) => {
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
 
   const { data: grn, error: grnErr } = await sb.from('grns')
-    .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate')
+    .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock')
     .eq('id', grnId).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
-  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null };
+  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null };
   if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
+  /* A receipt carried over from AutoCount is invoiced by the migrated-invoice
+     converter, never here. Three things go wrong if this path takes it: the
+     invoice would be numbered PI-YYMM-NNNN instead of HC-<AutoCount's number>
+     (the owner's standing rule), it would post Dr 1200 / Cr 2000 for a payable
+     AutoCount already booked, and it would enqueue a gr_to_pi transfer that
+     duplicates the invoice in the live account book. It would also consume the
+     GRN line's invoiceable quantity, so the mistake could not be corrected
+     without cancelling the invoice first. See lib/migrated-chain.ts. */
+  {
+    const refusal = refuseMigratedSources([{ docNo: g.grn_number, migrated: g.migrated_no_stock === true }]);
+    if (refusal) return c.json(refusal, 409);
+  }
 
   const { data: items, error: iErr } = await sb.from('grn_items')
     .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi')
@@ -1854,7 +1924,10 @@ purchaseInvoices.post('/from-grn', async (c) => {
   // Costing B — push the billed price down to the GRN's lots / DO / SI.
   await recostFromGrn(sb, g.id);
 
-  /* ERP -> AutoCount GRN->Purchase Invoice. Queued, never pushed inline. */
+  /* ERP -> AutoCount GRN->Purchase Invoice. Queued, never pushed inline. A
+     receipt carried over from AutoCount never reaches this line — it is refused
+     at the top of the handler, because the invoice AutoCount raised from it
+     already exists in the live account book. */
   await enqueueConvert(sb, {
     companyId: activeCompanyId(c),
     op: 'gr_to_pi',
@@ -1996,6 +2069,11 @@ purchaseInvoices.post('/:id/items', async (c) => {
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
+    /* Same refusal as every other path that can attach a GRN line — a receipt
+       carried over from AutoCount is invoiced by the converter, never by hand. */
+    const mig = await migratedRefusalForGrnItems(sb, [grnItemId]);
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
     const { data: gi } = await sb.from('grn_items')
       .select('qty_accepted, invoiced_qty, returned_qty').eq('id', grnItemId).maybeSingle();
     if (gi) {

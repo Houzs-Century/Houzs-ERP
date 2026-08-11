@@ -22,6 +22,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { postSiRevenue } from '../lib/post-si-revenue';
+import { MIGRATED_NO_GL_MESSAGE } from '../lib/migrated-chain';
 import { paginateAll } from '../lib/paginate-all';
 import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
@@ -271,6 +272,12 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
   const r = await postSiRevenue(sb, invoiceNumber);
 
   if (r.ok) {
+    /* Nothing to post and nothing wrong: AutoCount already booked this sale.
+       Answered explicitly so the caller is not left inferring it from a missing
+       jeNo. */
+    if (r.status === 'migrated_source') {
+      return c.json({ ok: true, status: 'migrated_source', posted: false, message: MIGRATED_NO_GL_MESSAGE });
+    }
     if (r.status === 'already_posted') {
       // Keep the historical 409 contract for the explicit re-post endpoint.
       return c.json({ error: 'already_posted', existingJe: { id: r.jeId, je_no: r.jeNo } }, 409);
@@ -290,6 +297,10 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
 export type PostPiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
   | { ok: true; status: 'already_posted'; jeNo: string; jeId: string }
+  /* Deliberately not posted, and that is a SUCCESS — see the migrated guard
+     below. It is `ok: true` so the confirm handler does not write its
+     "AP/GL post FAILED" audit row for a thing that was never meant to post. */
+  | { ok: true; status: 'migrated_source' }
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
@@ -318,10 +329,20 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
 
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
-    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, suppliers(code, name)')
+    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !piRaw) return { ok: false, status: 'invoice_not_found' };
+
+  /* MIGRATED PAPERWORK POSTS NO JOURNAL (migration 0280). This invoice mirrors
+     one AutoCount already raised, and AutoCount already booked the payable
+     behind it. Posting Dr 1200 / Cr 2000 here would count the same money in two
+     books. The guard lives in this function rather than at its call sites so
+     every caller — the confirm handler, resyncPiAccounting, any future one — is
+     covered by construction. */
+  if ((piRaw as unknown as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) {
+    return { ok: true, status: 'migrated_source' };
+  }
   // Cast through `unknown` — Supabase JS without generated types returns
   // `GenericStringError` from `.select(string).single()` even when data is
   // populated. Project-wide pattern; see routes/admin.ts L97.
@@ -438,6 +459,9 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
   }
 
   const r = await postPiAccounting(sb, invoiceNumber);
+  if (r.ok && r.status === 'migrated_source') {
+    return c.json({ ok: true, status: 'migrated_source', posted: false, message: MIGRATED_NO_GL_MESSAGE });
+  }
   if (r.ok && r.status === 'already_posted') {
     return c.json({ error: 'already_posted', existingJe: { id: r.jeId, je_no: r.jeNo } }, 409);
   }

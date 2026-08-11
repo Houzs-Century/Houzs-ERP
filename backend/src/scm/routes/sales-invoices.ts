@@ -56,6 +56,7 @@ import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredi
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { refuseMigratedSources } from '../lib/migrated-chain';
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -400,6 +401,46 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
    Pending formula: remaining_to_invoice = delivered − invoiced − returned. */
 async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
   return doLineRemaining(sb, doIds);
+}
+
+/* The migrated refusal for every path that can attach a DELIVERY to an invoice.
+   `/from-dos` resolves its own delivery ids and calls refuseMigratedSources
+   directly; the rest arrive holding either a do_item_id (POST /, POST
+   /:id/items) or a delivery id (POST /:id/items/from-do/:doId), so the delivery
+   has to be resolved before the rule can be applied. One rule behind all four
+   doors — a caller cannot pick a softer one.
+
+   A FAILED LOOKUP IS NOT A PASS. `ok: false` makes the caller refuse rather
+   than proceed blind; what it would otherwise let through is revenue booked a
+   second time for a sale AutoCount already invoiced. */
+async function migratedRefusalForDeliveries(
+  sb: any,
+  opts: { doItemIds?: Array<string | null | undefined>; doIds?: Array<string | null | undefined> },
+): Promise<
+  | { ok: true; refusal: { error: string; message: string; docNumbers: string[] } | null }
+  | { ok: false; reason: string }
+> {
+  const itemIds = [...new Set((opts.doItemIds ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0))];
+  const headIds = new Set((opts.doIds ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0));
+  if (itemIds.length > 0) {
+    const { data, error } = await sb.from('delivery_order_items')
+      .select('delivery_order_id').in('id', itemIds);
+    if (error) return { ok: false, reason: error.message };
+    for (const r of (data ?? []) as Array<{ delivery_order_id: string | null }>) {
+      if (r.delivery_order_id) headIds.add(r.delivery_order_id);
+    }
+  }
+  if (headIds.size === 0) return { ok: true, refusal: null };
+  const { data, error } = await sb.from('delivery_orders')
+    .select('do_number, migrated_no_stock').in('id', [...headIds]);
+  if (error) return { ok: false, reason: error.message };
+  return {
+    ok: true,
+    refusal: refuseMigratedSources(
+      ((data ?? []) as Array<{ do_number: string; migrated_no_stock: boolean | null }>)
+        .map((r) => ({ docNo: r.do_number, migrated: r.migrated_no_stock === true })),
+    ),
+  };
 }
 
 /* Remaining-to-invoice write guard. */
@@ -923,6 +964,20 @@ salesInvoices.post('/', async (c) => {
     if (over) return c.json(over, 409);
   }
 
+  /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
+     converter, never by hand — see lib/migrated-chain.ts. Checked HERE as well
+     as on /from-dos because this path reaches the same delivery lines through
+     `deliveryOrderId` or a line's `doItemId`, and would otherwise be the open
+     gate beside the fence: AutoCount already booked this revenue. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, {
+      doItemIds: items.map((it) => it.doItemId as string | undefined),
+      doIds: [(body.deliveryOrderId as string | undefined) ?? null],
+    });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
+  }
+
   /* FIX 3 — this SI declares a source DO, so its DO-derived lines must stay
      linked. Block any unlinked line that shadows a still-Pending DO line (dropping
      the link would let the same delivered goods be invoiced twice). */
@@ -1085,7 +1140,11 @@ salesInvoices.post('/', async (c) => {
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
   const post = await postSiRevenue(sb, h.invoice_number);
   if (post.ok) {
-    revenue = { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
+    /* 'migrated_source' carries no jeNo and needs none: AutoCount already booked
+       the revenue, so the correct number of journal entries here is zero. */
+    revenue = post.status === 'migrated_source'
+      ? { posted: false, status: post.status }
+      : { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
   } else {
     revenue = { posted: false, status: post.status };
     if (post.status !== 'zero_total' && post.status !== 'invoice_not_found') {
@@ -1152,6 +1211,21 @@ salesInvoices.post('/from-dos', async (c) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
+
+  /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
+     converter, never here. AutoCount already raised the invoice and already
+     booked its revenue, so this path would mint a second one under an ERP
+     number (breaking the owner's "keep AutoCount's number" rule), post
+     Dr 1100 / Cr 4000 for revenue already recognised, and enqueue a do_to_iv
+     transfer that duplicates the invoice in the live account book. It would
+     also consume the DO line's Pending pool, so the mistake could not be undone
+     without cancelling the invoice. See lib/migrated-chain.ts. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doIds });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
+  }
+
   const remainingMap = await doInvoiceableRemaining(sb, doIds);
 
   const customers = new Set<string>();
@@ -1366,7 +1440,11 @@ salesInvoices.post('/from-dos', async (c) => {
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
   const post = await postSiRevenue(sb, h.invoice_number);
   if (post.ok) {
-    revenue = { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
+    /* 'migrated_source' carries no jeNo and needs none: AutoCount already booked
+       the revenue, so the correct number of journal entries here is zero. */
+    revenue = post.status === 'migrated_source'
+      ? { posted: false, status: post.status }
+      : { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
   } else {
     revenue = { posted: false, status: post.status };
     if (post.status !== 'zero_total' && post.status !== 'invoice_not_found') {
@@ -1419,6 +1497,17 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
   const { data: doHeader } = await sb.from('delivery_orders').select('id, status').eq('id', doId).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
   if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
+
+  /* Same refusal as /from-dos: a delivery carried over from AutoCount is
+     invoiced by the migrated-invoice converter, never appended by hand. This
+     endpoint serves API callers only (the UI button was retired), which is
+     exactly why the rule has to be spelled out here rather than assumed to be
+     unreachable. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doIds: [doId] });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
+  }
 
   const { data: doItems } = await sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
@@ -1637,6 +1726,13 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const over = await checkSiOverRemaining(sb, [it]);
     if (over) return c.json(over, 409);
+  }
+
+  /* Same refusal as every other path that can attach a delivery line. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doItemIds: [it.doItemId as string | undefined] });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
   /* FIX 3 — the invoice was created from a DO, so a manually-added line that
