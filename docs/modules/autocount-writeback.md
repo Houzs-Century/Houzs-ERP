@@ -339,17 +339,32 @@ the document keeps NULL keys.
 Failing to record identity never changes the dispatch outcome: the document IS
 in AutoCount and the row IS `sent`. It is logged, not retried.
 
-### Known limitation — adding a line to a document AutoCount already has
+### Adding a line to a document AutoCount already has — SO only, declared, never inferred
 
-A genuinely new line on an existing AutoCount document is refused too, because
-the ERP cannot yet tell it apart from a legacy line whose key was never stored.
+This section used to be titled "Known limitation" and said **nothing in the ERP
+sets `IsNewLine`**. That stopped being true on 2026-08-11 (#2003): the design
+this section prescribed as "the honest signal" was implemented, exactly as
+prescribed, and the guide was not updated — recorded here rather than silently
+rewritten.
 
-`AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
-exactly this case, and **nothing in the ERP sets it**. Before anything does, the
-ERP needs positive evidence that a keyless line is new rather than unbackfilled —
-the honest signal is a document whose every other line is keyed AND whose backfill
-is known to have covered it completely. Setting `IsNewLine` on a guess re-opens
-the duplicate-append defect one line at a time.
+How it works now (read from the code, not from the PR):
+
+- `composeEdit` (`services/autocount-writeback.ts`) marks a keyless line
+  `IsNewLine: true` only when BOTH hold: **(1)** the route that inserted the row
+  declared its id in `opts.newLineIds` — only the route that did the inserting
+  can say — and **(2)** every OTHER line on the document already carries a
+  DtlKey, which is what makes the declaration safe to believe. A document with
+  any other keyless line still refuses the whole edit with `KeylessLineError`,
+  exactly as before.
+- **Scope is SO only.** `enqueueEdit` passes `newLineIds` through
+  `composeSoState` alone (`autocount-outbox.ts:1158`); `composePoState` and the
+  downstream composer take no such parameter, so a keyless line on a PO, DO,
+  GRN, SI or PI edit is refused as it always was.
+- The SO route's helper (`mfg-sales-orders.ts`, `queueAcSoEdit`) is what passes
+  the ids, with the WHY in a comment at the callsite.
+
+The refusal text a stuck operator sees is unchanged: backfill
+`scm.*_items.linked_ac_dtlkey`, then save again.
 
 ### Retirement — `Retire: true`
 

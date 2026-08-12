@@ -131,9 +131,12 @@ the live account book** — precisely the pair the owner named as his gate. On a
 purchase order those duplicates could never be removed, only zeroed, because the
 SDK has no `DeleteDetail` for `PurchaseOrder` at all.
 
-Open: adding a line to a document AutoCount already has is currently refused
-(`IsNewLine` is accepted by the C# but nothing sets it). There is no API or UI
-for the outbox. Coverage matrix and build plan: `docs/autocount-sync-coverage.md`
+~~Open: adding a line is refused~~ **Closed 2026-08-11 (#2003), for SO only**:
+`composeEdit` now sets `IsNewLine` when the inserting route declares the new
+row ids AND every other line on the document is already keyed (guard read in
+`services/autocount-writeback.ts` on 2026-08-12); PO and the four downstream
+types still refuse keyless lines. Still open: no API or UI for the outbox.
+Coverage matrix and build plan: `docs/autocount-sync-coverage.md` (PR #1931).
 (PR #1931).
 
 ## Criterion 2 — compartment and variant
