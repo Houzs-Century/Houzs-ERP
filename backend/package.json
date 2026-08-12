@@ -30,7 +30,9 @@
     "db:migrate": "node scripts/migrate.mjs",
     "db:migrate:baseline": "node scripts/migrate.mjs --baseline",
     "gen:bug-index": "node scripts/gen-bug-index.mjs",
-    "audit:bug-index": "node scripts/gen-bug-index.mjs --check"
+    "audit:bug-index": "node scripts/gen-bug-index.mjs --check",
+    "check:doc-refs": "node scripts/check-doc-refs.mjs",
+    "audit:doc-refs": "node scripts/check-doc-refs.mjs --strict"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
