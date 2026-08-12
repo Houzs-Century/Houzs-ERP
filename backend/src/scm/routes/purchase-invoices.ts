@@ -889,15 +889,19 @@ purchaseInvoices.get('/:id', async (c) => {
 // LINES for the full set and keep `grn`/`purchaseOrder` as the primary for
 // callers that still expect one.
 purchaseInvoices.get('/:id/linked', async (c) => {
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's purchase invoice to its linked document
+     numbers by id. All seven /:id/linked endpoints shared this gap (found
+     2026-08-12 by code read; two module guides claimed scoping that was absent). */
   const sb = c.get('supabase'); const id = c.req.param('id');
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('purchase_invoices')
     .select(`
       id,
       grn:grns(id, grn_number),
       purchase_order:purchase_orders(id, po_number)
     `)
-    .eq('id', id)
+    .eq('id', id), c)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);

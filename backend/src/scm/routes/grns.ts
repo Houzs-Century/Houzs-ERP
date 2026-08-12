@@ -1445,12 +1445,16 @@ grns.get('/:id', async (c) => {
 // ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
 // For a GRN: the parent PO + downstream PIs + PRs.
 grns.get('/:id/linked', async (c) => {
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's GRN to its linked document
+     numbers by id. All seven /:id/linked endpoints shared this gap (found
+     2026-08-12 by code read; two module guides claimed scoping that was absent). */
   const sb = c.get('supabase'); const id = c.req.param('id');
 
   const [grnRes, piRes, prRes] = await Promise.all([
-    sb.from('grns')
+    scopeToCompany(sb.from('grns')
       .select('id, purchase_order_id, purchase_order:purchase_orders(id, po_number)')
-      .eq('id', id)
+      .eq('id', id), c)
       .maybeSingle(),
     sb.from('purchase_invoices')
       .select('id, invoice_number, status, invoice_date')

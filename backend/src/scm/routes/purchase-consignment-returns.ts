@@ -399,15 +399,19 @@ purchaseConsignmentReturns.get('/:id', async (c) => {
 // ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
 // For a PC Return: the parent PC Receive + parent PC Order (both nullable).
 purchaseConsignmentReturns.get('/:id/linked', async (c) => {
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's PC return to its linked document
+     numbers by id. All seven /:id/linked endpoints shared this gap (found
+     2026-08-12 by code read; two module guides claimed scoping that was absent). */
   const sb = c.get('supabase'); const id = c.req.param('id');
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('purchase_consignment_returns')
     .select(`
       id,
       pc_receive:purchase_consignment_receives(id, receive_number),
       purchase_consignment_order:purchase_consignment_orders(id, pc_number)
     `)
-    .eq('id', id)
+    .eq('id', id), c)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);

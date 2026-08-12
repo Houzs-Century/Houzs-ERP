@@ -196,15 +196,21 @@ purchaseReturns.get('/:id', async (c) => {
 // For a PR: the parent GRN + parent PO (both nullable on purchase_returns).
 purchaseReturns.get('/:id/linked', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
-  const { data, error } = await sb
-    .from('purchase_returns')
-    .select(`
-      id,
-      grn:grns(id, grn_number),
-      purchase_order:purchase_orders(id, po_number)
-    `)
-    .eq('id', id)
-    .maybeSingle();
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's purchase return to its GRN and
+     PO numbers by id — the only read here that skipped the scope (found
+     2026-08-12 by code read; the module guide claimed scoping that was absent). */
+  const { data, error } = await scopeToCompany(
+    sb
+      .from('purchase_returns')
+      .select(`
+        id,
+        grn:grns(id, grn_number),
+        purchase_order:purchase_orders(id, po_number)
+      `)
+      .eq('id', id),
+    c,
+  ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
   // Supabase typegen returns joined rows as arrays even for to-one FKs.

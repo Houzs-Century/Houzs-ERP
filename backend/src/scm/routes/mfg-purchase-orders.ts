@@ -1034,6 +1034,18 @@ mfgPurchaseOrders.get('/:id/linked', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
+  /* Prove the PO belongs to the active company BEFORE fanning out. This read
+     had no company scope, so a caller in one company could resolve another
+     company's PO to its GRN / invoice / return numbers by id. All seven
+     /:id/linked endpoints shared this gap (found 2026-08-12 by code read).
+     404 rather than 403: an unreachable row must not confirm its own existence. */
+  const owner = await scopeToCompany(
+    sb.from('purchase_orders').select('id').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (owner.error) return c.json({ error: 'load_failed', reason: owner.error.message }, 500);
+  if (!owner.data) return c.json({ error: 'not_found' }, 404);
+
   const [grnRes, piRes, prRes] = await Promise.all([
     sb.from('grns')
       .select('id, grn_number, status, received_at')

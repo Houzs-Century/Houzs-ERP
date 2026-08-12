@@ -239,6 +239,19 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
+  /* Prove the PC Order belongs to the active company BEFORE fanning out. This
+     read was the only one on the router with no company scope, so a caller in
+     one company could resolve another company's PCO to its receive/return
+     numbers by id (found 2026-08-12 by code read; the module guide claimed
+     scoping that was absent). 404 rather than 403: an unreachable row must not
+     confirm its own existence. */
+  const owner = await scopeToCompany(
+    sb.from('purchase_consignment_orders').select('id').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (owner.error) return c.json({ error: 'load_failed', reason: owner.error.message }, 500);
+  if (!owner.data) return c.json({ error: 'not_found' }, 404);
+
   const [recvRes, retRes] = await Promise.all([
     sb.from('purchase_consignment_receives')
       .select('id, receive_number, status, received_at')

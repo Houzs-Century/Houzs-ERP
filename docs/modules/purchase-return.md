@@ -132,10 +132,16 @@ three weeks of a double deduction nobody could see
 | `scm.purchase_returns` | Header — `return_number`, `status`, `grn_id`, `posted_at`, `company_id` |
 | `scm.purchase_return_items` | Lines — `grn_item_id` (nullable, §5), item, qty, cost |
 
-Every read is company-scoped through `requireActiveCompanyId(c)` +
-`scopeToCompanyId(...)`, returning `NOT_THIS_COMPANY` (404) rather than leaking
-that the row exists elsewhere. Unlike Delivery Return, there is **no sales-scope
-row filter** here — procurement is not scoped own+downline.
+Every read is company-scoped — but by TWO different mechanisms, and one of them
+was missing until 2026-08-13. The write and status paths use the strict
+`requireActiveCompanyId(c)` + `scopeToCompanyId(...)` pair, returning
+`NOT_THIS_COMPANY` (404). The reads use the softer `scopeToCompany(q, c)` and
+404 `not_found`. `GET /:id/linked` used neither: it was a bare `.eq('id', id)`,
+so it resolved ANY company's document to its linked document numbers. All seven
+`/:id/linked` endpoints across the SCM routers shared that gap and were scoped
+on 2026-08-13 (BUG-HISTORY). Verified by reading each handler, not by grep.
+
+Unlike Delivery Return, there is **no sales-scope row filter** here — procurement is not scoped own+downline.
 
 ---
 
