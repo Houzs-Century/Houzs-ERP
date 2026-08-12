@@ -794,6 +794,13 @@ compartment row of a build the same DtlKey** — which is exactly the shape
 key is worse than a missing one: missing is refused loudly, wrong silently edits
 a different line in a live book.
 
+## 7l. Where this module sits
+
+This guide covers **how to call the write service**. For the shape of the whole
+relationship — the four channels, which documents are created versus converted,
+how a SKU crosses, what is automatic and what never will be — read
+**`docs/autocount-integration-map.md`** first. It is the map; this is one road on it.
+
 ## 7m. The master-data foreign key chain — read this before debugging a refused document
 
 **A document is refused as a WHOLE when any master it names is missing.** The
