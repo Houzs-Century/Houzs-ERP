@@ -1248,7 +1248,15 @@ inventory.get('/analytics', async (c) => {
 inventory.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   try {
-    return c.json(await reconcileLedger(sb));
+    /* Pass the company. reconcileLedger has taken a companyId since it was
+       written — its own comment says the operator-facing /reconcile "is
+       per-company … so the report can't surface the other company's doc
+       numbers" — but this call site omitted it, so the operator endpoint
+       returned BOTH companies' GRN / DO / transfer / consignment numbers.
+       systemHealth.ts:297 is the one caller that deliberately runs
+       cross-company. Found 2026-08-13 by a code audit, verified at the call
+       site before fixing. */
+    return c.json(await reconcileLedger(sb, activeCompanyId(c)));
   } catch (e: any) {
     return c.json({ error: 'load_failed', reason: e?.message ?? 'reconcile failed' }, 500);
   }

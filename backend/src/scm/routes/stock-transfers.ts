@@ -29,7 +29,8 @@ import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
 import { buildTransferPayload } from '../lib/stock-transfer-atomic';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix } from '../lib/companyScope';
+import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
@@ -404,9 +405,22 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   /* The BEFORE half of the audit pair. Read before the flip because afterwards
      the prior status is unrecoverable, and it is exactly what a reader wants:
      "this was POSTED and someone cancelled it". */
-  const { data: beforeRow } = await sb.from('stock_transfers')
-    .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
-    .eq('id', id).maybeSingle();
+  /* Company scope. This handler was missed by the 2026-07-22 owner audit that
+     scoped every sibling flow: the before-read and the CANCELLED flip were both
+     id-only, so a caller in company A holding B's transfer UUID could cancel B's
+     POSTED transfer AND drive reverseMovements over B's stock. stock-takes.ts:437
+     carries the same fix and its comment names this exact class. Found 2026-08-13
+     by a code audit, verified against both handlers before fixing. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: beforeRow } = await scopeToCompanyId(
+    sb.from('stock_transfers')
+      .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
+      .eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const beforeTransfer = beforeRow as {
     transfer_no: string; status: string;
     from_warehouse_id: string | null; to_warehouse_id: string | null; company_id: number | null;
@@ -415,10 +429,12 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TRANSFER', entityId: id, action: 'CANCEL', companyId: beforeTransfer?.company_id ?? null });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { data, error } = await sb.from('stock_transfers')
-    .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
-    .eq('id', id).neq('status', 'CANCELLED')
-    .select('id, status, cancelled_at').single();
+  const { data, error } = await scopeToCompanyId(
+    sb.from('stock_transfers')
+      .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
+      .eq('id', id).neq('status', 'CANCELLED'),
+    co.companyId,
+  ).select('id, status, cancelled_at').single();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data)  return c.json({ error: 'already_cancelled' }, 409);
 
