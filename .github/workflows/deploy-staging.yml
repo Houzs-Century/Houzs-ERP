@@ -27,12 +27,17 @@ on:
     # exactly why a two-hour production deploy outage went unnoticed while every
     # dashboard looked normal. Noise that hides signal is a fault of its own.
     #
-    # TO RESTORE: replace CLOUDFLARE_API_TOKEN in the GitHub **Staging**
-    # environment with a token carrying the same scopes as the working
-    # Production one (Account -> Cloudflare Pages:Edit, Workers Scripts:Edit),
-    # then put `main` back in the list below. Until then `workflow_dispatch`
-    # still lets an operator run a staging deploy by hand to test the new token
-    # without waiting for a merge.
+    # TO RESTORE: MINT A NEW token — do not try to widen the existing one. A
+    # re-dispatch on 2026-08-12 (run 31566944717) put the specific code in the
+    # log: alongside `Authentication error [code: 10000]` it returns
+    # `Invalid access token [code: 9109]`, which means the credential is not a
+    # valid token at all rather than an under-scoped one. Scope the new token
+    # like the working Production one (Account -> Cloudflare Pages:Edit,
+    # Workers Scripts:Edit), set it in the GitHub **Staging** environment, prove
+    # it with `workflow_dispatch`, and only then put `main` back in the list
+    # below. Restoring `main` before the token works just recreates the
+    # permanently-red workflow this pause was correct to remove.
+    # See docs/staging-bench-rot-coe.md.
     #
     # WORTH RESTORING, not abandoning: docs/SECURITY-DX-ROADMAP.md names the
     # staging bench as the thing that unblocks everything else, and the deferred

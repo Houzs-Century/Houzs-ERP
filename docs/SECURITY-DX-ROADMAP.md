@@ -85,16 +85,20 @@ as "staging is available"; it is not.
 | Why did nobody notice? | The nightly **Staging E2E** kept passing — honestly, about a two-week-old build. Staging carried no `GIT_SHA` stamp, so `/health` answered `sha:null` and the staleness was invisible from outside |
 
 Re-dispatched from `main` on 2026-08-12 (run 31566944717) to test whether the
-token had since been fixed: `npm ci`, typecheck, tests and build all passed, and
-the deploy step failed at `cloudflare/wrangler-action` again. **The token is
-still bad.**
+token had since been fixed. Everything up to the deploy passed — the audits,
+typecheck, the full backend suite, and the migration step, which applied **50
+pending migrations to the staging database, 0 failed**. Both deploy steps then
+failed. **The token is still bad**, and staging is now running a current schema
+under 2026-07-29 code until it can be deployed.
 
-**The single blocking action, and only the owner can take it:** issue a new
-Cloudflare API token with the same scopes as the working Production one (Account
-→ Cloudflare Pages:Edit, Workers Scripts:Edit) and set it in the GitHub
-**Staging** environment secrets — directly in GitHub, never pasted into a chat.
-Then `workflow_dispatch` proves it, and only then does `main` go back into the
-`deploy-staging.yml` trigger list.
+**The single blocking action, and only the owner can take it: mint a NEW
+Cloudflare API token.** The run log gives `Invalid access token [code: 9109]`
+alongside the `10000` — `9109` means the credential is not a valid token at all,
+so *editing the existing token's permissions will not fix it*. Create a fresh
+one, scoped like the working Production token (Account → Cloudflare Pages:Edit,
+Workers Scripts:Edit), and set it in the GitHub **Staging** environment secrets
+— directly in GitHub, never pasted into a chat. Then `workflow_dispatch` proves
+it, and only then does `main` go back into the `deploy-staging.yml` trigger list.
 
 Until that happens, treat every item below as blocked, not merely unstarted:
 splitting the giant files (#4), the PITR restore drill (#5), and the deferred

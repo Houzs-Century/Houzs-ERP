@@ -59,10 +59,25 @@ The chain, each link checkable:
    prod is caught. `deploy-staging.yml` never added the stamp, so staging's
    `/health` answers `{"ok":true,"sha":null}` — from outside there is **no way
    to tell which commit staging is running**, and no watchdog looking.
-7. Re-dispatched from `main` today, the frontend job passed `npm ci`,
-   `typecheck`, `test`, `build` and `check:sw`, then failed at
-   `cloudflare/wrangler-action` with `npx` exit code 1. **The token is still
-   bad, six weeks on.**
+7. Re-dispatched from `main` today, both jobs got all the way to the deploy and
+   failed there. **The token is still bad, six weeks on.**
+
+**And the token is invalid, not under-scoped — which changes the remedy.** The
+run log carries two codes, and the second is the specific one:
+
+```
+A request to the Cloudflare API (/accounts) failed.
+  Authentication error [code: 10000]
+  Invalid access token [code: 9109]
+```
+
+`9109` means the credential itself is not a valid token — revoked, expired or
+malformed. It is not a permissions refusal. Every note written about this so far,
+including `deploy-staging.yml`'s own comment and the roadmap's step 2, described
+the fix as a token "carrying the same scopes as the working Production one",
+which reads as though editing the existing token's permissions would fix it. It
+will not. **A new token has to be minted;** the scopes matter only once it is a
+valid one.
 
 ## What this cost
 
@@ -144,14 +159,40 @@ and every deploy. The two that had rotted, `codebase-map-facts.md` and
 | `deploy-staging.yml` stamps `--var GIT_SHA:${{ github.sha }}` on the Worker deploy | staging `/health` stops answering `sha:null`; the build staging is running becomes readable from outside, the same way prod's is |
 | `staging-e2e.yml` reports the stamp it tested against | a green nightly run now says WHICH commit it proved, so "green" can never again mean "green about something two weeks old" |
 | `docs/SECURITY-DX-ROADMAP.md` step 2 rewritten | it claimed "Staging exists" as though that were the remaining work; it now records that staging exists, is stale, and names the token as the single blocker |
+| `CLAUDE.md` gains a **do not guess** rule, ahead of the other mandatory ones | the existing `traced, not guessed` wording lives in the BUG-HISTORY and COE rules, which both govern the WRITE-UP only. Guessing was legal until the write-up, and a guessed fix could still be reported in confident "traced" language. The new rule governs the ACT — state the hypothesis, name what would refute it, go observe that, then fix — and requires every claim to the owner to be labelled PROVEN / LIKELY / UNKNOWN. Raised by the owner on 2026-08-12: *"我要确定的答案，有时找 bugs 都是猜的，很不好."* |
+
+## The state this left staging in, 2026-08-12
+
+The dispatch was not a no-op, and the shape of the failure matters: the
+migration step runs BEFORE the Worker deploy.
+
+| step | outcome |
+|---|---|
+| `audit:routes`, `audit:job-types`, `audit:work-order-states`, `typecheck`, `npm test` | all passed (28m35s — this workflow runs the suite unsharded, unlike prod's) |
+| Apply staging migrations | **passed. `278 migration(s), 245 applied, 50 pending` -> 50 APPLIED, 0 failed** |
+| Deploy the Worker | failed, `9109` |
+| Frontend Pages deploy | failed the same way |
+
+So staging now runs a **schema from `main` against code from 2026-07-29** — the
+database moved forward, the Worker and the SPA did not. That is tolerable and
+was the right trade to take: these migrations are additive and idempotent by
+convention, staging carries no real users, and one successful deploy after the
+token is replaced closes the gap in the correct direction. It is recorded here
+so nobody later reads a schema-versus-code mismatch on staging as a new fault.
+
+One thing it proved in passing: the staging Supabase is **awake and reachable**.
+`deploy-staging.yml` carries a retry ladder specifically because the free tier
+can auto-pause; it applied 50 migrations on attempt 1 of 3.
 
 ## Deferred — owner
 
-**Replacing the Staging `CLOUDFLARE_API_TOKEN` is the only thing that unblocks
-this, and only the owner can do it.** It needs the same scopes as the working
-Production token (Account → Cloudflare Pages:Edit, Workers Scripts:Edit), and
-it must be entered directly into the GitHub **Staging** environment secrets —
-never through a chat transcript.
+**Minting a NEW Staging `CLOUDFLARE_API_TOKEN` is the only thing that unblocks
+this, and only the owner can do it.** Note the verb: `9109` says the current
+value is not a valid token, so widening its permissions in the Cloudflare
+dashboard will not help — create a fresh one, scoped like the working Production
+token (Account → Cloudflare Pages:Edit, Workers Scripts:Edit). It must be
+entered directly into the GitHub **Staging** environment secrets — never through
+a chat transcript.
 
 Until then, `main` deliberately stays OUT of the `deploy-staging.yml` trigger
 list. Putting it back while the token is bad would recreate the

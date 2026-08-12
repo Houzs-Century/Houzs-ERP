@@ -3,6 +3,68 @@
 This file is loaded into every Claude session. It tells you what's
 non-obvious about this codebase and how the user wants to collaborate.
 
+## ⚠️ Do not guess. Prove it, or say you do not know yet — MANDATORY (owner rule)
+
+The owner's instruction, 2026-08-12: *"我要确定的答案，有时找 bugs 都是猜的，很不好."*
+
+The two rules below already demand `traced, not guessed` — but both of them only
+govern what you WRITE AFTER the work. Nothing governed the work itself, so the
+guessing was legal right up until the write-up, and a fix reached by guessing can
+still be written up in confident "traced" language. This rule closes that.
+
+**A cause you have not observed is a hypothesis, and a fix built on a hypothesis
+is a guess.** Before you propose or ship a fix:
+
+1. **State the hypothesis out loud, and name the observation that would REFUTE
+   it.** If you cannot name one, you do not have a hypothesis, you have a story.
+2. **Go and make that observation.** A live query, a `wrangler tail`, a
+   `workflow_dispatch` read-only check, a reproduction, a log line, a probe
+   script. Name the tool in what you report.
+3. **Only then fix.** If the observation refutes you, say so and start again —
+   that is the cheap outcome, not the embarrassing one.
+
+**Label every claim you make to the owner.** Three words are enough and he is
+entitled to them on every answer:
+
+- **PROVEN** — I ran something and here is the output.
+- **LIKELY** — consistent with the evidence, not yet checked; here is what would
+  settle it.
+- **UNKNOWN** — I do not know yet. This is always an acceptable answer. It is
+  never acceptable to dress it as one of the other two.
+
+**Reading code is not evidence about production.** Source, migration files and
+comments describe intent; the running system is the fact. This repo has paid for
+that distinction repeatedly, and each one was found by measuring after reasoning
+had already produced a confident wrong answer:
+
+- A migration file read as money corruption; the live DB refuted it
+  (`system-foundation-coe.md`).
+- "The unique index does not exist" — it did, four of them, ported by hand and
+  present in no file in this repo.
+- "604 `custom_specials` rows are corrupt, null them" — 679 of 694 strings were
+  live picker codes. Nulling would have deleted a correct, currently-rendering
+  line item from 604 historical documents.
+- `/health` answered `{"ok":true,"book":"AED_HOUZS"}` from CONSTANTS while the
+  service could not open the database at all.
+- "The master exists" was true — about the sales agent, while the constraint
+  pointed at the purchase agent.
+
+**Two traps that make a guess feel proven:**
+
+- **The check that answers a different question.** `UPDATE 1` was true while the
+  column was being corrupted; `res.count` answered the wrong question three
+  times (`jsonb-double-encoding-coe.md`). Ask what the successful result would
+  ALSO be true of.
+- **The check that is not running.** `audit:map` reported nothing for three
+  weeks because the script it runs had been crashing since the day after it was
+  written, and the nightly staging E2E passed for two weeks against a build
+  nobody had deployed (`staging-bench-rot-coe.md`). Green is not evidence until
+  you know the check ran, and against what.
+
+**Never make the evidence say what you want.** If a marker row is missing, that
+is the finding — do not insert it to make a gate pass. If a matcher misses, fix
+the library, do not loosen the guard the matcher exists to enforce.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
