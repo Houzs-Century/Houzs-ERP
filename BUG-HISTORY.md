@@ -1,3 +1,71 @@
+## The codebase-map generator had been crashing for three weeks, so the map quietly rotted [medium]
+
+**Symptom** - `docs/generated/codebase-map-facts.md` still claimed **122 route
+modules** against a real 135, and **164 migrations / highest 0163** against a real
+281 / 0281. Its own header says it is "regenerated from the tree so it cannot
+drift", and `CODEBASE-MAP.md` points every new reader at it as the mechanical
+layer that is safe to trust.
+
+**Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
+`backend/vitest.config.ts`. That file was renamed to **`vitest.config.mts`** by
+#925 (the Vitest 4 / Vite 8 toolchain upgrade). Every run since has died before
+writing a line:
+
+```
+Error: ENOENT: no such file or directory, open '...backend/vitest.config.ts'
+    at read (backend/scripts/gen-codebase-map.mjs:50:13)
+    at backend/scripts/gen-codebase-map.mjs:162:22
+```
+
+So this was never "nobody bothered to regenerate it". The generator threw, and
+`audit:map` is **deliberately** not a CI or deploy gate (a stale doc must never
+block a deploy - the sibling `audit:routes` gate jammed prod twice in one day).
+Nothing was left to surface the crash, so the doc froze on 2026-07-21.
+
+**Fix** - the config is located by trying `.mts` / `.ts` / `.js` in turn instead
+of pinning one name, and throws a message naming the problem if none match.
+Regenerating yields 135 route modules, 1038 endpoint registrations, 142 desktop
+routes.
+
+**Lesson** - **a generator that crashes is indistinguishable from a generator
+nobody runs, and the artifact looks equally authoritative either way.** The
+generated layer exists precisely so numbers cannot be wrong; that guarantee is
+only as good as the generator still running. A doc-only generator should not gate
+a deploy - but its failure has to reach somebody.
+
+**Ref** - `fix/converter-hide-retired`, 2026-08-12
+
+---
+
+## The Fabric Converter listed 88 supersede tombstones as if they were fabrics [low]
+
+**Symptom** - the owner opened the Fabric Converter and read `AVANI-01`
+immediately above `AVANI-01 [merged into AVANI-01 on 2026-08-11]`, and the same
+for AVANI-02..08, BO315-1-PEARL, BO315-11-METAL and dozens more - "why does my
+code have this twice?". The `Fabrics (827)` badge counted them too.
+
+**Root cause (traced, not guessed)** - the rows are correct. They are the losers
+of the 2026-08-11 merge pass, kept with `is_active = false` and a note recording
+what absorbed them, exactly as the never-delete-only-retire rule requires.
+`GET /fabric-tracking` returns `is_active` but does not filter on it, and neither
+the Converter page nor the Maintenance Fabrics panel filtered either - so 88 of
+~830 rows were tombstones presented as live fabrics.
+
+**Fix** - `useFabricTrackings` gains `includeRetired`, filtering in a `select` so
+both views derive from ONE cached fetch. The Maintenance panel passes false; the
+Converter hides them behind a `N retired hidden` checkbox.
+
+**The default is a deliberate change to the 2026-06-12 spec**
+(`fabric-queries.ts:164`: "rows stay on the converter"). That spec's intent -
+retiring is not deleting, and the rows stay manageable - still holds: they are one
+click away. But it was written before a merge pass put 88 tombstones in the list,
+and a master list that reads as if every code is duplicated serves nobody. Flagged
+for the owner to veto if the original default was load-bearing.
+
+**Ref** - `fix/converter-hide-retired`, 2026-08-12
+
+---
+
 ## Defect Done/Replace buttons never showed for Nancy — state-routing read the wrong payload path [high]
 
 **Symptom** - owner, 2026-08-11, logged in as Nancy on a Pulau Pinang defect (SETIA SPICE CONVENTION CENTRE): the Done / Replace buttons did not appear, even though her My Pending correctly listed that event.
