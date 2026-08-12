@@ -1367,6 +1367,12 @@ export interface ListProjectsFilters {
    *  timeline entry is neither 'done' nor 'replace' — i.e. a fresh upload the
    *  reviewer has not triaged yet. Not a checklist item; own predicate. */
   pending_defect_review?: boolean;
+  /** Two-warehouse defect-review split (owner 2026-08-11). The canonical states
+   *  that route to Nancy (Ops Exec); Shukor takes everything else. With
+   *  `pending_defect_review_exclude` the arm keeps projects whose state is NOT
+   *  in this list (Shukor); without it, only those in the list (Nancy). */
+  pending_defect_review_states?: string[];
+  pending_defect_review_exclude?: boolean;
   /** Multi-company (mig-pg 0093): the ACTIVE company (activeCompanyId(c)).
    *  When set the list is isolated to that company; undefined (company
    *  context unresolved — pre-migration / D1 test mirror) = no predicate. */
@@ -1676,8 +1682,17 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       d.setUTCDate(d.getUTCDate() - 30);
       return d.toISOString().slice(0, 10);
     })();
+    // Region routing (owner 2026-08-11): Nancy sees only the region states,
+    // Shukor everything else — including projects with a NULL/blank state.
+    const stateBinds = f.pending_defect_review_states ?? [];
+    const statePh = stateBinds.map(() => "?").join(",");
+    const stateClause = stateBinds.length
+      ? f.pending_defect_review_exclude
+        ? ` AND (p.state IS NULL OR p.state NOT IN (${statePh}))`
+        : ` AND p.state IN (${statePh})`
+      : "";
     pendingOr.push(
-      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
+      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?${stateClause}
         AND EXISTS (SELECT 1 FROM project_checklist dl
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
@@ -1688,7 +1703,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                  WHERE act.attachment_id = da.id
                                  ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
     );
-    pendingBinds.push(reviewSince);
+    pendingBinds.push(reviewSince, ...stateBinds);
   }
   if (f.pending_title) {
     pendingOr.push(

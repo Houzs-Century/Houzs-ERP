@@ -6044,15 +6044,22 @@ function ProjectDetailContent({
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
       // Two-stage defect triage (owner 2026-08-07):
-      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
-      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canReview  = the defect reviewer for THIS project's state (owner
+      //    2026-08-11 two-warehouse split): Nancy (Ops Exec role) for the region
+      //    states, Shukor (Storekeeper Supervisor) for every other state; admin
+      //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((detail.data as any)?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
       canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
