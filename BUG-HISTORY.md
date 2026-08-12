@@ -67,6 +67,58 @@ something the data is guaranteed to carry.
 
 ---
 
+## Defect Done/Replace buttons never showed for Nancy — state-routing read the wrong payload path [high]
+
+**Symptom** - owner, 2026-08-11, logged in as Nancy on a Pulau Pinang defect (SETIA SPICE CONVENTION CENTRE): the Done / Replace buttons did not appear, even though her My Pending correctly listed that event.
+
+**Root cause (traced)** - the state-based reviewer split (PR #2050) made the frontend `canReview` read the project state from `detail.data.state` (desktop) / `data.state` (mobile), but the project detail nests the project under `detail.data.project` (`getProjectDetail` does `SELECT p.*`; the component already does `const p = detail.data.project`). So `state` was always `undefined` -> `inRegion` always false -> Nancy (`isNancy && inRegion`) never qualified, and Shukor (`isShukor && !inRegion`) even qualified on Penang. The BACKEND My Pending routing was correct (it filters on `p.state` in SQL, validated on prod), which is why Nancy saw the event but couldn't act.
+
+**Fix** - read `detail.data.project.state` (desktop) / `data.project.state` (mobile). Two-token path fix on both surfaces.
+
+**The class** - a nested payload field read one level too shallow returns `undefined`, not an error, and `region.has("")` is a quiet false, not a crash. When a new gate reads detail data, verify the shape (`detail.data.project.X`, not `detail.data.X`).
+
+**Ref** - `fix/defect-review-state-path` 2026-08-11.
+
+## Combo Pricing 500'd on every load, for a table that was never created here [medium]
+
+**Symptom** - opening Products -> Combo Pricing puts
+`GET /api/scm/sofa-combos/anchors 500` in the console every time. Nothing staff
+do is blocked, which is why it went unreported: combos create and edit normally.
+
+**Root cause (traced, not guessed)** - `scm.sofa_combo_anchor` **does not exist
+in this database**. Verified against PRODUCTION on 2026-08-12:
+`to_regclass('scm.sofa_combo_anchor')` returns NULL, while `sofa_combo_pricing`
+is present and carries 270 rows for company 1 (173 of them supplier-scoped).
+R8 (the anchor mirror) came across from 2990 with its route AND its frontend
+query (`useSofaComboAnchors`, `staleTime: 30_000`) but without its table, so the
+handler has 500'd on every Combo Pricing page load since it was vendored.
+
+Combo writes survive by accident, not by design: `loadComboAnchor` destructures
+`{ data }` and drops `error`, so a missing table reads as `null` = "not
+anchored" and the write proceeds unmirrored.
+
+**What migration 0114 already knew, and the half it got wrong.** 0114 records
+the same to_regclass check and concludes "no migration needed; the route scoping
+is a harmless no-op". The table fact was right. The conclusion was scoped to the
+question being asked - whether the MULTI-COMPANY SCOPING change was safe, which
+it was. Nobody asked whether the ENDPOINT works without the table.
+
+**Fix** - `GET /anchors` returns `{ anchors: [] }` when, and only when, the error
+is `42P01` (relation does not exist). An absent table means nothing is anchored,
+which is what an empty list says; a 500 answers the caller's question no better.
+Every other error still surfaces as 500, so a genuine permission or connection
+fault cannot hide behind the branch. The feature stays dark. Creating the table
+remains open and is the owner's call - see `docs/sofa-combo-anchor.md`.
+
+**Lesson** - **"no migration needed" answers a schema question, not a code
+question.** When a table is deliberately skipped, every route that names it has
+to be checked, because the code that reads a table does not stop existing when
+the table does.
+
+**Ref** - `docs/sofa-combo-anchor`, 2026-08-12
+
+---
+
 ## Removing a shared add-on from one Specials list retired it on the other [high]
 
 **Symptom** - the owner opened Products -> Maintenance -> BEDFRAME -> Specials and
