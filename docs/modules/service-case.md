@@ -12,10 +12,11 @@
 > 2. **A terminal `voided` stage exists** (2026-07-29, #1408/#1413):
 >    `services/assr.ts:63-67`; `statusForStage` maps it to "Closed" (:88);
 >    `closed_at` set for completed OR voided, `completion_date` only for
->    completed (:858-865); `void_reason` column (mig 0226). KNOWN BUG flagged
->    2026-08-12: `runSlaEscalation` (`assrEscalation.ts:24`) and the backlog
->    tile still filter `!= 'completed'` only, so voided cases still escalate
->    and still count as backlog.
+>    completed (:858-865); `void_reason` column (mig 0226). FIXED 2026-08-13: twelve
+>    predicates (not two) still spelled "open" as `!= 'completed'` — the
+>    escalation sweep, nine counters in `routes/assr.ts` and three inbox lists.
+>    All now read `NOT IN ('completed','voided')`; the `= 'completed'` "closed"
+>    counters were left alone on purpose.
 > 3. **"At least one item" is no longer required at create** (owner audit
 >    2026-07-22): `routes/assr.ts:1735-1746` accepts empty items[]; in its
 >    place an undocumented duplicate-open-case 409 guard (:1748-1802).

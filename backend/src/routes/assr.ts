@@ -673,7 +673,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
     // definition the breach / aging queries use).
     c.env.DB.prepare(
       `SELECT COUNT(*) as count FROM assr_cases
-      WHERE stage != 'completed' AND archived_at IS NULL${coBare}${visBare.sql}`
+      WHERE stage NOT IN ('completed', 'voided') AND archived_at IS NULL${coBare}${visBare.sql}`
     )
       .bind(...visBare.binds)
       .first<{ count: number }>(),
@@ -721,7 +721,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
     c.env.DB.prepare(
       `SELECT COUNT(*) as count
        FROM assr_cases c
-      WHERE c.stage != 'completed'
+      WHERE c.stage NOT IN ('completed', 'voided')
         ${periodAnd}${coC}${visC.sql}
         AND julianday('now') - julianday(
               COALESCE(
@@ -748,7 +748,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
        FROM assr_cases c
        JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
-      WHERE c.stage != 'completed'
+      WHERE c.stage NOT IN ('completed', 'voided')
         AND c.archived_at IS NULL
         ${periodAnd}${coC}${visC.sql}
         AND h.target_days IS NOT NULL AND h.target_days > 0
@@ -1048,9 +1048,9 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
             cr.email        AS email,
             cr.phone1       AS phone,
             COUNT(*) AS total,
-            SUM(CASE WHEN c.stage != 'completed' THEN 1 ELSE 0 END) AS open,
+            SUM(CASE WHEN c.stage NOT IN ('completed', 'voided') THEN 1 ELSE 0 END) AS open,
             SUM(CASE WHEN c.stage  = 'completed' THEN 1 ELSE 0 END) AS closed,
-            SUM(CASE WHEN c.stage != 'completed'
+            SUM(CASE WHEN c.stage NOT IN ('completed', 'voided')
                       AND c.deadline_at IS NOT NULL
                       AND datetime('now') > c.deadline_at THEN 1 ELSE 0 END) AS breached,
             MAX(c.updated_at) AS last_activity_at
@@ -1070,7 +1070,7 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
 
   const unassigned = await c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) AS open
+            SUM(CASE WHEN stage NOT IN ('completed', 'voided') THEN 1 ELSE 0 END) AS open
        FROM assr_cases
       WHERE archived_at IS NULL AND (creditor_code IS NULL OR creditor_code = '')${assrCompanySql(c)}${visBare.sql}`
   )
@@ -2333,8 +2333,8 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     `SELECT
         COUNT(*) as total,
         SUM(CASE WHEN stage = 'completed' THEN 1 ELSE 0 END) as closed,
-        SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) as open_count,
-        SUM(CASE WHEN stage != 'completed' AND deadline_at IS NOT NULL
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided') THEN 1 ELSE 0 END) as open_count,
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided') AND deadline_at IS NOT NULL
                   AND datetime('now') > deadline_at THEN 1 ELSE 0 END) as breached,
         SUM(CASE WHEN quality_review_passed = 1 THEN 1 ELSE 0 END) as qa_passed,
         AVG(CASE WHEN stage = 'completed' AND closed_at IS NOT NULL
@@ -2378,7 +2378,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .all();
 
   // Case Duration buckets — mirrors the legacy Excel "Case Duration"
-  // tile. All counts are *open* cases (stage != 'completed') bucketed by
+  // tile. All counts are *open* cases (stage NOT IN completed/voided) bucketed by
   // age since complaint date. The buckets are non-overlapping so the
   // sum + still-younger-than-2wks == opening_count.
   //
@@ -2386,17 +2386,17 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // (matching the Excel formula `monthly_case/month (last 4 month data)`).
   const caseDuration = await c.env.DB.prepare(
     `SELECT
-        SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) AS opening_count,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided') THEN 1 ELSE 0 END) AS opening_count,
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided')
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 30
                  THEN 1 ELSE 0 END) AS over_1_month,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided')
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 21
                   AND julianday('now') - julianday(complained_date) < 30
                  THEN 1 ELSE 0 END) AS over_3_weeks,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN stage NOT IN ('completed', 'voided')
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 14
                   AND julianday('now') - julianday(complained_date) < 21
@@ -2471,7 +2471,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
             cr.company_name as name,
             COUNT(DISTINCT a.id) as total_cases,
             SUM(CASE WHEN a.stage = 'completed' THEN 1 ELSE 0 END) as closed_cases,
-            SUM(CASE WHEN a.stage != 'completed' AND a.deadline_at IS NOT NULL
+            SUM(CASE WHEN a.stage NOT IN ('completed', 'voided') AND a.deadline_at IS NOT NULL
                       AND datetime('now') > a.deadline_at THEN 1 ELSE 0 END) as breached,
             AVG(CASE WHEN a.satisfaction_rating IS NOT NULL
                       THEN a.satisfaction_rating END) as avg_rating,
@@ -2578,7 +2578,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push("c.stage = 'pending_review'");
       break;
     case "aging":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND julianday('now') - julianday(
               COALESCE(
                 (SELECT MAX(a.created_at)
@@ -2591,13 +2591,13 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
             ) > 3`);
       break;
     case "breach_now":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at`);
       break;
     case "open_now":
     case "opening_count":
-      conds.push("c.stage != 'completed'");
+      conds.push("c.stage NOT IN ('completed', 'voided')");
       break;
     case "total_period":
       conds.push(`COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
@@ -2606,7 +2606,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(`c.stage = 'completed' AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
       break;
     case "breach_period":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at
         AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
@@ -2615,18 +2615,18 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(`c.quality_review_passed = 1 AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
       break;
     case "over_1_month":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 30`);
       break;
     case "over_3_weeks":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 21
         AND julianday('now') - julianday(c.complained_date) < 30`);
       break;
     case "over_2_weeks":
-      conds.push(`c.stage != 'completed'
+      conds.push(`c.stage NOT IN ('completed', 'voided')
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 14
         AND julianday('now') - julianday(c.complained_date) < 21`);

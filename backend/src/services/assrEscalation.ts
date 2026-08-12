@@ -21,7 +21,7 @@ export async function runSlaEscalation(env: Env): Promise<{ escalated: number }>
             u.email as assignee_email, u.name as assignee_name
        FROM assr_cases c
        LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE c.stage != 'completed'
+      WHERE c.stage NOT IN ('completed', 'voided')
         AND c.deadline_at IS NOT NULL
         AND c.escalated_at IS NULL
         AND julianday('now') - julianday(c.deadline_at) >= 1`
