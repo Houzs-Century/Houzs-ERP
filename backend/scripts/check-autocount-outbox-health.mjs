@@ -60,7 +60,14 @@ const SKIP_KINDS = [
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [counts, oldest, failed, skipped] = await Promise.all([
+  const [flag, counts, oldest, failed, skipped] = await Promise.all([
+    /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
+       script described `scm.autocount_writeback` in prose and never read it, so
+       "is the write-back on" could only be answered from a document — and the
+       documents were a day stale. It is the first gate `enqueueSoCreate` hits
+       (autocount-outbox.ts) and it decides whether saving an SO queues anything
+       at all, so it belongs at the top of this report. */
+    pg`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`,
     pg`SELECT status, count(*)::int AS n FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
     pg`SELECT doc_type, doc_no, op, attempts,
               (now() - created_at) AS age
@@ -78,6 +85,30 @@ try {
         WHERE status = 'skipped'
         ORDER BY created_at DESC`,
   ]);
+
+  /* Report the raw value AND what the code makes of it. The parser
+     (autocount-writeback-flag.ts) fails CLOSED: absent, empty, 'off', or
+     anything it cannot parse all mean nothing is queued or sent. Printing the
+     raw string too means a typo like 'On ' is visible rather than hidden behind
+     the word "off". */
+  const raw = flag.length ? flag[0].value : null;
+  const v = (raw ?? '').trim().toLowerCase();
+  const on = v === 'all' || /^[0-9]+(\s*,\s*[0-9]+)*$/.test(v);
+  notice(
+    `WRITE-BACK SWITCH scm.autocount_writeback = ${raw === null ? 'ROW ABSENT' : JSON.stringify(raw)}` +
+      ` -> ${on ? `ON for ${v === 'all' ? 'every company' : 'company ' + v}` : 'OFF'}` +
+      `. ${on
+        ? 'Saving a document in those companies QUEUES it; the 5-min cron sends it.'
+        : 'Saving a document queues NOTHING — every enqueue returns early.'}`,
+  );
+  if (on) {
+    notice(
+      'The switch is not the last gate: the send also needs AC_SYNC_URL (wrangler.toml) ' +
+        'and the AC_SYNC_KEY secret. A missing key reaches the host and comes back 401 ' +
+        "\"bad key\" — that shows up as failed rows below, not as an empty queue. " +
+        'Worker secrets cannot be read from the database; use `wrangler secret list`.',
+    );
+  }
 
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const total = counts.reduce((a, r) => a + r.n, 0);
