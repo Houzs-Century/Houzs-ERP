@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1184 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4481 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11892 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11908 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 100 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1405 |
@@ -170,17 +170,17 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1254 files, 525804 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1254 files, 525909 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 14864 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11892 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11908 |
 | `frontend/src/pages/ServiceCases.tsx` | 8839 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 5444 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5378 |
 | `backend/src/routes/projects.ts` | 5176 |
 | `backend/src/scm/routes/scan-so.ts` | 4879 |

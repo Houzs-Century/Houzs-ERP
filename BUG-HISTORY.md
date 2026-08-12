@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## A COE named the wrong root cause because it quoted a repo comment instead of the run history [medium]
 
 **Symptom** - the staging COE, the roadmap, `deploy-staging.yml` and a
@@ -100,6 +101,212 @@ recreate the permanently-red workflow the pause was right to remove. Restoring
 and the ruled-out theories: `docs/staging-bench-rot-coe.md`.
 
 **Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+=======
+## A shebang made a test suite unparseable on Windows only, and one error was counted as two failing files [low]
+
+**Symptom** - `npx vitest run tests/soFeeLineRepairRow.test.ts` failed on every
+local (Windows) run with a bare parse error and nothing collected:
+
+```
+FAIL tests/soFeeLineRepairRow.test.ts
+SyntaxError: Invalid or unexpected token
+Test Files 1 failed (1) / Tests: no tests
+```
+
+CI ran the same file green on every shard (run 31597783021, shard 4/4:
+`✓ tests/soFeeLineRepairRow.test.ts (7 tests) 1160ms`). A full local `npm test`
+therefore ended in failures that were not real - the corrosive part, because it
+teaches people that local test results are noise.
+
+**Root cause (traced, not guessed)** - not a byte-level defect in the test file,
+which was the obvious reading and the wrong one. The test file is clean: no BOM
+(first bytes `2f 2f 20`), UTF-8 round-trips byte-identical, no lone surrogates,
+no control characters, uniform CRLF, and its only non-ASCII bytes are em-dashes
+in comments.
+
+The parse error was in the module it imports.
+`backend/scripts/repair-so-fee-line-integrity.mjs` began with
+`#!/usr/bin/env node`. On Windows vitest **inlines** that module and wraps its
+source in a function before `vm.runInThisContext` - the stack lands in
+`VitestModuleEvaluator._runInlinedModule` - so the `#!` is no longer at byte 0
+and V8 rejects it outright. Linux externalizes the same module, where node strips
+the shebang itself. Toolchain versions were identical and lockfile-pinned on both
+(vitest 4.1.10, vite 8.1.5, @cloudflare/vitest-pool-workers 0.18.6): the only
+variable was the OS.
+
+Two things made this read as a byte problem. It dies at **load**, so it surfaces
+as a failed FILE with zero tests, no assertion and no line number - exactly what
+a bad byte looks like. And a full run reported **2 failed** for this single
+error: vitest counts the failed suite and, separately, the `SyntaxError` arriving
+as an Unhandled Rejection, which it attributes to whichever file was running when
+it landed ("This error originated in ... It doesn't mean the error was thrown
+inside the file itself"). So the hunt for a second corrupted file was a hunt for
+something that did not exist.
+
+**Fix** - delete the shebang. It bought nothing: every caller runs the script
+through node (`so-fee-line-integrity.yml:79`, and the script header's own APPLY
+example), never as an executable, and the file carries no exec bit. A comment
+where the shebang was records why, so it is not re-added by someone matching the
+~200 sibling scripts that do carry one. Verified: local Windows 7/7 tests pass,
+the script still imports and evaluates under plain node, and the full local suite
+is **264 files / 3766 tests, zero failures** - so there was never a second file.
+
+The import graph of all 161 backend test files was swept for modules beginning
+with `#!`; this was the only one. The other test-imported `.mjs` all live in
+`scripts/lib/` and carry none - that is the existing convention for a module a
+test consumes - and the `scripts/*.mjs` pulled in with `?raw` are read as text,
+never parsed, so their shebangs are harmless.
+
+**Lesson** - **a green CI and a red local run on the same commit is a statement
+about the environment, not about the file.** Diff the environment first
+(here: the OS), and read the error's own stack - `_runInlinedModule` said the
+failure was in an inlined dependency, not in the suite named in the FAIL line.
+Corollary for this repo: a `.mjs` under `scripts/` that any test imports must not
+carry a shebang. Second corollary: one load-time throw can be counted as two
+failing files, so a failure count is not a count of broken files.
+
+**Ref** - #2062, `fix/vitest-shebang-parse-0812`, 2026-08-12
+
+---
+
+## Nobody with `scm.so.attribute_other` could create a Sales Order, and the picker they were told to use was empty [high]
+
+**Symptom** - the owner (IT Admin) fills in a new Sales Order, the Salesperson
+field reads "Lim (me)", and **Create Sales Order** returns
+`422 A salesperson must be assigned before this order can be confirmed`. The
+Salesperson dropdown contains exactly one option - that same "Lim (me)" - so
+there is nothing else to pick and no way out of the refusal.
+
+**Root cause (traced, not guessed)** - two independent faults that happen to
+alias each other, both measured against PRODUCTION on 2026-08-12.
+
+**(1) The roster is joined on a column that is almost always empty.**
+`filteredStaffList` cross-referenced `scm.staff.email` against the emails of
+Houzs users in the Sales / Management departments. On production:
+
+```
+scm.staff: 140 rows · 18 with an email · 102 with user_id
+active rows: 102 · 98 of them have NO email at all
+Houzs users in Sales/Management: 47
+staff rows whose email matches one of them: 0
+```
+
+Zero. The filter's "falls open" guard only fires when the ALLOWED set is empty,
+and it was not empty (47 users have emails) - so the filter ran, matched nothing,
+and emptied the picker. `staff.user_id` is the link that does exist, and
+`staff.ts` has always exposed it as `userId`; the frontend's `StaffRow` interface
+simply never declared it.
+
+**(2) An omitted salespersonId stamped NULL instead of the caller.**
+`selfStaffMatch` looked the caller up by staff id, then email, then name - all
+three against that now-empty list - so it missed, and the page rendered the
+UI-only `__self__` sentinel. `SalesOrderNew.tsx:1555` drops that sentinel on
+submit, *"so the backend keeps its own caller-based resolution rather than
+choking on a fake id"*. But `mfg-sales-orders.ts:3427` read
+`canAttributeOther ? (body.salespersonId ?? null) : callerStaffId` - the
+caller-based resolution existed only on the self-scoped branch. An omitted id
+therefore stamped NULL, and `collectSoConfirmProblems` refused the order.
+
+**The cohort is inverted, which is why it went unreported:** a self-scoped
+salesperson hits `: callerStaffId` and is fine. Only a caller holding
+`scm.so.attribute_other` - owner and IT Admin, via `*` - could not create a
+confirmed order at all.
+
+**The IT Admin DOES have a staff row.** `Lim`, `user_id = 4`, active, `email`
+NULL. The backend's `resolveOwnerStaffId` joins on `staff.user_id` and finds it;
+only the frontend's three lookups missed it. The page was telling the user they
+had no sales identity while the backend could see one.
+
+**Fix** - match on `user_id` on both sides. `StaffRow` declares `userId`;
+`selfStaffMatch` tries it FIRST (the same key the backend resolves by, so the two
+can no longer disagree about whether the caller has a staff row); the roster
+filter admits a staff row whose `userId` is in the Sales/Management cohort, with
+email kept as the fallback for the 18 rows that carry one. And the create path
+falls back to `callerStaffId` when `salespersonId` is ABSENT - an explicit null
+still means null. That is not the phantom risk the surrounding comment guards
+against: `resolveOwnerStaffId` returns the caller's REAL staff row, never the
+bridge's pinned SYSTEM uuid.
+
+**Lesson** - **joining two systems on a human-typed field is a join that will
+silently return nothing.** Both halves of this were the same mistake: email was
+chosen as the key because it reads like an identity, while `user_id` - the
+actual foreign key, present on 102 of 140 rows and already on the wire - went
+unused. When a filter can empty a required picker, it needs to be keyed on
+something the data is guaranteed to carry.
+
+**Ref** - `fix/salesperson-roster-and-self`, 2026-08-12
+
+---
+
+## The codebase-map generator had been crashing for three weeks, so the map quietly rotted [medium]
+
+**Symptom** - `docs/generated/codebase-map-facts.md` still claimed **122 route
+modules** against a real 135, and **164 migrations / highest 0163** against a real
+281 / 0281. Its own header says it is "regenerated from the tree so it cannot
+drift", and `CODEBASE-MAP.md` points every new reader at it as the mechanical
+layer that is safe to trust.
+
+**Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
+`backend/vitest.config.ts`. That file was renamed to **`vitest.config.mts`** by
+#925 (the Vitest 4 / Vite 8 toolchain upgrade). Every run since has died before
+writing a line:
+
+```
+Error: ENOENT: no such file or directory, open '...backend/vitest.config.ts'
+    at read (backend/scripts/gen-codebase-map.mjs:50:13)
+    at backend/scripts/gen-codebase-map.mjs:162:22
+```
+
+So this was never "nobody bothered to regenerate it". The generator threw, and
+`audit:map` is **deliberately** not a CI or deploy gate (a stale doc must never
+block a deploy - the sibling `audit:routes` gate jammed prod twice in one day).
+Nothing was left to surface the crash, so the doc froze on 2026-07-21.
+
+**Fix** - the config is located by trying `.mts` / `.ts` / `.js` in turn instead
+of pinning one name, and throws a message naming the problem if none match.
+Regenerating yields 135 route modules, 1038 endpoint registrations, 142 desktop
+routes.
+
+**Lesson** - **a generator that crashes is indistinguishable from a generator
+nobody runs, and the artifact looks equally authoritative either way.** The
+generated layer exists precisely so numbers cannot be wrong; that guarantee is
+only as good as the generator still running. A doc-only generator should not gate
+a deploy - but its failure has to reach somebody.
+
+**Ref** - `fix/converter-hide-retired`, 2026-08-12
+
+---
+
+## The Fabric Converter listed 88 supersede tombstones as if they were fabrics [low]
+
+**Symptom** - the owner opened the Fabric Converter and read `AVANI-01`
+immediately above `AVANI-01 [merged into AVANI-01 on 2026-08-11]`, and the same
+for AVANI-02..08, BO315-1-PEARL, BO315-11-METAL and dozens more - "why does my
+code have this twice?". The `Fabrics (827)` badge counted them too.
+
+**Root cause (traced, not guessed)** - the rows are correct. They are the losers
+of the 2026-08-11 merge pass, kept with `is_active = false` and a note recording
+what absorbed them, exactly as the never-delete-only-retire rule requires.
+`GET /fabric-tracking` returns `is_active` but does not filter on it, and neither
+the Converter page nor the Maintenance Fabrics panel filtered either - so 88 of
+~830 rows were tombstones presented as live fabrics.
+
+**Fix** - `useFabricTrackings` gains `includeRetired`, filtering in a `select` so
+both views derive from ONE cached fetch. The Maintenance panel passes false; the
+Converter hides them behind a `N retired hidden` checkbox.
+
+**The default is a deliberate change to the 2026-06-12 spec**
+(`fabric-queries.ts:164`: "rows stay on the converter"). That spec's intent -
+retiring is not deleting, and the rows stay manageable - still holds: they are one
+click away. But it was written before a merge pass put 88 tombstones in the list,
+and a master list that reads as if every code is duplicated serves nobody. Flagged
+for the owner to veto if the original default was load-bearing.
+
+**Ref** - `fix/converter-hide-retired`, 2026-08-12
+
+---
+
+>>>>>>> origin/main
 ## Defect Done/Replace buttons never showed for Nancy — state-routing read the wrong payload path [high]
 
 **Symptom** - owner, 2026-08-11, logged in as Nancy on a Pulau Pinang defect (SETIA SPICE CONVENTION CENTRE): the Done / Replace buttons did not appear, even though her My Pending correctly listed that event.

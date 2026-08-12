@@ -3485,8 +3485,24 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      lookup is dead in Houzs — the SCM bridge pins every caller to one
      super_admin row). Owner + IT Admin pass via `*`; grant to other positions
      via the Team > Positions matrix. */
+  /* An OMITTED salespersonId falls back to the caller's own staff row, for the
+     same reason the self-scoped branch below already does: the creator IS the
+     salesperson unless they name someone else. The frontend states this contract
+     out loud - SalesOrderNew.tsx omits its UI-only `__self__` sentinel "so the
+     backend keeps its own caller-based resolution rather than choking on a fake
+     id" - but this branch never implemented that resolution, so an omitted id
+     stamped NULL and collectSoConfirmProblems then refused the order with
+     "A salesperson must be assigned". Every caller holding
+     scm.so.attribute_other (owner, IT Admin, via `*`) could therefore not create
+     a confirmed Sales Order at all, while self-scoped sales staff were fine.
+
+     This is NOT the phantom risk the comment above guards against:
+     resolveOwnerStaffId returns the caller's REAL scm.staff row (joined by
+     staff.user_id) and never the bridge's pinned SYSTEM uuid, so the order is
+     credited to the human who raised it. An explicit null in the body still
+     means null - only an ABSENT field falls back. */
   const salespersonIdToStamp = canAttributeOther
-    ? ((body.salespersonId as string) ?? null)
+    ? ((body.salespersonId as string) ?? callerStaffId ?? null)
     : callerStaffId;
 
   /* Migration 0086 + Loo 2026-06-06 — venue follows the SELECTED salesperson:
