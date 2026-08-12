@@ -130,7 +130,12 @@ specialAddons.get('/', async (c) => {
     supabase.from('special_addons').select(SELECT),
     c,
   )
+    // sort_order is the MANUAL position and stays the higher rule (owner
+    // 2026-08-12). Alphabetical is the tie-break, not a replacement: rows the
+    // owner has not deliberately positioned share a sort_order and were
+    // previously left in insertion order, which is what made the list unreadable.
     .order('sort_order', { ascending: true })
+    .order('label', { ascending: true })
     .order('created_at', { ascending: true });
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
   return c.json({ addons: (data as AddonRow[]).map(toApi) });
@@ -328,11 +333,18 @@ specialAddons.post('/save', async (c) => {
   const supabase = c.get('supabase');
   const userId = gate.userId;
 
+  // The apply step below upserts ON CONFLICT (company_id, code) — the constraint
+  // migration 0087 put there. An unresolved company would send company_id NULL,
+  // which never conflicts, so every save would INSERT a second copy of every
+  // add-on instead of updating it. Refuse instead, matching PATCH and DELETE.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // 1) Append the version-log snapshot (audit + apply-source).
   const histId = genHistId();
   const { data: hist, error: histErr } = await supabase
     .from('special_addons_history')
-    .insert({ company_id: activeCompanyId(c), id: histId, addons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
+    .insert({ company_id: co.companyId, id: histId, addons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
     .select('id, addons, effective_from, notes, created_at')
     .single();
   if (histErr) return c.json({ error: 'history_insert_failed', reason: histErr.message }, 500);
