@@ -937,6 +937,25 @@ export const SalesOrderNew = () => {
     }
     return set;
   }, [houzsUsersQ.data, salespersonAllowedDeptIds]);
+  /* The SAME cohort, keyed by Houzs user id instead of email — because email is
+     not a key that exists on this data. Measured on production 2026-08-12: of
+     140 scm.staff rows only 18 carry an email at all, while 102 carry user_id;
+     of the 102 ACTIVE rows, 98 have no email. Cross-referencing staff.email
+     against the Sales/Management users' emails therefore matched ZERO rows and
+     collapsed the picker to nothing but the synthesized self-option. staff.user_id
+     IS the link (staff.ts exposes it as `userId` for exactly this), so it is the
+     primary match and email is kept only as the fallback for the 18. */
+  const salespersonAllowedUserIds = useMemo(() => {
+    if (salespersonAllowedDeptIds.size === 0) return null;
+    const set = new Set<number>();
+    for (const u of houzsUsersQ.data?.users ?? []) {
+      const deptIds = u.department_ids ?? (u.department_id != null ? [u.department_id] : []);
+      if (!deptIds.some((id) => salespersonAllowedDeptIds.has(id))) continue;
+      if (u.id != null) set.add(Number(u.id));
+    }
+    return set;
+  }, [houzsUsersQ.data, salespersonAllowedDeptIds]);
+
   /* Staff subset the dropdown iterates. Always keep the currently-picked
      staff (grandfather edit-mode / scan-seed rows whose original salesperson
      is no longer in Sales/Management) and always keep the creator (they need
@@ -944,16 +963,19 @@ export const SalesOrderNew = () => {
      haven't produced a set yet — we don't want to hide every option while
      loading. */
   const filteredStaffList = useMemo(() => {
-    if (!salespersonAllowedEmails || salespersonAllowedEmails.size === 0) {
-      return staffList;
-    }
+    const haveIds = !!salespersonAllowedUserIds && salespersonAllowedUserIds.size > 0;
+    const haveEmails = !!salespersonAllowedEmails && salespersonAllowedEmails.size > 0;
+    if (!haveIds && !haveEmails) return staffList;
     const selfEmail = (currentUser?.email ?? '').trim().toLowerCase();
+    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
     return staffList.filter((s) => {
       if (s.id === salespersonId) return true;
+      if (selfUserId != null && s.userId != null && Number(s.userId) === selfUserId) return true;
       if (selfEmail && (s.email ?? '').trim().toLowerCase() === selfEmail) return true;
-      return salespersonAllowedEmails.has((s.email ?? '').trim().toLowerCase());
+      if (haveIds && s.userId != null && salespersonAllowedUserIds!.has(Number(s.userId))) return true;
+      return haveEmails && salespersonAllowedEmails!.has((s.email ?? '').trim().toLowerCase());
     });
-  }, [staffList, salespersonAllowedEmails, salespersonId, currentUser?.email]);
+  }, [staffList, salespersonAllowedEmails, salespersonAllowedUserIds, salespersonId, currentUser?.email, currentUser?.id]);
 
   /* Same Sales+Management filter, projected to staff IDs — piped into
      PaymentsTable so the "Collected By" dropdown mirrors the salesperson
@@ -979,6 +1001,18 @@ export const SalesOrderNew = () => {
      the Houzs auth user so their NAME is always selectable + shown. */
   const SELF_SALESPERSON = '__self__';
   const selfStaffMatch = useMemo(() => {
+    /* user_id FIRST. It is the only link that actually exists on this data (102
+       of 140 staff rows carry it; 18 carry an email), and it is what the backend
+       already resolves the caller by — resolveOwnerStaffId joins staff.user_id.
+       Matching the frontend to the backend's own key is what stops the two
+       disagreeing about whether the caller has a staff row at all: the IT Admin
+       HAS one (user_id 4, email NULL), yet id/email/name all missed it, so the
+       page offered a synthesized self-option the create path then discarded. */
+    const selfUserId = currentUser?.id != null ? Number(currentUser.id) : null;
+    const byUserId = selfUserId != null
+      ? staffList.find((s) => s.userId != null && Number(s.userId) === selfUserId)
+      : undefined;
+    if (byUserId) return byUserId;
     const byId = currentStaff?.id
       ? staffList.find((s) => s.id === currentStaff.id)
       : undefined;
@@ -992,7 +1026,7 @@ export const SalesOrderNew = () => {
     return name
       ? staffList.find((s) => (s.name ?? '').trim().toLowerCase() === name)
       : undefined;
-  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name]);
+  }, [staffList, currentStaff?.id, currentStaff?.name, currentUser?.email, currentUser?.name, currentUser?.id]);
 
   /* The creator's display name for the synthesized self-option (only used when
      selfStaffMatch is undefined — i.e. they have no scm.staff row). */

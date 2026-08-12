@@ -27,6 +27,12 @@ export interface StaffRow {
   initials: string;
   color: string;
   active: boolean;
+  /* The Houzs user this staff row belongs to. Already sent by
+     backend/src/scm/routes/staff.ts (STAFF_COLUMNS carries user_id, toApi maps it
+     to `userId`) and simply never declared here. It is the ONLY reliable link
+     between the two systems: measured on production 2026-08-12, 102 of 140
+     scm.staff rows carry user_id while 18 carry an email. */
+  userId: number | null;
   email: string | null;
   phone: string | null;
 }
