@@ -249,7 +249,7 @@ for work already in production.
 
 | # | Decision |
 |---|---|
-| 1 | **Fabric library** — the individually ambiguous codes still need his call: `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371` (which survives?). The BULK half of this row is done: the duplicate-series merge tool shipped (#1972) and a run of fabric repairs landed 08-11/08-12 (#2018 #2032 #2033 #2035 #2036 #2038 #2047 #2061) |
+| 1 | **Fabric library** — the individually ambiguous codes still need his call: `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371` (which survives?). The BULK half of this row is done: the merge tool shipped (#1972) and RAN six times on 2026-08-11 (last: run 31461314399), plus fabric repairs #2018 #2032 #2033 #2035 #2036 #2038 #2047 #2061. That final run's plan also surfaced one more decision this table did not have: **`NX` vs `NX016`** share zero colour codes so the detector cannot merge them — owner call |
 | 4 | **"Seat Softer"** (7 instances) — the direct opposite of the existing `Seat Firmer`, currently with nowhere to go. Create it? (No trace in the tree — verified by grep, 2026-08-12) |
 | 6 | **`HC-SO-012949`** — a customer ordered a super-single `CODY-(S)` that was never put on any purchase order. Raising it is a commercial act. (The link-repair workflow explicitly excludes this order and says why — `repair-po-so-links-autocount-text.yml`) |
 | 7 | **The 27 held-back specials lines** keep their instructions as free text with no picker tick, matching his own fallback rule. Accept, or build migrated-immunity in the money path? (Still open — `docs/autocount-migration-record.md` section 9) |
@@ -258,9 +258,9 @@ for work already in production.
 
 | # | Was | Outcome |
 |---|---|---|
-| 2 | Should the ERP charge for special add-ons at all? | **CHARGE.** #1973: `chargeableSurchargesSen` reaches the customer price on every non-migrated line (`scm/lib/mfg-pricing-recompute.ts`), pinned by `mfg-pricing-recompute.surcharge.test.ts` (12 tests, run green 2026-08-12). Migrated lines are structurally immune |
-| 3 | HYDRAULIC — this row said "must not become a `special_addons` code" | **It became exactly that, at the owner's own later instruction** ("开 special order 那边勾选") — same PR #1973 plus `seed-hydraulic-special-addon.yml`, price seeded 0 so it charges nothing until he prices it. The constraint recorded here was overtaken by his ruling |
-| 5 | 18 duplicate DO lines — add a cancel column, or qty-0 with an audit note? | **Option B: qty-0 + audit note, nothing deleted.** #1971 + `zero-duplicate-do-lines.yml` (refuses non-`migrated_no_stock` docs, any doc with a movement, any line carrying money) |
+| 2 | Should the ERP charge for special add-ons at all? | **CHARGE.** #1973: `chargeableSurchargesSen` reaches the customer price on every non-migrated line (`scm/lib/mfg-pricing-recompute.ts`), pinned by `mfg-pricing-recompute.surcharge.test.ts` — the 12 tests were RUN green on 2026-08-12, not just located. Migrated lines are structurally immune |
+| 3 | HYDRAULIC — this row said "must not become a `special_addons` code" | **It became exactly that, at the owner's own later instruction** ("开 special order 那边勾选") — same PR #1973 plus `seed-hydraulic-special-addon.yml`, price seeded 0 so it charges nothing until he prices it. **Applied to prod**: run 31454564942 (2026-08-11 03:09) — `APPLIED — 1 inserted`, read back on a fresh connection as `[Hydraulic] categories=BEDFRAME active=true sell=0 cost=0`. The constraint recorded here was overtaken by his ruling |
+| 5 | 18 duplicate DO lines — add a cancel column, or qty-0 with an audit note? | **Option B: qty-0 + audit note, nothing deleted.** #1971 + `zero-duplicate-do-lines.yml`. **Applied to prod**: run 31451705673 (2026-08-11 02:13, mode=APPLY) — surplus lines zeroed and, in the run's own words, `VERIFIED on a fresh connection: quantities zeroed, notes present, every other column and every document total unchanged` |
 
 ## Sequence to go live
 
