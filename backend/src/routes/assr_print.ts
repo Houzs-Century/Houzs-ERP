@@ -1013,6 +1013,9 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
       <div class="lc">PO No</div><div class="vc mono">${esc(cs.po_no || "—")}</div>
       <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
+      <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
+      <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
+      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
       <div class="lc">Address</div><div class="vc span5">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
       <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
@@ -1104,6 +1107,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Delivery Area</div><div class="vc">${esc(cs.location || (cs as any).addr4 || "—")}</div>
       <div class="lc">Coordinator</div><div class="vc">Service Admin (Purchasing)</div>
       <div class="lc">Warehouse</div><div class="vc">${esc(warehouseLabel || "—")}</div>
+      <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
+      <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
+      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
+      <div class="lc"></div><div class="vc"></div>
       <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 10.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
     </div>
 
