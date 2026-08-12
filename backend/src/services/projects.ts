@@ -1605,12 +1605,16 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // sets status='done', which already drops it everywhere. No binds.
   const NOT_IN_REVIEW = `COALESCE(pc.review_status, '') NOT IN ('pending_review', 'amended')`;
   if (f.pending_label === "PURCHASER") {
-    // Purchaser staging (owner 2026-07-21):
-    //   - Stock Out Transfer Record unlocks once the Display Floor Plan is done.
-    //   - Exchange List + Stock In Transfer Record unlock once ANY Defect List
-    //     (Setup/Dismantle pair since 2026-07-29) is done OR has an upload —
-    //     sales/drivers complete by uploading, and the owner wants the
-    //     purchaser chasing replacements as soon as defects are filed.
+    // Purchaser staging:
+    //   - Stock Out Transfer Record unlocks once the Display Floor Plan is done
+    //     (owner 2026-07-21).
+    //   - Exchange List + Stock In Transfer Record now surface on their OWN due
+    //     date for EVERY event (owner 2026-08-11) — no longer gated on a defect
+    //     first existing. So at the end of each event the purchaser (Sim/Farra)
+    //     sees both; they click N/A when none is needed, or upload/complete the
+    //     task. Until one of those, the item stays 'pending' and keeps showing
+    //     here. (Uploading a reviewable doc auto-submits it, so NOT_IN_REVIEW
+    //     then drops it to the approver — it leaves the purchaser lane either way.)
     //   - Every other PURCHASER task surfaces on its own due date.
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
@@ -1623,15 +1627,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                        OR EXISTS (SELECT 1 FROM project_checklist fp
                                    WHERE fp.project_id = p.id
                                      AND fp.title = 'Display Floor Plan'
-                                     AND (fp.status = 'done' OR fp.review_status = 'approved')))
-                  AND (pc.title NOT IN ('Exchange List', 'Stock In Transfer Record')
-                       OR EXISTS (SELECT 1 FROM project_checklist dl
-                                   WHERE dl.project_id = p.id
-                                     AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
-                                     AND (dl.status = 'done' OR dl.review_status = 'approved'
-                                          OR EXISTS (SELECT 1 FROM project_checklist_attachments da
-                                                      WHERE da.item_id = dl.id
-                                                        AND da.archived_at IS NULL)))))`
+                                     AND (fp.status = 'done' OR fp.review_status = 'approved'))))`
     );
     pendingBinds.push(dueToday);
     // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
@@ -2135,6 +2131,19 @@ export async function patchFinance(
     }
   }
   if (!sets.length) return false;
+  // UPSERT (owner 2026-08-12 "why i cant save?"): this was UPDATE-only, so a
+  // project with NO project_finance row could never be given a Total Sales or
+  // rental — the UPDATE matched 0 rows, `changes > 0` was false and the route
+  // answered 400 "No changes", which reads as "nothing to save" rather than
+  // "there was nowhere to save it". 368 live projects were in that state (rows
+  // are created with the project, so copies/imports that skipped it were
+  // silently unwritable). Create the row first, then update it.
+  await env.DB.prepare(
+    `INSERT INTO project_finance (project_id)
+     SELECT ? WHERE NOT EXISTS (SELECT 1 FROM project_finance WHERE project_id = ?)`
+  )
+    .bind(projectId, projectId)
+    .run();
   sets.push("updated_at = datetime('now')", "updated_by = ?");
   binds.push(userId, projectId);
   const r = await env.DB.prepare(

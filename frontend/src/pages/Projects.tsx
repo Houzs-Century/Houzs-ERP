@@ -1361,6 +1361,28 @@ function ProjectsListView() {
         all.push(...batch);
         if (batch.length === 0 || all.length >= (res.total ?? all.length)) break;
       }
+      // Owner 2026-08-12: cluster same-event rows (same venue + start date)
+      // together so an event's different-brand projects sit side by side in the
+      // export instead of being scattered by the brand/date sort. Overall order
+      // is preserved — each event stays where its FIRST row appeared, and its
+      // other brands are pulled up next to it (stable within the event).
+      {
+        const eventKey = (r: ProjectRow) =>
+          `${(r.venue ?? "").trim().toUpperCase()}||${r.start_date ?? ""}`;
+        const origIdx = new Map<ProjectRow, number>();
+        all.forEach((r, i) => origIdx.set(r, i));
+        const firstSeen = new Map<string, number>();
+        for (const r of all) {
+          const k = eventKey(r);
+          if (!firstSeen.has(k)) firstSeen.set(k, origIdx.get(r)!);
+        }
+        all.sort((a, b) => {
+          const fa = firstSeen.get(eventKey(a))!;
+          const fb = firstSeen.get(eventKey(b))!;
+          if (fa !== fb) return fa - fb;
+          return origIdx.get(a)! - origIdx.get(b)!;
+        });
+      }
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
@@ -6055,7 +6077,7 @@ function ProjectDetailContent({
         const perms = user.permissions ?? [];
         if (perms.includes("*") || perms.includes("projects.manage")) return true;
         const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
-        const inRegion = region.has(((detail.data as any)?.state ?? "").trim().toLowerCase());
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
         const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
         const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
         return (isShukor && !inRegion) || (isNancy && inRegion);
