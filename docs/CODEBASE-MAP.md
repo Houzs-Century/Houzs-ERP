@@ -323,10 +323,16 @@ re-check the cited file rather than trusting the line.
   `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
   rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
   test something — it gates a live business.
-- **AutoCount writes are hard-off in code**: `AUTOCOUNT_WRITES_DISABLED = true` in
-  `backend/src/services/autocount.ts`. Flipping it is a code edit, not a config
-  change. Inbound pulls, by contrast, are env-gated (`AUTOCOUNT_SYNC_DISABLED` in
-  `wrangler.toml`) and are currently ON.
+- **AutoCount has TWO channels and this bullet used to describe only one.** The
+  LEGACY relay's writes are hard-off in code — `AUTOCOUNT_WRITES_DISABLED = true`
+  in `backend/src/services/autocount.ts`, a code edit to flip — while its inbound
+  pulls are env-gated (`AUTOCOUNT_SYNC_DISABLED` in `wrangler.toml`) and are ON.
+  That constant does **not** gate the ERP -> AutoCount WRITE-BACK, which is a
+  different service (`AcSyncService` on the AutoCount host) reached through
+  `AC_SYNC_URL` — set since PR #2030 — and gated instead by the DB toggle
+  `scm.app_config` -> `scm.autocount_writeback`, still `'off'`. Reading the
+  constant alone and concluding "nothing can reach AutoCount" is the mistake this
+  wording invited; `docs/autocount-integration-map.md` is the map.
 - **Cost/margin display** is env-gated by `COSTING_DISPLAY_ENABLED`, parsed by
   `scm/lib/costing-enabled.ts`. Set false and every sales document strips cost from
   the wire, not just from the UI.

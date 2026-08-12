@@ -1,5 +1,30 @@
 # ERP -> AutoCount sync: coverage, gaps, and the build plan
 
+> ## SUPERSEDED IN ITS CONCLUSIONS — read this box before you quote anything below
+>
+> **Checked against the code on `main` and against production, 2026-08-12.** This
+> document is a good assessment of what was true on **2026-08-11**, and its
+> reasoning about mechanisms is still worth reading. **Its headline conclusions are
+> not true any more**, and it was already being quoted as though they were. For
+> current status use `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md`; for the shape of the whole
+> integration use `docs/autocount-integration-map.md`.
+>
+> | This document says | Verified on 2026-08-12 |
+> |---|---|
+> | §0 Blocker 2: create returns only `DocNo`, so an edit appends duplicate lines | **FIXED.** Every create/convert route now answers with the created line keys — `Ok(docNo, CreatedLines(dtlTable, docNo))`, `AcSyncService.cs`, reading `DtlKey`/`ItemCode`/`Desc2` straight from the book's detail table |
+> | §0 Blocker 2: `/edit` treats a keyless line as new (`AddDetail`) | **FIXED.** A keyless line is now REFUSED unless the ERP asserts `IsNewLine` (`AcSyncService.cs`, the keyless-line guard; PRs #1935 + #1945). Line identity in prod is 92.8% on SO, not 0% |
+> | §0 Blocker 1: no non-destructive way to retire a line | **BUILT**, and by the mechanism this document recommended: `Retire:true` sets `Qty = 0` + `Transferable = false` + a `[ERP-CANCELLED]` marker in `Desc2`. The ERP reads the line's `DtlKey` BEFORE deleting the row (`retiredLineOf`, `autocount-outbox.ts`) so the removal can be named |
+> | §1.1: the write-back is "NOT WIRED, NOT DEPLOYED, NOT CONFIGURED"; `AC_SYNC_URL` commented out | **False now.** `AC_SYNC_URL` is set (`backend/wrangler.toml:42`, PR #2030) and the tunnel answers: unauthenticated `POST /health` -> `401 {"ok":false,"error":"bad key"}` |
+> | §1.4: PR #1855 is OPEN, the ERP half is unmerged | **Merged** 2026-08-10 |
+> | §2: "No cell anywhere is PROVEN" | **Five cells are PROVEN** against the live `AED_HOUZS` book: `create-so`, all four `/edit` guards, `so-to-do`, `cancel` SO + DO. `create-po` is blocked on `FK_PO_PurchaseAgent`, fixed in code but not yet on the host |
+>
+> **What has NOT changed, and is the thing to hold on to:** the DB toggle
+> `scm.app_config` -> `scm.autocount_writeback` is still `off`, and
+> `scm.autocount_outbox` still holds **zero rows of any status** — verified
+> 2026-08-12 by running `.github/workflows/autocount-outbox-health.yml`, which
+> reported `QUEUE EMPTY`. **No ERP document has ever reached AutoCount.** Anyone
+> asking "is it synced yet" should run that workflow rather than read a document.
+
 **Assessment date: 2026-08-11.** Scope: the owner's go-live blocker #1 —
 
 > "我们的 Sales Order、PO、DO、GR、PI、SI 等所有单据,无论是我打开后进行 Convert
