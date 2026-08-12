@@ -2135,6 +2135,19 @@ export async function patchFinance(
     }
   }
   if (!sets.length) return false;
+  // UPSERT (owner 2026-08-12 "why i cant save?"): this was UPDATE-only, so a
+  // project with NO project_finance row could never be given a Total Sales or
+  // rental — the UPDATE matched 0 rows, `changes > 0` was false and the route
+  // answered 400 "No changes", which reads as "nothing to save" rather than
+  // "there was nowhere to save it". 368 live projects were in that state (rows
+  // are created with the project, so copies/imports that skipped it were
+  // silently unwritable). Create the row first, then update it.
+  await env.DB.prepare(
+    `INSERT INTO project_finance (project_id)
+     SELECT ? WHERE NOT EXISTS (SELECT 1 FROM project_finance WHERE project_id = ?)`
+  )
+    .bind(projectId, projectId)
+    .run();
   sets.push("updated_at = datetime('now')", "updated_by = ?");
   binds.push(userId, projectId);
   const r = await env.DB.prepare(
