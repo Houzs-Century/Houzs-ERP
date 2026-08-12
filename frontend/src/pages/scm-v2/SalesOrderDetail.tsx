@@ -275,6 +275,10 @@ type SoHeader = {
      go out as an amendment. open_amendment is the light summary of any in-flight
      amendment (status NOT IN SENT/REJECTED). */
   amendment_eligible?: boolean;
+  /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
+     only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
+     below fires with no processing date involved. */
+  po_locked?: boolean;
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Two-lane rework: up to TWO can be open at once (one per lane). */
