@@ -65,6 +65,30 @@ had already produced a confident wrong answer:
 is the finding — do not insert it to make a gate pass. If a matcher misses, fix
 the library, do not loosen the guard the matcher exists to enforce.
 
+### Two rules that make the above executable
+
+A rule is text; text does not run. These two are actions, and both were bought
+the same day this section was written, by breaking it within hours.
+
+**1. RE-RUN, never recall.** Any date, count, run id or causal claim that is
+going into a document must come from a command executed *at the moment of
+writing*, not from something gathered earlier in the session. Late in a long
+session the earlier output has decayed into an impression, and an impression
+produces the same confident sentence a fact does. On 2026-08-12 the run list
+proving staging deployed fine until 2026-07-29 had already been fetched hours
+before; the COE was then written from memory of it and asserted the opposite.
+Re-running one command would have put the refutation on screen.
+
+**2. A contradiction is a finding — STOP, do not bridge it.** When two things
+you hold disagree, one is wrong, and establishing which is the work. Do not
+write the sentence that makes them fit. The same COE stated "last successful
+deploy 2026-07-29" and "the token never worked after 2026-07-01" four paragraphs
+apart, and reconciled them by inventing an earlier credential nobody had
+evidenced. The urge to produce a complete, coherent answer is the single largest
+source of wrong answers here — completeness is not a quality bar, and "these two
+facts disagree and I have not resolved it" is a better answer than a seamless
+one.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
