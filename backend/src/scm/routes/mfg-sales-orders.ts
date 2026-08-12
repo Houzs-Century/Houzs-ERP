@@ -89,6 +89,9 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
+/* "A PO is already out for this SO" — the second road to the same soft lock
+   (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
+import { soPoLocked } from '../lib/so-po-lock';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
 // gates `scm.so.view_all` / `scm.so.attribute_other` against the REAL Houzs
@@ -296,6 +299,22 @@ const SO_PROCESSING_LOCKED_RESPONSE = {
   reason: 'Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)',
 } as const;
 
+/* ── SO purchase-order lock (Owner 2026-08-12, 2990 only) ───────────────────
+   The SAME soft lock, reached by the other road: a live PO already claims one
+   of this SO's lines, so the order is with a supplier regardless of what the
+   processing date says. Rationale, scope and the fail-closed contract live in
+   lib/so-po-lock.ts — read that before widening this to Houzs.
+
+   A SEPARATE response from the processing-date one on purpose: the two are
+   fixed by different actions ("wait / talk to production" vs "the PO is out,
+   raise an amendment so purchasing can re-send"), and an operator told the
+   wrong reason goes looking in the wrong place. Both are 409 + amendment-
+   eligible, so the FE routing is unchanged. */
+const SO_PO_LOCKED_RESPONSE = {
+  error: 'so_locked_po_raised',
+  reason: 'A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.',
+} as const;
+
 /* Optimistic-lock rejection (WO-8 / GO-LIVE charter item 3). `error` is a CODE
    the frontend maps to a curated plain sentence (authed-fetch.ts humanApiError),
    so the wording can never drift; `message` carries the same sentence inline as
@@ -443,14 +462,36 @@ export function soProcessingLocked(
 
 /* Shared route guard — fetches the two date columns and returns the 409 body
    when locked, null when free. Callers that already hold the header row use
-   soProcessingLocked directly instead of re-querying. */
-async function soProcessingLockBlocked(sb: any, docNo: string): Promise<typeof SO_PROCESSING_LOCKED_RESPONSE | null> {
+   soEditLocked / soProcessingLocked directly instead of re-querying.
+
+   Owner 2026-08-12: now also answers the PO lock, so the ~6 writers that reach
+   the lock through THIS helper (line add/edit/delete, price override, …) picked
+   up the new rule without 6 separate edits — the shape that let previous guards
+   land on some writers and not others. The date lock is evaluated FIRST and its
+   response wins when both apply: it is the older, better-understood reason, and
+   an SO past its processing date with a PO on it is locked either way. */
+async function soProcessingLockBlocked(
+  sb: any,
+  docNo: string,
+): Promise<typeof SO_PROCESSING_LOCKED_RESPONSE | typeof SO_PO_LOCKED_RESPONSE | null> {
   const { data } = await sb.from('mfg_sales_orders')
     .select('internal_expected_dd, proceeded_at, status')
     .eq('doc_no', docNo).maybeSingle();
-  return soProcessingLocked(data as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)
-    ? SO_PROCESSING_LOCKED_RESPONSE
-    : null;
+  if (soProcessingLocked(data as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+    return SO_PROCESSING_LOCKED_RESPONSE;
+  }
+  return (await soPoLocked(sb, docNo)) ? SO_PO_LOCKED_RESPONSE : null;
+}
+
+/* Both soft locks as one boolean, for the call sites that already hold the
+   header row (and so would waste a re-read going through the helper above).
+   Same precedence-free question: "must this edit go through an amendment?" */
+async function soEditLocked(
+  sb: any,
+  docNo: string,
+  header: { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+): Promise<boolean> {
+  return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
 
 /* ── SO status legal-transition guard (FIX 1, 2026-07-16) ───────────────────
@@ -2647,9 +2688,20 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      in-flight amendment (status NOT IN SENT/REJECTED) for the pending banner.
      Reuses the SAME soProcessingLocked helper the edit endpoints use + the
      doCount/siCount already computed above for the hard-lock signal. */
-  const amendProcessingLocked = soProcessingLocked(
+  const amendDateLocked = soProcessingLocked(
     h.data as { internal_expected_dd?: string | null; proceeded_at?: string | null },
   );
+  /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so a 2990 SO with a live
+     PO flips the FE's Save into "Submit amendment request" exactly as an elapsed
+     processing date does. Shipped as its own header field (`po_locked`) too: the
+     desktop + mobile detail gates need to disable the line editors, and they are
+     PURE header functions (so-detail-gates.ts) that cannot run this query
+     themselves — deriving it client-side is what let the two surfaces drift
+     before. Skipped entirely when the date lock already answered true: the
+     result is identical and this is a per-request round trip on the hottest SO
+     read in the app. */
+  const amendPoLocked = amendDateLocked ? false : await soPoLocked(sb, docNo);
+  const amendProcessingLocked = amendDateLocked || amendPoLocked;
   const amendHardLocked = (doCount ?? 0) > 0 || (siCount ?? 0) > 0;
   const amendSoStatus = String((h.data as { status?: string | null }).status ?? '').toUpperCase();
   const amendTerminalStatus = ['SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED'].includes(amendSoStatus);
@@ -2691,6 +2743,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     has_children: (doCount ?? 0) > 0 || (siCount ?? 0) > 0,
     // Amendment flags (read-only; the FE routes on these).
     amendment_eligible: amendmentEligible,
+    /* The PO half of the soft lock, as its own fact — so-detail-gates.procLockActive
+       ORs it with its date test (owner 2026-08-12). NOT folded into
+       amendment_eligible: that flag is already false for a hard-locked / terminal
+       SO, and the editors must stay disabled in exactly those cases. */
+    po_locked: amendPoLocked,
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
     open_amendments: openAmendments,
@@ -6830,7 +6887,15 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      and stay open. Sits AFTER the cancelled/downstream-agnostic validations
      above but before any write. (`before` carries internal_expected_dd via
      the map above.) */
-  if (soProcessingLocked(before as unknown as { internal_expected_dd?: string | null; proceeded_at?: string | null } | null)) {
+  /* Owner 2026-08-12 — the PO lock (2990 only) reaches the SAME field-scoped
+     diff by the other road. Evaluated once, here, so both roads share one
+     rejection and a future CONTROLLED-column change cannot land on one and miss
+     the other. */
+  const patchDateLocked = soProcessingLocked(
+    before as unknown as { internal_expected_dd?: string | null; proceeded_at?: string | null } | null,
+  );
+  const patchPoLocked = patchDateLocked ? false : await soPoLocked(sb, docNo);
+  if (patchDateLocked || patchPoLocked) {
     /* Field-scoped (Loo 2026-06-13) — only a genuine change to a production-
        schedule date column is rejected; customer / address / payment header
        fields stay editable in the Proceed lane. `before` carries every patched
@@ -6848,11 +6913,17 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        what actually ships. This IS the server-side control: a client that posts
        a CONTROLLED field here is rejected regardless of what its UI allowed. */
     const beforeRowProc = before as unknown as Record<string, unknown>;
+    /* The remove-the-Processing-Date escape hatch is honoured ONLY for the date
+       lock. Deleting a date does not un-raise a Purchase Order, so under the PO
+       lock the same clear is just another CONTROLLED change and 409s — the way
+       to release a PO-locked SO is to cancel the PO, which this guard reads
+       live. Letting the hatch through here would hand every admin a one-click
+       bypass of the exact rule 2990-SO-2608-017 exists to justify. */
     const changedSchedule = lockedColumnsChanged(updates, beforeRowProc, {
-      superAdminClearsProcessingDate: superAdminClearsProc,
+      superAdminClearsProcessingDate: patchDateLocked ? superAdminClearsProc : false,
     });
     if (changedSchedule.length > 0) {
-      return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
+      return c.json(patchDateLocked ? SO_PROCESSING_LOCKED_RESPONSE : SO_PO_LOCKED_RESPONSE, 409);
     }
   }
 
@@ -7491,9 +7562,14 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, internal_expected_dd, proceeded_at, status, customer_id').eq('doc_no', docNo).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
-     SO's processing day has passed (already PO'd to the supplier). */
+     SO's processing day has passed (already PO'd to the supplier). Owner
+     2026-08-12 — nor once a live PO actually exists (2990), which is the case
+     this rule was always describing and only sometimes catching. */
   if (soProcessingLocked(header as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null })) {
     return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
+  }
+  if (await soPoLocked(sb, docNo)) {
+    return c.json(SO_PO_LOCKED_RESPONSE, 409);
   }
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
@@ -11486,9 +11562,14 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // sellers); kept for call-site parity with 2990.
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  // Guard 2 — an amendment only makes sense once the SO is processing-locked;
-  // an unlocked SO is still directly editable, so no amendment is needed.
-  if (!soProcessingLocked(soRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  /* Guard 2 — an amendment only makes sense once the SO is locked; an unlocked
+     SO is still directly editable, so no amendment is needed. Owner 2026-08-12:
+     "locked" now means date-locked OR PO-locked (2990). This guard is the MIRROR
+     of the write guards above — if it kept asking only about the date, a
+     PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
+     for "not locked yet") and the operator would have no way to change anything
+     at all. Keep the two definitions in lock-step. */
+  if (!await soEditLocked(sb, docNo, soRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
