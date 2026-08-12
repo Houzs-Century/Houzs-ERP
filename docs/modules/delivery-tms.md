@@ -542,7 +542,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET | `/trips/active/locations` | `trips.ts` | **Phase 4.** Latest position per driver across EVERY IN_PROGRESS trip (board-level overview). Read-only, scoped to allowed companies + own trips |
 | GET/PATCH/PUT | `/lorry-capacity`, `/lorry-capacity/lorries/:id/*` | `lorry-capacity.ts:132,354,389` | Capacity dashboard, in-house flag, repair days |
 | POST/GET/PATCH | `/dp-orders`, `/dp-orders/:id/cancel`, `/:id/schedule` | `dp-orders.ts:190,234,281,313,348` | Manual DP jobs with no source document |
-| PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **No frontend caller exists** — grep `frontend/src` for `/crew` returns nothing. |
+| PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **Now has its first UI caller** (corrected 2026-08-12): `useAssignDoCrew` (`delivery-planning-queries.ts:753-776`), consumed by `FleetDay.tsx`. |
 
 Machine-generated gate list: `docs/generated/route-capability-matrix.csv`
 (rows for `/delivery-planning`, `/trips`, `/drivers`, `/helpers`, `/lorries`).
@@ -778,17 +778,20 @@ Three masters, one shared fleet across companies. `drivers.ts:31-34` and
 | Path | What it writes | Who calls it |
 |---|---|---|
 | `PATCH /delivery-planning/:type/:id/schedule` (`:1705`) | schedule date, optional `deliveryState` override, and `{lorryId, driverId, tripId?, tripDate?, warehouseId?}` → **finds or creates a `scm.trips` row** for (lorry, date) and adds a `trip_stops` DELIVERY row (`:1909-1946`). `is_outsourced` derives from the lorry's `is_internal` (`:1705-1712`); trip numbers are minted max+1 via `mintMonthlyDocNo` (`:1716-1722`). | The board's `DriverEditCell` (`DeliveryPlanning.tsx:305`) and `LorryEditCell` (`:340`), and the bulk apply (`:660-665`). |
-| `PUT /delivery-orders-mfg/:id/crew` (`delivery-orders-mfg.ts:3314`) | the full `scm.delivery_order_crew` row — driver 1/2, **helper 1/2**, lorry, plus name/IC/contact/plate snapshots — and syncs `driver_id` / `driver_name` / `vehicle` onto the DO header (`:3412-3414`). | **Nobody, at this commit.** No frontend file references `/crew`. |
+| `PUT /delivery-orders-mfg/:id/crew` (`delivery-orders-mfg.ts:3314`) | the full `scm.delivery_order_crew` row — driver 1/2, **helper 1/2**, lorry, plus name/IC/contact/plate snapshots — and syncs `driver_id` / `driver_name` / `vehicle` onto the DO header (`:3412-3414`). | `useAssignDoCrew` (`delivery-planning-queries.ts:753`) from `FleetDay.tsx` — its first UI caller (corrected 2026-08-12; the hook's own header records it). |
 
 Consequences worth knowing before you touch this:
 
-- **There is no helper assignment UI on the delivery board or on Trips.** The
-  schedule payload has no helper field (`scheduleSchema` `:1642-1662`), the
-  board renders no helper cell, and the mobile detail shows Driver + Helper
-  **read-only** (`MobileDeliveryPlanning.tsx:1612-1613`). Helpers can be
-  assigned only via `POST /trips` / `PATCH /trips/:id` (`trips.ts:164-173`
-  accept `helper1Id` / `helper2Id`) — and `frontend/src/vendor/scm/lib/trips-queries.ts`
-  exports no create/update hook, so no UI reaches it either.
+- **Helper assignment — corrected 2026-08-12 after a code read; the previous
+  bullet was the stale side of an internal inconsistency** (Module-A2 below
+  already said the opposite). The board GRID still renders no helper cell
+  (only DriverEditCell / LorryEditCell exist in `DeliveryPlanningBoard.tsx`),
+  but: `scheduleSchema` DOES accept `helper1Id`/`helper2Id`
+  (`delivery-planning.ts:2194-2195`), written onto `trips.helper_1_id/2` on
+  trip CREATE only (an existing trip never rewrites its crew);
+  `trips-queries.ts:110` DOES export `useUpdateTrip`; and FleetDay's Last Mile
+  crew cards (Driver 1/2 + Helper 1/2 selects, per-trip Apply -> `PATCH
+  /trips/:id`) are a live helper-assignment UI.
 - Driver / Lorry cells are **name-matched, not id-linked**: the board row
   carries `crew.driver_1_name` / `crew.lorry_plate`, and the cell preselects by
   matching that string against the master list, keeping an off-list current
@@ -1384,7 +1387,11 @@ a duplicate `public.lorries` once; this module does not repeat that.
   caller sent — a form cannot make ABC Logistics' lorry ours by ticking a box.
 - **Detaching (explicit `null`)** clears the link and leaves the flag alone unless
   the caller sent one — a detached row is not automatically ours again.
-- **Absent** touches neither field.
+- **Absent** leaves the LINK alone but is not a blanket no-op (corrected
+  2026-08-12, `threepl-link.ts:75-82`): sending the own-fleet flag for a row
+  still LINKED to a carrier is refused (`conflict: 'own_flag_while_linked'`,
+  409 `linked_to_carrier` at `lorries.ts:259-264`); on an unlinked row the sent
+  flag IS written. Rule dated 2026-08-02 in the code.
 
 It is NOT a CHECK constraint or a trigger: a cross-column CHECK would have to pin
 existing rows, and a trigger would be a second writer of a field the routes

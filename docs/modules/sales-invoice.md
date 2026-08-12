@@ -48,7 +48,7 @@ Desktop routes: `frontend/src/App.tsx:658-661`, behind
 
 **The accounting fan-out is the distinguishing feature of this hook file.** Every
 mutation that can move revenue also invalidates the ledger queries —
-`['journal-entries']`, `['account-balances']`, `['ar-aging']` — see
+`['journal-entries']`, `['account-balances']`, `['ar-aging']` — EXCEPT `useAppendDoToSalesInvoice`, which invalidates the first two but NOT `['ar-aging']` (`sales-invoice-queries.ts:206-215`, read 2026-08-12) even though its endpoint posts revenue on a non-draft SI (`sales-invoices.ts` append handler) — the exact staleness gap this paragraph warns about, live in one of the four hooks. See
 `useCreateSalesInvoice` (`:89-92`), `useUpdateSalesInvoiceStatus` (`:105-111`),
 `useConvertDosToSi` (`:186-189`) and `useAppendDoToSalesInvoice` (`:207-210`).
 A new SI mutation that forgets those three keys leaves the Accounting screens
@@ -292,7 +292,7 @@ Everything is integer sen.
 | `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
 | `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
 | `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi` | header | Derived by `recomputeTotals` (`:264`); `total_centi` is what the GL posts. |
-| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set. |
+| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
 | per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_centi`, `local_total_centi` and `paid_centi` are NOT gated — everyone sees what is owed. |
 | `amount_centi` | `sales_invoice_payments` | The ledger rows `paid_centi` sums. |
 
@@ -349,6 +349,12 @@ Watch as data grows:
   of invoices.
 - AR aging (`/outstanding/summary`) is called out in
   `docs/perf-optimization-plan.md` §G9 as the server-snapshot candidate as debtor
+  count grows. **That candidate SHIPPED and this paragraph outlived it** (read
+  2026-08-12): `GET /outstanding/summary?snapshot=1` serves the materialized
+  view `scm.mv_ar_aging` (`outstanding.ts:135-161`, migration
+  `0152_scm_mv_ar_aging.sql`), refreshed nightly by the `0 2` cron
+  (`index.ts` REFRESH MATERIALIZED VIEW CONCURRENTLY). The live query stays
+  the default; the snapshot is opt-in and only honoured with no date range.
   data grows.
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission

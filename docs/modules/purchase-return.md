@@ -115,6 +115,8 @@ lines (no grnItemId) stay uncapped."*
 | item is NOT on the named GRN | allowed — genuinely ad-hoc |
 | item IS on the named GRN but the line does not link to it | **REFUSED** — link it |
 
+> Scope note (2026-08-12): this matrix runs on `POST /` CREATE only (`findUnlinkedPrLines` at `:552-565`). `POST /:id/items` never calls it — after create, an unlinked line whose material IS on the header GRN is accepted (only the linked-line qty cap runs).
+
 A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
 is preventative. It was added anyway because the cost is one query on a path
 already doing several, and the cost of not having it on the delivery side was

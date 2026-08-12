@@ -1,3 +1,7 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. Every backend cite past ~:590 drifted +28 (file is 1,403 lines; mount index.ts:366; permissions.ts:183) — behavior verified correct at the new locations. 38 claims clean.
+
 # Module: Announcements
 
 Per-module technical doc — office notices and system per-user notices, from the

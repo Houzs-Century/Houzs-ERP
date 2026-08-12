@@ -1,3 +1,11 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. The schema DOES enforce type↔is_showroom one-way: trigger trg_warehouse_sync_is_showroom (mig 0186, absent from this guide) overwrites is_showroom from type — a raw UPDATE of is_showroom alone is silently reverted.
+> 2. SalesOrderMaintenance.tsx:38-41 dropped useCreateWarehouse/useUpdateWarehouse — that view only READS.
+> 3. The type enum shipped in 0177_scm_warehouse_type_and_unify.sql, not “mig 0171” (0171 is idempotency; the file's internal header was never renumbered).
+> 4. The OR-include at inventory.ts:357-359 reads is_consignment, not is_showroom.
+> 5. POST/PATCH also accept country/state/postcode/city (mig 0180); 0180 + 0186 missing from the migration table. Racks, state-warehouse-mappings, warehouse-label and WH_NONE are undocumented here (coverage gap).
+
 # Module: Warehouses (SCM master)
 
 Per-module technical doc for `scm.warehouses` — the master list of physical

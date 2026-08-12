@@ -127,7 +127,7 @@ Removed with it: `useDeletePurchaseConsignmentOrder`, and the desktop
 "Permanently delete" button that appeared on `CANCELLED`.
 
 **What is NOT a violation and must stay** — the create-time rollback at
-`purchase-consignment-orders.ts:371`. supabase-js has no transaction, so that
+`purchase-consignment-orders.ts:384`. supabase-js has no transaction, so that
 compensating delete is the only thing standing between a failed line insert and
 a headerless orphan PC Order. It removes a document that never successfully
 existed.
@@ -164,7 +164,7 @@ Numbering: `PCO-YYMM-NNN`, minted by `mintMonthlyDocNo` +
 `insertWithDocNoRetry` — a unique-violation (23505) on `pc_number` re-derives the
 next free number instead of 500ing.
 
-Header dates `supplier_delivery_date_2/3/4` (mig 0181) are the supplier's
+Header dates `supplier_delivery_date_2/3/4` (shipped here by `0026_scm_supplier_delivery_dates.sql`, whose header names 2990's 0180+0181 as the source — corrected 2026-08-12; the live tree's own 0181 is unrelated localities) are the supplier's
 revised promises, kept alongside the original `expected_at`.
 
 Currencies: `MYR`, `RMB`, `USD`, `SGD`.

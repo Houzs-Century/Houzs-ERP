@@ -1,3 +1,45 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> This guide pins itself to a 2026-07-21 commit and the module moved under it.
+> Ten claims were checked against today's code and corrected; the largest are
+> fixed inline below, the rest are listed here with evidence so the stale text
+> cannot be quoted without hitting this block first.
+>
+> 1. **Stage order changed** (#1983, 2026-08-11): `pending_solution` now comes
+>    BEFORE `under_verification` — `services/assr.ts:99-108`, `stages.ts:40-50`,
+>    desktop `ServiceCases.tsx:5516-5524`, mobile `MobileServiceCase.tsx:89-93`.
+>    The `pending_item_ready` chip reads "Pending Item Ready".
+> 2. **A terminal `voided` stage exists** (2026-07-29, #1408/#1413):
+>    `services/assr.ts:63-67`; `statusForStage` maps it to "Closed" (:88);
+>    `closed_at` set for completed OR voided, `completion_date` only for
+>    completed (:858-865); `void_reason` column (mig 0226). KNOWN BUG flagged
+>    2026-08-12: `runSlaEscalation` (`assrEscalation.ts:24`) and the backlog
+>    tile still filter `!= 'completed'` only, so voided cases still escalate
+>    and still count as backlog.
+> 3. **"At least one item" is no longer required at create** (owner audit
+>    2026-07-22): `routes/assr.ts:1735-1746` accepts empty items[]; in its
+>    place an undocumented duplicate-open-case 409 guard (:1748-1802).
+> 4. **mark-opened advances to `pending_solution`** now, not
+>    `under_verification` (`services/assr.ts:933-942`).
+> 5. **The stage set is bounded by the app-level guard**
+>    (`ALL_STAGES.includes`, `services/assr.ts:815-817`), not a DB CHECK —
+>    the code's own comment records prod PG carries none.
+> 6. **The "known divergence" (mobile omits the director branch) was FIXED**
+>    the same day the guide was pinned (#974): `MobileServiceCase.tsx:377-380`
+>    now includes `org.director`.
+> 7. **Mobile list query key** is now
+>    `["mobile-assr-list-paged", q, sort, activeChip.key, user.id]` with a
+>    role-aware chip system (:404-422, :452).
+> 8. **Attachment upload gate is wider**: `requireAnyPermission(["service_cases.write","service_cases.create","service_cases.manage"])`
+>    (`routes/assr.ts:3150, :3197`).
+> 9. **`requireServiceCaseAccess` also gates two mutations** (sales-comment
+>    :1512, sales-nudge :1538) and an `enforceCaseScope` middleware runs on
+>    every mutating /:id route (:65-73).
+> 10. **Post-pin surface this guide does not cover**: the sheet-sync intake
+>    `POST /api/assr-form-intake/delivery-dates` writing three `sched_*` date
+>    columns (mig 0282, #2059); the letterhead-at-print-time rebuild (#2020,
+>    `assr_print.ts` now ~1,200 lines); route count now 61 registrations.
+
 # Module: Service Case (ASSR)
 
 Per-module technical doc — after-sales service cases from intake to close:
@@ -39,8 +81,8 @@ table; the backend's enum mirrors it at `backend/src/services/assr.ts:90-98`
 | # | `assr_cases.stage` | Chip | Owner role |
 |---|---|---|---|
 | 1 | `pending_review` | Review | Service Admin |
-| 2 | `under_verification` | Verify | Service Admin |
-| 3 | `pending_solution` | Solution | Service Admin |
+| 2 | `pending_solution` | Verify | Service Admin |
+| 3 | `under_verification` | Solution | Service Admin |
 | 4 | `pending_supplier_pickup` | Supplier | Service Admin |
 | 5 | `pending_item_ready` | Item Ready | Service Admin |
 | 6 | `pending_delivery_service` | Delivery | Logistic Admin |

@@ -1,3 +1,10 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. POST /invite (:936) and PATCH /:id (:1420) are requirePermissionOrSalesDirector — a Sales Director holding NEITHER verb can invite into and edit within their own department (dept-scope enforced in-handler); the carve-out is not read-only.
+> 2. Impersonate is NOT staging-only: users.ts:2031 registers an owner-wildcard-only handler with NO environment check (works in prod, 1h session); the IMPERSONATION_ENABLED staging door at :2272 is unreachable dead code behind it.
+> 3. GET /api/presence is its own router (routes/presence.ts, mounted index.ts:345), not part of users.ts.
+> 4. UNKNOWN worth a live-DB check: users.ts:1878/:1927 reference trigger trg_sync_user_to_tms on public.users which NO migration in either tree creates — a hand-applied prod object, or dead code.
+
 # Module: Team — Members & Invitations
 
 Per-module technical doc for the System > Team > Members surface: the member

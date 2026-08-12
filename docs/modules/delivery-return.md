@@ -110,6 +110,16 @@ receiving chains — one definition of "the same item", one shape of refusal:
 | item is NOT on the named DO | allowed — genuinely ad-hoc / goodwill |
 | item IS on the named DO but the line does not link to it | **REFUSED** — link it |
 
+**This table describes `findUnlinkedDrLines` (`return-unlinked-lines.ts:95-117`)
+— a SCANNER. Its two "allowed" outcomes never survive to creation any more**
+(read 2026-08-12): both write paths refuse EVERY line without `do_item_id` —
+POST / at `delivery-returns.ts:995-1008` ("Bug #16 — no DO, no Return", 409
+`do_link_required`, Commander 2026-05-31) and POST /:id/items at `:1350-1356`;
+the convert path only ever picks DO lines. What remains true mechanically: the
+column is nullable, and a LEGACY unlinked row would still move stock
+(`increaseInventoryForReturn` never tests `do_item_id`) — pre-existing rows
+only, not reachable API behavior.
+
 A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
 is preventative. It was added anyway because the cost is one query on a path
 already doing several, and the cost of not having it on the delivery side was
@@ -164,7 +174,9 @@ CANCELLED return returns success without rewriting).
 
 ## 8. Traps, collected
 
-- **`do_item_id` is nullable and always will be** — goodwill lines are
+- **`do_item_id` is nullable** — but a NEW goodwill line can no longer be
+  created through the API (409 `do_link_required`, both write paths — read
+  2026-08-12). The nullability exists for legacy rows. ~~goodwill lines are~~
   legitimate. The guard is what keeps that from being a bypass; do not "fix" it
   by making the column NOT NULL.
 - **The resync is a target walk.** Never add an incremental `+qty` write beside

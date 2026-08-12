@@ -395,7 +395,7 @@ was not a question the schema could answer. It is NOT filed under
 supplier-pickup picker and the supplier portal, and a workshop is none of
 those. Same reasoning `0210` used for `scm.threepl_companies`.
 
-Codes are **minted, never typed** — `WS-0001` per company, `mintWorkshopCode`.
+Codes are **minted, never typed** — `WS-001` per company (PAD=3 — only BD/WO pad to four, `fleet-code-mint.ts:29,36`; corrected 2026-08-12), `mintWorkshopCode`.
 The `UNIQUE (company_id, code)` index is the real guard; a racing create loses
 there and retries the mint. (The driver roster is what hand-typed codes look
 like after a year: `DRV-001..007` beside `DRV-05`/`DRV-050`, one person three

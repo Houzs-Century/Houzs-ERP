@@ -1,3 +1,15 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. List pageSize is a persisted per-user preference defaulting to 50 (PurchaseOrdersListV2.tsx:726), not fixed.
+> 2. The mobile shared-invalidation gap is FIXED: sharedInvalidate.ts:80 includes mfg-purchase-orders-paged (comment :75-79 records the bug).
+> 3. POST /bulk-supplier-date exists (mfg-purchase-orders.ts:2680, owner 2026-08-03) and is absent from the API table.
+> 4. Reopen is refused 409 cancel_is_final when the cancelled PO carries linked_ac_docno (:4392-4400). The guide contains zero mention of linked_ac_docno/linked_ac_dtlkey or the AutoCount outbox wired through every PO write (enqueuePoCreate :1382/:2416/:4055, queueAcPoEdit on PATCH/line CRUD/bulk-date/convert, retiredLineOf :3282, enqueueCancel :4353).
+> 5. outstanding-so-items is a pooled stock-aware MRP shortage view (:665-694); qty−po_qty_picked>0 is only the degraded fallback.
+> 6. /from-sos buckets by (warehouseId, supplierId) + per-category rules in po-grouping.ts (sofa/bedframe per-SO; mattress merges only within a Monday-anchored 7-day window) — same supplier routinely emits several POs.
+> 7. A second revision engine exists: applyPoAmendment (po-revision.ts:98-341) driven by the standalone PO-amendments router; po_amendments tables appear nowhere in this guide.
+> 8. On the create paths the matrix/combo cost is written into unit_price_centi, not unit_cost_centi (:1229-1260, :2352-2385; autoCostCenti → unitPriceCenti :2164-2173).
+> 9. §9's “no second read” is false: after GRN enrichment the list runs a second Promise.all wave — resolvePoSoCoverageForPos (computeMrp inside) + resolveDeliveredDosForPos (:572-576); §3.4 already describes them.
+
 # Module: Purchase Order (SCM)
 
 Per-module technical doc — the data flow from the screen down to the database,

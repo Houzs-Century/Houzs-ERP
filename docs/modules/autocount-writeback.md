@@ -1,3 +1,13 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. The two-gate ships-off premise is stale: AC_SYNC_URL is SET since 2026-08-11 (wrangler.toml:42) — only the DB toggle holds the feature dark.
+> 2. AcSyncService serves NINE POST routes (the eight ops + /ensure-masters, AcSyncService.cs:188-198); “Eight POST routes” also survives in the C# header and autocount-writeback.ts:6-9.
+> 3. persistLineKeys is NOT a strict 1:1 zip: lineWriteback.ids is Array<string|string[]> — the Nth key lands on every row of the Nth GROUP (sofa builds; autocount-outbox.ts:105-127,:524-528,:1690-1697), and verification also refuses on Desc2 divergence and ambiguous duplicate ItemCodes (:1657-1688). No toDetails exists; the composer is composeDetails.
+> 4. The §6 create rows are incomplete: both POST / hooks are DRAFT-gated, and two hooks are missing — enqueueSoCreate on the DRAFT→live status PATCH (mfg-sales-orders.ts:5932-5941) and enqueuePoCreate in /confirm (mfg-purchase-orders.ts:4052-4059).
+> 5. “Never creates a DEBTOR” is enforced ERP-side only (mastersOf returns no Debtors key); the C# side HAS a full Debtors loop (AcSyncService.cs:574-592).
+> 6. The 500 body does carry error: ex.Message (AcSyncService.cs:137), threaded into last_error — “only a 500, name only in the log” is half-wrong; whether the FK name is in ex.Message is SDK behavior (unknown).
+> 7. The cron logs only on failure or processed>0 (index.ts:530-533); an idle sweep logs nothing.
+
 # Module: ERP -> AutoCount write-back (SCM)
 
 After go-live the ERP is master and every document it creates must appear in

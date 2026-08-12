@@ -1,3 +1,10 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. applyPoAmendment applies MANUAL amendments only; a follow-up (source_so_amendment_id set) is applied by reviseBoundPo scoped {onlyPoId} — its stored lines are a never-applied preview (po-amendments.ts:343-356; amendment-po-followup.ts:8-13).
+> 2. The workflow migration is 0194_scm_po_amendment_workflow.sql (internal header still says 0192).
+> 3. shared/po-amendment.ts is NOT client-shared: zero frontend references; pure/DB-free holds.
+> 4. Approve also queues an AutoCount edit via enqueueEdit (po-amendments.ts:409-421) and writes an extra follow-up audit row (:392-407).
+
 # Module: Purchase Order Amendment (SCM)
 
 Standalone amendment / revision workflow for a **Purchase Order**, the PO-side
