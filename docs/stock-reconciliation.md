@@ -1,3 +1,33 @@
+> # ⚠ Corrections — verified against the code 2026-08-13
+>
+> 1. **§7.1 / D7 prescribe excluding sofas on the item master's `ItemGroup`.**
+>    The code deliberately abandoned that predicate:
+>    `check-stock-vs-autocount.mjs:172-176` states "Deliberately NO `g === \"SOFA\"`
+>    test here" and records that ItemGroup exclusion "swept out 19 codes / 85
+>    units of pillows, bolsters and stools". Both scripts exclude on the binding
+>    CSV's category column instead (`:143-145`; `import-ac-stock-balance.mjs:64,76`).
+>    ItemGroup is used only for the SERVICE exclusion and for reporting.
+> 2. **§6 / §10 claim 40,000 randomised cases were run differentially against
+>    the real `so-readiness.ts` with zero mismatches. No such harness exists** —
+>    no test imports both, and the figure appears nowhere in `backend/`. What
+>    exists is a hand-copied port inside the checker whose own comment calls it
+>    "a faithful reimplementation … kept in step deliberately". Treat the port
+>    as UNVERIFIED against its source, not as differentially tested.
+> 3. **D3 says "change the writer to emit a signed pair" — there is no TRANSFER
+>    writer to change.** The stock-transfer RPC (`0192:96-127`) already writes
+>    an OUT + an IN with `source_doc_type='STOCK_TRANSFER'`; nothing in
+>    `backend/src` ever writes `movement_type = 'TRANSFER'`. The view's
+>    `TRANSFER → +qty` arm is a latent trap, not an active double-count.
+> 4. D1 quotes one comment as appearing "identically" in `0198:175` and
+>    `0088:258`. They differ in wording and in batch matching
+>    (`= batch_no` vs `IS NOT DISTINCT FROM`).
+> 5. The `data/…` paths cited throughout are `backend/scripts/data/…`.
+>
+> Everything else checked held: `inventory_balances` really is a VIEW over
+> movements with no cancelled/void column, `so-readiness.ts`'s vocabulary and
+> PARTIAL-is-not-READY rule, the sofa single-batch coverage rule, and the new
+> checker's per-warehouse grouping and never-guess UNMAPPED reporting.
+
 # Stock reconciliation: ERP vs live AutoCount
 
 Two-axis reconciliation of the ERP's stock against the live AutoCount book

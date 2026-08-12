@@ -1358,7 +1358,7 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
       const counts = await c.env.DB.prepare(
         `SELECT LOWER(doc_no) AS k,
                 COUNT(*) AS case_count,
-                SUM(CASE WHEN stage IS NULL OR stage <> 'completed' THEN 1 ELSE 0 END) AS open_case_count
+                SUM(CASE WHEN stage IS NULL OR stage NOT IN ('completed', 'voided') THEN 1 ELSE 0 END) AS open_case_count
            FROM assr_cases
           WHERE archived_at IS NULL
             AND LOWER(doc_no) IN (${placeholders})${assrCompanySql(c, "company_id")}
@@ -1766,7 +1766,7 @@ app.post(
            FROM assr_cases c
            JOIN assr_items i ON i.assr_id = c.id
           WHERE c.archived_at IS NULL
-            AND (c.stage IS NULL OR c.stage <> 'completed')
+            AND (c.stage IS NULL OR c.stage NOT IN ('completed', 'voided'))
             AND c.doc_no = ?
             AND i.item_code IN (${placeholders})${assrCompanySql(c, "c.company_id")}`,
       )

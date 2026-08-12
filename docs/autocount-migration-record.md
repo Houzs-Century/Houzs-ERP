@@ -1,3 +1,87 @@
+> # ⚠ READ BEFORE FRIDAY — the runbook was verified against the code 2026-08-13
+>
+> Twenty-one problems were found in §1 (the Friday execution runbook) by reading
+> the source. **Four would change what happens to the live AED_HOUZS book.** Do
+> not follow §1 as written until they are settled.
+>
+> ### The four that touch the live book
+>
+> **A. Step 6's unblock condition for the convert push is the wrong one, and the
+> real risk is a daily occurrence.** The step says do not enable convert until
+> D14 is fixed because "`enqueueConvert` sends no `DtlKeys`". It sends them —
+> `autocount-outbox.ts:687`, `...(source.keys ? { DtlKeys: source.keys } : {})`,
+> with a refusal when a partial transfer's source lines lack keys. What the code
+> says is NOT covered (`:727-731`, verbatim): **partial QUANTITY on a line.** The
+> SDK primitive takes line keys, not quantities, so *a DO shipping 2 of a 5-unit
+> line still produces an AutoCount DO of 5 on that line.* Enable convert on the
+> stated condition and every partial delivery moves stock in AutoCount that did
+> not move in the ERP.
+>
+> **B. Step 3's premise is false, so the runbook's two-gate safety margin is one
+> gate.** It says `AC_SYNC_URL` is "commented at line 34" and sends IT to build a
+> tunnel. `wrangler.toml:42` has it SET and uncommented since 2026-08-11, on a
+> tunnel that already answered. §5 gate 3 therefore reports HOLDING while it is
+> OPEN — and the only remaining gate is the DB flag that Step 4 turns on.
+>
+> **C. Step 6's per-stage risk is understated in the unsafe direction.** §8 says
+> `enqueueEdit` is imported "by no other route file" than SO and PO. It is
+> imported by six more: `sales-invoices.ts`, `purchase-invoices.ts`,
+> `delivery-orders-mfg.ts`, `grns.ts`, `so-amendments.ts`, `po-amendments.ts`;
+> `enqueueCancel` by SI and PI. Opening `scm.sales.delivery` at stage 4 enables
+> DO **edit** into the live book, not just the convert.
+>
+> **D. Skipping `AC_SYNC_KEY` dead-letters everything on attempt 1.** The URL
+> alone passes the drain gate (`acServiceConfig` returns `key: null`), the header
+> is omitted, the service answers 401, and 401 is NOT retryable
+> (`retryable = status >= 500`) — so `dispatchOne` marks `failed` immediately,
+> with no retry and only a `console.error` as the signal. The step exists
+> (`wrangler secret put AC_SYNC_KEY`) but is buried inside Step 3, which problem
+> B makes look already-done.
+>
+> ### Verifications that do not verify what they claim
+>
+> - **Step 1** accepts `/health` as proof of the swap. `/health` answers from
+>   CONSTANTS (`AcSyncService.cs:167`) — `deploy-on-host.ps1:215-222` records that
+>   exact failure on 2026-08-12. The probe that proves both a new binary and a
+>   real DB connection is `POST /ensure-masters` with empty arrays; the runbook
+>   does not include it. It also omits two preconditions the script refuses
+>   without: `ac-svc-key.txt` must exist, `ac-svc-port.txt` must read 8900.
+> - **Step 3's verification** (`GET /health` "from a Worker") cannot be executed:
+>   no Worker code path calls `/health` — `AC_ROUTE` has no health op, and
+>   `callAcService` has two callers, both inside the drain. A bare curl without
+>   `X-API-KEY` returns 401/503.
+> - **Step 3's rollback** ("re-comment the URL — a complete stop") stops the
+>   push, not the queue: `enqueueAcOp` never reads `AC_SYNC_URL`. Rows accumulate
+>   and flush on restore, 20 at a time, unreviewed.
+> - **Step 4's verification** ("outbox count still 0") is the repo's own
+>   "check that answers a different question": zero is equally the answer if the
+>   UPDATE matched nothing or the value was mistyped — `readWritebackScope`
+>   resolves anything malformed to `off`, silently. Related: Step 4 says the flag
+>   uses "the same grammar as the freeze", but an area clause is REFUSED
+>   (`autocount-writeback-flag.ts:64-81`) precisely because pasting the freeze
+>   value into the adjacent key is the anticipated mistake.
+> - **Step 6's acceptance query** cites `AcSyncService.cs:403`, which is
+>   `doc.Ref = ...`. The predicate is at `:431-433`, is per-document, and no
+>   script implements the whole-book test the step describes.
+>
+> ### Unresolved contradiction inside this document
+>
+> Step 2 says checks 4.1-4.5 "have **never passed**"; §8 says "**five cells are
+> PROVEN as of 2026-08-12**" with document numbers. Both cannot be true, and it
+> decides whether Step 2 is an hour of work or already done. Per this repo's own
+> rule — *a contradiction is a finding, do not bridge it* — settle it before
+> Friday by reading `C:Tempac-sync-service.log` for `ZZERP-0001`, or by
+> re-running the five checks.
+>
+> ### Two things the runbook says do not exist, which do
+>
+> `.github/workflows/autocount-outbox-health.yml` reports status counts, oldest
+> pending age and every failed row's `last_error` — §4.2 says no such monitor
+> exists. It is dispatch-only, so the ALARM gap is real; the "nothing exists"
+> claim is not. And ~407 Houzs SOs / ~322 POs have incomplete line identity, so
+> they will save in the ERP and silently never reach AutoCount (`skipped`,
+> "refused, nothing sent") — no step mentions this population.
+
 # The AutoCount to ERP migration: the record
 
 **Status at 2026-08-11: PAUSED. Staff continue on AutoCount. Work resumes Friday.**

@@ -84,7 +84,6 @@ body-only by the */5 cron.
 
 ---
 
-<<<<<<< HEAD
 ## A COE named the wrong root cause because it quoted a repo comment instead of the run history [medium]
 
 **Symptom** - the staging COE, the roadmap, `deploy-staging.yml` and a
@@ -392,7 +391,6 @@ for the owner to veto if the original default was load-bearing.
 
 ---
 
->>>>>>> origin/main
 ## Defect Done/Replace buttons never showed for Nancy — state-routing read the wrong payload path [high]
 
 **Symptom** - owner, 2026-08-11, logged in as Nancy on a Pulau Pinang defect (SETIA SPICE CONVENTION CENTRE): the Done / Replace buttons did not appear, even though her My Pending correctly listed that event.
