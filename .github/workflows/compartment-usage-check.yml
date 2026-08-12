@@ -1,0 +1,78 @@
+name: Compartment usage (read-only)
+
+# Manual, read-only. Names every DOCUMENT carrying a sofa compartment code, and
+# says which of those lines actually have a photo — because the direction a bare
+# code (`1B`) should become (`1B(LHF)` vs `1B(RHF)`) is not recoverable from the
+# data and has to be read off the line's own photo by a human.
+#
+# Run this BEFORE any rename. Its sibling "Probe CSL vs Console (read-only)"
+# answers the other half: whether the cascade function exists in this database
+# and whether a SKU clash would abort it.
+#
+# target=staging (DEFAULT) runs against STAGING_DATABASE_URL; target=prod must be
+# picked explicitly. No writes either way — the script pins the session to
+# default_transaction_read_only.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB to read"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+      codes:
+        description: "Compartment codes, comma separated"
+        required: false
+        default: "1B,2B"
+        type: string
+      company_id:
+        description: "Company id (1 = Houzs)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: compartment-usage-check
+  cancel-in-progress: false
+
+jobs:
+  read-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/list-compartment-usage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          CODES: ${{ inputs.codes }}
+          COMPANY_ID: ${{ inputs.company_id }}
+
+  read-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/list-compartment-usage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CODES: ${{ inputs.codes }}
+          COMPANY_ID: ${{ inputs.company_id }}
