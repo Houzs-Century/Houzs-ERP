@@ -113,6 +113,15 @@ drivers.post('/', async (c) => {
 });
 
 drivers.patch('/:id', async (c) => {
+  // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
+  // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
+  // ("every company's TMS page shows the same lorries/drivers"), and driver_code
+  // carries a bare UNIQUE so per-company minting would collide across tenants.
+  // scm.lorry_service_records' own DDL (mig 0121) spells out the consequence:
+  // company_id is stamped on insert but "NOT used to scope reads", because a
+  // lorry's history must be visible wherever the lorry is. Verified 2026-08-13
+  // against the DDL and both route declarations before deciding NOT to change
+  // this handler.
   const id = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }

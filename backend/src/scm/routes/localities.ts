@@ -184,6 +184,12 @@ localities.post("/", async (c) => {
 
 // PATCH /:id — update a row.
 localities.patch("/:id", async (c) => {
+  // company-scope: my_localities is a GLOBAL address master (postcode -> city ->
+  // state -> warehouse). Verified 2026-08-13 against its CREATE TABLE in
+  // scm-schema/2990s-full-schema.sql:786 — it has NO company_id column, and
+  // migration 0083 (which added company_id to 30-odd scm tables) deliberately
+  // skipped it. Both companies share one Malaysian postcode map; adding a
+  // company predicate here would filter against a column that does not exist.
   const id = c.req.param("id");
   let body: unknown;
   try {
@@ -223,6 +229,12 @@ localities.patch("/:id", async (c) => {
 
 // DELETE /:id — drop a row.
 localities.delete("/:id", async (c) => {
+  // company-scope: my_localities is a GLOBAL address master (postcode -> city ->
+  // state -> warehouse). Verified 2026-08-13 against its CREATE TABLE in
+  // scm-schema/2990s-full-schema.sql:786 — it has NO company_id column, and
+  // migration 0083 (which added company_id to 30-odd scm tables) deliberately
+  // skipped it. Both companies share one Malaysian postcode map; adding a
+  // company predicate here would filter against a column that does not exist.
   const id = c.req.param("id");
   const sb = c.get("supabase");
   const { error } = await sb.from("my_localities").delete().eq("id", id);

@@ -92,9 +92,14 @@ modelFreeGifts.put('/', async (c) => {
 
 // DELETE — drop a Model's gift config.
 modelFreeGifts.delete('/:modelId', async (c) => {
+  /* Company scope. model_default_free_gifts carries company_id NOT NULL + FK
+     since migration 0083, and requireGiftEditor above resolves a permission and
+     a user id only — no tenancy — so an unscoped delete by model_id removed
+     another company's default gift rows. Verified 2026-08-13 by reading the gate
+     and then the table's DDL. */
   const gate = await requireGiftEditor(c);
   if ('error' in gate) return gate.error;
-  const { error } = await gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId'));
+  const { error } = await scopeToCompany(gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId')), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });

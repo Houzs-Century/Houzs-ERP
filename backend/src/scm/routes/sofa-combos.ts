@@ -749,16 +749,21 @@ sofaCombos.put('/:id', async (c) => {
 // Soft-delete. The History drawer still shows the row; pricing lookup
 // skips it (the picker filters deleted_at IS NULL).
 sofaCombos.delete('/:id', async (c) => {
+  /* Company scope. sofa_combo_pricing carries company_id NOT NULL + FK since
+     migration 0083, and requireWriteRole above checks the scm_config_write
+     PERMISSION only — no tenancy — so an unscoped soft-delete by id retired
+     another company's combo price. Verified 2026-08-13: read the gate, then the
+     table's DDL, before changing anything. */
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
-  const { error } = await supabase
+  const { error } = await scopeToCompany(supabase
     .from('sofa_combo_pricing')
     .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id);
+    .eq('id', id), c);
 
   if (error) {
     if (error.code === '42501' || /permission denied/i.test(error.message)) {
