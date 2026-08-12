@@ -376,6 +376,18 @@ re-check the cited file rather than trusting the line.
   artifact — see the script header).
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**
+  There is not one connection, there are **four channels** with different directions,
+  different credentials and different jobs, and treating them as one is how sessions
+  conclude the wrong thing. It carries: which hostname writes and why the ZeroTier IP
+  is refused by design; which of the six document types are CREATED versus CONVERTED
+  and why DO/GR/IV/PI can never be created standalone; how a SKU crosses (translation,
+  sofa decomposition, and `Desc2` as the only place a specification lives); what the
+  5-minute drain does automatically and the four cases that will **never** be automatic;
+  and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
+  the public internet with **no key** on two routes, one of them ~52 MB of purchase
+  history. OPEN, needs an owner action. Do not build on that relay.
 - `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
   go-live pushed into company 1: how to tell a migrated row from a real one (the exact
   SQL predicates), what each import wave wrote with its run id, and — the ones that bite —

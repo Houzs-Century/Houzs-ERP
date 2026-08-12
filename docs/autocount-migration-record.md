@@ -825,13 +825,24 @@ both sides; **the fix is not yet deployed to the host**, so PO create and `po-to
 unproven. The full foreign-key chain and the values known to exist are in
 `docs/modules/autocount-writeback.md` section 7m.
 
-**One test assumption was wrong and is recorded so nobody rebuilds it.** `qa-convert.ps1` step 6
-cancels the parent SO while its DO is still live and expects that to FAIL, on the theory that
-AutoCount refuses to cancel a transferred document. **It does not** — the cancel succeeded. That is
-a fact about AutoCount's cancel semantics, not a defect in the convert (`so-to-do` returned
-`DO-011260`, which is what proves the link). It matters for the owner's *cancel must not diverge*
-rule: cancelling an ERP sales order whose delivery order is still open will be accepted by
-AutoCount, leaving the DO behind.
+**CORRECTION, 2026-08-12.** An earlier revision of this section said AutoCount does NOT refuse to
+cancel a document already transferred downstream. **That was wrong**, and it was written from a
+test result rather than from the book. The service log says the opposite in as many words:
+
+```
+ERROR /cancel: AutoCount.Invoicing.TransferedDocNotAllowToCancelException:
+  The document was transfered to other document, so it is not allow to cancel.
+```
+
+**AutoCount DOES refuse.** Cancel the child before the parent — which is what the teardown in
+`qa-convert.ps1` already does, and why it succeeds.
+
+The false reading came from the harness, not the book: `qa-convert.ps1`'s `Call` helper returns
+`status = 0` when a `WebException` carries no `Response` object, and step 6 asserts `status >= 400`.
+A genuine refusal therefore scored as a failure. The same defect made `/create-po`'s foreign-key
+error read as `status=0` instead of 500. **A test whose failure path cannot tell "refused" from
+"could not ask" will eventually report the world backwards** — and it did, into this document,
+which is why the correction is written here rather than quietly edited out.
 
 **The asymmetry is entirely on the ERP side.** The AutoCount service already serves more than the
 ERP asks of it:
