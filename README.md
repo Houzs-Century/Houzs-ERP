@@ -156,17 +156,27 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 
 ## Cron schedule
 
-Configured in `backend/wrangler.toml → [triggers] crons`. Dispatched by `backend/src/index.ts → scheduled(event, env, ctx)`.
+Three triggers, declared in `backend/wrangler.toml` under `[triggers] crons` and
+dispatched by `scheduled(event, env, ctx)` in `backend/src/index.ts`.
 
-| Schedule | Job | Entrypoint |
-|----------|-----|------------|
-| `*/5 * * * *` | Sales-order incremental sync (`/SalesOrder/getSince` + checkpoint) | `services/sync.ts → runPull` |
-| `*/30 * * * *` | Purchase-order sync — `/PurchaseOrder/getAll` (docs) + `/PurchaseOrder/getOutstanding` (lines) | `services/po.ts → runPOPull` + `runPODocsPull` |
-| `0 2 * * *` | Daily batch — overdue auto-extension, ASSR SLA escalation, project due-date reminder emails, `/Creditor/getAll` resync, stock-items refresh (re-resolves `assr_cases.creditor_code` when upstream `MainSupplier` changes) | `services/overdue.ts`, `services/assr.ts`, `services/projects.ts`, `services/creditors.ts`, `services/stockItems.ts` |
+**The per-job list is NOT reproduced here.** It used to be, and it rotted into
+fiction: it advertised a `*/30` purchase-order pull and a daily `/Creditor/getAll`
+resync run by `services/overdue.ts`, `services/po.ts` and `services/creditors.ts`
+— three files that do not exist. `scheduled()` carries a commented branch per
+slot and is the only copy that cannot lie; read it there.
 
-Everything else runs on-demand from user actions (Refresh buttons, panel interactions, manual `Sync All`).
+| Trigger | Where to read what it does |
+|---|---|
+| `*/5 * * * *` | `backend/src/index.ts`, the `event.cron === "*/5 * * * *"` branch |
+| `*/30 * * * *` | same file, the `*/30` branch |
+| `0 2 * * *` | same file, the `0 2` branch |
 
-Every scheduled run writes one row to `execution_logs` (`type`, `status`, `message`, `started_at`, `request_id`). The Activity Log tab in Settings is a paginated view over that table.
+Everything else runs on demand from user actions (Refresh buttons, panel
+interactions, manual `Sync All`).
+
+Every scheduled run writes one row to `execution_logs` (`type`, `status`,
+`message`, `started_at`, `request_id`). The Activity Log tab in Settings is a
+paginated view over that table.
 
 ---
 

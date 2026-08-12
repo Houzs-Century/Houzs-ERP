@@ -67,6 +67,7 @@ jobs:
       # survives both failure modes.
       - run: npm run audit:bug-index
       - run: npm run audit:map
+      - run: npm run audit:doc-refs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the

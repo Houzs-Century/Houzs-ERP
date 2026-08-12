@@ -31,6 +31,27 @@ const jsonOut = process.argv.includes("--json");
 // make the entry wrong. Counted and shown, but never a failure.
 const DATED = new Set(["BUG-HISTORY.md"]);
 
+// Plans and design proposals. They describe what was INTENDED; where the build
+// went another way the cited file never existed, and that is the document doing
+// its job. Guidance documents are not allowed in this set.
+const PLANS = new Set([
+  "docs/mail-center-port-plan.md",
+  "docs/mail-center-admin-plan.md",
+  "docs/add-company-design.md",
+  "docs/2990-mirror-full-design.md",
+  "docs/scm-clone/PLAN.md",
+  "docs/scm-scaling-audit.md",
+  "docs/UPGRADE-PLAN.md",
+  "docs/USER-MANAGEMENT-PLAN.md",
+  "docs/agents/agent-platform-buildout.md",
+  "docs/pms-fair-pnl-seed-plan.md",
+  "docs/delivery-planning-jobtypes-spec.md",
+  "docs/ocr-prompt-audit.md",
+  "docs/server-snapshot-playbook.md",
+  "docs/agent-console-api.md",
+  "docs/AI-DEV-VELOCITY.md",
+]);
+
 const HISTORICAL = new Set([
   "MIGRATION-D1-TO-SUPABASE.md",
   "HANDOFF-supabase-cutover.md",
@@ -68,13 +89,27 @@ const docFiles = [
 // is a low false-positive rate, because a checker that cries wolf gets muted and
 // then rots, which is the failure this repo just spent a day on.
 const CITATION = /`([^`\n]+)`/g;
-const SOURCE_EXT = /\.(ts|tsx|mjs|js|sql|json|toml|yml|yaml|css|html)$/;
 
+// A doc may cite a path precisely to record that it is GONE — "DocumentTraceability.tsx
+// — DELETED", "was DELETED after this audit". That is correct documentation, not a
+// stale reference, and flagging it would push authors to delete the very sentence
+// that explains an absence. All three findings left in docs/modules/ were this.
+// Word boundaries were dropped deliberately: two rounds of shell escaping turned
+// the  escape into a literal backspace byte, which made this regex match
+// NOTHING and silently disabled the whole exemption. Without them the pattern is
+// slightly looser and cannot be corrupted the same way.
+const ABSENCE = /(deleted|removed|retired|renames|renamed|no longer exist|never existed|does not exist|do not exist)/i;
+const SOURCE_EXT = /\.(ts|tsx|mjs|js|sql|json|toml|yml|yaml|css|html)$/;
 // Docs cite paths relative to whichever root the reader is standing in —
 // `middleware/auth.ts` means backend/src/middleware/auth.ts, `api/client.ts`
 // means frontend/src/api/client.ts. A checker that demands repo-root paths
 // reports 1,511 "missing" files that all exist, gets muted, and rots. Resolve
 // against the roots the codebase actually uses.
+// Every root a doc plausibly writes relative to. This list was built by
+// MEASURING: the first version omitted backend/scripts/, backend/src/db/,
+// frontend/src/pages/, frontend/src/mobile/ and frontend/src/vendor/scm/, and
+// reported ~20 files as missing that were all present. Add a root here rather
+// than "fixing" a doc that was never wrong.
 const ROOTS = [
   "",
   "backend/src/",
@@ -82,7 +117,13 @@ const ROOTS = [
   "backend/",
   "frontend/",
   "backend/src/scm/",
+  "backend/src/db/",
+  "backend/scripts/",
+  "backend/tests/",
+  "frontend/src/pages/",
+  "frontend/src/mobile/",
   "frontend/src/vendor/",
+  "frontend/src/vendor/scm/",
   "e2e/",
 ];
 
@@ -103,6 +144,12 @@ function looksLikePath(raw) {
   const cleaned = s.replace(/[:#].*$/, "").replace(/[.,;)]+$/, "");
   if (!cleaned) return null;
   if (cleaned.includes("*")) return null; // glob, not a claim about one file
+  if (cleaned.includes("{")) return null; // brace expansion, e.g. {A,B,C}.tsx
+  if (cleaned.includes("...")) return null; // deliberately elided path
+  if (cleaned.includes("<") || cleaned.includes(">")) return null; // template, e.g. <name>-agent.ts
+  if (cleaned.startsWith("~/")) return null; // a path in the user's home, not the repo
+  if (cleaned.startsWith("src/api/")) return null; // the 2990 repo's layout, cited for comparison
+  if (cleaned.startsWith("postgres/") || cleaned.startsWith("node_modules/")) return null; // a dependency
   // A branch name (`docs/staging-truth-and-map-refresh`, `fix/po-key-snapshot`)
   // is shaped exactly like a path. Only claim it IS one when it carries a source
   // extension, or when it resolves to a real directory.
@@ -122,13 +169,33 @@ const perDoc = new Map();
 
 for (const file of docFiles) {
   const rel = path.relative(repoRoot, file).replaceAll("\\", "/");
-  if (HISTORICAL.has(rel)) continue;
+  if (HISTORICAL.has(rel) || PLANS.has(rel)) continue;
   const text = fs.readFileSync(file, "utf8");
   const lines = text.split(/\r?\n/);
+
+  // Absence is judged over the citation's line and its two neighbours — no
+  // wider. These docs are hard-wrapped at ~80 characters, so
+  // "…`services/overdue.ts` and `services/creditors.ts`" routinely sits on the
+  // line above "— three files that do not exist", and a line-only test flagged
+  // exactly that sentence.
+  //
+  // Whole-PARAGRAPH matching was tried first and rejected on the numbers: it
+  // dropped the checked population from 2,791 to 2,144, because one "removed"
+  // anywhere in a long paragraph exempted every citation in it. A checker that
+  // reports clean because it stopped looking is the precise failure this repo
+  // spent the day on. Three lines is enough for a wrapped sentence and cheap
+  // enough to be wrong about.
+  const nearAbsence = (i) => {
+    const win = [lines[i - 1] ?? "", lines[i] ?? "", lines[i + 1] ?? ""].join(" ");
+    return ABSENCE.test(win);
+  };
+
   lines.forEach((line, i) => {
+    const declaresAbsence = nearAbsence(i);
     for (const m of line.matchAll(CITATION)) {
       const p = looksLikePath(m[1]);
       if (!p) continue;
+      if (declaresAbsence) continue;
       checked++;
       perDoc.set(rel, (perDoc.get(rel) ?? 0) + 1);
       if (!resolveRef(p)) {
