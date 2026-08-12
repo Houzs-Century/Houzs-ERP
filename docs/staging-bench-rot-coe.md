@@ -246,6 +246,22 @@ it was written the same day this file got it wrong — which is the point. The r
 does not protect a document from being wrong; it only helps if the observation is
 actually made.
 
+### The regeneration in that row was itself wrong (2026-08-13)
+
+`route-locator.md` was regenerated here and reported as repaired. It was still
+missing **eight whole route files and 35 registrations**: `gen-route-locator.mjs`
+cut the `//` line comment AFTER testing for `/*`, so a comment that merely
+mentioned `/api/*` opened a phantom block comment and swallowed every route
+below it. Fixed by cutting the line comment first; 986 -> 1021 registrations,
+128 -> 136 files (BUG-HISTORY).
+
+This is lesson 4 of this document happening to this document's own fix.
+Regenerating proved the generator RAN; nobody compared its output to the tree.
+**A generated artifact can be current and wrong at the same time, and "I
+regenerated it" is a different claim from "it is correct."** The check that
+would catch this — diff the artifact's file list against the routers on disk —
+still does not exist.
+
 ## Deferred — owner
 
 **Minting a NEW Staging `CLOUDFLARE_API_TOKEN` is the only thing that unblocks

@@ -19,8 +19,8 @@
 > 4. Steps 1-2 call scripts that REFUSE any non-loopback target without
 >    `ACK_PROD_WIPE=yes` (`load-d1-dump-to-pg.mjs:47-49`,
 >    `copy-pg-to-pg.mjs:42-48`). The runbook never sets it.
-> 5. Both depend on `backend/houzs-d1-full.sql`, which is git-ignored and not in
->    the tree. The runbook never says how to obtain it.
+> 5. Both depend on `backend/houzs-d1-full.sql`. That file does not exist in the
+>    tree — it is git-ignored — and the runbook never says how to obtain it.
 > 6. Its final step ("remove the `[[d1_databases]]` block") was done on
 >    2026-06-13 — `wrangler.toml:106`.
 >

@@ -66,13 +66,20 @@ function stripComments(lines) {
     }
     // Remove any inline /* ... */ on the same line.
     line = line.replace(/\/\*.*?\*\//g, "");
+    /* CUT THE LINE COMMENT FIRST. It used to run last, so a `//` comment that
+       merely MENTIONED a wildcard path — "// Mounted at /api/sync/... above the
+       /api/* wall" — had its `/api/*` read as an opening block comment. inBlock
+       then stayed true to end of file and every route below vanished. Five
+       routers (addons, maintenance-config, pos-cart, public-images, so-mirror)
+       and 14 registrations were missing from route-locator.md this way, which
+       is also why its file count read 128 against a real 133. */
+    const lineComment = line.indexOf("//");
+    if (lineComment !== -1) line = line.slice(0, lineComment);
     const openBlock = line.indexOf("/*");
     if (openBlock !== -1) {
       inBlock = true;
       line = line.slice(0, openBlock);
     }
-    const lineComment = line.indexOf("//");
-    if (lineComment !== -1) line = line.slice(0, lineComment);
     return line;
   });
 }
