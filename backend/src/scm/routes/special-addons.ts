@@ -371,7 +371,11 @@ specialAddons.post('/save', async (c) => {
   if (upsertRows.length > 0) {
     const { error: upErr } = await supabase
       .from('special_addons')
-      .upsert(upsertRows, { onConflict: 'code' });
+      // 0087 dropped special_addons_code_unique and added
+      // special_addons_company_code_unique UNIQUE (company_id, code). ON CONFLICT
+      // must name the constraint that EXISTS or Postgres raises 42P10, which is
+      // what made every Save return 500.
+      .upsert(upsertRows, { onConflict: 'company_id,code' });
     if (upErr) {
       if (upErr.code === '42501' || /permission denied/i.test(upErr.message)) {
         return c.json({ error: 'forbidden', reason: upErr.message }, 403);
