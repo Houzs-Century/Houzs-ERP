@@ -1,7 +1,13 @@
 # COE — the staging bench stopped deploying, and its nightly proof went on passing
 
-**Date** — discovered 2026-08-12. The fault began 2026-07-01 and was
-load-bearing from 2026-07-29.
+**Date** — discovered 2026-08-12. The fault began **2026-07-30**.
+
+> **Correction, 2026-08-12.** The first version of this COE said the token had
+> been failing "since the day it was set, 2026-07-01". That is false, and it was
+> false in the source this file copied it from. The owner refused it on sight —
+> *"staging environment 怎么可能没有 set 过 cloudflare"*, *"之前 staging 都没问题的"* —
+> and he was right. See *How this COE got its own root cause wrong* below. The
+> corrected timeline is the one stated here.
 
 ## Trigger
 
@@ -33,13 +39,21 @@ demand rather than inferring it from history.
 
 The chain, each link checkable:
 
-1. The GitHub **Staging** environment's `CLOUDFLARE_API_TOKEN` has been
-   answering `Authentication error [code: 10000]` **since the day it was set,
-   2026-07-01**. It cannot even list `/accounts`. This is recorded in
-   `deploy-staging.yml`'s own trigger comment; it was known.
-2. So **Deploy (Staging) failed every run it ever made.** The last `success` is
-   run 30470280714, 2026-07-29 16:20 UTC — which predates the token, i.e. the
-   last good staging deploy was made by whatever credential was in place before.
+1. **The token worked for four weeks.** It was set in the GitHub **Staging**
+   environment on 2026-07-01 (`updated_at 2026-07-01T08:24:58Z`, unchanged
+   since) and Deploy (Staging) succeeded repeatedly on it. The last success is
+   run 30470280714, **2026-07-29 16:20 UTC**.
+2. **It stopped working overnight on 2026-07-30.** The first failure is run
+   30518266259 at 06:00 UTC, and its log carries the same pair the run today
+   does: `A request to the Cloudflare API (/accounts/***/workers/services/
+   autocount-sync-api-staging) failed. Authentication error [code: 10000]`,
+   then, on wrangler's fallback identity call,
+   `A request to the Cloudflare API (/accounts) failed. Invalid access token
+   [code: 9109]`. The frontend job failed identically against
+   `/pages/projects/houzs-erp-staging`. Nothing in GitHub changed — the secret's
+   `updated_at` still reads 2026-07-01 — so **the credential was revoked or
+   expired on the Cloudflare side**, some time between 2026-07-29 16:20 and
+   2026-07-30 06:00.
 3. On **2026-07-31** the push trigger was narrowed from `[main, staging]` to
    `[staging]` alone, at the owner's instruction ("暂时不需要staging的"). The
    reasoning written into the file is sound and worth keeping: a permanently-red
@@ -60,10 +74,11 @@ The chain, each link checkable:
    `/health` answers `{"ok":true,"sha":null}` — from outside there is **no way
    to tell which commit staging is running**, and no watchdog looking.
 7. Re-dispatched from `main` today, both jobs got all the way to the deploy and
-   failed there. **The token is still bad, six weeks on.**
+   failed there, with the identical signature. **The token has been dead for two
+   weeks and is still dead.**
 
-**And the token is invalid, not under-scoped — which changes the remedy.** The
-run log carries two codes, and the second is the specific one:
+**The token is invalid, not under-scoped — which changes the remedy.** The run
+log carries two codes, and the second is the specific one:
 
 ```
 A request to the Cloudflare API (/accounts) failed.
@@ -105,9 +120,15 @@ Nothing broke. What was lost is the *option* to not break things:
   complete in 80–100 seconds with real assertions. The suite is honest. It was
   asked a question about an environment, not about `main`, and it answered that
   question correctly.
-- **"The token was working and was revoked recently."** Refuted by the
-  workflow's own comment (failing since it was set, 2026-07-01) and reproduced
-  live today by run 31566944717.
+- **"The token was working and was revoked recently."** The first version of
+  this COE marked this REFUTED, citing `deploy-staging.yml`'s comment that the
+  token had failed since it was set on 2026-07-01. **That was the wrong call and
+  this is now CONFIRMED.** The run history shows Deploy (Staging) succeeding on
+  that same token for four weeks, last at 2026-07-29 16:20; the first failure is
+  2026-07-30 06:00. The credential died on Cloudflare's side while the GitHub
+  secret sat untouched. Recorded rather than quietly edited, because a
+  ruled-out section that was itself wrong is the most expensive kind of error in
+  this document — it is the section written to stop the next person re-checking.
 - **"Pausing the workflow was the wrong call."** Not refuted — it was the right
   call for the reason given. The defect is not the pause; it is that pausing a
   deploy left a *scheduled proof of that deployment* still running and still
@@ -184,6 +205,47 @@ One thing it proved in passing: the staging Supabase is **awake and reachable**.
 `deploy-staging.yml` carries a retry ladder specifically because the free tier
 can auto-pause; it applied 50 migrations on attempt 1 of 3.
 
+## How this COE got its own root cause wrong
+
+The first version of this document named the wrong root cause, and the way it
+did so is worth more than the fix.
+
+`deploy-staging.yml`'s trigger comment, written 2026-07-31, said the token had
+been failing "since it was set on 2026-07-01". Whoever wrote it had the token's
+`updated_at` (2026-07-01) and a workflow that was failing, and reasoned from the
+two to a start date. They did not open the run history — which was one command
+away and shows four weeks of green.
+
+This COE then **quoted that comment as evidence**, and even wrote a "ruled out"
+row on the strength of it. Worse, the contradiction was already inside this same
+file: it stated the last successful deploy as 2026-07-29, four weeks AFTER the
+date it claimed the token had never worked. Rather than treat that as a
+refutation, the draft explained it away — "which predates the token, i.e. the
+last good staging deploy was made by whatever credential was in place before" —
+inventing an unevidenced earlier credential to keep the story standing.
+
+The owner rejected it in one line: *"staging environment 怎么可能没有 set 过
+cloudflare"* — *"之前 staging 都没问题的"*. He was right, and the check took two
+commands: list the runs, read the first failing one's log.
+
+Three failures, none of them technical:
+
+1. **A note in a repo was treated as an observation.** It was somebody's
+   inference, written in a hurry, with no tool named beside it. `CLAUDE.md`
+   demands "name the tool that proved it" for exactly this reason, and the
+   comment named none.
+2. **A contradiction inside the same document was smoothed over instead of
+   chased.** The evidence to refute the claim was already in the file. When two
+   facts you hold disagree, one of them is wrong — that is a finding, not a
+   presentation problem.
+3. **The "ruled out" section was written from the same bad premise**, which is
+   the most costly place to be wrong: that section exists so nobody re-checks.
+
+This is the case the new *Do not guess* rule in `CLAUDE.md` was written for, and
+it was written the same day this file got it wrong — which is the point. The rule
+does not protect a document from being wrong; it only helps if the observation is
+actually made.
+
 ## Deferred — owner
 
 **Minting a NEW Staging `CLOUDFLARE_API_TOKEN` is the only thing that unblocks
@@ -211,7 +273,13 @@ token → `workflow_dispatch` to prove it → then restore `main` to the trigger
    to ignore red. What the pause produced was worse, because green trains nobody
    to look at all. Both are the same fault — a signal that no longer tracks
    reality — and the second one has no symptom.
-3. **A check that is non-blocking by design needs its own liveness signal.**
+3. **An inherited note is not evidence.** This COE's own first draft got its
+   root cause from a comment in a workflow file and passed it on as fact,
+   including into a "ruled out" row. A repo note carries whatever confidence its
+   author had, which is often none — and once copied it reads as settled. Copy
+   the CHECK, not the conclusion. When a document states a cause without naming
+   the tool that proved it, that is a hypothesis wearing a fact's clothes.
+4. **A check that is non-blocking by design needs its own liveness signal.**
    Both faults here are the same shape: something was made deliberately unable
    to fail loudly — the E2E so a deploy failure would not hide it, `audit:map`
    so a stale doc could never block a deploy — and both decisions were correct
@@ -220,11 +288,11 @@ token → `workflow_dispatch` to prove it → then restore `main` to the trigger
    something must still answer "when did this last actually run, and against
    what?" The gated artifact in the same directory stayed byte-perfect for three
    weeks; the two ungated ones rotted.
-4. **Every deployed surface needs a version stamp, not just production.** Prod
+5. **Every deployed surface needs a version stamp, not just production.** Prod
    has `GIT_SHA` and a watchdog because prod was overwritten by a stale clone
    four times. Staging was given neither, so the identical failure was
    undetectable there. The stamp costs one flag.
-5. **Pausing a workflow is a change to a system, not a decision to defer one.**
+6. **Pausing a workflow is a change to a system, not a decision to defer one.**
    The pause was recorded thoroughly and honestly in the file itself — and still
    nothing recorded what the pause did to the *other* workflow that depended on
    it. When switching something off, name what was relying on it being on.

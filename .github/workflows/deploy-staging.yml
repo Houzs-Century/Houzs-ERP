@@ -17,10 +17,18 @@ on:
     # every main release also shipped to the staging stack.
     #
     # PAUSED on 2026-07-31 (owner: "暂时不需要staging的"). The Staging
-    # environment's CLOUDFLARE_API_TOKEN has been failing with `Authentication
-    # error [code: 10000]` since it was set on 2026-07-01 — it cannot even list
-    # /accounts — so this workflow had failed EVERY run and taken Staging E2E
-    # (smoke) with it, skipped, every time.
+    # environment's CLOUDFLARE_API_TOKEN stopped working on 2026-07-30, so this
+    # workflow failed every run after that and took Staging E2E (smoke) with it.
+    #
+    # CORRECTED 2026-08-12: this comment used to say the token had been failing
+    # "since it was set on 2026-07-01". That was an inference from the secret's
+    # updated_at, never checked against the run history, and it is FALSE - the
+    # token deployed staging successfully for four weeks, last at 2026-07-29
+    # 16:20 UTC (run 30470280714). The first failure is run 30518266259 at
+    # 2026-07-30 06:00, already carrying `Invalid access token [code: 9109]`, so
+    # the credential was revoked or expired on Cloudflare's side while nothing
+    # in GitHub changed. The wrong version was copied into a COE before anyone
+    # opened the run list - see docs/staging-bench-rot-coe.md.
     #
     # It is paused rather than left red because a permanently-red workflow is
     # not free: it trains everyone to ignore red, and on 2026-07-31 that is

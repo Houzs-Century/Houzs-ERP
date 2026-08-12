@@ -81,7 +81,7 @@ as "staging is available"; it is not.
 | Is it running? | Yes. Worker and Pages both answer 200, all bindings intact |
 | When was it last built from `main`? | **2026-07-29 16:20 UTC** |
 | How far behind is that? | **775 commits, 59 production migrations** as of 2026-08-12 |
-| Why did it stop? | The GitHub **Staging** environment's `CLOUDFLARE_API_TOKEN` has failed with `Authentication error [code: 10000]` since the day it was set, 2026-07-01. Every `Deploy (Staging)` run failed. On 2026-07-31 the `main` trigger was removed, correctly, so the permanent red would stop training people to ignore red |
+| Why did it stop? | The Staging `CLOUDFLARE_API_TOKEN` **worked for four weeks and then died on 2026-07-30** — revoked or expired on Cloudflare's side, while the GitHub secret sat untouched (`updated_at` is still 2026-07-01). Every run since has failed. On 2026-07-31 the `main` trigger was removed, correctly, so the permanent red would stop training people to ignore red. An earlier note claimed the token had never worked; the run history refutes that — see `docs/staging-bench-rot-coe.md` |
 | Why did nobody notice? | The nightly **Staging E2E** kept passing — honestly, about a two-week-old build. Staging carried no `GIT_SHA` stamp, so `/health` answered `sha:null` and the staleness was invisible from outside |
 
 Re-dispatched from `main` on 2026-08-12 (run 31566944717) to test whether the
