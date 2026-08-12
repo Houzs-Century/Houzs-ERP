@@ -789,15 +789,48 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    NOT the pinned scm.staff uuid on user.id). Returns TRUE ⇒ block (the caller
    answers 404, indistinguishable from a nonexistent doc_no). A missing SO also
    returns TRUE (fail closed). */
+/* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
+
+   TWO dimensions, and the company one was missing until 2026-08-13. The
+   salesperson dimension answers "is this MY order" and returns false straight
+   away for a view-all tier (director / office / *). That is correct for its own
+   question and useless for tenancy: a view-all user in company A holding a
+   company B doc_no sailed through every caller of this guard - including all
+   four SO payment verbs, which WRITE money. The doc_no lookups below were also
+   unscoped, so `.eq('doc_no', docNo)` matched the other company's order.
+
+   Company is checked FIRST and for everyone, view-all included. Fixing it here
+   rather than in each handler is deliberate: 18 callers share this, and a 19th
+   written next month gets the guard for free - per-handler patching is what let
+   this class survive four separate audits. */
 async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
-  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const sb = c.get('supabase');
+
+  /* 1. Tenancy - every tier, view-all included.
+
+     DEGRADES when the company is UNRESOLVED, it does not fail closed. That is
+     the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
+     SENTINEL"): undefined means companyContext could not read the companies
+     master - pre-migration, the D1 test mirror, a Hyperdrive cold start - and
+     consumers MUST drop the predicate so single-company Houzs serves unchanged.
+     A first draft of this guard returned true here; that would have locked every
+     user out of all 18 handlers during a cold start, which is the app-wide
+     outage that comment warns about. scopeToCompany (non-strict) is the flavour
+     that implements the contract, so use it rather than hand-rolling. */
+  const { data: owned } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
+    c,
+  ).maybeSingle();
+  if (!owned) return true;
+
+  // 2. Salesperson - only for the self-scoped tier.
+  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const { data, error } = await sb
     .from('mfg_sales_orders')
     .select('salesperson_id')
     .eq('doc_no', docNo)
     .maybeSingle();
-  if (error || !data) return true; // fail closed — unknown/unreadable doc is out of scope
+  if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
   const sp = (data as { salesperson_id?: number | string | null }).salesperson_id;
   return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
 }

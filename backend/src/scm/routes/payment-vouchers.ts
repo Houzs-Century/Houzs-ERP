@@ -356,7 +356,18 @@ paymentVouchers.patch('/:id', async (c) => {
   /* The FULL header, not just status: this row is the BEFORE half of every
      from->to pair recorded at the end of the handler. Reading it here also
      removes the second round-trip the currency branch used to make. */
-  const { data: cur } = await sb.from('payment_vouchers').select(HEADER).eq('id', id).maybeSingle();
+  /* Company scope. This was an unscoped `.eq('id', id)`, so a holder of the
+     cross-company `scm.payment_voucher.write` permission could edit ANOTHER
+     company's DRAFT voucher - payee, amount, currency, lines. The sibling
+     cancel handler in this same file already does exactly this and its comment
+     names the class ('an unscoped load let one company cancel another's
+     voucher'); the PATCH was never aligned. Found 2026-08-13 by a scanner over
+     all 632 SCM handlers, then read here before changing anything. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: cur } = await scopeToCompanyId(
+    sb.from('payment_vouchers').select(HEADER).eq('id', id), co.companyId,
+  ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   const before = cur as unknown as Record<string, unknown>;
   if ((before as { status: string }).status !== 'DRAFT') {
