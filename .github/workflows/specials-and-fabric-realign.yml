@@ -24,6 +24,7 @@ on:
         options:
           - move-specials
           - align-fabric
+          - purge-unused-retired
       target:
         description: "Which DB"
         required: true
@@ -80,6 +81,15 @@ jobs:
       - name: align-fabric
         if: ${{ inputs.script == 'align-fabric' }}
         run: node scripts/align-converter-to-library.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: "1"
+          CODES: ${{ inputs.codes }}
+      - name: purge-unused-retired
+        if: ${{ inputs.script == 'purge-unused-retired' }}
+        run: node scripts/purge-unused-retired-specials.mjs
         env:
           DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
           MODE: ${{ inputs.mode }}
