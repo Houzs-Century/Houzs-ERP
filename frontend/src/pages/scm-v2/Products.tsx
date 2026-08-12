@@ -1623,7 +1623,9 @@ export const MaintenanceTab = ({
 
   // Count fabric_trackings rows for the left-rail "Fabrics (N)" badge.
   // Lightweight query (cached 30s) — uses the same hook as the panel itself.
-  const fabricsList = useFabricTrackings();
+  // Retired rows are excluded so the badge counts fabrics you can still use.
+  // Before this it read 827 while 88 of those were supersede tombstones.
+  const fabricsList = useFabricTrackings({ includeRetired: false });
   const fabricsCount = fabricsList.data?.length ?? 0;
 
   // PR #208 — draft beats supplier-scope-resolved beats master-fallback.
@@ -3839,8 +3841,12 @@ const CodeFormatPanel = ({
 
 const FabricsMaintenancePanel = () => {
   const [search, setSearch] = useState('');
+  /* This panel is a working list, not the master admin surface — the Fabric
+     Converter is, and that is where retired rows stay visible (and toggleable).
+     Here they are simply out of the way. */
   const { data, isLoading, error } = useFabricTrackings({
     search: search.trim() || undefined,
+    includeRetired: false,
   });
   const rows = data ?? [];
 
