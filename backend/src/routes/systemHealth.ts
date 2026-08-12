@@ -330,6 +330,16 @@ app.get("/ledger", requirePermission("*"), async (c) => {
 // One number per question, so "is the data clean yet?" stops being a matter of
 // opinion. Every count is a diff between what AutoCount has and what the ERP
 // has; clean = all of them zero.
+//
+// mirror_po_outstanding_lines is a plain COUNT(*), NOT a count of
+// is_outstanding = 1. The middleware's /getOutstanding filters to
+// "Qty - TransferedQty > 0", so every row in `purchase_orders` is outstanding
+// by construction and the pull leaves that legacy column NULL — the predicate
+// would report 0 on a perfectly good pull, which is precisely the silent zero
+// this endpoint exists to stop.
+//
+// No "--" comments inside the SQL: d1-compat splits statements and a line
+// comment swallows what follows it.
 app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
   try {
     const row = await c.env.DB.prepare(
@@ -350,7 +360,7 @@ app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
          (SELECT COUNT(*) FROM ac_snapshot_purchase_orders)                    AS snapshot_po,
          (SELECT MAX(snapshot_at) FROM ac_snapshot_purchase_orders)            AS snapshot_po_at,
          (SELECT COUNT(*) FROM purchase_order_docs)                            AS mirror_po_docs,
-         (SELECT COUNT(*) FROM purchase_orders WHERE is_outstanding = 1)       AS mirror_po_outstanding_lines,
+         (SELECT COUNT(*) FROM purchase_orders)                                AS mirror_po_outstanding_lines,
          (SELECT COUNT(*) FROM scm.purchase_orders p
             WHERE COALESCE(p.linked_ac_docno,'') <> ''
               AND NOT EXISTS (SELECT 1 FROM ac_snapshot_purchase_orders a
