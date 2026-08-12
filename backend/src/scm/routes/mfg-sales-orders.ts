@@ -112,6 +112,10 @@ import {
   type VenueBindingSb,
 } from '../lib/venue-binding';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+/* What changed on a LINE, for the audit trail — derived from the update about to
+   be persisted rather than a hand-kept field list (owner 2026-08-12; see the
+   module header for the 2990-SO-2608-017 edit this existed to catch and did not). */
+import { soLineFieldChanges } from '../lib/so-line-audit-diff';
 import { buildAmendmentLineRows, LINE_BUILD_ERRORS } from '../lib/amendment-lines';
 // OCR self-learning: a DRAFT confirm is the review event the background scan
 // path never reported. Lives in lib/ (not scan-so.ts) — scan-so.ts already
@@ -6417,6 +6421,32 @@ async function recomputeDeliveryFeeCore(
     if (rebuildErr) {
       if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);
       /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line rebuild failed:', rebuildErr.message);
+    } else {
+      /* Owner 2026-08-12 — this rebuild ADDS, REPRICES and DELETES SVC-DELIVERY*
+         lines on a live order, and until now it did so with no trace whatsoever.
+         2990-SO-2608-017 grew a RM250 delivery line at 01:38 and its History
+         showed only the SO's creation: the money moved and the timeline stayed
+         silent. It is automation, not a person, so it logs as source
+         'automation' exactly like the POS deposit and the free-gift reconcile —
+         "nobody did it" is a legitimate audit answer, "it never happened" is
+         not.
+
+         Only a real move is recorded (an unchanged re-derivation runs on every
+         line edit and would otherwise flood the timeline). Best-effort by
+         recordSoAudit's design; the fee is already committed either way. */
+      const priorFeeCenti = deliveryLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
+      if (priorFeeCenti !== fee.total) {
+        await recordSoAudit(sb, {
+          docNo,
+          action: priorFeeCenti === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
+          source: 'automation',
+          note: 'Auto: delivery fee lines re-derived',
+          fieldChanges: [
+            { field: 'itemCode', to: 'SVC-DELIVERY' },
+            { field: 'deliveryFeeCenti', from: priorFeeCenti, to: fee.total },
+          ],
+        });
+      }
     }
   }
 
@@ -8500,25 +8530,23 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   // mix or a special-delivery trigger. Stored cross-category source kept.
   await rederiveDeliveryFee(sb, docNo, c);
 
-  // PR-D — diff old vs new and emit one UPDATE_LINE row only if any field
-  // moved. Compare across both the derived columns (qty/price/discount)
-  // and the passthrough columns (code/group/description/uom/etc).
-  const fieldChanges: FieldChange[] = [];
-  const cmp = (field: string, fromVal: unknown, toVal: unknown) => {
-    const a = fromVal == null ? '' : String(fromVal);
-    const b = toVal == null ? '' : String(toVal);
-    if (a !== b) fieldChanges.push({ field, from: fromVal ?? null, to: toVal ?? null });
-  };
-  cmp('qty', prev.qty, qty);
-  cmp('unitPriceCenti', prev.unit_price_centi, unit);
-  cmp('discountCenti', prev.discount_centi, discount);
-  cmp('unitCostCenti', prev.unit_cost_centi, unitCost);
-  for (const [from, to] of [
-    ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
-    ['description2', 'description2'], ['uom', 'uom'], ['remark', 'remark'], ['cancelled', 'cancelled'],
-  ] as const) {
-    if (it[from] !== undefined) cmp(from, (prev as Record<string, unknown>)[to], it[from]);
-  }
+  /* PR-D — one UPDATE_LINE row when anything moved.
+     Owner 2026-08-12, after 2990-SO-2608-017: this used to compare a
+     HAND-MAINTAINED list (qty / prices / code / group / description / uom /
+     remark / cancelled). `variants` was never on it, and neither were the spec
+     columns the same handler writes — so changing ONLY a line's specification
+     produced an empty diff and the `length > 0` guard below skipped the audit
+     ENTIRELY. That SO had LEG 6" added to two sofa lines at a price that did
+     not move (leg_price_sen 0): the write landed, the supplier's PO went stale
+     against it, and the History timeline showed nothing at all. The single most
+     damaging edit we make was the one edit we did not record.
+
+     So the diff is now DERIVED FROM `updates` — the exact object about to be
+     persisted — instead of a parallel list that has to be remembered. A column
+     added to this handler is audited by construction; there is nothing left to
+     forget. (Same lesson as the amendment apply white-list: a hand-copy that
+     "MIRRORS" another list is a drift bug with a delay fuse.) */
+  const fieldChanges = soLineFieldChanges(prev as unknown as Record<string, unknown>, updates);
   if (fieldChanges.length > 0) {
     // Prefix with itemCode so the timeline can show "Updated line ITEM-123"
     // without a dedicated column on the audit row.
@@ -8898,9 +8926,19 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     action: 'UPDATE_LINE',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    /* Owner 2026-08-12 — this used to record `tbcVariants: "legHeight, seatHeight"`:
+       the NAMES of the keys that were filled, with neither the old nor the new
+       value. So the timeline could say a spec was touched but never what it
+       became, which is the one thing an audit of a spec change exists to answer.
+       Now the same readable before→after summary the line PATCH emits (`spec`),
+       from the SAME buildVariantSummary the persisted description2 uses. */
     fieldChanges: [
       { field: 'itemCode', to: prev.item_code },
-      { field: 'tbcVariants', to: Object.keys(patch).join(', ') },
+      {
+        field: 'spec',
+        from: buildVariantSummary(String(prev.item_group ?? ''), (prev.variants ?? null) as Record<string, unknown> | null) || null,
+        to: buildVariantSummary(String(prev.item_group ?? ''), nextVariants) || null,
+      },
       ...(sellingDeltaCenti !== 0
         ? [{ field: 'unitPriceCenti', from: prev.unit_price_centi, to: newUnit } satisfies FieldChange]
         : []),
