@@ -1,5 +1,51 @@
 # ERP -> AutoCount sync: coverage, gaps, and the build plan
 
+> ## SUPERSEDED IN ITS CONCLUSIONS — read this box before you quote anything below
+>
+> **Every line of this box was checked against SOURCE on `main` or read from
+> production on 2026-08-12** — the C# service and the TypeScript outbox, not another
+> document. That distinction is the whole point: this file was one day old, reads as
+> authoritative, and was quoted back as current fact when its headline conclusions
+> had already been fixed in code.
+>
+> **How to answer "where does this stand" without trusting any .md, including this
+> one:** read `backend/scripts/autocount-service/AcSyncService.cs` (the AutoCount
+> half) and `backend/src/scm/lib/autocount-outbox.ts` (the ERP half); run
+> `.github/workflows/autocount-outbox-health.yml` for whether anything has ever been
+> sent, and `backfill-ac-line-keys.yml` with `apply=0` for line-identity coverage.
+> Documents describe intent and history well and go stale about state within days.
+>
+> | This document says | Verified on 2026-08-12 |
+> |---|---|
+> | §0 Blocker 2: create returns only `DocNo`, so an edit appends duplicate lines | **FIXED.** Every create/convert route now answers with the created line keys — `Ok(docNo, CreatedLines(dtlTable, docNo))`, `AcSyncService.cs`, reading `DtlKey`/`ItemCode`/`Desc2` straight from the book's detail table |
+> | §0 Blocker 2: `/edit` treats a keyless line as new (`AddDetail`) | **FIXED.** `Edit` makes a pre-pass over every line before touching the document and `throw`s `REFUSED: line N ... carries no DtlKey and does not declare IsNewLine` — the append is unreachable, not merely discouraged (`AcSyncService.cs`, PRs #1935 + #1945) |
+> | §0 Blocker 2: the ERP has nowhere to put a returned key | **CLOSED, both halves.** `autocount-outbox.ts:1696` writes `linked_ac_dtlkey` per row after a create, and refuses to store rather than guess when the returned `Desc2` disagrees with the ERP's or a repeated `ItemCode` cannot be told apart |
+> | §0 Blocker 1: no non-destructive way to retire a line | **BUILT**, and by the mechanism this document recommended: `Retire:true` sets `Qty = 0` + `Transferable = false` + a `[ERP-CANCELLED]` marker in `Desc2`. The ERP reads the line's `DtlKey` BEFORE deleting the row (`retiredLineOf`, `autocount-outbox.ts`) so the removal can be named |
+> | §1.1: the write-back is "NOT WIRED, NOT DEPLOYED, NOT CONFIGURED"; `AC_SYNC_URL` commented out | **False now.** `AC_SYNC_URL` is set (`backend/wrangler.toml:42`, PR #2030) and the tunnel answers: unauthenticated `POST /health` -> `401 {"ok":false,"error":"bad key"}` |
+> | §1.4: PR #1855 is OPEN, the ERP half is unmerged | **Merged** 2026-08-10 |
+> | §0: `create-po` cannot satisfy AutoCount's agent foreign key | **Fixed IN THE SOURCE.** `/ensure-masters` now opens a `PurchaseAgent` through `PurchaseAgentCommand` — a different master, table and FK from the sales agent it used to reuse (`AcSyncService.cs`). **Whether the host is running a build that contains it cannot be established from this repository**: the exe lives on the office machine and `/health` needs a key. Do not restate a deployment claim you have not observed |
+>
+> **The line identity that all of the above depends on — measured, not quoted.**
+> `backfill-ac-line-keys.mjs` against production, DRY-RUN, 2026-08-12:
+>
+> | | ERP lines | already keyed | backfill can still set | no AutoCount counterpart |
+> |---|---|---|---|---|
+> | SO | 13,916 | 12,904 (92.7%) | **1** | **986** |
+> | PO | 873 | 273 (31.3%) | **0** | **600** |
+>
+> The number that matters is the last column, and no document had drawn attention to
+> it: those lines are **not waiting for a backfill run** — the backfill has nothing
+> left to give them. They have no counterpart in the book, so under the keyless-line
+> guard an `/edit` of those documents is REFUSED. Safe, and blocked. For PO that is
+> most of the file. Re-run the workflow before quoting these; they move with the data.
+>
+> **What has NOT changed, and is the thing to hold on to:** the DB toggle
+> `scm.app_config` -> `scm.autocount_writeback` is still `off`, and
+> `scm.autocount_outbox` still holds **zero rows of any status** — verified
+> 2026-08-12 by running `.github/workflows/autocount-outbox-health.yml`, which
+> reported `QUEUE EMPTY`. **No ERP document has ever reached AutoCount.** Anyone
+> asking "is it synced yet" should run that workflow rather than read a document.
+
 **Assessment date: 2026-08-11.** Scope: the owner's go-live blocker #1 —
 
 > "我们的 Sales Order、PO、DO、GR、PI、SI 等所有单据,无论是我打开后进行 Convert
