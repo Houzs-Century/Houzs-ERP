@@ -351,6 +351,48 @@ Not generic narrative.
   - After meaningful work lands, end the reply with a one-line offer to
   `/sync-wiki` if the wiki should be updated.
 
+## A merged PR's branch gets DELETED — MANDATORY (owner rule, 2026-08-12)
+
+*"确保做好了的PR 就delete掉."* A branch whose PR has merged is finished: its
+content is on `main`, and leaving it on `origin` costs a real thing. On
+2026-08-12 the repo carried **1,510 remote branches, 1,406 of them heads of
+already-merged PRs** — a `git branch -r` nobody could read, a tab-complete
+nobody could use, and 1,406 chances to branch off dead work by mistake. They
+were pruned in one pass, with a name+SHA manifest kept so every one stays
+restorable.
+
+**The durable fix is a repo setting, not a habit** — habits are what produced
+the 1,406. Settings -> General -> **Automatically delete head branches**. It was
+`false` as of 2026-08-12 and needs repo ADMIN to flip, so only the owner can:
+the API answers `404` to everyone else. Once on, GitHub deletes the head branch
+on every merge and nothing here needs doing by hand.
+
+Deliberately NOT solved with a workflow. A GitHub Action could delete the branch
+on merge without admin, but this repo has just paid for a workflow that died
+silently and went unnoticed for three weeks (`docs/staging-bench-rot-coe.md`). A
+setting cannot rot; a workflow can. One checkbox beats one more thing to watch.
+
+What the setting does NOT cover, and stays manual:
+
+- **PRs closed without merging.** GitHub leaves those branches alone, correctly
+  — the work was abandoned, not landed, and the branch is the only copy. Review
+  before deleting, never bulk-prune them.
+- **Branches with no PR at all.** As of 2026-08-12 there were 51, and `main` and
+  `staging` are among them. Never bulk-delete this set.
+
+To prune by hand, select on the PR being MERGED — never on age, and never on
+`git branch -r --merged`, which misses everything squash-merged (it found 291 of
+the 1,406):
+
+```sh
+gh pr list --state merged --limit 3000 --json headRefName --jq '.[].headRefName' | sort -u > /tmp/merged.txt
+git ls-remote --heads origin | sed 's|.*refs/heads/||' | sort -u > /tmp/branches.txt
+comm -12 /tmp/branches.txt /tmp/merged.txt   # verify this list before deleting anything
+```
+
+Record `sha<TAB>branch` for whatever you delete. `git push origin <sha>:refs/heads/<branch>`
+restores it without depending on GitHub's Restore button.
+
 ## See also
 
 - **`docs/KNOWLEDGE-SYSTEM.md`** — the layers, what belongs where, and why
