@@ -60,11 +60,23 @@ standing at that machine except to run one command.
    does not resolve, and it names database **`AED_DEMO`** — neither value can be
    trusted, and the script now warns about the second.
 2. Re-run `qa-convert.ps1` to close `create-po` and `po-to-gr`.
-3. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
+3. **Set `AC_SYNC_KEY` on the Worker** — `cd backend && npx wrangler secret put
+   AC_SYNC_KEY` (the owner or IT types the value directly; never through chat).
+   **This step was MISSING from this sequence and it is not optional.** Read
+   from both sides' code on 2026-08-12: the Worker sends `X-API-KEY` only when
+   the secret exists (`callAcService`, `services/autocount-writeback.ts:26` —
+   `...(cfg.key ? { 'X-API-KEY': cfg.key } : {})`), and the host refuses
+   everything without it (`AcSyncService.cs:161-162` — no key configured means
+   **503 for every request**, wrong key means **401**). `acServiceConfig`
+   treats the key as optional (`:775-780`, URL alone activates the drain), so
+   with the toggle on and the key unset, every real order drains into 401/503,
+   burns its 6 attempts, and lands FAILED — and there is still no outbox UI to
+   re-queue it.
+4. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
    `companies=1`. **Before anyone creates a document, not after**: the flag is
    checked at enqueue, so anything saved while it is off is never sent and cannot
    be backfilled.
-4. One real order, watched into the outbox.
+5. One real order, watched into the outbox.
 
 ## The owner's acceptance criteria
 
