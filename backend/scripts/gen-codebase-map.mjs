@@ -420,7 +420,7 @@ const comparable = (text) => text.split(/\r?\n/).join("\n");
 if (checkOnly) {
   if (!fs.existsSync(outputPath) || comparable(read(outputPath)) !== comparable(body)) {
     console.error("Codebase map facts are stale. Run: node backend/scripts/gen-codebase-map.mjs");
-    console.error("(This is an on-demand check. It is deliberately NOT a CI or deploy gate.)");
+    console.error("(PR CI gates this; deploy.yml deliberately does NOT — a stale doc must never block a release.)");
     process.exit(1);
   }
   console.log(`Codebase map facts are current (${routeTotals.modules} route modules, ${desktopRoutes.length} desktop routes).`);

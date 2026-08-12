@@ -28,7 +28,9 @@
     "db:reset:remote:DANGER": "wrangler d1 execute autocount-sync --file=./src/db/schema.sql --remote",
     "db:reset:local": "wrangler d1 execute autocount-sync --local --file=./src/db/schema.sql",
     "db:migrate": "node scripts/migrate.mjs",
-    "db:migrate:baseline": "node scripts/migrate.mjs --baseline"
+    "db:migrate:baseline": "node scripts/migrate.mjs --baseline",
+    "gen:bug-index": "node scripts/gen-bug-index.mjs",
+    "audit:bug-index": "node scripts/gen-bug-index.mjs --check"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

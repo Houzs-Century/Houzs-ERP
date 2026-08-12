@@ -59,6 +59,14 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # Bug index drift. PR-only on purpose: it is NOT in deploy.yml, because a
+      # stale doc must never block a release (audit:routes as a deploy gate jammed
+      # prod twice in one day). But it IS gated here, because the ungated
+      # audit:map crashed unnoticed for three weeks — see
+      # docs/staging-bench-rot-coe.md. PR-gated, deploy-free is the shape that
+      # survives both failure modes.
+      - run: npm run audit:bug-index
+      - run: npm run audit:map
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the

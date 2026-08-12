@@ -9,7 +9,7 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive.** D1 is test-only — prod has no D1 binding | `backend/src/db/` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -25,22 +25,31 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 
 ## Modules
 
-| Module | Route | Perm | What it does |
-|--------|-------|------|--------------|
-| **Overview** | `/` | — | Daily briefing. Inbox (tasks, reviews, blockers, this-week), KPI ribbon, cross-module P&L calendar, pipeline snapshot. |
-| **Sales Orders** | `/orders` | `sales_orders.read` | AutoCount sync target. Editable delivery fields that push back to AutoCount. Tabs: Orders, Balance (expiry collections), Overdue (auto-extension history), Sales P&L. |
-| **Delivery Orders** | `/delivery-orders` | `delivery_orders.read` | Flat delivery-ready view of sales orders with logistics fields (lorry, driver, dates). Auto-hidden for dispatchers who have the richer Trips Queue (`hidePerm: trips.read.all`). |
-| **Purchase Orders** | `/po` | `purchase_orders.read` | Unified procurement surface. Tabs: PO Documents (doc-level with per-status filter + line drill-down panel), Creditors (AutoCount mirror with PO aggregates), PO Cost P&L. PO amounts are read-only (upstream authority). |
-| **Service Cases (ASSR)** | `/assr` | `service_cases.read` | After-sales workflow — stage pipeline, SLA tracking, satisfaction survey. Creditor auto-resolves from `case.item_code` → `stock_items.main_supplier` → `creditors.creditor_code` (no parallel supplier registry). Tabs: Cases, By Creditor, Quality Metrics, Service Cost P&L. |
-| **Projects** | `/projects` | `projects.read` | Event-scoped lifecycle (exhibitions). Tabs: List, Calendar, Analytics, Profitability, Finance ledger, Checklist, Trips. Brand-scoped; payment proof stored in R2. |
-| **Logistics** | `/logistics` | `trips.read.all` or `fleet.read` | Two-level nav. Primary tabs → Trips (Queue, Drafts, Live, Tracking, Events, History) and Fleet (Drivers, Helpers, Lorries, Compliance). Legacy `/trips` and `/fleet` redirect here preserving `?focus=…`. |
-| **Team** | `/team` | `users.read` or `roles.read` | Tabs: Members (user accounts + pending invitations), Roles (grid of role cards with permission editor). Legacy `/roles` redirects to `/team?tab=roles`. |
-| **Settings** | `/settings` | `settings.manage` | Tabs: Connection, Sync (filtered cron + full refresh), Email (Resend channel toggles), Activity Log (execution history across all jobs). |
-| **Profile** | `/profile` | — | Password change, session, display name. |
+**Not listed here on purpose.** This section used to carry a hand-written table of
+every module, its route and its permission. It went stale — it still advertised
+`/orders`, `/po` and `/delivery-orders`, none of which are mounted any more — and
+it was the third place in the repo claiming to know where routes live. A fact with
+three homes is a fact that will disagree with itself.
+
+The routes live in exactly two places now, both derived from the tree, so neither
+can drift:
+
+| Question | Read |
+|---|---|
+| Every desktop route and the page module it renders | [`docs/generated/codebase-map-facts.md`](docs/generated/codebase-map-facts.md) §4 |
+| Every API endpoint with its file, line, mount path and permission gate | [`docs/generated/route-locator.md`](docs/generated/route-locator.md) + [`route-capability-matrix.csv`](docs/generated/route-capability-matrix.csv) |
+| What a module is FOR and how to work in it | [`docs/modules/<module>.md`](docs/modules/) |
+| What each area is for, what is vendored, what is dead | [`docs/CODEBASE-MAP.md`](docs/CODEBASE-MAP.md) |
+
+Regenerate the first two with `node backend/scripts/gen-codebase-map.mjs` and
+`npm --prefix backend run gen:route-locator`.
 
 ### Driver sub-app
 
-Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_orders.read`) are auto-redirected from `/` into the mobile shell at `/driver`. Pages: `DriverHome` (today's trip), `DriverTrip` (stop-by-stop POD capture), `DriverProfile` (clock-in, earnings, salary).
+Driver-only users (holding `trips.read.own` without `trips.read.all` or
+`sales_orders.read`) are auto-redirected from `/` into the mobile shell at
+`/driver`. Pages: `DriverHome` (today's trip), `DriverTrip` (stop-by-stop POD
+capture), `DriverProfile` (clock-in, earnings, salary).
 
 ### Public (no login) surfaces
 
@@ -55,7 +64,7 @@ Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_o
 
 ```
 ERP-Houzs/
-├── backend/                        # Cloudflare Worker (Hono + D1 + R2)
+├── backend/                        # Cloudflare Worker (Hono + Postgres/Hyperdrive + R2)
 │   ├── src/
 │   │   ├── index.ts                  # route mounts + scheduled(cron) handler
 │   │   ├── middleware/
@@ -71,11 +80,12 @@ ERP-Houzs/
 │   │   │   ├── permissions.ts        # role → permission expansion
 │   │   │   └── …
 │   │   └── db/
-│   │       ├── schema.sql              # baseline (used by db:reset)
-│   │       └── migrations/             # 001_*.sql … 036_*.sql, applied in order
+│   │       ├── schema.pg.ts            # Drizzle schema
+│   │       ├── migrations-pg/          # THE LIVE TREE — deploy.yml applies these to prod
+│   │       └── migrations/             # D1/SQLite tree, test parity only — never reaches prod
 │   ├── package.json                  # wrangler, hono
 │   ├── tsconfig.json
-│   └── wrangler.toml                 # D1/R2 bindings, crons, vars
+│   └── wrangler.toml                 # Hyperdrive/R2/KV/Queue bindings, crons, vars
 ├── frontend/                       # React SPA on Cloudflare Pages
 │   ├── src/
 │   │   ├── pages/                    # top-level routes
@@ -114,8 +124,8 @@ wrangler secret put GOOGLE_MAPS_API_KEY     # route planner geocoder
 wrangler secret put RESEND_API_KEY          # optional — email no-ops if unset
 cd ..
 
-# Apply schema + migrations to remote D1 (idempotent)
-npm run db:migrate
+# Migrations reach PRODUCTION automatically: deploy.yml runs pg-migrate.mjs on every
+# push to main. There is no manual prod migrate step.
 
 # Dev servers (separate terminals)
 npm run dev:backend     # wrangler dev on :8787
@@ -136,9 +146,9 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 | `npm run deploy:backend` | Deploys the Worker (`wrangler deploy`) |
 | `npm run deploy:frontend` | Builds (`vite build`) + deploys the SPA to Cloudflare Pages |
 | `npm run deploy:all` | Both, in order |
-| `npm run db:migrate` | Applies every `backend/src/db/migrations/*.sql` to remote D1 (idempotent — tracks applied files in `d1_migrations`) |
+| `npm run db:migrate` | Legacy D1 tree only. **Production migrations are `backend/src/db/migrations-pg/`, applied by `deploy.yml` via `scripts/pg-migrate.mjs` on every push to main** |
 | `npm run db:reset` | Disabled guard — prints why and exits 1 (it used to wipe the remote D1 cold-backup with no confirmation) |
-| `npm run db:reset:remote:DANGER` | Re-applies `schema.sql` to the **remote** D1 (**destructive — prod data loss**). Explicit name on purpose |
+| `npm run db:reset:remote:DANGER` | Re-applies `schema.sql` to the **remote D1 cold backup** — not to prod Postgres. Still destructive. Explicit name on purpose |
 | `npm run db:reset:local` | Same but against the local D1 sandbox |
 | `npm run install:all` | `npm install` in `backend/` + `frontend/` |
 
@@ -162,7 +172,7 @@ Every scheduled run writes one row to `execution_logs` (`type`, `status`, `messa
 
 ## AutoCount integration
 
-AutoCount is treated as the **system of record** for anything procurement- or finance-related. The D1 tables `sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`, `creditors`, and `stock_items` are mirrors — refreshed on cron, read-mostly from the SPA.
+AutoCount is treated as the **system of record** for anything procurement- or finance-related. The Postgres tables `sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`, `creditors`, and `stock_items` are mirrors — refreshed on cron, read-mostly from the SPA.
 
 | AutoCount endpoint | Used by | Refreshed |
 |-|-|-|
@@ -241,7 +251,7 @@ The SPA prepends this to every API call. In dev the fallback is `http://localhos
 - **`trips`, `trip_stops`, `trip_events`, `trip_drivers`** — dispatch graph. `trip_events` is append-only (clock-ins, status changes, notes).
 - **`finance_ledger`** — double-entry-ish project cost tracking feeding the Projects P&L.
 
-All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against SQLite views or ad-hoc queries — no pre-computed aggregates, since D1 handles the data volumes comfortably.
+All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against Postgres views or ad-hoc queries — no pre-computed aggregates at current data volumes.
 
 ---
 
@@ -306,4 +316,4 @@ No backend/frontend unit tests exist yet — Vitest is the planned pick when a s
 - `/help` surface inside the app — in-app tour + keyboard shortcuts (⌘K / `/` for search).
 - `docs/` holds architecture PDFs and module-specific guides. Check there first when something is non-obvious.
 - Cloudflare dashboard → Workers → `autocount-sync-api` → Logs for live request traces.
-- `execution_logs` table in D1 for cron / sync history (also exposed in Settings → Activity Log).
+- `execution_logs` table in Postgres for cron / sync history (also exposed in Settings → Activity Log).
