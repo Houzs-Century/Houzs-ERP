@@ -132,23 +132,37 @@ question being asked — whether the multi-company SCOPING change was safe, whic
 it was. Nobody asked whether the ENDPOINT works without the table.
 **Lesson: "no migration needed" answers a schema question, not a code question.**
 
-**Shipped 2026-08-12:** `GET /anchors` returns `{ anchors: [] }` when — and only
-when — the error is `42P01` (relation does not exist). Every other error still
-surfaces as 500, so a genuine permission or connection fault cannot hide behind
-that branch. The feature stays dark.
+**Shipped 2026-08-12 (stop the bleeding):** `GET /anchors` returns
+`{ anchors: [] }` when — and only when — the error is `42P01` (relation does not
+exist). Every other error still surfaces as 500, so a genuine permission or
+connection fault cannot hide behind that branch.
 
-**Turning R8 on is an OPEN owner decision.** If it is wanted:
+**Completed 2026-08-12 (owner decision): the table now exists.** Migration
+`0283_scm_sofa_combo_anchor.sql` creates
+`scm.sofa_combo_anchor (company_id, base_model, supplier_id, created_by,
+created_at, updated_at)`. Everything else had been in place since the vendoring —
+the route, the hooks, and the UI control at `SofaComboTab.tsx:245-253`. Only the
+table was missing.
 
-- Create `scm.sofa_combo_anchor (company_id, base_model, supplier_id)` —
-  `loadComboAnchor` filters on `company_id` when resolved, so make it
-  per-company from the start rather than repeating 0087's retrofit.
-- `mirrorAnchoredCombo` copies the scope tuple and every price map, swapping
-  only `supplier_id`. A row saved on a NON-anchored supplier returns false and
-  is not mirrored.
-- Mirroring INSERTs, so an anchored model accumulates effective-dated rows on
-  both sides. That is deliberate — the picker takes the latest in scope — but it
-  means enabling anchoring on a model with a long price history is not a no-op.
-  Rehearse on staging with a real model.
+**Creating it changed nothing on its own.** An empty table means no model is
+anchored, `mirrorAnchoredCombo` is never reached, and every combo write behaves
+exactly as before. Behaviour changes only when someone sets an anchor in the UI.
+
+**The unique key is load-bearing.** `sofa-combos.ts:452` upserts with
+`onConflict: 'company_id,base_model'`, and Postgres matches `ON CONFLICT` against
+a real unique index — so the constraint must stay exactly that pair. Anything
+else makes every `PUT /anchors/:baseModel` fail with `42P10`. That is not
+hypothetical: the identical failure shipped in `special_addons`, where 0087
+replaced a single-column unique with a per-company one while `/save` kept
+upserting `onConflict: 'code'`, and every Save returned 500 for weeks. **If the
+key changes, change the route in the same PR.**
+
+**What to know before anchoring a model:** mirroring INSERTs, so an anchored
+model accumulates effective-dated rows on BOTH sides. That is deliberate — the
+picker takes the latest in scope — but it means turning anchoring on for a model
+with a long price history is not a no-op. There is no FK to `scm.suppliers`
+(nothing in this schema references it, and an anchor is a preference, not a
+dependency); a stale `supplier_id` simply reads as unset in the UI.
 
 ## 7. See also
 
