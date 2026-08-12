@@ -52,7 +52,7 @@ background, and daily ERP use is unchanged.
 | 0 | **R2 object versioning** on `houzs-erp` bucket | Owner (the Cloudflare acct holding the bucket) | ~free | Files have zero recovery today. |
 | 0 | **Branch protection on `main`** | Owner (GitHub org admin) | free | Puts a gate before prod deploys. |
 | 1 | **Professional penetration test** | Hire a firm | paid | The gold standard for a system with customer + payment data. An AI scan does not replace it. |
-| 2 | **Finish the staging safety net** | Owner + AI | small | Staging exists (`houzs-erp-staging`); split its R2 bucket off prod (audit M4) and start testing there before prod. Unlocks safe splitting. |
+| 2 | **Revive the staging safety net** | **Owner first** (token), then AI | small | Staging exists and is STALE — see below. The owner must replace the Staging `CLOUDFLARE_API_TOKEN` before any of this is workable. Then: split its R2 bucket off prod (audit M4) and start testing there before prod. Unlocks safe splitting. |
 | 3 | **Persistent access-audit** (sensitive downloads/exports) | AI + owner (migration review) | medium | Design first; needs a prod migration, so do it supervised. |
 | 4 | **Split the giant files** | AI, once #2 exists | medium | Do it behind the staging net, one file per PR, tested before prod. |
 | 5 | **Restore drill** — actually restore a PITR snapshot into staging | Owner | small | An untested backup is a guess. Prove it works once. |
@@ -70,6 +70,36 @@ stale `main` can no longer merge (verify with
 What is still missing is the other half — every merge still auto-deploys straight
 to production with no staging bench in between. Step 2 is now the whole of this
 foundation, and it is what to build before the rest.
+
+### The staging bench is not merely unfinished — it is stale, and it looks fine (2026-08-12)
+
+Correcting what this document implied above. "Staging exists" was read for weeks
+as "staging is available"; it is not.
+
+| | |
+|---|---|
+| Is it running? | Yes. Worker and Pages both answer 200, all bindings intact |
+| When was it last built from `main`? | **2026-07-29 16:20 UTC** |
+| How far behind is that? | **775 commits, 59 production migrations** as of 2026-08-12 |
+| Why did it stop? | The GitHub **Staging** environment's `CLOUDFLARE_API_TOKEN` has failed with `Authentication error [code: 10000]` since the day it was set, 2026-07-01. Every `Deploy (Staging)` run failed. On 2026-07-31 the `main` trigger was removed, correctly, so the permanent red would stop training people to ignore red |
+| Why did nobody notice? | The nightly **Staging E2E** kept passing — honestly, about a two-week-old build. Staging carried no `GIT_SHA` stamp, so `/health` answered `sha:null` and the staleness was invisible from outside |
+
+Re-dispatched from `main` on 2026-08-12 (run 31566944717) to test whether the
+token had since been fixed: `npm ci`, typecheck, tests and build all passed, and
+the deploy step failed at `cloudflare/wrangler-action` again. **The token is
+still bad.**
+
+**The single blocking action, and only the owner can take it:** issue a new
+Cloudflare API token with the same scopes as the working Production one (Account
+→ Cloudflare Pages:Edit, Workers Scripts:Edit) and set it in the GitHub
+**Staging** environment secrets — directly in GitHub, never pasted into a chat.
+Then `workflow_dispatch` proves it, and only then does `main` go back into the
+`deploy-staging.yml` trigger list.
+
+Until that happens, treat every item below as blocked, not merely unstarted:
+splitting the giant files (#4), the PITR restore drill (#5), and the deferred
+FIFO ledger fix in `docs/inventory-ledger-divergence-coe.md`, which is
+explicitly staging-first. The full write-up is `docs/staging-bench-rot-coe.md`.
 
 ## What "done" means here
 

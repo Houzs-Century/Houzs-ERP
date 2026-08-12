@@ -23,6 +23,15 @@ Check for drift: `npm --prefix backend run audit:map`. That check is deliberatel
 NOT a CI or deploy gate — a stale doc must never stop a deploy (the sibling
 `audit:routes` gate is a gate, and it jammed prod twice in one day; see BUG-HISTORY).
 
+> **Run it, do not assume it ran.** Being ungated cuts both ways: from
+> 2026-07-22 to 2026-08-12 the generator itself crashed on every invocation
+> (`#925` renamed the vitest config it read by hardcoded name), so `audit:map`
+> crashed too and the facts file stood frozen at its first and only generation
+> — 116 production migrations behind by the end. The gated artifact next to it,
+> `route-capability-matrix.csv`, was byte-perfect over the same period. If this
+> file's split is going to hold, someone has to actually run the generator.
+> `docs/staging-bench-rot-coe.md` carries the class.
+
 ---
 
 ## 1. What ships

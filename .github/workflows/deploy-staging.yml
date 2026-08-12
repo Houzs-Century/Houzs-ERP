@@ -147,7 +147,14 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: backend
-          command: deploy --env staging
+          # --var GIT_SHA stamps the Worker with the commit it was built from,
+          # surfaced at GET /health. Prod has carried this since a stale clone
+          # overwrote prod four times; staging did NOT, and answered
+          # {"ok":true,"sha":null} — so when this workflow stopped running on
+          # 2026-07-31 there was no way, from outside, to tell that staging had
+          # frozen on the 2026-07-29 build while the nightly E2E went on passing
+          # against it for two weeks. See docs/staging-bench-rot-coe.md.
+          command: deploy --env staging --var GIT_SHA:${{ github.sha }}
       # Post-deploy smoke check. STAGING_SMOKE_URL repo VAR overrides the
       # default workers.dev origin if the staging Worker is served from a
       # custom domain. The authed SCM probes need DASHBOARD_API_KEY to run;

@@ -159,7 +159,24 @@ function runnerDir(scriptName) {
 }
 
 const deployYml = read(path.join(repoRoot, ".github", "workflows", "deploy.yml"));
-const vitestConfig = read(path.join(backendRoot, "vitest.config.ts"));
+
+// The vitest config's EXTENSION is not stable: #925 renamed it .ts -> .mts on
+// 2026-07-22, eleven hours after this generator was written against the old
+// name, and the ENOENT crash that followed froze codebase-map-facts.md for
+// three weeks. Resolve it, and say which name is missing rather than dying on
+// the first guess.
+const VITEST_CONFIG_NAMES = ["vitest.config.mts", "vitest.config.ts", "vitest.config.js"];
+const vitestConfigPath = VITEST_CONFIG_NAMES.map((n) => path.join(backendRoot, n)).find((p) =>
+  fs.existsSync(p),
+);
+if (!vitestConfigPath) {
+  console.error(
+    `Cannot find a vitest config in ${rel(backendRoot)} — looked for ${VITEST_CONFIG_NAMES.join(", ")}.\n` +
+      `Table 2's "read by backend vitest" column is derived from it. Add the new name above.`,
+  );
+  process.exit(1);
+}
+const vitestConfig = read(vitestConfigPath);
 
 function migrationTree(dirName, runner) {
   const dir = path.join(backendRoot, dirName.replace(/^src\//, "src/"));

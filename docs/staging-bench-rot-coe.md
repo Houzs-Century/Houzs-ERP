@@ -1,0 +1,199 @@
+# COE — the staging bench stopped deploying, and its nightly proof went on passing
+
+**Date** — discovered 2026-08-12. The fault began 2026-07-01 and was
+load-bearing from 2026-07-29.
+
+## Trigger
+
+Nobody reported this. There was nothing to report — that is the whole point of
+the entry.
+
+A routine question ("do we have staging?") found that
+`https://autocount-sync-api-staging.houzs-erp.workers.dev/health` and
+`https://houzs-erp-staging.pages.dev` both answer **200**, the Worker, the
+Pages project, the isolated Supabase, the isolated KV and the isolated queues
+all exist — and the last time any of it was **built from `main` was
+2026-07-29 16:20 UTC**.
+
+By 2026-08-12 `main` was **775 commits and 59 production migrations** further
+on. Meanwhile the nightly **Staging E2E (smoke)** had reported `success` every
+single night: 08-04, 08-05, 08-06, 08-07, 08-08, 08-09, 08-10, 08-11, each in
+about 90 seconds, each running real browser proofs of login, the SO list and
+company isolation.
+
+Those proofs were true. They were proving that a two-week-old build still
+worked.
+
+## Root cause, traced with evidence
+
+The tool that proved it: **`gh run list --workflow deploy-staging.yml`**, and
+then a live `workflow_dispatch` of that workflow from `main` — run
+**31566944717**, 2026-08-12 05:33 UTC — which reproduced the failure on
+demand rather than inferring it from history.
+
+The chain, each link checkable:
+
+1. The GitHub **Staging** environment's `CLOUDFLARE_API_TOKEN` has been
+   answering `Authentication error [code: 10000]` **since the day it was set,
+   2026-07-01**. It cannot even list `/accounts`. This is recorded in
+   `deploy-staging.yml`'s own trigger comment; it was known.
+2. So **Deploy (Staging) failed every run it ever made.** The last `success` is
+   run 30470280714, 2026-07-29 16:20 UTC — which predates the token, i.e. the
+   last good staging deploy was made by whatever credential was in place before.
+3. On **2026-07-31** the push trigger was narrowed from `[main, staging]` to
+   `[staging]` alone, at the owner's instruction ("暂时不需要staging的"). The
+   reasoning written into the file is sound and worth keeping: a permanently-red
+   workflow is not free, it trains everyone to ignore red, and that is exactly
+   how a two-hour production deploy outage went unnoticed the same day.
+4. **But the `staging` branch is not maintained.** It last moved 2026-07-14 and
+   sits 1,911 commits behind `main` (6 ahead). With `main` removed from the
+   trigger list and nobody pushing to `staging`, the workflow simply stopped
+   being invoked. It went from red to *silent*.
+5. **Staging E2E kept running anyway**, because its triggers are
+   `workflow_run` after a deploy, `workflow_dispatch`, **and a nightly
+   `schedule`**. The schedule needs no deploy. It pointed at the still-running
+   2026-07-29 stack and passed, correctly, every night.
+6. Nothing made the staleness visible. Prod's deploy stamps the Worker with
+   `--var GIT_SHA:${{ github.sha }}` and the **deploy-watchdog** workflow
+   compares that stamp against `main` every 15 minutes, precisely so a stale
+   prod is caught. `deploy-staging.yml` never added the stamp, so staging's
+   `/health` answers `{"ok":true,"sha":null}` — from outside there is **no way
+   to tell which commit staging is running**, and no watchdog looking.
+7. Re-dispatched from `main` today, the frontend job passed `npm ci`,
+   `typecheck`, `test`, `build` and `check:sw`, then failed at
+   `cloudflare/wrangler-action` with `npx` exit code 1. **The token is still
+   bad, six weeks on.**
+
+## What this cost
+
+Nothing broke. What was lost is the *option* to not break things:
+
+- `docs/SECURITY-DX-ROADMAP.md` names the staging bench as **the one structural
+  thing that unlocks the rest** — splitting the 12k-line files, the persistent
+  access-audit, the PITR restore drill. All of them are gated on a bench that
+  has not been current since 2026-07-29.
+- `docs/inventory-ledger-divergence-coe.md` defers the FIFO ledger fix as
+  explicitly **staging-first**. It cannot start.
+- Three switches in `backend/wrangler.toml` — `SESSION_FALLBACK_ENABLED`,
+  `HOUZS_OWNS_2990`, `COSTING_DISPLAY_ENABLED` — each carry a comment telling
+  the next operator to rehearse the flip on staging before touching prod. The
+  AutoCount cutover resumes Friday with those rehearsals unavailable.
+
+## What this audit RULED OUT
+
+- **"Staging was decommissioned."** Refuted. Every binding is still declared in
+  `[env.staging]`, both public URLs answer 200 today, and the KV namespace,
+  the dedicated `houzs-scan-ocr-staging` queues and the separate Supabase
+  project all still exist. Nothing was torn down; it was left running.
+- **"The nightly E2E is fake, skipped, or `continue-on-error`."** Refuted.
+  `staging-e2e.yml` sets `continue-on-error: false` deliberately and the runs
+  complete in 80–100 seconds with real assertions. The suite is honest. It was
+  asked a question about an environment, not about `main`, and it answered that
+  question correctly.
+- **"The token was working and was revoked recently."** Refuted by the
+  workflow's own comment (failing since it was set, 2026-07-01) and reproduced
+  live today by run 31566944717.
+- **"Pausing the workflow was the wrong call."** Not refuted — it was the right
+  call for the reason given. The defect is not the pause; it is that pausing a
+  deploy left a *scheduled proof of that deployment* still running and still
+  green, with no stamp by which anyone could tell the two had come apart.
+
+## The same fault, in a second place, found the same hour
+
+Looking for the staging evidence turned up an independent instance of the
+identical class, which is why this COE covers both: the lesson is the shared
+part.
+
+`docs/generated/codebase-map-facts.md` is the mechanical inventory that
+`CODEBASE-MAP.md` defers to precisely so the numbers "cannot drift". On
+2026-08-12 it claimed 122 route modules, 164 pg migrations and a highest
+migration of `0163`. The tree really held **135 route modules, 279 pg `.sql`
+files and `0281`** — 116 production migrations missing from the inventory that
+exists to be authoritative about migrations.
+
+The timeline is exact:
+
+| when | what |
+|---|---|
+| 2026-07-21 22:28 | `#963` writes `gen-codebase-map.mjs` and generates the facts file **once** |
+| 2026-07-22 10:03 | `#925` upgrades the test toolchain and renames `backend/vitest.config.ts` to `vitest.config.mts` |
+| ever since | the generator dies on `ENOENT ... vitest.config.ts` at line 162, before writing anything |
+
+The generator was broken **eleven hours and thirty-five minutes after it was
+born**, and the file it produced in that window stood as current for three
+weeks.
+
+Why nothing caught it: `audit:map` — the drift check — *is the same script with
+`--check`*, so it crashed too, and `CODEBASE-MAP.md` documents, deliberately and
+for a good reason, that it is NOT a CI or deploy gate (its sibling `audit:routes`
+is a gate and jammed prod twice in one day). A check that is non-blocking by
+design has nothing left to notice when the check itself dies.
+
+The control case proves the point rather than undermining it. Regenerating all
+three artifacts on 2026-08-12 found `route-capability-matrix.csv` and its
+summary **byte-identical** — because `audit:routes` gates them on every CI run
+and every deploy. The two that had rotted, `codebase-map-facts.md` and
+`route-locator.md`, are exactly the two nothing gates.
+
+## Fixes
+
+| Change | Effect |
+|---|---|
+| `gen-codebase-map.mjs` resolves the vitest config across `.mts` / `.ts` / `.js` and exits with a named error instead of an ENOENT stack | the generator runs again; the next rename reports which filename to add rather than silently freezing the inventory |
+| `codebase-map-facts.md` and `route-locator.md` regenerated | 122 -> 135 route modules, 923 -> 1037 endpoints, 125 -> 142 desktop routes, and the migration table finally reads 279 / `0281` instead of 164 / `0163` |
+| `deploy-staging.yml` stamps `--var GIT_SHA:${{ github.sha }}` on the Worker deploy | staging `/health` stops answering `sha:null`; the build staging is running becomes readable from outside, the same way prod's is |
+| `staging-e2e.yml` reports the stamp it tested against | a green nightly run now says WHICH commit it proved, so "green" can never again mean "green about something two weeks old" |
+| `docs/SECURITY-DX-ROADMAP.md` step 2 rewritten | it claimed "Staging exists" as though that were the remaining work; it now records that staging exists, is stale, and names the token as the single blocker |
+
+## Deferred — owner
+
+**Replacing the Staging `CLOUDFLARE_API_TOKEN` is the only thing that unblocks
+this, and only the owner can do it.** It needs the same scopes as the working
+Production token (Account → Cloudflare Pages:Edit, Workers Scripts:Edit), and
+it must be entered directly into the GitHub **Staging** environment secrets —
+never through a chat transcript.
+
+Until then, `main` deliberately stays OUT of the `deploy-staging.yml` trigger
+list. Putting it back while the token is bad would recreate the
+permanently-red workflow the pause was correct to remove. The order is: new
+token → `workflow_dispatch` to prove it → then restore `main` to the trigger.
+
+## Lessons
+
+1. **A scheduled check that outlives the thing it checks becomes a lie.** The
+   E2E's trigger set (`workflow_run` OR `schedule`) was written so the proof
+   would survive a deploy failure. It did — and that is the bug. A proof of a
+   deployed environment must fail, or at minimum announce itself as stale, when
+   the deployment behind it stops happening.
+2. **Permanently-green is more dangerous than permanently-red.** This file's
+   sibling lesson is already written in `deploy-staging.yml`: red trains people
+   to ignore red. What the pause produced was worse, because green trains nobody
+   to look at all. Both are the same fault — a signal that no longer tracks
+   reality — and the second one has no symptom.
+3. **A check that is non-blocking by design needs its own liveness signal.**
+   Both faults here are the same shape: something was made deliberately unable
+   to fail loudly — the E2E so a deploy failure would not hide it, `audit:map`
+   so a stale doc could never block a deploy — and both decisions were correct
+   in isolation. The cost neither accounted for is that a check which cannot go
+   red also cannot report its own death. If a signal is exempt from gating, then
+   something must still answer "when did this last actually run, and against
+   what?" The gated artifact in the same directory stayed byte-perfect for three
+   weeks; the two ungated ones rotted.
+4. **Every deployed surface needs a version stamp, not just production.** Prod
+   has `GIT_SHA` and a watchdog because prod was overwritten by a stale clone
+   four times. Staging was given neither, so the identical failure was
+   undetectable there. The stamp costs one flag.
+5. **Pausing a workflow is a change to a system, not a decision to defer one.**
+   The pause was recorded thoroughly and honestly in the file itself — and still
+   nothing recorded what the pause did to the *other* workflow that depended on
+   it. When switching something off, name what was relying on it being on.
+
+## See also
+
+- `docs/SECURITY-DX-ROADMAP.md` — why the bench gates the rest of the work
+- `docs/inventory-ledger-divergence-coe.md` — the deferred fix that is
+  staging-first and therefore blocked
+- `.github/workflows/deploy-staging.yml` — the trigger comment carries the
+  token history and the restore procedure
+- `docs/deploy-collision-coe.md` — the prod-side incidents that bought the
+  `GIT_SHA` stamp and the watchdog staging never got

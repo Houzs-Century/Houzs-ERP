@@ -1,3 +1,74 @@
+## The codebase-map generator died 11 hours after it was written, and froze the inventory for three weeks [medium]
+
+**Symptom** - `docs/generated/codebase-map-facts.md` — the artifact
+`CODEBASE-MAP.md` defers to precisely because generated numbers "cannot drift" —
+claimed 122 route modules, 164 pg migrations and a highest migration of `0163`.
+The tree held 135 route modules, 279 pg `.sql` files and `0281`. The file that
+exists to be authoritative about migrations was missing 116 of them.
+
+**Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
+`backend/vitest.config.ts` by hardcoded name, to derive table 2's "read by
+backend vitest" column. `#925` (2026-07-22 10:03) renamed that file to
+`vitest.config.mts` as part of a toolchain upgrade. `#963` had written the
+generator at 2026-07-21 22:28 — so it crashed with `ENOENT` from **eleven hours
+and thirty-five minutes after it was born**, before writing any output. It had
+produced exactly one generation, and that generation stood as current.
+
+Nothing caught it because `audit:map` IS the same script with `--check`, so the
+drift check crashed identically — and it is documented as deliberately NOT a CI
+or deploy gate, for the good reason that a stale doc must never block a deploy.
+The control case confirms the mechanism rather than contradicting it:
+regenerating all three artifacts found `route-capability-matrix.csv` and its
+summary byte-identical, because `audit:routes` gates them; the two that had
+rotted, `codebase-map-facts.md` and `route-locator.md`, are exactly the two
+nothing gates.
+
+**Fix** - the generator resolves the vitest config across `.mts` / `.ts` / `.js`
+and, if none exists, exits with a message naming the candidates instead of an
+ENOENT stack — so the next rename says which filename to add rather than silently
+freezing the inventory. Both stale artifacts regenerated. Class and lesson in
+`docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
+## Staging carried no build stamp, so two weeks of green nightly E2E proved a two-week-old build [high]
+
+**Symptom** - `Staging E2E (smoke)` reported `success` every night from at least
+2026-08-04 to 2026-08-11, ~90s each, running real login / SO-list / company-
+isolation proofs. Staging had not been built from `main` since **2026-07-29
+16:20 UTC**, by then 775 commits and 59 production migrations behind. Every
+assertion was true and none of them were about current code.
+
+**Root cause (traced, not guessed)** - two independent facts had to meet.
+(1) `Deploy (Staging)` failed every run it ever made: the GitHub **Staging**
+environment's `CLOUDFLARE_API_TOKEN` has answered `Authentication error
+[code: 10000]` since it was set on 2026-07-01, and on 2026-07-31 `main` was
+correctly removed from the trigger so the permanent red would stop training
+people to ignore red — after which the workflow simply stopped being invoked,
+because the `staging` branch it still triggers on last moved 2026-07-14.
+(2) `staging-e2e.yml` also runs on a nightly `schedule`, which needs no deploy.
+It pointed at the still-running old stack and passed. Nothing made the gap
+visible: prod stamps `--var GIT_SHA:${{ github.sha }}` and has a watchdog
+comparing it to `main` every 15 minutes, but `deploy-staging.yml` never added
+the stamp, so staging `/health` answered `{"ok":true,"sha":null}`. Reproduced on
+demand: run 31566944717, dispatched from `main` on 2026-08-12, passed typecheck,
+tests and build and failed at `cloudflare/wrangler-action` — the token is still
+bad.
+
+**Fix** - `deploy-staging.yml` now stamps `--var GIT_SHA`, and `staging-e2e.yml`
+reports the deployed commit against the commit it checked out, warning when they
+differ or when the stamp is absent. Deliberately a warning, not a failure: the
+suite proves an environment, and failing it while the deploy is paused would
+recreate the permanently-red workflow the pause was right to remove. Restoring
+`main` to the trigger is blocked on the owner issuing a new token. Full write-up
+and the ruled-out theories: `docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
 ## Two master-data foreign keys the write-back could never satisfy [high]
 
 **Symptom** - on the live book, `/create-po` returns a bare 500 and the whole
