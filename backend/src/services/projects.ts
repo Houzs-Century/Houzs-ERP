@@ -700,7 +700,16 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
             uhs1.name as setup_helper_1_name,
             uhs2.name as setup_helper_2_name,
             uhd1.name as dismantle_helper_1_name,
-            uhd2.name as dismantle_helper_2_name
+            uhd2.name as dismantle_helper_2_name,
+            -- Crew phone numbers (owner 2026-08-12): the printed Event Summary
+            -- lists each driver / helper with their contact, so the sheet is
+            -- usable on site without opening the ERP.
+            ud1.phone as setup_driver_phone,
+            ud2.phone as dismantle_driver_phone,
+            uhs1.phone as setup_helper_1_phone,
+            uhs2.phone as setup_helper_2_phone,
+            uhd1.phone as dismantle_helper_1_phone,
+            uhd2.phone as dismantle_helper_2_phone
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN users u1 ON u1.id = p.created_by
