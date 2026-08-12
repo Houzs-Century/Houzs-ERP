@@ -6055,7 +6055,7 @@ function ProjectDetailContent({
         const perms = user.permissions ?? [];
         if (perms.includes("*") || perms.includes("projects.manage")) return true;
         const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
-        const inRegion = region.has(((detail.data as any)?.state ?? "").trim().toLowerCase());
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
         const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
         const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
         return (isShukor && !inRegion) || (isNancy && inRegion);
