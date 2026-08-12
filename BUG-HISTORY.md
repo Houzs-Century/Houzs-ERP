@@ -243,7 +243,7 @@ is `42P01` (relation does not exist). An absent table means nothing is anchored,
 which is what an empty list says; a 500 answers the caller's question no better.
 Every other error still surfaces as 500, so a genuine permission or connection
 fault cannot hide behind the branch. The feature stays dark. Creating the table
-remains open and is the owner's call - see `docs/sofa-combo-anchor.md`.
+remains open and is the owner's call - see `docs/modules/combo-pricing.md` section 6.
 
 **Lesson** - **"no migration needed" answers a schema question, not a code
 question.** When a table is deliberately skipped, every route that names it has

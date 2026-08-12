@@ -405,7 +405,8 @@ sofaCombos.get('/anchors', async (c) => {
      permission or connection fault can never hide behind it.
 
      If the feature is ever wanted, the fix is a migration creating the table;
-     this branch then simply stops being taken. See docs/sofa-combo-anchor.md. */
+     this branch then simply stops being taken. See docs/modules/combo-pricing.md
+     section 6. */
   if (error) {
     const missing = error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '');
     if (missing) return c.json({ anchors: [] });
