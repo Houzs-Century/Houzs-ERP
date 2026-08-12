@@ -60,6 +60,17 @@ function fmtDate(s: string | null | undefined): string {
 
 function fmtDateTime(s: string | null | undefined): string {
   if (!s) return "—";
+  // Setup / dismantle times come from a <input type="datetime-local"> and are
+  // stored as naive MYT wall clock ("2026-07-30T11:00") — no zone marker. Those
+  // must print exactly as typed; the +8h shift below is only for true instants
+  // (created_at & friends, which carry Z / an offset). Before this, an 11:00
+  // crew call printed as 19:00 (owner 2026-08-12).
+  const naive = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s) && !/(Z|[+-]\d{2}:?\d{2})$/.test(s.trim());
+  if (naive) {
+    const [datePart, timePart] = s.trim().replace("T", " ").split(" ");
+    const [yy, mm, dd] = datePart.split("-");
+    return `${dd}/${mm}/${yy} ${(timePart || "").slice(0, 5)}`.trim();
+  }
   const parsed = new Date(s);
   if (isNaN(parsed.getTime())) return s.slice(0, 16).replace("T", " ");
   const d = new Date(parsed.getTime() + MYT_OFFSET_MS);
@@ -655,7 +666,10 @@ app.get("/:id", async (c) => {
             <div class="cell"><div class="k">PIC</div><div class="v">${esc(p.pic_name || "—")}</div></div>
             <div class="cell"><div class="k">Duration</div><div class="v">${p.duration_days ?? "—"} day(s)</div></div>
             <div class="cell"><div class="k">Status</div><div class="v">${nice(p.status)}</div></div>
-            <div class="cell"><div class="k">Stage</div><div class="v">${esc(STAGE_LABEL[p.stage] || p.stage || "—")}</div></div>
+            <!-- STAGE_LABEL predates the setup / dismantle stages, so fall back
+                 to title-casing whatever the row carries rather than printing
+                 the raw enum. -->
+            <div class="cell"><div class="k">Stage</div><div class="v">${esc(STAGE_LABEL[p.stage] || nice(p.stage))}</div></div>
             ${
               hidePayment
                 ? `<div class="cell blank"></div>`
