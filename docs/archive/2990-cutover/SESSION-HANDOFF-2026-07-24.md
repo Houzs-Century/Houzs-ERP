@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Session baton from **2026-07-24**; every PR it lists was merged that day. Kept as the record of what was checked. Current state: `docs/2990-cutover/HANDOFF.md`. Kept for history; do not follow it as a current instruction.
+
 # Session handoff — 2990 → Houzs go-live hardening (2026-07-24)
 
 > **SESSION 2 CLOSE (2026-07-24, later):** 13 PRs merged and DEPLOYED (verified
