@@ -177,6 +177,10 @@
       "reads": 1,
       "catches": 0
     },
+    "backend/src/scm/lib/so-agent.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/so-audit.ts": {
       "reads": 2,
       "catches": 0
@@ -227,6 +231,10 @@
     },
     "backend/src/scm/lib/venue-binding.ts": {
       "reads": 2,
+      "catches": 0
+    },
+    "backend/src/scm/lib/zero-cost-receipt-guard.ts": {
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/routes/accounting.ts": {
@@ -326,7 +334,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 90,
+      "reads": 89,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
@@ -440,6 +448,10 @@
     "backend/src/scm/routes/warehouse.ts": {
       "reads": 8,
       "catches": 0
+    },
+    "backend/src/services/acSnapshot.ts": {
+      "reads": 0,
+      "catches": 2
     },
     "backend/src/services/agents/delivery-agent-geo.ts": {
       "reads": 2,
