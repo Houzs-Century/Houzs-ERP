@@ -474,8 +474,16 @@ async function verifyGrnLinesNotOverInvoiced(
    CANCELLED is read-only. Returns the blocking JSON response, or null if the PI
    is editable. */
 async function piLocked(sb: any, piId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('purchase_invoices')
+  const { data, error } = await sb.from('purchase_invoices')
     .select('paid_centi, status').eq('id', piId).maybeSingle();
+  /* The error is READ, not dropped. A dropped error made `data` null, `!data`
+     read as "no such invoice", and the guard answered "not locked" — so a PAID
+     or CANCELLED invoice became editable on a transient read failure. A failed
+     read must never read as an absence when the absence is what authorises the
+     write. Distinguish it from the genuine not-found below. */
+  if (error) {
+    return { error: 'pi_lock_check_failed', message: `Could not check whether this invoice is locked, so it is treated as locked — try again (${error.message}).` };
+  }
   if (!data) return null; // not found — let the handler's own load surface 404
   const row = data as { paid_centi: number | null; status: string };
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };

@@ -767,7 +767,19 @@ async function verifyGrnOverReceipt(
     }
     return null;
   } catch {
-    // Best-effort: a verification read failure must not block the receipt.
+    // Best-effort: a thrown verification failure must not block the receipt.
+    /* ⚠️ AND THE THREE READS ABOVE DROP THEIR `error` — a PostgREST failure is
+       RETURNED, not thrown, so it never reaches this catch. It folds to
+       `?? []`, the cap check finds nothing over, and an over-received line
+       stays committed. That is the 2026-08-13 swallowed-error class ("a guard
+       that says all clear because it could not look", BUG-HISTORY.md), left
+       here DELIBERATELY: reading those errors means 409-ing legitimate
+       receipts on a transient blip, which reverses the best-effort policy this
+       comment states, and that is the owner's call. The sweep fixed the guards
+       whose fail-closed answer costs nothing; this one is listed, not churned.
+       Same note applies to the add-line verifier below and to the over-invoice
+       / over-return twins in purchase-invoices.ts, purchase-returns.ts and the
+       purchase-consignment routes. */
     return null;
   }
 }

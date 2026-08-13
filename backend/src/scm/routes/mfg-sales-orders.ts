@@ -161,6 +161,7 @@ import {
   checkAllowedOptions,
   loadProductAndModel,
   loadProductsAndModels,
+  variantCheckUnavailableResponse,
 } from '../lib/allowed-options-check';
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
@@ -3749,7 +3750,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const pmByCode = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
+  const { byCode: pmByCode, lookupError: pmErr } = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
+  /* A code missing from the map because the READ FAILED is not a code the
+     catalog has nothing to say about — the loop below would read the resulting
+     nulls as "allowed" and create the order. Refuse instead. */
+  if (pmErr) return c.json(variantCheckUnavailableResponse(pmErr), 409);
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (!it) continue;
@@ -7793,7 +7798,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* PR #216 — allowed_options check on add-item. Same shape as POST /. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -8426,7 +8433,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      CHANGES variants or the item code (see above) — a genuine edit picks from
      the CURRENT pool so it still validates; an untouched line is grandfathered. */
   if (variantsChanged || itemCodeChangedOnPatch) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -8949,7 +8958,9 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   /* allowed_options gate on the merged shape (same as the generic PATCH). */
   {
-    const { product, model } = await loadProductAndModel(sb, prev.item_code, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, prev.item_code, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(product, model, nextVariants as Parameters<typeof checkAllowedOptions>[2]);
     if (aoErr) return c.json({ ...aoErr, itemCode: prev.item_code }, 400);
   }
@@ -9820,7 +9831,9 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     return c.json({ error: 'sofa_swap_only', reason: 'The replacement must be a sofa.' }, 400);
   }
   {
-    const { product, model } = await loadProductAndModel(sb, newCode, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, newCode, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(product, model, newVariants as Parameters<typeof checkAllowedOptions>[2]);
     if (aoErr) return c.json({ ...aoErr, itemCode: newCode }, 400);
   }

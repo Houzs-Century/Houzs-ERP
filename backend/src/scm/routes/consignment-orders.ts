@@ -51,6 +51,7 @@ import {
 import {
   checkAllowedOptions,
   loadProductAndModel,
+  variantCheckUnavailableResponse,
 } from '../lib/allowed-options-check';
 import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
@@ -77,10 +78,18 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
   // A Consignment Order's downstream is a Consignment Note (consignment_delivery_orders
   // keyed on consignment_so_doc_no) — NOT the real delivery_orders/sales_invoices
   // tables (those never reference a CS- doc number, so the lock silently never fired).
-  const { count: noteCount } = await sb.from('consignment_delivery_orders')
+  const { count: noteCount, error: noteErr } = await sb.from('consignment_delivery_orders')
     .select('id', { head: true, count: 'exact' })
     .eq('consignment_so_doc_no', coDocNo)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `noteCount ?? 0` read as "no Consignment Note", which is the
+     absence that authorises the line edit / CANCELLED transition this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (noteErr) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Consignment Order has a Consignment Note, so it is locked for safety — try again (${noteErr.message}).` };
+  }
   if ((noteCount ?? 0) > 0) {
     return { error: 'co_has_downstream', message: 'Consignment Order has a Consignment Note — cancel it first to edit' };
   }
@@ -768,7 +777,9 @@ consignmentOrders.post('/', async (c) => {
     if (!it) continue;
     const code = String(it.itemCode ?? '');
     if (!code) continue;
-    const { product, model } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const err = checkAllowedOptions(
       product,
       model,
@@ -1561,7 +1572,9 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* allowed_options check on add-item. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1719,7 +1732,9 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const shouldRecompute = it.variants !== undefined || it.unitPriceCenti !== undefined || it.itemCode !== undefined;
 
   if (it.variants !== undefined || it.itemCode !== undefined) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,

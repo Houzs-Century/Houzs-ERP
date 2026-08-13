@@ -206,14 +206,24 @@ describe('allowed-options loaders — a miss here means the gate stops checking'
     expect((await loadProductAndModel(sb(), 'CODY-(SS)', 1)).model?.id).toBe('mdl-houzs-cody');
   });
 
-  it('UNSCOPED yields product=null on a duplicated code — the variant gate silently passes', async () => {
-    const { product, model } = await loadProductAndModel(sb(), 'CODY-(SS)');
+  /* UNSCOPED still yields product=null on a duplicated code — but the PGRST116
+     now comes out as `lookupError` instead of being discarded. That is the
+     whole difference: the caller can tell "the catalog says nothing about this
+     line" apart from "we could not ask the catalog", and only the first of
+     those is allowed to end in a saved line. */
+  it('UNSCOPED reports the PGRST116 instead of passing the gate as product=null', async () => {
+    const { product, model, lookupError } = await loadProductAndModel(sb(), 'CODY-(SS)');
     expect(product).toBeNull();
     expect(model).toBeNull();
+    expect(lookupError).toContain('multiple');
+  });
+
+  it('a scoped hit carries no lookupError, so the gate runs normally', async () => {
+    expect((await loadProductAndModel(sb(), 'CODY-(SS)', 2)).lookupError).toBeNull();
   });
 
   it('the batched form keys by code, so it too needs the company', async () => {
-    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 2)).get('CODY-(SS)')?.model?.id).toBe('mdl-2990-cody');
-    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 1)).get('CODY-(SS)')?.model?.id).toBe('mdl-houzs-cody');
+    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 2)).byCode.get('CODY-(SS)')?.model?.id).toBe('mdl-2990-cody');
+    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 1)).byCode.get('CODY-(SS)')?.model?.id).toBe('mdl-houzs-cody');
   });
 });
