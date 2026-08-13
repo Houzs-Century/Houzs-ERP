@@ -1241,17 +1241,20 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     location: 'KL',
   }));
 
-  test('without a binding it is still refused, and the reason names the base code', async () => {
+  test('with NO binding at all it now sends, on the canonical item', async () => {
+    /* This refused until 2026-08-13 — 9028-1S is two brand items in the cutover
+       map and a sales order names no creditor. The standing choice settles it
+       with one canonical item, opened by /ensure-masters on first use. */
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
       supplier_material_bindings: [],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(false);
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
     const [row] = outbox(sb);
-    expect(row.status).toBe('skipped');
-    expect(String(row.last_error)).toContain('ItemCodeError');
-    expect(String(row.last_error)).toContain('9028-1S');
+    expect(row.status).not.toBe('skipped');
+    expect(row.payload.body.Details).toHaveLength(1);
+    expect(row.payload.body.Details[0].ItemCode).toBe('9028-1S');
   });
 
   test('a binding on the MODEL BASE CODE is found and the document sends', async () => {
