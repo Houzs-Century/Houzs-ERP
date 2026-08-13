@@ -81,6 +81,336 @@ will show.
 
 **Ref** — 2026-08-14, `fix/autocount-so-agent`.
 
+
+## Documentation audit, 2026-08-13/14 — what the docs claimed and the code does not [high]
+
+**Scope note.** This entry is a CORRECTION RECORD, not a bug fix. It is filed
+here because the standing rule at the head of this file makes this file the
+system's memory, and because two of the items below are LIVE, UNFIXED defects
+found while testing doc claims against `origin/main` `0c2a4e88`. Nothing in the
+accompanying change touches code — it is docs-only on purpose, so the diff is
+reviewable as one thing.
+
+**Symptom** - the owner, 2026-08-13: *"直接去查看源代码，不要再查看它的文档了，那些
+文档已经很有问题了。"* Tested every load-bearing claim in the module docs, the
+COEs, `README.md` and `CLAUDE.md` against the tree that ships today. Fourteen
+claims were false in the present tense. Two of them describe behaviour that is
+broken in production right now.
+
+**Root cause** - three mechanisms, all mechanical, none of them carelessness:
+
+1. **A hand-resolved 13-branch squash merge (#2121, `d33ac743`) kept the wrong
+   side of several conflicts, in code AND in the doc, in one operation** — which
+   is why the doc could not catch the code. `git log -S` on the exact strings
+   names `d33ac743` as the commit that reintroduced them. It left
+   `docs/modules/sales-order.md` carrying BOTH halves of an unresolved conflict,
+   printed back to back: two contradictory definitions of the Processing-Date
+   column in one paragraph, and a duplicated `elapses (so-field-policy).` line.
+2. **A register written to survive a rename did not survive the rename it was
+   written for.** `sales-order.md`'s "column registry" — authored in #2106 on a
+   branch predating the rename branch — named the RETIRED column
+   `internal_expected_dd` as *"the only storage this concept has. Use this one"*
+   and closed with *"it is `internal_expected_dd`, full stop."* The same batch
+   merged the migration that retired it.
+3. **A doc that CACHED a production measurement as a durable sentence.**
+   `docs/autocount-sync-coverage.md` warned *"Re-run the workflow before quoting
+   these; they move with the data"* two lines above quoting them itself as
+   settled state, in bold: toggle `off`, outbox *"zero rows of any status"*,
+   *"No ERP document has ever reached AutoCount."* All three were falsified the
+   next day by the two `skipped` rows recorded at the top of this file.
+
+**Fix** - fourteen documents corrected, each with a dated correction block rather
+than a silent edit, because the fact that the first version was believed is the
+lesson. Full list in the PR body. The two LIVE defects found are recorded here so
+they are not lost when the docs read clean:
+
+**LIVE #1 — the Processing-Date rename is not finished, both proceed paths are
+dead, and this is live in production.** Mig `0286` renamed
+`scm.mfg_sales_orders.internal_expected_dd -> processing_date` and **applied on
+prod at 2026-08-13T13:46:59Z** — Deploy run `31705868668`, `backend` job:
+`APPLIED 0286_scm_processing_date_one_name.sql (6 statements)`. The old column is
+gone. Six literals in `backend/src/scm/routes/mfg-sales-orders.ts` were left
+behind by #2121's conflict resolution and no longer resolve:
+
+| line | literal | effect |
+|---|---|---|
+| `:5922` | `.select('proceeded_at, internal_expected_dd, …')` | 42703 fails the whole query; the error is discarded, `curRow` is null, every gate below evaluates against nulls |
+| `:5925` | row type declares the old name | agrees with the dead SELECT, so nothing type-complains |
+| `:5938` | `stored: curRow?.internal_expected_dd` | always null |
+| `:5958` | `patch.internal_expected_dd = resolved.date` | writes a column that does not exist |
+| `:7187` | `effOf('internal_expected_dd')` | the camel→snake map at `:6715` is `['processingDate','processing_date']`, so the key cannot exist — `PATCH /:docNo` with `proceededAt` returns 422 `PROCEED_NEEDS_DATE` on an order that HAS a Processing Date |
+| `:5059` | `body.internalExpectedDd` on create | no live client sends it — `SalesOrderNew.tsx:1646`, `MobileNewSO.tsx:1827/1898` and the create's own INSERT `:5254` all use `processingDate`. `autoProceed` is therefore always false: an order created WITH a Processing Date is created un-proceeded, the exact inverse of the owner's pinned rule *"只要有 Processing Date，就代表他 Proceed 了"* |
+
+`backend/src/scm/shared/so-processing-date.ts` already exports
+`SO_PROCESSING_DATE_COLUMN = 'processing_date'` and
+`SO_HEADER_LEGACY_PAYLOAD_KEYS.internalExpectedDd -> 'processingDate'`. The fix
+is to read those. **NOT FIXED — needs its own diff.**
+
+**LIVE #2 — the delivery board's `job_date` field was deleted by the same merge,
+and the doc still documents it.** `9fa8e0ff` added `job_date` so synthetic ASSR /
+DP / project rows stop carrying their leg date in the SO's Processing-Date field.
+`e1263558` (squashed into `d33ac743`) **removed every one of those lines** —
+`git show e1263558 -- backend/src/scm/routes/delivery-planning.ts` deletes
+`job_date: null`, `job_date: leg.date` (×2) and `job_date: date`. On `0c2a4e88`,
+`grep -rn 'job_date' backend/src` returns one stale comment and no field;
+`delivery-planning.ts:1169/:1333/:1470` still write `processing_date: leg.date`.
+`docs/modules/delivery-tms.md` described the deleted version as shipped, and
+`frontend/src/mobile/MobileDeliveryPlanning.tsx:177` and
+`backend/src/scm/shared/so-processing-date.ts:28` still describe it as live.
+**NOT FIXED — needs its own diff.**
+
+**Lesson** - **a conflict resolution is a rewrite, and nothing re-derives the
+invariant afterwards.** All three mechanisms above are the same shape: work that
+was correct on its own branch, merged by hand against work that was also correct
+on its own branch, wrong together, with no compiler and no test able to object
+because every one of these bindings is a STRING — a PostgREST select list, a
+`Record` key lookup, a doc table. The pattern that DOES work is already in this
+repo and is proven: make the parameter required and let the compiler enumerate
+the call sites. Six such parameters were swept and are required on `main` today.
+A string literal has no such enumerator, which is exactly why
+`so-processing-date.ts` exists — and why six sites that do not use it are the
+finding.
+
+**Also measured, and stated so it is not re-discovered:**
+- `142` lines in this file carry the literal unsubstituted placeholder `#<PR>`
+  in a Ref line, so those entries cannot be walked back to a commit
+  mechanically. (`grep -c '#<PR>' BUG-HISTORY.md` on `0c2a4e88` = 142; it reads
+  143 after this entry, which quotes the placeholder once as an example.)
+- Measured on `0c2a4e88`, before this entry: 2.5 MB, 10,658 lines, 847 entries
+  (134 `## ` + 713 `### `). This file's own instruction — *"read it before
+  touching a subsystem"* — is no longer executable at that size.
+- An independent coverage test on 2026-08-13 found ~15% of in-window `fix`
+  commits have no entry here at all, concentrated in cutover / sofa-import /
+  fabric-migration work. One of them, `70559354` (#1858), says sofa pillow stock
+  *"was thrown away"* — a stock-loss incident with no entry in this log.
+
+**Ref** - `docs/correct-lying-claims`, 2026-08-14. Audited against `origin/main`
+`0c2a4e88`. No production database was queried; every figure here is from a
+command run on that tree or from a cited commit message.
+
+---
+
+## The sofa purchase orders were never dedicated, and the delivery dates were lost to a renamed key [high]
+
+**Symptom** — 274 of 714 processed bedframe/sofa sales-order lines (38%) have no
+dedicated purchase order. Measured live on 2026-08-10 rather than taken on
+trust: **400 of 975** `scm.purchase_order_items` rows carry `so_item_id IS
+NULL`, of which the existing three-tier backfill can stamp **zero** (Tier 1/2/3
+all 0; 392 have no delivered chain and no usable note). Separately **110** of
+the 864 migrated PO lines and **48** headers show a blank EXPECTED DELIVERY
+although AutoCount has a date on every line, and `backfill-po-expected-at.mjs`
+cannot rescue them — its own production dry-run says so in one line: `can be
+filled from their own lines: 0; still blank because no LINE carries a date
+either: 48`. It derives the header from the LINES, and the lines are the thing
+that is null.
+
+**Root cause, traced not guessed** — three faults on the same rows, and the
+first theory was REFUTED before any of them was found. It is NOT that the sofa
+compartment decoder fails: 184 sofa PO-to-SO pairs share the same AutoCount
+ItemCode 184/184 and the same `Desc2` 182/184, and decoding all 126 sofa lines
+gives ZERO cases of "the PO fails where the SO succeeds".
+
+1. **`import-ac-outstanding-po.mjs`'s INSERT column list has no `so_item_id`.**
+   Not a broken lookup — no column. `grep so_item_id|FromSODtlKey` in that file
+   returned nothing. The script that DOES dedicate,
+   `import-ac-so-linked-pos.mjs`, then skips a document whole when it already
+   exists ("PO docs in file: 366; already in ERP: 267"), so it never went back
+   for the 267 the first importer had created. In the whole log of run
+   31359369768 the string `009830` appears zero times.
+2. **A renamed export key.** The same importer read `l.DelivDate` at three
+   sites. The snapshot was re-cut in `a5f51653` (PR #1779) with the key
+   `DeliveryDate`: 0 of 338 rows carry `DelivDate`, 338 of 338 carry
+   `DeliveryDate`. Reading an absent key is `undefined` in JavaScript, not an
+   error, so every line imported blank and nothing anywhere said so.
+3. **The line key was computed and thrown away.** `import-ac-so-linked-pos.mjs`
+   builds `dtlKey: Number(l.DtlKey)` at three sites; its INSERT has 21 columns
+   and none of them is it. `PODTL.DtlKey` is the PRIMARY KEY of AutoCount's PO
+   detail table and all 738 keys in the committed snapshots still resolve in the
+   live AED_HOUZS book (checked read-only over ODBC), so a durable handle was
+   discarded and every later repair has had to re-derive the link by matching.
+
+Both hops work when you walk them. For `HC-PO-009830`:
+`soLineByDtl.get("773519")` -> `SO-011207` / `HOK-5530 SOFA`, and
+`SOFA_MODEL_ALIAS` 5530->9028 decodes the same `Desc2` to `9028-2A(LHF)` +
+`9028-L(RHF)` — exactly the two rows already on that ERP purchase order.
+
+**Fix** — one repair over the same rows, `repair-migrated-po-lines.mjs` +
+`.github/workflows/repair-migrated-po-lines.yml`, DRY-RUN by default: it stamps
+`so_item_id`, `delivery_date` and `linked_ac_dtlkey` per line and then the
+header's `expected_at`, every UPDATE re-asserting the column is still NULL so a
+re-run plans nothing. Both importers are fixed too, not only the data: the
+date is read through `scripts/lib/ac-po-line.mjs`, the dedication through the
+SHARED `scripts/lib/so-line-dedication.mjs` (the taker was extracted from the
+one script that had it right), and both now write `linked_ac_dtlkey`
+— **#1819's `0273` already added exactly that column**, so this PR adds no
+migration of its own; a second column would have been the real mistake.
+Recovering which ERP row descends from which AutoCount line lives in `scripts/lib/ac-po-line-match.mjs`
+and refuses rather than guesses: a group whose two sides do not split the same
+way is refused whole, and so is one whose AutoCount lines disagree on anything
+the repair would write.
+
+**The zip's premise was FALSE, and review caught it before it wrote anything.**
+The first version of this fix zipped "indistinguishable" rows in `DtlKey` order,
+justified as *"identical on every field the ERP stores... any bijection is the
+same set of facts."* That is true of the ERP rows and false of the AutoCount
+lines, which is the side every written value is read from. Measured against the
+committed snapshots: **all 5 surviving buckets (10 AutoCount lines) carry
+DIFFERENT `FromSODtlKey`s** — `PO-000290` 60700/60702, `PO-009024`
+829179/829180, `PO-009596` 871212/871213, `PO-009746` 796552/796553, `PO-009767`
+887681/887682. Delivery dates agree in all 5, so `delivery_date` was never at
+risk; `so_item_id` and `linked_ac_dtlkey` were a coin flip on 12 rows. Worse,
+`PO-000290`'s two keys resolve to two different PRODUCTS on one order (60700 ->
+`SO-000870` "MYLATEX LUMBARIA (K)", 60702 -> `SO-000870` "NB-KHJ57(K)"). The fix
+refuses any bucket whose AutoCount lines disagree on `FromSODtlKey` or
+`DeliveryDate` and prints both candidates; on today's data that repairs 0 of
+those 12 rows.
+
+**The class** — *"the rows are indistinguishable" is a claim about ONE side of a
+match, and the side you are copying FROM is the one that has to be checked.*
+Two corollaries were fixed in the same pass. The `base` fallback could bind a PO
+line for product A to an SO line for product B, defended by a comment claiming
+the importer makes the same attempt — it does not: `import-ac-so-linked-pos.mjs`
+uses `base` only and never the PO row's own code. (Re-measured on the snapshots
+2026-08-11: exactly **1** of 579 resolvable lines is cross-product —
+`PO-000290` DtlKey 61216 `NB-KHJ57(K)` -> ERP `CODY-(K)`, pointed by
+`FromSODtlKey` at `SO-000870` "MYLATEX LUMBARIA (K)" -> ERP
+`LUMBARIA MATT (K)`. So the guard costs one link today and that link would have
+been the only wrong write.) That decision is no longer inline prose in the
+script: it is `dedicationCandidates()` in `scripts/lib/so-line-dedication.mjs`,
+one implementation with its own tests, so the rule and the comment defending it
+cannot drift apart again. And the zip's tie-break sorted a serial `id` with
+`localeCompare`, so ids `[9,10,11,12]` order as `[10,11,12,9]` and split a
+sofa's compartment rows across different AutoCount lines; it sorts numerically
+now.
+
+**Guards, each proven by breaking it** (`tests/acPoLineRepair.node.mjs`, 24
+tests, all passing): disable the coin-flip refusal -> **3 fail** (18/21 before
+the cross-product tests were added); drop the `sameProduct` gate so `base` is a
+blanket attempt again -> **1 fails** (23/24); restore the `localeCompare` row
+sort -> **1 fails**; point the date accessor back at the old `DelivDate` key ->
+**3 fail**. A test that does not fail without its fix proves nothing, so each
+was run both ways rather than asserted.
+
+Two smaller faults from the same review: `i.cancelled = false` (three queries)
+silently dropped NULL-cancelled SO lines out of a **claim-once** pool, which
+both under-repairs and can hand a different line to the next PO row — this repo
+reads the column as nullable everywhere else, `check-po-so-links.mjs` (the
+checker for this exact link) included, so all three now use
+`COALESCE(cancelled, false) = false`. And the APPLY log reported `plan.length`
+as the RESULT; it now prints the three affected-row counts the database returns.
+
+**The class, for next time** — *a field you read by name from a file you did not
+write is a silent dependency, and JavaScript will not tell you when it breaks.*
+Reading a renamed key produced `undefined`, which flowed all the way into a
+`NULL` column with no error, no warning and no failing test — the same shape as
+the five-copies-of-findColour entry above, one layer earlier. The guard is
+`tests/acPoLineRepair.node.mjs`, which asserts the accessor still resolves on
+every row of the COMMITTED snapshots (917 rows). A fixture would never have
+caught this, because a fixture carries whatever key the test author typed;
+revert the accessor to `DelivDate` and that test fails 338 + 579 times. The
+second half of the class: *a column missing from an INSERT is invisible to
+every reader* — nothing downstream can distinguish "never written" from
+"genuinely absent", which is why the second importer's skip-if-exists looked
+correct while it was silently the reason nothing ever went back.
+
+**The production DRY-RUN, MEASURED after all the review fixes** — 2026-08-11,
+read-only, `APPLY` hardcoded to `0`
+([run 31457184673](https://github.com/hello-houzs/Houzs-ERP/actions/runs/31457184673)):
+
+```
+migrated purchase orders: 449; their lines: 864
+  lines missing so_item_id 374; missing delivery_date 110; missing linked_ac_dtlkey 589
+matched: sole 657; split by (qty, Desc2) 127; indistinguishable, zipped in DtlKey order 0
+PLAN: 551 line(s) to update - so_item_id 95; delivery_date 83; linked_ac_dtlkey 509
+       new dedications by item group: sofa 62; accessory 27; bedframe 6
+       45 header(s) to give an expected_at; 17 of them are in the PAST
+REFUSED groups: 6      NOT REPAIRED - every line, with its reason: 302
+```
+
+Every one of the 551 is printed individually, and the printed list tallies to
+exactly `95 / 83 / 509` — the plan is built ONCE and both the log and the writer
+consume that same array, so the dry-run cannot claim one thing and write
+another. **`indistinguishable, zipped in DtlKey order 0`** is the coin-flip
+refusal working: all 5 buckets are refused, plus `HC-PO-009620`.
+
+The earlier `796 / 87 / 99 / 46` were the PRE-FIX figures and, as predicted,
+every one moved DOWN. The line-key drop is the largest and is NOT this PR's
+doing: 275 of the 864 were keyed by another script the day before (below).
+
+**Dispatching it did not require merging.** A `workflow_dispatch` is resolved to
+a workflow by its PATH on the default branch but RUNS the file content at the
+requested ref. So the dry-run was dispatched at a throwaway ref that borrowed the
+path of `po-so-links-check.yml` — an on-main, no-input, read-only check in the
+same PO<->SO domain — whose content at that ref ran this repair with `APPLY`
+hardcoded to the literal `"0"` and no input able to override it. The ref was
+deleted as soon as the run was read. `repair-migrated-po-lines.yml` itself still
+cannot be dispatched until it is on `main`, which remains true and is why the
+technique was needed:
+
+```
+$ gh workflow run repair-migrated-po-lines.yml --ref fix/po-dedication-and-dates -f target=prod -f apply=0
+HTTP 404: workflow repair-migrated-po-lines.yml not found on the default branch
+```
+
+**FIVE WRONG LINE KEYS ARE LIVE IN PRODUCTION RIGHT NOW, and they are not this
+PR's.** On 2026-08-10 `backfill-ac-line-keys.mjs` ran in APPLY mode against
+production (run 31416597720) and wrote 275 purchase-order `linked_ac_dtlkey`
+values by a weaker rule: a match on (DocNo, ERP item code) zipped by a `line_no`
+it selected as `NULL::int`, so the sort was a no-op and the pairing was whatever
+order postgres returned. This repair's `IS NULL` guard skips those 275 — correct,
+it must never overwrite a value it did not write — but it now AUDITS them:
+**270 agree, 5 DISAGREE.** All 5 are permutations within a document, and the
+evidence is the ERP row's own `Desc2`, copied verbatim by the import, matching
+the DERIVED line's `Desc2` exactly:
+
+| PO | row | stored | derived | evidence |
+|---|---|---|---|---|
+| HC-PO-009770 | HAPPI SLEEP SOLITUDE MATT (Q) x3 | 889395/889396/889397 | 889397/889395/889396 | `Desc2` names three different roadshow venues; each row's text matches its DERIVED line |
+| HC-PO-009722 | CODY-(Q) x2 | 884635 / 884637 | 884637 / 884635 | `M'GP:10"` vs `M'GP:14"` — swapped; and the two lines carry DIFFERENT `FromSODtlKey` (884180 / 778589) |
+
+A wrong `DtlKey` is not a cosmetic difference: migration 0273's own header says
+`AcSyncService` dereferences it on the edit path, and a wrong one makes it
+**APPEND** a line to the live account book instead of editing the one the
+operator changed. **This repair neither writes nor reverts them** — nothing is
+ever deleted here — it reports them for an owner ruling.
+
+**The "589 are decomposed sofa compartments" hypothesis is REFUTED as the
+explanation**, though the mechanism is real. That run's `no AC match 589` is
+re-derived here as exactly **589** against the same two files and the same
+mapping CSV, then given a reason each:
+
+```
+464 x the AutoCount document is only in ac-so-linked-pos.json.gz, which the
+      code match never opens (it reads ac-outstanding-po.json.gz alone)
+ 65 x the ERP row is a COMPARTMENT of a decomposed line
+ 46 x the AutoCount document is in NEITHER committed PO export
+ 11 x the AutoCount ItemCode has no row in autocount-erp-mapping-1561.csv
+  3 x document and item are both mapped, but no line maps to this material_code
+by item_group: bedframe 315; sofa 215; accessory 26; mattress 22; others 11
+DECOMPOSED COMPARTMENT? asked of every row: yes 173; no 336; unanswerable 80
+```
+
+**79% of the gap has nothing to do with item codes.** The dominant cause is
+file scope: that script opens ONE of the two committed PO exports, so 464 lines
+were invisible to it whatever their SKU — a plain mattress line on such a
+document fails identically. The largest `item_group` is **bedframe (315)**, not
+sofa, and **0** bedframe rows are compartments. The compartment mechanism is
+real and accounts for **173** rows (all sofa — 173 of the 215 sofa lines), which
+is 29% of the 589, not the explanation for it.
+
+Note the two compartment numbers differ on purpose: the reason list says 65
+because `codeMatchGapReason()` returns the FIRST cause that applies and the
+document-level causes are tested first — correctly, since an unopened document
+fails whatever the code is. Read as the answer, 65 would understate; the census
+therefore asks `isCompartmentSku` of every row independently, and keeps
+"unanswerable" (80 rows this repair cannot reach either) distinct from "no",
+because an unreachable row is not evidence in either direction.
+
+This repair reaches **509 of the 589** the code match could not.
+
+**Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
+(fix/po-dedication-and-dates).
+
 ## Three bugs in the AutoCount parity checkers, all in OUR queries, none in the data [medium]
 
 **Symptom** — both read-only checks crashed on 2026-08-10, and the section that
@@ -262,6 +592,7 @@ exemption it had just written applied. A surface that is told to go and use a
 different screen is a surface that has been switched off.
 
 **Ref** - 2026-08-13.
+
 ## The State dropdown was cut off after two or three states on every address form [medium]
 
 **Symptom** - the owner, on the Sales Order detail address block: "我的 state 的那个
@@ -313,6 +644,7 @@ converted, grep for its siblings (`grep -L createPortal` over the components
 that render a floating panel) before closing the ticket.
 
 **Ref** - `fix/state-picker-portal`, 2026-08-13
+
 ## Two ways the sofa write-back could pick a different item for the same sofa [high]
 
 Found while giving the four ambiguous sofa models a single canonical item. Both
@@ -355,6 +687,7 @@ what a sofa is, alongside the collapse that had already decided. The fix that
 actually holds is not a better opinion, it is deleting the second one.
 
 **Ref** - `feat/ac-sofa-default-code`, 2026-08-13
+
 ## A new workflow was wired to two secrets that do not exist, by copying the one workflow that already was [medium]
 
 **Symptom** - the first dispatch of "Re-queue skipped AutoCount documents" died
@@ -518,6 +851,7 @@ while the human is still on the screen.
 **Ref** - PR #2099, 2026-08-13.
 
 ---
+
 ## A sofa and a pillow were sitting in the fabric catalogue, and nothing on the write path could have stopped them [medium]
 
 **Symptom** - a prod probe on 2026-08-13 (`probe-fabric-leftovers.mjs`) found two
@@ -560,6 +894,7 @@ something, judge the field that carries identity (the code), not the field that
 carries prose (the description) — the prose was full of the exact word.**
 
 **Ref** - 2026-08-13, this PR. Probe: `probe-fabric-leftovers.mjs` group A.
+
 ## Proceeding an order stamped a click time and set no start date, so an order could be in production with no day the factory starts [high]
 
 **Symptom** - an order could reach IN_PRODUCTION carrying `proceeded_at` and a
@@ -599,6 +934,7 @@ writes one and forgets the other, and the half-written row looks valid to every
 reader that checks only its own marker.
 
 **Ref** - PR (branch `proceed-is-the-date`), 2026-08-13.
+
 ## The server enforced "both dates or neither" in one direction only [medium]
 
 **Symptom** - the New/Edit SO form refuses a lone date in either direction
@@ -630,6 +966,7 @@ as "the shared rule checks it". Two of five callers of this helper had no
 short-circuit of their own.
 
 **Ref** - `fix/date-pair-server-side`, 2026-08-13
+
 ## Every readiness and cutover number the owner was shown counted a different population than the screens he compared them against [medium]
 
 **Symptom** - the ops scripts and the app disagreed about which orders are
@@ -670,6 +1007,7 @@ own comment at `mfg-sales-orders.ts:455` says the lock stopped requiring
 and no sweep carried that same reasoning across to the scripts.
 
 **Ref** - `fix/proceeded-at-diagnostics`, 2026-08-13
+
 ## A guard that says "all clear" because it could not look [high]
 
 **The shape, named** — a Supabase read destructures `data` (or `count`) and
@@ -769,6 +1107,7 @@ Tests: `downstream-lock.test.ts` (new failed-read cases),
 `service-line-guard.test.ts` (new file),
 `product-lookup-company-scope.test.ts` (the "silently passes" case now pins the
 reported PGRST116 instead).
+
 ## Four repair scripts whose SECOND run destroys what their first run created [high]
 
 **Symptom** - a production PLAN of `normalize-fabric-codes.mjs` on 2026-08-13
@@ -842,6 +1181,7 @@ either converges by construction or has to refuse. Every script in
 `backend/scripts` that writes now states its re-run behaviour in its own header,
 because "is it safe to run this again" was a question nobody could answer without
 reading the whole file - and three times this month somebody answered it wrong.
+
 ## MRP and the Inventory page disagree about whether a DRAFT or SHIPPED order still demands stock [med, LEFT OPEN]
 
 **Symptom** - not a report from staff; found by grep on 2026-08-13 while
@@ -937,6 +1277,7 @@ when the truth moved. Import it, or pin it with a test - a citation is not a
 mechanism.
 
 **Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
+
 ## BUG CLASS - optional-param-noop: an optional argument that decides something [high]
 
 **The shape** - a parameter is OPTIONAL, and its ABSENCE changes an answer: a
@@ -1029,6 +1370,7 @@ existed, because it is.
 `fix/variant-itemcode-required` follow-up.
 
 ---
+
 ## Every company-scoped WRITE in the system was missing its company predicate [high]
 
 **Symptom** - no operator-visible symptom, which is the point. A caller switched
@@ -1074,6 +1416,7 @@ is not follow-up work, it is the same bug.
 
 **Ref** - `sweep/unscoped-write`, 2026-08-13. Convention now in `CLAUDE.md`
 (Coding conventions) and `docs/MULTICOMPANY-MODULE-MAP.md`.
+
 ## The Processing Date has surfaces that read it by NAME, and every one of them fails in silence [high]
 
 **Symptom (latent, not yet fired)** - the owner, 2026-08-13, after saying it more
@@ -1174,6 +1517,7 @@ only and a "Processing" column blanks with no error.
 flattened header. The grid `key: 'processing_date'` in three lists is a SAVED
 LAYOUT key persisted per user (migration 142) - it is already the unified name
 and must not move.
+
 ## The word "processingDate" meant three different facts in the scan payloads, and an audit had already been fooled by it [medium]
 
 **Symptom** - no runtime failure. The damage shows up as repeated bugs around
@@ -3234,6 +3578,7 @@ Two follow-on findings, both caught by tests rather than by reasoning:
   wrong one silently edits a different line in a live account book.
 
 **Ref** - 2026-08-11, PR #1936 (feat/ac-erp-line-identity). C# half in #1935.
+
 ## A bedframe SO line was stamped with a DIFFERENT line's build, because the Desc2 lookup was keyed on the document instead of the line [high]
 
 **Symptom** - 14 migrated bedframe sales-order lines disagreed with the purchase
@@ -3410,6 +3755,7 @@ The regression guard is behavioural rather than structural: three tests drive
 fails two of them (verified by reverting the line).
 
 **Ref** - 2026-08-11, PR #1954 (fix/so-amendment-migrated-price).
+
 ## Editing a SHIPPED delivery order never reached the stock ledger [high]
 
 **Symptom** - silent, and stock. An operator changes a line qty, deletes a line
@@ -3478,6 +3824,7 @@ being fixed and it is invisible from the resync function alone.
 
 **Ref** - 2026-08-11, PR #1957 (fix/do-resync-ledger). Comments corrected earlier
 in #1941; see the entry below for that.
+
 ## A CANCELLED purchase order could be hard-purged from the database [high]
 
 **Symptom** - not a crash; a capability that should never have existed.
@@ -3696,6 +4043,7 @@ history. And never assume two line tables are symmetrical: ask
 `information_schema`, or the second arm dies at 42703 mid-run.
 
 **Ref** - fix/chain-residue-repair, 2026-08-11
+
 ## A frozen write reads as an outage on every path that is not the vendored SCM client [medium]
 
 **Symptom** - with the go-live write freeze ON, a refused write answered
@@ -3840,6 +4188,7 @@ by a field that merely sounds like it means the same thing.
 
 **Ref** - 2026-08-11, PR #1942 (fix/stock-criterion-close). Found by an
 independent read while closing go-live criterion 3.
+
 ## /edit appended a duplicate of every line into the live account book, and a line could not be retired without deleting it [critical]
 
 **Symptom** - none yet, and that is the point: the ERP -> AutoCount write-back
@@ -3964,6 +4313,7 @@ them, which is what makes these two bugs fail a test instead of a live account
 book.
 
 **Ref** — 2026-08-10, PR #1855 (feat/ac-writeback-wiring-v2), found by #1898.
+
 ## "APPLIED - stamped 146 sofa lines", three times, and it was corrupting them [high]
 
 **Symptom** — `refresh-sofa-colours.mjs` was dispatched against prod with
@@ -4232,6 +4582,7 @@ question is only ever answered by tracing which branch writes
 `unitToPersistSen`.
 
 **Ref** - fix/special-addon-prices-from-autocount, 2026-08-11
+
 ## A migrated DO line carries no item_group, so every DO-side audit filtered itself down to nothing [medium]
 
 **Symptom** - the sofa document chain had never been checked past the purchase
@@ -4326,6 +4677,7 @@ safe for the item columns and unsafe for the header ones. `item_code` vs
 same sweep are two queries, not one query twice.
 
 **Ref** — 2026-08-10, PR #1910 (fix/probe-po-number).
+
 ## The special-order backfill wrote a field the picker never reads, and recompute erases [high]
 
 **Symptom** — the sofa special orders were "backfilled" and the Special Orders
@@ -4377,6 +4729,7 @@ silently reprices that historical document on its next edit, so the backfill
 script refuses to APPLY when any code it would stamp carries a non-zero price.
 
 **Ref** — 2026-08-10, PR fix/specials-into-variants.
+
 ## Five sofa colour strings named a fabric the library already held [medium]
 
 **Symptom** - after the shared matcher landed and 18 missing colours were
@@ -5222,7 +5575,6 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Fix.** The duplicate check scopes to the active company (same slice as the insert stamp and the list); unresolved-company installs keep the global check.
 - **Ref:** #<PR>. `fix/brand-dup-check-company-scope` 2026-08-08.
 
-
 ## 2026-08-07
 
 ### [HIGH] A Sales Order total carried a delivery fee NO line owned — deleting the SVC-DELIVERY line turned the header snapshot into a back door
@@ -5479,7 +5831,6 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Remediation is CANCEL in the app, never SQL.** The cancel path runs `fn_reverse_do_out`, which restores the DO's ORIGINAL lots at their ORIGINAL per-lot cost and deletes its `inventory_lot_consumptions` rows so the cancelled sale's COGS leaves the ledger. A hand-written UPDATE would move the quantity back and leave the costing ledger wrong.
 - **The class, for next time.** A nullable link is a nullable guard. Any check whose WHERE clause traverses a link is unable to see rows where the link is missing — audit those by the header, or by the absence itself. And when the owner says the screen disagrees with the check, the screen is the evidence and the check is the hypothesis.
 - **COE:** `docs/unlinked-line-duplicate-coe.md`. **Ref:** #1581, #<PR>. `fix/split-check-sees-unlinked` 2026-08-04.
-
 
 ## 2026-08-03
 
@@ -6467,6 +6818,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Test.** `scm/lib/consignment-lot-source.test.ts` (11 cases): PC_RECEIVE/PC_RETURN/PURCHASE_CONSIGNMENT_NOTE flagged; a STOCK_TRANSFER delta top-up with a PCR number flagged; bare (HOUZS) `PCR-…` flagged; a GRN and a genuine non-PCR STOCK_TRANSFER NOT flagged; `PCO-`/`PCT-` siblings NOT matched; null-safe. Plus the BOOQIT-CNR case in miniature — owned value = RM 1,000.00 (the GRN lot only), NOT RM 2,564.19; consignment qty (2) surfaced separately; total qty still 3.
 - **The class, for next time.** Ownership is a property of the SOURCE that created the stock, not of where it currently sits. When a flag can be set by mis-posting (a warehouse's is_consignment), it cannot gate MONEY — trace the value to the fact that is invariant (the lot came from a PC Receive) and classify there.
 - **Ref:** #<PR>. `feat/inventory-drawer-redesign` 2026-07-25. Merged the drawer's three tables into one per-lot table + added the reserving SO's delivery date in the same PR.
+
 ## 2026-07-24
 
 ### [MEDIUM] Mail Center mailbox creation validated against the HOUZS domain regardless of the active company — a 2990 mailbox was impossible to create
@@ -8311,7 +8663,7 @@ Six mobile screens diverged from their desktop twins — three touching stock, m
 - **Why no rename — the trap that would have made this an invisible outage.** Several paths in this app are IDENTIFIERS, not just addresses, and one of the mirrors **fails OPEN**: `MobileApp.tsx` `allowed()` resolves a mobile row's permission by looking its path up in `NAV_TABS` and **returns `true` when nothing matches**. So renaming a `to:` in `Sidebar.tsx` without renaming the matching `MOBILE_MENU_GROUPS` row does not hide the screen — it **ungates** it. `/reports/fair-report` carries `requireFairReport` on the Sidebar entry ONLY and the mobile row borrows it by path; same shape for `/scm/delivery-returns` (`hideForSales`). `gateVia: "/scm/fleet"` IS the permission for the mobile Drivers and Helpers screens. `mobileRoute.ts` `SO_RESERVED_SEGMENTS` contains the bare string `"maintenance"` — the only thing stopping `/scm/sales-orders/maintenance` parsing as a document number. Renaming any of those while nine agents concurrently edit `Sidebar.tsx` and `MobileApp.tsx` risks a silent permission leak for a cosmetic gain; the renames are documented and sequenced instead.
 - **Testing:** frontend `npx tsc -b` (the exact CI command) clean; backend `tsc --noEmit -p .` clean; 99 new tests across `canonicalHost.test.ts` (22) and `routeAliases.test.ts` (77) pass. The alias tests assert every alias resolves to its destination, that every destination is a route actually declared in `App.tsx`, that no alias shadows a real route, and that there are no chains or loops. `canonicalHost.test.ts` additionally pins the hand-copied logic in `[[path]].ts` to the shared module — including an assertion that the host comparison stays `!==` exact and never drifts to an `endsWith(".pages.dev")` that would swallow staging. (Rebased onto current `main`: the `/reports/fulfillment-costing` alias and its assertions were dropped because #846 removed that module — there is no destination to resolve to, so a guess at that path correctly reaches the not-found page.)
 - **The class, for next time:** before renaming a URL in this repo, grep for the path as DATA, not just as a route definition — nav `to:`, `gateVia`, `destinationScreen()`, `ROUTE_TO_CONFIG`, `SO_RESERVED_SEGMENTS`, prefetch keys, `CARD_DESCRIPTIONS`. The mobile gate lookup failing open means the failure mode of a missed mirror is "visible to everyone", not "broken", which nobody reports.
-- **Ref:** `chore/url-standardization`, 2026-07-19. Frontend + docs (README, `RUNBOOK-URL-STANDARDIZATION.md`), no migration. NOT merged.
+- **Ref:** `chore/url-standardization`, 2026-07-19. Frontend + docs (README, `docs/archive/RUNBOOK-URL-STANDARDIZATION.md`, archived 2026-08-13), no migration. NOT merged.
 
 ### 🟢 Removed the redundant Fulfillment Costing module and renamed Fair Report → "Sales Report" (owner decision, not a bug)
 - **Owner decision, logged per the mandatory-entry rule.** The "Fair Report" already carries the three-way SO→DO→Invoice cost comparison, so the standalone **Fulfillment Costing** report was redundant. Removed the whole FC module; renamed the Fair Report's user-visible label + page/heading to **"Sales Report"**.
@@ -8934,6 +9286,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Honest gaps, NOT fixed here, so they stay named.** (1) **No bounce/complaint webhook and no suppression list** — HOOKKA has none either; a hard bounce is visible only in the Resend dashboard, and `email_log` records that Resend *accepted* the message, which is not the same as delivered. This is the single biggest remaining hole and it is a new build, not a guard. (2) **No environment guard** — nothing prevents a preview/staging isolate from sending real mail if `RESEND_API_KEY` is bound there; the only gate is key presence. Unchanged from HOOKKA and unchanged by this PR. (3) **No per-recipient throttle** — anti-spam is structural (the claim window + human trigger), not a rate limit. (4) `email_log.ref_id` is INTEGER and a PO id is a uuid, so PO identity lives in the subject and in `entity_audit_log`; unchanged, same as the DO.
 - **Verification:** `npx tsc --noEmit -p tsconfig.json` clean; frontend `npx tsc -b` clean (real `npm install` in the worktree, not a junction — a junction's reinstall nukes MAIN's deps). **Full backend suite green: 69 files / 970 tests.** Tests were ADDED TO the existing `backend/tests/documentEmail.test.ts` (file count unchanged — #785's history is that 65→66 files fell off a capacity cliff): 28 tests there now, covering the builder, the recipient shapes that pass a bare `@` check, the status allow-list including the CANCELLED refusal, all six attachment outcomes, the base64 arithmetic, fail-closed on a missing toggle row, and both `outboxRetry` branches asserted against the real `email_outbox` row. **The route's claim / release / audit glue is NOT covered and none was faked** — the harness pins `DATABASE_URL=""` and applies `src/db/migrations` to an isolated D1, while `scm` is Postgres behind Hyperdrive, so route-level `scm` tests remain impossible. **Migrations 0144/0145 are UNVERIFIED against a real database**; both are idempotent and additive, but per the staging-first rule they must be applied to STAGING before this branch merges — a failed file blocks ALL deploys. **No email was sent to any real supplier from this worktree.**
 - **Ref:** `wt/poemail`, 2026-07-19. Closes the `send-to-supplier` audit gap named in the entry below. NOT merged — staged for owner review.
+
 ## 2026-07-19 — Mining HOOKKA's incident history for defects still open here
 
 ### 🟠 Three optimistic mutations rolled back a REJECTED save in silence — the screen showed the new value, then quietly showed the old one, and nothing said the backend had refused
@@ -11142,3 +11495,4 @@ Severity tags: 🔴 critical/high · 🟠 medium · 🟢 low.
 ### SCM correctness (mostly caught pre-Houzs on 2990, verified on Houzs)
 - 🟠 **GRN defaulted warehouse to CHINA-transit** → false MRP alarms. Fix + GRN 防呆.
 - 🟠 **Sofa drop-ship DO missing the 7 corner-holes line** → under-built. Fixed Houzs (PR #349).
+

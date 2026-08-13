@@ -998,6 +998,42 @@ name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
 status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
 completely different problems.
 
+## 7z. HOW TO CALL THE SERVICE — read this before concluding you cannot
+
+Three facts, because a session that did not have them concluded from this
+repository that the service was unreachable and that the whole QA had to be run
+by a person standing at the office machine. None of that is true.
+
+**1. Call the HOSTNAME, never the ZeroTier IP.**
+
+```
+POST https://autocount.houzscentury.com/<route>
+```
+
+A direct call to `10.147.17.100:8900` **will be refused** — 400, or 403 with a
+forged `Host` — and that is not a fault to debug. The listener prefix is
+`http://localhost:<port>/`, so http.sys serves loopback only. **cloudflared runs
+ON that host and connects from loopback**, which is exactly why the tunnel path
+works where a direct one cannot. Verified from an ordinary workstation
+2026-08-11.
+
+**2. The key is the `X-API-KEY` header**, its value being the host's
+`C:\Tempc-svc-key.txt` — the same value as the `AC_SYNC_KEY` Worker secret,
+which is already set. No key gets 401; a service with no key file configured
+refuses everything with 503 (fail-closed, `#2025`).
+
+**3. `it-houzs.dev` is a DIFFERENT relay** — the legacy read middleware. It has
+never fronted AcSyncService and never will. Finding `/health` 404 there proves
+nothing about this service.
+
+**What this means for who can do it:** anyone, from anywhere. No ZeroTier, no
+office visit, no SQL password — the HTTP path needs the API key, not the
+database. The office machine is needed for exactly one thing: **rebuilding the
+exe** (`docs/autocount-service-deploy.md`), because it compiles against licensed
+assemblies. Even that is not exclusive — `build-local.ps1` compiles the source
+on any workstation with AutoCount 2.2 installed, which is how a CS0234 was
+caught before it shipped.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -1029,15 +1065,34 @@ TTL). Queued rows stay `pending` and drain when it is turned back on.
 **AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
 the queue by status, the FAILED rows in full (each one is a document that is in
 the ERP and not in the account book), the age of the oldest pending row, and the
-`skipped` backlog split by REASON — a refusal needs a line-key backfill, a
-merged conversion needs a human, a parentless document can never exist in
-AutoCount at all. An unrecognised reason is printed rather than counted away,
-and a skip that has already been re-queued (below) is reported separately rather
-than counted as backlog.
+`skipped` backlog split by REASON. **The script prints the reason AND its
+remedy — read `backend/scripts/check-autocount-outbox-health.mjs:61-70`
+(`SKIP_KINDS`) for the current set, do not learn the taxonomy from here.** An
+unrecognised reason is printed rather than counted away, and a skip that has
+already been re-queued (below) is reported separately rather than counted as
+backlog.
 
 An empty queue is reported as EMPTY, not as healthy: the table is append-only,
-so zero rows means nothing was ever enqueued, which is the correct state while
-the toggle is off.
+so zero rows means nothing was ever enqueued. **What that MEANS depends on the
+switch**, and the script says which — it reads
+`scm.app_config -> scm.autocount_writeback` and branches on it.
+
+> **CORRECTED 2026-08-14.** Two claims here were stale. (1) This paragraph ended
+> *"…which is the correct state while the toggle is off"* unconditionally. PR
+> #2094 (`2b1cf249`) made the note depend on the flag the script had already
+> read: *"It said empty was 'the correct state while scm.autocount_writeback is
+> off' no matter what the flag said — correct until the flag was turned on,
+> misleading after."* See `check-autocount-outbox-health.mjs:143-152`.
+> (2) The `skipped`-reason list above named three remedies. `SKIP_KINDS` carries
+> **eight** entries covering four distinct refusal classes —
+> `KeylessLineError`, `SofaCollapseError`, `ItemCodeError`, `MissingLocationError`
+> — plus compose-failure, masters-not-opened, no-source-document and
+> no-AutoCount-shape. Before #2094 the check matched on the shared prefix
+> `refused, nothing sent`, so three of the four classes were reported as a
+> DtlKey problem; an operator holding a `MissingLocationError` was sent to
+> backfill line keys. The script's own header comment at `:56` still says "FOUR
+> different classes" where `SKIP_KINDS` now has eight entries; that is a source
+> comment and is left alone here (docs-only diff).
 
 The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
 a row reaches `failed` — a failed row means a document
