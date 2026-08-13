@@ -22,6 +22,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: convergent. AutoCount's DtlKey is the source and the truth does not move, so a second run writes the same text.
  */
 import fs from "node:fs";
 import zlib from "node:zlib";

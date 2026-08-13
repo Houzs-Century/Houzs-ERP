@@ -86,7 +86,7 @@ has **neither column**. A Houzs-originated amendment carrying a header change is
 
 **F2 — Approving an amendment mutates the SO, and the mirror would silently revert it.**
 `scm/lib/so-revision.ts` `applySoAmendment()` writes `scm.mfg_sales_orders` (header allow-list
-`internal_expected_dd, customer_delivery_date, customer_state, postcode` + cascades) and
+`processing_date, customer_delivery_date, customer_state, postcode` + cascades) and
 `scm.mfg_sales_order_items` (REMOVE = hard DELETE, ADD = INSERT, SPEC/QTY = UPDATE with an
 honest-pricing recompute), then bumps `revision`. If that runs on a **mirrored company-2 SO**,
 the next 2990 outbox drain for that doc_no upserts the header and **delete-and-reinserts every

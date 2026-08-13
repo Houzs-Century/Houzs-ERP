@@ -43,7 +43,9 @@
    MODE=plan (default) writes nothing. MODE=apply needs
    CONFIRM="I HAVE REVIEWED THE DRY-RUN", runs one transaction per colour, and
    verifies on a fresh connection. Nothing is deleted and nothing is
-   re-activated: the retired row stays retired, which is the point. */
+   re-activated: the retired row stays retired, which is the point.
+
+   RE-RUN: inert. A line is in scope only while it names a retired colour, which the repoint changes. */
 import postgres from 'postgres';
 import {
   repointColour, repointDescription2, repointVariantKey, repointAllowedOptions,

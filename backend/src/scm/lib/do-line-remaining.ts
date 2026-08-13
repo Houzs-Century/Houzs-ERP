@@ -280,8 +280,14 @@ export async function resolveCandidateDoIds(
      when no explicit doIds was passed, then cascaded that id set into the
      header + line reads below. Same defect as the GRN pick-PO picker. Passed
      as an id (not the Hono ctx) so this lib stays free of the route layer;
-     callers resolve it with requireActiveCompanyId/activeCompanyId. */
-  companyId?: number | null,
+     callers resolve it with requireActiveCompanyId/activeCompanyId.
+
+     REQUIRED, not optional. A leak guard that a third caller can switch off by
+     omitting an argument is not a guard — it is a default, and this one's
+     default direction is "every company's delivery orders". Pass an explicit
+     `null` only where there genuinely is no company; that then reads as a
+     decision instead of an oversight (optional-param-noop sweep 2026-08-13). */
+  companyId: number | null | undefined,
 ): Promise<string[]> {
   if (doIdsParam && doIdsParam.trim()) {
     return [...new Set(doIdsParam.split(',').map((d) => d.trim()).filter(Boolean))];

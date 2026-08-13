@@ -39,6 +39,8 @@
 // and listed by document. That is deliberate: a null is an honest "not known
 // yet" that shows up as a pending line, whereas a guessed warehouse silently
 // points staff at a shelf that is empty. Never fall back to a default.
+//
+// RE-RUN: inert. The UPDATE re-asserts warehouse_id IS NULL, so a line routed by hand keeps its warehouse.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

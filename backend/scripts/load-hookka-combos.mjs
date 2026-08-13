@@ -9,6 +9,8 @@
 // Append-only table: a row is only inserted when no live row exists for the
 // same (base_model, modules-key, tier, supplier) with effective_from >= the
 // quotation date. DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: inert while the tiers are unshifted - it dedupes on (scope, base_model, tier, modules). retier-sofa-tiers.mjs MOVES those tiers, so a run after the shift would not recognise its own rows and would insert them all again.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

@@ -15,6 +15,8 @@
 // is left exactly as it is.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. The UPDATE re-asserts expected_at IS NULL. A person who CLEARS an ETA would get it refilled - accepted, because expected_at has no clear action in the UI.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

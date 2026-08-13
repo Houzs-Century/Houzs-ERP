@@ -7,7 +7,7 @@ name: unify-processing-date
 # with its own timestamp — so proceeded_at is not a second fact, it is the same
 # fact recorded in the wrong shape.
 #
-# Prod company 1 on 2026-08-13: internal_expected_dd set on 0 of 2723 orders,
+# Prod company 1 on 2026-08-13: processing_date set on 0 of 2723 orders,
 # proceeded_at set on 519. Every rule keyed on the Processing Date — the edit
 # lock, the proceed gate, MRP — is therefore dead.
 #

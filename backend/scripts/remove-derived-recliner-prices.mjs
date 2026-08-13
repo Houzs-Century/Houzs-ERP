@@ -10,6 +10,8 @@
 // left alone). Explicit quoted prices (1S(R)/1S(P) rows) are untouched.
 //
 // DRY-RUN default; APPLY=1 writes; audited (old→null).
+//
+// RE-RUN: inert. A removed grid/matrix entry is not there to remove again.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

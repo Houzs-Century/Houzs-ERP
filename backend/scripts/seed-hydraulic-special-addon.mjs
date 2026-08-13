@@ -33,6 +33,8 @@
 // the UI, lethal from a script that knows about one row.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. INSERT ... ON CONFLICT DO NOTHING.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;
