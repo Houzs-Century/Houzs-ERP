@@ -29,7 +29,7 @@ are its labels, not disjoint sets.
 | cross-company scope | 56 (27 high) | **REOPENED 2026-08-13** — the scanner was too loose (see §I). Honest count is now **20 unscoped WRITES, 18 reads**, not 0. 13 handlers fixed and verified so far; the rest are listed by the script |
 | permission / access gate | 11 (4 high) | 3 HIGH **DONE**, 4 **OPEN** (§C) |
 | money / quantity arithmetic | 47 (12 high) | 3 **DONE** incl. the top HIGH, 3 **OPEN** (§B) |
-| silent failure | 33 (5 high) | frontend 35 → 0 **DONE**; backend 2 CRITICAL **DONE**, 7 **OPEN** (§D) |
+| silent failure | 33 (5 high) | **CLOSED** — frontend 35 → 0; backend all 9 §D items done |
 | old/new competing implementations | 29 | agent running |
 | dead code | 12 | agent running |
 
@@ -64,13 +64,17 @@ are its labels, not disjoint sets.
 |---|---|---|
 | D1 | DO cancel discarded `writeMovements`' result — stock left permanently deducted, 200 returned. The sibling `resyncInventoryForDo` was given a failure trace on 2026-08-05; the cancel twin was not. | **DONE** |
 | D2 | DR line add/edit/delete/cancel — same shape, four callers. The CREATE path reports; the mutations did not. | **DONE** |
-| D3 | `grns.ts:2553` GRN cancel — reversal failure logged only. | **OPEN** |
-| D4 | `grns.ts:2575` — the 2026-07-31 `RecountResult` fix reached the POST caller and not the CANCEL caller. Its own header documents the incident it caused. | **OPEN** |
-| D5 | `recomputePoReceived` (`grns.ts:839/862`) returns `{ok:true}` after an unchecked write — the reporting channel exists and actively lies. Same in `purchase-consignment-receives.ts:354`. | **OPEN — rank first of the remainder** |
-| D6 | `purchase-returns.ts:1049` — `reverseMovements` computes a partial-failure count; the caller reads only `reversed > 0`. | **OPEN** |
-| D7 | Consignment note/return mutations discard the `string[]` their own create path returns. | **OPEN** |
-| D8 | Purchase-consignment family — same discard; `recomputePcoReceived` never got the `RecountResult` upgrade. | **OPEN** |
-| D9 | `consignment-returns.ts:779` `returnLineLock` never destructures `error`, so a failed read makes the terminal-state guard PASS. | **OPEN** |
+| D3 | GRN cancel — the reversing OUT's result was dropped, so a failed reversal left phantom received stock and returned 200. | **DONE** — surfaced as `cancelErrors` |
+| D4 | GRN cancel — the 2026-07-31 `RecountResult` fix reached the POST caller and not the CANCEL caller. Its own header records the eleven POs that cost. | **DONE** |
+| D5 | `recomputePoReceived` returned `{ok:true}` after two UNCHECKED writes — the reporting channel existed and actively lied. Same shape in `purchase-consignment-receives`. | **DONE** — both writes checked; the PC twin now returns a result at all, and `postPcReceiveAndRollup` carries `recountError` through |
+| D6 | `purchase-returns` cancel — `reverseMovements` computes a partial-failure count; the caller read only `reversed > 0`, so reversed:3 / failed:2 returned a clean 200. | **DONE** — `reversalErrors` |
+| D7 | Consignment note/return mutations discarded the `string[]` their own create path returns — 8 call sites. | **DONE** |
+| D8 | Purchase-consignment — `recomputePcoReceived` never got the `RecountResult` upgrade. | **DONE** |
+| D9 | `returnLineLock` never destructured `error`, so a failed read made the terminal-state guard PASS. | **DONE** — fails closed with a retry message |
+
+**Section D is closed.** Every one had its reporting version already present in
+the same file — the fix had been applied to the create/post path and not to its
+cancel/mutation twin. That asymmetry, not the swallow itself, is the pattern.
 
 ## E. Frontend / rules
 
