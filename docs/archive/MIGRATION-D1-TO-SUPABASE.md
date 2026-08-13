@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The D1 -> Supabase cutover completed **2026-06-13**; `backend/wrangler.toml` records the D1 binding as removed and prod now runs on Supabase Postgres through Hyperdrive. Superseded by `CLAUDE.md` (Migrations) and `docs/CODEBASE-MAP.md` §4. Kept for history; do not follow it as a current instruction.
+
 # D1 -> Supabase Postgres migration runbook
 
 Move the Houzs backend from Cloudflare D1 (SQLite) to Supabase Postgres

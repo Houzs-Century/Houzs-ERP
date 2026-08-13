@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The admin UI it specifies shipped as `frontend/src/pages/MailboxesTab.tsx`. Superseded by `docs/modules/mail-center.md` (**2026-08-04**). Kept for history; do not follow it as a current instruction.
+
 # Mail Center — Admin "Assign Mailbox + Alias" UI: build plan
 
 **Status:** plan only (2026-06-24). Completes the gap left open by

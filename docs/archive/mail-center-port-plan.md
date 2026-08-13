@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The port shipped. Superseded by `docs/modules/mail-center.md` (**2026-08-04**), which is the module guide for the surface this plan built. Kept for history; do not follow it as a current instruction.
+
 # Mail Center — Hookka → Houzs port plan (file-by-file)
 
 Port Hookka's in-ERP shared inbox (Cloudflare Email Routing / IMAP inbound + outbound

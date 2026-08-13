@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The dashboard steps were carried out: `erp.houzscentury.com` is the canonical domain and the `pages.dev` bounce ships in `frontend/src/main.tsx`. Superseded by `docs/CODEBASE-MAP.md` §3. Kept for history; do not follow it as a current instruction.
+
 # Runbook — URL standardization on houzscentury.com
 
 Owner goal: every URL a user sees is on the brand domain **houzscentury.com**.
