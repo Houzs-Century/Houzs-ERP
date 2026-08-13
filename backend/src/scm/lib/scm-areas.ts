@@ -94,6 +94,13 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/trips/*", "scm.transportation.drivers"],
   ["/dp-orders/*", "scm.transportation.drivers"],
   ["/delivery-messages/*", "scm.transportation.drivers"],
+  /* AR reconciliation joined the guarded set on 2026-08-13 (owner: "加上和兄弟
+     页面一样的门"). It rode the coarse scm.access umbrella while its two real
+     siblings, /outstanding and /unbilled-deliveries, both sat behind
+     scm.finance.outstanding — so a caller explicitly DENIED that key got the
+     same receivables book from this router. Position matters: the drift test
+     asserts this table matches scm/index.ts IN ORDER. */
+  ["/ar/*", "scm.finance.outstanding"],
   ["/scan-lorry-invoice/*", "scm.transportation.drivers"],
   ["/lorry-capacity/*", "scm.transportation.drivers"],
   ["/helpers/*", "scm.transportation.drivers"],
@@ -127,7 +134,10 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/fabric-colours",
   "/document-flow",
   "/po-so-coverage",
-  "/ar",
+  // "/ar" left this list on 2026-08-13 when it gained an area guard. Both halves
+  // have to move together: the drift test derives the guarded set and the
+  // unguarded set from the SAME source scan, so gating a router without removing
+  // it here fails the mirror in two places at once. It did.
   "/reports",
 ] as const;
 
