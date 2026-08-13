@@ -4,6 +4,8 @@
 // "active 回来那个venue"). EAST COAST MALL and DATARAN CENTRIO exist in
 // public.project_venues but were switched inactive, which blanks the picker.
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: convergent. Sets the same active flag on the same venues.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

@@ -38,11 +38,17 @@
    already drove those to their canonical form from his list, including colour
    names this script cannot know. Re-deriving them here would fight it.
 
+   RE-RUN: safe and inert - a colour already in the canonical shape plans no
+   change, because the colour NAME is read back out of the LABEL (nameFromLabel)
+   as well as out of the code. Until 2026-08-13 it was not: run two parsed the
+   clean code, found no name, and proposed rewriting 200 labels down to a bare
+   code, deleting the colour name from every one of them.
+
    MODE=plan (default) prints and writes nothing.
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
-import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel } from "./lib/fabric-code.mjs";
+import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel, nameFromLabel } from "./lib/fabric-code.mjs";
 import {
   countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy,
   /* A colour CODE change is not just a variants edit. The same string is also
@@ -134,9 +140,17 @@ async function main() {
     const [win, ...lose] = scored;
 
     /* The winner's NAME is the best one in the group: its own if it has one,
-       otherwise any sibling's. A merge must not lose the only colour name. */
-    let best = win.p.name;
-    if (!best) for (const s of scored) if (s.p.name) { best = s.p.name; break; }
+       otherwise any sibling's. A merge must not lose the only colour name.
+
+       THE LABEL COUNTS AS A SOURCE, and that is what makes a second run safe.
+       Run one moves the name out of the code and into the label; run two parses
+       a now-clean code, finds no name, and - before this - rebuilt the label
+       without one, erasing it. nameFromLabel reads it back out of the label it
+       just wrote, but only from a label whose own series+number canonicalise to
+       this same id, so the name can never come from a different colour. */
+    const nameOf = (s) => s.p.name || nameFromLabel(s.r.colour_id, s.r.label);
+    let best = nameOf(win);
+    if (!best) for (const s of scored) { const n = nameOf(s); if (n) { best = n; break; } }
     const target = { ...win.p, name: best };
     const newId = canonId(target), newLabel = canonLabel(target);
 

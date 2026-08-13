@@ -2,6 +2,13 @@ name: Normalize fabric codes
 
 # Manual. MODE=plan (the default) writes NOTHING - it prints every code, label
 # and series it would rewrite. MODE=apply needs the CONFIRM sentence.
+#
+# RE-RUN: safe and inert. A colour already in the canonical shape plans no
+# change, because the colour NAME is read back out of the LABEL as well as out
+# of the code. Until 2026-08-13 it was not: the plan on a second pass proposed
+# 200 label rewrites down to a bare code, deleting the colour name from every
+# one of them with the code unchanged. Read the plan's CODE / LABEL section -
+# a line whose "->" side has LOST a word is that bug coming back.
 on:
   workflow_dispatch:
     inputs:

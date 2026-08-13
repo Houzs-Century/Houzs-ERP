@@ -8,6 +8,8 @@
 // It only touches showroom-name variants (never a real exhibition venue like an
 // AEON mall), so a project/exhibition SO keeps its own venue.
 // DRY-RUN unless APPLY=1. TARGET overridable via env.
+//
+// RE-RUN: convergent. Writes one fixed venue name; a second run rewrites the same string.
 import postgres from "postgres";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }

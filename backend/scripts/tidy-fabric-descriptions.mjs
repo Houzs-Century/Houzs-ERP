@@ -38,6 +38,8 @@
 // what absorbed it and must survive verbatim.
 //
 // plan (default) writes nothing. apply needs CONFIRM=I HAVE REVIEWED THE DRY-RUN.
+//
+// RE-RUN: inert. A description already in the approved shape produces no change; the CODE is never touched.
 
 import postgres from "postgres";
 import { parse, canonId } from "./lib/fabric-code.mjs";
