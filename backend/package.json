@@ -23,8 +23,6 @@
     "audit:ac-sofa-corpus": "node scripts/gen-sofa-desc2-corpus.mjs --check",
     "gen:test-schema": "node scripts/gen-test-schema-snapshot.mjs",
     "audit:test-schema": "node scripts/gen-test-schema-snapshot.mjs --check",
-    "gen:test-projects": "node scripts/gen-test-projects.mjs",
-    "audit:test-projects": "node scripts/gen-test-projects.mjs --check",
     "gen:route-locator": "node scripts/gen-route-locator.mjs",
     "audit:route-locator": "node scripts/gen-route-locator.mjs --check",
     "audit:trgm": "node scripts/check-trgm-coverage.mjs",
