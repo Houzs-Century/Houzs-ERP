@@ -481,10 +481,19 @@ the model to copy: a key a legitimate human action can restore - a Super Admin
 removing a Processing Date - is not a key, it is a trap. The two safe shapes are
 a key the write itself destroys (`jsonb_typeof = 'string'` -> NULL; a `-1S` line
 re-coded away) and a value re-derived from an immutable source. Everything else
-either converges by construction or has to refuse. Every script in
-`backend/scripts` that writes now states its re-run behaviour in its own header,
-because "is it safe to run this again" was a question nobody could answer without
-reading the whole file - and three times this month somebody answered it wrong.
+either converges by construction or has to refuse. A writing script has to state
+its re-run behaviour in its own header, because "is it safe to run this again"
+was a question nobody could answer without reading the whole file - and three
+times this month somebody answered it wrong.
+
+**Correction, 2026-08-13.** This entry originally claimed that "every script in
+`backend/scripts` that writes now states its re-run behaviour in its own
+header". It did not, and saying so stopped anybody checking. Measured by
+`npm --prefix backend run audit:release-discipline` on the day this was written:
+**162 scripts write, and 67 of them carry no re-run note.** They are listed, one
+by one, in `backend/scripts/release-discipline-grandfathered.json`, and a NEW
+writing script without one now fails CI. The rule is real from here; the claim
+that it was already universal was not.
 ## MRP and the Inventory page disagree about whether a DRAFT or SHIPPED order still demands stock [med, LEFT OPEN]
 
 **Symptom** - not a report from staff; found by grep on 2026-08-13 while

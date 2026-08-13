@@ -188,6 +188,44 @@ test-only now — which matters most for migrations, below.
   number at MERGE time by re-listing the tree, not when you branch — parallel
   PRs otherwise pick the same one.
 
+## Release discipline — the two things a revert cannot undo (ENFORCED)
+
+Reverting a commit un-ships a route. It does not un-ship a **migration** (the
+file is applied to prod on the next push to main and is immutable from that
+moment) and it does not un-ship a **repair script that has already run**. For
+those two, the discipline IS the rollback plan, so it is a CI gate and not a
+paragraph: `npm --prefix backend run audit:release-discipline`, wired into the
+required `backend-typecheck` check.
+
+**A migration carries a `-- REVERSAL:` note.** What undoes it, or `IRREVERSIBLE
+— <why>`. If it does `DROP VIEW`, the note has to name the GRANTS the recreate
+must put back: a recreated view is a NEW object with an empty ACL, which is how
+0189 took prod's Sales Order list down for every user and needed both 0190 and
+0191 to repair — nobody had written down what the view's grants were.
+
+**A script in `backend/scripts` that opens a database and WRITES carries all
+four of:**
+
+1. a `MODE` / `APPLY` gate whose DEFAULT is plan (any non-`apply` default —
+   `'plan'`, `'dry-run'` — counts; an opt-OUT like `DRY=1` does not, because
+   unset it writes);
+2. a `CONFIRM` phrase on the apply path, refused with an exit (a value you must
+   repeat, like `delete-test-so.mjs`'s `CONFIRM_DOC`, is stronger and also counts);
+3. a verification that re-reads on a **FRESH connection** and asserts the
+   **SHAPE**. A row count is not a shape: on 2026-08-13 a repair written to undo
+   the jsonb double-encoding COE reproduced that exact bug on 7 production rows,
+   and its row count reported 7 of 7 while only its shape check saw it;
+4. a `RE-RUN:` line in the header saying what a SECOND run does.
+
+Copy `repair-array-shaped-variants.mjs` or `unify-processing-date.mjs` — both
+pass all four today.
+
+**It is a ratchet.** Today's tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`, and that list may only
+SHRINK: fix a rule and the check makes you delete it from the ledger in the same
+PR, and the count is printed on every run so the debt stays visible. A NEW
+script complies or CI fails.
+
 ## ⚠️ Never ask the owner to run a query — build the check instead (owner rule)
 
 The owner is not a database console. If you need a fact that lives only in

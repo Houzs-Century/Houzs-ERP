@@ -46,6 +46,13 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The release-discipline ratchet compares the grandfather ledger to
+          # the one at the merge base, and `git merge-base` needs the history
+          # to reach one. With depth 1 it cannot, and the step below FAILS
+          # rather than quietly skipping — a ratchet that cannot see its
+          # baseline is not a ratchet.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -76,6 +83,32 @@ jobs:
       - run: npm run audit:test-schema
       # Keeps a new test file from quietly landing in the expensive project.
       - run: npm run audit:test-projects
+      # The two artefacts a revert cannot undo: a migration, which pg-migrate
+      # applies to prod on the next push to main and tracks by FULL FILENAME,
+      # and a repair script that has already run. The gate is a RATCHET —
+      # today's tree is grandfathered in
+      # backend/scripts/release-discipline-grandfathered.json, a NEW script
+      # must comply, and the grandfathered count prints on every run.
+      #
+      # Its own logic is tested by node:test, which neither vitest project
+      # collects, so it is run explicitly here. A checker nobody runs is not a
+      # checker.
+      - run: npm run test:release-discipline
+      - run: npm run audit:release-discipline
+      # The no-growth half. Separate step so a git-plumbing failure is
+      # obviously not a discipline failure, and so the gate above still stands
+      # if this one ever has to be looked at.
+      #
+      # On a `pull_request` event the checkout is the MERGE with main, so
+      # `merge-base HEAD FETCH_HEAD` resolves to main's tip — the list this
+      # change is actually adding to. If main shrinks the list while a branch is
+      # open, the branch has to update before its own entries stop looking new;
+      # the ruleset already requires branches to be up to date to merge.
+      - name: The grandfather list may only shrink
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          npm run audit:release-discipline -- --ratchet-against FETCH_HEAD
       - run: npm run typecheck
       # The 221-file pure-logic suite. It lives here, in the job that already
       # finishes in about a minute, because it takes ~7 SECONDS — it used to be
