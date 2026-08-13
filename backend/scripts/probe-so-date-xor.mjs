@@ -35,14 +35,14 @@ async function main() {
   const [tot] = await sql`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE company_id = ${CO}`;
   note(`sales orders (company ${CO}): ${tot.n}`);
 
-  /* The UI's "Processing Date" is internal_expected_dd (PR #140 renamed it);
-     the legacy processing_date column was dropped in migration 0189. */
+  /* The UI's "Processing Date" is scm.mfg_sales_orders.processing_date — one
+     column since 0189, one name since 0284. */
   const [sum] = await sql`
     SELECT
-      count(*) FILTER (WHERE internal_expected_dd IS NOT NULL AND customer_delivery_date IS NOT NULL)::int AS both,
-      count(*) FILTER (WHERE internal_expected_dd IS NULL     AND customer_delivery_date IS NULL)::int     AS neither,
-      count(*) FILTER (WHERE internal_expected_dd IS NULL     AND customer_delivery_date IS NOT NULL)::int AS deliv_only,
-      count(*) FILTER (WHERE internal_expected_dd IS NOT NULL AND customer_delivery_date IS NULL)::int     AS proc_only
+      count(*) FILTER (WHERE processing_date IS NOT NULL AND customer_delivery_date IS NOT NULL)::int AS both,
+      count(*) FILTER (WHERE processing_date IS NULL     AND customer_delivery_date IS NULL)::int     AS neither,
+      count(*) FILTER (WHERE processing_date IS NULL     AND customer_delivery_date IS NOT NULL)::int AS deliv_only,
+      count(*) FILTER (WHERE processing_date IS NOT NULL AND customer_delivery_date IS NULL)::int     AS proc_only
     FROM scm.mfg_sales_orders WHERE company_id = ${CO}`;
 
   note(`\n=== both-or-neither ===`);
@@ -67,7 +67,7 @@ async function main() {
            max(created_at)::date AS last_seen
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}
-       AND internal_expected_dd IS NULL AND customer_delivery_date IS NOT NULL
+       AND processing_date IS NULL AND customer_delivery_date IS NOT NULL
      GROUP BY 1 ORDER BY n DESC`;
   note(`\n=== DELIVERY-only rows, by status ===`);
   if (!bySrc.length) note(`  none`);
@@ -80,7 +80,7 @@ async function main() {
      week, the hole has to close first or the backlog just regrows. */
   const [recent] = await sql`
     SELECT count(*)::int AS n FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO} AND internal_expected_dd IS NULL
+     WHERE company_id = ${CO} AND processing_date IS NULL
        AND customer_delivery_date IS NOT NULL
        AND created_at > now() - interval '30 days'`;
   note(`\n  created in the last 30 days: ${recent.n}${Number(recent.n) ? "  <- still being produced" : "  (historical only)"}`);
@@ -88,7 +88,7 @@ async function main() {
   const eg = await sql`
     SELECT doc_no, status, customer_delivery_date, created_at::date AS created
       FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO} AND internal_expected_dd IS NULL
+     WHERE company_id = ${CO} AND processing_date IS NULL
        AND customer_delivery_date IS NOT NULL
      ORDER BY created_at DESC LIMIT 15`;
   note(`\n=== newest 15 ===`);

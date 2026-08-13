@@ -27,6 +27,7 @@
 // owns the HTTP shaping, exactly like so-location-gate.ts.
 // ----------------------------------------------------------------------------
 import { z } from 'zod';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 
 /**
  * One row of the optional `payments[]` on an SO create (the POS split-payment
@@ -34,7 +35,10 @@ import { z } from 'zod';
  * single-deposit fallback, a money row must never be silently dropped.
  */
 export const soCreatePaymentSchema = z.object({
-  method:            z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* READ the shared list, never re-type it — payment-methods.ts states that
+     rule, and this file was extracted from the router just as main introduced
+     it, so the two arrived together and only look independent. */
+  method:            z.enum(PAYMENT_METHOD_CODES),
   amountCenti:       z.number().int().positive(),
   approvalCode:      z.string().optional().nullable(),
   merchantProvider:  z.string().trim().min(1).optional().nullable(),

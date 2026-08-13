@@ -68,14 +68,17 @@
   width: 100%;
 }
 
+/* Portalled to <body> since 2026-08-13, so EVERY bit of geometry — position,
+   top / bottom / left / width / max-height — is measured from the input and set
+   inline by StatePicker.tsx. It was absolutely positioned inside the field until
+   then, which let any ancestor with an overflow clip cut the state list off
+   after a couple of rows. z-index 1000 is what every other body-portalled menu
+   here uses (SoLineCard, SearchableSelect); it clears the drawer backdrops these
+   address forms sit in (z-index 50). */
 .panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 60;
-  max-height: 280px;
+  z-index: 1000;
   overflow-y: auto;
+  font-family: var(--font-sans, inherit);
   background: var(--c-paper, #fff);
   border: 1px solid var(--line, #d6d9d2);
   border-radius: var(--radius-sm, 8px);

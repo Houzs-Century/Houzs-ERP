@@ -83,9 +83,9 @@ type DoRow = {
   do_date: string;
   expected_delivery_at: string | null;
   customer_delivery_date: string | null;
-  /** Linked SO's Processing date (mfg_sales_orders.internal_expected_dd),
+  /** Linked SO's Processing date (mfg_sales_orders.processing_date),
    *  stamped server-side onto every list row for the quick-view drawer. */
-  so_internal_expected_dd?: string | null;
+  so_processing_date?: string | null;
   debtor_name: string;
   debtor_code: string | null;
   salesperson_id: string | null;
@@ -486,8 +486,8 @@ function DetailDrawer({
                 <MetaItem k="From SO" v={soOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
-                    internal_expected_dd) must be visible in every quick view. */}
-                <MetaItem k="Processing" v={fmtDate(row.so_internal_expected_dd ?? null)} />
+                    processing_date) must be visible in every quick view. */}
+                <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
                 <MetaItem k="Delivery date" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem k="Expected at" v={fmtDate(row.expected_delivery_at)} />
                 <MetaItem k="Driver" v={row.driver_name || "—"} />

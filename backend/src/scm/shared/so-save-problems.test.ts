@@ -4,6 +4,7 @@ import {
   validationFailedBody,
   type SaveProblem,
 } from './so-save-problems';
+import { meetsDepositGate } from './order-rules';
 
 const codes = (ps: SaveProblem[]) => ps.map((p) => p.code);
 
@@ -177,6 +178,66 @@ describe('collectProcessingGateProblems', () => {
     });
   });
 
+  /* Both dates or neither (owner, restated 2026-08-13). The client refuses both
+     directions (so-form-validate.ts:94); the server only ever asked for the
+     delivery half, inside the completeness block, so a Delivery Date alone got
+     through anything that skipped the form. */
+  describe('processing_delivery_must_pair', () => {
+    it('a delivery date with NO processing date is refused', () => {
+      const ps = collectProcessingGateProblems({
+        procDate: null,
+        delivDate: '2099-02-10',
+        todayMY: '2026-08-13',
+      });
+      expect(ps).toHaveLength(1);
+      expect(ps[0]).toMatchObject({ code: 'processing_delivery_must_pair', field: 'Processing Date' });
+    });
+
+    it('grandfathers a stored unpaired delivery date when the save touches neither date', () => {
+      // The 19 live orders AutoCount could not pair must stay editable for an
+      // unrelated change — the same carve-out the past-date rules use.
+      const ps = collectProcessingGateProblems({
+        procDate: null,
+        delivDate: '2099-02-10',
+        todayMY: '2026-08-13',
+        origProcDate: null,
+        origDelivDate: '2099-02-10',
+      });
+      expect(ps).toEqual([]);
+    });
+
+    it('still refuses when the edit MOVES the lone delivery date', () => {
+      const ps = collectProcessingGateProblems({
+        procDate: null,
+        delivDate: '2099-03-10',
+        todayMY: '2026-08-13',
+        origProcDate: null,
+        origDelivDate: '2099-02-10',
+      });
+      expect(codes(ps)).toEqual(['processing_delivery_must_pair']);
+    });
+
+    it('still refuses when the edit CLEARS the processing date off a paired order', () => {
+      const ps = collectProcessingGateProblems({
+        procDate: null,
+        delivDate: '2099-02-10',
+        todayMY: '2026-08-13',
+        origProcDate: '2099-01-10',
+        origDelivDate: '2099-02-10',
+      });
+      expect(codes(ps)).toEqual(['processing_delivery_must_pair']);
+    });
+
+    it('a paired order, and an order with neither date, both pass', () => {
+      expect(collectProcessingGateProblems({
+        procDate: '2099-01-10', delivDate: '2099-02-10', todayMY: '2026-08-13',
+      })).toEqual([]);
+      expect(collectProcessingGateProblems({
+        procDate: null, delivDate: null, todayMY: '2026-08-13',
+      })).toEqual([]);
+    });
+  });
+
   it('treats a total <= 0 order as deposit-satisfied (free order)', () => {
     const ps = collectProcessingGateProblems({
       procDate: '2099-01-10',
@@ -247,6 +308,18 @@ describe('deposit threshold is per company', () => {
 
   it('company code is matched case-insensitively and trimmed', () => {
     expect(unpaid(facts(' 2990 ', 300_00))).toHaveLength(1);
+  });
+
+  /* This report and the Proceed gate must never disagree about whether the
+     deposit is in — they describe the same act (a Processing Date IS Proceed),
+     so they read the same predicate. Reporting is all they may differ on. */
+  it('reports the shortfall exactly when meetsDepositGate refuses', () => {
+    for (const companyCode of ['HOUZS', '2990', null, 'FUTURE-CO']) {
+      for (const paidCenti of [0, 299_99, 300_00, 499_99, 500_00, 1000_00]) {
+        expect(unpaid(facts(companyCode, paidCenti)).length === 0)
+          .toBe(meetsDepositGate(paidCenti, 1000_00, companyCode));
+      }
+    }
   });
 });
 

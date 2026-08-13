@@ -14,6 +14,8 @@
  *
  * This is a link repair. It writes no value, moves no money and touches no
  * stock. DRY-RUN by default; APPLY=1 writes.
+ *
+ * RE-RUN: convergent. Re-derives the same so_item_id from the same AutoCount dedication text.
  */
 import postgres from "postgres";
 

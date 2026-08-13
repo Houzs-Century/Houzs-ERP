@@ -1,5 +1,16 @@
 name: retier-sofa-tiers
 
+# Manual, and ONE-SHOT. Shifts the 2026-08 sofa price bands up one tier
+# (P1->P2, P2->P3, old P3 retired), per the owner's "all of our normal price
+# start from P2".
+#
+# RE-RUN: REFUSED, in both modes, once the combo batch has been shifted. The
+# combo block shifts by POSITION, not by value, so a second pass would push the
+# band the first pass promoted to P2 on to P3 and soft-DELETE the one it
+# promoted to P3. The script now stops on its own if it finds a soft-deleted row
+# in the 2026-08 combo batch. If it refuses and you believe the shift has not
+# run, do not force it - find out who retired that combo first.
+
 on:
   workflow_dispatch:
     inputs:

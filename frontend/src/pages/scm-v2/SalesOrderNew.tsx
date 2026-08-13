@@ -1320,7 +1320,13 @@ export const SalesOrderNew = () => {
       phones,
       location: ai.location,
       deliveryDate: deliveryDate || ai.deliveryDate,
-      processingDate: processingDate || ai.processingDate,
+      /* UNCHANGED MAPPING, made visible by the 2026-08-13 rename: the SO's
+         Processing Date (DERIVED here as Delivery − 6 weeks) is written back
+         into the slip's own `slipDate` — the day the rep wrote the slip. Those
+         are two different facts; the backend's CARRIED_NOT_INVERTED lists
+         slipDate so this never reaches the distillers. Rewiring it is a
+         behaviour change, not a rename, so it is deliberately left alone. */
+      slipDate: processingDate || ai.slipDate,
       salesRep: scanSalesperson || ai.salesRep,
       customerSoRef: customerSoNo.trim() || ai.customerSoRef,
       paymentMethod: ai.paymentMethod,
@@ -1628,9 +1634,9 @@ export const SalesOrderNew = () => {
         emergencyContactName:         emergencyName  || undefined,
         emergencyContactRelationship: emergencyRel   || undefined,
         emergencyContactPhone:        emergencyPhone || undefined,
-        /* PR #121 — Processing Date → internal_expected_dd, Delivery Date →
+        /* PR #121 — Processing Date → processing_date, Delivery Date →
            customer_delivery_date. */
-        internalExpectedDd:   processingDate || undefined,
+        processingDate:   processingDate || undefined,
         customerDeliveryDate: deliveryDate   || undefined,
         note: note || undefined,
         /* Original-slip provenance — the scanned slip's R2 key (from the Scan

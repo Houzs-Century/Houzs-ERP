@@ -44,9 +44,14 @@ export type ExtractedPayment = PaymentMethodValues & {
   imageIndex: number;
   amountRm: number | null;
   approvalCode: string | null;
-  // This receipt's own printed date (YYYY-MM-DD) when read; else null → the
-  // planner falls back to the slip date, then today.
-  processingDate: string | null;
+  /* THE CARD TERMINAL'S OWN PRINTED TRANSACTION DATE for THIS receipt
+     (YYYY-MM-DD) when read; else null → the planner falls back to the slip's
+     own written date (ExtractedSlip.slipDate), then today.
+     It is NOT the Sales Order's Processing Date (`internal_expected_dd`) and it
+     is NOT the slip date. All three were once called "processingDate", which is
+     exactly how the wrong one kept getting picked; this one is the money date —
+     it becomes the payment ledger row's paid_at (see resolvePaidAt). */
+  receiptTxnDate: string | null;
 };
 
 /** A ledger row the planner decided to book. Amounts are always > 0 (RM0
@@ -108,7 +113,9 @@ export function deriveLedgerMethod(v: PaymentMethodValues): LedgerMethod {
   };
 }
 
-/** Payment date = a plausible slip/receipt date, else today (MYT string).
+/** Payment date = a plausible receipt-transaction / slip date, else today (MYT
+ *  string). Never the Sales Order's Processing Date — that date has nothing to
+ *  do with when money changed hands.
  *  SANITY CLAMP (evidence 2026-07: the OCR invented years — "2015-09-17" for a
  *  current slip — which would book money YEARS in the past): only trust a date
  *  within [today-60d, today+7d]; anything outside books at today instead. */
@@ -137,8 +144,10 @@ export type PlanReceiptPaymentsInput = {
   // Slip-level singular fields — the FALLBACK for the first receipt when
   // payments[] is empty (the pre-multi contract).
   legacy: PaymentMethodValues & { depositRm: number | null; approvalCode: string | null };
-  // Fallback payment date (the slip's processing date) + clock, for the clamp.
-  slipProcessingDate: string | null;
+  /* Fallback payment date — the SLIP'S OWN WRITTEN DATE (ExtractedSlip.slipDate),
+     used only when a receipt printed no transaction date of its own. NOT the
+     Sales Order's Processing Date. Plus the clock, for the clamp. */
+  slipDate: string | null;
   nowMs: number;
   todayStr: string;
 };
@@ -198,7 +207,9 @@ export function planReceiptPayments(input: PlanReceiptPaymentsInput): PlannedRec
     // Prefer the durable enqueue-time copy; fall back to the provenance receipt
     // copy for the first receipt only (the singular receipt_image_key).
     const slipKey = storedImageKeys.includes(jobKey) ? jobKey : (first ? receiptImageKey : null);
-    const paidAt = resolvePaidAt(entry?.processingDate ?? input.slipProcessingDate, input.nowMs, input.todayStr);
+    // THIS receipt's own printed transaction date wins; the slip's written date
+    // is the fallback; resolvePaidAt clamps both and lands on today otherwise.
+    const paidAt = resolvePaidAt(entry?.receiptTxnDate ?? input.slipDate, input.nowMs, input.todayStr);
 
     rows.push({
       imageIndex,

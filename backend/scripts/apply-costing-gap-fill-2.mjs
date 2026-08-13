@@ -11,6 +11,8 @@
 //
 // Fill-empty-only unless the row carries overwrite:true. Audited.
 // DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: convergent. Writes the same base_price_sen from the same fixed list, but appends a master_price_history row each time - re-run only to correct a drifted price, and expect a duplicate audit entry.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

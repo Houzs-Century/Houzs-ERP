@@ -23,6 +23,8 @@
 // Desc2 re-parse would map, so the parse is still visible in the run log.
 //
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: by design, repeatedly. This is a SWEEP: it re-parses Desc2 and re-stamps only the keys in OWNED_VARIANT_KEYS, so running it after every parser change is the point.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

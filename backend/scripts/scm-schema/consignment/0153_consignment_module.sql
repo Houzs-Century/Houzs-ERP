@@ -6,6 +6,13 @@
 -- consignment ("loaner" / stock-on-consignment) workflow can run independently
 -- of the live B2C sales pipeline.
 --
+-- NAMES HERE ARE THE 2026-05 SHAPE, NOT TODAY'S. This file is a pre-migration
+-- baseline replayed before the migration tree, so it still declares
+-- `internal_expected_dd` AND the dead legacy `processing_date` on
+-- consignment_sales_orders. migrations-pg/0284 drops the dead one and renames the
+-- live one to `processing_date` — the single name the UI, the API and every human
+-- already use. Leave this file alone; 0284 runs after it.
+--
 -- WHAT THIS CLONES (1:1 column fidelity, current shape — schema.ts is stale, so
 -- these were copied directly from the migration ledger):
 --   • consignment_sales_orders / _items / _payments   ← mfg_sales_orders /

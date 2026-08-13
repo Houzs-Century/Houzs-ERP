@@ -237,7 +237,10 @@ export type MobileScanPrefill = {
   custRef: string;
   note: string;
   deliveryDate: string; // '' when none / not a clean date
-  processingDate: string;
+  /* The SLIP'S OWN written date ('' when none / not a clean date). NOT the
+     Sales Order's Processing Date (internal_expected_dd) — see
+     ReconciledPrefill.slipDate. */
+  slipDate: string;
   customerType: string;
   buildingType: string;
   venue: string; // raw slip location text (mobile venue is free-text)
@@ -450,7 +453,7 @@ function buildPrefill(
     custRef: rec.customerSoRef,
     note: rec.note,
     deliveryDate: rec.deliveryDate ?? "",
-    processingDate: rec.processingDate ?? "",
+    slipDate: rec.slipDate ?? "",
     customerType: rec.customerType,
     buildingType: rec.buildingType,
     // Mobile venue is free text — seed the raw slip location (nothing lost).
