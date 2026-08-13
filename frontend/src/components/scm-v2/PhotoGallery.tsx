@@ -44,6 +44,12 @@ import {
 } from "lucide-react";
 import { Button } from "../Button";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+/* Set-primary, delete and reorder all invalidated on success and said nothing on
+   failure — the same shape as the fabric grid the owner reported as "I press it
+   and nothing happens". Inline mutations, so the first sweep could not resolve
+   them by name; they surfaced once the checker learned to read the component
+   they live in. */
+import { writeFailed } from "../../vendor/scm/lib/mutation-error";
 import { cn } from "../../lib/utils";
 import { prepareImageForUpload } from "../../lib/imagePipeline";
 
@@ -141,6 +147,7 @@ export function PhotoGallery({
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["product-model-photos", modelId] }),
+    onError: writeFailed,
   });
 
   const deleteMut = useMutation({
@@ -151,6 +158,7 @@ export function PhotoGallery({
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["product-model-photos", modelId] }),
+    onError: writeFailed,
   });
 
   const reorderMut = useMutation({
@@ -161,6 +169,7 @@ export function PhotoGallery({
       ),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["product-model-photos", modelId] }),
+    onError: writeFailed,
   });
 
   // Pending uploads (in-flight, kept locally so the UI shows progress tiles

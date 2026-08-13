@@ -1333,6 +1333,16 @@ function StopDetail({
     onSuccess: async () => {
       await invalidate();
     },
+    /* A failed "Mark arrived" said NOTHING — the driver taps, the button
+       returns, and the arrival never reaches the customer the owner wanted it
+       for. This file already notifies on the DO-create failures below; this one
+       had no error path at all. */
+    onError: async (e) => {
+      await notify({
+        title: "Couldn't mark arrival",
+        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+      });
+    },
   });
 
   // "POD complete" → DELIVERED (stamps delivered_at).

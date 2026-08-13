@@ -170,8 +170,37 @@ function consumerHandles(text, hook) {
   });
 }
 
+/* INLINE MUTATIONS — declared inside a component rather than in a `useXxx`
+   hook. The consumer scan below cannot resolve them by name, and they were all
+   reported UNRESOLVED: 53 of them, which is a pile a human is told to read and
+   never does.
+
+   But an inline mutation's consumer IS the file it sits in. So apply exactly
+   the same test to THIS file: was the result bound to a variable that is then
+   awaited via mutateAsync, read as .isError / .error, or given per-call options
+   on .mutate(vars, { onError })? That resolves most of them mechanically and
+   leaves only the genuinely ambiguous for a person. */
+const byFile = new Map();
+for (const s of allSrc) byFile.set(s.rel, s.text);
+
 for (const f of findings) {
-  if (!/^use[A-Z]/.test(f.owner)) { f.verdict = "UNRESOLVED"; continue; }
+  if (!/^use[A-Z]/.test(f.owner)) {
+    const text = byFile.get(f.file) ?? "";
+    /* The binding is on the line the mutation is assigned to — find the nearest
+       `const <name> = useMutation(` at or before this finding's offset. */
+    const upto = text.split("\n").slice(0, f.line).join("\n");
+    const bound = [...upto.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*useMutation\s*\(/g)].pop()?.[1];
+    if (!bound) { f.verdict = "UNRESOLVED"; continue; }
+    const esc = bound.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const handled =
+      new RegExp(`${esc}\\s*\\.\\s*mutateAsync`).test(text) ||
+      new RegExp(`${esc}\\s*\\.\\s*isError`).test(text) ||
+      new RegExp(`${esc}\\s*\\.\\s*error`).test(text) ||
+      [...text.matchAll(new RegExp(`${esc}\\s*\\.\\s*mutate\\s*\\(`, "g"))]
+        .some((m) => /\bonError\b/.test(callArgs(text, m.index + m[0].length - 1)));
+    f.verdict = handled ? "CAUGHT" : "SILENT";
+    continue;
+  }
   const consumers = allSrc.filter((s) => s.rel !== f.file && s.text.includes(f.owner));
   if (!consumers.length) { f.verdict = "UNRESOLVED"; continue; }
   f.verdict = consumers.some((s) => consumerHandles(s.text, f.owner)) ? "CAUGHT" : "SILENT";
