@@ -61,12 +61,24 @@ that section reads the committed export, not the database.
 
 # BROKEN
 
-## 1. `Agent` on `create_so` — every ERP-created sales order [fix in flight]
+## 1. `Agent` on `create_so` — every ERP-created sales order [FIXED, #2148]
 
-*Fault 7 of the go-live COE. Recorded here in full because it is the template
-every finding below is measured against, and because as of this branch it is
-still live on `main`: `composeCreateSo` reads `header.agent`, and
-`SO_HEADER_COLS` still does not select `salesperson_id`.*
+*Fault 7 of the go-live COE. Kept in full because it is the template every
+finding below is measured against. The table below describes `main` before
+#2148; that PR did what this finding prescribed and one thing more —* `agent`
+*is now also STAMPED at create from the salesperson, so the fallback is the
+backstop rather than the only source. See* `docs/modules/autocount-writeback.md`
+*§7n.*
+
+**What #2148 did NOT do, so finding 9 stays open:** `mapOrPassthrough` still
+returns `null` for an unmapped value, and still does so for `SalesLocation`,
+`VENUE` and `BRANDING`. The agent alone routes through `resolveAcAgent`, which
+passes an unmapped **`scm.staff` name** through and lets `/ensure-masters` open
+it — but deliberately NOT the raw `agent` free text, because that column holds
+bare uuids and "Unassigned" in production and the service opens an agent under
+exactly the string it is given. Finding 9's blanket "make the pass-through the
+default" needs that distinction per field: a value with a trustworthy writer may
+pass through, a free-text column with none may not.
 
 | step | fact |
 |---|---|
@@ -299,8 +311,8 @@ that the ERP-side value is available and currently discarded at the composer.
 
 # Recommended fix order
 
-1. **`salesperson_id` into `SO_HEADER_COLS`** and read it for `Agent` (finding 1). Unblocks every ERP-created SO. **In flight** — COE §5.
-2. **Stop `mapOrPassthrough` returning null** for Agent, SalesLocation, VENUE, BRANDING (findings 3, 5, 6, 9) — *and* fix `mastersOf`'s edit blindness (11) in the same PR, or the pass-through opens nothing on an edit.
+1. ~~**`salesperson_id` into `SO_HEADER_COLS`** and read it for `Agent` (finding 1). Unblocks every ERP-created SO.~~ **DONE, #2148** — and `agent` is stamped at create too, so new orders carry it in the column the reports read.
+2. **Stop `mapOrPassthrough` returning null** for SalesLocation, VENUE, BRANDING (findings 3, 5, 6, 9) — *and* fix `mastersOf`'s edit blindness (11) in the same PR, or the pass-through opens nothing on an edit. Agent is done (#2148) and is the worked example of the distinction this needs: a value with a trustworthy writer passes through, a free-text column with none does not.
 3. **A constant purchase agent** for `create_po` (finding 2), before the first PO is ever pushed.
 4. `po_doc_no ?? customer_po ?? customer_so_no` (7); branding from the lines (6).
 5. `soEditHeader`'s own rule applied to all its keys (10).
