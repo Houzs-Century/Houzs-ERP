@@ -152,7 +152,9 @@ here as such so nobody later cites it as established.
 
 | Item | Why deferred | Owner |
 | --- | --- | --- |
-| Enable the merge queue | The `merge_group` trigger and the `scale-postgres-contract` gate are now both ready (this PR). What remains is the decision and the flaky-test exposure — a queue is serial, so one flaky failure re-runs everything behind it | owner |
+| **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
+| **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
+| ~~Enable the merge queue~~ — **NOT POSSIBLE on this repo, see below** | `hello-houzs` is a **User** account, and GitHub's merge queue is organization-only. The ruleset page simply does not offer the option | — |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
 | 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
@@ -212,6 +214,95 @@ it irrelevant for 221 of the files and marginal for the remaining 44.
 
 ---
 
+## Confirmed on real runners, and where the bottleneck moved
+
+#2131 merged 2026-08-13. Job times from the merge run, against the ~380s
+per-shard the same job cost before:
+
+| job | before | after |
+| --- | --- | --- |
+| `backend-tests (1)` | ~380s | **141s** |
+| `backend-tests (2)` | ~380s | **127s** |
+| `backend-typecheck` | ~55s | 92s (it now also runs the 234-file light suite) |
+| `scale-postgres-contract` | ~80s | 70s |
+| `backend-postgres` | ~60s | 38s |
+| `e2e-contract` | ~18s | 17s |
+| **`frontend`** | ~285s | **~285s — untouched** |
+
+**The critical path is now `frontend`, and nothing in this work touched it.**
+A CI run finishes when its slowest job finishes; that used to be
+`backend-tests` at ~380s and it is now `frontend` at ~285s. Further backend
+work buys the PR author almost nothing from here.
+
+That job does, in one serial block: `npm ci`, `check:test-focus`, `typecheck`,
+`test`, two `node --test` gate scripts, `build`, **a second full `vite build` of
+the merge base** for the bundle baseline, `check:sw`, `test:smoke-script`,
+`typecheck:perf-local`, a Playwright Chromium download, and `test:perf-local`.
+The merge-base rebuild and the browser download are the two obvious candidates
+and neither has been measured — measure before touching, per `CLAUDE.md`.
+
+## The merge queue is not available here, and what to do instead
+
+Cause 1 — 35 open PRs against `strict_required_status_checks_policy`, giving
+~4.7 CI runs per PR — has an obvious textbook fix, and `ci.yml` has carried the
+`merge_group` trigger for it since before this work started. It cannot be used:
+
+```
+gh api users/hello-houzs --jq '.type'   ->  "User"
+```
+
+**GitHub's merge queue is organization-only.** `hello-houzs` is a personal
+account, so the "Require merge queue" checkbox never appears on the ruleset
+page no matter what else is configured. This was found the slow way — by
+recommending it, watching the owner look for a checkbox that does not exist,
+and only then checking the account type. Check `owner.type` before proposing
+anything org-scoped.
+
+The `merge_group` work already merged is not wasted: the trigger and the
+`scale-postgres-contract` gate are correct, and they become live the moment the
+repo moves under an organization. Until then:
+
+| option | effect | cost |
+| --- | --- | --- |
+| **Reduce the open-PR count** (chosen) | 35 → ~10 cuts the re-run storm ~3.5x | none; it is triage, not infrastructure |
+| Transfer the repo to an organization | unlocks the queue, plus org secrets and teams | a real migration; collaborators and integrations need re-setting |
+| Turn OFF `strict_required_status_checks_policy` | removes the O(n²) entirely | removes the guard added after three migration-collision incidents. Would need the duplicate-migration check moved to a pre-deploy gate first |
+
+## The hidden cost of the BUG-HISTORY rule, and the one-line fix
+
+Draining the backlog surfaced something nobody had measured. Of the first five
+pull requests that turned `DIRTY` after an unrelated merge landed:
+
+| PR | conflicting file |
+| --- | --- |
+| #2043 | `BUG-HISTORY.md` |
+| #1914 | `BUG-HISTORY.md` |
+| #1867 | `BUG-HISTORY.md` |
+| #2037 | `docs/modules/autocount-writeback.md` |
+
+**Four out of five, and not one line of code.** `BUG-HISTORY.md` is
+append-at-the-top and mandatory, so with N branches open, every one of them
+edits the same first line of the same file. Merge any one and the other N-1
+conflict — on a file where both sides are always wanted.
+
+The rule is right and should not change; the mechanics were wrong.
+`.gitattributes` now carries:
+
+```
+BUG-HISTORY.md merge=union
+```
+
+`union` is a built-in git merge driver that keeps both sides of a conflicting
+hunk instead of stopping. For a newest-first ledger where each branch prepends
+its own block, that is the correct resolution every time — it is precisely what
+was being done by hand. Scoped to this one file: two branches revising the same
+*existing* entry would get both copies, which is wrong for `docs/modules/*.md`
+and anything else edited in place.
+
+Resolving one of these by hand also demonstrated the treadmill: the fix was
+pushed, and `main` had moved again before GitHub finished recomputing. Manual
+resolution does not converge while the base branch is live.
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
@@ -229,7 +320,36 @@ it irrelevant for 221 of the files and marginal for the remaining 44.
 3. **`strict` without a merge queue does not scale past a handful of PRs.** The
    rule is right; the missing half of the pair is what made it quadratic.
 
-4. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
+4. **The generated snapshot has TWO inputs, and the forgettable one is the
+   baseline.** Within an hour of opening #2131 its own gate turned red, and the
+   cause was not a migration: #2106 edited `src/db/schema.sql`. Both feed
+   `gen:test-schema`, but "regenerate after adding a migration" is the sentence
+   everyone remembers, so the audit's own error message said exactly that and
+   pointed the reader at the wrong directory. Fixed to name both. A gate that
+   fires correctly and explains incorrectly still costs the next person the
+   afternoon.
+
+5. **Fixing the slowest job just promotes the second-slowest.** `backend-tests`
+   went 380s → 141s and the run did not get 240s faster for the author, because
+   `frontend` was already sitting at ~285s behind it. Always re-read the whole
+   job table after a win; the number that matters is the max, not the one that
+   moved.
+
+6. **Check the platform can do the thing before recommending it.** The merge
+   queue was proposed, prepared for, and written into this document twice
+   before anyone ran `gh api users/hello-houzs --jq '.type'` and got `"User"`.
+   One call, available from the first minute, would have replaced a whole
+   strand of the plan. Capability questions are cheap to answer and expensive
+   to assume.
+
+7. **"No output" is not "no difference".** While triaging PRs for closure,
+   `git diff origin/main origin/<branch>` printed nothing and was read as "this
+   branch is already merged". The ref had simply never been fetched. #2029 was
+   one step from being closed while still holding an unlanded 45 KB change.
+   Verify the input exists before believing the empty result — the repo's
+   standing rule that exit code 0 is not success, in a new costume.
+
+8. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
    the shard count against "112 files" and a "334s" suite. Both are long stale
    (277 files; a single shard now runs ~380s), and every later decision that
    trusted those numbers inherited the error. Sizing comments must be
