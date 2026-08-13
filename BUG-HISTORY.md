@@ -1,3 +1,25 @@
+# Bug history
+
+Newest first. Each entry is one defect: what was seen, what caused it, what was
+changed, and what class it belongs to. Entries are `##` (recent) or `###` under a
+`## YYYY-MM-DD` date heading (older); nothing else in this file uses those levels.
+
+**Before adding an entry, read [`docs/bug-classes.md`](docs/bug-classes.md).** It
+holds the causes that have recurred here — with a count, the worst thing each one
+cost, and **the name of the check that now fails on it**. If the bug you are about
+to write up is an instance of a class listed there, the check should have caught
+it: say why it did not, and widen the check in the same PR. If it is a new class,
+add it there once it has recurred, with a check — or under *Classes with no check
+yet*, saying what blocks one.
+
+That file exists because this one was not enough on its own. On 2026-08-10 a
+stringified value bound to a jsonb parameter corrupted 146 sofa lines three times
+in an afternoon; it was written up here and given a COE; on 2026-08-13 the repair
+script written to undo the damage reproduced it, turning seven production rows
+string-shaped. The write-up was read. Nothing mechanical enforced it.
+
+---
+
 ## Fixing the cause of a refused write-back did not bring the document back [high]
 
 **Symptom** - `HC-SO-2608-002` was refused with `MissingLocationError` and

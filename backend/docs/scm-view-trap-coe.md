@@ -69,6 +69,22 @@ HEADER is fatal for the list read unless the view is recreated in the same PR.
 If a third route grows a view-backed select, copy the comment block from the
 first call site and grep for it on review.
 
+> **This rule is still enforced by prose, and that is a known gap — not a
+> claim of coverage.** As of 2026-08-13 there are 10 `VIEW-TRAP` comment sites
+> in the tree and zero automated checks, and this COE's own family bit twice
+> more afterwards (2026-07-24, "Sales Orders list down on prod — permission
+> denied for view `mfg_sales_orders_with_payment_totals`", then again after
+> 0190). `docs/jsonb-double-encoding-coe.md` Lesson 4 is the general finding:
+> a documented trap catches the next reader anyway.
+>
+> The executable form would be a `test:pg` case (that CI job already runs a real
+> postgres:16) that builds the view family from the migrations and asserts every
+> column named in the shared HEADER select resolves through the VIEW, not only
+> through the base table — Postgres freezes a view's output column set at
+> `CREATE VIEW` time even when the body says `SELECT so.*`, which is this whole
+> COE. Until that exists, "copy the comment and grep on review" is what there
+> is. Tracked in `docs/bug-classes.md` under *Classes with no check yet*.
+
 ---
 
 ## 4. Prevention rules (Houzs-flavoured P-1..P-5)

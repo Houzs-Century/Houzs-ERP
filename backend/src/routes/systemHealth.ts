@@ -294,7 +294,12 @@ app.get("/ledger", requirePermission("*"), async (c) => {
   }
   try {
     const sb = getSupabaseService(c.env);
-    const { asOf, issueCount, issues } = await reconcileLedger(sb);
+    /* null = ALL COMPANIES, on purpose. This is the cross-company integrity
+       count; the per-company report is the operator-facing /reconcile route.
+       Written out rather than omitted so the two modes are distinguishable at
+       the call site — an omitted argument reads the same whether the author
+       meant "every company" or never knew there was a choice. */
+    const { asOf, issueCount, issues } = await reconcileLedger(sb, null);
     return c.json({
       check: "inventory_ledger_integrity",
       label: "Inventory ledger integrity",

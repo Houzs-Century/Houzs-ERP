@@ -38,7 +38,7 @@ export async function findSofaLinesWithoutCompleteBatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   lines: SofaGuardLine[],
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaGuardOffender[]> {
   if (lines.length === 0) return [];
 
@@ -125,7 +125,7 @@ export async function detectSofaSoItemIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ itemCode: string; itemGroup: string | null; soItemId: string | null }>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<Set<string>> {
   const out = new Set<string>();
   if (rows.length === 0) return out;
@@ -152,7 +152,7 @@ async function detectSofa(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ item_code: string; item_group: string | null }>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<(r: { item_code: string; item_group: string | null }) => boolean> {
   const codes = [...new Set(rows.map((r) => r.item_code).filter(Boolean))];
   const sofaCodes = new Set<string>();
@@ -189,7 +189,7 @@ export async function findIncompleteSofaSets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null | undefined>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<IncompleteSofaSet[]> {
   const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return [];

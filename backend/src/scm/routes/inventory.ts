@@ -1261,7 +1261,17 @@ inventory.get('/analytics', async (c) => {
 inventory.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   try {
-    return c.json(await reconcileLedger(sb));
+    /* PER-COMPANY, and it has to be typed out. reconcile-ledger.ts documents
+       exactly two modes — "when a companyId is given (operator-facing
+       /reconcile, which is per-company)" and "when omitted (System Health's
+       cross-company integrity count)" — and tests/reconcileLedgerScope.test.ts
+       pins the per-company mode in both directions after company A's report
+       listed company B's PC-Return numbers. That fix was tested at the function
+       and never wired here: this call passed no company at all, so the
+       operator-facing report had been running in System Health's cross-company
+       mode. Found 2026-08-13 by audit:decision-params, when the parameter
+       stopped being omissible. */
+    return c.json(await reconcileLedger(sb, activeCompanyId(c)));
   } catch (e: any) {
     return c.json({ error: 'load_failed', reason: e?.message ?? 'reconcile failed' }, 500);
   }
