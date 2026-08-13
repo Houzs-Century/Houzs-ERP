@@ -414,10 +414,37 @@ local stamps), so they verdict `mirror-source` — reported with the exact stamp
 for the 2990 SOURCE database, never written here. Rule:
 `classifySoLineWarehouse`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+**Historical backfill for the MIGRATED AutoCount lines (2026-08-11, applied).**
+A different population and a different rule. `import-ac-outstanding-so.mjs`
+resolved every imported line's warehouse and then left `warehouse_id` out of its
+INSERT column list, so all 13,881 migrated lines carried the AutoCount location
+as free TEXT and a NULL `warehouse_id` — every one of them in the `WH_NONE`
+bucket, unable to allocate, with sofa failing one step earlier because
+`findCoveringBatch` returns null on a null warehouse before it looks at stock.
+The column-list bug itself was fixed in #1848.
+
+`backend/scripts/backfill-so-line-warehouse.mjs` (workflow **Backfill SO line
+warehouse (migrated orders)**) filled them; all 13,907 migrated lines now carry
+a warehouse. **The evidence rule is AutoCount, not the line's own text.** The
+`location` text is the importer's transcription — the same script's output — so
+each line is re-read from the committed AutoCount export by its own
+`linked_ac_dtlkey` -> `DtlKey` (header `SalesLocation` only as a named fallback)
+and filled ONLY where AutoCount independently reports the same location.
+`CONFLICT`, no-evidence and unresolvable-location lines are left NULL and listed:
+a null surfaces as a pending line, a guessed warehouse sends staff to an empty
+shelf. The apply writes an explicit id list, never a `WHERE location = ...`
+predicate, so the refused set cannot be swept back in.
+
+Audited after the fact against AutoCount: 7,800 lines agree on the exact
+`DtlKey`, 6,037 on the header, 70 have no AutoCount row (documents absent from
+the outstanding-only export), and **0 are miswarehoused**. Verify with
+**Stock criterion census (read-only)** — `check-stock-criterion.mjs`, section A.
+
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`internal_expected_dd` — the UI's
-"Processing Date"; the `processing_date` column is a dead legacy snapshot) runs
+"Processing Date"; the legacy `processing_date` snapshot column was DROPPED in
+mig 0189, see the column registry below) runs
 EVERY gate and reports all failures at once (`so-save-problems.ts` →
 `{ error: 'validation_failed', problems: [...] }`, HTTP 422; rendered by the
 shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
@@ -446,6 +473,35 @@ timestamp the system writes, not a date a user picks — what was unified is the
 RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
 (email), the processing-date path TIGHTENED by four (name / address / postcode /
 delivery date), and the threshold became per-company.
+
+### Column registry — every date in this DB that looks like a Processing Date
+
+**Read this before binding any UI field, writing any query, or "unifying"
+anything.** Owner, 2026-08-13, after saying it more than three times: *"你确保你的
+process（就是整套系统）里，把 internal expected date、processing date 和 process
+date 都直接整合变成一个，不要再搞多个了。因为每一次讨论到 processing date 的时候，
+你就有各种各样的 bug，原因就是因为你有太多个了。这三个 date 其实都是指向同一个东西。"*
+
+The DATA was unified on 2026-08-13 (519 company-1 orders migrated out of
+`proceeded_at` into `internal_expected_dd`; both companies report zero split).
+The trap that survived was the NAMES — one concept answering to several column
+names, so the next reader picked the wrong one. This table is the whole answer.
+
+| Column | What it actually is | Status |
+|--------|--------------------|--------|
+| `scm.mfg_sales_orders.internal_expected_dd` | **THE Processing Date.** The SO's one user-picked date, behind the UI label "Processing Date". | **The only storage this concept has. Use this one.** |
+| `scm.consignment_sales_orders.internal_expected_dd` | The same concept for a Consignment Order. CO create + PATCH read/write only this. | Live, correct. |
+| `scm.mfg_sales_orders.proceeded_at` | **A different fact:** the TIMESTAMP the system stamps when the order is Proceeded — not a date a user picks. `recomputeSoStockAllocation` gates on it (NULL ⇒ every line forced PENDING). | Live. Stays a separate column ON PURPOSE. What was unified with the Processing Date is the RULE (`meetsProceedGate`), never the storage. |
+| `scm.mfg_sales_orders.processing_date` | Dead legacy snapshot. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). | **DROPPED — mig 0189.** |
+| `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284.** |
+| `scm.consignment_sales_orders.processing_date` | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it is NULL on every row. It was still being SELECTed into the CO list/detail payload, which is exactly the bait that produced the mfg blank-date bug. | Select removed. **DROP is a follow-up migration** — `pg-migrate` runs BEFORE `wrangler deploy`, so dropping a column in the same release that stops selecting it 500s the still-live old Worker (that is what blocked prod in #1191/0189). Exact SQL is at the CO `HEADER` note in `scm/routes/consignment-orders.ts`. |
+| `public.sales_orders.processing_date` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
+| `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's own date (`/sales`, `Sales.tsx`, mig 070). A `sales_entry` is a **different document**: no SO row, no doc flow, and none of the SO machinery — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation. | **KEPT under this name, deliberately.** A rename is UNSAFE: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys, and the change-request approval path replays a JSON payload stored days earlier — after a rename those stored keys match nothing and the field is **silently dropped on approve**, with no error. Documented at both ends instead (`routes/sales.ts`, `Sales.tsx`). **Do not coalesce or merge it with the SO's date.** |
+
+Two rules follow from the table. **Never add a ninth name** — if you need the
+SO's Processing Date, it is `internal_expected_dd`, full stop. **Never unify
+across documents** — `sales_entries` and AutoCount's mirror share a *word*, not a
+concept, and merging them would destroy real distinctions.
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 
