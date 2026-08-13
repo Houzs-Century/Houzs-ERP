@@ -658,6 +658,15 @@ other company's row — which is how an order came to be refused with
 company-scoped, showed RM 490 for that SKU. Tests:
 `scm/lib/product-lookup-company-scope.test.ts`.
 
+**Since 2026-08-13 the two GATES take the company as a REQUIRED argument** —
+`validateItemCodes` and `findServiceLineCodes`. The degrade rule above still
+holds (`null` means no predicate) but it can no longer be reached by SAYING
+NOTHING: a refusal gate that is silently unscoped does not fail loudly, it
+admits the other company's SKU, and "these move together" was an instruction no
+compiler was enforcing. The pricing LOADERS keep `companyId?` and the documented
+degrade — they are reads, not gates. See **BUG CLASS optional-param-noop** in
+`BUG-HISTORY.md`.
+
 ---
 
 ## 3. Backend (list handler)

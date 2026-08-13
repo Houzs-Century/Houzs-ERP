@@ -858,11 +858,11 @@ async function resolveDoSofaBatchMap(
         .map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group ?? null, soItemId: it.so_item_id ?? null }));
       const sofaSoIds = await detectSofaSoItemIds(sb, sofaRows, companyId);
       if (sofaSoIds.size > 0) {
-        /* 'latest' (default) — movement paths must stay deterministic even in
-           the rare multi-PO window so a resync delta lands in the SAME bucket
-           the original OUT was stamped with. New drop-ship APPROVALS block on
+        /* 'latest' — movement paths must stay deterministic even in the rare
+           multi-PO window so a resync delta lands in the SAME bucket the
+           original OUT was stamped with. New drop-ship APPROVALS block on
            multi-PO separately (buildDropshipOffenders, audit H3). */
-        const expected = await resolveExpectedBatchBySoItem(sb, [...sofaSoIds]);
+        const expected = await resolveExpectedBatchBySoItem(sb, [...sofaSoIds], { onMultiPo: 'latest' });
         for (const [sid, eb] of expected) if (eb.poNumber) batchBySoItem.set(sid, eb.poNumber);
       }
     }
@@ -3094,8 +3094,12 @@ deliveryOrdersMfg.get('/:id', async (c) => {
     })
     .map((it) => (it.so_item_id as string | null) ?? null)
     .filter((x): x is string => Boolean(x));
+  /* 'latest' — a READ-ONLY drill-down naming the PO a line most likely came
+     from. It stamps nothing, so the ambiguous case is better answered with the
+     most recent live PO than left blank; the write paths that DO stamp block
+     on it (audit H3). */
   const boundPoBySoItem = unresolvedSoIds.length > 0
-    ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds)
+    ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' })
     : new Map<string, { poNumber: string }>();
   /* Per-line Assigned SO (owner 2026-07-31): a DO is HARD-linked to its Sales
      Order — never an MRP guess — so the drill-down shows each line's intrinsic SO

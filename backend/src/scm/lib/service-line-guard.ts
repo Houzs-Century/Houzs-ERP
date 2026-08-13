@@ -20,11 +20,19 @@ export type ServiceGuardLine = {
 };
 
 /** Returns the distinct item codes among `lines` that are SERVICE lines —
- *  by payload signals or by catalog category. Empty array → all clear. */
+ *  by payload signals or by catalog category. Empty array → all clear.
+ *
+ *  companyId is REQUIRED (an explicit `null` still means "no predicate"). The
+ *  catalog half of this guard is the half that catches a crafted payload, and
+ *  `code` is unique only per company — unscoped it answers about the OTHER
+ *  company's catalog row, so the same payload can be cleared or refused
+ *  depending on which company's SKU master happens to hold that code. That is
+ *  not a decision a caller should be able to make by omission
+ *  (optional-param-noop sweep 2026-08-13). */
 export async function findServiceLineCodes(
   sb: any,
   lines: ServiceGuardLine[],
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<string[]> {
   const offenders = new Set<string>();
   const lookupCodes = new Set<string>();

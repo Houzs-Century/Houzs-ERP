@@ -229,6 +229,22 @@ Not generic narrative.
 ## Coding conventions specific to this repo
 
 - **No emoji.** Anywhere. Empty states, status copy, comments, commits.
+- **A parameter that DECIDES something is required, never optional.** If its
+  absence changes an answer — a gate, an exemption, a scope, a threshold, a
+  default that is not neutral — write it as `x: T | null` and let the compiler
+  enumerate the call sites. `x?: T` means every caller that says nothing keeps
+  the OLD behaviour, with no compile error, no failing test and no runtime
+  signal, so the rule ends up applying only where someone remembered it. This
+  cost four days on `itemCode` (DIVAN ONLY lines kept demanding a mattress Gap
+  after PR #1763 said "every desktop + mobile call site"), and the same hole
+  shipped `onMultiPo` on the drop-ship batch resolver, where the silent default
+  was the permissive one. Where "no value" is legitimate, pass an explicit
+  `null` — it reads as a decision — and assert what `null` means. An optional
+  parameter is acceptable only when its absence is the STRICTER direction, and
+  then the comment has to say so (precedents: `assertNotMirrored`'s missing
+  context leaves the guard active; `scopeToCompanyId` in
+  `scm/lib/companyScope.ts` states this rule in full). See **BUG CLASS
+  optional-param-noop** at the top of `BUG-HISTORY.md`.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw
