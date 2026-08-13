@@ -92,7 +92,10 @@ export async function findModelUsage(
      iterations, which returned "model unused" and let the delete through. */
   const { data: skus, error } = await sb.from('mfg_products').select('code').eq('model_id', modelId);
   if (error) return { ok: false, reason: `mfg_products: ${error.message}` };
-  for (const s of (skus ?? []) as Array<{ code: string }>) {
+  /* No `?? []`: the early return above is what makes `skus` an array, and
+     folding a null back into an empty list here would rebuild the exact
+     "unreadable list reads as no SKUs" path the comment above describes. */
+  for (const s of skus as Array<{ code: string }>) {
     const u = await findSkuUsage(sb, s.code);
     if (!u.ok) return u;
     if (u.usage) return { ok: true, usage: { ...u.usage, code: s.code } };

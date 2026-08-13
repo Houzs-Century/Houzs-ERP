@@ -537,7 +537,7 @@ mfgProducts.get('/:id', async (c) => {
 /* Exported so the swallowed-read guard below (the duplicate-code probe that
    gates the cascade rename) can be driven by a test — same reason
    deleteMfgProductHandler is exported. */
-export const patchMfgProductHandler = async (c: any) => {
+export const patchMfgProductHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   const id = c.req.param('id');
@@ -773,7 +773,9 @@ export const patchMfgProductHandler = async (c: any) => {
             + `rather than cascaded onto stock and documents unchecked — try again (${dupErr.message}).`,
         }, 409);
       }
-      if (dup && dup.length > 0) {
+      // `dup` is an array here — the `if (dupErr) return` above is what makes it
+      // one, and a `dup &&` guard would read an unreadable probe as "no duplicate".
+      if (dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
       /* material_code tables carry material_kind (mfg_product | fabric | raw) —
