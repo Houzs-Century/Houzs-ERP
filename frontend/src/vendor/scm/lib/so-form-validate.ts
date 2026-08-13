@@ -133,6 +133,25 @@ export function soDateGuardError(i: SoDateGuardInput): SoFormError | null {
  */
 export const LOCATION_REQUIRED_COMPANY_CODES: readonly string[] = ["HOUZS"];
 
+/**
+ * Does this company's order need a stock location? Mirrors
+ * `companyRequiresStockLocation` in the backend gate, including the
+ * deliberately UNGATED unknown/absent code — a surface that has not resolved
+ * its branding yet must not start refusing orders.
+ *
+ * Exported so a surface can ask the QUESTION without pretending to answer the
+ * whole guard: `SalesOrderNewFromProducts` collects no address, so it needs to
+ * know which companies would refuse a CONFIRMED create in order to land a
+ * DRAFT for them instead — and it must read the one list, never re-derive it.
+ */
+export function companyRequiresStockLocation(
+  companyCode: string | null | undefined,
+): boolean {
+  const code = (companyCode ?? "").trim().toUpperCase();
+  if (!code) return false;
+  return LOCATION_REQUIRED_COMPANY_CODES.includes(code);
+}
+
 export interface SoLocationGuardInput {
   /** Active company code from `useBranding().companyCode` ('HOUZS' | '2990'). */
   companyCode: string | null | undefined;
@@ -181,8 +200,7 @@ export interface SoLocationGuardInput {
 export function soStockLocationError(i: SoLocationGuardInput): SoFormError | null {
   if (i.asDraft || i.isEdit) return null;
   if (i.mappingsLoaded === false) return null;
-  const code = (i.companyCode ?? "").trim().toUpperCase();
-  if (!code || !LOCATION_REQUIRED_COMPANY_CODES.includes(code)) return null;
+  if (!companyRequiresStockLocation(i.companyCode)) return null;
   if (i.salesLocation.trim() !== "") return null;
 
   const state = i.state.trim();

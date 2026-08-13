@@ -385,16 +385,26 @@ fails if a THIRD `enqueueSoCreate` callsite ever appears un-gated.
 shared `frontend/src/vendor/scm/lib/so-form-validate.ts`, called by all four
 create surfaces — `SalesOrderNew`, `MobileNewSO` (create only; an EDIT enqueues
 an AutoCount *edit*, which leaves the book's own Location alone),
-`SalesOrderNewGuided` (inert — that flow always lands a DRAFT, wired so it is
-gated automatically if that ever changes) and `SalesOrderNewFromProducts`.
+`SalesOrderNewGuided` and `SalesOrderNewFromProducts` (both inert — both land a
+DRAFT, wired so they are gated automatically if that ever changes).
 
-> **`SalesOrderNewFromProducts` cannot raise a company-1 order.** That flow
-> collects no address by design ("address is added on the SO detail after
-> save") and lands CONFIRMED, so under company 1 it has no way to resolve a
-> warehouse. The page now says so up front and points at *Switch to Full form*,
-> rather than letting the operator build a cart and meet a 422. The backend
-> would refuse it either way — this is the UI telling the truth earlier, not a
-> second rule.
+The same file exports `companyRequiresStockLocation(companyCode)`, the twin of
+the backend predicate, for a surface that needs the QUESTION rather than the
+guard. One caller, below.
+
+> **`SalesOrderNewFromProducts` lands a DRAFT under a location-gated company**
+> (owner-approved 2026-08-13, SURFACE CHANGE). That flow collects no address by
+> design ("address is added on the SO detail after save"), so under company 1 a
+> CONFIRMED create can never resolve a warehouse — between #2112 and this, the
+> page could not raise an order at all (BUG-HISTORY). It now lands a draft for
+> exactly the companies in `LOCATION_REQUIRED_COMPANY_CODES`, read through
+> `companyRequiresStockLocation` so the scope is never re-derived: **company 2
+> (2990) and every uncovered company keep landing CONFIRMED.** A draft is never
+> written to AutoCount, so it owes no Location; the address is added on the SO
+> detail and the `DRAFT -> live` transition re-runs the same gate there. The
+> gate is deferred to the screen that can satisfy it, not bypassed. The page
+> header and the Create CTA ("Save draft SO") say which outcome the operator is
+> about to get. Pinned in `so-form-validate.test.ts`.
 
 **Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
 Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
