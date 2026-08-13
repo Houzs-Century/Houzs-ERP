@@ -34,9 +34,12 @@
 // CALIBRATED, not guessed — and the numbers below are a snapshot, not a
 // standing fact. AS OF 2026-08-13, run against all 3,231 commits then reachable
 // from origin/main, this exact detector fires on 30 titles (0.9%) and
-// 438 title-or-body messages (13.6%). Sampling those 438 by matched noun, they
-// are overwhelmingly REAL scope claims: "all four arms" (x46), "every caller"
-// (x49), "both surfaces" (x53), "every reader", "all six line-DELETE routes".
+// 438 title-or-body messages (13.6%). Grouping those 438 by the population noun
+// that matched — attributing each claim to the longest noun it ends with — the
+// head of the distribution is page x83, surface x80, caller x61, path x52,
+// route x48, screen x33, endpoint x26, call site x25, consumer x18, arm x16.
+// Sampling them, they are overwhelmingly REAL scope claims ("every reader",
+// "all six line-DELETE routes"), not population nouns used as prose.
 // That is the population this gate exists for, and roughly one PR in seven
 // will be asked to prove itself.
 //
