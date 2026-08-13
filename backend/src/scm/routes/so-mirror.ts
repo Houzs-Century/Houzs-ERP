@@ -79,6 +79,26 @@ const { tableMap, applyMap } = createMirrorMapper({
   mfg_sales_order_payments: { prefixCols: ['so_doc_no'] },
 });
 
+/* NO PAIR GATE HERE, and that is a decision, not an omission (2026-08-14).
+ *
+ * The owner's both-dates-or-neither rule (shared/so-processing-date,
+ * soDatePairRefusal) is enforced on every path where HOUZS authors the write:
+ * SO create, SO header PATCH, CO create, CO header PATCH, amendment submit,
+ * amendment approve, the /status proceed. This route is not one of them — it is
+ * a one-way REPLICA of rows 2990 already committed in its own database, and
+ * 2990 is a separate repository on its own deploy schedule.
+ *
+ * Refusing an unpaired mirror row would not fix it: a non-2xx keeps the row
+ * PENDING in 2990's outbox and the pg_cron drainer retries it forever, so one
+ * legacy company-2 order would wedge the queue behind it and every later SO
+ * would stop arriving. Silently rewriting it is worse — the replica would then
+ * disagree with the system of record, and the next reconciliation would chase a
+ * difference this route invented.
+ *
+ * So the rule for company 2 belongs in 2990's own write paths. What is
+ * enforceable here is that the date ARRIVES at all, which is what the alias
+ * above is for. If unpaired company-2 rows ever need counting, that is
+ * backend/scripts/probe-so-date-xor.mjs, which reports them per company. */
 soMirror.post('/', async (c) => {
   if (!mirrorAuthed(c)) return c.json({ error: 'unauthorized' }, 401);
   let body: { docNo?: string; deleted?: boolean; header?: Record<string, unknown>; items?: Record<string, unknown>[]; payments?: Record<string, unknown>[] };

@@ -481,12 +481,11 @@ the outstanding-only export), and **0 are miswarehoused**. Verify with
 ### Processing-Date save gates (aggregated `validation_failed`)
 
 Setting or changing the Processing Date (`scm.mfg_sales_orders.processing_date`
-— one column, and since mig 0284 one NAME: the UI label, the API field
+— one column, and since **mig 0286** one NAME: the UI label, the API field
 `processingDate` and the column are the same word. It was `internal_expected_dd`,
-and an older dead column squatted on `processing_date` until 0189 dropped it) runs
-Setting or changing the Processing Date (`internal_expected_dd` — the UI's
-"Processing Date"; the legacy `processing_date` snapshot column was DROPPED in
-mig 0189, see the column registry below) runs
+and an older dead column squatted on `processing_date` until 0189 dropped it.
+Two paragraphs used to stand here, one written before the rename and one after,
+each naming a different column — that is what a stale guide does) runs
 EVERY gate and reports all failures at once (`so-save-problems.ts` →
 `{ error: 'validation_failed', problems: [...] }`, HTTP 422; rendered by the
 shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
@@ -499,23 +498,61 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 | Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. Measured free: of 63 live dated SOs, zero lacked any of these four; 12 lacked only the email that was dropped. |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
 
-Related short-circuit gates: Processing + Delivery all-or-nothing
-(`processing_delivery_must_pair` — the SO create + header PATCH paths 400 on it
-before the aggregator runs; since 2026-08-13 `so-save-problems` ALSO reports the
-reverse direction, a Delivery Date with no Processing Date, as a 422 problem
-under the same code, so a path with no short-circuit of its own — the CO header
-PATCH, the amendment approver, any future caller — cannot write half a pair.
-Grandfathered like the past-date rules: a stored unpaired date the save leaves
-untouched still saves), remove-date is super-admin only
+Related short-circuit gates: remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
-elapses (`so-field-policy`).
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `processing_date`.
+
+### Both dates or neither — `processing_delivery_must_pair`
+
+*"processing date 和 delivery date 必须同时有或者同时没有"* (owner, restated
+2026-08-13). One predicate, `soDatePairRefusal` in
+`backend/src/scm/shared/so-processing-date.ts`, and **every server write path
+that can set or clear either date calls it**. It is not a UI rule: the client
+guard (`so-form-validate.ts` `soDateGuardError`) still runs first for the
+message, but nothing depends on it.
+
+| Write path | File | Response |
+|---|---|---|
+| SO create | `routes/mfg-sales-orders.ts` (`createSalesOrderCore`) | 400 `processing_delivery_must_pair` |
+| SO header PATCH | `routes/mfg-sales-orders.ts` | 400, and the aggregated 422 report re-states it |
+| SO `/status` → IN_PRODUCTION (proceed writes the date) | `routes/mfg-sales-orders.ts` | 400 |
+| SO amendment SUBMIT | `routes/mfg-sales-orders.ts` | 400 `amendment_dates_xor` |
+| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` |
+| CO create | `routes/consignment-orders.ts` | 400 |
+| CO header PATCH | `routes/consignment-orders.ts` | 400 |
+| aggregated save report (both directions) | `shared/so-save-problems.ts` | 422 problem |
+| repair script | `scripts/unify-processing-date.mjs` | refuses the transaction |
+
+**GRANDFATHERED, and that is part of the rule.** Live orders are honestly
+unpaired — imported AutoCount history has no delivery date for some — so a save
+that leaves BOTH dates exactly as it found them still succeeds. Only a save that
+CHANGES a date is judged. `backend/scripts/probe-so-date-xor.mjs` counts the
+offenders per company.
+
+**CLEARING ONE CLEARS BOTH, one direction only.** Clearing the Processing Date
+(already super-admin-only) also clears the Delivery Date — on the header AND, via
+`p_apply_delivery_date`, on every `line_delivery_date`, or MRP keeps ordering by
+a line date the header no longer holds. The reverse is a REFUSAL, not a cascade:
+clearing the delivery date alone would have to clear the Processing Date, which
+is exactly the write `scm.so.remove_processing_date` guards.
+
+**The one deliberate exclusion is the 2990 mirror** (`routes/so-mirror.ts`). It
+replicates rows 2990 already committed; a non-2xx keeps the row PENDING in
+2990's outbox and its pg_cron drainer retries forever, so one legacy unpaired
+company-2 order would wedge the queue behind it. The rule for company 2 belongs
+in 2990's own write paths. The route says so in a comment, and
+`tests/soDatePairWiring.test.ts` asserts the comment is still there.
+
+The enumeration is a TEST, not prose: `tests/soDatePairWiring.test.ts` anchors on
+each path's source and fails if one stops calling the predicate. That file exists
+because the rule was previously hand-written in five places and simply missing
+from three — and every unit test over the logic passed the whole time.
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
 `meetsProceedGate` in `order-rules` is the single rule behind ALL of it: setting
-`internal_expected_dd`, the create's auto-proceed, and both manual proceed paths
+`processing_date`, the create's auto-proceed, and both manual proceed paths
 (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`). Net
 effect of the unification: the proceed paths LOOSENED by one condition (email),
 the processing-date path TIGHTENED by four (name / address / postcode / delivery
@@ -525,14 +562,14 @@ it, so they cannot come to different verdicts about the same deposit.
 
 **PROCEED IS THE DATE (owner, pinned 2026-08-13).** *"只要有 Processing Date，就
 代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
-date 就代表没有 proceed。"* Proceeding therefore WRITES `internal_expected_dd`; it
+date 就代表没有 proceed。"* Proceeding therefore WRITES `processing_date`; it
 does not stamp a click time. Until 2026-08-13 every proceed path wrote only
 `proceeded_at`, so an order could sit IN_PRODUCTION with no start date — and
 production queues by that date.
 
 | Path | Where the date comes from |
 |------|---------------------------|
-| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `internal_expected_dd`, else `internalExpectedDd` on the request body (which the route now accepts); a date written here clears the FULL gate table above, read live off the row |
+| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else the `internalExpectedDd` REQUEST KEY (the payload name is unchanged — only the column was renamed, and a payload rename would break every deployed client); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
 | `PATCH /:docNo` `proceededAt` | this patch's `internalExpectedDd`, else the stored one |
 | CREATE auto-proceed | `internalExpectedDd` on the create — no date means the order is created UN-proceeded, never refused |
 
@@ -591,17 +628,21 @@ names, so the next reader picked the wrong one. This table is the whole answer.
 
 | Column | What it actually is | Status |
 |--------|--------------------|--------|
-| `scm.mfg_sales_orders.internal_expected_dd` | **THE Processing Date.** The SO's one user-picked date, behind the UI label "Processing Date". | **The only storage this concept has. Use this one.** |
-| `scm.consignment_sales_orders.internal_expected_dd` | The same concept for a Consignment Order. CO create + PATCH read/write only this. | Live, correct. |
+| `scm.mfg_sales_orders.processing_date` | **THE Processing Date.** The SO's one user-picked date, behind the UI label "Processing Date". Was `internal_expected_dd` until **mig 0286** renamed it (base table, the consignment twin, and every dependent view's projection). | **The only storage this concept has. Use this one.** |
+| `scm.consignment_sales_orders.processing_date` | The same concept for a Consignment Order. CO create + PATCH read/write only this. Renamed by the same mig 0286, after 0286 step 1 dropped the dead clone column that was squatting on the name. | Live, correct. |
 | `scm.mfg_sales_orders.proceeded_at` | **A different fact:** the TIMESTAMP the system stamps when the order is Proceeded — not a date a user picks. `recomputeSoStockAllocation` gates on it (NULL ⇒ every line forced PENDING). | Live. Stays a separate column ON PURPOSE. What was unified with the Processing Date is the RULE (`meetsProceedGate`), never the storage. |
-| `scm.mfg_sales_orders.processing_date` | Dead legacy snapshot. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). | **DROPPED — mig 0189.** |
+| `scm.mfg_sales_orders.processing_date` *(the OLD one)* | Dead legacy snapshot. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). Its drop is what freed the name for 0286. | **DROPPED — mig 0189.** |
 | `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284.** |
-| `scm.consignment_sales_orders.processing_date` | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it is NULL on every row. It was still being SELECTed into the CO list/detail payload, which is exactly the bait that produced the mfg blank-date bug. | Select removed. **DROP is a follow-up migration** — `pg-migrate` runs BEFORE `wrangler deploy`, so dropping a column in the same release that stops selecting it 500s the still-live old Worker (that is what blocked prod in #1191/0189). Exact SQL is at the CO `HEADER` note in `scm/routes/consignment-orders.ts`. |
+| `scm.consignment_sales_orders.processing_date` *(the OLD one)* | Same clone artifact. Zero writers ever, NULL on every row, still SELECTed into the CO payload — the exact bait that produced the mfg blank-date bug. | **DROPPED — mig 0286 step 1**, which had to clear it before the rename could land (`column processing_date ... already exists`). The guard there fires only while BOTH names are present: a bare `DROP COLUMN IF EXISTS` would, on a re-run, drop the users' renamed dates. |
 | `public.sales_orders.processing_date` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
 | `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's own date (`/sales`, `Sales.tsx`, mig 070). A `sales_entry` is a **different document**: no SO row, no doc flow, and none of the SO machinery — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation. | **KEPT under this name, deliberately.** A rename is UNSAFE: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys, and the change-request approval path replays a JSON payload stored days earlier — after a rename those stored keys match nothing and the field is **silently dropped on approve**, with no error. Documented at both ends instead (`routes/sales.ts`, `Sales.tsx`). **Do not coalesce or merge it with the SO's date.** |
 
 Two rules follow from the table. **Never add a ninth name** — if you need the
-SO's Processing Date, it is `internal_expected_dd`, full stop. **Never unify
+SO's Processing Date, it is `processing_date`, full stop, and read the name
+through `SO_PROCESSING_DATE_COLUMN` so the next rename moves the readers with
+it. A column name inside a string is invisible to the compiler: the `/status`
+proceed block kept selecting, comparing and WRITING `internal_expected_dd` for a
+day after 0286 renamed it, and nothing failed to build. **Never unify
 across documents** — `sales_entries` and AutoCount's mirror share a *word*, not a
 concept, and merging them would destroy real distinctions.
 
