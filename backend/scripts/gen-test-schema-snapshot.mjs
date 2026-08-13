@@ -326,8 +326,12 @@ if (check) {
   if (stale.length) {
     console.error(
       `Test schema snapshot is stale: ${stale.join(", ")}\n` +
-        `A migration changed the schema without regenerating it, so the suite\n` +
-        `would run against a schema production does not have.\n` +
+        `Something under src/db/ changed the schema without this being\n` +
+        `regenerated, so the suite would run against a schema production does\n` +
+        `not have. It is EITHER a new/edited file in src/db/migrations/ OR an\n` +
+        `edit to the src/db/schema.sql baseline — both feed this snapshot, and\n` +
+        `the baseline is the one people forget (it is what went stale first,\n` +
+        `on 2026-08-13, via a change to sales_orders).\n` +
         `Fix: npm run gen:test-schema`,
     );
     process.exit(1);
