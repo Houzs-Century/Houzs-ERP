@@ -84,10 +84,24 @@ async function main() {
   /* Read them WITH their identity, so a refused row can be opened by a human
      rather than described. The arm list is the shared one, so a table that
      gained a mangled row later is included without editing this file. */
+  /* ASK WHICH COLUMNS EXIST. Not every arm carries item_code —
+     inventory_movements does not — and a hard-coded select fails the WHOLE
+     run on the first arm that lacks it, which is what happened on the first
+     prod plan. The identity column is resolved per arm and degrades to NULL
+     rather than taking the script down. */
+  const cols = await sql`SELECT table_schema || '.' || table_name AS t, column_name
+                           FROM information_schema.columns WHERE table_schema = 'scm'`;
+  const has = new Map();
+  for (const r of cols) {
+    if (!has.has(r.t)) has.set(r.t, new Set());
+    has.get(r.t).add(r.column_name);
+  }
   const rows = [];
   for (const arm of ARMS) {
+    const have = has.get(arm.t) ?? new Set();
+    const idCol = ['item_code', 'sku_code', 'product_code'].find((cName) => have.has(cName));
     const r = await sql.unsafe(
-      `SELECT i.id::text AS id, i.item_code, i.variants::text AS raw
+      `SELECT i.id::text AS id, ${idCol ? `i.${idCol}` : 'NULL'} AS item_code, i.variants::text AS raw
          FROM ${arm.t} i
         WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'array'`, [CO]);
     for (const x of r) rows.push({ arm: arm.name, t: arm.t, ...x });
