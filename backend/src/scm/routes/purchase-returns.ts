@@ -1006,6 +1006,10 @@ purchaseReturns.patch('/:id/complete', async (c) => {
 export const cancelPurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const user = c.get('user');
+  /* Surfaced in the response, the way the create path already surfaces
+     movementErrors. A cancel that only PARTLY reversed its stock must not
+     report a clean 200. */
+  const reversalErrors: string[] = [];
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
@@ -1047,6 +1051,22 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
   // Best-effort; never un-cancel on a movement failure.
   try {
     const rev = await reverseMovements(sb, 'PURCHASE_RETURN', id, user.id);
+    /* PARTIAL FAILURE IS REPORTED. reverseMovements inserts row by row on
+       purpose ("so a single collision doesn't abort the whole reversal",
+       inventory-movements.ts:571) and returns { ok, reversed, skipped, failed,
+       reason }. Only `reversed > 0` was read, so reversed:3 / failed:2 entered
+       the branch below and the handler returned a clean 200 - the cancel
+       reported success while part of the stock never came back.
+
+       The cancel still STANDS (a ledger hiccup must not un-cancel a document);
+       what changes is that the caller is told. */
+    if (!rev.ok) {
+      reversalErrors.push(
+        `Stock reversal incomplete: ${rev.reversed} reversed, ${rev.failed} failed` +
+        (rev.reason ? ` (${rev.reason})` : '') +
+        '. The return is cancelled; run /inventory/reconcile to repair the ledger.',
+      );
+    }
     if (rev.reversed > 0) {
       /* PR cancel reversed stock IN → may unlock PENDING SOs. Re-walk. */
       try {
@@ -1067,7 +1087,10 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
     }
   } catch { /* best-effort */ }
 
-  return c.json({ purchaseReturn: { id, status: 'CANCELLED' } });
+  return c.json({
+    purchaseReturn: { id, status: 'CANCELLED' },
+    ...(reversalErrors.length ? { reversalErrors } : {}),
+  });
 };
 purchaseReturns.patch('/:id/cancel', cancelPurchaseReturnHandler);
 

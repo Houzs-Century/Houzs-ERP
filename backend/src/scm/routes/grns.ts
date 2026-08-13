@@ -2445,6 +2445,11 @@ grns.post('/from-po-items', async (c) => {
    movement/rollback failure does not un-cancel the GRN.
    NOTE: grns has no cancelled_at column, so we set status + updated_at only. */
 grns.patch('/:id/cancel', async (c) => {
+  /* Surfaced in the response, the way this file's POST path already surfaces
+     movementErrors and recountError. A cancel whose stock reversal or PO recount
+     failed must not report a clean 200 - the GRN stays CANCELLED either way, but
+     the ledger and the PO no longer silently disagree with it. */
+  const cancelErrors: string[] = [];
   const id = c.req.param('id');
   const sb = c.get('supabase');
   const user = c.get('user');
@@ -2588,7 +2593,19 @@ grns.patch('/:id/cancel', async (c) => {
           };
         });
       if (movements.length > 0) {
-        await writeMovements(sb, movements, activeCompanyId(c));
+        /* CHECKED. writeMovements never throws — it logs and returns
+           {ok:false} — so the enclosing best-effort catch caught
+           nothing here and the result was discarded. A cancel whose reversing
+           OUT failed left phantom received stock on the shelf and returned 200.
+           The recordEntityAudit(action:'CANCEL') written earlier records that
+           the CANCEL happened; it never recorded that the REVERSAL did not. */
+        const wrote = await writeMovements(sb, movements, activeCompanyId(c));
+        if (!wrote.ok) {
+          cancelErrors.push(
+            `Stock reversal FAILED (${movements.length} row(s)): ${wrote.reason ?? 'unknown'}. ` +
+            'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
+          );
+        }
         /* GRN cancel pulled stock back out → other READY SOs that relied on
            this stock may need to regress. Re-walk allocation. Best-effort. */
         try {
@@ -2609,9 +2626,23 @@ grns.patch('/:id/cancel', async (c) => {
   // (b) Recount received_qty on each linked PO item from live GRN lines — this
   //     cancelled GRN's lines now drop out, auto-releasing the PO + re-evaluating
   //     its status.
+  /* The 2026-07-31 fix that made recomputePoReceived RETURN its outcome was
+     wired into the POST caller only; this one still threw the RecountResult
+     away — and the function never throws, so the catch was dead too. Its own
+     header documents what that costs: eleven POs sat with their goods in the
+     warehouse and received_qty untouched for seventeen days, because the only
+     record of the failure was a console line in an ephemeral Worker log. */
   try {
-    await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
-  } catch { /* best-effort */ }
+    const recount = await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
+    if (!recount.ok) {
+      cancelErrors.push(
+        `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
+        'still show the goods as received — reopen and re-save the PO, or run the recount.',
+      );
+    }
+  } catch (e) {
+    cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
+  }
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
 
@@ -2627,7 +2658,7 @@ grns.patch('/:id/cancel', async (c) => {
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
+  return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
 });
 
 /* ════════════════════════════════════════════════════════════════════════

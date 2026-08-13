@@ -872,7 +872,23 @@ consignmentReturns.patch('/:id', async (c) => {
    terminal return re-runs recomputeTotals + resyncReturnInventory, which would
    rewrite settled totals and (for non-cancelled terminal states) re-book stock. */
 async function returnLineLock(sb: any, id: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('consignment_delivery_returns').select('status').eq('id', id).maybeSingle();
+  /* FAILS CLOSED. `error` was not destructured at all, so a failed read gave
+     data = null, st = undefined, every check fell through, and the guard
+     RETURNED NULL — i.e. it PASSED. A lock whose own comment says editing a
+     terminal return "would rewrite settled totals and re-book stock" opened
+     itself whenever the database hiccupped.
+
+     Closed rather than open because of what is on the other side: this is not a
+     visibility filter, it is the only thing standing between a settled return
+     and a re-run of recomputeTotals + resyncReturnInventory. A read failure is
+     transient and the operator retries; a wrongly-permitted edit is not. */
+  const { data, error } = await sb.from('consignment_delivery_returns').select('status').eq('id', id).maybeSingle();
+  if (error) {
+    return {
+      error: 'return_status_unavailable',
+      message: 'The return\'s status could not be read just now, so its lines are locked until it can be. Please try again in a moment.',
+    };
+  }
   const st = (data as { status: string } | null)?.status;
   if (st === 'CANCELLED') return { error: 'return_cancelled', message: 'This consignment return is cancelled — its lines can no longer be changed.' };
   if (st === 'REFUNDED') return { error: 'return_refunded', message: 'This consignment return is refunded — its lines can no longer be changed.' };
@@ -914,8 +930,14 @@ consignmentReturns.post('/:id/items', async (c) => {
   gateCrnFinance(c, null, data);
   await recomputeTotals(sb, id);
   /* Adding a return line books its IN too (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, user?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, user?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ item: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) }, 201);
 });
 
 consignmentReturns.patch('/:id/items/:itemId', async (c) => {
@@ -991,8 +1013,14 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   /* Adjust inventory by the qty/variant delta (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 consignmentReturns.delete('/:id/items/:itemId', async (c) => {
@@ -1005,8 +1033,14 @@ consignmentReturns.delete('/:id/items/:itemId', async (c) => {
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
   await recomputeTotals(sb, id);
   /* Give the deleted line's stock back OUT (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 // ── Status transition ──────────────────────────────────────────────────────
@@ -1061,10 +1095,19 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
 
   /* Cancelling a Consignment Return REVERSES the return IN: target net is now 0
      so the resync writes a balancing OUT per bucket. Idempotent + best-effort. */
+  // Hoisted: the response is OUTSIDE this block, so a block-scoped
+  // declaration would leave the cancel path unable to report.
+  let resyncErrs: string[] = [];
   if (body.status === 'CANCELLED') {
-    try { await resyncReturnInventory(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+    movementErrors; these mutations threw it away, so a resync that failed to
+    book or drain stock returned a clean 200. writeMovements never throws, so
+    the catch caught nothing either. */
+    resyncErrs = [];
+    try { resyncErrs = await resyncReturnInventory(sb, id, user.id); }
+    catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   }
 
-  return c.json({ consignmentReturn: data });
+    return c.json({ consignmentReturn: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 };
 consignmentReturns.patch('/:id/status', patchConsignmentReturnStatusHandler);
