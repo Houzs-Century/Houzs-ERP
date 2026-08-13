@@ -408,14 +408,29 @@ The per-line `stock_status` itself is **stored**, not derived — plain `text` o
 `PENDING` / `READY` / `PARTIAL`. It is written by
 `recomputeSoStockAllocation`.
 
-### 6.1 The processing-date gate
+### 6.1 The `proceeded_at` gate
 
-`recomputeSoStockAllocation` gates on `proceeded_at`. An SO with a NULL
-processing date has **every line forced to PENDING and consumes no stock**,
-so the ERP emits the blank remark however much stock is physically on hand.
-Any order that AutoCount marks `READY` but the ERP has not yet processed will
-therefore disagree, and it is not a stock error. The checker pulls
-`proceeded_at` and separates this class out by name.
+`recomputeSoStockAllocation` gates on **`proceeded_at`** — the lifecycle
+timestamp, NOT the Processing Date. An SO with a NULL `proceeded_at` has
+**every line forced to PENDING and consumes no stock**, so the ERP emits the
+blank remark however much stock is physically on hand. Any order that AutoCount
+marks `READY` but the ERP has not yet processed will therefore disagree, and it
+is not a stock error. The checker pulls `proceeded_at` and separates this class
+out by name.
+
+> **Naming corrected 2026-08-14.** This section was headed "The processing-date
+> gate" and called `proceeded_at` "the processing date". Since mig 0286 those
+> are two different columns: the Processing Date is
+> `scm.mfg_sales_orders.processing_date`, and `proceeded_at` is a separate live
+> timestamp. The MECHANICS above are unchanged and still correct —
+> `lib/so-stock-allocation.ts` really does select and gate on `proceeded_at`.
+>
+> The distinction is not academic on migrated data: the cutover importer writes
+> AutoCount's `UDF_PDate` into `proceeded_at` and leaves `processing_date` NULL
+> (`docs/cutover-tally-method.md`), so a migrated order allocates stock while
+> carrying no Processing Date, and the owner's pinned rule *"没有 processing
+> date 就代表没有 proceed"* says that order is not proceeded. Whichever way that
+> is resolved, it is a decision about the ALLOCATOR, not a rewording here.
 
 ---
 
