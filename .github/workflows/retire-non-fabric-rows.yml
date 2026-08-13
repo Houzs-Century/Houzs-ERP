@@ -1,0 +1,97 @@
+name: retire-non-fabric-rows
+
+# Products sitting in the fabric master — deactivate them, record why, delete nothing.
+#
+# A prod probe on 2026-08-13 found two rows in scm.fabric_trackings that are not
+# fabrics: "SOFA 5535" described as "5535 (3+L)", and "SQUARE PILLOW" described
+# as 'SQUARE PILLOW (16" X 16")'. Owner: 「为什么sofa 和square pillow在fabric
+# convert里面？」. PR #2104 shut the write path so no third one can arrive; this
+# is the other half, on the rows already there.
+#
+# NOTHING IS DELETED. The script has no DELETE in it. A retired row is set
+# is_active = false and has a sentence appended to its description saying which
+# product word condemned it and on what day, with the original description kept
+# verbatim in front of it. The plan prints the exact reversal SQL for every row.
+#
+# IT REFUSES ANYTHING STILL REFERENCED. Before a row is touched, the full
+# fabric census runs against its code — the same carrier list and the same
+# per-kind SQL as census-fabric-colour.mjs, imported from lib/colour-carriers.mjs.
+# Any live carrier naming the code leaves the row alone and reports the counts.
+# A product code that reached a real order is a different problem, and is not
+# something to deactivate quietly underneath a live document.
+#
+# mode=plan (the default) writes nothing and holds the session read-only.
+# mode=apply needs the confirm phrase, runs one transaction per row, re-checks
+# the census inside that transaction, and verifies on a FRESH connection --
+# including that the table did not shrink.
+#
+# RUN PLAN FIRST AND READ IT. The plan is the artifact; apply without having
+# read one is how the wrong row gets retired.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+      codes:
+        description: "optional '|' separated fabric codes to narrow to (blank = every product-headed code)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: retire-non-fabric-rows
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      # The rule that picks the rows is written twice (route TS + script mjs)
+      # because a .mjs cannot import a Hono route. These tests are what keeps
+      # the two copies identical, so a drifted pair must not reach prod data.
+      - name: Guard tests (the rule, the stamp, the census SQL)
+        run: npx vitest run tests/nonFabricCodeParity.test.ts tests/colourCarriersEngine.test.ts src/scm/routes/fabric-tracking.non-fabric-code.test.ts
+      - name: Retire non-fabric rows (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          CODES: ${{ inputs.codes }}
+        # pipefail, or `tee` swallows the exit code and a run whose own
+        # read-back disagreed with it reports success
+        run: |
+          set -o pipefail
+          node scripts/retire-non-fabric-rows.mjs | tee retire-non-fabric-rows.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retire-non-fabric-rows-${{ inputs.mode }}
+          path: backend/retire-non-fabric-rows.txt
+          retention-days: 90
