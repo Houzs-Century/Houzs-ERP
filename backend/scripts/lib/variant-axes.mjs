@@ -28,6 +28,23 @@ export const isDivanOnly = (itemCode) => /\bDIVAN\s*ONLY\b/i.test(itemCode ?? ""
 export const isDivanlessFrame = (itemCode) => /ADJUSTABLE|\(S?S\+S\)|DOUBLE\s*D[AE]C?KER|\bDDB/i.test(itemCode ?? "");
 
 const DIVANLESS_AXES = new Set(["divanHeight", "legHeight", "gap"]);
+
+/* A console is the table between two seats. It has no seat, so it can have no
+   seat height, and asking for one reports a defect that cannot be fixed from
+   any source. The owner stated the class directly (2026-08-11: "有些 sku 是没有
+   的"), and the AutoCount sketches show it: on PO-009553 both seat boxes carry
+   a figure and the console box is deliberately blank.
+
+   Deliberately narrow. STOOL is NOT here - a stool is something you sit on, and
+   no line currently reports it missing, so exempting it would be a guess with
+   no case behind it. Add a piece here only with evidence that it has no seat. */
+const SEATLESS_PIECE = /^(CONSOLE|CT)\b/i;
+const compartmentOfCode = (itemCode) => {
+  const c = String(itemCode ?? "").toUpperCase();
+  const i = c.indexOf("-");
+  return i < 0 ? "" : c.slice(i + 1);
+};
+export const isSeatlessPiece = (itemCode) => SEATLESS_PIECE.test(compartmentOfCode(itemCode));
 const isEmpty = (v) => v === undefined || v === null || String(v).trim() === "";
 
 export function missingVariantAxes(itemGroup, variants, itemCode) {
@@ -36,11 +53,13 @@ export function missingVariantAxes(itemGroup, variants, itemCode) {
   const v = variants ?? {};
   const skipGap = isDivanOnly(itemCode);
   const skipBase = isDivanlessFrame(itemCode);
+  const skipSeat = isSeatlessPiece(itemCode);
   return axes.filter(
     (axis) =>
       axis.required !== false &&
       !(skipGap && axis.key === "gap") &&
       !(skipBase && DIVANLESS_AXES.has(axis.key)) &&
+      !(skipSeat && axis.key === "seatHeight") &&
       axis.aliases.every((k) => isEmpty(v[k])),
   );
 }

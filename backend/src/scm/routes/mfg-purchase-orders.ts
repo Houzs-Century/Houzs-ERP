@@ -35,7 +35,7 @@ import {
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { enqueuePoCreate, enqueueCancel, enqueueEdit } from '../lib/autocount-outbox';
+import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -69,7 +69,8 @@ import {
 } from '../lib/po-email';
 import { getSupabaseService } from '../../db/supabase';
 import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
-import { thumbKeyFor } from '../../services/photoThumbs';
+import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
+import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -247,11 +248,12 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    add/edit/delete alike. Only ever reached for a PO the downstream lock let
    through, which is the same rule AutoCount enforces on its side. Never
    throws. */
-async function queueAcPoEdit(c: any, poId: string): Promise<void> {
+async function queueAcPoEdit(c: any, poId: string, retire: AcRetiredLine[] = []): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
     docType: 'PO',
     docId: poId,
+    retire,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -1623,7 +1625,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, ' +
+    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
@@ -1650,6 +1652,20 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
+      /* A retired line has no demand to purchase against. The line-level bind
+         (soLinkTargetRefusal) has refused this since it was written and the
+         From-SO picker never lists one, but THIS is the bulk create — reached by
+         POST /from-sos and by the MRP agent, neither of which goes through
+         either — so a cancelled line stayed purchasable here. Inert today
+         (production holds two cancelled lines, both with zero demand) and the
+         gate that has to exist before line retirement can ship. */
+      if ((row as { cancelled?: boolean | null }).cancelled) {
+        return c.json({
+          error: 'so_line_cancelled',
+          reason: `Sales Order line ${row.doc_no ?? ''} (${row.item_code ?? ''}) is cancelled — it has no demand to purchase against.`.trim(),
+          soItemId: p.soItemId,
+        }, 409);
+      }
       const remaining = row.qty - row.po_qty_picked;
       if (p.qty <= 0)         return c.json({ error: 'qty_must_be_positive', soItemId: p.soItemId }, 400);
       // Commander 2026-05-31 — MRP-origin converts skip the remaining cap: the
@@ -2380,6 +2396,33 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       supabase, c.get('houzsUser'), c.get('companyId'), header.id, bucket.lines.length,
       `Raised from Sales Order${bucket.soDocNos.size === 1 ? '' : 's'} ${[...bucket.soDocNos].join(', ')}`,
     );
+    /* ERP -> AutoCount PO create. THE LARGEST CREATE-SIDE HOLE IN THE SYSTEM
+       until now: this is the converter behind POST /from-sos and the MRP
+       agent's createDraftPosFromPicks, i.e. every purchase order the ERP raises
+       from a Sales Order — and it queued nothing. It is not covered by the
+       confirm-time hook either, because the status literal above writes
+       'SUBMITTED' directly whenever a warehouse resolved, so PATCH /:id/confirm
+       never runs for these and could not act as a backstop.
+
+       Same DRAFT rule as POST / : a draft PO is inert by design (mrp.ts's
+       PO_DEAD excludes it from supply, recomputeSoPicked ignores its lines), so
+       it does not belong in the account book until a human confirms it — and
+       confirm does queue it. Gated on headerPayload.status, the LITERAL that was
+       inserted, rather than on `asDraft` — because this route has a SECOND way
+       to become a draft that `asDraft` does not describe: a bucket whose SO line
+       resolved no warehouse is forced to DRAFT above (owner 2026-08-02).
+       Re-deriving the condition would have queued exactly those. */
+    if (headerPayload.status !== 'DRAFT') {
+      await enqueuePoCreate(supabase, {
+        companyId: activeCompanyId(c),
+        poId: header.id,
+        /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
+           SCM bridge gives every caller, and created_by here is a bigint staff
+           id. Undefined on the headless MRP-agent path, which degrades to an
+           unattributed row exactly as recordPoCreate does. */
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length });
   }
 
@@ -2686,6 +2729,17 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
       statusSnapshot: (before.status as string | null) ?? null,
       fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
     });
+    /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
+       and after `continue`s, so a PO that was skipped (not found, downstream-
+       locked, or a failed write) queues nothing. A bulk route that queued one
+       edit for the whole batch would be wrong in both directions: it would send
+       POs that did not change and would name only one of the ones that did.
+
+       This matters because `applyToLines` cascades the date down to every line
+       (purchase_order_items.delivery_date), and DeliveryDate is a real AutoCount
+       detail field — so the account book's own promised dates were left behind
+       by every bulk date change the ERP has ever made. */
+    await queueAcPoEdit(c, id);
     updated.push({ id, poNumber });
   }
 
@@ -3222,6 +3276,11 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const doomed = (doomedRow ?? null) as unknown as Record<string, unknown> | null;
 
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_order_items', itemId);
+
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
@@ -3259,7 +3318,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
     catch { /* line already deleted — don't fail on counter recount */ }
   }
 
-  await queueAcPoEdit(c, poId);
+  await queueAcPoEdit(c, poId, retire);
 
   return c.body(null, 204);
 });
@@ -3519,7 +3578,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
    lock out a producer — the importer's `po-items/...` keys are served unchanged.
    The SO endpoint is untouched: it validates against mfg_sales_order_items and
    would have had to be loosened to serve a PO line. */
-mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', async (c) => {
+export const poItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const poId = c.req.param('id');
   const itemId = c.req.param('itemId');
@@ -3543,11 +3602,83 @@ mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', async (c) =>
     // Signed thumb sibling. A photo uploaded before thumbnails existed has no
     // `.thumb` object — the URL 404s and the client falls back to signedUrl.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: R2 S3 creds unset in prod => signing throws for every photo.
+       Fall back to the proxy route below (R2 binding, no creds needed) rather
+       than 500. See scm/lib/photoProxyFallback.ts for why this is not returned
+       as `signedUrl`. */
+    return c.json(
+      proxyFallbackPayload(
+        'po-item-photo',
+        `/mfg-purchase-orders/${poId}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', poItemPhotoSignedHandler);
+
+/* ── PO photo PROXY — the credential-free read path ────────────────────────
+   Added 2026-08-10 alongside the signing outage. The SO and consignment
+   surfaces already had a proxy; the PO side had ONLY /signed, so when signing
+   broke there was nothing to fall back to.
+
+   Streams the object from the R2 BINDING (c.env.SO_ITEM_PHOTOS), which needs no
+   S3 credential. PO photos live in the same bucket as SO photos — both the
+   convert-carried `so-items/...` keys and the AutoCount importer's
+   `po-items/...` keys — so one binding serves both.
+
+   AUTHZ is a copy of the /signed route's, deliberately including
+   scopeToCompany. The SO proxy does NOT company-scope (its /signed twin does
+   not either), but the PO /signed route DOES, so omitting it here would make
+   this proxy strictly MORE permissive than the route it backs up — a
+   cross-company read leak. Membership, never key shape: the key must be listed
+   in THIS line's photo_urls and the line must belong to THIS PO. A `.thumb`
+   sibling is authorised against its BASE key, because thumbs are never
+   themselves listed in photo_urls.
+
+   NOTE: this sits behind the global auth gate, so it is NOT usable as a bare
+   <img src> — see scm/lib/photoProxyFallback.ts. */
+export const poItemPhotoProxyHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const poId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  if (!c.env.SO_ITEM_PHOTOS) {
+    return c.json({ error: 'photo_bucket_not_configured' }, 500);
+  }
+
+  const { data: item } = await scopeToCompany(sb
+    .from('purchase_order_items')
+    .select('purchase_order_id, photo_urls')
+    .eq('id', itemId), c)
+    .maybeSingle();
+  if (!item) return c.json({ error: 'item_not_found' }, 404);
+  const i = item as { purchase_order_id: string; photo_urls: string[] | null };
+  if (i.purchase_order_id !== poId) return c.json({ error: 'item_doc_mismatch' }, 400);
+  if (!(i.photo_urls ?? []).includes(baseKeyOf(photoKey))) {
+    return c.json({ error: 'photo_not_in_item' }, 404);
+  }
+
+  const obj = await c.env.SO_ITEM_PHOTOS.get(photoKey);
+  if (!obj) return c.json({ error: 'photo_not_found_in_r2' }, 404);
+
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+      // Keys are immutable per object (uuid / ac-<DtlKey>-<n>), so a replaced
+      // photo is a different key. `private` — PO photos are not public.
+      'cache-control': 'private, max-age=31536000, immutable',
+    },
+  });
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey', poItemPhotoProxyHandler);
 
 /* ── PR #78 — Convert from Sales Order ─────────────────────────────────
    Commander 2026-05-26 (AutoCount parity): "可以点击 Convert from Sales
@@ -3758,6 +3889,22 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // Recount po_qty_picked from the live PO lines for every converted SO line.
   try { await recomputeSoPicked(sb, toInsert.map((it) => it.id)); }
   catch { /* lines already inserted — don't fail on counter recount */ }
+
+  /* ERP -> AutoCount edit, NOT a convert. AutoCount has no SO->PO transfer at
+     all (Convert_ targets only DO/IV/GR/PI — AcSyncService.cs:305-353), so this
+     route is not a conversion in AutoCount's sense however it is named here: it
+     APPENDS lines to a purchase order that may already exist in the account
+     book, which is an edit of that document.
+
+     What happens next is deliberately loud rather than clever. A PO still in
+     DRAFT has no AutoCount counterpart, so this folds into the create that
+     confirm will queue. A PO already in the book gets a real edit — and because
+     these lines are brand new they carry no DtlKey, so composeEdit refuses the
+     whole document and writes a visible skipped row naming it. That refusal is
+     correct until IsNewLine is implemented: guessing a key would make
+     AcSyncService rewrite somebody else's line in a live book, and 0273's own
+     header says a wrong key is strictly worse than NULL. */
+  await queueAcPoEdit(c, poId);
 
   return c.json({
     copied: rows.length,
@@ -4230,12 +4377,27 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, po_number, company_id')
+    .select('id, status, po_number, company_id, linked_ac_docno')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
+
+  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK. The 2.2 SDK has no
+     un-cancel - CancelDocument is a command, not a flag, and a whole-file grep
+     of the reflected surface for uncancel / set_Cancelled returns nothing. A
+     reopen here would leave the PO live in the ERP and cancelled in the account
+     book, with nothing able to close the gap. Raise a new PO instead. */
+  const acDocNo = (cur as { linked_ac_docno?: string | null }).linked_ac_docno;
+  if (curStatus === 'CANCELLED' && acDocNo) {
+    return c.json({
+      error: 'cancel_is_final',
+      message: 'This purchase order was cancelled in AutoCount too, and AutoCount has no '
+        + 'un-cancel. Raise a new purchase order instead.',
+      acDocNo,
+    }, 409);
+  }
   // Idempotent — a live PO is already open, echo back.
   if (curStatus === 'SUBMITTED' || curStatus === 'PARTIALLY_RECEIVED') {
     return c.json({ purchaseOrder: { id, status: curStatus } });

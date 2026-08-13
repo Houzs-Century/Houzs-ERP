@@ -75,8 +75,18 @@ function sofaCompartmentIssues(build, reclOK, codeSet) {
   const model = modelOf(f.code);
   const have = build.map((r) => compartmentOf(r.code));
   const out = { issues: [], needPhoto: false };
-  if (build.some((r) => /SOFA UNPARSED/.test(r.remark || ""))) {
-    out.issues.push("COMPARTMENT: placeholder, never decoded (SOFA UNPARSED)");
+  /* The SOFA UNPARSED remark marks the LINE the decoder could not read, not the
+     build. Flagging the whole build on any one line's remark over-reported by
+     11 of 30 in production: HC-PO-009018 is correctly decomposed to
+     1A(LHF)+1NA+1A(RHF) and was failed only because it also carries a STOOL,
+     whose own Desc2 is "BO315-21/32\" X 49\"" - a dimension, with no structure
+     to parse and none needed, since STOOL IS its compartment.
+
+     A line is only undecoded when it fell back to the bare `1S` placeholder. A
+     line carrying a real named piece decoded fine whatever the remark says. */
+  const undecoded = build.filter((r) => /SOFA UNPARSED/.test(r.remark || "") && /^1S$/i.test(compartmentOf(r.code)));
+  if (undecoded.length) {
+    out.issues.push(`COMPARTMENT: the build collapsed to a bare 1S placeholder, never decoded (${undecoded.length} line${undecoded.length > 1 ? "s" : ""})`);
     out.needPhoto = true;
     return out;
   }

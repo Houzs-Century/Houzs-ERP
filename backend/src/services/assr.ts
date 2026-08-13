@@ -98,8 +98,8 @@ function statusForStage(stage: Stage): string {
 // still bounds the value set so bad inputs fail loud.
 export const ALL_STAGES: ReadonlyArray<Stage> = [
   "pending_review",
-  "under_verification",
   "pending_solution",
+  "under_verification",
   "pending_supplier_pickup",
   "pending_item_ready",
   "pending_delivery_service",
@@ -931,10 +931,12 @@ export async function markCaseOpened(
     .first<{ stage: Stage }>();
   if (!row) return false;
   if (row.stage !== "pending_review") return false;
+  // Order change (Nico 2026-08-11): Solution now precedes Verification,
+  // so first-open auto-advance lands on Pending Solution.
   return transitionStage(
     env,
     id,
-    "under_verification",
+    "pending_solution",
     userId,
     "auto-advanced when Service Admin opened the case",
   );

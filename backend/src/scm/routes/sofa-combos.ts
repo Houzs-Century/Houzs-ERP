@@ -390,7 +390,28 @@ sofaCombos.get('/anchors', async (c) => {
     c,
   )
     .order('base_model', { ascending: true });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  /* scm.sofa_combo_anchor DOES NOT EXIST in Houzs — verified against production
+     2026-08-12 (`to_regclass('scm.sofa_combo_anchor')` = NULL), which is what
+     migration 0114 recorded when it skipped the table. R8 came across from 2990
+     with the route and the frontend query but without its table, so this handler
+     has 500'd on EVERY Combo Pricing page load since it was vendored.
+
+     An absent table means "nothing is anchored", which is the truth and is
+     exactly what an empty list says. Report it as such rather than as a failure:
+     the caller (useSofaComboAnchors) only ever asks "which models are anchored",
+     and a 500 answers that question no better than [] while filling the console
+     with a red herring. Every OTHER error still surfaces as 500 — this narrows
+     to the one code that means the relation is missing (42P01), so a genuine
+     permission or connection fault can never hide behind it.
+
+     If the feature is ever wanted, the fix is a migration creating the table;
+     this branch then simply stops being taken. See docs/modules/combo-pricing.md
+     section 6. */
+  if (error) {
+    const missing = error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '');
+    if (missing) return c.json({ anchors: [] });
+    return c.json({ error: 'load_failed', reason: error.message }, 500);
+  }
   return c.json({ anchors: (data ?? []) as Array<{ base_model: string; supplier_id: string }> });
 });
 

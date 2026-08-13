@@ -72,7 +72,13 @@ describe("SpecialAddonsTab — the editor is gated on the API's own write rule",
 /* ── ITEM 3 — the /assr/:id route ──────────────────────────────────────────
    Missing `allowSales` while its three siblings had it and while the API admits
    Sales. Wrong in the direction that DENIES: a sales rep opened the case list,
-   clicked a case, and got Forbidden on a case the backend would have served. */
+   clicked a case, and got Forbidden on a case the backend would have served.
+
+   Owner 2026-07-23 changed the DETAIL route's shape: a non-director Sales rep is
+   now REDIRECTED from the editable /assr/:id to the read-only /my-cases/:id
+   ("sales agent 不应该有 edit case 功能"). The original invariant's GOAL — a rep is
+   never Forbidden on a case the API would serve — still holds, but via a redirect
+   rather than an inline allowSales guard, so the two are asserted separately. */
 describe("/assr/:id — the route guard matches requireServiceCaseAccess", () => {
   test("the backend case-detail read really does admit Sales", () => {
     // Verify the premise before trusting it. Two things must hold: the endpoint
@@ -83,9 +89,11 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
     expect(assr).toMatch(/function requireServiceCaseAccess[\s\S]{0,400}canAccessServiceCases/);
   });
 
-  test("every service-case route carries allowSales — including the detail route", () => {
+  test("the list + My Cases routes carry allowSales so a Sales rep isn't Forbidden", () => {
     const app = feSrc("App.tsx");
-    for (const path of ["/assr", "/assr/:id", "/my-cases", "/my-cases/:id"]) {
+    // /assr/:id is asserted separately below — reps are redirected off it, not
+    // guarded onto it, so it deliberately no longer carries an inline allowSales.
+    for (const path of ["/assr", "/my-cases", "/my-cases/:id"]) {
       // Take the guard that follows each route declaration.
       const at = app.indexOf(`path="${path}"`);
       expect(at, `route ${path} disappeared`).toBeGreaterThan(-1);
@@ -96,6 +104,30 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
         `${path} lost allowSales — a Sales rep now hits Forbidden on a case the API would serve`,
       ).toContain("allowSales");
     }
+  });
+
+  test("/assr/:id redirects a non-director Sales rep to read-only My Cases, never Forbidden", () => {
+    const app = feSrc("App.tsx");
+    // The route delegates to SalesRepCaseDetailRoute instead of an inline guard.
+    const at = app.indexOf(`path="/assr/:id"`);
+    expect(at, "route /assr/:id disappeared").toBeGreaterThan(-1);
+    // Wide window: the route element keeps the long historical allowSales note
+    // before the <SalesRepCaseDetailRoute/> element it now renders.
+    const block = app.slice(at, at + 1400);
+    expect(
+      block,
+      "/assr/:id no longer delegates to SalesRepCaseDetailRoute",
+    ).toContain("<SalesRepCaseDetailRoute");
+
+    // That component must (a) redirect the non-director rep to /my-cases/:id — so
+    // a rep is made read-only, never Forbidden — and (b) still admit ops + Sales
+    // Directors to the editable detail via allowSales (fail direction preserved).
+    const compAt = app.indexOf("function SalesRepCaseDetailRoute");
+    expect(compAt, "SalesRepCaseDetailRoute definition missing").toBeGreaterThan(-1);
+    const comp = app.slice(compAt, compAt + 600);
+    expect(comp).toContain("isSalesNonDirector(user)");
+    expect(comp).toContain("Navigate to={`/my-cases/${id}`}");
+    expect(comp).toContain("allowSales");
   });
 
   test("PageGuard resolves both cohorts from the SERVER, not a local mirror", () => {

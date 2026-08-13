@@ -110,6 +110,7 @@ import { ServiceSettingsView } from "./ServiceSettings";
 import { ServiceLeadTimePortal } from "./ServiceLeadTimePortal";
 import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
 import type {
   Paginated,
@@ -128,8 +129,8 @@ type StageFilter = "ALL" | AssrStage;
 const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "ALL", label: "All" },
   { value: "pending_review", label: "Review" },
-  { value: "under_verification", label: "Verification" },
   { value: "pending_solution", label: "Solution" },
+  { value: "under_verification", label: "Verification" },
   { value: "pending_supplier_pickup", label: "Supplier Pickup / Return" },
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
@@ -165,9 +166,9 @@ const NCR_OPTIONS = [
 // honored by the service-admin manually picking the correct next
 // stage from the dropdown — this map only seeds the primary button.
 const NEXT_STAGE: Record<string, { stage: AssrStage; label: string }> = {
-  pending_review:           { stage: "under_verification",       label: "Start Verification" },
-  under_verification:       { stage: "pending_solution",         label: "Move to Solution" },
-  pending_solution:         { stage: "pending_supplier_pickup",  label: "Hand to Supplier" },
+  pending_review:           { stage: "pending_solution",         label: "Move to Solution" },
+  pending_solution:         { stage: "under_verification",       label: "Start Verification" },
+  under_verification:       { stage: "pending_supplier_pickup",  label: "Hand to Supplier" },
   pending_supplier_pickup:  { stage: "pending_item_ready",       label: "Mark Item Ready" },
   pending_item_ready:       { stage: "pending_delivery_service", label: "Arrange Delivery" },
   pending_delivery_service: { stage: "completed",                label: "Close Case" },
@@ -814,6 +815,22 @@ function CasesView({
       // form-era item_code only as fallback (Nico 2026-08-07).
       render: (r) => <span className="font-mono text-[11px]">{(r as any).items_codes || r.item_code || "—"}</span>,
       getValue: (r) => (r as any).items_codes || r.item_code,
+    },
+    {
+      key: "complaint_issue",
+      // Free text — a distinct-values filter menu would be noise, so no
+      // filter; the column still sorts (alphabetical) and the full text
+      // rides the title tooltip. (Nico 2026-08-13)
+      label: "Complaint Issue",
+      render: (r) =>
+        r.complaint_issue ? (
+          <span className="block max-w-[280px] truncate text-[12px]" title={r.complaint_issue}>
+            {r.complaint_issue}
+          </span>
+        ) : (
+          "—"
+        ),
+      getValue: (r) => r.complaint_issue || null,
     },
     {
       key: "resolution_method",
@@ -3553,7 +3570,16 @@ function DetailContent({
           <>
             {/* PR 1 redesign — Print + Portal Link moved up from the
                 pill row. Match the design's title-row action group. */}
-            <PrintMenu caseId={id} assrNo={c.assr_no} toast={toast} />
+            <PrintMenu
+              caseId={id}
+              assrNo={c.assr_no}
+              customer={c.customer_name}
+              refNo={c.ref_no}
+              stage={c.stage}
+              resolutionMethod={c.resolution_method}
+              companyCode={c.company_code}
+              toast={toast}
+            />
             <PortalLinksMenu
               id={id}
               assrNo={c.assr_no}
@@ -4111,42 +4137,6 @@ function DetailContent({
               </div>
             </StageRow>
 
-            {/* under_verification — QC Issue Inspection on receipt */}
-            <StageRow
-              c={c}
-              priorityMap={priorityMap}
-              stageId="under_verification"
-              title="Verification"
-              summary={
-                c.verification_outcome === "accepted"
-                  ? "Office confirms the reported issue is valid"
-                  : c.verification_outcome === "rejected"
-                  ? "Rejected — not our issue"
-                  : c.verification_outcome === "needs_more_info"
-                  ? "Awaiting more info from the customer"
-                  : "Awaiting QC issue inspection"
-              }
-              currentStage={c.stage}
-              stages={activeStages}
-              openStage={openStage}
-              setOpenStage={setOpenStage}
-            >
-              {/* Mig 081 — Verification card wraps its own PanelSection so
-                  we strip the outer card wrapper by nesting it directly. */}
-              <VerificationCard
-                c={c}
-                patch={patch}
-                transition={transition}
-                dialog={dialog}
-                caseId={id}
-                attachments={attachments}
-                archived={!!c.archived_at}
-                detail={detail}
-                toast={toast}
-                hideHeader
-              />
-            </StageRow>
-
             {/* pending_solution — pick resolution method + set supplier */}
             <StageRow
               c={c}
@@ -4168,6 +4158,11 @@ function DetailContent({
               label="Resolution Method"
               value={c.resolution_method}
               options={resolutionOptions.length ? resolutionOptions : [...RESOLUTION_OPTIONS]}
+              /* The one place the slug used to leak to the operator: the
+                 summary above, the status card and the printed document all
+                 say "Supplier Service" while this dropdown said
+                 "supplier_repair" (owner 2026-08-12). Same map, one wording. */
+              optionLabel={resolutionLabel}
               onSave={(v) => patch({ resolution_method: v })}
             />
             {/* Refresh — route tag chip + consequence line right under
@@ -4238,6 +4233,42 @@ function DetailContent({
               />
             )}
           </PanelSection>
+            </StageRow>
+
+            {/* under_verification — QC Issue Inspection on receipt */}
+            <StageRow
+              c={c}
+              priorityMap={priorityMap}
+              stageId="under_verification"
+              title="Verification"
+              summary={
+                c.verification_outcome === "accepted"
+                  ? "Office confirms the reported issue is valid"
+                  : c.verification_outcome === "rejected"
+                  ? "Rejected — not our issue"
+                  : c.verification_outcome === "needs_more_info"
+                  ? "Awaiting more info from the customer"
+                  : "Awaiting QC issue inspection"
+              }
+              currentStage={c.stage}
+              stages={activeStages}
+              openStage={openStage}
+              setOpenStage={setOpenStage}
+            >
+              {/* Mig 081 — Verification card wraps its own PanelSection so
+                  we strip the outer card wrapper by nesting it directly. */}
+              <VerificationCard
+                c={c}
+                patch={patch}
+                transition={transition}
+                dialog={dialog}
+                caseId={id}
+                attachments={attachments}
+                archived={!!c.archived_at}
+                detail={detail}
+                toast={toast}
+                hideHeader
+              />
             </StageRow>
 
             {/* pending_supplier_pickup — the whole supplier leg since mig
@@ -5500,8 +5531,8 @@ const VERIFICATION_OPTIONS = [
 // 在 stage funnel 每个 stage 加上 description).
 const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] = [
   { id: "pending_review",              short: "Review",       long: "Review",                  desc: "New case — first review" },
-  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
   { id: "pending_solution",            short: "Solution",     long: "Solution",                desc: "Decide fix & assign supplier" },
+  { id: "under_verification",          short: "Verification", long: "Verification",            desc: "Inspect & verify the issue" },
   { id: "pending_supplier_pickup",     short: "Supplier",     long: "Supplier Pickup / Return", desc: "Item with supplier for repair" },
   { id: "pending_item_ready",          short: "Pending Item Ready", long: "Pending Item Ready", desc: "Repair done — QC check" },
   { id: "pending_delivery_service",    short: "Delivery",     long: "Delivery / Service",      desc: "Schedule return delivery" },
@@ -6808,33 +6839,118 @@ const PRINT_VARIANTS = {
 } as const;
 type PrintVariant = keyof typeof PRINT_VARIANTS;
 
+/* Whose paper the copy prints on. The two entities share one service
+   operation, so a case raised under one is routinely handed to the customer on
+   the other's letterhead; "Both" names them separately (service provider vs
+   retail entity) for the cases where the difference matters. Applies to all
+   three copies — customer, supplier and office. */
+const PRINT_ENTITIES = {
+  houzs: "Houzs",
+  "2990": "2990",
+  both: "Both",
+} as const;
+type PrintEntity = keyof typeof PRINT_ENTITIES;
+
+
 function PrintMenu({
   caseId,
   assrNo,
+  customer,
+  refNo,
+  stage,
+  resolutionMethod,
+  companyCode,
   toast,
 }: {
   caseId: number;
   assrNo?: string | null;
+  customer?: string | null;
+  refNo?: string | null;
+  stage?: string | null;
+  resolutionMethod?: string | null;
+  /** The case's OWN company — not the active workspace's. The two differ
+   *  routinely (a 2990 workspace holding a Houzs-owned case), and this is what
+   *  the document heads itself with when no entity is picked. */
+  companyCode?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
   const [open, setOpen] = useState(false);
-  /* Which copy the operator picked, held until the Print preview confirms it.
-     A service case prints from a SERVER-rendered HTML view, not a jspdf file,
-     so this preview names the case and the copy and then hands over to that
-     view — there is no document here to download. */
-  const [variant, setVariant] = useState<PrintVariant | null>(null);
+  /* Which copy the operator picked.
 
-  async function go(v: PrintVariant) {
+     HISTORY, because this went back and forth: the card originally said only
+     "Copy: Customer Copy / Contains: …" — it restated the menu choice and told
+     you nothing about the case, which is why it read as no preview at all. The
+     fix attempted next was embedding the real print page in an iframe; the
+     owner rejected that on sight (2026-08-11) — it drags the print page's own
+     toolbar into the dialog and clips an A4 page into a narrow modal. What was
+     actually wanted is the shape every OTHER document already uses: a compact
+     summary card with the facts that identify the document, then the exits.
+     So: no iframe, real content. */
+  const [variant, setVariant] = useState<PrintVariant | null>(null);
+  /* Whose letterhead the copy prints on (owner 2026-08-11). Null = the case's
+     own company, which is what the document has always used — the backend
+     applies that default, so a print with no choice made is byte-identical to
+     before. The picker lives in the dialog rather than the copy menu because
+     the menu would otherwise become 3 copies × 3 entities = 9 rows. */
+  const [entity, setEntity] = useState<PrintEntity | null>(null);
+  /* Null means "not touched" — which resolves to the case's OWN company, the
+     same thing the backend falls back to. Resolving it here rather than leaving
+     it blank is what lets the picker highlight a real choice and the card name
+     the company that will actually head the paper. */
+  const caseEntity: PrintEntity = companyCode === "2990" ? "2990" : "houzs";
+  const chosen: PrintEntity = entity ?? caseEntity;
+  /* The band names the entity being printed, not the workspace you happen to be
+     in. `both` heads the paper with Houzs (see the route), so it says Houzs. */
+  const bandCompany = defaultBrandingForCompany(
+    chosen === "2990" ? "2990" : HOUZS_COMPANY_CODE,
+  ).companyName;
+
+  const path = (v: PrintVariant, e: PrintEntity) =>
+    `/api/assr-print/${caseId}?variant=${v}&entity=${e}`;
+
+  async function openInTab(v: PrintVariant, e: PrintEntity) {
     try {
-      await api.openHtml(`/api/assr-print/${caseId}?variant=${v}`);
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to open print view");
+      await api.openHtml(path(v, e));
+    } catch (e2: any) {
+      toast.error(e2?.message || "Failed to open print view");
     }
   }
-  const print = usePrintPreview(() => (variant ? go(variant) : undefined));
+
+  /* Print without a visible embed and without bouncing through a tab: fetch the
+     document, mount it in a HIDDEN iframe, print that, then drop it. Same trick
+     the PDF documents use (vendor/scm/lib/pdf-common deliverPdf), and the same
+     reason — printing an iframe sidesteps the app's global @media print rules,
+     which would otherwise put a blank sheet in the tray. */
+  const printNow = async (v: PrintVariant, e: PrintEntity) => {
+    let html: string;
+    try {
+      html = await api.getHtml(path(v, e));
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to load the print view");
+      return;
+    }
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+    frame.srcdoc = html;
+    frame.onload = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      } catch {
+        /* Some engines throw before the document settles; the tab exit is still
+           there and the frame is cleaned up below either way. */
+      }
+    };
+    document.body.appendChild(frame);
+    // 60s, same as the PDF path: long enough for the OS print dialog to hold it.
+    window.setTimeout(() => { try { document.body.removeChild(frame); } catch { /* gone */ } }, 60_000);
+  };
+
+  const print = usePrintPreview(() => (variant ? printNow(variant, chosen) : undefined));
   const pick = (v: PrintVariant) => {
     setOpen(false);
     setVariant(v);
+    setEntity(null);
     print.openPreview();
   };
 
@@ -6885,11 +7001,45 @@ function PrintMenu({
           onClose={print.close}
           docTitle="Service Case"
           docNo={assrNo ?? `Case ${caseId}`}
+          companyName={bandCompany}
+          /* The facts that identify THIS document, in the same shape the DO /
+             SO / SI previews use — customer, what is wrong, how it is being
+             fixed. "Copy" stays because it is the one thing the menu chose. */
           rows={[
-            { label: "Copy", value: PRINT_VARIANTS[variant].label },
-            { label: "Contains", value: PRINT_VARIANTS[variant].hint },
-            { value: "Print now opens the print view in a new tab." },
+            { label: "Customer", value: customer || "—" },
+            ...(refNo ? [{ label: "Ref No", value: refNo }] : []),
+            { label: "Stage", value: caseStageLabel(stage ?? "") },
+            {
+              label: "Service",
+              value: resolutionMethod ? resolutionLabel(resolutionMethod) : "Not set yet",
+            },
+            { label: "Copy", value: `${PRINT_VARIANTS[variant].label} · ${PRINT_VARIANTS[variant].hint}` },
+            {
+              label: "Letterhead",
+              value: (
+                <span className="inline-flex overflow-hidden rounded-md border border-border align-middle">
+                  {(Object.keys(PRINT_ENTITIES) as PrintEntity[]).map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      onClick={() => setEntity(e)}
+                      aria-pressed={chosen === e}
+                      className={cn(
+                        "px-2.5 py-1 text-[11.5px] font-semibold transition-colors",
+                        chosen === e
+                          ? "bg-primary text-white"
+                          : "bg-surface text-ink-secondary hover:bg-surface-dim"
+                      )}
+                    >
+                      {PRINT_ENTITIES[e]}
+                    </button>
+                  ))}
+                </span>
+              ),
+            },
           ]}
+          onViewPdf={() => openInTab(variant, chosen)}
+          viewLabel="View full copy"
           onPrint={print.handlers.onPrint}
         />
       )}

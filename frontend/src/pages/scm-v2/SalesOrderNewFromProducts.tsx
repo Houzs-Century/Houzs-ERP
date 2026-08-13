@@ -55,8 +55,9 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
-import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../../hooks/useBranding";
+import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
@@ -183,6 +184,9 @@ export function SalesOrderNewFromProducts() {
   };
   const clearCart = () => setCartQty({});
 
+  /* Active company — feeds the shared stock-location guard in onCreate. */
+  const branding = useBranding();
+
   // Customer state
   const [customer, setCustomer] = useState<Customer>({
     name: "",
@@ -262,23 +266,44 @@ export function SalesOrderNewFromProducts() {
       return;
     }
 
-    /* Owner 2026-08-08 — CONFIRMING now requires every goods line's required
-       variant axes (sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/
-       Fabrics). This flow has no variant editors by design ("enrich on the SO
-       detail after save"), so a cart carrying such a line lands a DRAFT the
-       operator completes and confirms on the detail — the server confirm gate
-       would refuse a direct-CONFIRMED create outright. Accessory / mattress /
-       others carts carry no axes and keep confirming directly. */
-    const needsCompletion = items.some(
-      (i) => missingConfirmVariantAxes(i.itemGroup, i.variants).length > 0,
-    );
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — SHARED with the
+       Full form and mobile via soStockLocationError, and the backend refuses
+       the same create with 422 validation_failed either way.
+
+       This flow collects NO address at all ("address is added on the SO detail
+       after save") and lands CONFIRMED, so under a company that requires a
+       stock location it cannot raise an order — AutoCount would refuse the
+       document. Say so here, with the way out, rather than letting the
+       operator build a cart and meet a server error: the Full form is the
+       surface that has a State field. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation: "",
+      state: "",
+    });
+    if (locationErr) {
+      setPostError(
+        `${soErrorText(locationErr)} This page has no address fields — use "Switch to Full form" to enter it.`,
+      );
+      return;
+    }
+
+    /* This flow carries no Processing Date and no variant editors by design
+       ("enrich on the SO detail after save"), so nothing here can be
+       spec-complete and nothing here needs to be: variant completeness is the
+       PROCEED rule (owner 2026-08-13), and proceeding happens on the detail
+       page once a date is set.
+
+       It used to downgrade such a cart to a DRAFT, because the confirm gate
+       (2026-08-08) would have refused a direct-CONFIRMED create. That gate no
+       longer asks about variants, so the downgrade would now only strand a
+       real order in Draft for no reason. */
     const body: Record<string, unknown> = {
       customerName: customer.name.trim(),
       phone: customer.phone.trim(),
       email: customer.email.trim() || null,
       debtorCode: customer.debtorCode || null,
       items,
-      asDraft: needsCompletion || undefined,
     };
     try {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
