@@ -69,6 +69,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { soProcessingLocked } from './mfg-sales-orders';
+import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -855,6 +856,15 @@ deliveryPlanning.get('/', async (c) => {
   /* multi-company: id → code map (HOUZS / 2990 / …) so each shared-queue row can
      carry a readable company_code label. Built once. */
   const codeMap = companyCodeMap(c);
+  /* PO lock per row (owner 2026-08-12, 2990 only) — the drawer decides
+     client-side whether a replacement_disposal change saves directly or routes
+     into an amendment, and it decides from the row. Without this fact on the row
+     the drawer would attempt the direct write, collect the guard's 409, and
+     strand the operator with a change they were told to request and no way to
+     request it. ONE batched chain for the whole board (see soPoLockedMany), not
+     a per-row query; Houzs doc numbers are filtered out inside it, so a
+     Houzs-only board costs nothing. */
+  const poLockedDocs = await soPoLockedMany(sb, docNos);
   const orders = soRows.map((r) => {
     const docNo = String(r.doc_no ?? '');
     /* Branding — derived 1:1 with the SO list (never the empty header field).
@@ -974,6 +984,8 @@ deliveryPlanning.get('/', async (c) => {
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
       internal_expected_dd: internalDD,
+      /* Feeds procLockActive in the drawer alongside internal_expected_dd. */
+      po_locked: poLockedDocs.has(docNo),
       days_left: daysBetween(today, effectiveDD),
       // address (HC delivery-sheet columns)
       address: [r.address1, r.address2].filter(Boolean).join(', ') || null,
@@ -1155,6 +1167,10 @@ deliveryPlanning.get('/', async (c) => {
           amend_reason: null,
           effective_delivery_date: leg.date,
           internal_expected_dd: leg.date,
+          /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
+             number, and it carries no replacement_disposal for the drawer to
+             lock. Always false; a Set lookup on a row key would be meaningless. */
+          po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
           postcode: null,
@@ -1315,6 +1331,9 @@ deliveryPlanning.get('/', async (c) => {
         amend_reason: null,
         effective_delivery_date: date,
         internal_expected_dd: date,
+        /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
+           number, and it carries no replacement_disposal for the drawer to lock. */
+        po_locked: false,
         days_left: date ? daysBetween(today, date) : null,
         address,
         postcode: (d.postcode as string | null) ?? null,
@@ -1449,6 +1468,10 @@ deliveryPlanning.get('/', async (c) => {
           amend_reason: null,
           effective_delivery_date: leg.date,
           internal_expected_dd: leg.date,
+          /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
+             number, and it carries no replacement_disposal for the drawer to
+             lock. Always false; a Set lookup on a row key would be meaningless. */
+          po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
           postcode: null,
@@ -2056,7 +2079,19 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     const current = (before.data as { replacement_disposal?: string | null } | null)?.replacement_disposal ?? null;
     const requested = (soUpdates['replacement_disposal'] ?? null) as string | null;
     const genuineChange = String(current ?? '') !== String(requested ?? '');
-    if (genuineChange && soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+    /* Owner 2026-08-12 — the PO lock (2990 only) is the same soft lock reached
+       by the other road, so the board write must respect it identically or the
+       drawer's amendment routing has a hole exactly where a supplier is already
+       building. ONE 409 body for both: from this board the operator's next
+       action is the same either way ("raise it as an amendment, Logistics
+       approves"), and the error CODE is what the SCM client maps to a curated
+       sentence — a second code here would need its own entry to avoid surfacing
+       raw. */
+    const dpLocked = genuineChange && (
+      soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)
+      || await soPoLocked(sb, soDocNo)
+    );
+    if (dpLocked) {
       return c.json({
         error: 'so_locked_processing',
         reason: 'Replacement / disposal is locked on this order — request the change as an amendment instead (it goes to Logistics for approval in SO Amendments).',
@@ -2392,7 +2427,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
    services/agents/agent-company.ts's UNRESOLVED-vs-STALE_PIN, and it is quiet
    for the same reason — the two states agree on every field a caller reads. */
 export type TripWiring =
-  | { state: 'WIRED'; trip: { id: string; trip_no: string } }
+  | { state: 'WIRED'; trip: { id: string; trip_no: string }; stopCreated?: boolean; stopSkippedReason?: string }
   | { state: 'NOT_REQUESTED' }
   | { state: 'FAILED'; reason: string };
 
@@ -2697,11 +2732,32 @@ async function scheduleOntoTrip(
     /* The stop is written; the trip EXISTS. A blank trip_no here means only that
        the echo read came back empty, so this stays WIRED — the wiring is what is
        being reported, not the label. */
+
+    /* SAY WHEN NO STOP WAS WRITTEN. The insert above is guarded by
+       `!already && (doId || soId)`, and on the SO-DIRECT path BOTH are null —
+       doId because there is no DO, soId because it is set to null right above
+       (scm.mfg_sales_orders has a TEXT doc_no PK and no uuid, while
+       trip_stops.so_id is a uuid). So scheduling an SO straight from the board
+       creates no stop at all, and this returned WIRED anyway: the dispatcher
+       saw success, the driver's sheet stayed empty, and lorry capacity counted
+       nothing.
+
+       The stop is NOT invented — there is genuinely no key to file it under,
+       and guessing one would put a job on a route that cannot be traced back
+       to its order. What changes is that the answer stops lying. The existing
+       fields are untouched so no caller breaks; a caller that reads
+       stopCreated can now tell the operator the job still needs its DO. */
+    const stopCreated = Boolean(already) || Boolean(doId || soId);
     return {
       state: 'WIRED',
       trip: tr
         ? { id: tripIdStr, trip_no: (tr.tripNo ?? tr.trip_no ?? '') }
         : { id: tripIdStr, trip_no: '' },
+      stopCreated,
+      ...(stopCreated ? {} : {
+        stopSkippedReason:
+          'This Sales Order has no Delivery Order yet, so there is no stop to put on the lorry — the date is saved, but the job will not appear on a driver sheet until the DO exists.',
+      }),
     };
   } catch (e) {
     /* Still best-effort — the header schedule already committed, so throwing

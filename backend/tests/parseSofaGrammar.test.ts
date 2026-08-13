@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 // @ts-expect-error - plain .mjs, shared by the SO and PO importers
 import { parseSofa } from '../scripts/lib/parse-sofa.mjs';
+// @ts-expect-error - plain .mjs, the older sofa backfill's copy of the same ruling
+import { RULES } from '../scripts/lib/sofa-special-map.mjs';
+import MAP from '../scripts/data/special-order-phrase-map.json';
 
 /* docs/sofa-import-handoff.md section 7: "owner 给的每个新例子都补成金标测试".
    Until now there was none, and that is exactly how #1813 shipped a NOISE class
@@ -220,5 +223,66 @@ describe('parse-sofa: the 5526 cutover builds', () => {
 
   test('PO-000162 DAYBED refuses rather than inventing a piece', () => {
     expect(conf('[DAYBED/COL:J9833-2]', '5526')).toBe('low');
+  });
+});
+
+/* The phrase -> picker-code map is the second half of the same owner ruling the
+   parser's special-order sweep implements, and it exists TWICE: as regexes in
+   `backend/scripts/data/special-order-phrase-map.json` (the backfill and the
+   price audit read it) and as predicates in `backend/scripts/lib/sofa-special-map.mjs`
+   (the older sofa backfill reads that). Two copies of one ruling is exactly the
+   drift this repo keeps paying for, and it had already happened: the JSON's
+   notch family demanded a stitch/hole word AND a SEPARATE seat/cushion word in
+   sequence, so it missed 'NO HOLES ON STICHING' and 'NO STICHING' — two real
+   AutoCount slip phrases — while the lib matched them.
+
+   Owner rulings about a phrase belong here, next to the parser rulings. */
+describe('special-order phrase map: the notch family', () => {
+  const CODE = 'No notch on Seat Cushion';
+  const fam = (MAP.families as Array<{ code: string; yes: string; no?: string }>).find((f) => f.code === CODE)!;
+  const YES = new RegExp(fam.yes);
+  const NO = fam.no ? new RegExp(fam.no) : null;
+  const libRule = (RULES as Array<{ code: string; yes: (s: string) => boolean; no?: (s: string) => boolean }>)
+    .find((r) => r.code === CODE)!;
+
+  // the normalisation the map declares in its own `_matching` note
+  const flat = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
+  const mapped = (phrase: string) => { const s = flat(phrase); return !(NO && NO.test(s)) && YES.test(s); };
+  const libMapped = (phrase: string) => { const s = flat(phrase); return !(libRule.no && libRule.no(s)) && libRule.yes(s); };
+
+  /* Verbatim from data/ac-outstanding-so.json.gz. The first two were UNMAPPED
+     before 2026-08-11: a stitch word is the seat-cushion detail on its own, and
+     demanding a second distinct token dropped them. */
+  const SHOULD_MAP = [
+    'NO HOLES ON STICHING',
+    'No stiching',
+    'no stitching on sitting area',
+    'no hole or stiching at sitting area',
+    'no stiching in sitting area',
+    'no hole on sitting area',
+    'no holes on sit area',
+    'HB straight to wall and cushion no stitching',
+  ];
+
+  /* Not this family. 'no line ... plane' is the separate combined code, and a
+     bare hole/notch word with no negation is not an instruction to omit one. */
+  const SHOULD_NOT_MAP = [
+    'seat cushion no line do plane',
+    'SEAT CUSHION NO LINE DO PLAIN',
+    'AKEMI SLEEP ESSENTIAL 7 HOLES PILLOW',
+    'no bracket',
+    'Nostiching',
+  ];
+
+  for (const phrase of SHOULD_MAP)
+    test(`"${phrase}" maps to ${CODE}`, () => { expect(mapped(phrase)).toBe(true); });
+
+  for (const phrase of SHOULD_NOT_MAP)
+    test(`"${phrase}" does NOT map to ${CODE}`, () => { expect(mapped(phrase)).toBe(false); });
+
+  test('the JSON map and lib/sofa-special-map.mjs agree on every one of them', () => {
+    for (const phrase of [...SHOULD_MAP, ...SHOULD_NOT_MAP])
+      expect(`${phrase}: json=${mapped(phrase)} lib=${libMapped(phrase)}`)
+        .toBe(`${phrase}: json=${mapped(phrase)} lib=${mapped(phrase)}`);
   });
 });

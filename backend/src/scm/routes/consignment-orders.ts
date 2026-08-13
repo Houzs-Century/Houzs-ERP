@@ -32,6 +32,7 @@ import { todayMyt } from '../lib/my-time';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
+import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -2037,15 +2038,28 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
     return c.json({ photoKey, photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
   } catch (e) {
-    const photoUrl = `/consignment-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}`;
-    // eslint-disable-next-line no-console
-    console.warn('[co-item-photo] signing failed, falling back to proxy:', e);
-    return c.json({ photoKey, photoUrl }, 201);
+    /* Upload succeeded and the row is inserted — never lose it. Hand back the
+       proxy path. Same inert-fallback fix as the SO upload route: `mode` lets
+       the client branch on the contract instead of sniffing the string. */
+    const basePath = `/consignment-orders/${docNo}/items/${itemId}`;
+    const reason = e instanceof Error ? e.message : String(e);
+    warnSigningFailedOnce('co-item-photo', reason);
+    return c.json(
+      {
+        photoKey,
+        mode: 'proxy',
+        photoUrl: photoProxyPath(basePath, photoKey),
+        thumbProxyPath: photoProxyPath(basePath, thumbKeyFor(photoKey)),
+        expiresAt: null,
+        reason,
+      },
+      201,
+    );
   }
 });
 
 // Refresh a signed GET URL for an existing key.
-consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) => {
+export const consignmentItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -2069,11 +2083,25 @@ consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c)
     // WO-7: signed thumb sibling. Pre-existing photos have no thumb object —
     // the frontend's <img> onError falls back to signedUrl on the 404.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: R2 S3 creds unset in prod => signing throws for every photo.
+       Fall back to the proxy route below rather than 500. See
+       scm/lib/photoProxyFallback.ts for why this is not returned as
+       `signedUrl`. */
+    return c.json(
+      proxyFallbackPayload(
+        'co-item-photo',
+        `/consignment-orders/${docNo}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
+
+consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', consignmentItemPhotoSignedHandler);
 
 // Proxy GET (fallback for clients holding proxy URLs).
 consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {

@@ -60,6 +60,17 @@ function fmtDate(s: string | null | undefined): string {
 
 function fmtDateTime(s: string | null | undefined): string {
   if (!s) return "—";
+  // Setup / dismantle times come from a <input type="datetime-local"> and are
+  // stored as naive MYT wall clock ("2026-07-30T11:00") — no zone marker. Those
+  // must print exactly as typed; the +8h shift below is only for true instants
+  // (created_at & friends, which carry Z / an offset). Before this, an 11:00
+  // crew call printed as 19:00 (owner 2026-08-12).
+  const naive = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s) && !/(Z|[+-]\d{2}:?\d{2})$/.test(s.trim());
+  if (naive) {
+    const [datePart, timePart] = s.trim().replace("T", " ").split(" ");
+    const [yy, mm, dd] = datePart.split("-");
+    return `${dd}/${mm}/${yy} ${(timePart || "").slice(0, 5)}`.trim();
+  }
   const parsed = new Date(s);
   if (isNaN(parsed.getTime())) return s.slice(0, 16).replace("T", " ");
   const d = new Date(parsed.getTime() + MYT_OFFSET_MS);
@@ -71,12 +82,71 @@ function fmtDateTime(s: string | null | undefined): string {
   return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// "31 Jul - 2 Aug 2026" / "1 - 3 Aug 2026" / "9 Aug 2026" — the event dates read
+// as one line under the title instead of two Start/End fields in the grid
+// (owner's reference sheet, 2026-08-12). Date-only strings, no timezone shift.
+function fmtRange(a: string | null | undefined, b: string | null | undefined): string {
+  const part = (s: string | null | undefined) => {
+    if (!s) return null;
+    const t = String(s).slice(0, 10).split("-");
+    if (t.length !== 3) return null;
+    const y = Number(t[0]);
+    const m = Number(t[1]);
+    const d = Number(t[2]);
+    if (!y || !m || !d || m > 12) return null;
+    return { y, m, d };
+  };
+  const s = part(a);
+  const e = part(b);
+  const one = (x: { y: number; m: number; d: number }) => `${x.d} ${MONTHS[x.m - 1]} ${x.y}`;
+  if (!s && !e) return "—";
+  if (!s) return one(e!);
+  if (!e) return one(s);
+  if (s.y === e.y && s.m === e.m && s.d === e.d) return one(s);
+  if (s.y !== e.y) return `${one(s)} - ${one(e)}`;
+  if (s.m !== e.m) return `${s.d} ${MONTHS[s.m - 1]} - ${e.d} ${MONTHS[e.m - 1]} ${e.y}`;
+  return `${s.d} - ${e.d} ${MONTHS[e.m - 1]} ${e.y}`;
+}
+
+// One crew slot: "NAME · +60…", the phone dimmed. Empty slots print an em dash
+// so the setup and dismantle columns keep the same four rows.
+function crew(name: string | null | undefined, phone?: string | null): string {
+  const n = (name || "").trim();
+  if (!n) return "—";
+  const tel = (phone || "").trim();
+  return `${esc(n)}${tel ? ` <span class="tel">${esc(tel)}</span>` : ""}`;
+}
+
+// Ledger category → printed label. cogs_matt_sofa reads "COGS · Matt Sofa".
+function costLabel(cat: string): string {
+  const c = String(cat || "");
+  if (c === "cogs") return "COGS";
+  if (c.startsWith("cogs_")) return `COGS · ${catLabelText(c.slice(5))}`;
+  return catLabelText(c);
+}
+
+function catLabelText(cat: string): string {
+  return String(cat || "")
+    .split("_")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 function fmtMoney(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return `RM ${n.toLocaleString("en-MY", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+// Whole ringgit — the headline strip drops the sen so the four numbers stay on
+// one line each at 12pt.
+function fmtMoney0(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return `RM ${Math.round(n).toLocaleString("en-MY")}`;
 }
 
 const STAGE_LABEL: Record<string, string> = {
@@ -109,10 +179,22 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function fetchAsDataUri(env: Env, key: string, fallbackMime = "image/png"): Promise<string | null> {
+async function fetchAsDataUri(
+  env: Env,
+  key: string,
+  fallbackMime = "image/png",
+  maxBytes?: number,
+): Promise<string | null> {
   try {
     const obj = await env.POD_BUCKET.get(key);
     if (!obj) return null;
+    // Site photos come straight off a phone camera and can run to several MB;
+    // base64 adds a third on top. Skip anything oversized rather than build a
+    // 20MB page the browser then has to print (owner 2026-08-12).
+    if (maxBytes != null && typeof obj.size === "number" && obj.size > maxBytes) {
+      console.warn(`[print] skipped ${key}: ${obj.size} bytes > ${maxBytes}`);
+      return null;
+    }
     const buf = new Uint8Array(await obj.arrayBuffer());
     const mime = obj.httpMetadata?.contentType || fallbackMime;
     return `data:${mime};base64,${bytesToBase64(buf)}`;
@@ -184,7 +266,6 @@ app.get("/:id", async (c) => {
     canSeeAllSalesReports,
   );
   const stockTransfers = (detail.stock_transfers as any[]) ?? [];
-  const activity = (detail.activity as any[]) ?? [];
 
   // ── Company identity (per-company branding) ─────────────────
   // Letterhead / footer come from the DOCUMENT's company. `projects` has no
@@ -214,8 +295,6 @@ app.get("/:id", async (c) => {
   const costLines = lines.filter((l) => l.kind === "cost");
   const totalIncome = incomeLines.reduce((s, l) => s + (l.amount || 0), 0);
   const totalCost = costLines.reduce((s, l) => s + (l.amount || 0), 0);
-  const profit = totalIncome - totalCost;
-  const margin = totalIncome > 0 ? (profit / totalIncome) * 100 : null;
   const rentalTotal = costLines
     .filter((l) => l.category === "rental")
     .reduce((s, l) => s + (l.amount || 0), 0);
@@ -223,14 +302,27 @@ app.get("/:id", async (c) => {
   const rentalPerDay =
     p.duration_days && p.duration_days > 0 ? rentalTotal / p.duration_days : null;
 
-  // Checklist rollup
+  // ── Headline finance numbers (owner's reference sheet, 2026-08-12) ──
+  // Event sales live in TWO places: per-day ledger lines and the lump
+  // project_finance.total_sales box. A project has one or the other (older
+  // months only have the lump), so take the larger rather than adding them —
+  // summing would double-count every project that has both.
+  const salesTotal = Math.max(totalIncome, Number(finance?.total_sales) || 0);
+  // Gross profit stops at cost of goods; net profit carries every cost line
+  // (rental, contractor, transport…), which is why the two differ on the sheet.
+  const cogsTotal = costLines
+    .filter((l) => String(l.category || "").startsWith("cogs"))
+    .reduce((s, l) => s + (l.amount || 0), 0);
+  const grossProfit = salesTotal - cogsTotal;
+  const netProfit = salesTotal - totalCost;
+  const margin = salesTotal > 0 ? (netProfit / salesTotal) * 100 : null;
+
+  // Checklist rollup — the progress bar / done-pending-blocked-n/a strip was
+  // dropped from the sheet (owner 2026-08-12); the section heading still shows
+  // "done / countable" so the totals live there.
   const checklistTotal = checklist.length;
   const checklistDone = checklist.filter((c) => c.status === "done").length;
   const checklistNa = checklist.filter((c) => c.status === "na").length;
-  const checklistBlocked = checklist.filter((c) => c.status === "blocked").length;
-  const checklistPending = checklistTotal - checklistDone - checklistNa - checklistBlocked;
-  const denom = checklistTotal - checklistNa;
-  const progressPct = denom > 0 ? Math.round((checklistDone / denom) * 100) : 0;
 
   // Group cost lines by category for the finance table
   const costByCategory = new Map<string, number>();
@@ -241,6 +333,19 @@ app.get("/:id", async (c) => {
   for (const l of incomeLines) {
     incomeByCategory.set(l.category, (incomeByCategory.get(l.category) ?? 0) + (l.amount || 0));
   }
+  // Cost ladder for the Finance Snapshot: cogs buckets, then everything else.
+  const cogsRows = [...costByCategory.entries()].filter(([cat]) =>
+    String(cat || "").startsWith("cogs"),
+  );
+  const otherRows = [...costByCategory.entries()].filter(
+    ([cat]) => !String(cat || "").startsWith("cogs"),
+  );
+  // Rental reads better as a rate — "(RM 158/m²/day)" beside the amount.
+  const rentalRate =
+    rentalTotal > 0 && p.size_sqm > 0 && p.duration_days > 0
+      ? rentalTotal / (p.size_sqm * p.duration_days)
+      : null;
+  const rentalNote = rentalRate != null ? `RM ${Math.round(rentalRate)}/m²/day` : null;
 
   // Defect counts
   const setupDefects = defects.filter((d) => d.phase === "setup");
@@ -258,6 +363,112 @@ app.get("/:id", async (c) => {
       .join(" ");
   }
 
+  // Raw enum values (done / in_review / na / setup / logistic …) printed as
+  // words — the sheet used to carry the database spelling straight through.
+  function nice(v: unknown): string {
+    const t = String(v ?? "").trim();
+    if (!t) return "—";
+    if (t.toLowerCase() === "na") return "N/A";
+    return t
+      .replace(/[_-]+/g, " ")
+      .split(" ")
+      .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+      .join(" ");
+  }
+
+  // ── What appears when printing (owner 2026-08-12) ───────────────
+  // Keys: overview, finance, logistics, photos, sales, defects, stock,
+  // checklist, notes.
+  // `?sections=overview,finance,checklist` prints ONLY those blocks. Absent =
+  // everything the caller is allowed to see (unchanged behaviour, so existing
+  // links and the plain Print button keep working). The permission strips
+  // (hideMoney / hideSetupDismantle) still win — this can only ever REMOVE
+  // sections, never reveal one the user may not see.
+  const sectionsParam = (c.req.query("sections") || "").trim();
+  const wanted = new Set(
+    sectionsParam
+      ? sectionsParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
+      : [],
+  );
+  const want = (key: string): boolean => wanted.size === 0 || wanted.has(key);
+  // Sections are numbered as they RENDER, so hiding one no longer leaves a gap
+  // (the report used to read 1, 2, 3, 7 because the numbers were hardcoded and
+  // empty sections just vanished). Each h2 calls this once, in document order.
+  let _secNo = 0;
+  const secNo = (): number => ++_secNo;
+
+  // ── Checklist grouped by its sections (mig 050) ─────────────────
+  // The sheet used to print one flat 6-column table; the owner's reference
+  // layout groups tasks under their section band with a per-section count.
+  // Sections that end up empty (all rows stripped by a permission gate, or
+  // simply unused on this project) are skipped, so no orphan bands print.
+  const sectionRows = ((scoped as any).sections as any[]) ?? [];
+  const clGroups: Array<{ name: string; items: any[]; done: number; denom: number }> = [];
+  const pushGroup = (name: string, items: any[]) => {
+    if (!items.length) return;
+    const na = items.filter((ci) => ci.status === "na").length;
+    clGroups.push({
+      name,
+      items,
+      done: items.filter((ci) => ci.status === "done").length,
+      denom: items.length - na,
+    });
+  };
+  for (const s of sectionRows) {
+    pushGroup(s.name, checklist.filter((ci) => ci.section_id === s.id));
+  }
+  const knownSectionIds = new Set(sectionRows.map((s) => s.id));
+  pushGroup(
+    "Other",
+    checklist.filter((ci) => !ci.section_id || !knownSectionIds.has(ci.section_id)),
+  );
+
+  // ── Setup / dismantle photos (owner's reference sheet, 2026-08-12) ──
+  // One picture per phase, taken from the first image attached to the phase's
+  // checklist task. Behind the same gate as the crew details: a user who cannot
+  // see Setup & Dismantle does not get the photos either.
+  const taskPhotoRows = ((detail as any).checklist_attachments as any[]) ?? [];
+  const titleById = new Map<number, string>(
+    checklist.map((ci: any) => [ci.id, String(ci.title || "").toLowerCase()]),
+  );
+  const findPhoto = (match: (title: string) => boolean) => {
+    for (const a of taskPhotoRows) {
+      const itemId = a.item_id ?? a.itemId;
+      const title = titleById.get(itemId);
+      if (!title || !match(title)) continue;
+      const key = a.r2_key ?? a.r2Key;
+      const mime = String(a.content_type ?? a.contentType ?? "");
+      const name = String(a.file_name ?? a.fileName ?? "");
+      const looksImage = mime.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(name);
+      if (!key || !looksImage) continue;
+      return { key: String(key), mime: mime || "image/jpeg" };
+    }
+    return null;
+  };
+  const PHOTO_MAX_BYTES = 4_000_000;
+  const wantPhotos = want("photos") && !hideSetupDismantle;
+  const setupShot = wantPhotos ? findPhoto((t) => t.includes("setup image")) : null;
+  const dismantleShot = wantPhotos
+    ? findPhoto((t) => t.includes("dismantle image")) ??
+      findPhoto((t) => t.includes("event complete"))
+    : null;
+  const [setupPhotoUri, dismantlePhotoUri] = await Promise.all([
+    setupShot ? fetchAsDataUri(c.env, setupShot.key, setupShot.mime, PHOTO_MAX_BYTES) : null,
+    dismantleShot
+      ? fetchAsDataUri(c.env, dismantleShot.key, dismantleShot.mime, PHOTO_MAX_BYTES)
+      : null,
+  ]);
+
+  // Status pill palette — done green, waiting amber, blocked red, n/a grey.
+  function pillClass(status: string, review?: string | null): string {
+    const s = String(status || "").toLowerCase();
+    if (s === "done") return "ok";
+    if (s === "na") return "na";
+    if (s === "blocked") return "bad";
+    if (review) return "wait";
+    return "wait";
+  }
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -267,18 +478,35 @@ app.get("/:id", async (c) => {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    /* Layout follows the owner's reference sheet (2026-08-12): label-above-value
+       cells four to a row, a KPI strip for finance, and the checklist grouped
+       under section bands with coloured status pills. */
     @page { size: A4; margin: 12mm 10mm 12mm 10mm; }
     *, *::before, *::after {
       box-sizing: border-box;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
+    :root {
+      --ink: #1a1f29;
+      --muted: #7b8290;
+      --line: #dcdfe3;
+      --band: #eef0f2;
+      --ok-bg: #e3f5e8;
+      --ok-fg: #145c2c;
+      --wait-bg: #fdf3d6;
+      --wait-fg: #6b4e00;
+      --bad-bg: #fde4e1;
+      --bad-fg: #8c1d18;
+      --na-bg: #f1f2f0;
+      --na-fg: #5f6368;
+    }
     html, body { margin: 0; padding: 0; height: 100%; }
     body {
       font-family: "Google Sans", "Product Sans", "Roboto", Helvetica, Arial, sans-serif;
-      color: #000;
-      font-size: 10pt;
-      line-height: 1.5;
+      color: var(--ink);
+      font-size: 9pt;
+      line-height: 1.45;
       background: #fff;
       -webkit-font-smoothing: antialiased;
     }
@@ -294,7 +522,7 @@ app.get("/:id", async (c) => {
       table.sheet { box-shadow: none !important; margin: 0 !important; width: 100% !important; }
     }
     table.sheet > thead > tr > td { padding: 2mm 10mm 3mm 10mm; }
-    table.sheet > tbody > tr > td { padding: 2mm 10mm 2mm 10mm; }
+    table.sheet > tbody > tr > td { padding: 0 10mm 2mm 10mm; }
     table.sheet > tfoot > tr > td { padding: 2mm 10mm 2mm 10mm; }
     table.sheet > tbody > tr.filler > td { padding: 0 !important; height: 100%; }
 
@@ -303,105 +531,251 @@ app.get("/:id", async (c) => {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      padding-bottom: 4mm;
-      border-bottom: 1.5pt solid #000;
+      padding-bottom: 3mm;
+      border-bottom: 0.75pt solid var(--ink);
     }
-    .letterhead .logo { max-height: 46px; max-width: 210px; object-fit: contain; }
-    .letterhead .logo-fallback { font-weight: 700; font-size: 18pt; letter-spacing: 1.2pt; text-transform: uppercase; }
-    .letterhead .company { text-align: right; font-size: 8.5pt; line-height: 1.4; max-width: 95mm; }
-    .letterhead .company .co-name { font-weight: 700; font-size: 10pt; letter-spacing: 0.3pt; text-transform: uppercase; }
-    .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 8pt; margin-top: 0.5pt; }
+    .letterhead .logo { max-height: 44px; max-width: 200px; object-fit: contain; }
+    .letterhead .logo-fallback { font-weight: 700; font-size: 17pt; letter-spacing: 1.2pt; text-transform: uppercase; }
+    .letterhead .company { text-align: right; font-size: 7.3pt; line-height: 1.42; max-width: 95mm; color: var(--muted); }
+    .letterhead .company .co-name { font-weight: 700; font-size: 9.5pt; letter-spacing: 0.3pt; text-transform: uppercase; color: var(--ink); }
+    .letterhead .company .reg-no { font-family: "Roboto Mono", monospace; font-size: 7pt; }
 
-    /* Doc title */
+    /* Title + event identity */
     .doc-title {
-      margin-top: 4mm;
+      margin-top: 3.5mm;
       display: flex;
       justify-content: space-between;
-      align-items: flex-end;
-      padding-bottom: 2mm;
-      border-bottom: 0.5pt solid #000;
+      align-items: baseline;
+      gap: 6mm;
     }
     .doc-title h1 {
       margin: 0;
-      font-size: 14pt;
+      font-size: 15pt;
       font-weight: 700;
-      letter-spacing: 0.6pt;
+      letter-spacing: 0.5pt;
       text-transform: uppercase;
     }
-    .doc-title .ref {
-      font-family: "Roboto Mono", monospace;
-      font-size: 9pt;
-      text-align: right;
+    .doc-title .ref { font-size: 7.3pt; color: var(--muted); text-align: right; white-space: nowrap; }
+    /* Hero band — event identity reversed out of the dark ink, with the PIC on
+       a green tag (owner's second reference sheet, 2026-08-12). */
+    .hero {
+      margin-top: 3mm;
+      background: var(--ink);
+      color: #fff;
+      padding: 3mm 4mm;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 5mm;
+    }
+    .hero .h-name { font-size: 13pt; font-weight: 700; line-height: 1.2; }
+    .hero .h-meta { font-size: 8.5pt; margin-top: 1.2mm; color: #c7cdd8; }
+    .hero .h-pic {
+      background: #2f6f4f;
+      color: #fff;
+      font-size: 8.5pt;
+      font-weight: 700;
+      padding: 1.2mm 3mm;
+      border-radius: 1mm;
+      white-space: nowrap;
+    }
+
+    /* Headline money strip under the hero */
+    .kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #f7f8f6; }
+    .kpi .kc { padding: 2.2mm 3mm; border-left: 0.5pt solid var(--line); min-width: 0; }
+    .kpi .kc:first-child { border-left: 0; }
+    .kpi .kc .k {
+      font-size: 6.6pt;
+      font-weight: 700;
+      letter-spacing: 0.55pt;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .kpi .kc .v { font-size: 12pt; font-weight: 700; font-family: "Roboto Mono", monospace; }
+    .kpi .kc .v.neg { color: var(--bad-fg); }
+
+    /* Finance snapshot — cost ladder with sub-totals */
+    table.fin { width: 100%; border-collapse: collapse; font-size: 8.3pt; margin-top: 1mm; }
+    table.fin td { padding: 0.7mm 0; border-bottom: 0.5pt dotted var(--line); }
+    table.fin td.amt { text-align: right; font-family: "Roboto Mono", monospace; white-space: nowrap; }
+    table.fin tr.sum td { font-weight: 700; border-top: 0.5pt solid var(--ink); border-bottom: 0; }
+
+    /* Logistics — setup left, dismantle right */
+    .logi { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6mm; margin-top: 1.5mm; }
+    .logi .col.right { border-left: 0.5pt solid var(--line); padding-left: 6mm; }
+    .logi .col-head {
+      font-size: 8.5pt;
+      font-weight: 700;
+      letter-spacing: 0.3pt;
+      padding-bottom: 1mm;
+      border-bottom: 0.5pt solid var(--line);
+    }
+    .logi .lr { display: grid; grid-template-columns: 17mm minmax(0, 1fr); padding: 0.9mm 0; border-bottom: 0.5pt dotted var(--line); }
+    .logi .lr .k {
+      font-size: 6.4pt;
+      font-weight: 700;
+      letter-spacing: 0.5pt;
+      text-transform: uppercase;
+      color: var(--muted);
+      align-self: center;
+    }
+    .logi .lr .v { font-size: 8.6pt; font-weight: 700; overflow-wrap: anywhere; }
+    .logi .lr .v .tel { font-weight: 400; color: var(--muted); font-family: "Roboto Mono", monospace; font-size: 7.6pt; }
+
+    /* Setup / dismantle photos, two up */
+    .shots { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6mm; margin-top: 1.5mm; }
+    .shots figure { margin: 0; }
+    .shots figcaption {
+      font-size: 7.5pt;
+      color: var(--muted);
+      padding-bottom: 1mm;
+    }
+    .shots img {
+      width: 100%;
+      max-height: 62mm;
+      object-fit: cover;
+      border: 0.5pt solid var(--line);
+      display: block;
+    }
+    .shots .none {
+      border: 0.5pt dashed var(--line);
+      height: 24mm;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 7.5pt;
+      color: var(--muted);
     }
 
     /* Sections */
     section { margin-top: 4mm; }
     section h2 {
-      margin: 0 0 1.5mm 0;
-      font-size: 9.5pt;
+      margin: 0;
+      font-size: 9.3pt;
+      font-weight: 700;
+      letter-spacing: 0.5pt;
+      text-transform: uppercase;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    section h2 + .sub, section .sub { font-size: 7.6pt; color: var(--muted); }
+    section .rule { border-top: 0.75pt solid var(--ink); margin-top: 1mm; }
+
+    /* Label-above-value cells, four to a row */
+    .cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 5mm; }
+    .cells.six { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .cell { padding: 1.5mm 0 1.4mm 0; border-bottom: 0.5pt solid var(--line); min-width: 0; }
+    .cell .k {
+      font-size: 6.6pt;
+      font-weight: 700;
+      letter-spacing: 0.55pt;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .cell .v { font-size: 9pt; font-weight: 700; overflow-wrap: anywhere; }
+    .cell .v.mono { font-family: "Roboto Mono", monospace; font-size: 8.5pt; }
+    .cell .v .sub2 { display: block; font-size: 7.4pt; font-weight: 400; color: var(--muted); }
+    .cell .v.neg { color: var(--bad-fg); }
+    .cell.blank { border-bottom: 0; }
+    .cell.span2 { grid-column: span 2; }
+
+    /* Data tables */
+    table.data { width: 100%; border-collapse: collapse; font-size: 8.2pt; margin-top: 1mm; }
+    table.data th, table.data td { padding: 1mm 1.6mm 1mm 0; border-bottom: 0.5pt solid var(--line); vertical-align: top; }
+    table.data thead { display: table-header-group; }
+    table.data th {
+      text-align: left;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 6.6pt;
+      letter-spacing: 0.55pt;
+      color: var(--muted);
+      border-bottom: 0.5pt solid var(--line);
+    }
+    table.data tr { break-inside: avoid; page-break-inside: avoid; }
+    table.data th.num, table.data td.num { text-align: right; padding-right: 0; }
+    table.data td.num, table.data td.mono { font-family: "Roboto Mono", monospace; }
+    table.data tr.total td { font-weight: 700; border-top: 0.75pt solid var(--ink); border-bottom: 0; }
+    /* Section band inside the checklist table */
+    table.data tr.grp td {
+      background: var(--band);
+      font-weight: 700;
+      font-size: 7.2pt;
+      letter-spacing: 0.6pt;
+      text-transform: uppercase;
+      padding: 1.2mm 1.6mm;
+      border-bottom: 0;
+    }
+    table.data tr.grp td.cnt { text-align: right; font-family: "Roboto Mono", monospace; letter-spacing: 0; color: #4a5060; }
+
+    /* Status pills */
+    .pill {
+      display: inline-block;
+      padding: 0.6mm 1.6mm;
+      border-radius: 1mm;
+      font-size: 6.6pt;
       font-weight: 700;
       letter-spacing: 0.4pt;
       text-transform: uppercase;
-      border-bottom: 0.5pt solid #000;
-      padding-bottom: 0.5mm;
+      white-space: nowrap;
     }
+    .pill.ok { background: var(--ok-bg); color: var(--ok-fg); }
+    .pill.wait { background: var(--wait-bg); color: var(--wait-fg); }
+    .pill.bad { background: var(--bad-bg); color: var(--bad-fg); }
+    .pill.na { background: var(--na-bg); color: var(--na-fg); }
 
-    /* Two-column label/value grid */
-    .kv {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      column-gap: 8mm;
-      row-gap: 1mm;
-      font-size: 9.5pt;
-    }
-    .kv .row { display: flex; justify-content: space-between; gap: 4mm; border-bottom: 0.25pt dotted #000; padding: 0.4mm 0; }
-    .kv .row .lbl { color: #000; font-weight: 500; }
-    .kv .row .val { font-family: "Roboto Mono", monospace; text-align: right; }
-
-    /* Data tables */
-    table.data { width: 100%; border-collapse: collapse; font-size: 9pt; margin-top: 1mm; }
-    table.data th, table.data td { padding: 1mm 2mm; border-bottom: 0.25pt solid #000; }
-    table.data th { text-align: left; font-weight: 700; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.4pt; }
-    table.data td.num { text-align: right; font-family: "Roboto Mono", monospace; }
-    table.data tr.total td { font-weight: 700; border-top: 1pt solid #000; border-bottom: 0; padding-top: 1.2mm; }
-
-    /* Status chip (B&W — outline only) */
-    .chip {
-      display: inline-block;
-      padding: 0.3mm 1.8mm;
-      border: 0.5pt solid #000;
-      font-size: 7.5pt;
-      letter-spacing: 0.3pt;
-      text-transform: uppercase;
-      font-weight: 700;
-      vertical-align: middle;
-    }
-
-    /* Progress bar */
-    .bar { width: 100%; height: 2.2mm; border: 0.5pt solid #000; position: relative; }
-    .bar .fill { height: 100%; background: #000; }
-    .bar .val { position: absolute; right: -14mm; top: -0.5mm; font-family: "Roboto Mono", monospace; font-size: 8.5pt; font-weight: 700; }
-
-    .meta-line { font-size: 8.5pt; color: #000; margin-top: 1mm; }
+    .meta-line { font-size: 7.8pt; color: var(--muted); margin-top: 1.2mm; }
+    .notes-body { white-space: pre-wrap; margin: 1.5mm 0 0 0; font-size: 8.6pt; }
 
     .footer-line {
-      border-top: 0.5pt solid #000;
+      border-top: 0.5pt solid var(--line);
       padding-top: 1.5mm;
-      font-size: 7.5pt;
-      color: #000;
+      font-size: 6.8pt;
+      color: var(--muted);
       display: flex;
       justify-content: space-between;
+      gap: 6mm;
     }
 
-    /* Stack grids responsively — not needed for print, but friendly on screen */
+    .muted { color: var(--muted); font-weight: 400; }
+
     @media screen and (max-width: 680px) {
-      .kv { grid-template-columns: 1fr; }
+      .cells { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
-    ul.inline-list { margin: 0.5mm 0 0 0; padding: 0 0 0 4mm; font-size: 9pt; }
-    ul.inline-list li { margin-bottom: 0.4mm; }
-
-    .muted { color: #000; opacity: 0.65; }
+    /* Screen-only section picker — ticks decide what lands on the paper. Built
+       from the sections that actually rendered, so a user only ever sees blocks
+       they are allowed to print (owner 2026-08-12). */
+    .picker {
+      width: 210mm;
+      max-width: 100%;
+      margin: 0 auto 10px auto;
+      background: #fff;
+      border: 1px solid #b9b5ad;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 14px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+    .picker strong { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; }
+    .picker label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+    .picker .spacer { flex: 1 1 auto; }
+    .picker button {
+      font: inherit;
+      padding: 4px 12px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .picker button.ghost { background: #fff; color: var(--ink); }
+    section.off { display: none !important; }
+    @media print { .picker { display: none !important; } }
   </style>
 </head>
 <body>
@@ -423,118 +797,194 @@ app.get("/:id", async (c) => {
           </div>
           <div class="doc-title">
             <h1>Event Summary Report</h1>
-            <div class="ref">
-              ${esc(p.code)}<br>
-              Generated ${fmtDateTime(new Date().toISOString())}
-            </div>
+            <div class="ref">Generated ${fmtDateTime(new Date().toISOString())}</div>
           </div>
+          <div class="hero">
+            <div>
+              <div class="h-name">${esc(p.name)}</div>
+              <div class="h-meta">${esc(
+                [
+                  fmtRange(p.start_date, p.end_date),
+                  p.booth_no ? `Booth ${p.booth_no}` : null,
+                  p.brand || null,
+                  p.event_type_name || null,
+                  p.code,
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
+              )}</div>
+            </div>
+            ${p.pic_name ? `<div class="h-pic">PIC · ${esc(p.pic_name)}</div>` : ""}
+          </div>
+          ${
+            hideMoney
+              ? ""
+              : `<div class="kpi">
+            <div class="kc"><div class="k">Total Sales</div><div class="v">${fmtMoney0(salesTotal)}</div></div>
+            <div class="kc"><div class="k">Gross Profit</div><div class="v${grossProfit < 0 ? " neg" : ""}">${fmtMoney0(grossProfit)}</div></div>
+            <div class="kc"><div class="k">Net Profit</div><div class="v${netProfit < 0 ? " neg" : ""}">${fmtMoney0(netProfit)}</div></div>
+            <div class="kc"><div class="k">Margin</div><div class="v${margin != null && margin < 0 ? " neg" : ""}">${margin != null ? margin.toFixed(1) + "%" : "—"}</div></div>
+          </div>`
+          }
         </td>
       </tr>
     </thead>
 
     <tbody>
       <tr><td>
-        <!-- ── 1. Event overview ─────────────────────────── -->
-        <section>
-          <h2>1. Event Overview</h2>
-          <div class="kv">
-            <div class="row"><span class="lbl">Project Code</span><span class="val">${esc(p.code)}</span></div>
-            <div class="row"><span class="lbl">Name</span><span class="val">${esc(p.name)}</span></div>
-            <div class="row"><span class="lbl">Brand</span><span class="val">${esc(p.brand || "—")}</span></div>
-            <div class="row"><span class="lbl">Event Type</span><span class="val">${esc(p.event_type_name || "—")}</span></div>
-            <div class="row"><span class="lbl">State</span><span class="val">${esc(p.state || "—")}</span></div>
-            <div class="row"><span class="lbl">Venue</span><span class="val">${esc(p.venue || "—")}</span></div>
-            <div class="row"><span class="lbl">Organizer</span><span class="val">${esc(p.organizer || "—")}</span></div>
-            <div class="row"><span class="lbl">Booth No</span><span class="val">${esc(p.booth_no || "—")}</span></div>
-            <div class="row"><span class="lbl">Size (m²)</span><span class="val">${p.size_sqm ?? "—"}</span></div>
-            <div class="row"><span class="lbl">Start Date</span><span class="val">${fmtDate(p.start_date)}</span></div>
-            <div class="row"><span class="lbl">End Date</span><span class="val">${fmtDate(p.end_date)}</span></div>
-            <div class="row"><span class="lbl">Duration</span><span class="val">${p.duration_days ?? "—"} day(s)</span></div>
-            <div class="row"><span class="lbl">Current Stage</span><span class="val"><span class="chip">${esc(STAGE_LABEL[p.stage] || p.stage)}</span></span></div>
-          </div>
-          <div class="meta-line">
-            <strong>Progress:</strong>
-            <span class="bar" style="display:inline-block;width:40mm;vertical-align:middle;margin:0 18mm 0 2mm">
-              <span class="fill" style="width:${progressPct}%"></span>
-              <span class="val">${progressPct}%</span>
-            </span>
-            — ${checklistDone} done / ${checklistPending} pending / ${checklistBlocked} blocked / ${checklistNa} n/a
-            ${hidePayment ? "" : `&nbsp;·&nbsp; Payment: <span class="chip">${esc(PAYMENT_LABEL[p.payment_status || "not_started"])}</span>`}
-          </div>
-        </section>
-
-        <!-- ── 2. Logistics schedule ─────────────────────── -->
+        <!-- ── Event overview ────────────────────────────── -->
         ${
-          !hideSetupDismantle && (p.setup_start_at || p.dismantle_start_at)
-            ? `<section>
-                <h2>2. Logistics Schedule</h2>
-                <div class="kv">
-                  <div class="row"><span class="lbl">Setup Start</span><span class="val">${fmtDateTime(p.setup_start_at)}</span></div>
-                  <div class="row"><span class="lbl">Setup End</span><span class="val">${fmtDateTime(p.setup_end_at)}</span></div>
-                  <div class="row"><span class="lbl">Setup Driver</span><span class="val">${esc(p.setup_driver_name || "—")}</span></div>
-                  <div class="row"><span class="lbl">Setup Lorry</span><span class="val">${esc(p.setup_lorry_plate || "—")}</span></div>
-                  <div class="row"><span class="lbl">Dismantle Start</span><span class="val">${fmtDateTime(p.dismantle_start_at)}</span></div>
-                  <div class="row"><span class="lbl">Dismantle End</span><span class="val">${fmtDateTime(p.dismantle_end_at)}</span></div>
-                  <div class="row"><span class="lbl">Dismantle Driver</span><span class="val">${esc(p.dismantle_driver_name || "—")}</span></div>
-                  <div class="row"><span class="lbl">Dismantle Lorry</span><span class="val">${esc(p.dismantle_lorry_plate || "—")}</span></div>
+          want("overview")
+            ? `<section data-sec="overview" data-label="Event Overview">
+          <h2><span class="sn">${secNo()}.</span> Event Overview</h2>
+          <div class="rule"></div>
+          <!-- Dates, booth, brand and PIC ride in the hero band above, so the
+               grid carries what is left. -->
+          <div class="cells">
+            <div class="cell"><div class="k">Brand</div><div class="v">${esc(p.brand || "—")}</div></div>
+            <div class="cell"><div class="k">Event Type</div><div class="v">${esc(p.event_type_name || "—")}</div></div>
+            <div class="cell"><div class="k">State</div><div class="v">${esc(p.state || "—")}</div></div>
+            <div class="cell"><div class="k">Booth No.</div><div class="v mono">${esc(p.booth_no || "—")}</div></div>
+            <div class="cell"><div class="k">Organizer</div><div class="v">${esc(p.organizer || "—")}</div></div>
+            <div class="cell"><div class="k">Venue</div><div class="v">${esc(p.venue || "—")}</div></div>
+            <div class="cell"><div class="k">Duration</div><div class="v">${p.duration_days ?? "—"} day(s)</div></div>
+            <div class="cell"><div class="k">Size (m²)</div><div class="v mono">${p.size_sqm ?? "—"}</div></div>
+            <div class="cell"><div class="k">Status</div><div class="v">${nice(p.status)}</div></div>
+            <!-- STAGE_LABEL predates the setup / dismantle stages, so fall back
+                 to title-casing whatever the row carries rather than printing
+                 the raw enum. -->
+            <div class="cell"><div class="k">Stage</div><div class="v">${esc(STAGE_LABEL[p.stage] || nice(p.stage))}</div></div>
+            ${
+              hidePayment
+                ? `<div class="cell blank"></div>`
+                : `<div class="cell"><div class="k">Payment</div><div class="v">${esc(PAYMENT_LABEL[p.payment_status || "not_started"])}</div></div>`
+            }
+            <div class="cell blank"></div>
+          </div>
+        </section>`
+            : ""
+        }
+
+        <!-- ── Finance snapshot ──────────────────────────── -->
+        <!-- Cost ladder: every cogs bucket, a COGS sub-total, then the rest of
+             the ledger and Total Cost. The headline numbers (sales, GP, NP,
+             margin) print in the strip under the hero, so they are not repeated
+             here (owner's reference sheet, 2026-08-12). -->
+        ${hideMoney || !want("finance") ? "" : `
+        <section data-sec="finance" data-label="Finance Snapshot">
+          <h2><span class="sn">${secNo()}.</span> Finance Snapshot</h2>
+          <div class="rule"></div>
+          <table class="fin">
+            <tbody>
+              ${cogsRows
+                .map(
+                  ([cat, amt]) => `
+                  <tr>
+                    <td>${esc(costLabel(cat))}</td>
+                    <td class="amt">${fmtMoney(amt)}</td>
+                  </tr>`
+                )
+                .join("")}
+              ${
+                cogsRows.length > 1
+                  ? `<tr class="sum">
+                      <td>COGS Total</td>
+                      <td class="amt">${fmtMoney(cogsTotal)}</td>
+                    </tr>`
+                  : ""
+              }
+              ${otherRows
+                .map(
+                  ([cat, amt]) => `
+                  <tr>
+                    <td>${esc(costLabel(cat))}${cat === "rental" && rentalNote ? ` <span class="muted">(${esc(rentalNote)})</span>` : ""}</td>
+                    <td class="amt">${fmtMoney(amt)}</td>
+                  </tr>`
+                )
+                .join("")}
+              <tr class="sum">
+                <td>Total Cost</td>
+                <td class="amt">${fmtMoney(totalCost)}</td>
+              </tr>
+              ${
+                incomeByCategory.size
+                  ? [...incomeByCategory.entries()]
+                      .map(
+                        ([cat, amt]) => `
+                        <tr>
+                          <td>${esc(catLabel(cat))} <span class="muted">(income)</span></td>
+                          <td class="amt">${fmtMoney(amt)}</td>
+                        </tr>`
+                      )
+                      .join("")
+                  : ""
+              }
+            </tbody>
+          </table>
+        </section>`}
+
+        <!-- ── Logistics schedule ────────────────────────── -->
+        <!-- Setup left, dismantle right, each with lorry, driver and helpers +
+             their phone numbers so the sheet works on site. -->
+        ${
+          want("logistics") && !hideSetupDismantle && (p.setup_start_at || p.dismantle_start_at)
+            ? `<section data-sec="logistics" data-label="Logistics Schedule">
+                <h2><span class="sn">${secNo()}.</span> Logistics Schedule</h2>
+                <div class="rule"></div>
+                <div class="logi">
+                  <div class="col">
+                    <div class="col-head">SETUP · ${fmtDateTime(p.setup_start_at)}${p.setup_end_at ? ` → ${fmtDateTime(p.setup_end_at)}` : ""}</div>
+                    <div class="lr"><span class="k">Lorry</span><span class="v mono">${esc(p.setup_lorry_plate || "—")}</span></div>
+                    <div class="lr"><span class="k">Driver</span><span class="v">${crew(p.setup_driver_name, p.setup_driver_phone)}</span></div>
+                    <div class="lr"><span class="k">Helper 1</span><span class="v">${crew(p.setup_helper_1_name, p.setup_helper_1_phone)}</span></div>
+                    <div class="lr"><span class="k">Helper 2</span><span class="v">${crew(p.setup_helper_2_name, p.setup_helper_2_phone)}</span></div>
+                  </div>
+                  <div class="col right">
+                    <div class="col-head">DISMANTLE · ${fmtDateTime(p.dismantle_start_at)}${p.dismantle_end_at ? ` → ${fmtDateTime(p.dismantle_end_at)}` : ""}</div>
+                    <div class="lr"><span class="k">Lorry</span><span class="v mono">${esc(p.dismantle_lorry_plate || "—")}</span></div>
+                    <div class="lr"><span class="k">Driver</span><span class="v">${crew(p.dismantle_driver_name, p.dismantle_driver_phone)}</span></div>
+                    <div class="lr"><span class="k">Helper 1</span><span class="v">${crew(p.dismantle_helper_1_name, p.dismantle_helper_1_phone)}</span></div>
+                    <div class="lr"><span class="k">Helper 2</span><span class="v">${crew(p.dismantle_helper_2_name, p.dismantle_helper_2_phone)}</span></div>
+                  </div>
                 </div>
               </section>`
             : ""
         }
 
-        <!-- ── 3. Finance ─────────────────────────────────── -->
-        ${hideMoney ? "" : `
-        <section>
-          <h2>3. Finance</h2>
-          <table class="data">
-            <thead>
-              <tr>
-                <th>Category</th>
-                <th class="num">Income (RM)</th>
-                <th class="num">Cost (RM)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${[...incomeByCategory.entries()]
-                .map(
-                  ([cat, amt]) => `
-                  <tr>
-                    <td>${esc(catLabel(cat))}</td>
-                    <td class="num">${fmtMoney(amt).replace("RM ", "")}</td>
-                    <td class="num">—</td>
-                  </tr>`
-                )
-                .join("")}
-              ${[...costByCategory.entries()]
-                .map(
-                  ([cat, amt]) => `
-                  <tr>
-                    <td>${esc(catLabel(cat))}</td>
-                    <td class="num">—</td>
-                    <td class="num">${fmtMoney(amt).replace("RM ", "")}</td>
-                  </tr>`
-                )
-                .join("")}
-              <tr class="total">
-                <td>Total</td>
-                <td class="num">${fmtMoney(totalIncome).replace("RM ", "")}</td>
-                <td class="num">${fmtMoney(totalCost).replace("RM ", "")}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="meta-line">
-            <strong>Gross profit:</strong> ${fmtMoney(profit)}
-            &nbsp;·&nbsp; <strong>Margin:</strong> ${margin != null ? margin.toFixed(1) + "%" : "—"}
-            ${rentalPerSqm != null ? `&nbsp;·&nbsp; <strong>Rental / m²:</strong> ${fmtMoney(rentalPerSqm)}` : ""}
-            ${rentalPerDay != null ? `&nbsp;·&nbsp; <strong>Rental / day:</strong> ${fmtMoney(rentalPerDay)}` : ""}
-          </div>
-        </section>`}
-
-        <!-- ── 4. Sales reports ──────────────────────────── -->
+        <!-- ── Setup & dismantle photos ──────────────────── -->
         ${
-          !hideMoney && salesReports.length
-            ? `<section>
-                <h2>4. Sales Reports</h2>
+          setupPhotoUri || dismantlePhotoUri
+            ? `<section data-sec="photos" data-label="Setup &amp; Dismantle Photos">
+                <h2><span class="sn">${secNo()}.</span> Setup &amp; Dismantle Photos</h2>
+                <div class="rule"></div>
+                <div class="shots">
+                  <figure>
+                    <figcaption>Setup${p.setup_start_at ? ` · ${fmtDate(p.setup_start_at)}` : ""}</figcaption>
+                    ${
+                      setupPhotoUri
+                        ? `<img src="${setupPhotoUri}" alt="Setup photo">`
+                        : `<div class="none">No setup photo attached</div>`
+                    }
+                  </figure>
+                  <figure>
+                    <figcaption>Dismantle${p.dismantle_start_at ? ` · ${fmtDate(p.dismantle_start_at)}` : ""}</figcaption>
+                    ${
+                      dismantlePhotoUri
+                        ? `<img src="${dismantlePhotoUri}" alt="Dismantle photo">`
+                        : `<div class="none">No dismantle photo attached</div>`
+                    }
+                  </figure>
+                </div>
+              </section>`
+            : ""
+        }
+
+        <!-- ── Sales reports ─────────────────────────────── -->
+        ${
+          want("sales") && !hideMoney && salesReports.length
+            ? `<section data-sec="sales" data-label="Sales Reports">
+                <h2><span class="sn">${secNo()}.</span> Sales Reports</h2>
+                <div class="rule"></div>
                 <table class="data">
                   <thead>
                     <tr>
@@ -549,7 +999,7 @@ app.get("/:id", async (c) => {
                         (r: any) => `
                         <tr>
                           <td>${esc(r.title || "—")}</td>
-                          <td>${r.period_start ? fmtDate(r.period_start) : "—"} — ${r.period_end ? fmtDate(r.period_end) : "—"}</td>
+                          <td class="mono">${r.period_start ? fmtDate(r.period_start) : "—"} — ${r.period_end ? fmtDate(r.period_end) : "—"}</td>
                           <td class="num">${r.sales_amount != null ? fmtMoney(r.sales_amount).replace("RM ", "") : "—"}</td>
                         </tr>`
                       )
@@ -564,16 +1014,13 @@ app.get("/:id", async (c) => {
             : ""
         }
 
-        <!-- ── 5. Defects ────────────────────────────────── -->
+        <!-- ── Defects ───────────────────────────────────── -->
         ${
-          defects.length
-            ? `<section>
-                <h2>5. Defect Report</h2>
-                <div class="meta-line">
-                  <strong>${defects.length}</strong> total
-                  &nbsp;·&nbsp; Setup: ${setupDefects.length} &nbsp;·&nbsp; Dismantle: ${dismantleDefects.length}
-                  &nbsp;·&nbsp; By Sales: ${salesDefects.length} &nbsp;·&nbsp; By Logistic: ${logisticDefects.length}
-                </div>
+          want("defects") && defects.length
+            ? `<section data-sec="defects" data-label="Defect Report">
+                <h2><span class="sn">${secNo()}.</span> Defect Report</h2>
+                <div class="sub">${defects.length} total · Setup: ${setupDefects.length} · Dismantle: ${dismantleDefects.length} · By Sales: ${salesDefects.length} · By Logistic: ${logisticDefects.length}</div>
+                <div class="rule"></div>
                 <table class="data">
                   <thead>
                     <tr>
@@ -591,13 +1038,13 @@ app.get("/:id", async (c) => {
                       .map(
                         (d: any) => `
                         <tr>
-                          <td>${esc(d.phase)}</td>
-                          <td>${esc(d.reported_by_role)}</td>
+                          <td>${nice(d.phase)}</td>
+                          <td>${nice(d.reported_by_role)}</td>
                           <td>${esc(d.item_code || d.item_description || "—")}</td>
                           <td>${esc(d.size || "—")}</td>
                           <td class="num">${d.quantity ?? 1}</td>
                           <td>${esc(d.reason || "—")}</td>
-                          <td>${d.resolved ? "Resolved" : "Open"}${d.linked_assr_no ? ` · ${esc(d.linked_assr_no)}` : ""}</td>
+                          <td><span class="pill ${d.resolved ? "ok" : "wait"}">${d.resolved ? "Resolved" : "Open"}</span>${d.linked_assr_no ? ` <span class="muted">${esc(d.linked_assr_no)}</span>` : ""}</td>
                         </tr>`
                       )
                       .join("")}
@@ -607,11 +1054,12 @@ app.get("/:id", async (c) => {
             : ""
         }
 
-        <!-- ── 6. Stock transfer ─────────────────────────── -->
+        <!-- ── Stock transfer ────────────────────────────── -->
         ${
-          stockTransfers.length
-            ? `<section>
-                <h2>6. Stock Transfer</h2>
+          want("stock") && stockTransfers.length
+            ? `<section data-sec="stock" data-label="Stock Transfer">
+                <h2><span class="sn">${secNo()}.</span> Stock Transfer</h2>
+                <div class="rule"></div>
                 <table class="data">
                   <thead>
                     <tr>
@@ -627,9 +1075,9 @@ app.get("/:id", async (c) => {
                         (t: any) => `
                         <tr>
                           <td>${t.direction === "out" ? "OUT" : "RETURN"}</td>
-                          <td>${fmtDateTime(t.transferred_at)}</td>
+                          <td class="mono">${fmtDateTime(t.transferred_at)}</td>
                           <td>${esc(t.notes || "—")}</td>
-                          <td>${t.confirmed_at ? `${fmtDate(t.confirmed_at)} by ${esc(t.confirmed_by_name || "—")}` : "Pending"}</td>
+                          <td>${t.confirmed_at ? `${fmtDate(t.confirmed_at)} · ${esc(t.confirmed_by_name || "—")}` : `<span class="pill wait">Pending</span>`}</td>
                         </tr>`
                       )
                       .join("")}
@@ -639,32 +1087,41 @@ app.get("/:id", async (c) => {
             : ""
         }
 
-        <!-- ── 7. Checklist ──────────────────────────────── -->
+        <!-- ── Checklist, grouped by section ─────────────── -->
         ${
-          checklist.length
-            ? `<section>
-                <h2>7. Checklist (${checklistDone}/${checklistTotal - checklistNa} complete)</h2>
+          want("checklist") && checklist.length
+            ? `<section data-sec="checklist" data-label="Checklist">
+                <h2><span class="sn">${secNo()}.</span> Checklist</h2>
+                <div class="sub">${checklistDone}/${checklistTotal - checklistNa} complete · ${checklistTotal} tasks total</div>
+                <div class="rule"></div>
                 <table class="data">
                   <thead>
                     <tr>
-                      <th style="width:40%">Task</th>
-                      <th>Owner</th>
+                      <th style="width:44%">Task</th>
                       <th>Due</th>
                       <th>Status</th>
                       <th>Completed</th>
                     </tr>
                   </thead>
                   <tbody>
-                    ${checklist
+                    ${clGroups
                       .map(
-                        (ci: any) => `
-                        <tr>
-                          <td>${esc(ci.title)}${ci.required_perm ? ` <span class="muted">(gated)</span>` : ""}</td>
-                          <td>${esc(ci.owner_name || "—")}</td>
-                          <td>${fmtDate(ci.due_date)}</td>
-                          <td>${esc(ci.status)}${ci.review_status ? ` · ${esc(ci.review_status)}` : ""}</td>
-                          <td>${ci.completed_at ? `${fmtDate(ci.completed_at)}${ci.completed_by_name ? ` · ${esc(ci.completed_by_name)}` : ""}` : "—"}</td>
-                        </tr>`
+                        (g) => `
+                        <tr class="grp">
+                          <td colspan="3">${esc(g.name)}</td>
+                          <td class="cnt">${g.done}/${g.denom}</td>
+                        </tr>
+                        ${g.items
+                          .map(
+                            (ci: any) => `
+                            <tr>
+                              <td>${esc(ci.title)}${ci.required_perm ? ` <span class="muted">(gated)</span>` : ""}</td>
+                              <td class="mono">${fmtDate(ci.due_date)}</td>
+                              <td><span class="pill ${pillClass(ci.status, ci.review_status)}">${nice(ci.status)}${ci.review_status ? ` · ${nice(ci.review_status)}` : ""}</span></td>
+                              <td>${ci.completed_at ? `<span class="mono">${fmtDate(ci.completed_at)}</span>${ci.completed_by_name ? ` · ${esc(ci.completed_by_name)}` : ""}` : "—"}</td>
+                            </tr>`
+                          )
+                          .join("")}`
                       )
                       .join("")}
                   </tbody>
@@ -673,34 +1130,16 @@ app.get("/:id", async (c) => {
             : ""
         }
 
-        <!-- ── 8. Activity highlights ─────────────────────── -->
-        ${
-          activity.length
-            ? `<section>
-                <h2>8. Activity Highlights</h2>
-                <ul class="inline-list">
-                  ${activity
-                    .slice(0, 15)
-                    .map(
-                      (a: any) => `
-                      <li>
-                        <strong>${esc(a.action)}</strong>
-                        ${a.from_value || a.to_value ? ` — ${esc(a.from_value || "")} → ${esc(a.to_value || "")}` : ""}
-                        ${a.note ? ` · ${esc(a.note)}` : ""}
-                        <span class="muted"> · ${esc(a.user_name || "system")} · ${fmtDateTime(a.created_at)}</span>
-                      </li>`
-                    )
-                    .join("")}
-                </ul>
-              </section>`
-            : ""
-        }
+        <!-- Activity Highlights dropped (owner 2026-08-12) — the audit trail is
+             noise on a printed debrief and pushed the sheet onto a second page.
+             It stays available in the on-screen project timeline. -->
 
         ${
-          p.notes
-            ? `<section>
-                <h2>9. Notes</h2>
-                <p style="white-space:pre-wrap;margin:0;font-size:9.5pt">${esc(p.notes)}</p>
+          want("notes") && p.notes
+            ? `<section data-sec="notes" data-label="Notes">
+                <h2><span class="sn">${secNo()}.</span> Notes</h2>
+                <div class="rule"></div>
+                <p class="notes-body">${esc(p.notes)}</p>
               </section>`
             : ""
         }
@@ -722,6 +1161,80 @@ app.get("/:id", async (c) => {
 
   <script>
     // Auto-print removed — user can Ctrl/Cmd+P when ready.
+    //
+    // Section picker: tick / untick what appears when printing. Choices are
+    // remembered per browser, so the next report opens the same way. Section
+    // numbers are renumbered on every toggle — hiding one never leaves a gap
+    // (the sheet used to read 1, 2, 3, 7).
+    (function () {
+      var KEY = "houzs.print.sections.v1";
+      var secs = Array.prototype.slice.call(document.querySelectorAll("section[data-sec]"));
+      if (!secs.length) return;
+
+      var saved = {};
+      try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+
+      function renumber() {
+        var n = 0;
+        for (var i = 0; i < secs.length; i++) {
+          if (secs[i].classList.contains("off")) continue;
+          n += 1;
+          var sn = secs[i].querySelector("h2 .sn");
+          if (sn) sn.textContent = n + ".";
+        }
+      }
+
+      var bar = document.createElement("div");
+      bar.className = "picker";
+      var lead = document.createElement("strong");
+      lead.textContent = "Print sections";
+      bar.appendChild(lead);
+
+      var boxes = [];
+      secs.forEach(function (sec) {
+        var key = sec.getAttribute("data-sec");
+        var on = saved[key] !== false;
+        sec.classList.toggle("off", !on);
+        var lab = document.createElement("label");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = on;
+        cb.addEventListener("change", function () {
+          sec.classList.toggle("off", !cb.checked);
+          saved[key] = cb.checked;
+          try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) {}
+          renumber();
+        });
+        boxes.push(cb);
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(sec.getAttribute("data-label") || key));
+        bar.appendChild(lab);
+      });
+
+      var spacer = document.createElement("span");
+      spacer.className = "spacer";
+      bar.appendChild(spacer);
+
+      var all = document.createElement("button");
+      all.type = "button";
+      all.className = "ghost";
+      all.textContent = "Select all";
+      all.addEventListener("click", function () {
+        boxes.forEach(function (cb) {
+          if (!cb.checked) { cb.checked = true; cb.dispatchEvent(new Event("change")); }
+        });
+      });
+      bar.appendChild(all);
+
+      var pr = document.createElement("button");
+      pr.type = "button";
+      pr.textContent = "Print";
+      pr.addEventListener("click", function () { window.print(); });
+      bar.appendChild(pr);
+
+      document.body.insertBefore(bar, document.body.firstChild);
+      renumber();
+    })();
   </script>
 </body>
 </html>`;

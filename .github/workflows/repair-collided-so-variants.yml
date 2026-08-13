@@ -1,0 +1,50 @@
+name: Repair collided SO bedframe variants (DRY-RUN gated)
+
+# Rewrites the migrated bedframe SO lines that hold ANOTHER line's build, caused
+# by refresh-so-variants.mjs keying its Desc2 lookup on (DocNo | item code)
+# instead of the line's own DtlKey. Merges into variants, never replaces, so
+# specials and any other key survive. Re-reads every repaired row on a fresh
+# connection and fails the job if a write did not land.
+# See backend/scripts/repair-collided-so-variants.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "named = the 14 audited documents (each corroborated by its PO); collided = every row provably stamped from another line"
+        required: false
+        default: "named"
+        type: choice
+        options: [named, collided]
+      apply:
+        description: "1 to WRITE. Anything else is a dry run."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-collided-so-variants
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-collided-so-variants.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCOPE: ${{ inputs.scope }}
+          APPLY: ${{ inputs.apply }}
+          # GitHub-hosted runners have no IPv6 egress; mirror soak-gate/deploy so
+          # an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

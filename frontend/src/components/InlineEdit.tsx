@@ -13,9 +13,15 @@ interface Props {
   textarea?: boolean;
   /** When provided, renders a <select> dropdown instead of an input. */
   options?: readonly string[];
+  /* How to word an option. The stored value is a slug — `supplier_repair` —
+     and without this the dropdown shows the operator the slug while every
+     other surface (status card, printed document) shows the human label, so
+     the same field reads two different ways on one screen. Defaults to the
+     raw value, so callers with already-readable options need not pass it. */
+  optionLabel?: (value: string) => string;
 }
 
-export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options }: Props) {
+export function InlineEdit({ label, value, type = "text", onSave, placeholder, textarea, options, optionLabel }: Props) {
   const [draft, setDraft] = useState<string>(value == null ? "" : String(value));
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -72,10 +78,12 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
         >
           <option value="">— none —</option>
           {/* Include the current value even if it isn't in the option list, so legacy/unknown values aren't silently overwritten. */}
-          {draft && !options.includes(draft) && <option value={draft}>{draft}</option>}
+          {draft && !options.includes(draft) && (
+            <option value={draft}>{optionLabel ? optionLabel(draft) : draft}</option>
+          )}
           {options.map((opt) => (
             <option key={opt} value={opt}>
-              {opt}
+              {optionLabel ? optionLabel(opt) : opt}
             </option>
           ))}
         </select>

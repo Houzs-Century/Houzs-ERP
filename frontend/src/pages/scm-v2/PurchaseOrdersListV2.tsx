@@ -45,6 +45,7 @@ import {
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -776,13 +777,19 @@ export function PurchaseOrdersListV2() {
     cancelled: 0,
   };
 
-  // Money-out KPIs are summed over the CURRENT page only (paginated contract has
-  // no full-set money sums), so their cards are labelled "on this page".
+  /* The rows the TABLE is actually showing — the page rows minus whatever the
+     per-column funnels are hiding. This page is where the problem was found
+     (owner 2026-08-12); the rationale, and why the "is a funnel active" test
+     compares LENGTH rather than array identity, now live once in the hook. */
+  const visible = useVisibleRows(rows);
+
+  // Money-out KPIs sum the rows ON SCREEN (the paginated contract has no
+  // full-set money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let committed = 0;
     let outstanding = 0;
     let received = 0;
-    for (const r of rows) {
+    for (const r of visible.rows) {
       const t = totalOf(r);
       committed += t;
       const b = statusFor(r.status).bucket;
@@ -790,7 +797,7 @@ export function PurchaseOrdersListV2() {
       if (b === "received") received += t;
     }
     return { committed, outstanding, received };
-  }, [rows]);
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -1263,11 +1270,16 @@ export function PurchaseOrdersListV2() {
 
         {/* Stat strip */}
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
+          {/* Owner 2026-08-12 — every tile now describes the rows ON SCREEN, and
+              says so when a column funnel is narrowing them. The count tile is
+              the one that has to switch source: `total` is the server's full
+              match count and is right until a client-side funnel hides part of
+              the page, at which point it contradicts the table underneath. */}
           <StatCard
             pending={statsPending}
             label="Total POs"
-            value={total.toLocaleString("en-MY")}
-            subtitle="All matching POs"
+            value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+            subtitle={visible.filtered ? "Filtered · shown below" : "All matching POs"}
             rail="bg-primary"
             active
           />
@@ -1275,14 +1287,18 @@ export function PurchaseOrdersListV2() {
             pending={statsPending}
             label="Committed"
             value={fmtRm(money.committed)}
-            subtitle="Sum on this page"
+            subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
             rail="bg-accent"
           />
           <StatCard
             pending={statsPending}
             label="Outstanding"
             value={fmtRm(money.outstanding)}
-            subtitle="Submitted + partial · on this page"
+            subtitle={
+              visible.filtered
+                ? "Submitted + partial · filtered"
+                : "Submitted + partial · on this page"
+            }
             tone="warning"
             rail="bg-accent-bright"
           />
@@ -1290,7 +1306,9 @@ export function PurchaseOrdersListV2() {
             pending={statsPending}
             label="Received"
             value={fmtRm(money.received)}
-            subtitle="Fully received · on this page"
+            subtitle={
+              visible.filtered ? "Fully received · filtered" : "Fully received · on this page"
+            }
             tone="success"
             rail="bg-synced"
           />
@@ -1379,6 +1397,9 @@ export function PurchaseOrdersListV2() {
               <DataTable<PoHeaderRow>
                 tableId="purchase-orders-v2"
                 rows={rows}
+                /* Feeds the stat strip so the tiles describe what is on screen
+                   rather than what the server matched (owner 2026-08-12). */
+                onFilteredRowsChange={visible.onFilteredRowsChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
