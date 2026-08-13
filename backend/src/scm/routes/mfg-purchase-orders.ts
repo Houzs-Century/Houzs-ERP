@@ -3775,6 +3775,21 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
   if (!soItems || soItems.length === 0) {
+    /* conversion-guard-ok: this converter is closed by CONSTRUCTION rather than
+       by a refusal. The PO loads through scopeToCompanyId and the SO items
+       through scopeToCompany, so another company's SO yields zero rows and lands
+       here — there is no unscoped read for a cross-company source to arrive
+       through, which is why it does not call crossCompanySourceRefusal like its
+       ten siblings.
+
+       THE TRADE-OFF, stated because it is the one thing this shape is worse at:
+       the sibling converters answer "that document belongs to 2990, switch
+       company and convert it there", and this one answers "has no items", which
+       is true from this company's view and unhelpful from the operator's. It is
+       left as-is deliberately: naming the other company would require an
+       UNSCOPED read of a document this handler otherwise never touches, and
+       widening the read surface to improve an error message is the wrong trade
+       on a conversion path. */
     return c.json({ error: 'so_has_no_items', reason: `Sales Order ${soDocNo} has no items to convert.` }, 404);
   }
 

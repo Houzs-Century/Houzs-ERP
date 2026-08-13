@@ -31,7 +31,7 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  isCrossCompanySource, crossCompanyConversionBlocked,
+  isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 
 /* CROSS-COMPANY GUARD for the three GRN create paths. Each stamps the ACTIVE
@@ -42,23 +42,21 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
 
    Returns the refusal payload for the first offending PO, or null when every
    referenced PO belongs to the active company (or the company is unresolved,
-   which degrades to allowed exactly like the rest of the scoping helpers). */
+   which degrades to allowed exactly like the rest of the scoping helpers).
+
+   DELEGATES to crossCompanySourceRefusal (scm/lib/companyScope.ts) since
+   2026-08-13. This used to be its own copy of the rule, and so did
+   delivery-returns.ts's `crossCompanyDoSourceBlocked` — three implementations
+   of one invariant, each with its own name, which is exactly why four
+   conversions were guarded and seven were not with nothing in the code saying
+   which was which. The wrapper stays because it names the TABLE and the doc-no
+   COLUMN once for this file's three call sites. */
 async function firstCrossCompanyPo(
   sb: any,
   c: any,
   poIds: Array<string | null | undefined>,
 ): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  const ids = [...new Set(poIds.filter((p): p is string => !!p))];
-  if (ids.length === 0) return null;
-  const { data, error } = await sb.from('purchase_orders')
-    .select('id, po_number, company_id').in('id', ids);
-  if (error) return { loadError: error.message };
-  for (const p of (data ?? []) as Array<{ po_number: string; company_id: number | null }>) {
-    if (isCrossCompanySource(p.company_id, c)) {
-      return { blocked: crossCompanyConversionBlocked(p.po_number, p.company_id, c) };
-    }
-  }
-  return null;
+  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
 }
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';

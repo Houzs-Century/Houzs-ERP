@@ -62,7 +62,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
-  isCrossCompanySource, crossCompanyConversionBlocked,
+  isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
@@ -3846,6 +3846,24 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   if (missing.length > 0) return c.json({ error: 'so_item_not_found', missing }, 404);
 
   const docNos = [...new Set([...idToDoc.values()])];
+
+  /* CROSS-COMPANY GUARD — SO -> DO, the conversion this file exists for, and it
+     had none. The SO-line load above is `.in('id', pickedIds)` with NO company
+     predicate, so a caller naming another company's soItemIds got their lines;
+     everything downstream then stamps the ACTIVE company, minting a DO under
+     this company's doc prefix that ships the OTHER company's order and deducts
+     the OTHER company's stock.
+
+     It is checked HERE, at the first point the source documents are known by
+     name, and BEFORE the status gate below — an out-of-company SO must not be
+     probeable through its status either. Same rule and same refusal as every
+     other conversion (crossCompanySourceRefusal, scm/lib/companyScope.ts);
+     mfg_sales_orders is keyed on doc_no, hence the repeated column. */
+  {
+    const x = await crossCompanySourceRefusal(sb, c, 'mfg_sales_orders', docNos, 'doc_no', 'doc_no');
+    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
+    if (x?.blocked) return c.json(x.blocked, 409);
+  }
 
   /* Audit gap #4 — every source SO must be committed (CONFIRMED or beyond) before
      its lines can ship into a DO. Blocks a DRAFT / ON_HOLD / CANCELLED SO. */

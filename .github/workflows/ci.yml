@@ -97,6 +97,13 @@ jobs:
       # on its CERTAIN half only; the advisory half (line numbers, key-shaped
       # prose) is printed and never fails a PR.
       - run: node scripts/check-docs-drift.mjs --strict
+      # The fifth: a document conversion never crosses a company. Eleven
+      # conversions existed and SEVEN were unguarded, because the rule was
+      # written three different ways under three different names and nothing
+      # could tell guarded from unguarded. One primitive now
+      # (crossCompanySourceRefusal), and this asserts every conversion route
+      # reaches it. That is the part that survives the session.
+      - run: node scripts/check-conversion-guards.mjs --strict
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single

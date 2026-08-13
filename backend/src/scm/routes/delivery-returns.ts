@@ -18,7 +18,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  isCrossCompanySource, crossCompanyConversionBlocked,
+  crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
@@ -964,17 +964,25 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
    minted under the ACTIVE company's numbering, so inheriting would leave the
    doc number and the company_id disagreeing. Unresolved company / NULL source
    company degrade to allowed — the three-state sentinel, as everywhere. */
+/* DELEGATES to crossCompanySourceRefusal (scm/lib/companyScope.ts) since
+   2026-08-13. This was its own copy of the rule, and grns.ts had a third —
+   three implementations of one invariant, each named differently, which is
+   precisely why four conversions were guarded and seven were not with nothing
+   in the code saying which was which.
+
+   The shared primitive also FAILS CLOSED on a read error, which this copy did
+   not: it destructured `data` and dropped `error`, so a transient failure read
+   as "no offending source" and let the conversion through. A conversion moves
+   money; "unknown" must not resolve to "allowed". */
 async function crossCompanyDoSourceBlocked(sb: any, c: any, doIds: string[]) {
-  const ids = [...new Set(doIds.filter((x): x is string => !!x))];
-  if (ids.length === 0) return null;
-  const { data } = await sb.from('delivery_orders')
-    .select('id, do_number, company_id').in('id', ids);
-  for (const row of ((data ?? []) as Array<{ do_number: string | null; company_id: number | null }>)) {
-    if (isCrossCompanySource(row.company_id, c)) {
-      return crossCompanyConversionBlocked(row.do_number, row.company_id, c);
-    }
+  const res = await crossCompanySourceRefusal(sb, c, 'delivery_orders', doIds, 'do_number');
+  if (res && 'loadError' in res) {
+    return {
+      error: 'cross_company_check_failed',
+      message: 'Could not verify which company that delivery order belongs to. Try again.',
+    };
   }
-  return null;
+  return res?.blocked ?? null;
 }
 
 // ── Create ──────────────────────────────────────────────────────────────

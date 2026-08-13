@@ -654,3 +654,70 @@ export function crossCompanyConversionBlocked(
     activeCompany: activeCode,
   };
 }
+
+/**
+ * THE CONVERSION RULE, in one place. A document conversion never crosses a
+ * company boundary.
+ *
+ * Load the source documents this conversion names, and return a refusal for the
+ * FIRST one that belongs to another company. Null means every referenced source
+ * is in the active company (or the company is unresolved, which degrades to
+ * allowed exactly like every other helper in this file).
+ *
+ * WHY IT EXISTS AS A SHARED PRIMITIVE. Before 2026-08-13 this exact rule was
+ * written THREE different ways: inline in some handlers, as a file-local
+ * `firstCrossCompanyPo` in grns.ts, and as a file-local
+ * `crossCompanyDoSourceBlocked` in delivery-returns.ts. Eleven conversions
+ * existed; four were guarded and SEVEN WERE NOT, and nothing in the code said
+ * which was which — not to a reader, and not to any scanner, because each copy
+ * had its own name. The seven gaps let a 2990 delivery be folded into a Houzs
+ * invoice, a 2990 SO mint a HOUZS purchase order, and stock be drawn out of one
+ * company's warehouse under the other's refund.
+ *
+ * One rule, one implementation, one name, and
+ * `scripts/check-conversion-guards.mjs` asserts every conversion route reaches
+ * it. That is the part that keeps it true after this session.
+ *
+ * FAILS CLOSED on a read error. If we cannot prove the source belongs here, we
+ * do not convert it: unlike a read, a conversion MOVES money, so "unknown" must
+ * not resolve to "allowed". This is deliberately stricter than the rest of the
+ * file, which degrades open — and the difference is the point.
+ *
+ * @param table       the source table, e.g. 'purchase_orders'
+ * @param idColumn    its primary key, e.g. 'id'
+ * @param docNoColumn the human document number to NAME in the refusal — an
+ *                    operator cannot act on a uuid
+ */
+export async function crossCompanySourceRefusal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  c: CompanyScopeCtx,
+  table: string,
+  ids: Array<string | null | undefined>,
+  docNoColumn: string,
+  idColumn = "id",
+): Promise<
+  | { blocked: ReturnType<typeof crossCompanyConversionBlocked> }
+  | { loadError: string }
+  | null
+> {
+  const unique = [...new Set(ids.filter((v): v is string => !!v))];
+  if (unique.length === 0) return null;
+  const { data, error } = await sb
+    .from(table)
+    .select(`${idColumn}, ${docNoColumn}, company_id`)
+    .in(idColumn, unique);
+  if (error) return { loadError: error.message };
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    if (isCrossCompanySource(row.company_id, c)) {
+      return {
+        blocked: crossCompanyConversionBlocked(
+          (row[docNoColumn] as string | null) ?? null,
+          row.company_id,
+          c,
+        ),
+      };
+    }
+  }
+  return null;
+}
