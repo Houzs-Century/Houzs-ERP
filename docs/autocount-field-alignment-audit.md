@@ -104,7 +104,7 @@ have `CreatePo` assign only when non-empty.
 |---|---|
 | ERP column read | `mfg_sales_orders.sales_location` — correct column |
 | what it contains | a **warehouse label**: `deriveSalesLocationFromState` resolves `customer_state` → `state_warehouse_mappings` → `warehouseLabel(wh)`, which prefers `warehouses.code` |
-| composer | `SalesLocation: mapOrPassthrough(header.sales_location, LOCATION_MAP)` — **no `?? raw` fallback**, unlike the line-level location four lines away in `composeDetails` |
+| composer | `SalesLocation: mapOrPassthrough(header.sales_location, LOCATION_MAP)` — **no `?? raw` fallback**, unlike the line-level location in `composeDetails`, which is `mapOrPassthrough(raw, LOCATION_MAP) ?? raw` in the same file |
 | master opened? | only when non-empty — `mastersOf` does `addLoc(body.SalesLocation)` |
 | C# assignment | `Set(() => so.SalesLocation = Str(p, "SalesLocation"))` — unconditional, `""` |
 | failure | `FK_SO_SalesLocation`, named in AcSyncService.cs:556-560 as the second link of the chain, hit on the live book 2026-08-12. FATAL-FK |
@@ -256,9 +256,11 @@ body is always `{DocNo, DocDate: null, Ref: null, DtlKeys?}`. In
 Meanwhile the ERP *does* hold a reference for each: `delivery_orders.ref`,
 `grns.delivery_note_ref`, `sales_invoices.ref`, `purchase_invoices.supplier_invoice_ref`
 — every one of them is already mapped in `DOWNSTREAM[*].header` for the EDIT
-path. So the reference reaches AutoCount only if somebody later edits the
-document, and on the purchase side (`transferMaster: true`, which copies the
-source header) the blank actively overwrites.
+path. So the ERP's own reference reaches the account book only if somebody later
+edits the document. Whether the `""` also *overwrites* something is unverified:
+the purchase side transfers with `transferMaster: true`, which the C# comment
+says copies the source header's master (supplier / currency / terms), and
+whether `Ref` and `Description` travel with it was not established from here.
 
 **Fix** — pass `ref` and `docDate` at the six call sites; they are already
 plumbed through `enqueueConvert`'s signature and unused.
