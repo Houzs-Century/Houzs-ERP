@@ -72,6 +72,7 @@ jobs:
           COMPANY: ${{ inputs.company }}
           MODE: ${{ inputs.mode }}
           MOVE_COLOURS: ${{ inputs.move_colours }}
+          DECLARE: ${{ inputs.declare }}
           PAIRS: ${{ inputs.pairs }}
         run: |
           set -o pipefail
