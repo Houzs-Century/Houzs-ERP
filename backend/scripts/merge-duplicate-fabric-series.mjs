@@ -147,6 +147,16 @@ const codeKeys = (r) => {
 };
 
 async function main() {
+  /* Echo what actually arrived. The first DECLARE run did nothing and merged
+     the auto-detected pairs instead, because the workflow declared the input
+     but never passed it through as an env var — the script saw no DECLARE, and
+     silently widened to every pair. A run whose whole point was one declared
+     pair must not look identical to a run with none, so the settings are
+     printed before any work. */
+  note(`settings: MODE=${APPLY ? "apply" : "plan"} COMPANY=${CO} MOVE_COLOURS=${MOVE_COLOURS ? "1" : "0"}`);
+  note(`  DECLARE=${process.env.DECLARE ? `"${process.env.DECLARE}"` : "(none — only auto-detected pairs)"}`);
+  note(`  PAIRS=${ONLY.length ? ONLY.join(",") : "(none — not restricted)"}`);
+
   const allCols = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const libs = await sql`SELECT id, label, tier, default_surcharge, active FROM scm.fabric_library WHERE company_id = ${CO}`;
 
