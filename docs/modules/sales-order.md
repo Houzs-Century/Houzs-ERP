@@ -375,7 +375,13 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
 
 Related short-circuit gates: Processing + Delivery all-or-nothing
-(`processing_delivery_must_pair`), remove-date is super-admin only
+(`processing_delivery_must_pair` — the SO create + header PATCH paths 400 on it
+before the aggregator runs; since 2026-08-13 `so-save-problems` ALSO reports the
+reverse direction, a Delivery Date with no Processing Date, as a 422 problem
+under the same code, so a path with no short-circuit of its own — the CO header
+PATCH, the amendment approver, any future caller — cannot write half a pair.
+Grandfathered like the past-date rules: a stored unpaired date the save leaves
+untouched still saves), remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `internal_expected_dd`.
