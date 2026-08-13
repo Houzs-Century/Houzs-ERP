@@ -7,6 +7,16 @@
    shows the same fabric twice and a report that groups by fabric_id splits one
    series' history in half.
 
+   TWO WAYS A PAIR GETS INTO THE PLAN. Detected (below), or DECLARED by the
+   owner: DECLARE="FG66151:PC151" asserts that two series are one fabric even
+   though they share no colour code and the detector can therefore never see
+   them (owner 2026-08-12, "这两个是一样的"). A declared pair skips DETECTION
+   and nothing else - same canonical-side rule, same LOSSLESS/LOSSY grading,
+   same refusals. Its colours are matched by NUMBER (FG66151-01 <-> PC151-01),
+   which is the only correspondence that exists when no code is shared, and a
+   number the winner does not hold still counts as uncovered. A run with
+   DECLARE set applies ONLY the declared pairs unless PAIRS widens it.
+
    HOW A DUPLICATE IS DETECTED - by the COLOUR, never by the series name.
    Two series are duplicates when they hold the same colour CODE. The code is
    the colour with its trailing colour NAME peeled off ("STAR-01 SILVER GREY" ->
@@ -204,7 +214,55 @@ async function main() {
     }
   }
 
-  note(`\n=== DUPLICATE SERIES PAIRS: ${pairs.size} ===`);
+  /* ── OWNER-DECLARED PAIRS ────────────────────────────────────────────────
+     The detector above recognises a duplicate by a SHARED COLOUR CODE, and
+     that is deliberate: naming alone is a hunch. But two series can be one
+     physical fabric and share not a single code — the owner named FG66151 and
+     PC151 on 2026-08-12 ("这两个是一样的"), and their codes have nothing in
+     common, so no amount of folding will ever pair them. The only authority
+     that can pair them is the owner, so DECLARE is exactly that: a human
+     assertion, typed in, that these two series are the same fabric.
+
+     A declared pair is not trusted any further than the assertion itself. It
+     enters the SAME plan, is classified by the SAME evidence, and is refused
+     by the SAME rules — it only skips the DETECTION step. The colours are
+     matched by their trailing number (FG66151-01 ↔ PC151-01), because with no
+     shared code that is the only correspondence there is, and a number that
+     matches nothing on the winner still lands in `uncovered` and still needs
+     MOVE_COLOURS. */
+  const DECLARED = (process.env.DECLARE || "").split(",").map((s) => s.trim()).filter(Boolean)
+    .map((s) => s.split(":").map((x) => x.trim()))
+    .filter(([a, b]) => a && b);
+  /* the colour's own number within its series: strip the series prefix, then
+     take the leading digits. Falls back to the trailing digits after the last
+     separator. Padded to 2 so "-1" and "-01" are one number. */
+  const colourNumOf = (r) => {
+    const cid = String(r.colour_id || "").toUpperCase();
+    const fid = String(r.fabric_id || "").toUpperCase();
+    const rest = cid.startsWith(fid) ? cid.slice(fid.length) : cid;
+    const m = /(\d{1,3})/.exec(rest.replace(/^[^A-Z0-9]+/, "")) || /(\d{1,3})\s*$/.exec(cid);
+    return m ? String(Number(m[1])).padStart(2, "0") : null;
+  };
+  const declaredPks = new Set();
+  for (const [a, b] of DECLARED) {
+    const [x, y] = [a, b].sort();
+    const pk = pk2(x, y);
+    declaredPks.add(pk);
+    const ax = colsBySeries.get(x) || [], by = colsBySeries.get(y) || [];
+    if (!ax.length || !by.length) {
+      bad(`DECLARE "${a}:${b}": ${!ax.length ? `"${x}"` : `"${y}"`} holds no colours (or does not exist) — nothing to merge`);
+      continue;
+    }
+    if (pairs.has(pk)) { note(`DECLARE "${a}:${b}": already detected by shared colour code — using the detected pairing`); continue; }
+    const byNum = new Map();
+    for (const r of ax) { const n = colourNumOf(r); if (n && !byNum.has(n)) byNum.set(n, r); }
+    const hits = [];
+    for (const r of by) { const n = colourNumOf(r); if (n && byNum.has(n)) hits.push([`#${n}`, byNum.get(n), r]); }
+    pairs.set(pk, hits);
+    note(`DECLARE "${x}" = "${y}" (owner-asserted): ${hits.length} colour number(s) line up, ${ax.length}/${by.length} colours held`);
+  }
+
+  note(`\n=== DUPLICATE SERIES PAIRS: ${pairs.size}${declaredPks.size ? ` (${declaredPks.size} owner-declared)` : ""} ===`);
   const plan = [];
   for (const [pk, hits] of [...pairs].sort((a, b) => b[1].length - a[1].length)) {
     const [a, b] = JSON.parse(pk);
@@ -214,8 +272,9 @@ async function main() {
     const aWins = ra !== rb ? ra > rb : ca !== cb ? ca > cb : a.length <= b.length;
     const [keep, drop] = aWins ? [a, b] : [b, a];
     const keepRefs = aWins ? ra : rb, dropRefs = aWins ? rb : ra;
-    plan.push({ keep, drop, keepRefs, dropRefs, hits, keepCols: aWins ? ca : cb, dropCols: aWins ? cb : ca });
-    note(`\n  "${keep}"  <=  "${drop}"     [${hits.length} shared colour code${hits.length === 1 ? "" : "s"}]`);
+    const declared = declaredPks.has(pk);
+    plan.push({ keep, drop, keepRefs, dropRefs, hits, declared, keepCols: aWins ? ca : cb, dropCols: aWins ? cb : ca });
+    note(`\n  "${keep}"  <=  "${drop}"     [${hits.length} ${declared ? "matching colour number" : "shared colour code"}${hits.length === 1 ? "" : "s"}]${declared ? "   OWNER-DECLARED" : ""}`);
     note(`      KEEP  "${keep}"  ${keepRefs} live line${keepRefs === 1 ? "" : "s"}, ${aWins ? ca : cb} colours`);
     note(`      DROP  "${drop}"  ${dropRefs} live line${dropRefs === 1 ? "" : "s"}, ${aWins ? cb : ca} colours`);
     for (const [k, ra2, rb2] of hits.slice(0, 6)) {
@@ -245,17 +304,31 @@ async function main() {
   note(`\n=== PER-PAIR PLAN ===`);
   for (const p of plan) {
     p.skip = null;
+    /* DECLARE names ONE pair the owner asked for. Letting the run also apply
+       every pair the detector happened to find would merge things nobody
+       asked about in the same transaction batch, so a declared run is
+       restricted to the declared pairs unless PAIRS explicitly widens it. */
+    if (DECLARED.length && !ONLY.length && !p.declared) { p.skip = "DECLARE set — only declared pairs run"; continue; }
     if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; continue; }
     if (bothSides.has(p.drop) || bothSides.has(p.keep)) { p.skip = "chained merge"; continue; }
 
     const keepCols = colsBySeries.get(p.keep) || [];
     const dropCols = colsBySeries.get(p.drop) || [];
-    // a losing colour is "covered" when the winner holds a colour sharing a code key
+    /* A losing colour is "covered" when the winner holds its counterpart.
+       Detected pair: counterpart = a colour sharing a code key. Owner-declared
+       pair: the two series share NO code by definition (that is why the
+       detector was blind to them), so the counterpart is the colour with the
+       same number — the correspondence the owner is asserting when they say
+       the series are the same. A number the winner does not hold is still
+       uncovered, so a declared pair is graded on the same evidence. */
+    const keyFn = p.declared
+      ? (r) => { const n = colourNumOf(r); return n ? [n] : []; }
+      : (r) => keysOf.get(pk2(r.fabric_id, r.colour_id)) || [];
     const keepKey = new Map();
-    for (const r of keepCols) for (const k of keysOf.get(pk2(r.fabric_id, r.colour_id)) || []) if (!keepKey.has(k)) keepKey.set(k, r);
+    for (const r of keepCols) for (const k of keyFn(r)) if (!keepKey.has(k)) keepKey.set(k, r);
     p.cover = new Map();   // drop colour_id -> keep colour row (or null)
     for (const r of dropCols) {
-      const hit = (keysOf.get(pk2(r.fabric_id, r.colour_id)) || []).map((k) => keepKey.get(k)).find(Boolean) || null;
+      const hit = keyFn(r).map((k) => keepKey.get(k)).find(Boolean) || null;
       p.cover.set(r.colour_id, hit);
     }
     p.uncovered = dropCols.filter((r) => !p.cover.get(r.colour_id));
