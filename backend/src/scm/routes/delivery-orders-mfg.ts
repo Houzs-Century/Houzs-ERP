@@ -1725,6 +1725,16 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
+  /* Qty REDUCTIONS handled by fn_return_do_units_at_cost (0286) rather than by a
+     row in `writes` — the function writes its own balancing IN because restoring
+     the lots and writing that row have to be one transaction. Collected here and
+     run before the batch insert so a failure can fall back to the legacy blended
+     row instead of leaving the reduction unposted. */
+  const returns: Array<{
+    warehouse_id: string; product_code: string; variant_key: string;
+    batch_no: string | null; qty: number; correction_seq: number;
+    fallback: MovOut;
+  }> = [];
   for (const k of allKeys) {
     const t = targetByBucket.get(k);
     const a = aggByBucket.get(k) ?? { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: null, max_seq: 0 };
@@ -1762,43 +1772,92 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
         ...(batch_no ? { batch_no } : {}),
       });
     } else {
-      /* delta < 0 — operator reduced a line qty or deleted a line. Give stock back.
-         Cost basis = weighted average of the original OUTs so the reversing IN
-         re-opens the lot at the same cost (matches reverseMovements semantics).
+      /* delta < 0 — operator reduced a line qty or deleted a line. Give stock back
+         AT ORIGINAL COST (owner decision 2026-08-13, audit ledger B6).
 
-         KNOWN LIMIT, owner decision pending (audit ledger B6). When the original
-         OUT was PARTLY uncosted — a "ship anyway" oversell, where the FIFO
-         consumer could not cover every unit and wrote total_cost_sen 0 for the
-         short ones — this average blends real cost with zeros. Returning 4 of an
-         OUT of 10 where 6 cost 100 sen and 4 cost nothing gives 60 sen/unit: too
-         much if the 4 returned were the uncosted ones, too little if they were
-         the costed ones. Which units come back is not knowable from a qty delta.
+         fn_return_do_units_at_cost (0286) walks this bucket's
+         inventory_lot_consumptions newest-first and returns each unit to the lot
+         that actually paid for it, then writes its own balancing IN at cost 0 —
+         the value is back in the original lots, so a second priced lot here would
+         double-count it. Restoring the lot and writing that row must be one
+         transaction, which is why it is a function and not a row in `writes`.
 
-         Left as-is deliberately rather than guessed at. The DO CANCEL path does
-         not have this problem — fn_reverse_do_out (mig 0198) restores the
-         ORIGINAL lot by id — so the durable answer is to route this resync
-         through the same function, which is a costing change and the owner's
-         call. A fully-uncosted OUT is unaffected: 0 in, 0 back. */
+         The fallback below is the OLD behaviour: one IN at the weighted average
+         of the bucket's OUTs. It blends costed with uncosted units — a "ship
+         anyway" oversell leaves short units at total_cost_sen 0, so returning 4 of
+         an OUT of 10 where 6 cost 100 sen and 4 cost nothing hands back 60
+         sen/unit, wrong in one direction or the other every time. It is kept
+         ONLY for a database that has not applied 0286 yet: a reduction that
+         posts no movement at all would leave shipped stock permanently deducted,
+         which is worse than an imprecise cost. */
       const unit_cost_sen = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
-      writes.push({
-        movement_type: 'IN',
-        warehouse_id,
-        product_code, variant_key, product_name,
+      returns.push({
+        warehouse_id, product_code, variant_key, batch_no,
         qty: -delta,
-        unit_cost_sen,
-        source_doc_type: 'DO',
-        source_doc_id: deliveryOrderId,
-        source_doc_no: doNo,
         correction_seq,
-        performed_by: performedBy,
-        notes: 'Resync: line qty reduced / line deleted (shipped DO).',
-        ...(batch_no ? { batch_no } : {}),
+        fallback: {
+          movement_type: 'IN',
+          warehouse_id,
+          product_code, variant_key, product_name,
+          qty: -delta,
+          unit_cost_sen,
+          source_doc_type: 'DO',
+          source_doc_id: deliveryOrderId,
+          source_doc_no: doNo,
+          correction_seq,
+          performed_by: performedBy,
+          notes: 'Resync: line qty reduced / line deleted (shipped DO).',
+          ...(batch_no ? { batch_no } : {}),
+        },
       });
     }
   }
-  if (writes.length > 0) {
+
+  /* Run the qty RETURNS first (0286). Each call restores that bucket's original
+     lots and writes its own balancing IN, so a bucket that succeeds contributes
+     nothing to `writes`; one that fails falls back to the legacy blended row,
+     which then rides the same batch insert (and the same RECOUNT_FAILED trail)
+     as everything else. Returns are independent per bucket, so a failure on one
+     must not abandon the others — hence the per-bucket try. */
+  /* Buckets the RPC gave stock back to. They are NOT in `writes` (the function
+     wrote its own IN), but they DID re-open lots, so they must still reach
+     reconcileUncostedAfterIn — a restored lot can retro-cost an earlier "ship
+     anyway" OUT exactly as a fresh IN can — and they must still count as "the
+     ledger changed" for the restamp/allocation steps below. Gating those on
+     `writes.length` alone would silently skip every reduction the fn handled. */
+  const rpcHandled: MovOut[] = [];
+  for (const r of returns) {
+    let handled = false;
+    try {
+      const { error: rtErr } = await sb.rpc('fn_return_do_units_at_cost', {
+        p_do_id: deliveryOrderId,
+        p_warehouse_id: r.warehouse_id,
+        p_product_code: r.product_code,
+        p_variant_key: r.variant_key,
+        p_batch_no: r.batch_no,
+        p_qty: r.qty,
+        p_correction_seq: r.correction_seq,
+        p_performed_by: performedBy ?? null,
+        p_notes: 'Resync: line qty reduced / line deleted (shipped DO).',
+      });
+      if (!rtErr) handled = true;
+      else if (!(rtErr.message ?? '').includes('fn_return_do_units_at_cost')) {
+        /* eslint-disable-next-line no-console */
+        console.error('[do-resync] return-at-cost fn failed (falling back to blended IN):', rtErr.message);
+      }
+    } catch (e) {
+      /* eslint-disable-next-line no-console */
+      console.error('[do-resync] return-at-cost fn exception (falling back to blended IN):', e);
+    }
+    if (handled) rpcHandled.push(r.fallback);
+    else writes.push(r.fallback);
+  }
+
+  if (writes.length > 0 || rpcHandled.length > 0) {
     // Multi-company: resync movements inherit the DO's company.
-    const wrote = await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null);
+    const wrote = writes.length > 0
+      ? await writeMovements(sb, writes, (doHeader as { company_id?: number | null }).company_id ?? null)
+      : { ok: true as const, reason: undefined };
     /* 2026-08-05 — this result used to be DISCARDED, the only movement write in
        the DO family with no failure trace (first-ship and GRN both collect
        movementErrors). A failed resync delta means a shipped DO's line edit
@@ -1835,7 +1894,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
        RM0 in this warehouse can now be costed from it. Wired 2026-07-29; until
        then only the GRN post reconciled (COE §2). Runs BEFORE this DO's own
        restamp so both read the same movement state. Best-effort. */
-    await reconcileUncostedAfterIn(sb, writes, performedBy);
+    await reconcileUncostedAfterIn(sb, [...writes, ...rpcHandled], performedBy);
     /* Costing C — line set changed → re-derive each line's actual FIFO cost
        from the now-current movements (ship OUT + these resync deltas). */
     await restampDoActualCost(sb, deliveryOrderId);
