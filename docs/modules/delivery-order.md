@@ -133,6 +133,12 @@ still need `edit` on `scm.sales.delivery`.
    stamps it on each row as **`so_internal_expected_dd`** — the linked SO's
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
+   **This is a DERIVED response field, and both ends read it as a string** —
+   mobile via `pick(r, "soInternalExpectedDd", "so_internal_expected_dd")`. If
+   the SO column is ever renamed, rename this response key on BOTH ends or
+   neither: a backend-only rename blanks the "Processing" column with no error
+   anywhere. See docs/modules/sales-order.md, "surfaces that read this date by
+   NAME".
    The list also stamps **`source_pos`** per row via the ONE shared resolver
    (`scm/lib/source-po-trace.ts`, batched, one ledger pass): a DO is a sales-side
    doc, so its list + drill-down show the durable **Source PO** (`batch_no` =

@@ -558,7 +558,8 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
-   (`customer_delivery_date` or `internal_expected_dd`), paginated so the
+   (`customer_delivery_date` or the Processing Date `internal_expected_dd`),
+   paginated so the
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
 2. **Service Cases** (`row_type: 'assr'`, `:1034`) — read from **`public.assr_cases`
@@ -580,6 +581,19 @@ materialised; there is no board table.
 
 Each of the last three unions is wrapped defensively: a failure logs and leaves
 the SO rows untouched (`:1341-1343`).
+
+**`internal_expected_dd` is the SALES ORDER's Processing Date and nothing else.**
+The last three sources are jobs, not orders: a service leg, a manual DP job and
+a PMS project window have no deposit gate, no supplier PO and no edit lock, so
+they have no processing date at all. They send `internal_expected_dd: null` and
+carry their own leg date as **`job_date`** (2026-08-13). Before that they put
+the leg date in `internal_expected_dd`, which made the name mean a third thing
+on rows that cannot have one — the same confusion the Processing-Date
+unification exists to end. Nothing on the board reads it for those rows: the
+"Internal Est." column was removed in the owner's 2026-08-04 column pass, the HC
+fields drawer (whose `procLockActive` reads it) is offered on `so` rows only,
+and the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first,
+which every synthetic row sets to the same leg date.
 
 Then: row scope (§6) → region filter → counts → state filter →
 `{ orders, counts, regions }` (`:1345-1371`). Counts are computed over the

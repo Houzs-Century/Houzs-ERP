@@ -421,7 +421,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning?region=<ALL|code>&state=<delivery_state|ALL>
    The board. Source = live (status NOT DRAFT/CANCELLED) mfg_sales_orders that
-   need delivery (have a customer_delivery_date or internal_expected_dd) +
+   need delivery (have a customer_delivery_date or a Processing Date) +
    their DOs. delivery_state derived LIVE per SO. Region classified from the
    customer's STATE (stateToRegionsFromConfig).
    ─────────────────────────────────────────────────────────────────────────*/
@@ -983,7 +983,13 @@ deliveryPlanning.get('/', async (c) => {
       amend_reason: r.amendReason ?? r.amend_reason ?? null,
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
+      /* THE SALES ORDER'S PROCESSING DATE, and only ever that. Read by the HC
+         fields drawer's procLockActive; the synthetic ASSR / DP / project rows
+         below set it NULL because a job leg has no processing date at all —
+         their leg date is `job_date`. */
       internal_expected_dd: internalDD,
+      /* SO rows are not jobs — see the synthetic rows below. */
+      job_date: null as string | null,
       /* Feeds procLockActive in the drawer alongside internal_expected_dd. */
       po_locked: poLockedDocs.has(docNo),
       days_left: daysBetween(today, effectiveDD),
@@ -1166,7 +1172,16 @@ deliveryPlanning.get('/', async (c) => {
           amended_delivery_date: leg.date,
           amend_reason: null,
           effective_delivery_date: leg.date,
-          internal_expected_dd: leg.date,
+          /* A SERVICE CASE HAS NO PROCESSING DATE. It is not a sales order: no
+             deposit gate, no supplier PO, nothing to lock. This field used to
+             carry the leg date, which made the name mean a third thing (SO
+             processing date / the legacy processing_date column / "whatever
+             date this row sorts by") on rows that have no such date — the exact
+             confusion the 2026-08-13 unification exists to end. The leg date has
+             its own name now. */
+          internal_expected_dd: null as string | null,
+          /* The ASSR leg's own trigger date — pickup / delivery / inspection. */
+          job_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
@@ -1330,7 +1345,11 @@ deliveryPlanning.get('/', async (c) => {
         amended_delivery_date: date,
         amend_reason: null,
         effective_delivery_date: date,
-        internal_expected_dd: date,
+        /* A DP JOB HAS NO PROCESSING DATE — it is not a sales order. Its
+           requested date is `job_date`; see the ASSR block above for why the
+           name is not reused here. */
+        internal_expected_dd: null as string | null,
+        job_date: date,
         /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
            number, and it carries no replacement_disposal for the drawer to lock. */
         po_locked: false,
@@ -1467,7 +1486,11 @@ deliveryPlanning.get('/', async (c) => {
           amended_delivery_date: leg.date,
           amend_reason: null,
           effective_delivery_date: leg.date,
-          internal_expected_dd: leg.date,
+          /* A PMS PROJECT WINDOW HAS NO PROCESSING DATE — it is not a sales
+             order. Its SETUP / DISMANTLE window start is `job_date`; see the
+             ASSR block above for why the name is not reused here. */
+          internal_expected_dd: null as string | null,
+          job_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
