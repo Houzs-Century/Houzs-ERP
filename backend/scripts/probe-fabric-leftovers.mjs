@@ -6,11 +6,18 @@
    the leftovers, grouped by WHY they are wrong, because each group needs a
    different fix and the owner should see the counts before anything is written.
 
-   Why the shape matters (not cosmetics): fabric-tracking.ts colourLabelOf()
-   takes everything AFTER THE FIRST SPACE of the description as the colour name.
-   So "BABY WHITE" (no code prefix) displays as colour "WHITE", and
-   "SF-AT-15 FABRIC" displays as colour "FABRIC". A wrong description is a wrong
-   colour name in every picker.
+   Why the shape matters (not cosmetics). fabric-tracking.ts mirrors every cost
+   fabric into the SELLING library that SO/CO pickers read, and it derives both
+   halves from the CODE and the DESCRIPTION, never from the stored `series`:
+
+     const series = seriesOf(code);                                  // :85
+     fabric_colours … label: colourLabelOf(code, description)        // :93
+     colourLabelOf = desc.slice(desc.indexOf(' ') + 1)               // :68-72
+
+   So "BABY WHITE" (no code prefix) is shown as colour "WHITE", "SF-AT-15
+   FABRIC" as colour "FABRIC", and a code with a stray segment (J9883-1-01)
+   opens a whole series of its own. A wrong description is a wrong colour name
+   in every picker; a wrong code is a wrong series.
 
    Writes nothing. */
 import postgres from "postgres";
@@ -19,7 +26,8 @@ const sql = postgres(process.env.DATABASE_URL, { ssl: "require", prepare: false,
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const CO = Number(process.env.COMPANY || 1);
 
-// same derivation the route uses, so this probe judges what the UI shows
+// verbatim from backend/src/scm/routes/fabric-tracking.ts:62-72, so this probe
+// judges what the PICKER shows, not what the Converter table shows
 const seriesOf = (code) => {
   const v = (code || "").trim().toUpperCase();
   const m = /^(.+)[\s-]+\d{1,3}$/.exec(v);
@@ -32,13 +40,14 @@ const colourLabelOf = (code, desc) => {
   return sp > 0 ? d.slice(sp + 1).trim() : code;
 };
 
-const NON_FABRIC = /^(SOFA|SQUARE\s*PILLOW|LONG\s*PILLOW|BOLSTER|STOOL|CONSOLE|MATTRESS|BEDFRAME|DIVAN|DELIVERY|TRANSPORT)/i;
+const NON_FABRIC = /^(SOFA|SQUARE\s*PILLOW|LONG\s*PILLOW|BOLSTER|STOOL|CONSOLE|MATTRESS|BEDFRAME|DIVAN|DELIVERY|TRANSPORT|SERVICE|SVC)/i;
 const JUNK_TAIL = /\b(FABRIC|FABRICS|MATERIAL|COLOR|COLOUR|TBC|KIV|NEW|OLD)\b\s*$/i;
 
 async function main() {
-  const rows = await sql`SELECT id, fabric_code, description, supplier_code, sofa_tier, bedframe_tier
-                         FROM scm.fabric_tracking WHERE company_id = ${CO} ORDER BY fabric_code`;
-  note(`fabric_tracking rows (company ${CO}): ${rows.length}`);
+  const rows = await sql`SELECT id, fabric_code, fabric_description AS description, series,
+                                supplier, supplier_code, is_active, fabric_category
+                         FROM scm.fabric_trackings WHERE company_id = ${CO} ORDER BY fabric_code`;
+  note(`fabric_trackings rows (company ${CO}): ${rows.length}`);
 
   const g = { nonFabric: [], nameAsCode: [], junkTail: [], noPrefix: [], codeOnly: [], tidy: [] };
   for (const r of rows) {
@@ -47,7 +56,7 @@ async function main() {
     const up = code.toUpperCase();
     const dup = desc.toUpperCase();
 
-    if (NON_FABRIC.test(up)) { g.nonFabric.push(r); continue; }
+    if (NON_FABRIC.test(up) || NON_FABRIC.test(dup)) { g.nonFabric.push(r); continue; }
     // legacy: the CODE itself carries the colour name (KS-01 BABY WHITE)
     if (/^[A-Z0-9-]+\s+[A-Z]/i.test(code) && /\s/.test(code)) { g.nameAsCode.push(r); continue; }
     if (JUNK_TAIL.test(desc)) { g.junkTail.push(r); continue; }
@@ -56,11 +65,11 @@ async function main() {
     g.tidy.push(r);
   }
 
-  const show = (title, list, why, n = 12) => {
+  const show = (title, list, why, n = 15) => {
     note(`\n=== ${title}: ${list.length} ===`);
     note(`    ${why}`);
     for (const r of list.slice(0, n)) {
-      note(`    ${String(r.fabric_code).padEnd(26)} | ${String(r.description ?? "").slice(0, 42).padEnd(42)} | 系列=${seriesOf(r.fabric_code)} 颜色名显示为="${colourLabelOf(r.fabric_code, r.description)}"`);
+      note(`    ${String(r.fabric_code).padEnd(26)} | ${String(r.description ?? "").slice(0, 40).padEnd(40)} | 系列=${seriesOf(r.fabric_code)} 颜色名显示为="${colourLabelOf(r.fabric_code, r.description)}"${r.is_active === false ? " [已停用]" : ""}`);
     }
     if (list.length > n) note(`    … 还有 ${list.length - n} 条`);
   };
@@ -108,6 +117,42 @@ async function main() {
   note(`\n=== G 系列被切碎(代码中间多一段数字): ${over.length} ===`);
   note(`    真正的系列已经存在,这些行却各自成了一个系列 — 改代码要连带把引用它的单据行改过去`);
   for (const o of over.slice(0, 20)) note(`    ${String(o.code).padEnd(20)} 系列=${String(o.series).padEnd(14)} → 应该是 ${o.should}(系列 ${o.parent})`);
+
+  /* H. STORED series ≠ DERIVED series. The Converter table SHOWS the stored
+     `series` column (route :285) but the picker mirror GROUPS BY seriesOf(code)
+     (route :85). Where they disagree the same fabric sits in two different
+     series depending on which screen you are looking at — and editing the
+     Series cell (PATCH /:id/series) moves only the Converter view. */
+  const drift = rows.filter((r) => {
+    const stored = (r.series || "").trim().toUpperCase();
+    return stored && stored !== seriesOf(r.fabric_code);
+  });
+  note(`\n=== H 存的系列 ≠ picker 用的系列: ${drift.length} ===`);
+  note(`    Converter 表显示 series 栏,SO/CO 的布料选单却按代码推导 — 两边对不上时同一块布在两个系列里`);
+  note(`    这也意味着:光改 Series 那格没用,要改的是代码本身`);
+  for (const r of drift.slice(0, 20)) {
+    note(`    ${String(r.fabric_code).padEnd(22)} 存的="${r.series}"  picker用="${seriesOf(r.fabric_code)}"`);
+  }
+
+  /* Reference counts for the F pairs the owner already named, so the merge
+     decision (which side wins) is a number and not a guess. */
+  const NAMED = (process.env.PAIRS || "FG66151:PC151").split(",").map((s) => s.trim()).filter(Boolean);
+  if (NAMED.length) {
+    note(`\n=== owner 指定要看的配对 ===`);
+    for (const p of NAMED) {
+      const [a, b] = p.split(":");
+      for (const side of [a, b]) {
+        const codes = rows.filter((r) => seriesOf(r.fabric_code) === side.toUpperCase()).map((r) => r.fabric_code);
+        if (!codes.length) { note(`    ${side}: 系列不存在`); continue; }
+        const [{ n: soN }] = await sql`SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+                                       WHERE company_id = ${CO} AND fabric_code = ANY(${codes})`;
+        const [{ n: colN }] = await sql`SELECT count(*)::int AS n FROM scm.fabric_colours
+                                        WHERE fabric_id = ${side.toUpperCase()}`;
+        note(`    ${String(side).padEnd(10)} 颜色 ${String(codes.length).padStart(3)} 个 | SO 行引用 ${String(soN).padStart(4)} | 选单颜色行 ${colN}`);
+        note(`        codes: ${codes.slice(0, 12).join(", ")}${codes.length > 12 ? " …" : ""}`);
+      }
+    }
+  }
 
   await sql.end({ timeout: 5 });
 }
