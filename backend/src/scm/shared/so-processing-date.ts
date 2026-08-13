@@ -284,3 +284,216 @@ export function readSoProcessingDateFromBody(
   }
   return null;
 }
+
+
+/* ─── the prose that used to live at the call sites ──────────────────────────
+ *
+ * WHY A CONSTANT, not a typed string. Migration 0286 renamed
+ * internal_expected_dd -> processing_date, and the /status proceed block in
+ * routes/mfg-sales-orders.ts was the one reader the rename commit missed. A
+ * PostgREST select of a column that does not exist answers 42703 and fails the
+ * WHOLE query; the route discarded that error (`const { data: cur }`), so the
+ * row read null, `stored` read null, and every proceed either refused for want
+ * of a date the order already had, or 500'd on the write. It shipped, and
+ * nothing failed to build: a column name inside a string is invisible to the
+ * compiler. SO_PROCESSING_DATE_COLUMN exists so the next rename moves its
+ * readers with it.
+ *
+ * THE CO HEADER PATCH had no copy of the pair rule at all. The CO create path
+ * short-circuited on it and the SO header PATCH did too, but the only pair
+ * check the CO header PATCH reached was the delivery->processing half inside
+ * collectProcessingGateProblems — and that half is gated on
+ * `facts.completeness`, which that call does not pass. So a Consignment Order
+ * could take a Processing Date with no Delivery Date through a plain PATCH:
+ * production's go-ahead with nothing to promise it against. The owner's rule is
+ * 同时有或者同时没有 — both or neither.
+ *
+ * CLEARING ONE CLEARS BOTH, in the one direction that is safe: clearing the
+ * Processing Date takes the Delivery Date with it, never the reverse. The CO
+ * header has no remove-processing-date permission of its own, so the one-way
+ * cascade cannot become a back door if one is ever added.
+ *
+ * These paragraphs sat at the call sites until 2026-08-14, when the file-size
+ * ratchet asked for the two routes to shrink. Prose about a shared rule belongs
+ * beside the rule: five callers cannot each hold a copy without drifting. */
+
+/* verbatim, moved from mfg-sales-orders.ts for the file-size ratchet:
+ * POS auto-Proceed (Loo 2026-06-09) — when a handover arrives already complete
+ *    (customer + address + delivery date + the company's deposit) AND carries a
+ *    Processing Date, the order lands in Proceed without a manual click. Same gate
+ *    the POS "Move to Proceed" button uses, so the two never drift; and the same
+ *    date, because having one is what being proceeded MEANS (owner 2026-08-13).
+ *
+ * ── SO processing-date lock (Owner 2026-06-12) ─────────────────────────────
+ *    Once the SO's processing day has PASSED (from midnight Malaysia time, UTC+8,
+ *    the day AFTER the processing date) the SO is LOCKED: locked orders are what
+ *    we PO to the supplier, so header edits, line add/edit/delete and price
+ *    overrides are all rejected with 409 so_locked_processing. Status transitions
+ *    (deliver / cancel flow), payments, PO/DO conversions and reads stay open.
+ *    The UI's "Processing Date" lives in processing_date — the ONE column, and
+ *    now the ONE name (mig 0286 renamed it from internal_expected_dd — 0284 is the
+ *    consignment proceeded_at retirement, and this comment named it for a day; the dead
+ *    legacy column that used to squat on this name went in 0189).
+ *
+ * ── SO purchase-order lock (Owner 2026-08-12, 2990 only) ───────────────────
+ *    The SAME soft lock, reached by the other road: a live PO already claims one
+ *    of this SO's lines, so the order is with a supplier regardless of what the
+ *    processing date says. Rationale, scope and the fail-closed contract live in
+ *    lib/so-po-lock.ts — read that before widening this to Houzs.
+ * 
+ *    A SEPARATE response from the processing-date one on purpose: the two are
+ *    fixed by different actions ("wait / talk to production" vs "the PO is out,
+ *    raise an amendment so purchasing can re-send"), and an operator told the
+ *    wrong reason goes looking in the wrong place. Both are 409 + amendment-
+ *    eligible, so the FE routing is unchanged.
+ *
+ * Owner 2026-07-16 — the lock fires once the processing day has passed on a
+ *      CONFIRMED-or-later order. A Processing Date can only be SET on a ≥30%-paid
+ *      order and IS production's "ready to build" signal, so once it elapses the
+ *      order is committed regardless of whether the explicit Proceed (IN_PRODUCTION)
+ *      toggle was ever pressed. The prior rule ALSO required `proceeded_at` — but
+ *      that is stamped only at the IN_PRODUCTION transition, so a CONFIRMED SO whose
+ *      processing date had passed stayed directly editable (a salesperson could
+ *      change a line's colour after we had already PO'd it). DRAFT (not yet
+ *      confirmed) and CANCELLED stay editable. When the caller's header select omits
+ *      `status` we fall back to the `proceeded_at` marker so a status-blind read can
+ *      never OVER-lock a row.
+ *
+ * Shared route guard — fetches the two date columns and returns the 409 body
+ *    when locked, null when free. Callers that already hold the header row use
+ *    soEditLocked / soProcessingLocked directly instead of re-querying.
+ * 
+ *    Owner 2026-08-12: now also answers the PO lock, so the ~6 writers that reach
+ *    the lock through THIS helper (line add/edit/delete, price override, …) picked
+ *    up the new rule without 6 separate edits — the shape that let previous guards
+ *    land on some writers and not others. The date lock is evaluated FIRST and its
+ *    response wins when both apply: it is the older, better-understood reason, and
+ *    an SO past its processing date with a PO on it is locked either way.
+ *
+ * ── SO Proceed gate (FIX 2, 2026-07-16) ────────────────────────────────────
+ *    meetsProceedGate (shared order-rules) was only consulted at CREATE
+ *    auto-proceed. The two MANUAL proceed paths — PATCH /:docNo/status →
+ *    IN_PRODUCTION (stamps proceeded_at) and PATCH /:docNo proceededAt — stamped
+ *    proceeded_at with NO ≥50%-paid / full-address check, so mobile / API could
+ *    proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
+ *    shared gate on both manual paths so create + manual + client can't drift.
+ *    `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
+ *    the SO's local_total_centi — no new threshold invented (the per-company
+ *    fraction is processingDateThresholdFor, inside meetsProceedGate).
+ *
+ * Σ collected vs the header total, both centi — the deposit facts every
+ *    Processing-Date gate weighs. One reader because there is one rule: the Proceed
+ *    gate and the aggregated save report must not be able to disagree about how
+ *    much has been paid, only about how to report it.
+ *
+ * Every reason a Processing Date may NOT be set on THIS order, read live off the
+ *    row instead of off a patch body — the same aggregated list the header PATCH
+ *    builds (collectProcessingGateProblems), from the same facts.
+ * 
+ *    It exists because proceeding now WRITES the date (owner: a Processing Date is
+ *    what "proceeded" means). That write has to clear exactly what a date set on the
+ *    header clears — variants, colour-KIV, deposit, completeness, the date rules —
+ *    or the proceed route becomes the way around the gate that guards the shop
+ *    floor.
+ *
+ * Owner 2026-06-12 + Loo 2026-06-13 — after the processing date passes the SO is
+ *    what we PO to the supplier, so the columns that feed the supplier PO freeze on
+ *    the header PATCH. The rest of the customer / delivery-address / payment fields
+ *    stay editable in the Proceed lane (POS "edit in Proceed"); items have their
+ *    own per-route processing lock. Keyed by DB column name.
+ * 
+ *    Owner 2026-06-16 — customer_state + sales_location ALSO freeze here. State
+ *    drives each SO line's warehouse_id (deriveWarehouseIdFromState), and that
+ *    warehouse is what the PO ships from. Once the SO is locked the line warehouse
+ *    is frozen + PO'd, so letting State change afterwards would silently desync the
+ *    warehouse / PO from the customer's address. The REST of the address (address
+ *    lines / city) + payment stay editable — the State (and the Location it
+ *    derives) plus the Postcode lock.
+ * 
+ *    Owner 2026-07-05 — postcode ALSO freezes here. Like State, the postcode is
+ *    part of the PO delivery location the supplier ships to, so it must not drift
+ *    after the SO is locked + PO'd.
+ * 
+ *    Owner 2026-07-17 — this Set is no longer written by hand. It is DERIVED from
+ *    the shared SO_HEADER_FIELD_POLICY table (scm/shared/so-field-policy.ts),
+ *    which is the single source of truth for the FREE / CONTROLLED split and is
+ *    drift-tested against the frontend's vendored copy. `city` joined the set
+ *    there: the mobile UI already disabled City and named it in its lock copy, but
+ *    no backend set contained it, so a posted City change wrote straight through
+ *    on a locked, PO'd SO — and no amendment could carry it either.
+ * 
+ *    One correction the policy table records and this comment used to get wrong:
+ *    State freezes because it RESOLVES the warehouse. Postcode and City freeze
+ *    because they are printed on the supplier PO as the delivery destination.
+ *    Postcode resolves nothing — state_warehouse_mappings has no postcode column.
+ *
+ * ── Amendable header fields (Owner 2026-07-16) ─────────────────────────────
+ *    Every column SO_PROCESSING_LOCK_COLS freezes above is rejected by the header
+ *    PATCH once the SO is locked. The amendment workflow is the sanctioned channel
+ *    for changing a locked SO — so this is EXACTLY the set an amendment must be
+ *    able to carry, or a field would be frozen with no way to request it at all
+ *    (owner: "應該是全部可以 request 啊 然後看有沒有 approval"; the Delivery Date was
+ *    the concrete casualty).
+ * 
+ *    Keyed by the camelCase payload name the header PATCH already accepts, mapped
+ *    to its column. `sales_location` is in the lock Set but NOT amendable directly:
+ *    it is DERIVED from customer_state, and applySoAmendment re-derives it exactly
+ *    as the header PATCH does. Mirrors the frontend AMENDABLE_HEADER_KEYS
+ *    (vendor/scm/lib/so-amendment-header.ts) — keep the two in step.
+ * 
+ *    This allow-list is the trust boundary: an amendment's header_changes jsonb is
+ *    client-authored, so any key not listed here is REJECTED at create rather than
+ *    written through to the SO on approve.
+ * 
+ *    Owner 2026-07-17 — also DERIVED from SO_HEADER_FIELD_POLICY now, so the lock
+ *    Set and this allow-list cannot fall out of step: every CONTROLLED row is in
+ *    both, every DERIVED row is in the lock only. That invariant used to be prose
+ *    in three files; it is a test now (soFieldPolicy.test.ts).
+ */
+
+/* verbatim, moved from consignment-orders.ts for the file-size ratchet:
+ * NOTE — there is no `processing_date` here, on purpose, and it must not come
+ *    back. The CO's Processing Date is `internal_expected_dd` (below), the SAME one
+ *    name the rest of the system uses; the CO create/PATCH paths already read and
+ *    write only that, and ConsignmentOrderDetail/New bind their "Processing date"
+ *    input to it. scm.consignment_sales_orders.processing_date (mig 0153) exists
+ *    only because this module was cloned from mfg_sales_orders wholesale — it has
+ *    NEVER had a writer (the create INSERT omits it; the header PATCH builds its
+ *    update from the closed `map` below, which does not contain it; the status
+ *    PATCH writes only status+updated_at; recomputeTotals writes only money), so
+ *    every row's value is NULL and selecting it only tempted the next reader to
+ *    bind a UI field to a permanently-blank column. That already happened once on
+ *    the mfg twin — see BUG-HISTORY "SO read views showed a blank Processing date".
+ * 
+ *    THE COLUMN IS STILL IN THE DATABASE. Dropping it is a SEPARATE, LATER deploy,
+ *    not this one: deploy.yml runs pg-migrate BEFORE `wrangler deploy`, so a column
+ *    dropped in the same release that stops selecting it leaves the still-live old
+ *    Worker doing a PostgREST select on a missing column — which 500s the whole
+ *    Consignment Orders list AND detail for the length of the deploy. (That class
+ *    of mistake is what blocked prod for hours in #1191/0189.) Once THIS commit is
+ *    live, nothing reads the column and the follow-up migration is a one-liner:
+ * 
+ *      ALTER TABLE scm.consignment_sales_orders DROP COLUMN IF EXISTS processing_date;
+ * 
+ *    Its sibling scm.consignment_sales_orders.proceeded_at needed no such wait —
+ *    nothing read it even before this commit — and was dropped in mig 0284.
+ *
+ * No `processing_date` in this line any more, and it is NOT an omission: the
+ *      consignment header carried TWO columns, a dead legacy `processing_date`
+ *      that nothing has ever written and the live date under the old name
+ *      `internal_expected_dd`. Mig 0284 dropped the dead one and renamed the live
+ *      one onto the freed name — it is selected two lines down, next to
+ *      customer_delivery_date, where the date it partners with lives. Selecting a
+ *      dropped column is a hard PostgREST error (the 0189 lesson), so this had to
+ *      go in the same commit as the migration.
+ *
+ * CO composition rules (mirror the SO create path):
+ *        1. Processing Date + Delivery Date are all-or-nothing.
+ *        2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
+ *        3. All MATTRESS lines must share ONE brand.
+ *
+ * Processing & Delivery Date may only be today or a future date, BUT an
+ *      already-past value the edit does NOT change is grandfathered through. The
+ *      helper re-derives past-date + processing-≤-delivery from the effective +
+ *      original dates and folds in the variant offenders collected above.
+ */

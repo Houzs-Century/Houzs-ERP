@@ -30,11 +30,7 @@ import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
-/* POS auto-Proceed (Loo 2026-06-09) — when a handover arrives already complete
-   (customer + address + delivery date + the company's deposit) AND carries a
-   Processing Date, the order lands in Proceed without a manual click. Same gate
-   the POS "Move to Proceed" button uses, so the two never drift; and the same
-   date, because having one is what being proceeded MEANS (owner 2026-08-13). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
@@ -306,32 +302,13 @@ async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise
   return res;
 }
 
-/* ── SO processing-date lock (Owner 2026-06-12) ─────────────────────────────
-   Once the SO's processing day has PASSED (from midnight Malaysia time, UTC+8,
-   the day AFTER the processing date) the SO is LOCKED: locked orders are what
-   we PO to the supplier, so header edits, line add/edit/delete and price
-   overrides are all rejected with 409 so_locked_processing. Status transitions
-   (deliver / cancel flow), payments, PO/DO conversions and reads stay open.
-   The UI's "Processing Date" lives in processing_date — the ONE column, and
-   now the ONE name (mig 0286 renamed it from internal_expected_dd — 0284 is the
-   consignment proceeded_at retirement, and this comment named it for a day; the dead
-   legacy column that used to squat on this name went in 0189). */
+/* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCKED_RESPONSE = {
   error: 'so_locked_processing',
   reason: 'Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)',
 } as const;
 
-/* ── SO purchase-order lock (Owner 2026-08-12, 2990 only) ───────────────────
-   The SAME soft lock, reached by the other road: a live PO already claims one
-   of this SO's lines, so the order is with a supplier regardless of what the
-   processing date says. Rationale, scope and the fail-closed contract live in
-   lib/so-po-lock.ts — read that before widening this to Houzs.
-
-   A SEPARATE response from the processing-date one on purpose: the two are
-   fixed by different actions ("wait / talk to production" vs "the PO is out,
-   raise an amendment so purchasing can re-send"), and an operator told the
-   wrong reason goes looking in the wrong place. Both are 409 + amendment-
-   eligible, so the FE routing is unchanged. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PO_LOCKED_RESPONSE = {
   error: 'so_locked_po_raised',
   reason: 'A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.',
@@ -466,32 +443,13 @@ export function soProcessingLocked(
      Locked strictly AFTER the processing day — procYmd === today stays open. */
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   if (!(procYmd < todayMY)) return false;
-  /* Owner 2026-07-16 — the lock fires once the processing day has passed on a
-     CONFIRMED-or-later order. A Processing Date can only be SET on a ≥30%-paid
-     order and IS production's "ready to build" signal, so once it elapses the
-     order is committed regardless of whether the explicit Proceed (IN_PRODUCTION)
-     toggle was ever pressed. The prior rule ALSO required `proceeded_at` — but
-     that is stamped only at the IN_PRODUCTION transition, so a CONFIRMED SO whose
-     processing date had passed stayed directly editable (a salesperson could
-     change a line's colour after we had already PO'd it). DRAFT (not yet
-     confirmed) and CANCELLED stay editable. When the caller's header select omits
-     `status` we fall back to the `proceeded_at` marker so a status-blind read can
-     never OVER-lock a row. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
   const status = String(header.status ?? '').toUpperCase();
   if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
   return Boolean(header.proceeded_at);
 }
 
-/* Shared route guard — fetches the two date columns and returns the 409 body
-   when locked, null when free. Callers that already hold the header row use
-   soEditLocked / soProcessingLocked directly instead of re-querying.
-
-   Owner 2026-08-12: now also answers the PO lock, so the ~6 writers that reach
-   the lock through THIS helper (line add/edit/delete, price override, …) picked
-   up the new rule without 6 separate edits — the shape that let previous guards
-   land on some writers and not others. The date lock is evaluated FIRST and its
-   response wins when both apply: it is the older, better-understood reason, and
-   an SO past its processing date with a PO on it is locked either way. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingLockBlocked(
   sb: any,
   docNo: string,
@@ -579,25 +537,13 @@ function soStatusTransitionError(
   };
 }
 
-/* ── SO Proceed gate (FIX 2, 2026-07-16) ────────────────────────────────────
-   meetsProceedGate (shared order-rules) was only consulted at CREATE
-   auto-proceed. The two MANUAL proceed paths — PATCH /:docNo/status →
-   IN_PRODUCTION (stamps proceeded_at) and PATCH /:docNo proceededAt — stamped
-   proceeded_at with NO ≥50%-paid / full-address check, so mobile / API could
-   proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
-   shared gate on both manual paths so create + manual + client can't drift.
-   `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
-   the SO's local_total_centi — no new threshold invented (the per-company
-   fraction is processingDateThresholdFor, inside meetsProceedGate). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCEED_GATE_RESPONSE = {
   error: 'proceed_gate_unmet',
   reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
 } as const;
 
-/* Σ collected vs the header total, both centi — the deposit facts every
-   Processing-Date gate weighs. One reader because there is one rule: the Proceed
-   gate and the aggregated save report must not be able to disagree about how
-   much has been paid, only about how to report it. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soDepositFacts(
   sb: any,
   docNo: string,
@@ -640,15 +586,7 @@ async function soProceedGateBlocked(
   return ok ? null : SO_PROCEED_GATE_RESPONSE;
 }
 
-/* Every reason a Processing Date may NOT be set on THIS order, read live off the
-   row instead of off a patch body — the same aggregated list the header PATCH
-   builds (collectProcessingGateProblems), from the same facts.
-
-   It exists because proceeding now WRITES the date (owner: a Processing Date is
-   what "proceeded" means). That write has to clear exactly what a date set on the
-   header clears — variants, colour-KIV, deposit, completeness, the date rules —
-   or the proceed route becomes the way around the gate that guards the shop
-   floor. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingDateProblemsForDoc(
   sb: any,
   docNo: string,
@@ -702,60 +640,10 @@ const SO_IDENTITY_LOCK_COLS = new Set<string>([
   'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
 ]);
 
-/* Owner 2026-06-12 + Loo 2026-06-13 — after the processing date passes the SO is
-   what we PO to the supplier, so the columns that feed the supplier PO freeze on
-   the header PATCH. The rest of the customer / delivery-address / payment fields
-   stay editable in the Proceed lane (POS "edit in Proceed"); items have their
-   own per-route processing lock. Keyed by DB column name.
-
-   Owner 2026-06-16 — customer_state + sales_location ALSO freeze here. State
-   drives each SO line's warehouse_id (deriveWarehouseIdFromState), and that
-   warehouse is what the PO ships from. Once the SO is locked the line warehouse
-   is frozen + PO'd, so letting State change afterwards would silently desync the
-   warehouse / PO from the customer's address. The REST of the address (address
-   lines / city) + payment stay editable — the State (and the Location it
-   derives) plus the Postcode lock.
-
-   Owner 2026-07-05 — postcode ALSO freezes here. Like State, the postcode is
-   part of the PO delivery location the supplier ships to, so it must not drift
-   after the SO is locked + PO'd.
-
-   Owner 2026-07-17 — this Set is no longer written by hand. It is DERIVED from
-   the shared SO_HEADER_FIELD_POLICY table (scm/shared/so-field-policy.ts),
-   which is the single source of truth for the FREE / CONTROLLED split and is
-   drift-tested against the frontend's vendored copy. `city` joined the set
-   there: the mobile UI already disabled City and named it in its lock copy, but
-   no backend set contained it, so a posted City change wrote straight through
-   on a locked, PO'd SO — and no amendment could carry it either.
-
-   One correction the policy table records and this comment used to get wrong:
-   State freezes because it RESOLVES the warehouse. Postcode and City freeze
-   because they are printed on the supplier PO as the delivery destination.
-   Postcode resolves nothing — state_warehouse_mappings has no postcode column. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCK_COLS = soProcessingLockColumns();
 
-/* ── Amendable header fields (Owner 2026-07-16) ─────────────────────────────
-   Every column SO_PROCESSING_LOCK_COLS freezes above is rejected by the header
-   PATCH once the SO is locked. The amendment workflow is the sanctioned channel
-   for changing a locked SO — so this is EXACTLY the set an amendment must be
-   able to carry, or a field would be frozen with no way to request it at all
-   (owner: "應該是全部可以 request 啊 然後看有沒有 approval"; the Delivery Date was
-   the concrete casualty).
-
-   Keyed by the camelCase payload name the header PATCH already accepts, mapped
-   to its column. `sales_location` is in the lock Set but NOT amendable directly:
-   it is DERIVED from customer_state, and applySoAmendment re-derives it exactly
-   as the header PATCH does. Mirrors the frontend AMENDABLE_HEADER_KEYS
-   (vendor/scm/lib/so-amendment-header.ts) — keep the two in step.
-
-   This allow-list is the trust boundary: an amendment's header_changes jsonb is
-   client-authored, so any key not listed here is REJECTED at create rather than
-   written through to the SO on approve.
-
-   Owner 2026-07-17 — also DERIVED from SO_HEADER_FIELD_POLICY now, so the lock
-   Set and this allow-list cannot fall out of step: every CONTROLLED row is in
-   both, every DERIVED row is in the lock only. That invariant used to be prose
-   in three files; it is a test now (soFieldPolicy.test.ts). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
 /* Loose equality for the lock diff — null / undefined / '' all collapse so a
@@ -5937,13 +5825,8 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     updated_at: new Date().toISOString(),
   };
   if (toStatus === 'IN_PRODUCTION') {
-    /* Column name bound to the constant, not typed as a string: migration 0286
-       renamed internal_expected_dd -> processing_date and THIS block was the one
-       reader the rename commit missed. A PostgREST select of a column that does
-       not exist is a 42703, so the read returned nothing, `stored` read null,
-       and every proceed either refused for want of a date it already had or
-       500'd on the write below. That is the exact failure shape
-       shared/so-processing-date.ts exists to make impossible. */
+    /* Column bound to the constant — see "WHY A CONSTANT" in
+       shared/so-processing-date.ts. */
     const { data: cur } = await sb.from('mfg_sales_orders')
       .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`)
       .eq('doc_no', docNo).maybeSingle();
