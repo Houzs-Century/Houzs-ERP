@@ -55,7 +55,7 @@ D1 SQLite for a month after the Postgres cutover.
 | `backend/src/scm/routes` | 94 | 27004 | 3803 | **14.08%** | 13.98% | 0 |
 | `backend/src/scm/lib` | 146 | 7628 | 4437 | **58.17%** | 58.07% | 10 |
 | `backend/src/scm/shared` | 48 | 2401 | 1135 | **47.27%** | 47.17% | 4 |
-| `backend/scripts/lib` | 35 | 2199 | 1394 | **63.39%** | 63.29% | 12 |
+| `backend/scripts/lib` | 40 | 2656 | 1430 | **53.84%** | 53.74% | 15 |
 | `backend/scripts` | 379 | 31906 | 15 | **0.05%** | 0.00% | 378 |
 | `frontend/src` | 593 | 59866 | 7624 | **12.74%** | 12.64% | 353 |
 
@@ -167,10 +167,12 @@ uncovered.
 
 **`backend/scripts` is split in two, because one number over it was a lie in
 both directions.** `scripts/lib/` — the modules that exist *because* a test
-imports them (CLAUDE.md's shebang rule) — measures 67%, and the rest, the
-one-shot operational scripts, measures 0.05%. Averaged together they read 4%,
-which flatters the ops scripts and slanders the library. Split, each says
-something true, and `scripts/lib` is held to both floors.
+imports them (CLAUDE.md's shebang rule) — and the rest, the one-shot operational
+scripts at 0.05%. Averaged together they read about 4%, which flatters the ops
+scripts and slanders the library. Split, each says something true, and
+`scripts/lib` is held to both floors. Both figures are in §2's generated table;
+neither is typed here, because a typed number goes stale and the one that used
+to sit in this sentence did.
 
 **The one-shot area has its no-test floor turned OFF, deliberately.** Several
 new ops scripts land a week; each is dispatched by hand through a workflow and
@@ -182,13 +184,70 @@ untested files are diagnostics (`backfill-fifo-divergence.mjs`,
 `repair-2990-doc-refs.mjs`, both around 900 lines); a wrong answer from a
 diagnostic is a wasted afternoon, not a wrong ledger.
 
-**`scripts/lib` also has a MEASUREMENT blind spot.** Coverage here is only what
-the two vitest projects execute. Some `scripts/lib/` modules are exercised
-exclusively by `node --test` harnesses (`backend/tests/*.node.mjs`, run by
-`npm run test:scale-contract`), and node's own coverage output is not istanbul
-JSON, so those modules read as untested when they are not — its no-test count is
-an UPPER bound. Folding those harnesses into the merged report is the follow-up;
-getting them to run in CI at all was overdue and is done in this PR.
+**`scripts/lib` has a MEASUREMENT blind spot, and it is the largest single
+source of noise in this gate. Read this before you believe its no-test count.**
+
+The merged report is produced by **vitest only** — `test:coverage:light` plus
+`test:coverage:workers`. Vitest does not execute `node:test` files, so a module
+whose only test is a `backend/tests/*.node.mjs` harness has **every line
+reported as uncovered** and is counted as a file with NO test. It is not
+untested; it is untested *by the runner that measures*.
+
+Measured 2026-08-14, `backend/scripts/lib` reports **15 files with no test**.
+Only **four** of those genuinely have none:
+
+| file the gate calls untested | actually tested by | in which runner | line % under that runner |
+|---|---|---|---:|
+| `release-discipline.mjs` | `tests/releaseDiscipline.node.mjs` | `node:test`, `npm run test:release-discipline` (ci.yml) | 98.60% |
+| `route-matrix-diff.mjs` | `tests/routeMatrixDrift.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `jsonb-bind-scan.mjs` | `tests/jsonbBindScan.node.mjs` | `node:test`, `test:scale-contract` | 95.53% |
+| `po-cost-plan.mjs` | `tests/poCostPlan.node.mjs` | `node:test`, `test:scale-contract` | 97.91% |
+| `id-restamp-exec.mjs` | `tests-pg/idRestampExec.pg.test.ts` | vitest **pg project**, `npm run test:pg` — a third config whose report is never merged | — |
+| `ac-po-line-match.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 95.10% |
+| `swallowed-read-scan.mjs` | `tests/swallowedReadScan.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `so-line-dedication.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `ac-po-line.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `ac-line-key-audit.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 96.15% |
+| `catalogue-series.mjs` | `tests/catalogueSeriesOneList.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `sqlite-default-to-pg.mjs` | **nothing** | — | — |
+| `scm-area-keys.mjs` | **nothing** | — | — |
+| `bedframe-special-map.mjs` | **nothing** | — | — |
+| `classify-tests.mjs` | **nothing** (it is imported by both vitest configs at config-load time, so it executes outside instrumentation) | — | — |
+
+Reproduce the right-hand column with:
+
+```
+cd backend && node --experimental-test-coverage --test tests/*.node.mjs
+```
+
+**This is not a curiosity; it fails PRs.** This PR's own `coverage-ratchet`
+check went red on `backend/scripts/lib` for three rounds. The cause was three
+modules landing on `main` on 2026-08-13 — `release-discipline.mjs`,
+`jsonb-bind-scan.mjs`, `swallowed-read-scan.mjs`, 407 lines between them — each
+arriving *with* a thorough `node:test` suite that runs in CI. The gate saw 407
+new uncovered lines and three new files with no test, and reported a coverage
+regression that had not happened. The floors were re-baselined deliberately
+(`--update --allow-drop`) on 2026-08-14 to record the measurement, not to
+forgive a regression.
+
+Expect this to recur every time a `scripts/lib` module lands with a `node:test`
+suite. Until the gap is closed, the honest response is to confirm the module has
+a test in another runner — the command above proves it in one line — and
+re-baseline with `--allow-drop`, saying so in the PR. Do not close it by
+deleting the floor, and do not close it by writing a second, redundant vitest
+test for a module that already has a good one.
+
+**Closing it properly** means one of: (a) converting the `node:test` harnesses
+to vitest so their coverage lands in the same istanbul report — cheapest, but
+`test:scale-contract` deliberately runs on plain node with no vite transform,
+which is part of what makes it a *contract* test; (b) collecting node's own
+`--experimental-test-coverage` output and converting v8 ranges to istanbul
+statements before merging — the gate refuses mixed providers on purpose
+(`shape_mismatch`), so this needs a real conversion, not a concatenation; or
+(c) giving the baseline a `testedElsewhere` list beside the existing
+`knownAbsent`, each entry carrying the harness that covers it and a `why`, so
+the count means "no test anywhere" again. (c) is the smallest change that makes
+the number honest, and it keeps the escape hatch visible in the diff.
 
 **`frontend/src` is where the dangerous untested files actually are.** 353 files
 with no test at all, and the largest are the screens that take money and move

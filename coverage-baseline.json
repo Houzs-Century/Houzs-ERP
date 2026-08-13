@@ -42,13 +42,13 @@
       "files": 48
     },
     "backend/scripts/lib": {
-      "pct": 63.29,
-      "zeroCoverageFiles": 12,
+      "pct": 53.74,
+      "zeroCoverageFiles": 15,
       "lines": {
-        "total": 2199,
-        "covered": 1394
+        "total": 2656,
+        "covered": 1430
       },
-      "files": 35
+      "files": 40
     },
     "backend/scripts": {
       "pct": 0,
