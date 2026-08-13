@@ -32,6 +32,7 @@
  this is a measurement, not a gate; the numbers are the output.
 */
 import postgres from "postgres";
+import { DO_SHIPPED_STATES } from "./lib/do-shipped-states.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -318,7 +319,7 @@ async function main() {
       LEFT JOIN scm.inventory_movements m
              ON m.source_doc_type = 'DO' AND m.source_doc_id = d.id
      WHERE d.migrated_no_stock = false
-       AND UPPER(COALESCE(d.status::text, '')) IN ('DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED')`;
+       AND UPPER(COALESCE(d.status::text, '')) = ANY(${DO_SHIPPED_STATES})`;
   log("");
   log("  -- did the delivery side move stock? --");
   log(`    migrated DOs: ${doMv.migrated_dos}; of those WITH movements: ${doMv.migrated_dos_with_movements} (must be 0 by design)`);

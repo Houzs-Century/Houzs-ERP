@@ -53,6 +53,7 @@ import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readine
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
+import { DO_STATUSES as SHARED_DO_STATUSES } from '../../scm/shared/do-shipped-states';
 import {
   loadRegionConfig,
   stateToRegions,
@@ -535,8 +536,12 @@ export interface DeliveryBriefData {
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-/** The DO lifecycle (delivery-orders-mfg.ts state machine) — pipeline buckets. */
-const DO_STATUSES = ['DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'];
+/* The DO lifecycle — pipeline buckets. IMPORTED from the state machine's own
+   declaration (scm/shared/do-shipped-states.ts, which delivery-orders-mfg.ts
+   reads for its PATCH status guard), because the copy that used to sit here had
+   quietly lost COMPLETED: the pipeline counted eight of the nine legal statuses
+   and reported the missing bucket as absent rather than as uncounted. */
+const DO_STATUSES: readonly string[] = SHARED_DO_STATUSES;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function collectDoStatusCounts(sb: any): Promise<Record<string, number>> {

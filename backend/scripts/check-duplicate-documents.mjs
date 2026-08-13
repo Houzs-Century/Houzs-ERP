@@ -50,6 +50,7 @@ import {
   mrpInflationForBuckets,
 } from "./lib/duplicate-docs-core.mjs";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -72,9 +73,10 @@ const REPORT_FLOOR = Number(process.env.REPORT_FLOOR || 0.8);
 const VERIFY_POS = (process.env.VERIFY_POS || "2990-PO-2607-001,2990-PO-2607-005")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
-// mrp.ts verbatim: SOs in these statuses no longer demand; POs in these no
-// longer supply.
-const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT", "SHIPPED"]);
+// SOs in these statuses no longer demand; POs in these no longer supply.
+// The SO set is IMPORTED from the same file mrp.ts reads - "mrp.ts verbatim"
+// is what this said before, and verbatim is a thing you have to keep being.
+const SO_DONE = new Set(SO_TERMINAL_STATES);
 const PO_DEAD = new Set(["CANCELLED", "DRAFT"]);
 
 const up = (s) => String(s ?? "").toUpperCase();
@@ -556,7 +558,7 @@ try {
              FROM scm.mfg_sales_order_items i
              JOIN scm.mfg_sales_orders so ON so.doc_no = i.doc_no
             WHERE so.company_id = ${hdr.company_id} AND i.item_code = ${code} AND i.cancelled = false
-              AND UPPER(COALESCE(so.status::text,'')) NOT IN ('DELIVERED','INVOICED','CLOSED','CANCELLED','DRAFT','SHIPPED')`,
+              AND UPPER(COALESCE(so.status::text,'')) <> ALL(${SO_TERMINAL_STATES})`,
       ]);
       buckets.push({
         bucket: `${co(hdr.company_id)} ${code}${vk ? ` [${vk}]` : ""}`,

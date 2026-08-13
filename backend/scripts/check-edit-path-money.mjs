@@ -28,6 +28,7 @@
 // the answer IS the output. Non-zero only when the database is unreachable.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -67,7 +68,9 @@ async function hasTable(table) {
   return !!r;
 }
 
-const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+/* The read-side "stock has already gone out" set — one declaration, in
+   lib/do-shipped-states.mjs. */
+const SHIPPED = DO_STOCK_OUT_STATES;
 
 try {
   /* ── 1. THE INDEXES THAT ARE NOT IN ANY FILE ───────────────────────────────
