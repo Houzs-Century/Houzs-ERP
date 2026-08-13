@@ -126,7 +126,7 @@ try {
       VALUES
         (${p.soDocNo}, 2, 'STATUS',
          'System (2990 delivered-chain backfill)',
-         ${JSON.stringify([{ field: "status", from: p.soStatus, to: "DELIVERED" }])},
+         ${pg.json([{ field: "status", from: p.soStatus, to: "DELIVERED" }])},
          'DELIVERED', 'backfill',
          '2990 source marked this order DELIVERED; its DO(s) were imported as DISPATCHED because 2990 had no delivered step. Backfilled per owner ruling 2026-07-24 (status follows the SOP chain).')`;
   }

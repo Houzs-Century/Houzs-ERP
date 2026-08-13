@@ -6,6 +6,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
@@ -2971,15 +2972,12 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
-    const { data: poItem } = await sb.from('purchase_order_items')
-      .select('qty, received_qty').eq('id', addLinePoItemId).maybeSingle();
-    if (poItem) {
-      const p = poItem as { qty: number; received_qty: number };
-      const remaining = (p.qty ?? 0) - (p.received_qty ?? 0);
-      if (qtyReceived > remaining) {
-        return c.json({ error: 'qty_exceeds_remaining', poItemId: addLinePoItemId, requested: qtyReceived, remaining }, 409);
-      }
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_order_items', id: addLinePoItemId,
+      capColumn: 'qty', drawnColumns: ['received_qty'],
+      requested: qtyReceived, what: 'PO line',
+    });
+    if (capLock) return c.json({ ...capLock, poItemId: addLinePoItemId }, 409);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
@@ -3211,15 +3209,12 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const poItemId = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
     if (poItemId && qtyReceived > prevQty) {
-      const { data: poItem } = await sb.from('purchase_order_items')
-        .select('qty, received_qty').eq('id', poItemId).maybeSingle();
-      if (poItem) {
-        const p = poItem as { qty: number; received_qty: number };
-        const headroom = (p.qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
-        if (qtyReceived > headroom) {
-          return c.json({ error: 'qty_exceeds_remaining', poItemId, requested: qtyReceived, remaining: headroom }, 409);
-        }
-      }
+      const capLock = await qtyCapRefusal(sb, {
+        table: 'purchase_order_items', id: poItemId,
+        capColumn: 'qty', drawnColumns: ['received_qty'],
+        requested: qtyReceived, ownPriorDraw: prevQty, what: 'PO line',
+      });
+      if (capLock) return c.json({ ...capLock, poItemId }, 409);
     }
   }
 

@@ -25,6 +25,7 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -1062,15 +1063,12 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
      PC Order line's remaining (qty - received_qty). Manual lines uncapped. */
   const addLinePcoItemId = (it.pcOrderItemId as string) ?? null;
   if (addLinePcoItemId) {
-    const { data: pcoItem } = await sb.from('purchase_consignment_order_items')
-      .select('qty, received_qty').eq('id', addLinePcoItemId).maybeSingle();
-    if (pcoItem) {
-      const p = pcoItem as { qty: number; received_qty: number };
-      const remaining = (p.qty ?? 0) - (p.received_qty ?? 0);
-      if (qtyReceived > remaining) {
-        return c.json({ error: 'qty_exceeds_remaining', pcoItemId: addLinePcoItemId, requested: qtyReceived, remaining }, 409);
-      }
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_consignment_order_items', id: addLinePcoItemId,
+      capColumn: 'qty', drawnColumns: ['received_qty'],
+      requested: qtyReceived, what: 'PC Order line',
+    });
+    if (capLock) return c.json({ ...capLock, pcoItemId: addLinePcoItemId }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -1172,15 +1170,12 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
     const pcoItemId = (prev as { pc_order_item_id: string | null }).pc_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
     if (pcoItemId && qtyReceived > prevQty) {
-      const { data: pcoItem } = await sb.from('purchase_consignment_order_items')
-        .select('qty, received_qty').eq('id', pcoItemId).maybeSingle();
-      if (pcoItem) {
-        const p = pcoItem as { qty: number; received_qty: number };
-        const headroom = (p.qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
-        if (qtyReceived > headroom) {
-          return c.json({ error: 'qty_exceeds_remaining', pcoItemId, requested: qtyReceived, remaining: headroom }, 409);
-        }
-      }
+      const capLock = await qtyCapRefusal(sb, {
+        table: 'purchase_consignment_order_items', id: pcoItemId,
+        capColumn: 'qty', drawnColumns: ['received_qty'],
+        requested: qtyReceived, ownPriorDraw: prevQty, what: 'PC Order line',
+      });
+      if (capLock) return c.json({ ...capLock, pcoItemId }, 409);
     }
   }
 
