@@ -466,7 +466,11 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
      * document and asks for a backfill — unchanged behaviour, deliberately. */
     const keys = run.map((x) => x.line.linked_ac_dtlkey ?? null);
     const neverSent = keys.every((k) => k == null);
-    const alreadySeparate = keys.every((k) => k != null)
+    /* Needs at least TWO compartments to mean anything: a run of one always has
+       "all distinct" keys, and a single keyed compartment is a build the book
+       holds as one line, which must still fold. */
+    const alreadySeparate = keys.length > 1
+      && keys.every((k) => k != null)
       && new Set(keys.map(String)).size === keys.length;
     if (neverSent || alreadySeparate) {
       for (const x of run) out.push({ ...x.line, sourceIndexes: [x.index], via: 'passthrough' });

@@ -578,9 +578,19 @@ describe('line identity — one AutoCount line has ONE DtlKey', () => {
     expect(res.lines[0].linked_ac_dtlkey).toBe('4242');
   });
 
-  it('drops to null when they disagree — a wrong DtlKey edits somebody else\'s line', () => {
+  it('two compartments with DIFFERENT keys are two lines there, and stay two', () => {
+    /* Was "drops to null when they disagree". Since 2026-08-13 distinct keys are
+       how a NEW order looks: it sends one AutoCount line per ERP line, and each
+       comes back with its own key. Folding them would merge two real lines in a
+       licensed ledger, so they are left alone and each keeps the key that
+       addresses it. The corruption case this test used to guard — a build the
+       book holds FOLDED whose ERP rows disagree — is the MIXED case below, where
+       some compartments have a key and some do not; that still folds to a null
+       key so the caller refuses and asks for a backfill. */
     const res = collapseSofaLines([mk('9028-1A(LHF)', 4242), mk('9028-1A(RHF)', 9999)]);
-    expect(res.lines[0].linked_ac_dtlkey).toBeNull();
+    expect(res.lines).toHaveLength(2);
+    expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([4242, 9999]);
+    expect(res.lines.every((l) => l.via === 'passthrough')).toBe(true);
   });
 
   it('drops to null when only some compartments have one', () => {
@@ -662,7 +672,7 @@ describe('folding follows the shape AutoCount already holds, not the item code',
     expect(res.refusals).toEqual([]);
     expect(res.lines).toHaveLength(1);
     expect(res.lines[0].item_code).toBe('9028-1S');
-    expect(res.lines[0].linked_ac_dtlkey).toBe(77);
+    expect(Number(res.lines[0].linked_ac_dtlkey)).toBe(77);
   });
 
   it('DISTINCT keys — already two lines there — are left as two', () => {
@@ -675,7 +685,7 @@ describe('folding follows the shape AutoCount already holds, not the item code',
     ]);
     expect(res.refusals).toEqual([]);
     expect(res.lines.map((l) => l.item_code)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
-    expect(res.lines.map((l) => l.linked_ac_dtlkey)).toEqual([81, 82]);
+    expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([81, 82]);
   });
 
   it('MIXED keys still fold, so the keyless-line refusal can stop the document', () => {
