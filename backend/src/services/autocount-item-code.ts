@@ -97,6 +97,33 @@ export type ItemCodeResolution =
  * lines are refused rather than guessed at.
  */
 /**
+ * AutoCount items the ERP OPENS ITSELF, rather than ones the cutover found.
+ *
+ * `/ensure-masters` creates an item before the document that names it is sent
+ * (AcSyncService.cs:495-521) — ItemGroup OTHER, StockControl, sales + purchase,
+ * base UOM UNIT — and skips one that already exists. So a code the account book
+ * has never held is not a dead end; it is opened on first use.
+ *
+ * That cuts both ways, which is why this set exists as an explicit, reviewed
+ * list instead of "anything goes". A typo does not fail — it silently OPENS a
+ * junk item in a licensed account book, and the ERP would keep posting to it.
+ * Nothing reaches /ensure-masters as a new item unless it is named here.
+ */
+export const AC_ITEMS_ERP_OPENS: ReadonlySet<string> = new Set([
+  /* One canonical item per sofa model, named EXACTLY as the ERP names it, so
+     the two systems agree character for character and the stock reconciliation
+     needs no translation. The cutover had collapsed each of these onto two
+     brand items (Armani/DorsettLoft, RedSofa/THL, two Todern spellings), which
+     a sales order can never choose between — it does not know the brand until
+     purchasing does. The brand now lives on the purchase order, where it is
+     actually known, and the item is one. */
+  '9028-1S',
+  '9058-1S',
+  '5152-1S',
+  '5080-1S',
+]);
+
+/**
  * THE STANDING CHOICE for an ERP code the cutover left pointing at several
  * AutoCount items, used when the document has no creditor to choose with.
  *
@@ -109,30 +136,38 @@ export type ItemCodeResolution =
  * would corrupt purchasing. This is the separate, deliberate answer.
  *
  * Owner's rule, 2026-08-13: "一个 item 统一一个" — one ERP item, one AutoCount
- * item, always the same one, so stock and history stay on a single code instead
- * of splitting across the brand items the cutover collapsed.
+ * item, and here that is the ERP's own code, opened by /ensure-masters.
  *
- * Each value is checked at test time against the compiled map: it must be a
- * real AutoCount ItemCode AND one of the candidates for its ERP code. A typo
- * here would put a phantom item in a licensed account book.
+ * The old brand items keep every line they already hold: composeEdit omits
+ * ItemCode for a line AutoCount already owns, so an edit to a pre-cutover order
+ * never rewrites its item to this one.
  */
 export const AC_DEFAULT_ITEM_CHOICE: ReadonlyMap<string, string> = new Map([
-  /* Owner picked DorsettLoft for the two models Armani and DorsettLoft both
-     supply. The remaining two have only one plausible brand each, and the
-     choice matches the supplier the ERP already records as MAIN for the
-     model's compartments. */
-  ['9028-1S', 'DSL-9028 SOFA'],
-  ['9058-1S', 'DSL-9058 SOFA'],
-  ['5152-1S', 'RDS-5152 SOFA'],
-  ['5080-1S', 'TD-SF5080 SOFA'],
+  ['9028-1S', '9028-1S'],
+  ['9058-1S', '9058-1S'],
+  ['5152-1S', '5152-1S'],
+  ['5080-1S', '5080-1S'],
 ]);
 
-/** The choice for `code`, but only if it really is one of that code's candidates. */
+/**
+ * The choice for `code`, once it is safe to use.
+ *
+ * Either it names one of the items the book already holds for this code, or it
+ * is a code we have declared the ERP opens. Anything else is a typo and is
+ * treated as no choice at all.
+ */
 function defaultChoiceFor(code: string, candidates: AcItemMapEntry[]): string | null {
-  const want = AC_DEFAULT_ITEM_CHOICE.get(code);
+  /* Keyed by the model base code, because that is what D9 hands the resolver.
+     A raw compartment reaching here (a caller resolving one line at a time)
+     means the same sofa and must get the same answer — otherwise the choice
+     silently depends on which side of the collapse the caller sits. */
+  const split = splitSofaCode(code);
+  const want = AC_DEFAULT_ITEM_CHOICE.get(code)
+    ?? (split ? AC_DEFAULT_ITEM_CHOICE.get(up(`${split.model}-1S`)) : undefined);
   if (!want) return null;
   const hit = candidates.find((e) => up(e.ac) === up(want));
-  return hit ? hit.ac : null;
+  if (hit) return hit.ac;
+  return AC_ITEMS_ERP_OPENS.has(want) ? want : null;
 }
 
 export function resolveAcItemCode(

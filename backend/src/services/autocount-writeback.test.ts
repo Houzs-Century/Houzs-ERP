@@ -8,6 +8,7 @@ import { describe, expect, test, vi } from 'vitest';
 import {
   composeCreateSo,
   composeCreatePo,
+  composeDetails,
   composeEdit,
   KeylessLineError,
   MissingLocationError,
@@ -437,5 +438,54 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   test('an EDIT omits the key entirely rather than blanking the book, and never refuses', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [line({ linked_ac_dtlkey: 991 })], opts);
     expect(p.Lines[0]).not.toHaveProperty('Location');
+  });
+});
+
+/* Owner 2026-08-13. Each of four sofa models was opened in AutoCount as TWO
+   brand items, which a sales order can never choose between — it does not know
+   the brand until purchasing does. The answer is one canonical item per model,
+   named as the ERP names it. That is right for a NEW order and WRONG for the
+   194 real lines the book already holds under a brand item: an edit that sent
+   the canonical code would move them, silently, in a licensed ledger. */
+describe('an edit never rewrites the item on a line AutoCount already owns', () => {
+  /* The real cutover map, not the synthetic TEST_INDEX — the whole behaviour
+     turns on 9028-1S being genuinely ambiguous there. */
+  const real = {};
+  const compartment = (comp: string, over: Partial<ErpLine> = {}): ErpLine => ({
+    item_code: `9028-${comp}`,
+    description: `SOFA 9028 ${comp}`,
+    description2: '1A(LHF) + 2A(RHF) (28")',
+    qty: 1,
+    unit_price_centi: 0,
+    ...over,
+  });
+
+  test('a policy-chosen ItemCode is OMITTED, so the book keeps its own', () => {
+    const p = composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
+      compartment('1A(LHF)', { linked_ac_dtlkey: 991, unit_price_centi: 399_000 }),
+      compartment('2A(RHF)', { linked_ac_dtlkey: 991 }),
+    ], real);
+    /* D9 folds the build into one line, addressed by its key. */
+    expect(p.Lines).toHaveLength(1);
+    expect(p.Lines[0].DtlKey).toBe(991);
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
+  });
+
+  test('a CREATE still carries it — there is nothing to preserve yet', () => {
+    const { details, defaultChosen } = composeDetails([
+      compartment('1A(LHF)', { unit_price_centi: 399_000 }),
+      compartment('2A(RHF)'),
+    ], real);
+    expect(details).toHaveLength(1);
+    expect(details[0].ItemCode).toBe('9028-1S');
+    expect(defaultChosen[0]).toBe(true);
+  });
+
+  test('a code read off the BOOK is still sent on an edit — a real swap must propagate', () => {
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      { item_code: 'AKEMI APEX MATT (SP)', description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 55 },
+    ], real);
+    expect(p.Lines[0].DtlKey).toBe(55);
+    expect(p.Lines[0].ItemCode).toBe('AK-APEX MATT (SP)');
   });
 });

@@ -424,13 +424,18 @@ export function composeDescription2(line: ErpLine): string | null {
 export function composeDetails(
   lines: ErpLine[],
   opts: ComposeOptions = {},
-): { details: AcDetail[]; collapsed: CollapsedLine[] } {
+): { details: AcDetail[]; collapsed: CollapsedLine[]; defaultChosen: boolean[] } {
   const { lines: collapsed, refusals } = collapseSofaLines(lines);
   if (refusals.length) throw new SofaCollapseError(refusals);
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
   const locationless: Array<{ index: number; itemCode: string }> = [];
   const details: AcDetail[] = [];
+  /* Per detail: did this ItemCode come from the STANDING CHOICE rather than
+     from the book? composeEdit needs to know, because a chosen code is the
+     ERP's policy answer and must never overwrite what AutoCount already holds
+     on a line it owns. */
+  const defaultChosen: boolean[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
       supplierCode: opts.supplierCode ?? null,
@@ -465,11 +470,12 @@ export function composeDetails(
     if (location) d.Location = location;
     if (l.delivery_date) d.DeliveryDate = l.delivery_date;
     details.push(d);
+    defaultChosen.push(r.via === 'default-choice');
   });
   if (failures.length) throw new ItemCodeError(failures);
   if (locationless.length) throw new MissingLocationError(locationless);
 
-  return { details, collapsed };
+  return { details, collapsed, defaultChosen };
 }
 
 /**
@@ -625,7 +631,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const { details, collapsed } = composeDetails(lines, opts);
+  const { details, collapsed, defaultChosen } = composeDetails(lines, opts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
      identity when every one of them holds the same key — anything else
@@ -665,7 +671,25 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
+    if (dtlKey == null) return d;
+    /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT OVERWRITTEN — the same rule
+     * Location runs under, applied to the item itself.
+     *
+     * When the ItemCode came from the STANDING CHOICE, the ERP did not read it
+     * off the account book; it picked one by policy because a sales order names
+     * no brand. On a line AutoCount ALREADY HOLDS, that guess is not new
+     * information and the book's own value is the truth. Sending it rewrites
+     * history: measured 2026-08-13, 194 real sofa lines are held under the two
+     * brand items the cutover collapsed, and an edit to any of those orders
+     * would have moved them onto the canonical code — silently, in a licensed
+     * ledger. Omitting the key leaves them exactly as they are.
+     *
+     * A code resolved from the book (direct, sofa-model, binding) still goes,
+     * so genuinely swapping the product on a line still propagates. */
+    const { ItemCode, ...rest } = d;
+    return defaultChosen[i]
+      ? { ...rest, DtlKey: dtlKey } as AcEditLine
+      : { ...d, DtlKey: dtlKey };
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a
