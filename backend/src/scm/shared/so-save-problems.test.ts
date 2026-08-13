@@ -4,6 +4,7 @@ import {
   validationFailedBody,
   type SaveProblem,
 } from './so-save-problems';
+import { meetsDepositGate } from './order-rules';
 
 const codes = (ps: SaveProblem[]) => ps.map((p) => p.code);
 
@@ -247,6 +248,18 @@ describe('deposit threshold is per company', () => {
 
   it('company code is matched case-insensitively and trimmed', () => {
     expect(unpaid(facts(' 2990 ', 300_00))).toHaveLength(1);
+  });
+
+  /* This report and the Proceed gate must never disagree about whether the
+     deposit is in — they describe the same act (a Processing Date IS Proceed),
+     so they read the same predicate. Reporting is all they may differ on. */
+  it('reports the shortfall exactly when meetsDepositGate refuses', () => {
+    for (const companyCode of ['HOUZS', '2990', null, 'FUTURE-CO']) {
+      for (const paidCenti of [0, 299_99, 300_00, 499_99, 500_00, 1000_00]) {
+        expect(unpaid(facts(companyCode, paidCenti)).length === 0)
+          .toBe(meetsDepositGate(paidCenti, 1000_00, companyCode));
+      }
+    }
   });
 });
 

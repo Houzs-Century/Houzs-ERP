@@ -17,7 +17,7 @@
 // rules. It only aggregates + names them. Pure — no I/O, no DB, no Hono.
 // ----------------------------------------------------------------------------
 import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from './so-variant-rule';
-import { meetsProcessingDatePaymentGate, processingDateThresholdFor } from './order-rules';
+import { meetsDepositGate, processingDateThresholdFor } from './order-rules';
 import { fmtRM } from './format';
 
 /** One machine- + human-readable reason a save was rejected.
@@ -174,8 +174,9 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
 
   // 2. Deposit — a Processing Date is production's "ready to build" signal,
   //    so it can't be set until >=30% is collected. Reported with the concrete
-  //    amount + threshold. Mirrors meetsProcessingDatePaymentGate → 400
-  //    processing_date_unpaid. Only fires when a date is actually being set.
+  //    amount + threshold. The SAME predicate the Proceed gate weighs
+  //    (meetsDepositGate) — one deposit rule, since setting the date IS
+  //    proceeding. Only fires when a date is actually being set.
   if (facts.deposit && facts.procDate) {
     const { paidCenti, totalCenti } = facts.deposit;
     /* Per company (owner 2026-07-31: Houzs 30%, 2990 50%). The threshold is read
@@ -183,7 +184,7 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
        amount in the message — a 2990 operator refused at 50% must not be told
        "30%", which is what a hard-coded constant here would print. */
     const threshold = processingDateThresholdFor(facts.companyCode);
-    if (!meetsProcessingDatePaymentGate(paidCenti, totalCenti, facts.companyCode)) {
+    if (!meetsDepositGate(paidCenti, totalCenti, facts.companyCode)) {
       const pct = Math.round(threshold * 100);
       const neededCenti = Math.ceil(totalCenti * threshold);
       out.push({

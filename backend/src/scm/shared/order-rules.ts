@@ -14,13 +14,15 @@ export const paidPct = (paid: number, total: number): number => {
   return Math.min(100, Math.round((paid / total) * 100));
 };
 
-/** Minimum paid fraction (of the order total) to advance an order to Proceed. */
+/** 2990's deposit fraction. NOT a second gate — it is one branch of
+ *  processingDateThresholdFor, which is the only thing that reads it. The name
+ *  is the fossil of the era when Proceed and the Processing Date were two rules
+ *  with two thresholds; they are one rule now (meetsDepositGate). */
 export const PROCEED_PAID_THRESHOLD = 0.5;
 
-/** Minimum paid fraction to SET a Processing Date. Houzs requires only 30%
- *  (owner 2026-07-14) — the ≥50% PROCEED_PAID_THRESHOLD is a 2990 rule and must
- *  NOT gate the Houzs processing date. Kept as its own constant so the two gates
- *  can never be conflated again. */
+/** Houzs's deposit fraction (owner 2026-07-14), and the fallback for any company
+ *  code we do not recognise. Same note as above: read through
+ *  processingDateThresholdFor, never directly. */
 export const PROCESSING_DATE_PAID_THRESHOLD = 0.30;
 
 /** Inputs to the Processing-Date gate. `paid` / `total` must share a unit
@@ -46,10 +48,12 @@ export interface ProceedGateInput {
  *
  *  It answers ONE question — may this order start production? — and every path
  *  that used to ask its own version now asks this: setting `internal_expected_dd`
- *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
- *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
- *  timestamp the system writes, not a date the user picks; what is unified is the
- *  RULE, not the storage.
+ *  (the date the user picks), the create's auto-proceed, and the two manual
+ *  proceed paths. Since 2026-08-13 those proceed paths WRITE that same date
+ *  rather than stamping a click time, so there is one act with one gate;
+ *  `proceeded_at` survives alongside it as the timestamp the system writes (the
+ *  stock allocator still reads it), but it is no longer what makes an order
+ *  proceeded — the date is.
  *
  *  WHAT CHANGED, and why each way:
  *   - **Threshold is per company** (HOUZS 30% / 2990 50%). Previously two
@@ -71,28 +75,87 @@ export const meetsProceedGate = (i: ProceedGateInput): boolean =>
   i.hasAddress &&
   i.hasPostcode &&
   i.hasDeliveryDate &&
-  (i.total <= 0 || i.paid / i.total >= processingDateThresholdFor(i.companyCode));
+  meetsDepositGate(i.paid, i.total, i.companyCode);
 
-/** May a Processing Date (factory-start / 开工日期) be SET on a Sales Order, given
- *  collection so far? Owner/Loo 2026-06-30 — the Processing Date is production's
- *  "ready to build" signal: once it is set, the backend treats the SO as a go and
- *  orders materials / starts the build when the date arrives. So it must NOT be
- *  set until the customer has paid the ≥30% deposit Houzs requires
- *  (PROCESSING_DATE_PAID_THRESHOLD — owner 2026-07-14; the 50% Proceed threshold
- *  is a 2990 rule). UNLIKE meetsProceedGate, customer-info / address completeness is
- *  deliberately NOT gated here — an order with incomplete customer info may still
- *  carry a Processing Date (Loo: resolve customer details in Proceed). Only the
- *  money gates the date.
+/** The money half of the gate above, on its own — for the aggregated save
+ *  report, which names the deposit shortfall as its own fixable problem instead
+ *  of failing the whole gate anonymously (so-save-problems).
+ *
+ *  THE ONE DEPOSIT RULE. It used to be two functions with two names
+ *  (meetsProcessingDatePaymentGate for the date, the inline ratio above for
+ *  Proceed) for one act, back when setting a date and proceeding were separate
+ *  things. They are the same act — a Processing Date IS Proceed — so a second
+ *  copy could only ever drift into a second threshold, which is exactly what
+ *  happened before 2026-07-31.
  *
  *  `paid` / `total` must share a unit (whole-MYR on the POS, centi on the server)
  *  — only their ratio is used. Free order (total ≤ 0, e.g. a Free Item Campaign
- *  giveaway): nothing to collect, so the gate is vacuously met (mirrors
- *  meetsProceedGate, and avoids the 0/0 = NaN a `total > 0` guard would need). */
-export const meetsProcessingDatePaymentGate = (
+ *  giveaway): nothing to collect, so the gate is vacuously met — and that shape
+ *  also avoids the 0/0 = NaN a `total > 0` guard would need. */
+export const meetsDepositGate = (
   paid: number,
   total: number,
   companyCode?: CompanyCode | string | null,
 ): boolean => total <= 0 || paid / total >= processingDateThresholdFor(companyCode);
+
+/** Refusals for a proceed that carries no usable Processing Date. Owner, stated
+ *  more than three times: *"只要有 Processing Date，就代表他 Proceed 了。没有
+ *  processing date 就代表没有 proceed。"* Proceed is therefore not an event with a
+ *  click time — it is the state of having a date — so a proceed with no date is
+ *  not an order we can start: the factory queue is ordered BY that date.
+ *
+ *  Refusing beats defaulting to today. A guessed start date is a real order in
+ *  the real queue on the wrong day, and nobody would ever see that it was
+ *  guessed. A refusal costs the operator one field. */
+export const PROCEED_NEEDS_DATE = {
+  error: 'proceed_needs_processing_date',
+  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date the factory starts, then proceed.',
+} as const;
+
+export const PROCEED_DATE_UNREADABLE = {
+  error: 'proceed_needs_processing_date',
+  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong start date is a wrong factory queue, so nothing was changed.',
+} as const;
+
+export type ProceedDateInput = {
+  /** The date the CALLER is proceeding with, if this request carries one. */
+  supplied?: string | null;
+  /** internal_expected_dd as it stands on the order (date or timestamp). */
+  stored?: string | null;
+};
+
+/** `write: true` means the caller must PERSIST `date` to internal_expected_dd —
+ *  the proceed is what puts it there. `write: false` means the order already
+ *  carries that date, so proceeding writes no date at all. */
+export type ProceedDateResolution =
+  | { ok: true; date: string; write: boolean }
+  | { ok: false; refusal: typeof PROCEED_NEEDS_DATE | typeof PROCEED_DATE_UNREADABLE };
+
+/** 'YYYY-MM-DD' out of a date or a timestamp column, else null. Mirrors how
+ *  soProcessingLocked reads the same column — internal_expected_dd is a DATE in
+ *  Postgres but reaches us as a string from several shapes of client. */
+const ymdOrNull = (v?: string | null): string | null => {
+  const ymd = String(v ?? '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+};
+
+/** Which Processing Date a proceed proceeds WITH, or why it cannot.
+ *
+ *  A date already on the order WINS over one in the request, and is never
+ *  rewritten: that order is already proceeded by the owner's rule, so moving its
+ *  date is a reschedule — a different act, owned by the header PATCH because
+ *  that is where the processing lock and the full save gate live. Proceeding
+ *  must not become the road around them. */
+export const resolveProceedProcessingDate = (i: ProceedDateInput): ProceedDateResolution => {
+  const stored = ymdOrNull(i.stored);
+  if (stored) return { ok: true, date: stored, write: false };
+  const raw = String(i.supplied ?? '').trim();
+  if (!raw) return { ok: false, refusal: PROCEED_NEEDS_DATE };
+  const supplied = ymdOrNull(raw);
+  return supplied
+    ? { ok: true, date: supplied, write: true }
+    : { ok: false, refusal: PROCEED_DATE_UNREADABLE };
+};
 
 /** The companies whose deposit rule differs. Mirrors companyContext's
  *  `c.get('companyCode')`, which is the only producer of these strings. */
