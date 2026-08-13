@@ -52,11 +52,13 @@ const TSV = readFileSync(join(here, "..", "src", "services", "autocount-item-map
   .match(/`([\s\S]*?)`/)[1];
 
 const byErp = new Map();
+const acCodes = new Set();
 for (const line of TSV.split("\n")) {
   if (!line) continue;
   const [ac, erp, category, supplier] = line.split("\t");
   if (!ac || !erp) continue;
   const k = erp.trim().toUpperCase();
+  acCodes.add(ac.trim().toUpperCase());
   if (!byErp.has(k)) byErp.set(k, []);
   byErp.get(k).push({ ac, category: category ?? "", supplier: supplier || null });
 }
@@ -76,15 +78,16 @@ try {
       `Every ambiguous code refuses any SALES ORDER that contains it unless a binding names the item.`,
   );
 
-  const codes = ambiguous.map(([k]) => k);
   const [bindings, sofaModelRows] = await Promise.all([
+    /* EVERY mfg_product binding, not just the ambiguous ones. "Bound" is not
+       the same as "bound to something real", and the only way to tell is to
+       check each supplier_sku against the codes the account book holds. */
     pg`SELECT b.material_code, b.supplier_sku, b.is_main_supplier,
               s.code AS supplier_code, s.name AS supplier_name
          FROM scm.supplier_material_bindings b
          LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
         WHERE b.company_id = ${COMPANY}
           AND b.material_kind = 'mfg_product'
-          AND upper(btrim(b.material_code)) = ANY(${codes})
         ORDER BY b.material_code, b.is_main_supplier DESC`,
     /* For a sofa base code no ERP line ever carries, the ERP's own opinion of
        the supplier lives on the COMPARTMENT rows (9028-1A(LHF) and friends).
@@ -122,11 +125,22 @@ try {
     notice(`${code}`);
     for (const c of cands) notice(`    candidate: ${c.ac}   [supplier ${c.supplier ?? "none"}]`);
     const bound = (boundFor.get(code) ?? []).filter((b) => (b.supplier_sku ?? "").trim());
-    if (bound.length) {
+    /* Only a binding naming a REAL item resolves an ambiguous code — the
+       resolver refuses a tie-breaker that names a third string. Mark each row
+       so a wrong one is not read as a working one. */
+    const usable = bound.filter((b) => acCodes.has(String(b.supplier_sku).trim().toUpperCase()));
+    if (usable.length) {
       for (const b of bound) {
-        notice(`    BOUND -> ${b.supplier_sku}  via ${b.supplier_code ?? "?"} ${b.supplier_name ?? ""}${b.is_main_supplier ? " (MAIN)" : ""}`);
+        const ok = acCodes.has(String(b.supplier_sku).trim().toUpperCase());
+        notice(`    BOUND -> ${b.supplier_sku}  via ${b.supplier_code ?? "?"} ${b.supplier_name ?? ""}${b.is_main_supplier ? " (MAIN)" : ""}${ok ? "" : "   <- NOT AN AUTOCOUNT ITEM"}`);
       }
-      notice(`    => RESOLVES to ${bound[0].supplier_sku}`);
+      notice(`    => RESOLVES to ${usable[0].supplier_sku}`);
+    } else if (bound.length) {
+      for (const b of bound) {
+        notice(`    BOUND -> ${b.supplier_sku}  via ${b.supplier_code ?? "?"} ${b.supplier_name ?? ""}${b.is_main_supplier ? " (MAIN)" : ""}   <- NOT AN AUTOCOUNT ITEM`);
+      }
+      notice("    => REFUSED. Every binding on this code names something the account book does not hold.");
+      notice(`    FIX: point one of these rows at exactly ${cands.map((c) => `'${c.ac}'`).join(" or ")}`);
     } else {
       notice("    BOUND -> nothing. This code refuses every sales order it appears on.");
       const who = sofaModelRows.filter((r) => r.model === model);
@@ -176,7 +190,11 @@ try {
      wall of text, and the binding path already worked for them. What matters
      is how many are still unresolved. */
   const others = ambiguous.filter(([k]) => !isSofaBase(k));
-  const unresolved = others.filter(([k]) => !(boundFor.get(k) ?? []).some((b) => (b.supplier_sku ?? "").trim()));
+  /* Resolved means bound to a REAL item. A row naming a string the book does
+     not hold is refused on an ambiguous code, so counting it as resolved would
+     report a document as sendable when it is not. */
+  const unresolved = others.filter(([k]) =>
+    !(boundFor.get(k) ?? []).some((b) => acCodes.has((b.supplier_sku ?? "").trim().toUpperCase())));
   notice("");
   notice(
     `=== OTHER AMBIGUOUS CODES: ${others.length} total, ${others.length - unresolved.length} bound, ` +
@@ -184,6 +202,51 @@ try {
   );
   for (const [code, cands] of unresolved) {
     notice(`  ${code} -> ${cands.map((c) => `${c.ac} [${c.supplier ?? "none"}]`).join("  |  ")}`);
+  }
+
+  /* BOUND IS NOT THE SAME AS CORRECT. A binding is only useful if the string it
+     names is an item the account book actually holds; one that names anything
+     else would have the ERP send an ItemCode AutoCount has never heard of. The
+     resolver refuses that for an AMBIGUOUS code (a tie-breaker has to name one
+     of the tied items) and still trusts it elsewhere, where a renamed item is a
+     real possibility the snapshot cannot see. This is the list a human has to
+     work: for the ambiguous ones it is a hard block, for the rest it is a
+     probable typo worth checking before the document goes out. */
+  notice("");
+  notice("=== BINDINGS THAT NAME SOMETHING THE ACCOUNT BOOK DOES NOT HOLD ===");
+  const bad = [];
+  for (const [code, rows] of boundFor) {
+    for (const r of rows) {
+      const sku = (r.supplier_sku ?? "").trim();
+      if (!sku || acCodes.has(sku.toUpperCase())) continue;
+      bad.push({ code, sku, r, ambiguous: (byErp.get(code) ?? []).length > 1 });
+    }
+  }
+  const boundRows = bindings.filter((r) => (r.supplier_sku ?? "").trim()).length;
+  if (!bad.length) {
+    notice(`  none — all ${boundRows} binding rows name a real AutoCount item.`);
+  } else {
+    const blocking = bad.filter((b) => b.ambiguous);
+    notice(
+      `  ${bad.length} of ${boundRows} binding rows, of which ${blocking.length} sit on an ` +
+        "ambiguous code and therefore REFUSE the document until corrected. The rest are " +
+        "still accepted (a renamed item is a real possibility the snapshot cannot see), " +
+        "but each one sends an ItemCode the 2026-08-05 book did not hold.",
+    );
+    /* Blocking rows in full; the rest capped, because a typo list thousands
+       long is not something anyone works through in a CI log. Say what was cut
+       rather than letting the tail look like it does not exist. */
+    const shown = [...blocking, ...bad.filter((b) => !b.ambiguous).slice(0, 40)];
+    for (const b of shown) {
+      const cands = (byErp.get(b.code) ?? []).map((c) => c.ac);
+      notice(
+        `  ${b.ambiguous ? "BLOCKS " : "suspect"}  ${b.code} -> "${b.sku}"` +
+          ` via ${b.r.supplier_code ?? "?"}${b.r.is_main_supplier ? " (MAIN)" : ""}` +
+          (cands.length ? `   book holds: ${cands.join(" | ")}` : "   book holds: nothing under this code"),
+      );
+    }
+    const hidden = bad.length - shown.length;
+    if (hidden > 0) notice(`  ... and ${hidden} more non-blocking row(s) not listed.`);
   }
 } finally {
   await pg.end({ timeout: 5 });
