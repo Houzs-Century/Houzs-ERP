@@ -25,12 +25,28 @@
 // A row whose parent is not resolved yet is left pending WITHOUT burning an
 // attempt. Sweeps drain oldest-first, so the parent's create is ahead of it in
 // the same batch and usually resolves on the very same sweep.
+//
+// A QUEUED PAYLOAD SPEAKS AUTOCOUNT, NOT ERP — checked 2026-08-13, because it
+// decides whether renaming an ERP column strands rows already in the queue.
+// `payload.body` is the composed AcSyncService document (DebtorName, DocDate,
+// UDF.{BRANDING,VENUE,ToPONo,PDate}, Details[]); the only ERP identifiers that
+// survive into it are `writeback` / `lineWriteback` / `fromDoc` / `selfDoc`,
+// which name a TABLE and `doc_no` or `id`. No ERP column name for a business
+// field is frozen in there, so an ERP column rename cannot strand a queued row
+// and no payload migration is needed. `mastersOf` reads the payload's UDF block
+// for BRANDING and VENUE only — PDate is a date, not a dropdown master.
+//
+// What a rename CAN break here is the compose side, and silently: SO_HEADER_COLS
+// is a string select list, `soEditHeader` reads its header out of a bare
+// Record, and `composeCreateSo` is handed `header as never`. All three are keyed
+// on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
   callAcService,
   AGENT_MAP,
@@ -198,11 +214,12 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
-/* internal_expected_dd is the SO's "Processing date" — the ONE storage behind
-   that UI label since mig 0189 dropped the legacy processing_date column. It
-   leaves as the PDate UDF. */
+/* processing_date is the SO's "Processing date" — the ONE storage behind that
+   UI label, under the ONE name since mig 0284 (0189 had already dropped the
+   dead legacy column of this name; 0284 then renamed the live
+   internal_expected_dd onto it). It leaves as the PDate UDF. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, internal_expected_dd, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -1429,7 +1446,7 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
      this function — a cleared date sends nothing rather than blanking the
      account book's value, which is the conservative half of the pair and the
      one that cannot destroy data. */
-  const pdate = acUdfDate(h.internal_expected_dd as string | null | undefined);
+  const pdate = acUdfDate(h.processing_date as string | null | undefined);
   if (pdate) udf.PDate = pdate;
   if (Object.keys(udf).length) out.UDF = udf;
 

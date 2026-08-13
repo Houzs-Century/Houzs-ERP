@@ -31,6 +31,7 @@
 // Run under tsx (TS imports): npx tsx scripts/recompute-so-allocation.mjs
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const DOC = (process.env.DOC || "").trim() || undefined;
@@ -52,9 +53,10 @@ if (!DATABASE_URL) {
 }
 const pg = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 
-// The allocator's own live-SO lens (so-stock-allocation.ts step 1) — the
-// snapshot must cover exactly the rows the function can touch.
-const EXCLUDED = ["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"];
+// The allocator's own live-SO lens (so-stock-allocation.ts step 1), IMPORTED:
+// the snapshot must cover exactly the rows the function can touch, and "must"
+// is only true if the two read the same constant.
+const EXCLUDED = SO_TERMINAL_STATES;
 
 async function snapshotLines() {
   const rows = await pg`

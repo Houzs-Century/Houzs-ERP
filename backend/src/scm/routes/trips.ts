@@ -17,6 +17,17 @@
 // revenue_centi is sourced from that. Dual-read camelCase ?? snake_case on every
 // result column (the pg driver camelCases result columns).
 //
+// COMPANY SCOPE — CROSS-COMPANY, which is NOT the same as unscoped. Trips is a
+// TMS shared queue (lib/companyScope.ts, "CROSS-COMPANY VIEW modules"): reads
+// WIDEN to the caller's granted companies via scopeToAllowedCompanies, and so do
+// the WRITES. The SCM supabase client is service-role, so RLS re-checks nothing
+// and that predicate is the only thing standing between a company-1-only
+// dispatcher and a company-2 trip they hold no grant for. Inserts still stamp
+// the ACTIVE company (a trip is raised from whichever company you are in; it may
+// still reference the other company's DOs). Where a write is by id, use
+// maybeSingle — the predicate can legitimately match zero rows, and single()
+// would render that 404 as a 500.
+//
 // Houzs port of 2990's apps/api/src/routes/trips.ts — same plumbing as the
 // sibling SCM routes (supabaseAuth + scm-scoped c.get('supabase'); paginateAll
 // from ../lib/paginate-all, mintMonthlyDocNo from ../lib/doc-no). scm.trips /
@@ -520,7 +531,15 @@ trips.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ error: 'no_changes' }, 400);
 
-  const { data, error } = await sb.from('trips').update(updates).eq('id', id).select(TRIP_COLS).single();
+  /* CROSS-COMPANY, not un-scoped: Trips is one shared queue, so the boundary is
+     the caller's ALLOWED set (scopeToAllowedCompanies), the same predicate the
+     list read above uses — never the single active company. The service-role
+     client bypasses RLS, so without this a company-1-only dispatcher could edit
+     a company-2 trip by id. maybeSingle, not single: the predicate can
+     legitimately match zero rows, and single() would turn that 404 into a 500. */
+  const { data, error } = await scopeToAllowedCompanies(
+    sb.from('trips').update(updates).eq('id', id), c,
+  ).select(TRIP_COLS).maybeSingle();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -542,7 +561,9 @@ trips.patch('/:id/status', async (c) => {
   if (!TRIP_STATUSES.has(status)) return c.json({ error: 'invalid_status' }, 400);
 
   const sb = c.get('supabase');
-  const { data: cur } = await sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id').eq('id', id).maybeSingle();
+  const { data: cur } = await scopeToAllowedCompanies(
+    sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id').eq('id', id), c,
+  ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   /* WRITE OWNERSHIP (owner rule): a Driver/Helper may advance a trip's step
      (status) ONLY on a trip they are crewed on. Ops/dispatcher (`all`) pass
@@ -559,8 +580,11 @@ trips.patch('/:id/status', async (c) => {
   if (status === 'IN_PROGRESS' && !dual(cur as Record<string, unknown>, 'clock_in_at')) updates.clock_in_at = now;
   if (status === 'COMPLETED' && !dual(cur as Record<string, unknown>, 'clock_out_at')) updates.clock_out_at = now;
 
-  const { data, error } = await sb.from('trips').update(updates).eq('id', id).select(TRIP_COLS).single();
+  const { data, error } = await scopeToAllowedCompanies(
+    sb.from('trips').update(updates).eq('id', id), c,
+  ).select(TRIP_COLS).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!data) return c.json({ error: 'not_found' }, 404);
 
   /* REVERSE SYNC: cancelling a trip strands its scheduled orders. Return each to
      the board by clearing its scheduled-looking delivery_state override — the
@@ -674,9 +698,11 @@ trips.delete('/:id/stops/:stopId', async (c) => {
   const sb = c.get('supabase');
   /* Snapshot the stop's source keys BEFORE the delete — once it is gone there is
      nothing left to map back to a header. */
-  const { data: stopRow } = await sb.from('trip_stops')
-    .select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId).maybeSingle();
-  const { error } = await sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId);
+  const { data: stopRow } = await scopeToAllowedCompanies(sb.from('trip_stops')
+    .select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId), c).maybeSingle();
+  // Shared queue → the ALLOWED set is the boundary, on the DELETE itself: the
+  // read above cannot protect the write, the client being service-role.
+  const { error } = await scopeToAllowedCompanies(sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* REVERSE SYNC: a removed DELIVERY stop means that order is no longer on this
@@ -713,15 +739,15 @@ trips.delete('/:id', async (c) => {
   const stops = await deliveryStopsOfTrip(sb, id);
 
   if (hard) {
-    const { error } = await sb.from('trips').delete().eq('id', id);
+    const { error } = await scopeToAllowedCompanies(sb.from('trips').delete().eq('id', id), c);
     if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
     const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
     return c.json({ ok: true, deleted: true, ...reconcileFieldsFor(reconcile) });
   }
 
-  const { data, error } = await sb.from('trips')
+  const { data, error } = await scopeToAllowedCompanies(sb.from('trips')
     .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-    .eq('id', id).select(TRIP_COLS).maybeSingle();
+    .eq('id', id), c).select(TRIP_COLS).maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
   /* REVERSE SYNC — return each stranded order to the board (clear its
@@ -769,18 +795,18 @@ trips.post('/:id/optimize-route', async (c) => {
          response and the next page load would have to re-bill Google to show it.
          eta_offset_s is an OFFSET from departure, not a clock time: the trip's
          start can move, and a stored wall-clock ETA would go stale silently. */
-      await sb.from('trip_stops').update({
+      await scopeToAllowedCompanies(sb.from('trip_stops').update({
         stop_no: st.order,
         leg_distance_m: st.legDistanceMetres,
         leg_duration_s: st.legDurationSeconds,
         eta_offset_s: st.etaSecondsFromDepart,
         route_optimised_at: optimisedAt,
-      }).eq('id', st.ref).eq('trip_id', id);
+      }).eq('id', st.ref).eq('trip_id', id), c);
     }
     // The trip's own distance was hand-typed until now; the optimiser knows it.
-    await sb.from('trips')
+    await scopeToAllowedCompanies(sb.from('trips')
       .update({ total_distance_km: Math.round(result.totalDistanceMetres / 100) / 10, updated_at: optimisedAt })
-      .eq('id', id);
+      .eq('id', id), c);
     applied = true;
   }
   return c.json({ ...result, applied });

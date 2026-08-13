@@ -229,6 +229,22 @@ Not generic narrative.
 ## Coding conventions specific to this repo
 
 - **No emoji.** Anywhere. Empty states, status copy, comments, commits.
+- **A parameter that DECIDES something is required, never optional.** If its
+  absence changes an answer — a gate, an exemption, a scope, a threshold, a
+  default that is not neutral — write it as `x: T | null` and let the compiler
+  enumerate the call sites. `x?: T` means every caller that says nothing keeps
+  the OLD behaviour, with no compile error, no failing test and no runtime
+  signal, so the rule ends up applying only where someone remembered it. This
+  cost four days on `itemCode` (DIVAN ONLY lines kept demanding a mattress Gap
+  after PR #1763 said "every desktop + mobile call site"), and the same hole
+  shipped `onMultiPo` on the drop-ship batch resolver, where the silent default
+  was the permissive one. Where "no value" is legitimate, pass an explicit
+  `null` — it reads as a decision — and assert what `null` means. An optional
+  parameter is acceptable only when its absence is the STRICTER direction, and
+  then the comment has to say so (precedents: `assertNotMirrored`'s missing
+  context leaves the guard active; `scopeToCompanyId` in
+  `scm/lib/companyScope.ts` states this rule in full). See **BUG CLASS
+  optional-param-noop** at the top of `BUG-HISTORY.md`.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw
@@ -273,6 +289,27 @@ Not generic narrative.
   wiki's *Polling Strategy* note for cadence and rationale.
 - **URL is state.** Filters/tabs/modes go in `useSearchParams`.
   localStorage is fallback for personal prefs only.
+- **Company scope: the predicate is the only isolation — on WRITES too.**
+  The SCM/Houzs supabase client is the **service role**, so it **bypasses
+  RLS** and no policy is ever evaluated on an app request. The
+  `company_id` predicate a statement carries is the entire tenant
+  boundary. Three rules follow:
+  (a) put it on the write itself, not only on the read that preceded it —
+  nothing re-checks between two PostgREST round trips, which is how a
+  scoped-read-then-open-update shipped across the whole system;
+  (b) a parent-ownership predicate (`so_doc_no`, `purchase_invoice_id`,
+  `trip_id`) proves the row is on that document, NOT that the document is
+  in your books — you need both;
+  (c) a cross-company module still takes a predicate, just a wider one
+  (`scopeToAllowedCompanies` = the caller's granted companies); "shared
+  queue" never means "no predicate". Use `scopeToCompany` /
+  `scopeToCompanyId` from `scm/lib/companyScope.ts` (that file's header is
+  the reference), and `maybeSingle` not `single` on any by-id statement
+  carrying one — the predicate can legitimately match zero rows and
+  `single()` reports that honest 404 as a 500. If a route is
+  deliberately cross-company or deliberately shared, say so in a comment
+  naming why, so the next sweep does not "fix" it. Background:
+  `docs/MULTICOMPANY-MODULE-MAP.md`.
 - **Permissions are flat strings**, e.g. `projects.read`. Catalogue
   lives in `backend/src/services/permissions.ts`. New verbs since
   mig 047: `projects.chat`, `projects.checklist.tick` — use

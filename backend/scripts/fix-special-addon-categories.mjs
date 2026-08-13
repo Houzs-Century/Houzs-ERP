@@ -18,6 +18,8 @@
 //    with no duplicate to merge later.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. The category rewrite is computed from the row as it reads now, and a corrected row produces no change.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

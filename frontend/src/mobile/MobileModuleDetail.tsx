@@ -663,7 +663,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     status: (h) => h.status,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
-      ["Delivery", dmy(h.customer_delivery_date ?? h.internal_expected_dd)],
+      ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.customer_country)],
       ["Reference", firstOf(h.ref, h.po_doc_no)],

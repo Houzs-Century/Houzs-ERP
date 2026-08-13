@@ -1141,10 +1141,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     fields: [
       [(r) => pick(r, "doNumber", "do_number") ?? "—", "DO No"],
       [(r) => dm(pick(r, "doDate", "do_date")), "Date"],
-      /* Owner 2026-07-24 — Processing (linked SO's internal_expected_dd,
+      /* Owner 2026-07-24 — Processing (linked SO's processing_date,
          stamped server-side) + Delivery in every quick view; desktop drawer
          parity. */
-      [(r) => dm(pick(r, "soInternalExpectedDd", "so_internal_expected_dd")), "Processing"],
+      [(r) => dm(pick(r, "soProcessingDate", "so_processing_date")), "Processing"],
       [(r) => dm(pick(r, "customerDeliveryDate", "customer_delivery_date")), "Delivery"],
       [(r) => pick(r, "driverName", "driver_name") ?? "—", "Driver"],
       [(r) => { const n = pick(r, "lineCount", "line_count"); return n == null ? "—" : String(n); }, "Items"],
@@ -1192,10 +1192,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       [(r) => pick(r, "invoiceNumber", "invoice_number") ?? "—", "Inv No"],
       [(r) => dm(pick(r, "invoiceDate", "invoice_date")), "Date"],
       [(r) => dm(pick(r, "dueDate", "due_date")), "Due"],
-      /* Owner 2026-07-24 — Processing (linked SO's internal_expected_dd,
+      /* Owner 2026-07-24 — Processing (linked SO's processing_date,
          stamped server-side) + Delivery (SI snapshot, falling back to the
          linked SO's date) in every quick view; desktop drawer parity. */
-      [(r) => dm(pick(r, "soInternalExpectedDd", "so_internal_expected_dd")), "Processing"],
+      [(r) => dm(pick(r, "soProcessingDate", "so_processing_date")), "Processing"],
       [(r) => dm(pick(r, "customerDeliveryDate", "customer_delivery_date") ?? pick(r, "soCustomerDeliveryDate", "so_customer_delivery_date")), "Delivery"],
       [(r) => rmField(pick(r, "totalCenti", "total_centi", "localTotalCenti", "local_total_centi")), "Amount"],
       [(r) => rmField(balanceCenti(r)), "Balance"],

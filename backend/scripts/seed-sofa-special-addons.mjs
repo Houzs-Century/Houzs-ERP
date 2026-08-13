@@ -16,6 +16,8 @@
 // missing codes into scm.special_addons and touches nothing else.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. INSERT ... ON CONFLICT DO NOTHING.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

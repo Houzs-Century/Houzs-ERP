@@ -57,6 +57,7 @@
 // Run under tsx (the TS imports): npx tsx scripts/restamp-do-actual-cost.mjs
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const ONLY_STALE = process.env.ONLY_STALE === "1";
@@ -81,11 +82,13 @@ if (!DATABASE_URL) {
 }
 const pg = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
 
-// The same shipped set the restamp itself honours (SHIPPED_STATES in
-// delivery-orders-mfg.ts) plus COMPLETED, which the audit's 3b uses for the
-// same reason: a COMPLETED DO has certainly shipped. The function re-checks
-// status itself, so an over-wide scope can only no-op, never mis-stamp.
-const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+// The shipped set the restamp honours, plus COMPLETED, which the audit's 3b
+// uses for the same reason: a COMPLETED DO has certainly shipped. That pairing
+// now has a NAME — DO_STOCK_OUT_STATES — and one home, instead of being spelled
+// out here and in five other scripts as "the other list, plus one". The
+// function re-checks status itself, so an over-wide scope can only no-op,
+// never mis-stamp.
+const SHIPPED = DO_STOCK_OUT_STATES;
 
 async function loadScope() {
   const rows = DOS.length

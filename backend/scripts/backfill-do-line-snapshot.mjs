@@ -39,6 +39,8 @@
 // SCOPE=migrated (default) restricts to delivery_orders.migrated_no_stock =
 // true — the documents this writer made. SCOPE=all covers every DO line in the
 // company. DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. Every SET is wrapped in its own CASE ... IS NULL, so a value a person stated is left alone.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

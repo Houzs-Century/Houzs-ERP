@@ -34,6 +34,8 @@
 //   APPLY=1        write. Anything else is a dry run.
 //   PART           renames | merges | all   (default all)
 //   MAX_ROWS       rows to print per section (default 100)
+//
+// RE-RUN: inert. A canonicalised plate is already canonical, and a merged loser row is gone.
 
 import { readFileSync } from "node:fs";
 import { register } from "node:module";

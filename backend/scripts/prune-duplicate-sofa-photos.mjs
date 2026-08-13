@@ -16,6 +16,8 @@
 // and deleting an object no row points at buys nothing.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. The de-duplicated photo_urls array it writes has no duplicates left to prune.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;
