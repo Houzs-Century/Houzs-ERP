@@ -5,7 +5,12 @@
 // live AED_HOUZS book answered on 2026-08-13 with
 // `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`.
 import { describe, expect, test } from 'vitest';
-import { soAgentToStamp, readStaffAgentName } from './so-agent';
+import {
+  soAgentToStamp,
+  readStaffAgentName,
+  readStaffForStamp,
+  followSalespersonToAgent,
+} from './so-agent';
 
 describe('soAgentToStamp', () => {
   test('a create with a salesperson stamps the salesperson NAME', () => {
@@ -85,5 +90,69 @@ describe('readStaffAgentName', () => {
   test('a failed lookup returns null instead of throwing into the create', async () => {
     const sb = staffSb([], true);
     await expect(readStaffAgentName(sb, 'staff-1')).resolves.toBeNull();
+  });
+
+  /* One row, one read: the venue chain fetched the same staff row two
+     statements after the agent needed it. */
+  test('readStaffForStamp carries the venue off the SAME row', async () => {
+    const sb = staffSb([{ id: 'staff-1', name: 'Chang Shi Ting', venue_id: 'venue-7' }]);
+    expect(await readStaffForStamp(sb, 'staff-1')).toEqual({
+      name: 'Chang Shi Ting', venueId: 'venue-7',
+    });
+    /* A venue-less salesperson (an admin under their own name) stays NULL —
+       admins oversee every venue by design. */
+    const noVenue = staffSb([{ id: 'staff-2', name: 'Admin' }]);
+    expect(await readStaffForStamp(noVenue, 'staff-2')).toEqual({ name: 'Admin', venueId: null });
+    expect(await readStaffForStamp(sb, 'nobody')).toBeNull();
+  });
+});
+
+describe('followSalespersonToAgent — the header PATCH', () => {
+  const staffSb = (rows: Array<Record<string, unknown>>) => ({
+    from: () => ({
+      select: () => ({
+        eq: (_col: string, val: unknown) => ({
+          maybeSingle: async () => ({ data: rows.find((r) => r.id === val) ?? null }),
+        }),
+      }),
+    }),
+  });
+  const sb = staffSb([{ id: 'staff-2', name: 'Nurul Hidayah' }]) as never;
+
+  test('reassigning the salesperson moves the agent with it', async () => {
+    const updates: Record<string, unknown> = { salesperson_id: 'staff-2' };
+    const body: Record<string, unknown> = { salespersonId: 'staff-2' };
+    await followSalespersonToAgent(sb, updates, body);
+    expect(updates.agent).toBe('Nurul Hidayah');
+    /* diffFields() audits from `body` through the same field map, so a column
+       written with no entry there changes the order with nothing in its
+       history to say so. */
+    expect(body.agent).toBe('Nurul Hidayah');
+  });
+
+  test('a PATCH that names the agent itself still wins', async () => {
+    const updates: Record<string, unknown> = { salesperson_id: 'staff-2', agent: 'KINGSLEY' };
+    const body: Record<string, unknown> = { agent: 'KINGSLEY' };
+    await followSalespersonToAgent(sb, updates, body);
+    expect(updates.agent).toBe('KINGSLEY');
+  });
+
+  /* `agent` is the LAST record of who sold the order, and the write-back reads
+     it exactly when salesperson_id is empty — clearing both would throw that
+     away. A name that cannot be read is the same call: stale beats none. */
+  test('clearing the salesperson, or an unreadable name, leaves the agent alone', async () => {
+    const cleared: Record<string, unknown> = { salesperson_id: null };
+    await followSalespersonToAgent(sb, cleared, {});
+    expect(cleared.agent).toBeUndefined();
+
+    const unknown: Record<string, unknown> = { salesperson_id: 'staff-gone' };
+    await followSalespersonToAgent(sb, unknown, {});
+    expect(unknown.agent).toBeUndefined();
+  });
+
+  test('a PATCH that does not touch the salesperson touches nothing', async () => {
+    const updates: Record<string, unknown> = { phone: '012' };
+    await followSalespersonToAgent(sb, updates, {});
+    expect(updates).toEqual({ phone: '012' });
   });
 });

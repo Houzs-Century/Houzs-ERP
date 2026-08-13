@@ -55,12 +55,19 @@ describe('nothing writes the agent column from body.agent alone', () => {
   });
 
   test('it derives from the salesperson the order is actually stamped with', () => {
-    const at = code.indexOf('const agentToStamp = soAgentToStamp(');
-    expect(at).toBeGreaterThan(0);
-    const block = code.slice(at, at + 400);
-    expect(block).toContain('body.agent');
-    expect(block).toContain('readStaffAgentName(');
+    const readAt = code.indexOf('readStaffForStamp(');
+    expect(readAt).toBeGreaterThan(0);
+    const block = code.slice(readAt, readAt + 300);
     expect(block).toContain('salespersonIdToStamp');
+    expect(block).toContain('soAgentToStamp(body.agent');
+  });
+
+  /* One staff row, one read. The venue chain fetched the same row for
+     `venue_id` two statements later; two reads of one row is also how the
+     route file grew past a ceiling that may only fall. */
+  test('the venue chain reuses that read rather than issuing its own', () => {
+    expect(code).toContain('stampStaff?.venueId');
+    expect(code).not.toMatch(/\.select\('venue_id'\)/);
   });
 
   test('it is resolved BEFORE every row that carries it', () => {
@@ -78,19 +85,15 @@ describe('the header PATCH keeps the two in step', () => {
      salesperson_id every time. Reassigning the salesperson now has to move the
      agent with it, or the account book keeps naming the previous rep. */
   test('a reassigned salesperson carries the agent with it', () => {
-    const at = code.indexOf("if (typeof updates['salesperson_id'] === 'string'");
-    expect(at).toBeGreaterThan(0);
-    const block = code.slice(at, at + 400);
-    expect(block).toContain("updates['agent'] === undefined");
-    expect(block).toContain('readStaffAgentName(');
-    /* diffFields() audits from `body` through the same map, so a column written
-       with no entry there changes the order with nothing in its history. */
-    expect(block).toContain("body['agent'] = followed");
+    /* The rule — including that `body` is updated so diffFields() can audit it —
+       is asserted in src/scm/lib/so-agent.test.ts. This is the hook. */
+    expect(code).toContain('await followSalespersonToAgent(');
   });
 
   test('it runs before the change-detection read, so a no-op stays a no-op', () => {
-    const at = code.indexOf("if (typeof updates['salesperson_id'] === 'string'");
+    const at = code.indexOf('await followSalespersonToAgent(');
     const beforeRead = code.indexOf("const { data: before, error: beforeError } = await sb.from('mfg_sales_orders')");
+    expect(at).toBeGreaterThan(0);
     expect(beforeRead).toBeGreaterThan(0);
     expect(at).toBeLessThan(beforeRead);
   });
