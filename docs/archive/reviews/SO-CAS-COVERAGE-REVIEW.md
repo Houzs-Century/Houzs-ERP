@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Point-in-time review of `fix/so-cas-mandatory@92167619` (**2026-07-20**). That branch merged; SO version-CAS and the edit lease are live in `backend/src/scm/routes/mfg-sales-orders.ts` and `so-amendments.ts`. Kept as the review record. Kept for history; do not follow it as a current instruction.
+
 # SO CAS / Lease Coverage Review
 
 Reviewed branch: `fix/so-cas-mandatory@92167619`  

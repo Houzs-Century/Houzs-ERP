@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Vendoring finished: zero `/scm/*-v2` routes remain in `frontend/src/App.tsx`, and the native `pages/scm/` tree this file calls "untouched" has since been deleted. Superseded by `docs/CODEBASE-MAP.md` §3. (Moved out of `frontend/src/pages/scm-v2/` on 2026-08-13.) Kept for history; do not follow it as a current instruction.
+
 # SCM 2990-vendoring progress (Houzs)
 
 Goal: replace native `/scm/*` pages with 2990's ACTUAL pages (verbatim layout, Houzs backend).

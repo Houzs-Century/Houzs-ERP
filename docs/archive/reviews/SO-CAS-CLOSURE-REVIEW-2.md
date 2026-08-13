@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Point-in-time review of `fix/so-cas-mandatory@8baa8226` (**2026-07-21**), whose verdict was "never publish this commit". A later head was published; SO version-CAS and the edit lease are live in `backend/src/scm/routes/mfg-sales-orders.ts`. Kept as the review record — the verdict applies to that commit, not to `main`. Kept for history; do not follow it as a current instruction.
+
 # SO Concurrency Closure — Independent Review 2
 
 Reviewed commit: `fix/so-cas-mandatory@8baa8226`  

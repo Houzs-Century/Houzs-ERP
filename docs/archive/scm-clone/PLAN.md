@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The 1:1 SCM clone landed: `frontend/src/pages/scm-v2/` is the canonical `/scm/*` surface, the native `frontend/src/pages/scm/` tree is deleted, and no `-v2` routes remain in `App.tsx`. Superseded by `docs/CODEBASE-MAP.md` §3-4. Kept for history; do not follow it as a current instruction.
+
 # Houzs ← 2990s SCM — 1:1 Clone Program
 
 > Durable spec for the multi-week clone. Read this first every session; it is

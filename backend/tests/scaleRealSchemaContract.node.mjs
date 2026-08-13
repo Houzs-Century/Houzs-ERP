@@ -98,13 +98,17 @@ test("the sharded command reaches the workerd vitest project, not the light one"
   );
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 
-  /* Read WHICH script ci.yml shards, rather than hard-coding a name. The old
-     guard asserted `npm test -- --shard=...` and ci.yml has since moved to
-     `npm run test:workers -- --shard=...` — a better arrangement, since it
-     targets the workerd project directly instead of relying on where an `&&`
-     chain happens to end. A guard naming the script by hand fails on that
-     improvement; a guard that FOLLOWS the workflow keeps checking the thing
-     that matters. */
+  /* Read WHICH script ci.yml shards, rather than hard-coding a name.
+     THE CARRIER CHANGED, and that is the whole lesson: `test` is now
+     `test:light && test:workers`, and CI deliberately shards `test:workers`
+     instead — targeting the workerd project directly rather than relying on
+     where an `&&` chain happens to end. The old guard named `npm test` by hand
+     and so failed on that improvement.
+
+     A second session fixed this same guard the same afternoon by hard-coding
+     `test:workers` instead. Same verdict, and it works — but it pins the name
+     in two places, so the NEXT rename breaks it again. Following the workflow
+     is what stops that recurring. */
   const shardCmd = /npm (?:run )?([\w:-]+) -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/.exec(workflow);
   assert.ok(
     shardCmd,

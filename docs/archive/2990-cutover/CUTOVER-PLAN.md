@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The cutover it plans **flipped 2026-07-21** — `HOUZS_OWNS_2990 = "true"` in `backend/wrangler.toml`. Outcome and the items still open are in `docs/2990-cutover/HANDOFF.md`. Kept for history; do not follow it as a current instruction.
+
 # 2990 → Houzs cutover: fully replace the 2990 backend
 
 **Goal (owner, 2026-07-13):** the 2990 POS talks **entirely** to the Houzs merged

@@ -162,9 +162,11 @@ A file existing is still not evidence a feature is live; check BOTH `App.tsx` an
 feature has no nav entry, no mounted route and no query firing — on the surface
 where it is off.
 
-**Docs that are historical.** `MIGRATION-D1-TO-SUPABASE.md` and
-`HANDOFF-supabase-cutover.md` describe the abandoned Supabase project and a bound
-D1. They are records of a past cutover, not descriptions of today.
+**Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
+`docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
+and a bound D1. They are records of a past cutover, not descriptions of today —
+which is why they now live under `docs/archive/`. See `docs/README.md` for what is
+authoritative for what.
 
 ## 5. Files that are too big to read whole
 
@@ -467,5 +469,7 @@ are marked UNVERIFIED below and re-checking them is not optional.
   whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
   its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
   gap between AutoCount and the ERP**: most of those gaps are decisions.
-- `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
-  with what caveats.
+- `docs/archive/scm-v2-vendoring-progress.md` for what was vendored, when, and with
+  what caveats. Archived — the vendoring finished, so read it as history: it still
+  describes temporary `/scm/<x>-v2` routes and an intact native `pages/scm/` tree,
+  and neither exists any more.

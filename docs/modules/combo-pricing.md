@@ -178,4 +178,4 @@ dependency); a stale `supplier_id` simply reads as unset in the UI.
 
 - `BUG-HISTORY.md` — the anchor 500 entry, and the lesson above
 - `docs/modules/sales-order.md` — where combo pricing lands on a document
-- `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` — what was vendored and with what caveats
+- `docs/archive/scm-v2-vendoring-progress.md` — what was vendored and with what caveats (archived; the vendoring is finished)
