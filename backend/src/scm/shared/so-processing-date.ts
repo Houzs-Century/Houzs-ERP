@@ -128,3 +128,159 @@ export function canonicaliseSoHeaderChanges<T>(
   }
   return out;
 }
+
+// ----------------------------------------------------------------------------
+// THE PAIR RULE — "both dates or neither", in ONE predicate.
+//
+// Owner, restated 2026-08-13 after saying it before: "processing date 和
+// delivery date 必须同时有或者同时没有". A Processing Date is the go-to-
+// production signal and the Delivery Date is what it is promised against; half
+// a pair is a half-stated schedule, and production queues on it.
+//
+// WHY IT MOVED HERE. The rule was written FIVE times, by hand, in five files —
+// the SO create path, the SO header PATCH, the CO create path, the amendment
+// submit path, and (one direction only) so-save-problems. Five copies is how it
+// came to be enforced in five slightly different ways: the CO header PATCH had
+// no copy at all, the amendment APPROVE path had none either, and
+// so-save-problems only ever asked the delivery→processing direction because
+// the other half lived behind a `completeness` block the CO paths do not pass.
+// A rule that is only true on the paths someone remembered is the bug class
+// this repo keeps repeating. One predicate, every write path calls it.
+//
+// GRANDFATHERING IS PART OF THE RULE, not an exception to it. Live orders are
+// honestly unpaired — AutoCount has no delivery date for some imported history
+// — so a save that leaves BOTH dates exactly as it found them must still
+// succeed, or editing a remark on an old order starts failing. Same carve-out
+// the past-date rules in so-save-problems use, and for the same reason.
+// ----------------------------------------------------------------------------
+
+/** The refusal body for an unpaired date pair. `error` is the stable code four
+ *  routes already return by hand, so no client has to learn a new one. */
+export const SO_DATE_PAIR_REFUSAL = {
+  error: 'processing_delivery_must_pair',
+  reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
+} as const;
+
+export type SoDatePairFacts = {
+  /** The Processing Date this write LEAVES on the row (YYYY-MM-DD) or null. */
+  nextProc: string | null;
+  /** The Delivery Date this write LEAVES on the row (YYYY-MM-DD) or null. */
+  nextDeliv: string | null;
+  /** The Processing Date as STORED before this write. Pass null on a create —
+   *  every date there is new, so nothing can be grandfathered. */
+  origProc: string | null;
+  /** The Delivery Date as STORED before this write. Null on a create. */
+  origDeliv: string | null;
+};
+
+/** 'YYYY-MM-DD' or null, from a date, a timestamp, '' or null. The stored
+ *  columns are DATE in Postgres but reach callers as several shapes of string,
+ *  so the compare has to be on a normalised day — otherwise an unchanged
+ *  '2026-09-01T00:00:00+00:00' would read as a change against '2026-09-01' and
+ *  the grandfather carve-out would stop working. */
+export const soDateYmd = (v: unknown): string | null => {
+  const ymd = String(v ?? '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;
+};
+
+/**
+ * The refusal when this write would leave the order holding exactly ONE of the
+ * two dates, or `null` when the pair is legal.
+ *
+ * Fires only when the write CHANGES a date: a stored unpaired pair that this
+ * save leaves untouched is a historical record, not a fresh entry.
+ *
+ * Callers pass EFFECTIVE values — the patch value when the request sets that
+ * key, else the stored one — so editing one date is still checked against the
+ * other already on the row.
+ *
+ * PRESENCE IS NOT PARSEABILITY, and the two are measured differently on
+ * purpose. A value that is present but not a calendar date ('tomorrow', a
+ * half-typed '2026-9') still COUNTS as a date for the pair test, so it is
+ * refused as half a pair rather than silently read as "no date" and let
+ * through; the shape of the value is somebody else's gate. Only the
+ * grandfather compare normalises, because a stored DATE column reaches callers
+ * as '2026-09-01' from one client and '2026-09-01T00:00:00+00:00' from another
+ * and an unchanged date must not read as a change.
+ */
+export function soDatePairRefusal(
+  facts: SoDatePairFacts,
+): typeof SO_DATE_PAIR_REFUSAL | null {
+  const present = (v: unknown): boolean => String(v ?? '').trim() !== '';
+  if (present(facts.nextProc) === present(facts.nextDeliv)) return null;
+  const unchanged =
+    soDateYmd(facts.nextProc) === soDateYmd(facts.origProc) &&
+    soDateYmd(facts.nextDeliv) === soDateYmd(facts.origDeliv) &&
+    present(facts.nextProc) === present(facts.origProc) &&
+    present(facts.nextDeliv) === present(facts.origDeliv);
+  return unchanged ? null : SO_DATE_PAIR_REFUSAL;
+}
+
+/**
+ * CLEARING ONE CLEARS BOTH — the other half of the owner's rule, for the one
+ * shape where refusing would be wrong.
+ *
+ * Removing the Processing Date pulls the order back OUT of Proceed, and it is
+ * already the most-gated write on the header (`scm.so.remove_processing_date`,
+ * super-admin only). Once that clear is authorised, the Delivery Date it was
+ * promised against has nothing left to hang on: the owner's rule says the pair
+ * goes together, so the pair goes together. Refusing instead would make an
+ * authorised removal impossible unless the caller happened to send both keys.
+ *
+ * ONE DIRECTION ONLY, deliberately. Clearing the DELIVERY date on an order that
+ * still holds a Processing Date is NOT cascaded — cascading it would clear the
+ * Processing Date, which is exactly the write the super-admin permission
+ * guards, so the cascade would become the road around that permission. That
+ * direction stays a refusal, and the message names the Processing Date as the
+ * thing to remove.
+ *
+ * Returns the column names to force to null, or [] when nothing cascades.
+ * `procCleared` must be true only when THIS request genuinely clears a stored
+ * Processing Date.
+ */
+export function soDatePairCascadeColumns(i: {
+  procCleared: boolean;
+  /** true when the request itself already names customer_delivery_date — then
+   *  the caller's own value wins and there is nothing to cascade. */
+  delivInPatch: boolean;
+  /** The stored Delivery Date; nothing to clear when it is already null. */
+  origDeliv: string | null;
+}): readonly string[] {
+  if (!i.procCleared || i.delivInPatch) return [];
+  return soDateYmd(i.origDeliv) ? ['customer_delivery_date'] : [];
+}
+
+/**
+ * The Processing Date carried by a REQUEST BODY, under the canonical key or any
+ * key still aliased onto it.
+ *
+ * WHY THIS EXISTS AND NOT A LITERAL. The SO create path read
+ * `body.internalExpectedDd` to decide auto-proceed, and NO client sends that
+ * key — desktop New SO, both mobile surfaces, from-products and the create's own
+ * INSERT all send `processingDate`. So `autoProceed` was always false and an
+ * order created WITH a Processing Date was created UN-proceeded, the exact
+ * inverse of the owner's pinned rule ("只要有 Processing Date, 就代表他 Proceed
+ * 了"). Nothing failed: an absent property is `undefined`, not an error.
+ *
+ * Reads the CANONICAL key first — a body carrying both spellings was written by
+ * newer code and the newer one is the one to believe — then the legacy aliases,
+ * so a client that has not been redeployed keeps working.
+ */
+export function readSoProcessingDateFromBody(
+  body: Record<string, unknown> | null | undefined,
+  aliases: Readonly<Record<string, string>> = SO_HEADER_LEGACY_PAYLOAD_KEYS,
+): string | null {
+  if (body == null) return null;
+  const pick = (k: string): string | null => {
+    const v = body[k];
+    return typeof v === 'string' && v.trim() !== '' ? v : null;
+  };
+  const canonical = pick(SO_PROCESSING_DATE_PAYLOAD_KEY);
+  if (canonical) return canonical;
+  for (const [legacy, target] of Object.entries(aliases)) {
+    if (target !== SO_PROCESSING_DATE_PAYLOAD_KEY) continue;
+    const v = pick(legacy);
+    if (v) return v;
+  }
+  return null;
+}

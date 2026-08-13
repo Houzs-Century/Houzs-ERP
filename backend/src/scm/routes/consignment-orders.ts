@@ -58,6 +58,7 @@ import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
    2026-07-18) — mirrors the SO path. Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+import { soDatePairCascadeColumns, soDatePairRefusal } from '../shared/so-processing-date';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -711,13 +712,13 @@ consignmentOrders.post('/', async (c) => {
   {
     const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
-    /* must-pair stays a short-circuit (structurally-incomplete date pair). */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+    /* must-pair stays a short-circuit (structurally-incomplete date pair), and
+       the predicate is shared/so-processing-date's so the CO paths cannot drift
+       from the SO paths. Every date on a create is new — no originals. */
+    const coCreatePairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (coCreatePairRefusal) return c.json(coCreatePairRefusal, 400);
     /* Aggregate the rest (variants / past-date / processing-≤-delivery) into ONE
        response — mirrors the SO create path. No deposit gate on the consignment
        mirror, so `deposit` is omitted. All dates are new on create. */
@@ -1329,6 +1330,9 @@ consignmentOrders.patch('/:docNo', async (c) => {
      already-past value the edit does NOT change is grandfathered through. The
      helper re-derives past-date + processing-≤-delivery from the effective +
      original dates and folds in the variant offenders collected above. */
+  /* Set when clearing the Processing Date also clears a Delivery Date the
+     request never named — read by the line-level cascade after the write. */
+  let coCascadedDeliveryClear = false;
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1338,9 +1342,35 @@ consignmentOrders.patch('/:docNo', async (c) => {
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    /* THE PAIR RULE, which this path did not have (owner: 同时有或者同时没有).
+       The CO create path has always short-circuited on it, and the SO header
+       PATCH has too, but the CO header PATCH had NO copy: the only pair check it
+       reached was the delivery→processing half inside
+       collectProcessingGateProblems, and even that half is gated on
+       `facts.completeness`, which this call does not pass. So a CO could take a
+       Processing Date with no Delivery Date through a plain PATCH — production's
+       go-ahead with nothing to promise it against. Same predicate, same
+       grandfathering, as every other write path.
+
+       CLEARING ONE CLEARS BOTH, in the one direction that is safe: clearing the
+       Processing Date takes the Delivery Date with it. (The CO header has no
+       remove-processing-date permission of its own; the cascade still runs one
+       way only, so the reverse cannot become a back door if one is added.) */
+    const coCascadeCols = soDatePairCascadeColumns({
+      procCleared: typeof proc === 'string' && (proc || null) === null && !!origProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of coCascadeCols) updates[col] = null;
+    coCascadedDeliveryClear = coCascadeCols.length > 0;
+    const effDelivAfterCascade = coCascadedDeliveryClear ? null : effDeliv;
+    const coPairRefusal = soDatePairRefusal({
+      nextProc: effProc, nextDeliv: effDelivAfterCascade, origProc, origDeliv,
+    });
+    if (coPairRefusal) return c.json(coPairRefusal, 400);
     const coProblems = collectProcessingGateProblems({
       procDate: effProc,
-      delivDate: effDeliv,
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -1375,8 +1405,11 @@ consignmentOrders.patch('/:docNo', async (c) => {
 
   /* Master-follower cascade. When the header's customer_delivery_date changes,
      every non-overridden line picks up the new date. Best-effort. */
-  if (body['customerDeliveryDate'] !== undefined) {
-    const newDate = body['customerDeliveryDate'] as string | null;
+  if (body['customerDeliveryDate'] !== undefined || coCascadedDeliveryClear) {
+    /* A cascaded clear has no body value to read — the header column was set to
+       null above, so the lines must follow it, or MRP keeps ordering by a line
+       date the header no longer holds. */
+    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)

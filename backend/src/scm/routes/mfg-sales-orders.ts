@@ -168,6 +168,12 @@ import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender,
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import {
+  SO_PROCESSING_DATE_COLUMN,
+  readSoProcessingDateFromBody,
+  soDatePairCascadeColumns,
+  soDatePairRefusal,
+} from '../shared/so-processing-date';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -307,7 +313,8 @@ async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise
    overrides are all rejected with 409 so_locked_processing. Status transitions
    (deliver / cancel flow), payments, PO/DO conversions and reads stay open.
    The UI's "Processing Date" lives in processing_date — the ONE column, and
-   now the ONE name (mig 0284 renamed it from internal_expected_dd; the dead
+   now the ONE name (mig 0286 renamed it from internal_expected_dd — 0284 is the
+   consignment proceeded_at retirement, and this comment named it for a day; the dead
    legacy column that used to squat on this name went in 0189). */
 const SO_PROCESSING_LOCKED_RESPONSE = {
   error: 'so_locked_processing',
@@ -3430,13 +3437,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
     /* Processing + Delivery are all-or-nothing (both set or both empty). Kept as
        a SHORT-CIRCUIT (not aggregated): an unpaired date is a structurally-
-       incomplete input, not one of several field-level fixes. */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+       incomplete input, not one of several field-level fixes. The predicate is
+       shared/so-processing-date's, not a local Boolean() compare, so the five
+       write paths that enforce this rule cannot drift apart again. No originals
+       — every date on a create is new, so nothing is grandfathered. */
+    const createPairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (createPairRefusal) return c.json(createPairRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
        (Commander 2026-05-29 — a Processing Date means "ready to build", so every
@@ -5047,7 +5055,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      cannot exist: proceeded, in production, with no day the factory starts. The
      create refuses nothing extra for it — the order is simply created un-
      proceeded, and gets its date (and its Proceed) when someone picks one. */
-  const procDateOnCreate = (body.internalExpectedDd as string | null | undefined) || null;
+  /* Read through the shared helper, not a literal. This line said
+     `body.internalExpectedDd`, a key NO client sends — desktop New SO, both
+     mobile surfaces, from-products and this route's own INSERT all send
+     `processingDate` — so `autoProceed` was always false and an order created
+     WITH a Processing Date was created UN-proceeded, the inverse of the owner's
+     pinned rule. An absent property is `undefined`, not an error, so nothing
+     said a word. The helper accepts the legacy spelling too. */
+  const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
   const autoProceed = !!procDateOnCreate && meetsProceedGate({
@@ -5787,9 +5802,12 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // roll back the status change).
 mfgSalesOrders.patch('/:docNo/status', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
-  /* `internalExpectedDd` — the Processing Date a move to IN_PRODUCTION proceeds
-     WITH, for a caller proceeding an order that does not carry one yet. */
-  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; internalExpectedDd?: string };
+  /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
+     WITH, for a caller proceeding an order that does not carry one yet.
+     `internalExpectedDd` is the legacy spelling of the same key and is still
+     accepted (readSoProcessingDateFromBody); it is the name this route's
+     contract was documented under, and no live client sends it. */
+  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; processingDate?: string; internalExpectedDd?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
@@ -5919,11 +5937,18 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     updated_at: new Date().toISOString(),
   };
   if (toStatus === 'IN_PRODUCTION') {
+    /* Column name bound to the constant, not typed as a string: migration 0286
+       renamed internal_expected_dd -> processing_date and THIS block was the one
+       reader the rename commit missed. A PostgREST select of a column that does
+       not exist is a 42703, so the read returned nothing, `stored` read null,
+       and every proceed either refused for want of a date it already had or
+       500'd on the write below. That is the exact failure shape
+       shared/so-processing-date.ts exists to make impossible. */
     const { data: cur } = await sb.from('mfg_sales_orders')
-      .select('proceeded_at, internal_expected_dd, debtor_name, email, address1, postcode, customer_delivery_date')
+      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; internal_expected_dd?: string | null;
+      proceeded_at?: string | null; processing_date?: string | null;
       debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
@@ -5935,8 +5960,11 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
        The date the proceed proceeds WITH is either already on the order or comes
        in on this request; there is no third source, and today is a guess. */
     const resolved = resolveProceedProcessingDate({
-      supplied: typeof body.internalExpectedDd === 'string' ? body.internalExpectedDd : null,
-      stored: curRow?.internal_expected_dd ?? null,
+      /* Both spellings — the canonical `processingDate` every live client
+         actually sends, and the legacy `internalExpectedDd` this route's
+         contract was documented under. */
+      supplied: readSoProcessingDateFromBody(body as Record<string, unknown>),
+      stored: curRow?.[SO_PROCESSING_DATE_COLUMN] ?? null,
     });
     if (!resolved.ok) return c.json(resolved.refusal, 422);
     if (resolved.write) {
@@ -5956,7 +5984,19 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
         deliveryDate: curRow?.customer_delivery_date,
       }, c.get('companyCode') ?? null);
       if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
-      patch.internal_expected_dd = resolved.date;
+      /* The pair rule, on the one write path that reaches the date without a
+         header patch. soProcessingDateProblemsForDoc above already refuses a
+         missing delivery date through the completeness gate; this is the same
+         invariant stated where the WRITE is, so a future edit to that helper's
+         facts cannot quietly re-open the hole. */
+      const pairRefusal = soDatePairRefusal({
+        nextProc: resolved.date,
+        nextDeliv: curRow?.customer_delivery_date ?? null,
+        origProc: curRow?.[SO_PROCESSING_DATE_COLUMN] ?? null,
+        origDeliv: curRow?.customer_delivery_date ?? null,
+      });
+      if (pairRefusal) return c.json(pairRefusal, 400);
+      patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;
     }
     if (!curRow?.proceeded_at) {
       /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
@@ -7065,6 +7105,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      another date, stays governed by the existing gates (payment ≥30%, variants
      complete, not-in-the-past, processing lock). */
   let superAdminClearsProc = false;
+  /* Set by the date-pair block below when clearing the Processing Date also
+     clears a Delivery Date the request never named. Read at the RPC call so the
+     line-level cascade runs for it too. */
+  let cascadedDeliveryClear = false;
   {
     const proc = body['processingDate'];
     const origProc =
@@ -7185,7 +7229,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        already be on the row; what it may not do is mark an order proceeded with
        no day the factory starts. A date arriving in THIS patch is gated by the
        aggregated Processing-Date block below, which runs before any write. */
-    if (!effOf('internal_expected_dd')?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
+    /* Bound to the constant — this read named `internal_expected_dd`, which
+       migration 0286 renamed away, so `effOf` resolved undefined for EVERY
+       order and this line refused every proceed that came through the header
+       PATCH, including ones whose date arrived in the same request. */
+    if (!effOf(SO_PROCESSING_DATE_COLUMN)?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
   }
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
@@ -7210,16 +7258,41 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
        both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
        structurally-incomplete input, not one of several field-level fixes — there
-       is no meaningful "and also" to report against half a date pair. Only fires
-       when THIS request touches a date; a patch that doesn't touch dates
-       grandfathers any legacy unpaired row through. */
-    const touchesDates = typeof proc === 'string' || typeof deliv === 'string';
-    if (touchesDates && Boolean(effProc) !== Boolean(effDeliv)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+       is no meaningful "and also" to report against half a date pair. The
+       predicate is shared/so-processing-date's, so this path, the create path,
+       the CO paths and both amendment paths state the rule ONCE; the grandfather
+       carve-out (a stored unpaired pair this save leaves alone) lives inside it
+       rather than in a `touchesDates` flag each caller re-derived.
+
+       CLEARING ONE CLEARS BOTH (owner: 同时有或者同时没有). Removing the
+       Processing Date is already super-admin-only (superAdminClearsProc above);
+       once that removal is authorised the Delivery Date it was promised against
+       goes with it, so a caller that sends only `processingDate: ''` no longer
+       has to know to send the delivery key too. Computed BEFORE the refusal so
+       the cascade is what the refusal is judged against. The reverse — clearing
+       only the delivery date — deliberately does NOT cascade: it would clear the
+       Processing Date, which is exactly the write that permission guards. */
+    const cascadeCols = soDatePairCascadeColumns({
+      procCleared: superAdminClearsProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of cascadeCols) updates[col] = null;
+    /* The header column is only half the write: apply_so_header_cas cascades a
+       delivery-date change down to every line_delivery_date behind
+       p_apply_delivery_date, which keys off the request body. A cascade the
+       body never mentioned would move the header and leave every LINE on the
+       old date — the exact split MRP reads (it orders by line_delivery_date).
+       Flagged here so the RPC call below applies both halves. */
+    cascadedDeliveryClear = cascadeCols.length > 0;
+    const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
+    const pairRefusal = soDatePairRefusal({
+      nextProc: effProc,
+      nextDeliv: effDelivAfterCascade,
+      origProc,
+      origDeliv,
+    });
+    if (pairRefusal) return c.json(pairRefusal, 400);
     /* The aggregated report — variants (collected above), the 30% deposit
        (collected above), and the past-date / processing-≤-delivery date rules,
        ALL in one response so the coordinator fixes them in a single pass. The
@@ -7232,7 +7305,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
          processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
       companyCode: c.get('companyCode') ?? null,
       procDate: effProc,
-      delivDate: effDeliv,
+      /* Post-cascade, so the aggregated report judges the row this save will
+         actually leave behind rather than the one the body described. */
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -7338,8 +7413,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       : null,
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
-    p_apply_delivery_date: body['customerDeliveryDate'] !== undefined,
-    p_delivery_date: (body['customerDeliveryDate'] as string | null | undefined) ?? null,
+    p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
+    p_delivery_date: cascadedDeliveryClear
+      ? null
+      : (body['customerDeliveryDate'] as string | null | undefined) ?? null,
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
     p_company_id: activeCompanyId(c) ?? null,
@@ -11926,7 +12003,13 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const nextProc = 'processingDate' in headerChanges ? ymd(headerChanges['processingDate']) : curProc;
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    if ((nextProc !== '') !== (nextDeliv !== '')) {
+    /* Same predicate as every other write path (shared/so-processing-date), with
+       this path's own error code kept: `amendment_dates_xor` is what the
+       amendment UI branches on, and the aim is one RULE, not one string. The
+       stored pair is passed as the originals so an amendment that touches
+       neither date on a legacy unpaired order is still submittable — that is
+       what the amendment queue exists to fix. */
+    if (soDatePairRefusal({ nextProc, nextDeliv, origProc: curProc, origDeliv: curDeliv })) {
       return c.json({
         error: 'amendment_dates_xor',
         reason: 'Processing Date and Delivery Date must be set together — request both, or clear both.',

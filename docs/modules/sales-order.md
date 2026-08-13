@@ -496,17 +496,56 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 | Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. Measured free: of 63 live dated SOs, zero lacked any of these four; 12 lacked only the email that was dropped. |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
 
-Related short-circuit gates: Processing + Delivery all-or-nothing
-(`processing_delivery_must_pair` — the SO create + header PATCH paths 400 on it
-before the aggregator runs; since 2026-08-13 `so-save-problems` ALSO reports the
-reverse direction, a Delivery Date with no Processing Date, as a 422 problem
-under the same code, so a path with no short-circuit of its own — the CO header
-PATCH, the amendment approver, any future caller — cannot write half a pair.
-Grandfathered like the past-date rules: a stored unpaired date the save leaves
-untouched still saves), remove-date is super-admin only
+Related short-circuit gates: remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `processing_date`.
+
+### Both dates or neither — `processing_delivery_must_pair`
+
+*"processing date 和 delivery date 必须同时有或者同时没有"* (owner, restated
+2026-08-13). One predicate, `soDatePairRefusal` in
+`backend/src/scm/shared/so-processing-date.ts`, and **every server write path
+that can set or clear either date calls it**. It is not a UI rule: the client
+guard (`so-form-validate.ts` `soDateGuardError`) still runs first for the
+message, but nothing depends on it.
+
+| Write path | File | Response |
+|---|---|---|
+| SO create | `routes/mfg-sales-orders.ts` (`createSalesOrderCore`) | 400 `processing_delivery_must_pair` |
+| SO header PATCH | `routes/mfg-sales-orders.ts` | 400, and the aggregated 422 report re-states it |
+| SO `/status` → IN_PRODUCTION (proceed writes the date) | `routes/mfg-sales-orders.ts` | 400 |
+| SO amendment SUBMIT | `routes/mfg-sales-orders.ts` | 400 `amendment_dates_xor` |
+| SO amendment APPROVE | `routes/so-amendments.ts` | 409 `amendment_dates_pair_stale` |
+| CO create | `routes/consignment-orders.ts` | 400 |
+| CO header PATCH | `routes/consignment-orders.ts` | 400 |
+| aggregated save report (both directions) | `shared/so-save-problems.ts` | 422 problem |
+| repair script | `scripts/unify-processing-date.mjs` | refuses the transaction |
+
+**GRANDFATHERED, and that is part of the rule.** Live orders are honestly
+unpaired — imported AutoCount history has no delivery date for some — so a save
+that leaves BOTH dates exactly as it found them still succeeds. Only a save that
+CHANGES a date is judged. `backend/scripts/probe-so-date-xor.mjs` counts the
+offenders per company.
+
+**CLEARING ONE CLEARS BOTH, one direction only.** Clearing the Processing Date
+(already super-admin-only) also clears the Delivery Date — on the header AND, via
+`p_apply_delivery_date`, on every `line_delivery_date`, or MRP keeps ordering by
+a line date the header no longer holds. The reverse is a REFUSAL, not a cascade:
+clearing the delivery date alone would have to clear the Processing Date, which
+is exactly the write `scm.so.remove_processing_date` guards.
+
+**The one deliberate exclusion is the 2990 mirror** (`routes/so-mirror.ts`). It
+replicates rows 2990 already committed; a non-2xx keeps the row PENDING in
+2990's outbox and its pg_cron drainer retries forever, so one legacy unpaired
+company-2 order would wedge the queue behind it. The rule for company 2 belongs
+in 2990's own write paths. The route says so in a comment, and
+`tests/soDatePairWiring.test.ts` asserts the comment is still there.
+
+The enumeration is a TEST, not prose: `tests/soDatePairWiring.test.ts` anchors on
+each path's source and fails if one stops calling the predicate. That file exists
+because the rule was previously hand-written in five places and simply missing
+from three — and every unit test over the logic passed the whole time.
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
@@ -532,31 +571,33 @@ production queues by that date.
 | `PATCH /:docNo` `proceededAt` | this patch's `processingDate`, else the stored one |
 | CREATE auto-proceed | `processingDate` on the create — no date means the order is created UN-proceeded, never refused |
 
-> **CORRECTION 2026-08-14 — the table above describes the DESIGN, and the route
-> does not implement it. This is BROKEN IN PRODUCTION RIGHT NOW.** Mig `0286`
-> applied on prod at 2026-08-13T13:46:59Z (Deploy run `31705868668`, `backend`
-> job: `APPLIED 0286_scm_processing_date_one_name.sql (6 statements)`), so the
-> old column is gone and the literals below no longer resolve. Six literals in
-> `backend/src/scm/routes/mfg-sales-orders.ts` were left on the old names when PR
-> #2121 hand-resolved the 13-branch batch merge (`git log -S` on the SELECT
-> string names `d33ac743` as the commit that reintroduced it). Verified on
-> `origin/main` at `0c2a4e88`:
+> **RESOLVED 2026-08-14 — the table above now describes what the route does.**
+> It did not for a day, and the story is worth keeping. Mig `0286` applied on
+> prod at 2026-08-13T13:46:59Z (Deploy run `31705868668`, `backend` job:
+> `APPLIED 0286_scm_processing_date_one_name.sql (6 statements)`), so the old
+> column was gone while SIX literals in
+> `backend/src/scm/routes/mfg-sales-orders.ts` still named it — left behind when
+> PR #2121 hand-resolved a 13-branch batch merge (`git log -S` on the SELECT
+> string names `d33ac743`). Every one of them failed SILENTLY:
 >
-> | line | literal | what it does now |
+> | literal | what it did | now |
 > |---|---|---|
-> | `:5922` | `.select('proceeded_at, internal_expected_dd, …')` | PostgREST answers 42703 and fails the WHOLE query; the error is discarded (`const { data: cur }`), so `curRow` is `null` and every gate below evaluates against nulls |
-> | `:5925` | the row type declares `internal_expected_dd` | agrees with the dead SELECT, so nothing type-complains |
-> | `:5938` | `stored: curRow?.internal_expected_dd` | always `null` |
-> | `:5958` | `patch.internal_expected_dd = resolved.date` | writes a column that does not exist |
-> | `:7187` | `effOf('internal_expected_dd')` | the camel→snake map at `:6715` is `['processingDate','processing_date']`, so this key **cannot** exist — the header PATCH proceed path returns 422 `PROCEED_NEEDS_DATE` unconditionally |
-> | `:5059` | `const procDateOnCreate = (body.internalExpectedDd ?? null)` | no live client sends that key. `SalesOrderNew.tsx:1646`, `MobileNewSO.tsx:1827/1898`, `SalesOrderNewFromProducts.tsx` and the create's own INSERT (`:5254`) and gate (`:5080`) all use `processingDate`. So `autoProceed` is **always false** — an order created WITH a Processing Date is created un-proceeded, which is the exact inverse of the owner's pinned rule |
+> | `.select('proceeded_at, internal_expected_dd, …')` | PostgREST 42703 fails the WHOLE query; the error is discarded (`const { data: cur }`), so `curRow` was `null` and every gate below evaluated against nulls | selects `SO_PROCESSING_DATE_COLUMN` |
+> | the row type declaring `internal_expected_dd` | agreed with the dead SELECT, so nothing type-complained | `processing_date` |
+> | `stored: curRow?.internal_expected_dd` | always `null` | reads the constant |
+> | `patch.internal_expected_dd = resolved.date` | wrote a column that does not exist | writes the constant |
+> | `effOf('internal_expected_dd')` | the camel→snake map is `['processingDate','processing_date']`, so this key could NEVER exist — the header PATCH proceed path returned 422 `PROCEED_NEEDS_DATE` unconditionally | reads the constant |
+> | `body.internalExpectedDd` on create | no live client sends that key (`SalesOrderNew.tsx`, `MobileNewSO.tsx`, `SalesOrderNewFromProducts.tsx` and this route's own INSERT all send `processingDate`), so `autoProceed` was **always false** — an order created WITH a Processing Date was created un-proceeded, the exact inverse of the owner's pinned rule | `readSoProcessingDateFromBody`, which takes the canonical key and still accepts the legacy one |
 >
-> This is a live blocker, **not fixed by this documentation change** (docs-only
-> diff on purpose). The fix is to read `SO_PROCESSING_DATE_COLUMN` /
-> `SO_HEADER_LEGACY_PAYLOAD_KEYS` from
-> `backend/src/scm/shared/so-processing-date.ts`, which already export
-> `'processing_date'` and already map `internalExpectedDd → processingDate`.
-> Until then, believe the code, not this table.
+> **The lesson, and it is the reason this box stays.** Not one of the six was a
+> typo — they were all correct code the day before, and a `RENAME COLUMN` made
+> them wrong without touching them. A column name in a string, and a payload key
+> read off a `Record`, are both invisible to `tsc`. That is precisely what
+> `backend/src/scm/shared/so-processing-date.ts` exists for, and the fix is to
+> read the name FROM it: `SO_PROCESSING_DATE_COLUMN`,
+> `readSoProcessingDateFromBody`, `canonicaliseSoHeaderChanges`.
+> `backend/tests/soDatePairWiring.test.ts` now fails on any live mention of the
+> old name, so the next rename cannot go half-done in silence.
 
 No path guesses a date: a proceed with none returns 422
 `proceed_needs_processing_date` (`PROCEED_NEEDS_DATE` in `order-rules`), because
