@@ -124,20 +124,49 @@ export async function runPull(
    different table for a different document, and nothing joins the two. The old
    name made this column look like the ERP's field to every reader who met it,
    which is the confusion the owner has now called out more than three times. */
+/* WHAT THIS STATEMENT WRITES IS THE POSTGRES TABLE, NOT THE OLD D1 ONE.
+ *
+ * `public.sales_orders` was created by `0000_baseline.sql` with 22 columns and
+ * has gained exactly two since (`customer_email`, 0009; `processing_date` renamed
+ * to `ac_udf_pdate`, 0285). This INSERT named SEVEN columns that have never
+ * existed on it — `transfer_to`, `note`, `inv_addr1..4`, `sync_error` — carried
+ * over verbatim from the D1 schema (`src/db/schema.sql`) at the Postgres cutover.
+ * Postgres answers an unknown column with 42703 and refuses the whole statement,
+ * so EVERY AutoCount sales-order pull threw, `failed` incremented for all of
+ * them, and `runPull` only advances `pull_checkpoint` when `failed === 0` — the
+ * window is refetched forever and the mirror has taken nothing since the cutover.
+ * Nothing surfaced it because the per-row failure is caught and counted.
+ *
+ * `company_id` is the other half. Migration 0083 added it and set it NOT NULL
+ * with no DEFAULT, and this statement never named it, so even with the seven
+ * phantom columns removed the first INSERT of a new doc_no would 23502. It is
+ * resolved in SQL from the companies master rather than passed in, because that
+ * is precisely what 0083's own backfill did (`WHERE code = 'HOUZS'`) and it keeps
+ * the value out of reach of a caller that could get it wrong: this mirror is the
+ * HOUZS account book by construction — AutoCount is company 1's system, 2990 has
+ * its own — so there is no second answer to pick between.
+ *
+ * The four address fields and the note are NOT quietly dropped data: the columns
+ * they were being written to do not exist, so nothing was ever stored in them.
+ * `o.InvAddr1..4` / `o.SOUDF_Note` are still read from AutoCount by the puller's
+ * caller and are simply not part of this table's shape. If they are wanted, the
+ * fix is a migration that adds them, not a statement that pretends they are there.
+ */
 export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST" | "EAST" | "SG"): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO sales_orders (
-       doc_no, region, transfer_to, doc_date, ref, branding, debtor_name, phone,
+       company_id,
+       doc_no, region, doc_date, ref, branding, debtor_name, phone,
        sales_location, sales_agent, local_total, balance, remark2, remark3, remark4,
-       ac_udf_pdate, expiry_date, note, po_doc_no, inv_addr1, inv_addr2, inv_addr3,
-       inv_addr4, venue, attention, sync_status, sync_error, last_modified, updated_at
+       ac_udf_pdate, expiry_date, po_doc_no,
+       venue, attention, sync_status, last_modified, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-       'SYNCED', NULL, ?, datetime('now')
+       (SELECT id FROM companies WHERE code = 'HOUZS'),
+       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       'SYNCED', ?, datetime('now')
      )
      ON CONFLICT(doc_no) DO UPDATE SET
        region = excluded.region,
-       transfer_to = excluded.transfer_to,
        doc_date = excluded.doc_date,
        ref = excluded.ref,
        branding = excluded.branding,
@@ -152,23 +181,16 @@ export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST"
        remark4 = excluded.remark4,
        ac_udf_pdate = excluded.ac_udf_pdate,
        expiry_date = excluded.expiry_date,
-       note = excluded.note,
        po_doc_no = excluded.po_doc_no,
-       inv_addr1 = excluded.inv_addr1,
-       inv_addr2 = excluded.inv_addr2,
-       inv_addr3 = excluded.inv_addr3,
-       inv_addr4 = excluded.inv_addr4,
        venue = excluded.venue,
        attention = excluded.attention,
        sync_status = 'SYNCED',
-       sync_error = NULL,
        last_modified = excluded.last_modified,
        updated_at = datetime('now')`
   )
     .bind(
       o.DocNo,
       region,
-      o.TransferTo ?? null,
       dateOnly(o.DocDate),
       o.Ref ?? null,
       o.SOUDF_BRANDING ?? null,
@@ -183,15 +205,24 @@ export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST"
       o.Remark4 ?? null,
       dateOnly(o.SOUDF_PDate),
       dateOnly(o.SalesExemptionExpiryDate),
-      o.SOUDF_Note ?? null,
       o.SOUDF_ToPONo ?? null,
-      o.InvAddr1 ?? null,
-      o.InvAddr2 ?? null,
-      o.InvAddr3 ?? null,
-      o.InvAddr4 ?? null,
       o.SOUDF_VENUE ?? null,
       o.Attention ?? null,
       o.LastModified ?? null
     )
     .run();
 }
+
+/**
+ * The columns `public.sales_orders` actually has, and the ones this module is
+ * allowed to write. Exported so a test can hold the statement above to the
+ * schema instead of to a reviewer's memory — the seven phantom columns survived
+ * every review of this file for the whole life of the Postgres cutover.
+ */
+export const SALES_ORDERS_MIRROR_COLUMNS = [
+  "id", "company_id", "doc_no", "doc_date", "ref", "branding", "debtor_name",
+  "phone", "sales_location", "sales_agent", "region", "local_total", "balance",
+  "remark2", "remark3", "remark4", "ac_udf_pdate", "expiry_date", "po_doc_no",
+  "venue", "attention", "last_modified", "sync_status", "updated_at",
+  "customer_email",
+] as const;
