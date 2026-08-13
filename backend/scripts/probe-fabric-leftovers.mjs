@@ -144,10 +144,17 @@ async function main() {
       for (const side of [a, b]) {
         const codes = rows.filter((r) => seriesOf(r.fabric_code) === side.toUpperCase()).map((r) => r.fabric_code);
         if (!codes.length) { note(`    ${side}: 系列不存在`); continue; }
-        const [{ n: soN }] = await sql`SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
-                                       WHERE company_id = ${CO} AND fabric_code = ANY(${codes})`;
+        /* There is no fabric_code column on an SO line — the pick lives in the
+           `variants` jsonb, under any of the aliases so-variant-rule accepts
+           for the fabric axis (fabricCode / colorCode / colourCode /
+           fabricColor). Counting only one of them would undercount. */
+        const [{ n: soN }] = await sql`
+          SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+          WHERE company_id = ${CO} AND NOT cancelled
+            AND coalesce(variants->>'fabricCode', variants->>'colorCode',
+                         variants->>'colourCode', variants->>'fabricColor') = ANY(${codes})`;
         const [{ n: colN }] = await sql`SELECT count(*)::int AS n FROM scm.fabric_colours
-                                        WHERE fabric_id = ${side.toUpperCase()}`;
+                                        WHERE company_id = ${CO} AND fabric_id = ${side.toUpperCase()}`;
         note(`    ${String(side).padEnd(10)} 颜色 ${String(codes.length).padStart(3)} 个 | SO 行引用 ${String(soN).padStart(4)} | 选单颜色行 ${colN}`);
         note(`        codes: ${codes.slice(0, 12).join(", ")}${codes.length > 12 ? " …" : ""}`);
       }
