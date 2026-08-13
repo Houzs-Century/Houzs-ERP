@@ -1,3 +1,179 @@
+## PO -> GRN convert died on `there is no row at position -1` [high]
+
+**Symptom** - `/po-to-gr` returns 500 on the live book. `/so-to-do` on the same
+service, same shape of call, succeeds - `DO-011260` and `DO-011262` are the
+proof. So the transfer primitive itself works; only the purchase side of it
+fails. The message says nothing about purchasing: `there is no row at position
+-1`.
+
+**Root cause (traced, not guessed)** - the third argument of
+`AddPartialTransferDetail(fromDocType, fromDocDtlKeys, transferMaster)` was
+`false` on all four conversions. That flag copies the SOURCE document's header
+master - supplier, currency, terms - onto the target. With `false` the GRN is
+constructed with no supplier, the purchase detail constructor looks that
+supplier up in the master table, `IndexOf` returns `-1`, and the SDK indexes the
+row collection at `-1`. The sales classes tolerate `false`, which is why DO and
+IV never showed it and why the failure looked purchase-specific rather than
+argument-specific.
+
+**Two theories were tested first and both are wrong**, recorded so they are not
+re-chased: (1) that a headless process was being refused an "edit transfer
+detail" dialog - `DisableShowEditTransferDetailForm()` was added and the
+exception did not change by one character; (2) that `PurchaseHeader` failed to
+set the supplier - `SalesHeader` does not set one either, and it passes.
+
+**Fix** - `transferMaster: true` on the two PURCHASE conversions (`GR`, `PI`).
+The two sales conversions keep `false` deliberately: they are proven in the live
+book with it, and this change is not the place to disturb them.
+
+**Lesson** - a boolean whose name is a noun deserves the reflected signature
+read before it is passed. The argument had been `false` since the file was
+written, and every debugging theory pointed at purchasing because purchasing was
+the only side that broke - the difference was in the call, not in the module.
+
+**Ref** - `fix/ac-convert-headless`, 2026-08-12. Compiles clean locally (48,128
+bytes); NOT yet exercised against the live book - the swap must run on the host.
+
+## The stock-location gate left "New order from catalogue" unable to raise ANY company-1 order [high]
+
+**Symptom** - on company 1 (Houzs Century), every cart built on
+`/scm/sales-orders/new/from-products` was refused at Create with
+`422 validation_failed` / `so_state_required` - "Pick the delivery State before
+creating this order." There is no State field on that screen, and no way to
+reach one without abandoning the cart, so the page could not create an order at
+all. Company 2 (2990) was unaffected.
+
+**Root cause** - two correct decisions that were never checked against each
+other. The page collects no address BY DESIGN (its own header says "Payments and
+address are added on the SO detail after save") and lands CONFIRMED. PR #2112
+then made a resolved `sales_location` mandatory at CREATE for the companies in
+`LOCATION_REQUIRED_COMPANY_CODES`, gated on `asDraft !== true`. A flow that
+collects no State and does not draft satisfies neither arm of that gate.
+
+The gate's own DRAFT exemption was the missing piece and was already sitting
+there: `SalesOrderNewGuided` collects no address either and was never affected,
+because it lands a draft unconditionally. #2112 recognised the collision on the
+from-products page and answered it as UI copy - the page told the operator to
+"Switch to Full form" - which is a refusal explained, not an order created, and
+it arrived only after the cart was built. (The module guide claimed the page
+said so "up front"; it never did. That claim is also fixed.)
+
+**Fix** - the page lands a DRAFT for exactly the companies the location rule
+covers, read from the ONE shared list via the new
+`companyRequiresStockLocation` in `frontend/src/vendor/scm/lib/so-form-validate.ts`
+(twin of the backend predicate of the same name). A draft is never written to
+AutoCount, so it owes the account book no Location; the operator adds the
+address on the SO detail and confirms there, where the `DRAFT -> live`
+transition re-runs the same gate. Nothing is bypassed - the gate is deferred to
+the only screen that can satisfy it. Company 2 and every uncovered company keep
+landing CONFIRMED, and adding a company to the list now moves this page with it
+instead of breaking it. The shared `soStockLocationError` call stays, passed
+`asDraft: landsDraft`, so the day this flow stops drafting it is gated
+automatically rather than silently minting locationless orders - the same wiring
+the guided wizard uses. Page copy and the CTA now say "Save draft SO" and
+explain the next step.
+
+**Lesson** - **a gate with an exemption must be checked against every surface,
+because the surface that needs the exemption is the one that cannot satisfy the
+rule.** #2112 correctly listed all four create surfaces and correctly worked out
+that this one could never pass; the step it skipped was asking whether the
+exemption it had just written applied. A surface that is told to go and use a
+different screen is a surface that has been switched off.
+
+**Ref** - 2026-08-13.
+## The State dropdown was cut off after two or three states on every address form [medium]
+
+**Symptom** - the owner, on the Sales Order detail address block: "我的 state 的那个
+UI 也是被直接斩断了,然后很难、很辛苦". Opening State showed MALAYSIA, Johor, Kedah
+and then nothing - the rest of the 16 states existed but were sliced off at the
+card's edge, so picking anything past Kedah meant fighting a list you could not
+see.
+
+**Root cause (traced to the declaration)** - `StatePicker.module.css` had
+`.panel { position: absolute; top: calc(100% + 4px); z-index: 60 }` inside
+`.comboWrap { position: relative }`, i.e. the menu was a normal child of the
+field. `position: absolute` escapes layout flow, but it does NOT escape an
+ancestor's `overflow` clip - any card, drawer or section between the field and
+the viewport that sets `overflow: hidden`/`auto` clips the menu at its own box,
+and the SO detail's address card is only ~150px tall below the field. z-index
+was never the problem, so the earlier bump to 60 could not have helped. The
+component had no `createPortal`, no `position: fixed` and no
+`getBoundingClientRect` anywhere - every other picker in this codebase
+(`SoLineCard`'s SKU/fabric menus, `SearchableSelect`) had already been converted
+to a body portal for exactly this reason, and this one was missed.
+
+**Fix** - the panel is `createPortal(..., document.body)` with
+`position: fixed`, and its top/bottom/left/width/max-height are measured from
+the input's `getBoundingClientRect()`. A `useLayoutEffect` re-measures on
+`scroll` in the CAPTURE phase (the field usually sits in a scrolling card or
+drawer, and those scroll events never reach `window` on the bubble path) and on
+`resize`, removing both listeners when the list closes or the component
+unmounts. When the space below the input cannot hold the list and the space
+above holds more, the panel anchors by its `bottom` edge and grows upward
+instead. Behaviour is untouched: options still commit on `onMouseDown` +
+`preventDefault` so the pick lands before the input blurs, `onBlur` still
+closes, and Escape/arrows/Enter are unchanged - a portal moves the DOM node but
+React events still propagate along the REACT tree, so hosts that close on a
+click in their own subtree (the Warehouse drawer's backdrop) behave as before.
+Mobile is untouched: it passes `compact`, which is a native `<select>`.
+
+**Verified** - reproduced in an isolated harness (a `overflow: hidden` card,
+the shape of the real address block): pre-fix, exactly two states rendered;
+post-fix the full 280px scrollable list paints over the card edge, flips above
+the input near the viewport bottom, and picking still reports
+`("Penang", "Malaysia")`. 13 new tests in `StatePicker.test.tsx`; the 7
+placement ones fail on the pre-fix tree.
+
+**Lesson** - **`position: absolute` is not an escape hatch from `overflow`; only
+leaving the subtree is.** Three menus in this repo were portalled one at a time,
+each as its own bug report, because the fix was applied to the component that
+was complained about rather than to the class. When a shared control is
+converted, grep for its siblings (`grep -L createPortal` over the components
+that render a floating panel) before closing the ticket.
+
+**Ref** - `fix/state-picker-portal`, 2026-08-13
+## Two ways the sofa write-back could pick a different item for the same sofa [high]
+
+Found while giving the four ambiguous sofa models a single canonical item. Both
+are the same class: one fact derived in two places that were allowed to disagree.
+
+**1. A compartment resolved differently from its own collapsed build.**
+`resolveAcItemCode` had a fallback that sent a compartment (`9028-1A(LHF)`)
+through the model base code, widening the candidate list with every AutoCount
+model the cutover folded onto that ERP model (`SOFA_MODEL_ALIAS`). So a
+compartment of 9028 saw `HOK-5530 SOFA` through the alias and took it on the
+HOK preference, while `9028-1S` itself sees only the two brand items and falls
+through. Resolving one line at a time and resolving the built document gave two
+different AutoCount items for one sofa.
+
+**Fix** - the SHAPE is now decided before the resolver runs, so the resolver
+does no sofa reasoning at all: a folded line arrives as `<model>-1S`, an
+unfolded one as its own compartment code, and each resolves to what it is. The
+alias widening stays, restricted to base codes, which is the only shape it was
+ever meaningful for.
+
+**2. A run of ONE compartment stopped folding.** The new shape rule reads the
+DtlKeys — compartments sharing one key are one line in the book and fold;
+distinct keys are already separate lines and do not. A run of length one always
+satisfies "all keys distinct", so every single-piece build silently stopped
+folding. The visible damage was in the refusal tests: four of them went quiet,
+passing lines through instead of refusing a bad Desc2, because a passthrough
+line is never handed to the code that refuses.
+
+**Fix** - the distinct-keys test requires at least two compartments.
+
+**A third was caught in review before it shipped.** The first version of the
+shape rule was "does the line have a key". A new order gets its keys back from
+the create, so its very first edit would have folded two real account-book lines
+into one. The owner spotted it: *"如果他有 delete 东西等等，就算是建立新的
+order，他就会整个 SKU 换掉，不是吗？"*
+
+**Lesson** - **when a pipeline decides a shape, nothing downstream may re-derive
+it.** Every one of these came from the resolver holding its own opinion about
+what a sofa is, alongside the collapse that had already decided. The fix that
+actually holds is not a better opinion, it is deleting the second one.
+
+**Ref** - `feat/ac-sofa-default-code`, 2026-08-13
 ## A new workflow was wired to two secrets that do not exist, by copying the one workflow that already was [medium]
 
 **Symptom** - the first dispatch of "Re-queue skipped AutoCount documents" died
