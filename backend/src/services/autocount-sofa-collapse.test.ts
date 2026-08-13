@@ -63,8 +63,18 @@ function decoded(row: AcSofaCorpusRow) {
 }
 
 /** The compartment rows the importer would have written for this build. */
+/** Any non-null value; only its SAMENESS across a build matters. */
+const CORPUS_DTLKEY = 4242;
+
 function erpRows(row: AcSofaCorpusRow, pieces: string[], ps: ReturnType<typeof parseSofa>): CollapsibleLine[] {
   return pieces.map((comp, i) => ({
+    /* ONE SHARED KEY, because every corpus row IS one line in the account book —
+       that is what makes it a corpus row. Since 2026-08-13 the shared key is
+       what tells collapseSofaLines this build is folded there; compartments
+       with distinct keys, or with none, are left as separate lines so a NEW
+       order sends one AutoCount line per ERP line. A fixture with no key would
+       be describing a document the book has never seen. */
+    linked_ac_dtlkey: CORPUS_DTLKEY,
     item_code: `${row.model}-${comp}`,
     item_group: 'sofa',
     description: `SOFA ${row.model} ${comp}`,
@@ -348,6 +358,9 @@ describe('the two corrections that a naive inverse gets wrong', () => {
 describe('ECHO stops being the answer the moment the row disagrees with it', () => {
   const pair = (over: Partial<CollapsibleLine>, d2 = '1EL + 1ER (28") / COL: BEIGE'): CollapsibleLine[] =>
     ['9028-1A(LHF)', '9028-1A(RHF)'].map((code, i) => ({
+      /* One shared key — these pairs stand for a build the book already holds
+         as a single line, which is the only shape that folds. */
+      linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
       description2: d2, qty: 1, unit_price_centi: i === 0 ? 500000 : 0,
       variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: [] },
@@ -436,6 +449,10 @@ describe('ECHO stops being the answer the moment the row disagrees with it', () 
 describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   const build = (over: Partial<CollapsibleLine>[]): CollapsibleLine[] =>
     over.map((o) => ({
+      /* Shared key: these are builds the book holds as one line, the only shape
+         that folds and therefore the only shape that can be refused for a bad
+         Desc2. Without it they are simply left alone. */
+      linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: '9028-1S', item_group: 'sofa', description: 'SOFA 9028',
       description2: '1 (28") / COL: BEIGE', qty: 1, unit_price_centi: 0, ...o,
     }));
@@ -514,10 +531,12 @@ describe('grouping — where one sofa ends and the next begins', () => {
     const a = '1 + 1 (28")';
     const b = '2 + 2 (30")';
     const res = collapseSofaLines([
-      { item_code: '9028-1A(LHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 100 },
-      { item_code: '9028-1A(RHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 0 },
-      { item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 200 },
-      { item_code: '9028-2A(RHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 0 },
+      /* Two builds the book holds as two lines, so two keys — and each build's
+         own pair shares one. */
+      { linked_ac_dtlkey: 11, item_code: '9028-1A(LHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 100 },
+      { linked_ac_dtlkey: 11, item_code: '9028-1A(RHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 0 },
+      { linked_ac_dtlkey: 22, item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 200 },
+      { linked_ac_dtlkey: 22, item_code: '9028-2A(RHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 0 },
     ]);
     expect(res.refusals).toEqual([]);
     expect(res.lines).toHaveLength(2);
@@ -527,7 +546,9 @@ describe('grouping — where one sofa ends and the next begins', () => {
 
   it('emits N identical lines for an EXACT repeat, and refuses a ragged run', () => {
     const d2 = '1 + 1 (28")';
+    /* Folded in the book, hence one key across the run. */
     const mk = (code: string) => ({
+      linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: 'S', description2: d2,
       qty: 1, unit_price_centi: 0,
     });
@@ -612,5 +633,61 @@ describe('splitSofaCode', () => {
     }
     expect(compartmentLike).toBeGreaterThan(50);
     expect(offenders).toEqual([]);
+  });
+});
+
+
+/* Owner 2026-08-13. A NEW order sends one AutoCount line per ERP line —
+   '9028-1A(LHF)' and '9028-2A(RHF)' each go in as themselves. Old orders keep
+   the folded shape the book already holds them in. The DtlKeys are what tell
+   the two apart, per build, so one document can carry both. */
+describe('folding follows the shape AutoCount already holds, not the item code', () => {
+  const comp = (code: string, over: Partial<CollapsibleLine> = {}): CollapsibleLine => ({
+    item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
+    description2: '1A(LHF) + 2A(RHF) (28")', qty: 1, unit_price_centi: 0, ...over,
+  });
+
+  it('NO keys — a create — sends one line per ERP line', () => {
+    const res = collapseSofaLines([comp('9028-1A(LHF)', { unit_price_centi: 399000 }), comp('9028-2A(RHF)')]);
+    expect(res.refusals).toEqual([]);
+    expect(res.lines.map((l) => l.item_code)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
+    expect(res.lines.every((l) => l.via === 'passthrough')).toBe(true);
+  });
+
+  it('ONE shared key — the book holds it folded — stays folded', () => {
+    const res = collapseSofaLines([
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 77, unit_price_centi: 399000 }),
+      comp('9028-2A(RHF)', { linked_ac_dtlkey: 77 }),
+    ]);
+    expect(res.refusals).toEqual([]);
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0].item_code).toBe('9028-1S');
+    expect(res.lines[0].linked_ac_dtlkey).toBe(77);
+  });
+
+  it('DISTINCT keys — already two lines there — are left as two', () => {
+    /* The case that broke the first version of this rule: a new order gets its
+       keys back from the create, so its very first edit must not fold two real
+       book lines into one. */
+    const res = collapseSofaLines([
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 81, unit_price_centi: 399000 }),
+      comp('9028-2A(RHF)', { linked_ac_dtlkey: 82 }),
+    ]);
+    expect(res.refusals).toEqual([]);
+    expect(res.lines.map((l) => l.item_code)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
+    expect(res.lines.map((l) => l.linked_ac_dtlkey)).toEqual([81, 82]);
+  });
+
+  it('MIXED keys still fold, so the keyless-line refusal can stop the document', () => {
+    /* Some compartments keyed means the book DOES hold it folded and the ERP's
+       record is incomplete. Emitting them separately would append duplicates of
+       a line already in a licensed ledger, so this keeps the old treatment:
+       fold, key resolves to null, the caller refuses and asks for a backfill. */
+    const res = collapseSofaLines([
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 90, unit_price_centi: 399000 }),
+      comp('9028-2A(RHF)'),
+    ]);
+    expect(res.lines).toHaveLength(1);
+    expect(res.lines[0].linked_ac_dtlkey ?? null).toBeNull();
   });
 });

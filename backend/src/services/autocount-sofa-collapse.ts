@@ -438,6 +438,44 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
 
   const flush = () => {
     if (!run.length || !runModel) { run = []; runModel = null; runDesc2 = null; return; }
+
+    /* COLLAPSE ONLY WHAT AUTOCOUNT ALREADY HOLDS AS ONE LINE.
+     *
+     * Owner 2026-08-13: a NEW order sends one AutoCount line per ERP line —
+     * '9028-1A(LHF)' and '9028-2A(RHF)' each go in as themselves. Old orders
+     * are untouched, and the book is full of them in the folded shape: 658 real
+     * sofa lines, one line per build with the compartments in Desc2.
+     *
+     * The keys say which is which, and they say it per BUILD, so a document can
+     * hold both shapes without either being guessed at:
+     *
+     *   compartments sharing ONE DtlKey -> one line in the book -> fold, so an
+     *     edit rewrites that line's Desc2 instead of appending duplicates.
+     *   compartments with DISTINCT keys -> already separate lines -> leave them.
+     *   no keys at all                  -> the book has never seen this -> leave
+     *     them, which is what makes a create send one line per ERP line.
+     *
+     * "Has a key" would NOT do: a new order's lines get their keys back from
+     * the create, so its first edit would fold two real book lines into one.
+     *
+     * MIXED keys are neither, and they are the dangerous one: some compartments
+     * of a build carrying a key means the book DOES hold it folded, while the
+     * ERP's record of that is incomplete. Emitting them separately would append
+     * duplicates of a line already in a licensed ledger. Those still fold, so
+     * the key resolves to null and the existing keyless-line refusal stops the
+     * document and asks for a backfill — unchanged behaviour, deliberately. */
+    const keys = run.map((x) => x.line.linked_ac_dtlkey ?? null);
+    const neverSent = keys.every((k) => k == null);
+    const alreadySeparate = keys.every((k) => k != null)
+      && new Set(keys.map(String)).size === keys.length;
+    if (neverSent || alreadySeparate) {
+      for (const x of run) out.push({ ...x.line, sourceIndexes: [x.index], via: 'passthrough' });
+      run = [];
+      runModel = null;
+      runDesc2 = null;
+      return;
+    }
+
     const r = collapseRun(run, runModel);
     if ('refusal' in r) {
       refusals.push({
