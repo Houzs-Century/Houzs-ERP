@@ -16,6 +16,33 @@
 // by `.eq('id', ...)` (or an id-shaped column) and contains none of the scope
 // helpers anywhere in its body.
 //
+// ⚠️ WHAT THIS SCRIPT IS, AND IS NOT — read before quoting its number.
+//
+// It is a LEAD GENERATOR. It found every cross-company leak fixed on
+// fix/company-scope-sweep, and that is its value.
+//
+// It is NOT a proof of absence. Deciding "is this statement scoped" needs to
+// know which builder a value holds and where a predicate was composed, and this
+// is regexes over lines. In ONE DAY (2026-08-13) it was wrong in four distinct
+// ways, each found only because a human re-read the code:
+//
+//   1. a lost `\s` / `\b` made the named-handler resolver match nothing, so it
+//      silently scanned the WRONG function bodies — and hid a cross-company GL
+//      posting. Repairing it took the count UP, 34 -> 37.
+//   2. it counted a helper NAME appearing anywhere in a handler as scoping, so
+//      delivery-orders-mfg PATCH /:id passed on an `activeCompanyId(c)` that
+//      sits AFTER the write, inside an audit row's companyId field.
+//   3. the statement window anchored on `.from(`, missing the wrapping
+//      `scopeToCompanyId(` on the line ABOVE — it flagged six handlers that
+//      were already correct.
+//   4. the window then ran too far FORWARD and swept the next statement in,
+//      re-excusing that same DO handler a third time.
+//
+// So: a NON-ZERO result is worth reading. A ZERO result means "this heuristic
+// found nothing", not "there is nothing". The gates on
+// fix/company-scope-sweep were each verified by opening the handler, its guard
+// function and the table's DDL — that reading, not this number, is the evidence.
+//
 // WHAT IT CANNOT SEE, stated so a clean run is not over-read:
 //   - a handler scoped indirectly, e.g. by first resolving a parent that was
 //     itself scoped. Those show up as false positives; annotate with
@@ -126,8 +153,12 @@ const ID_PREDICATE = /\.eq\(\s*['"`](id|[a-z_]+_id)['"`]/;
    tables proven to carry company_id — because a wide list on a checker that
    cannot parse SQL would produce noise, and noise is how a checker dies. */
 const RAW_SQL_STMT = /\.prepare\(|\bsql`|\bdb\.query\(/;
+/* `company_id` bare (no `=`) counts too: an INSERT names it in the column list,
+   e.g. `INSERT INTO project_venues (name, ..., company_id) VALUES (...)`. That
+   is the row being stamped with its company, which is the scoping act for a
+   create. Requiring `=` or `IN` reported every such INSERT as unscoped. */
 const RAW_SQL_SCOPED =
-  /company_id\s*(=|IN)|activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred/i;
+  /\bcompany_id\b|activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred/i;
 const RAW_SQL_TABLES =
   /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:scm\.)?(warehouses|mfg_sales_orders|delivery_orders|purchase_orders|grns|purchase_invoices|sales_invoices|payment_vouchers|suppliers|mfg_products|project_venues|trips|stock_transfers|consignment_sales_orders|consignment_delivery_orders)\b/i;
 
@@ -298,8 +329,21 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
       let end = start;
       let depth = 0;
       for (let k = start; k < scanBody.length && k < start + 25; k++) {
-        end = k;
         const line = scanBody[k] ?? "";
+        /* A BLANK LINE ENDS THE WINDOW. Paren-depth alone was not enough: a
+           multi-line chained builder left depth non-zero past its own `;`, the
+           window ran the full 25 lines, and it swept in the NEXT statement.
+
+           That is not theoretical — it re-excused the DO PATCH. Its
+           `update(updates).eq('id', id)` window reached down to a
+           recordEntityAudit call whose `companyId:` field falls back to
+           `activeCompanyId(c)`, and the audit field counted as the predicate.
+           The same handler, fooled the same way, for the third time today.
+
+           This codebase separates statements with blank lines consistently, so
+           a blank line is a firmer boundary than counting brackets. */
+        if (k > start && line.trim() === "") break;
+        end = k;
         for (const ch of line) {
           if (ch === "(") depth++;
           else if (ch === ")") depth--;
@@ -335,7 +379,31 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
       const stmt = statementAround(i);
       return SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
     });
-    if (delegated || hasScopedQuery) return;
+    /* THE BUILDER-IN-A-VARIABLE SHAPE, which is legitimate and common:
+
+           const query = supabase.from('x').update(...).eq('id', id);
+           const { error } = await scopeToCompany(query, c);
+
+       The scope is applied on a LATER line than the `.from(`, so the
+       statement window cannot see it — personal-quick-picks DELETE /:id is
+       exactly this and is correctly scoped. A primitive called with a BARE
+       IDENTIFIER (not `sb.from(...)`) is wrapping a builder held in a variable,
+       which only happens when someone is scoping it.
+
+       RESTRICTED TO THE THREE QUERY-WRAPPING HELPERS. The first cut ran this
+       over every primitive and matched `activeCompanyId(c)` — `c` is a bare
+       identifier too — which silently re-opened the exact hole this whole
+       exercise started from: the DO PATCH passed again. I only found that
+       because I removed the DO fix and re-ran, and the checker said 0.
+
+       The comment I wrote at the time claimed the regex could not match a
+       context argument. It could. Asserted below now instead of asserted in
+       prose. */
+    const BUILDER_WRAPPERS = ["scopeToCompany", "scopeToCompanyId", "scopeToAllowedCompanies"];
+    const wrapsABuilder = BUILDER_WRAPPERS.some((h) =>
+      new RegExp(`\\b${h}\\s*\\(\\s*[A-Za-z_$][\\w$]*\\s*[,)]`).test(joined),
+    );
+    if (delegated || hasScopedQuery || wrapsABuilder) return;
 
     /* Statement-level hit collection is deliberately NOT used to decide the
        verdict — this codebase wraps builders across many lines and a regex
@@ -347,7 +415,21 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
        than being bolted onto the builder test above. */
     scanBody.forEach((l, i) => {
       if (!RAW_SQL_STMT.test(l)) return;
-      const stmt = scanBody.slice(i, Math.min(i + 12, scanBody.length)).join("\n");
+      /* LOOK BACK, not only forward. The predicate is routinely assembled on the
+         line ABOVE the statement —
+
+             const companyPred = activeCompanySql(c);
+             const existing = await c.env.DB.prepare(
+               `SELECT ... WHERE LOWER(name) = LOWER(?)${companyPred} LIMIT 1`)
+
+         — so a window that begins at `.prepare(` sees the interpolation
+         `${companyPred}` and not what it holds, and reports a correctly scoped
+         statement as unscoped. That mis-anchor produced five phantom findings in
+         venues.ts alone, every one of which is scoped. Fourth time in this
+         file's history that a window started too late; the fix is the same each
+         time and it is now the same shape as statementAround's. */
+      const back = Math.max(0, i - 6);
+      const stmt = scanBody.slice(back, Math.min(i + 12, scanBody.length)).join("\n");
       if (!RAW_SQL_TABLES.test(stmt)) return;
       if (RAW_SQL_SCOPED.test(stmt)) return;
       const abs = scanOffset + i;
