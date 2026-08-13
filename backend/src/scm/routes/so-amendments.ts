@@ -562,6 +562,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      Re-validate against the SO's CURRENT other date at the moment of
      approval: the last write that can still say no. Fail-open on a missing SO
      row — the apply path right below owns that refusal. */
+<<<<<<< HEAD
   /* Legacy stored spellings rewritten onto today's keys BEFORE any of the three
      `in headerChanges` tests below reads them. Both gates in this block — the
      date-pair re-check and the deposit gate — are keyed on the literal payload
@@ -571,15 +572,19 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      write side. */
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('internalExpectedDd' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
+=======
+  const headerChanges = amendment.header_changes ?? null;
+  if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('internal_expected_dd, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
+      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
-    const cur = (soDates ?? {}) as { internal_expected_dd?: string | null; customer_delivery_date?: string | null };
+    const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: unknown): string => (v == null ? '' : String(v).slice(0, 10));
-    const nextProc = 'internalExpectedDd' in headerChanges
-      ? ymd(headerChanges['internalExpectedDd'])
-      : ymd(cur.internal_expected_dd);
+    const nextProc = 'processingDate' in headerChanges
+      ? ymd(headerChanges['processingDate'])
+      : ymd(cur.processing_date);
     const nextDeliv = 'customerDeliveryDate' in headerChanges
       ? ymd(headerChanges['customerDeliveryDate'])
       : ymd(cur.customer_delivery_date);
@@ -594,7 +599,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }
 
     /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
-       Approving an amendment can SET internal_expected_dd through
+       Approving an amendment can SET processing_date through
        header_changes, and until now the only thing checked here was the date
        ORDER above. So an order could acquire a Processing Date — production's
        go-ahead — with no deposit and no delivery address, simply by routing the
@@ -609,7 +614,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
        Only when the amendment SETS a non-empty date. Clearing it, or an
        amendment that touches only the delivery date, is untouched — a gate that
        blocks REMOVING a date would trap an order it was meant to protect. */
-    if (nextProc !== '' && 'internalExpectedDd' in headerChanges) {
+    if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
         postcode?: string | null; local_total_centi?: number | null;

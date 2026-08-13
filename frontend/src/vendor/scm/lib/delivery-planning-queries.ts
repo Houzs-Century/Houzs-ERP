@@ -85,6 +85,7 @@ export type PlanningOrder = {
      with the amend dates above. */
   amend_reason: string | null;
   effective_delivery_date: string | null;
+<<<<<<< HEAD
   /* The SALES ORDER's Processing Date, and nothing else. NULL on every
      synthetic row (`row_type` assr / dp / project): a service leg, a DP job and
      a PMS project window are not sales orders and have no processing date — a
@@ -97,6 +98,9 @@ export type PlanningOrder = {
      trigger, the DP order's requested date, the PMS SETUP/DISMANTLE window
      start. NULL on `so` rows, which are orders rather than jobs. */
   job_date: string | null;
+=======
+  processing_date: string | null;
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
   /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
      lines, so the SO is soft-locked with no processing date involved. Read by
      DeliveryFieldsDrawer's procLockActive call to route a replacement_disposal

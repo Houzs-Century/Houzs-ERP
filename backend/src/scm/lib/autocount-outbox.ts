@@ -214,6 +214,7 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
+<<<<<<< HEAD
 /* The Processing date is INTERPOLATED from the shared constant, not spelled out
    here. This list is a STRING handed to PostgREST, so it is one of the surfaces
    that reads a column by NAME: rename the column and leave the literal and this
@@ -226,6 +227,14 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    which makes the row come back as GenericStringError. */
 const SO_HEADER_COLS =
   `doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, ${SO_PROCESSING_DATE_COLUMN}, linked_ac_docno` as const;
+=======
+/* processing_date is the SO's "Processing date" — the ONE storage behind that
+   UI label, under the ONE name since mig 0284 (0189 had already dropped the
+   dead legacy column of this name; 0284 then renamed the live
+   internal_expected_dd onto it). It leaves as the PDate UDF. */
+const SO_HEADER_COLS =
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -1451,12 +1460,17 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
      in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
      this function — a cleared date sends nothing rather than blanking the
      account book's value, which is the conservative half of the pair and the
+<<<<<<< HEAD
      one that cannot destroy data.
      `h` is a bare Record, so this read is NOT type-checked: a stale literal here
      would read undefined, omit PDate under the very rule above, and stop the
      Processing date reaching the account book with nothing logged. Keyed on the
      shared constant so it moves with the column. */
   const pdate = acUdfDate(h[SO_PROCESSING_DATE_COLUMN] as string | null | undefined);
+=======
+     one that cannot destroy data. */
+  const pdate = acUdfDate(h.processing_date as string | null | undefined);
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
   if (pdate) udf.PDate = pdate;
   if (Object.keys(udf).length) out.UDF = udf;
 

@@ -3872,7 +3872,7 @@ function buildDraftSoBodyFromSlip(
 
   // Owner 2026-08-08 (2990-SO-2608-007, addendum #3) — a DRAFT never carries a
   // Processing Date. The previous rule here (owner 2026-07-04: slip delivery
-  // date ⇒ pin processing to TODAY) silently stamped internal_expected_dd on
+  // date ⇒ pin processing to TODAY) silently stamped processing_date on
   // scan drafts, which is wrong twice over: semantically a draft has not
   // started processing, and the date rode in WITHOUT the deposit / variant /
   // completeness gates every explicit Processing-Date write runs. Both dates
@@ -3898,7 +3898,7 @@ function buildDraftSoBodyFromSlip(
     city: (parsed.city ?? '').trim() || null,
     postcode: (parsed.postcode ?? '').trim() || null,
     // Delivery from the slip (today-or-later only); processing pinned to today.
-    internalExpectedDd: scanProcDate,
+    processingDate: scanProcDate,
     customerDeliveryDate: scanDelivDate,
     emergencyContactPhone: (parsed.phones[1] ?? '').trim()
       ? `+60${(parsed.phones[1] ?? '').replace(/\s+/g, '')}`
@@ -4105,10 +4105,10 @@ async function runScanJob(
     });
     if (
       outcome.status !== 201 &&
-      (body.internalExpectedDd != null || body.customerDeliveryDate != null)
+      (body.processingDate != null || body.customerDeliveryDate != null)
     ) {
       console.warn('[scan-job] create rejected with dates, retrying dateless:', job.id, outcome.status);
-      body.internalExpectedDd = null;
+      body.processingDate = null;
       body.customerDeliveryDate = null;
       outcome = await replay(body);
     }
@@ -4119,7 +4119,7 @@ async function runScanJob(
     // re-picks the category variants against the slip photo. Never lose the scan.
     if (outcome.status !== 201 && Array.isArray(body.items) && (body.items as unknown[]).length > 0) {
       console.warn('[scan-job] category lines rejected, retrying as loose lines:', job.id, outcome.status);
-      body.internalExpectedDd = null;
+      body.processingDate = null;
       body.customerDeliveryDate = null;
       body.items = (body.items as Array<Record<string, unknown>>).map((it) => ({
         itemCode: it.itemCode,

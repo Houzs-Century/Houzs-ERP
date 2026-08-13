@@ -104,9 +104,9 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
-  // The processing-date column the lock reads (PR #140 renamed only the label;
-  // the legacy processing_date snapshot column was dropped in mig 0189).
-  internal_expected_dd?: string | null;
+  // The processing-date column the lock reads. Label, API field and column are
+  // finally the same word (mig 0284 renamed it from internal_expected_dd).
+  processing_date?: string | null;
   proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
@@ -1174,8 +1174,8 @@ function SalesOrderDetailV2ReadOnly() {
                 />
                 <Field
                   label="Processing date"
-                  value={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  value={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <Field
                   label="Delivery date"
@@ -1345,8 +1345,8 @@ function SalesOrderDetailV2ReadOnly() {
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />
                 <KeyDateRow
                   k="Processing"
-                  v={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  v={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <KeyDateRow
                   k="Delivery"

@@ -47,6 +47,7 @@ export interface ProceedGateInput {
  *  Proceed 的意思。如果分两个的话,会不会很乱?"*
  *
  *  It answers ONE question — may this order start production? — and every path
+<<<<<<< HEAD
  *  that used to ask its own version now asks this: setting `internal_expected_dd`
  *  (the date the user picks), the create's auto-proceed, and the two manual
  *  proceed paths. Since 2026-08-13 those proceed paths WRITE that same date
@@ -54,6 +55,13 @@ export interface ProceedGateInput {
  *  `proceeded_at` survives alongside it as the timestamp the system writes (the
  *  stock allocator still reads it), but it is no longer what makes an order
  *  proceeded — the date is.
+=======
+ *  that used to ask its own version now asks this: setting `processing_date`
+ *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
+ *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
+ *  timestamp the system writes, not a date the user picks; what is unified is the
+ *  RULE, not the storage.
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
  *
  *  WHAT CHANGED, and why each way:
  *   - **Threshold is per company** (HOUZS 30% / 2990 50%). Previously two

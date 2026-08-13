@@ -612,7 +612,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   /* Commander 2026-05-28 — PO-from-SO redesign. Surface three extra fields
      so the frontend grid can render Processing Date + derive each PO line's
      warehouse (from the SO's sales_location) + delivery date (from the SO
-     LINE's own line_delivery_date). internal_expected_dd + sales_location
+     LINE's own line_delivery_date). processing_date + sales_location
      come off the SO header; line_delivery_date off the item. */
   const { data: items, error } = await scopeToCompany(
     supabase
@@ -620,7 +620,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
       .select(`
       id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_centi,
       variants, line_suffix, cancelled, line_delivery_date,
-      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, internal_expected_dd, sales_location )
+      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, processing_date, sales_location )
     `),
     c,
   )
@@ -637,7 +637,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     so: {
       doc_no: string; debtor_name: string | null; branding: string | null; status: string;
       so_date: string; customer_delivery_date: string | null;
-      internal_expected_dd: string | null; sales_location: string | null;
+      processing_date: string | null; sales_location: string | null;
     };
   };
 
@@ -710,7 +710,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
         variants:        r.variants,
         lineSuffix:      r.line_suffix,
         // Commander 2026-05-28 — new fields for the redesigned PO-from-SO grid.
-        processingDate:   r.so.internal_expected_dd,
+        processingDate:   r.so.processing_date,
         salesLocation:    r.so.sales_location,
         lineDeliveryDate: r.line_delivery_date,
         mainSupplierCode: mainSupplierByCode.get(r.item_code)?.code ?? null,

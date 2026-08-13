@@ -558,8 +558,12 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
+<<<<<<< HEAD
    (`customer_delivery_date` or the Processing Date `internal_expected_dd`),
    paginated so the
+=======
+   (`customer_delivery_date` or `processing_date`), paginated so the
+>>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
 2. **Service Cases** (`row_type: 'assr'`, `:1034`) — read from **`public.assr_cases`
@@ -963,7 +967,7 @@ request (§3).
 
 | Table | Role |
 |---|---|
-| `scm.mfg_sales_orders` | Board's primary source. `delivery_state` (the manual override cache, `0053:172`, indexed `:174`), `customer_state`, `customer_country`, `customer_delivery_date`, `amended_delivery_date` + `amend_date_from_customer` + `amend_reason` (`0053:192-194`), `internal_expected_dd`, `postcode`, `building_type`, HC context columns (`0053:178-181`) |
+| `scm.mfg_sales_orders` | Board's primary source. `delivery_state` (the manual override cache, `0053:172`, indexed `:174`), `customer_state`, `customer_country`, `customer_delivery_date`, `amended_delivery_date` + `amend_date_from_customer` + `amend_reason` (`0053:192-194`), `processing_date`, `postcode`, `building_type`, HC context columns (`0053:178-181`) |
 | `scm.delivery_orders` | `delivery_state` (`0053:173`); execution columns `time_range`, `time_confirmed`, `arrival_at`, `departure_at`, `shipout_date`, `customer_delivered_date`, `eta_arriving_port`, `delivery_substatus` (`0053:182-189`), `arrives_em_warehouse_date` (`0053:195`) |
 | `scm.delivery_order_crew` | `0053:144-169`. `do_id` UNIQUE; `driver_1_id`/`driver_2_id` → `scm.drivers`, `helper_1_id`/`helper_2_id` → `scm.helpers`, `lorry_id` → `scm.lorries`, plus name/IC/contact/plate SNAPSHOTS and `assigned_at`/`assigned_by` |
 | `scm.trips` | `0053:68-92`. `trip_no`, `trip_date`, `lorry_id`, `driver_id`, `helper_1_id`, `helper_2_id`, `warehouse_id`, `trip_type`, `status`, `is_outsourced`, `clock_in_at`/`clock_out_at` |

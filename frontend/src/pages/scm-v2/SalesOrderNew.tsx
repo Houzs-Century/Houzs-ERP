@@ -1641,9 +1641,9 @@ export const SalesOrderNew = () => {
         emergencyContactName:         emergencyName  || undefined,
         emergencyContactRelationship: emergencyRel   || undefined,
         emergencyContactPhone:        emergencyPhone || undefined,
-        /* PR #121 — Processing Date → internal_expected_dd, Delivery Date →
+        /* PR #121 — Processing Date → processing_date, Delivery Date →
            customer_delivery_date. */
-        internalExpectedDd:   processingDate || undefined,
+        processingDate:   processingDate || undefined,
         customerDeliveryDate: deliveryDate   || undefined,
         note: note || undefined,
         /* Original-slip provenance — the scanned slip's R2 key (from the Scan

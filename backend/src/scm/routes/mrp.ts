@@ -166,7 +166,7 @@ type DemandRow = {
     status: string;
     so_date: string | null;
     customer_delivery_date: string | null;
-    internal_expected_dd: string | null; // processing date (drives when to order)
+    processing_date: string | null; // processing date (drives when to order)
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -601,7 +601,7 @@ export async function computeMrp(
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, internal_expected_dd, customer_state, sales_location )
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
@@ -1013,7 +1013,7 @@ export async function computeMrp(
         customerState: r.so?.customer_state ?? null,
         soDate: r.so?.so_date ?? null,
         deliveryDate: lineDelivery,
-        processingDate: r.so?.internal_expected_dd ?? null,
+        processingDate: r.so?.processing_date ?? null,
         orderByDate: orderByOf(lineDelivery, prod?.category ?? null, whId, mainByCode.get(code)?.code ?? null),
         qty: eff,
         source,
@@ -1177,7 +1177,7 @@ export async function computeMrp(
         customerState: d.so?.customer_state ?? null,
         soDate: d.so?.so_date ?? null,
         deliveryDate: setDelivery,
-        processingDate: d.so?.internal_expected_dd ?? null,
+        processingDate: d.so?.processing_date ?? null,
         orderByDate: orderByOf(setDelivery, prod?.category ?? null, whId, mainByCode.get(d.item_code)?.code ?? null),
         itemCode: d.item_code,
         description: prod?.name ?? d.description ?? null,

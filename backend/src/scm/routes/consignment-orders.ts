@@ -145,9 +145,17 @@ const HEADER =
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
-  'currency, status, remark2, remark3, remark4, note, processing_date, sales_exemption_expiry, ' +
+  /* No `processing_date` in this line any more, and it is NOT an omission: the
+     consignment header carried TWO columns, a dead legacy `processing_date`
+     that nothing has ever written and the live date under the old name
+     `internal_expected_dd`. Mig 0284 dropped the dead one and renamed the live
+     one onto the freed name — it is selected two lines down, next to
+     customer_delivery_date, where the date it partners with lives. Selecting a
+     dropped column is a hard PostgREST error (the 0189 lesson), so this had to
+     go in the same commit as the migration. */
+  'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
-  'customer_state, customer_country, customer_delivery_date, internal_expected_dd, linked_do_doc_no, ' +
+  'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
@@ -518,7 +526,7 @@ consignmentOrders.get('/mine', async (c) => {
       .from('consignment_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'total_revenue_centi, line_count, deposit_centi',
       )
       .eq('salesperson_id', myStaffId)
@@ -676,7 +684,7 @@ consignmentOrders.post('/', async (c) => {
        2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
        3. All MATTRESS lines must share ONE brand. */
   {
-    const procDate  = (body.internalExpectedDd  as string | null | undefined) || null;
+    const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
     /* must-pair stays a short-circuit (structurally-incomplete date pair). */
     if (Boolean(procDate) !== Boolean(delivDate)) {
@@ -983,7 +991,7 @@ consignmentOrders.post('/', async (c) => {
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
     customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
-    internal_expected_dd: (body.internalExpectedDd as string) ?? null,
+    processing_date: (body.processingDate as string) ?? null,
     customer_so_no: (body.customerSoNo as string) ?? null,
     customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
@@ -1035,7 +1043,7 @@ consignmentOrders.post('/', async (c) => {
   captureIfSet('localTotalCenti', total);
   captureIfSet('paymentMethod', body.paymentMethod);
   captureIfSet('depositCenti', body.depositCenti);
-  captureIfSet('internalExpectedDd', body.internalExpectedDd);
+  captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
@@ -1205,7 +1213,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
     ['customerDeliveryDate', 'customer_delivery_date'],
-    ['internalExpectedDd', 'internal_expected_dd'],
+    ['processingDate', 'processing_date'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -1276,7 +1284,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
   /* Processing Date set → every non-cancelled line must carry its category-
      required variants. Collected (not returned) — aggregated with the date rules
      below. */
-  if (body['internalExpectedDd'] !== undefined && body['internalExpectedDd'] !== null && body['internalExpectedDd'] !== '') {
+  if (body['processingDate'] !== undefined && body['processingDate'] !== null && body['processingDate'] !== '') {
     const { data: liveItems } = await scopeToCompanyId(sb
       .from('consignment_sales_order_items')
       .select('id, item_code, item_group, variants, cancelled')
@@ -1299,9 +1307,9 @@ consignmentOrders.patch('/:docNo', async (c) => {
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     const deliv = body['customerDeliveryDate'];
-    const origProc = (beforeRow?.['internal_expected_dd'] as string | null) ?? null;
+    const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;

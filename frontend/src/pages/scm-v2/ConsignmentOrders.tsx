@@ -119,12 +119,14 @@ type SoRow = {
   customer_country: string | null;
   city: string | null;
   postcode: string | null;
-  processing_date: string | null;
   customer_delivery_date: string | null;
-  /* PR-E — Internal expected delivery date (commander's privately tracked
-     ETA, distinct from the customer-facing customer_delivery_date). Hidden
-     by default — coordinator reveals via right-click. */
-  internal_expected_dd: string | null;
+  /* The Processing Date — the ONE internal date, distinct from the
+     customer-facing customer_delivery_date. Hidden by default; coordinator
+     reveals via right-click. Was `internal_expected_dd` until mig 0284 settled
+     the column on the name everyone already says; the dead legacy
+     `processing_date` this row type used to ALSO carry (never written by
+     anything) went with it. */
+  processing_date: string | null;
   /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp). */
   target_date: string | null;
   /* PR #143 — Header-level payment method (cash | transfer | merchant) +
@@ -1480,18 +1482,18 @@ const buildAllColumns = (
     searchValue: (r) => r.postcode ?? '',
   },
   {
-    /* "Processing Date" is the UI label for the internal_expected_dd column.
-       PR #121/#140 renamed it app-wide — SO New / SO Detail / OrderInfoCard
-       all read+write internal_expected_dd under this label. The raw
-       processing_date column is dead (nothing in the API ever writes it), so
-       this column must read internal_expected_dd or it shows permanently
-       blank. Key kept as 'processing_date' to preserve saved column layouts.
-       Duplicate "Internal DD" column removed. Commander 2026-05-28. */
+    /* Label, column key and field are now the SAME word. This column used to
+       be keyed 'processing_date' (a dead column nothing ever wrote) while
+       reading `internal_expected_dd` under the "Processing Date" label — the
+       key was kept only to preserve saved column layouts, and the mismatch is
+       the whole reason mig 0284 settled the concept on one name. Saved layouts
+       still match, because the key never changed. Duplicate "Internal DD"
+       column removed, commander 2026-05-28. */
     key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.internal_expected_dd),
-    searchValue: (r) => `${r.internal_expected_dd ?? ''} ${compactDate(r.internal_expected_dd)}`,
-    filterType: 'date', dateValue: (r) => r.internal_expected_dd,
+    accessor: (r) => compactDate(r.processing_date),
+    searchValue: (r) => `${r.processing_date ?? ''} ${compactDate(r.processing_date)}`,
+    filterType: 'date', dateValue: (r) => r.processing_date,
   },
   {
     key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,

@@ -129,8 +129,8 @@ still need `edit` on `scm.sales.delivery`.
    The first two collapse into `has_children`; the third gives
    `lifecycle_state` (`'shipped' | 'invoiced' | 'returned'`, `:1998`).
    A fourth, sequential batched read then pulls
-   `mfg_sales_orders.internal_expected_dd` for the distinct `so_doc_no` set and
-   stamps it on each row as **`so_internal_expected_dd`** — the linked SO's
+   `mfg_sales_orders.processing_date` for the distinct `so_doc_no` set and
+   stamps it on each row as **`so_processing_date`** — the linked SO's
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
    **This is a DERIVED response field, and both ends read it as a string** —

@@ -103,7 +103,7 @@ describe('so-field-policy — frontend mirror matches the backend source of trut
 
   it('classifies the delivery/charge-affecting fields as CONTROLLED', () => {
     for (const key of [
-      'customerDeliveryDate', 'internalExpectedDd', 'customerState', 'postcode', 'city',
+      'customerDeliveryDate', 'processingDate', 'customerState', 'postcode', 'city',
       // Two-lane phase 2 (owner 2026-07-27): the address block + disposal note.
       'address1', 'address2', 'address3', 'address4',
       'shipToAddress', 'billToAddress', 'installToAddress', 'replacementDisposal',
