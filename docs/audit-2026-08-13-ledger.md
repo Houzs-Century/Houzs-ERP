@@ -26,12 +26,12 @@ are its labels, not disjoint sets.
 
 | cluster | artifact count | status |
 |---|---|---|
-| cross-company scope | 56 (27 high) | **REOPENED 2026-08-13** — the scanner was too loose (see §I). Honest count is now **20 unscoped WRITES, 18 reads**, not 0. 13 handlers fixed and verified so far; the rest are listed by the script |
-| permission / access gate | 11 (4 high) | 3 HIGH **DONE**, 4 **OPEN** (§C) |
-| money / quantity arithmetic | 47 (12 high) | 3 **DONE** incl. the top HIGH, 3 **OPEN** (§B) |
-| silent failure | 33 (5 high) | **CLOSED** — frontend 35 → 0; backend all 9 §D items done |
-| old/new competing implementations | 29 | agent running |
-| dead code | 12 | agent running |
+| cross-company scope | 56 (27 high) | **CLOSED** — reopened once when the scanner turned out too loose (§I), then finished: every WRITE finding either fixed or opened and annotated. Four of the last eleven were false positives for four DIFFERENT reasons, one of which would have become a bug if "fixed" |
+| permission / access gate | 11 (4 high) | **CLOSED** (§C) — 6 gated, 1 left open by owner decision |
+| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5 **DONE**; **B4 open** (needs a data check); B6 is an owner costing decision, documented at the line |
+| silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
+| old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
+| dead code | 12 | Reported, none removed. Deleting code is cheap to get wrong and nothing here is causing harm — left for a deliberate pass |
 
 ---
 
@@ -43,8 +43,8 @@ are its labels, not disjoint sets.
 | B2 | `POST /purchase-invoices/from-grn` summed line totals UNCLAMPED while writing them CLAMPED, so `total_centi` ≠ Σ lines. Its sibling `/from-grn-items` already clamps inside the reduce and says why. GRN stores an unbounded `discount_centi` (grns.ts:1695), so the premise is real. | **DONE** |
 | B3 | Three SO paths lower the unit price and keep the stored discount: variant edit, product swap, sofa exchange. Negative total → clamped downstream → over-billing again. | **DONE** — all three now 422 `discount_exceeds_new_price`, following this file's own "reject-don't-normalize" rule (`:6199`, audit 2026-06-11 C-2) |
 | B4 | The **persisted** sofa selling price is quantised to whole ringgit per module and per combo (`sofa-build.ts:503/533/1260`), so RM1,299.50 × 4 bills RM5,200 instead of RM5,198. Only bites when a module price is not a whole ringgit; every writer of those columns is operator-entered. | **OPEN** — needs a data check before changing a pricing engine |
-| B5 | Landed-freight per-unit rounding (`recost.ts:383`) can double a sub-sen allocation: 50 sen over 100 units → 1 sen/unit → 100 sen capitalised. Bounded by ~0.5 sen/unit. | **OPEN** |
-| B6 | A shipped-DO line reduction returns stock at a cost blended over costed and uncosted units (`delivery-orders-mfg.ts:1768`), creating value from nothing in the MIXED case. | **OPEN** — the symmetric argument is defensible for a fully-uncosted OUT |
+| B5 | Landed-freight per-unit rounding doubled a sub-sen allocation: 50 sen over 100 units → `round(0.5)` = 1 sen/unit → 100 sen capitalised, once per source. | **DONE** — the charge is added as a TOTAL and the aggregate divides once, so `allocateLandedCharges`' exactness survives to the lot |
+| B6 | A shipped-DO line reduction returns stock at a cost blended over costed and uncosted units. | **OWNER** — documented at the line, not guessed. Which units come back is not knowable from a qty delta, so the blend is wrong in one direction or the other. The durable fix is to route the resync through `fn_reverse_do_out` (mig 0198), which the DO CANCEL already uses to restore the ORIGINAL lot by id — a costing change |
 
 ## C. Permission gates
 
@@ -53,10 +53,10 @@ are its labels, not disjoint sets.
 | C1 | `POST /maintenance-config/sofa-compartments/rename` — **no gate at all**, and two comments each said the other layer had it. Renames a compartment code across the SKU master, every historical doc-line snapshot, combos, quick picks and in-flight carts. | **DONE** |
 | C2 | `/localities` POST/PATCH/DELETE — no gate; shared 5,870-row postcode master + city-level routing; no `company_id`, so a change hits both companies. | **DONE** |
 | C3 | `/state-warehouse-mappings` PUT/DELETE — no gate; repoints which warehouse an entire state ships from. | **DONE** |
-| C4 | `inventory.ts` cost/valuation/supplier reads have no finance gate; Storekeeper holds `scm.warehouse.inventory = view` and `canSeeMargin: false` is written and never enforced. | **OPEN** |
-| C5 | `/ar/reconciliation` — whole-book receivables, no area guard, no finance gate, no row scope. Its own header records the choice. | **OPEN** |
-| C6 | Quotes: the list is row-scoped to own+downline, `PATCH /:id` and `/:id/cancel` are not. | **OPEN** |
-| C7 | `accounting.ts` — zero in-route checks on 4 GL verbs; its only gate (`moneyWriteDenial`) fails open for a positionless caller. Payment vouchers are double-gated; the GL is not. | **OPEN** |
+| C4 | `inventory.ts` cost/valuation/supplier reads had no finance gate; Storekeeper holds `scm.warehouse.inventory = view` and `canSeeMargin: false` was written and never enforced. | **DONE** (owner: gate it) — `/value` and `/cogs` 403; `/movements` and `/lots` STRIP the cost columns so quantity, location and batch stay visible |
+| C5 | `/ar/reconciliation` — whole-book receivables, no area guard, no finance gate, no row scope, while both its siblings have all three. | **DONE** (owner: gate it like the siblings) — `scm.finance.outstanding` at the mount + the per-salesperson row scope `unbilled-deliveries` uses |
+| C6 | Quotes: the list is row-scoped to own+downline, `PATCH /:id` and `/:id/cancel` are not. | **OWNER: LEAVE AS IS** — reps do amend each other's quotes; that is how the shop works. Recorded in the code so the next audit does not re-open it |
+| C7 | `accounting.ts` — zero in-route checks on 4 GL verbs; its only gate (`moneyWriteDenial`) fails open for a positionless caller. Payment vouchers are double-gated; the GL is not. | **DONE** (owner: reuse the existing key) — gated on `scm.payment_voucher.post`; a new key would have taken effect with nobody holding it and stopped GL posting |
 
 ## D. Silent failure — backend
 
