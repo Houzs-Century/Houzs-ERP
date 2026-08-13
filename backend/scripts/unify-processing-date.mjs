@@ -106,7 +106,7 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
  *  appears once per LINE, so the same date repeats — a document whose lines
  *  disagree is reported and excluded rather than silently taking the first. */
 function loadAutoCountDates() {
-  const byDoc = new Map(), conflicted = new Set();
+  const byDoc = new Map(), conflicted = new Set(), delivByDoc = new Map();
   const add = (doc, raw) => {
     const d = String(raw || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !doc) return;
@@ -114,23 +114,39 @@ function loadAutoCountDates() {
     if (byDoc.has(k) && byDoc.get(k) !== d) conflicted.add(k);
     else byDoc.set(k, d);
   };
-  for (const [file, field] of [['ac-outstanding-so.json.gz', 'UDF_PDate'], ['ac-so-dates.json.gz', 'PDate']]) {
+  /* The DELIVERY date comes from the same extracts, per LINE. The header's is
+     the EARLIEST line date — the rule backfill-so-dates.mjs already set ("the
+     earliest line date -> customer_delivery_date"), copied rather than
+     re-derived so the two cannot disagree. */
+  const addDeliv = (doc, raw) => {
+    const d = String(raw || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !doc) return;
+    const k = String(doc).trim();
+    if (!delivByDoc.has(k) || d < delivByDoc.get(k)) delivByDoc.set(k, d);
+  };
+  for (const [file, pField, dField] of [
+    ['ac-outstanding-so.json.gz', 'UDF_PDate', 'DeliveryDate'],
+    ['ac-so-dates.json.gz', 'PDate', 'DelivDate'],
+  ]) {
     const p = path.join(here, 'data', file);
     if (!fs.existsSync(p)) { bad(`missing source extract ${file} — cannot classify without it`); process.exit(2); }
     const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(p)).toString('utf8').replace(/^﻿/, ''));
-    let n = 0;
-    for (const r of rows) if (r[field]) { add(r.DocNo, r[field]); n++; }
-    note(`  ${file}: ${rows.length} rows, ${n} with ${field}`);
+    let n = 0, dn = 0;
+    for (const r of rows) {
+      if (r[pField]) { add(r.DocNo, r[pField]); n++; }
+      if (r[dField]) { addDeliv(r.DocNo, r[dField]); dn++; }
+    }
+    note(`  ${file}: ${rows.length} rows, ${n} with ${pField}, ${dn} with ${dField}`);
   }
   for (const k of conflicted) byDoc.delete(k);
-  return { byDoc, conflicted };
+  return { byDoc, conflicted, delivByDoc };
 }
 
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'DRY-RUN (everything rolls back)'} company=${CO} deposit_threshold=${DEPOSIT_THRESHOLD}`);
 
   note(`\n=== AUTOCOUNT SOURCE ===`);
-  const { byDoc, conflicted } = loadAutoCountDates();
+  const { byDoc, conflicted, delivByDoc } = loadAutoCountDates();
   note(`  documents with a processing date: ${byDoc.size}`);
   if (conflicted.size) note(`  EXCLUDED, lines disagree on the date: ${conflicted.size} (${[...conflicted].slice(0, 8).join(', ')})`);
 
@@ -177,7 +193,7 @@ async function main() {
     const src = r.linked_ac_docno ? byDoc.get(String(r.linked_ac_docno).trim()) : undefined;
     if (!src) { notProceeded.push(r); continue; }
     if (src !== r.proc_date) { disagree.push({ ...r, src }); continue; }
-    migrate.push({ ...r, value: src });
+    migrate.push({ ...r, value: src, delivFix: (!r.deliv && r.linked_ac_docno) ? (delivByDoc.get(String(r.linked_ac_docno).trim()) ?? null) : null });
   }
 
   note(`\n=== CLASSIFICATION (company ${CO}, ${rows.length} split rows) ===`);
@@ -185,6 +201,19 @@ async function main() {
   note(`  NOT PROCEEDED  ${String(notProceeded.length).padStart(5)}  AutoCount has no processing date — a click stamp, and a click is not a date`);
   note(`  DISAGREE       ${String(disagree.length).padStart(5)}  AutoCount has a date but the column holds a different one — refused`);
   note(`  HUMAN-TOUCHED  ${String(humanTouched.length).padStart(5)}  the Processing Date was changed by a person — their decision stands`);
+
+  /* THE PAIR RULE IS AN INVARIANT, NOT A PREFERENCE. Owner: "processing date 和
+     delivery date 必须同时有或者同时没有". Writing a Processing Date onto an
+     order with no Delivery Date does not merely leave it awkward — it CREATES
+     that violation, 125 of them on the first prod dry-run, in the same
+     statement that claims to restore the invariant. AutoCount has the missing
+     dates (538 of its 557 dated documents carry one), so they move together. */
+  const needDeliv = migrate.filter((r) => !r.deliv);
+  const canFix = needDeliv.filter((r) => r.delivFix);
+  note(`\n=== PAIR RULE ===`);
+  note(`  migrating rows with NO delivery date:                        ${needDeliv.length}`);
+  note(`  ... AutoCount supplies one, written in the same statement:   ${canFix.length}`);
+  note(`  ... AutoCount has none either — left honestly unpaired:      ${needDeliv.length - canFix.length}`);
 
   for (const [title, list, fmt] of [
     ['DISAGREE', disagree, (r) => `${String(r.doc_no).padEnd(18)} ${String(r.status).padEnd(14)} db=${r.proc_date}  autocount=${r.src}`],
@@ -214,7 +243,7 @@ async function main() {
     if (!(r.debtor_name ?? '').trim()) miss.push('customer name');
     if (!(r.address1 ?? '').trim()) miss.push('address line 1');
     if (!(r.postcode ?? '').trim()) miss.push('postcode');
-    if (!r.deliv) miss.push('delivery date');
+    if (!r.deliv && !r.delivFix) miss.push('delivery date');
     const total = Number(r.local_total_centi || 0), paid = Number(r.paid_centi || 0);
     if (total > 0 && paid / total < DEPOSIT_THRESHOLD) miss.push('deposit below threshold');
     return { doc: r.doc_no, locked: r.value < todayMY, miss };
@@ -255,10 +284,22 @@ async function main() {
         /* Company-scoped: the service role bypasses RLS, so this predicate is
            the only isolation. The IS NULL guard keeps a re-run a no-op; the
            audit-trail refusal above is what keeps it CORRECT. */
-        const back = await tx`
-          UPDATE scm.mfg_sales_orders SET internal_expected_dd = ${r.value}::date
-           WHERE company_id = ${CO} AND doc_no = ${r.doc_no} AND internal_expected_dd IS NULL
-          RETURNING doc_no`;
+        /* Both dates in ONE statement when the delivery date is also being
+           supplied — the pair rule is an invariant, so it must never be false
+           even momentarily. The extra IS NULL guard means a delivery date a
+           human has since set can never be overwritten. */
+        const back = r.delivFix
+          ? await tx`
+              UPDATE scm.mfg_sales_orders
+                 SET internal_expected_dd = ${r.value}::date,
+                     customer_delivery_date = ${r.delivFix}::date
+               WHERE company_id = ${CO} AND doc_no = ${r.doc_no}
+                 AND internal_expected_dd IS NULL AND customer_delivery_date IS NULL
+              RETURNING doc_no`
+          : await tx`
+              UPDATE scm.mfg_sales_orders SET internal_expected_dd = ${r.value}::date
+               WHERE company_id = ${CO} AND doc_no = ${r.doc_no} AND internal_expected_dd IS NULL
+              RETURNING doc_no`;
         wrote += back.length;
       }
       note(`\n${APPLY ? 'wrote' : 'would write'}: ${wrote} row(s)`);
