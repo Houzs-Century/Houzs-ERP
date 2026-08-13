@@ -475,13 +475,12 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
   });
 
   test('a CREATE still carries it — there is nothing to preserve yet', () => {
-    const { details, defaultChosen } = composeDetails([
+    const { details } = composeDetails([
       compartment('1A(LHF)', { unit_price_centi: 399_000 }),
       compartment('2A(RHF)'),
     ], real);
     expect(details).toHaveLength(1);
     expect(details[0].ItemCode).toBe('9028-1S');
-    expect(defaultChosen[0]).toBe(true);
   });
 
   test('an ordinary line the book owns keeps its item too — not just the sofas', () => {

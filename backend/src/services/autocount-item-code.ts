@@ -85,7 +85,8 @@ const ALIAS_SOURCES: Map<string, string[]> = (() => {
 })();
 
 export type ItemCodeResolution =
-  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding' | 'default-choice' }
+  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding'
+      | 'same-name' | 'preferred-supplier' | 'erp-canonical' }
   | { ok: false; reason: 'unmapped' | 'ambiguous'; detail: string; candidates: string[] };
 
 /**
@@ -97,77 +98,72 @@ export type ItemCodeResolution =
  * lines are refused rather than guessed at.
  */
 /**
- * AutoCount items the ERP OPENS ITSELF, rather than ones the cutover found.
+ * WHO WINS when the cutover left one ERP code pointing at several AutoCount
+ * items and the document cannot say which.
+ *
+ * Owner's rule, 2026-08-13: prefer HOK, then NB. Both are AutoCount ItemCode
+ * prefixes (HOK- is creditor 400-O002, NB- is 400-N002). This is what clears
+ * the bulk of it — of the 117 ambiguous ERP codes in the map, 102 are BEDFRAME,
+ * and HOK alone settles 103 of the 117.
+ */
+const SUPPLIER_PREFERENCE = ['HOK', 'NB'] as const;
+
+/**
+ * THE LAST WORD: our own code, opened in AutoCount if the book has never held
+ * it.
  *
  * `/ensure-masters` creates an item before the document that names it is sent
- * (AcSyncService.cs:495-521) — ItemGroup OTHER, StockControl, sales + purchase,
- * base UOM UNIT — and skips one that already exists. So a code the account book
- * has never held is not a dead end; it is opened on first use.
+ * (AcSyncService.cs:495-521 — ItemGroup OTHER, StockControl, sales + purchase,
+ * base UOM UNIT) and skips one that already exists. So "the book has never
+ * heard of this" is not a dead end, and it stopped being an acceptable reason
+ * to refuse a salesperson's order.
  *
- * That cuts both ways, which is why this set exists as an explicit, reviewed
- * list instead of "anything goes". A typo does not fail — it silently OPENS a
- * junk item in a licensed account book, and the ERP would keep posting to it.
- * Nothing reaches /ensure-masters as a new item unless it is named here.
+ * This is the whole answer to two problems at once:
+ *
+ *   - AMBIGUITY nothing else could settle. Four sofa models, GINA-(SS),
+ *     SGABELLO: the account book holds two brand items and a SALES ORDER cannot
+ *     choose, because it does not learn the brand until purchasing does — the
+ *     owner's words, "开 SO 的时候 PO 还没开". Picking one by alphabet would be
+ *     a silent coin flip, and measured on 658 real sofa lines no single brand
+ *     item is right for more than about 70% of them.
+ *   - CODES THE BOOK NEVER HELD. Whole ranges of newer products are in no
+ *     cutover row at all, and every order containing one was refused outright.
+ *
+ * Safe because an ERP item code cannot be typed. SoLineCard refuses text that
+ * matches no catalogue product ("typed text that matches NO catalog product can
+ * never become a line"), so the only strings that reach here are codes someone
+ * already opened in the ERP's own product master.
+ *
+ * Old documents are untouched: composeEdit omits ItemCode for a line AutoCount
+ * already owns, so an order sitting on a brand item stays on it forever.
  */
-export const AC_ITEMS_ERP_OPENS: ReadonlySet<string> = new Set([
-  /* One canonical item per sofa model, named EXACTLY as the ERP names it, so
-     the two systems agree character for character and the stock reconciliation
-     needs no translation. The cutover had collapsed each of these onto two
-     brand items (Armani/DorsettLoft, RedSofa/THL, two Todern spellings), which
-     a sales order can never choose between — it does not know the brand until
-     purchasing does. The brand now lives on the purchase order, where it is
-     actually known, and the item is one. */
-  '9028-1S',
-  '9058-1S',
-  '5152-1S',
-  '5080-1S',
-]);
+const canonicalOwnCode = (erpItemCode: string): string => erpItemCode.trim();
 
 /**
- * THE STANDING CHOICE for an ERP code the cutover left pointing at several
- * AutoCount items, used when the document has no creditor to choose with.
- *
- * A purchase order names its supplier and resolves on its own. A SALES ORDER
- * never does, so before this every order containing one of these was refused —
- * correctly, but permanently, because nothing downstream could supply the
- * missing fact either. The supplier SKU binding cannot stand in for it: that
- * column means "what this supplier calls it" and is printed on documents sent
- * to the supplier, so writing an AutoCount code into it to satisfy the sync
- * would corrupt purchasing. This is the separate, deliberate answer.
- *
- * Owner's rule, 2026-08-13: "一个 item 统一一个" — one ERP item, one AutoCount
- * item, and here that is the ERP's own code, opened by /ensure-masters.
- *
- * The old brand items keep every line they already hold: composeEdit omits
- * ItemCode for a line AutoCount already owns, so an edit to a pre-cutover order
- * never rewrites its item to this one.
+ * The answer for a document with no creditor to ask — steps 3 to 5 of the
+ * owner's chain, in order. Never returns null: step 5 always has an answer.
  */
-export const AC_DEFAULT_ITEM_CHOICE: ReadonlyMap<string, string> = new Map([
-  ['9028-1S', '9028-1S'],
-  ['9058-1S', '9058-1S'],
-  ['5152-1S', '5152-1S'],
-  ['5080-1S', '5080-1S'],
-]);
+function chooseWithoutSupplier(
+  ownCode: string,
+  code: string,
+  candidates: AcItemMapEntry[],
+): { acItemCode: string; via: 'same-name' | 'preferred-supplier' | 'erp-canonical' } {
+  /* 3. The book already calls it what we call it. Worth more than any
+        preference: it is not a guess, it is a match. Recovers HB709NL and the
+        four DL-CS2 mattresses, where the OTHER candidate is a mis-mapped row
+        and an alphabetical tie-break would have picked it. */
+  const sameName = candidates.find((e) => up(e.ac) === code);
+  if (sameName) return { acItemCode: sameName.ac, via: 'same-name' };
 
-/**
- * The choice for `code`, once it is safe to use.
- *
- * Either it names one of the items the book already holds for this code, or it
- * is a code we have declared the ERP opens. Anything else is a typo and is
- * treated as no choice at all.
- */
-function defaultChoiceFor(code: string, candidates: AcItemMapEntry[]): string | null {
-  /* Keyed by the model base code, because that is what D9 hands the resolver.
-     A raw compartment reaching here (a caller resolving one line at a time)
-     means the same sofa and must get the same answer — otherwise the choice
-     silently depends on which side of the collapse the caller sits. */
-  const split = splitSofaCode(code);
-  const want = AC_DEFAULT_ITEM_CHOICE.get(code)
-    ?? (split ? AC_DEFAULT_ITEM_CHOICE.get(up(`${split.model}-1S`)) : undefined);
-  if (!want) return null;
-  const hit = candidates.find((e) => up(e.ac) === up(want));
-  if (hit) return hit.ac;
-  return AC_ITEMS_ERP_OPENS.has(want) ? want : null;
+  /* 4. The owner's supplier preference. Only when it narrows to exactly one —
+        two HOK items for one ERP code is still a question nobody answered. */
+  for (const prefix of SUPPLIER_PREFERENCE) {
+    const hit = candidates.filter((e) => up(e.ac).startsWith(`${prefix}-`));
+    if (hit.length === 1) return { acItemCode: hit[0].ac, via: 'preferred-supplier' };
+  }
+
+  /* 5. Our own code. */
+  return { acItemCode: canonicalOwnCode(ownCode), via: 'erp-canonical' };
 }
 
 export function resolveAcItemCode(
@@ -200,6 +196,8 @@ export function resolveAcItemCode(
   const bound = opts.bindings?.get(code);
   let candidates = index.byErp.get(code) ?? [];
   let via: 'direct' | 'sofa-model' = 'direct';
+  /* What "our own code" means for this line — see canonicalOwnCode. */
+  let ownCode = erpItemCode;
 
   /* A sofa compartment has no AutoCount item of its own — the whole point of
      D9 is that AutoCount holds ONE line for the build. So the compartment
@@ -210,8 +208,27 @@ export function resolveAcItemCode(
      one of them at random. */
   if (!candidates.length) {
     const split = splitSofaCode(erpItemCode);
+    /* RESOLVE THE COMPARTMENT AS ITS BUILD, by asking the same question of the
+       model base code. D9 always collapses before the composer resolves, so the
+       base code's answer is the one that reaches AutoCount — and a compartment
+       resolved on its own has to match it or the ERP opens two items for one
+       sofa depending on which side of the collapse the caller sits.
+       They really did diverge: the alias expansion below pulls in every
+       AutoCount model the cutover folded onto this ERP model, so a compartment
+       of 9028 saw HOK-5530 SOFA (via the alias) and took it on the HOK
+       preference, while 9028-1S itself sees only the two brand items and falls
+       through to its own code. Guarded on the base differing from the input so
+       a base code can never recurse into itself. */
     if (split) {
+      const base = up(`${split.model}-1S`);
+      if (base !== code) return resolveAcItemCode(base, opts);
       via = 'sofa-model';
+      /* A compartment's own code is not an item in anybody's book — the whole
+         point of D9 is that AutoCount holds ONE line for the build. So when we
+         fall back to our own code it must be the MODEL BASE, the same string
+         the collapsed line carries, or resolving one line at a time and
+         resolving the built document would open two different items. */
+      ownCode = `${split.model}-1S`;
       const models = [split.model, ...(ALIAS_SOURCES.get(up(split.model)) ?? [])];
       const seen = new Set<string>();
       const acc: AcItemMapEntry[] = [];
@@ -257,28 +274,18 @@ export function resolveAcItemCode(
     if (candidates.length <= 1 || index.acCodes.has(up(bound))) {
       return { ok: true, acItemCode: bound, via: 'binding' };
     }
-    /* A bad binding does not get to refuse a code that HAS a standing choice —
-       it is exactly the wrong data the choice was written to route around. Fall
-       through to the normal path rather than returning the choice here, so a
-       purchase order still narrows by its own creditor first and only a
-       supplier-less document lands on the default. */
-    if (!defaultChoiceFor(code, candidates)) return {
-      ok: false,
-      reason: 'ambiguous',
-      detail: `ERP item code '${erpItemCode}' is bound to '${bound}', which is not an AutoCount `
-        + `item. The account book holds this code as ${candidates.map((e) => `'${e.ac}'`).join(' or ')}`
-        + ' — correct the supplier SKU mapping to name one of those exactly.',
-      candidates: candidates.map((e) => e.ac),
-    };
+    /* Otherwise IGNORE it and let the chain below decide. It used to refuse
+       here, which was right while there was no other answer — but blocking a
+       salesperson's order on a typo in a column that belongs to purchasing is
+       not. The bad rows stay visible: check-autocount-ambiguous-items.mjs
+       validates every binding against the book and lists them. */
   }
 
+  /* Nothing in the book under this code — whole product ranges opened after the
+     2026-08-05 snapshot are like this. Open it under our own name rather than
+     refusing the document. */
   if (!candidates.length) {
-    return {
-      ok: false,
-      reason: 'unmapped',
-      detail: `ERP item code '${erpItemCode}' is in no AutoCount cutover mapping row`,
-      candidates: [],
-    };
+    return { ok: true, acItemCode: canonicalOwnCode(ownCode), via: 'erp-canonical' };
   }
   if (candidates.length === 1) return { ok: true, acItemCode: candidates[0].ac, via };
 
@@ -304,18 +311,9 @@ export function resolveAcItemCode(
     };
   }
 
-  /* NO SUPPLIER TO ASK, SO USE THE STANDING CHOICE — see AC_DEFAULT_ITEM_CHOICE.
-     Last, so a purchase order's own creditor always wins over it. */
-  const chosen = defaultChoiceFor(code, candidates);
-  if (chosen) return { ok: true, acItemCode: chosen, via: 'default-choice' };
-
-  return {
-    ok: false,
-    reason: 'ambiguous',
-    detail: `ERP item code '${erpItemCode}' maps to ${candidates.length} AutoCount items and the `
-      + 'document names no supplier to choose between them',
-    candidates: candidates.map((e) => e.ac),
-  };
+  /* No creditor to ask — and on a SALES ORDER there never is one, because the
+     purchase order does not exist yet when the order is written back. */
+  return { ok: true, ...chooseWithoutSupplier(ownCode, code, candidates) };
 }
 
 /**

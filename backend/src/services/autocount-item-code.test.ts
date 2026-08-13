@@ -13,8 +13,6 @@
  */
 import { describe, expect, it, test } from 'vitest';
 import {
-  AC_DEFAULT_ITEM_CHOICE,
-  AC_ITEMS_ERP_OPENS,
   AC_ITEM_MAP_ROWS,
   ItemCodeError,
   acItemIndex,
@@ -91,7 +89,7 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
          cutover collapsed. Counted, not asserted on: what protects these lines
          is that composeEdit omits a chosen ItemCode for a line AutoCount
          already owns, which is tested in autocount-writeback.test.ts. */
-      if (r.ok && r.via === 'default-choice') { byChoice += 1; continue; }
+      if (r.ok && r.via === 'erp-canonical') { byChoice += 1; continue; }
       if (!r.ok) {
         if (row.side === 'PO') poRefused += 1;
         (r.reason === 'ambiguous' ? refusedAmbiguous : refusedUnmapped)
@@ -152,10 +150,14 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
     for (const [erp, acs] of contested) {
       const r = resolveAcItemCode(erp);
       if (!r.ok) continue;                                   // refusing is still safe
-      expect(r.via, `${erp} must not be guessed`).toBe('default-choice');
+      /* Either the book itself settled it (a name match, or the owner's HOK/NB
+         preference) or we fall back to our own code. What must NEVER happen is
+         landing on one of the brand items by luck of ordering. */
+      if (r.via === 'same-name' || r.via === 'preferred-supplier') continue;
+      expect(r.via, `${erp} must not be guessed`).toBe('erp-canonical');
       expect([...acs], `${erp} resolved to one of the brand items it cannot choose between`)
         .not.toContain(r.acItemCode);
-      expect(AC_ITEMS_ERP_OPENS.has(r.acItemCode), `${erp} -> ${r.acItemCode} is not declared`).toBe(true);
+      expect(r.acItemCode, `${erp} did not fall back to its own code`).toBe(erp);
     }
   });
 
@@ -353,127 +355,110 @@ describe('the live supplier binding resolves what the cutover snapshot cannot', 
   });
 });
 
-/* Regression: 2026-08-13. Making the binding reachable for collapsed sofa lines
-   (#2093) exposed that the bindings themselves were wrong. Production held a
-   row for every one of the four ambiguous sofa models and not one named a real
-   AutoCount item — the MAIN supplier's row for 9028-1S carried the ERP's own
-   code, the rest carried '<real code> 1S'. Finding those without a guard would
-   have opened phantom items in a licensed account book. */
-describe('a binding that is meant to break a tie must name one of the tied items', () => {
-  /* A code with NO standing choice, so the guard is what decides the outcome.
-     SQUARE PILLOW is five AutoCount items in the real map. */
-  const AMBIGUOUS = 'SQUARE PILLOW';
+/* Owner's chain, 2026-08-13, for an ERP code the cutover left pointing at
+   several AutoCount items and a document that cannot say which:
 
-  test('the map really does hold several items for it, or this test proves nothing', () => {
-    const r = resolveAcItemCode(AMBIGUOUS, {});
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.candidates.length).toBeGreaterThan(1);
-  });
+     1. one candidate            -> it
+     2. the document's creditor  -> that supplier's item
+     3. a candidate NAMED like the ERP code -> it
+     4. HOK, then NB
+     5. our own code, opened by /ensure-masters
 
-  test('naming one of the candidates resolves', () => {
-    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'AMN-SQUARE PILLOW']]) });
+   Step 2 almost never fires on a sales order: the purchase order does not exist
+   yet when the order is written back ("开 SO 的时候 PO 还没开"), which is the
+   whole reason the rest of the chain has to be total. */
+describe("the owner's chain for a code no sales order can disambiguate", () => {
+  test('3 — a candidate named like the ERP code wins, even over alphabet', () => {
+    /* HB709NL is held under BOTH 'HB709NL' and an unrelated 'NTYR-...' row.
+       Alphabetically NTYR loses, but that is luck; the name match is the reason. */
+    const r = resolveAcItemCode('HB709NL', {});
     expect(r.ok).toBe(true);
-    if (r.ok) { expect(r.acItemCode).toBe('AMN-SQUARE PILLOW'); expect(r.via).toBe('binding'); }
+    if (r.ok) { expect(r.acItemCode).toBe('HB709NL'); expect(r.via).toBe('same-name'); }
   });
 
-  test('naming the ERP code itself is REFUSED, not sent as an item', () => {
-    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'SQUARE PILLOW']]) });
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.detail).toContain('is not an AutoCount item');
-      /* The remedy has to carry the strings to type in, not just a complaint. */
-      expect(r.detail).toContain('AMN-SQUARE PILLOW');
+  test('3 — and it beats the alphabet where the alphabet would be WRONG', () => {
+    /* 'DL-CS2 ARCTIC DREAM (K)' sorts first, but the book also holds a row
+       named exactly like the ERP code. The mis-mapped row must not win. */
+    const r = resolveAcItemCode('DL-CS2 NN-WINTER DREAM MATT (K', {});
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.acItemCode).toBe('DL-CS2 NN-WINTER DREAM MATT (K');
+      expect(r.via).toBe('same-name');
     }
   });
 
-  test("a near-miss like '<real code> 1S' is REFUSED too", () => {
-    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'AMN-SQUARE PILLOW 1S']]) });
-    expect(r.ok).toBe(false);
-  });
-
-  test('an item the book holds under ANOTHER ERP code is accepted — it is real', () => {
-    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'DSL-9058 SOFA']]) });
+  test('4 — HOK wins where it is one of the candidates', () => {
+    const r = resolveAcItemCode('SQUARE PILLOW', {});
     expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('HOK-SQUARE PILLOW'); expect(r.via).toBe('preferred-supplier'); }
   });
 
-  test('the override still wins where the map gives at most one answer', () => {
-    /* The rename case, unchanged: one candidate means the binding is an
-       override, not a tie-breaker, and a renamed book is a real possibility. */
-    const r = resolveAcItemCode('Y04-(K)', { bindings: new Map([['Y04-(K)', 'AERO-Y04-RENAMED']]) });
-    expect(r.ok).toBe(true);
-    const post = resolveAcItemCode('BRAND-NEW-SKU', { bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]) });
-    expect(post.ok).toBe(true);
-  });
-});
-
-/* Owner 2026-08-13, after HC-SO-2608-001 was refused: "一个 item 统一一个", and
-   the item is the ERP's own code. The cutover had collapsed each of these sofa
-   models onto two brand items, which a sales order can never choose between —
-   it does not know the brand until purchasing does. /ensure-masters opens the
-   canonical code on first use. */
-describe('the standing choice for a code no sales order can disambiguate', () => {
-  test('every entry is EITHER one of its own candidates OR a code we declared we open', () => {
-    /* The whole guard rail. /ensure-masters creates whatever it is told to
-       create, so a typo here is not a failed lookup — it is a junk item opened
-       in a licensed account book, silently, on the first order that hits it. */
-    const index = acItemIndex();
-    expect(AC_DEFAULT_ITEM_CHOICE.size).toBeGreaterThan(0);
-    for (const [erp, ac] of AC_DEFAULT_ITEM_CHOICE) {
-      const cands = (index.byErp.get(erp.toUpperCase()) ?? []).map((e) => e.ac);
-      /* Only ambiguous codes need one; a 1:1 code resolves already and an entry
-         for it is dead weight that will rot. */
-      expect(cands.length, `${erp} is not ambiguous — remove it`).toBeGreaterThan(1);
-      const known = cands.includes(ac);
-      expect(known || AC_ITEMS_ERP_OPENS.has(ac),
-        `${ac} is neither a candidate for ${erp} nor declared in AC_ITEMS_ERP_OPENS`).toBe(true);
+  test('4 — NB is the fallback when there is no HOK', () => {
+    const hits = [...acItemIndex().byErp.entries()].filter(([, v]) =>
+      v.length > 1
+      && !v.some((e) => e.ac.toUpperCase().startsWith('HOK-'))
+      && v.some((e) => e.ac.toUpperCase().startsWith('NB-')));
+    /* If the map ever stops containing such a code this test is vacuous — fail
+       loudly rather than pass on an empty loop. */
+    expect(hits.length).toBeGreaterThan(0);
+    for (const [erp] of hits) {
+      const r = resolveAcItemCode(erp, {});
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.acItemCode.toUpperCase().startsWith('NB-')).toBe(true);
     }
   });
 
-  test('a code we open must NOT already exist in the book under another name', () => {
-    /* If the snapshot already holds it, we are not opening a new item — we are
-       reusing one, and it should be a candidate rather than a declaration. */
-    const index = acItemIndex();
-    for (const ac of AC_ITEMS_ERP_OPENS) {
-      expect(index.acCodes.has(ac.toUpperCase()), `${ac} already exists in the book`).toBe(false);
+  test('5 — neither HOK nor NB: our own code, never a coin flip between brands', () => {
+    /* The four sofa models plus GINA-(SS) and SGABELLO. Measured on 658 real
+       sofa lines, no single brand item is right for more than ~70% of them, so
+       picking one is a silent wrong answer 30% of the time. */
+    for (const erp of ['9028-1S', '9058-1S', '5152-1S', '5080-1S', 'GINA-(SS)', 'SGABELLO']) {
+      const r = resolveAcItemCode(erp, {});
+      expect(r.ok, erp).toBe(true);
+      if (r.ok) {
+        expect(r.acItemCode, erp).toBe(erp);
+        expect(r.via, erp).toBe('erp-canonical');
+      }
     }
   });
 
-  test('a sales order (no supplier) now resolves instead of being refused', () => {
-    const r = resolveAcItemCode('9028-1S', {});
+  test('5 — a code the book has NEVER held resolves instead of refusing the order', () => {
+    /* Whole product ranges opened after the 2026-08-05 snapshot are in no
+       cutover row. Every order containing one used to be refused outright. */
+    const r = resolveAcItemCode('SOME-BRAND-NEW-CODE-9999', {});
     expect(r.ok).toBe(true);
-    if (r.ok) { expect(r.acItemCode).toBe('9028-1S'); expect(r.via).toBe('default-choice'); }
+    if (r.ok) { expect(r.acItemCode).toBe('SOME-BRAND-NEW-CODE-9999'); expect(r.via).toBe('erp-canonical'); }
   });
 
-  test('the sofa compartments a real order carries resolve through it too', () => {
-    /* What the ERP actually stores. The line code is a compartment; D9 collapses
-       it to 9028-1S, which is the code the choice is keyed by. */
+  test('the sofa COMPARTMENTS a real order carries land on the same code', () => {
     const r = resolveAcItemCode('9028-1A(LHF)', {});
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.acItemCode).toBe('9028-1S');
   });
 
-  test('a PURCHASE ORDER still follows its own creditor, not the default', () => {
+  test('2 — a PURCHASE ORDER still follows its own creditor, ahead of all of this', () => {
     const armani = resolveAcItemCode('9028-1S', { supplierCode: '400-A004' });
     expect(armani.ok).toBe(true);
-    if (armani.ok) { expect(armani.acItemCode).toBe('AMN-SF9028 SOFA'); expect(armani.via).not.toBe('default-choice'); }
+    if (armani.ok) { expect(armani.acItemCode).toBe('AMN-SF9028 SOFA'); expect(armani.via).not.toBe('erp-canonical'); }
   });
 
-  test('a wrong binding no longer refuses a code that has a standing choice', () => {
-    /* Production holds exactly this: the MAIN supplier's row for 9028-1S names
-       something the book does not have. It must neither be sent nor block. */
-    const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA 1S']]) });
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.acItemCode).toBe('9028-1S');
-  });
-
-  test('a GOOD binding still wins over the default — an operator said so explicitly', () => {
+  test('a GOOD binding still wins over the whole chain — an operator said so', () => {
     const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA']]) });
     expect(r.ok).toBe(true);
     if (r.ok) { expect(r.acItemCode).toBe('AMN-SF9028 SOFA'); expect(r.via).toBe('binding'); }
   });
 
-  test('a code with no entry is still refused — nothing is guessed', () => {
-    const r = resolveAcItemCode('SQUARE PILLOW', {});
-    expect(r.ok).toBe(false);
+  test('a WRONG binding is ignored, not obeyed and not fatal', () => {
+    /* Production holds exactly this: the main supplier row for 9028-1S names
+       'AMN-SF9028 SOFA 1S', which the book does not have. Sending it would open
+       a phantom item; refusing would block the order. Neither. */
+    const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA 1S']]) });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('9028-1S'); expect(r.via).toBe('erp-canonical'); }
+  });
+
+  test('an empty code is still refused — the one thing with no answer', () => {
+    expect(resolveAcItemCode('', {}).ok).toBe(false);
+    expect(resolveAcItemCode('   ', {}).ok).toBe(false);
   });
 });

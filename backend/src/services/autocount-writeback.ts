@@ -424,18 +424,13 @@ export function composeDescription2(line: ErpLine): string | null {
 export function composeDetails(
   lines: ErpLine[],
   opts: ComposeOptions = {},
-): { details: AcDetail[]; collapsed: CollapsedLine[]; defaultChosen: boolean[] } {
+): { details: AcDetail[]; collapsed: CollapsedLine[] } {
   const { lines: collapsed, refusals } = collapseSofaLines(lines);
   if (refusals.length) throw new SofaCollapseError(refusals);
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
   const locationless: Array<{ index: number; itemCode: string }> = [];
   const details: AcDetail[] = [];
-  /* Per detail: did this ItemCode come from the STANDING CHOICE rather than
-     from the book? composeEdit needs to know, because a chosen code is the
-     ERP's policy answer and must never overwrite what AutoCount already holds
-     on a line it owns. */
-  const defaultChosen: boolean[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
       supplierCode: opts.supplierCode ?? null,
@@ -470,12 +465,11 @@ export function composeDetails(
     if (location) d.Location = location;
     if (l.delivery_date) d.DeliveryDate = l.delivery_date;
     details.push(d);
-    defaultChosen.push(r.via === 'default-choice');
   });
   if (failures.length) throw new ItemCodeError(failures);
   if (locationless.length) throw new MissingLocationError(locationless);
 
-  return { details, collapsed, defaultChosen };
+  return { details, collapsed };
 }
 
 /**
