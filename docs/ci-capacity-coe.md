@@ -152,6 +152,8 @@ here as such so nobody later cites it as established.
 
 | Item | Why deferred | Owner |
 | --- | --- | --- |
+| **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
+| **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
 | Enable the merge queue | The `merge_group` trigger and the `scale-postgres-contract` gate are now both ready (this PR). What remains is the decision and the flaky-test exposure — a queue is serial, so one flaky failure re-runs everything behind it | owner |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
 | 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
@@ -212,6 +214,33 @@ it irrelevant for 221 of the files and marginal for the remaining 44.
 
 ---
 
+## Confirmed on real runners, and where the bottleneck moved
+
+#2131 merged 2026-08-13. Job times from the merge run, against the ~380s
+per-shard the same job cost before:
+
+| job | before | after |
+| --- | --- | --- |
+| `backend-tests (1)` | ~380s | **141s** |
+| `backend-tests (2)` | ~380s | **127s** |
+| `backend-typecheck` | ~55s | 92s (it now also runs the 234-file light suite) |
+| `scale-postgres-contract` | ~80s | 70s |
+| `backend-postgres` | ~60s | 38s |
+| `e2e-contract` | ~18s | 17s |
+| **`frontend`** | ~285s | **~285s — untouched** |
+
+**The critical path is now `frontend`, and nothing in this work touched it.**
+A CI run finishes when its slowest job finishes; that used to be
+`backend-tests` at ~380s and it is now `frontend` at ~285s. Further backend
+work buys the PR author almost nothing from here.
+
+That job does, in one serial block: `npm ci`, `check:test-focus`, `typecheck`,
+`test`, two `node --test` gate scripts, `build`, **a second full `vite build` of
+the merge base** for the bundle baseline, `check:sw`, `test:smoke-script`,
+`typecheck:perf-local`, a Playwright Chromium download, and `test:perf-local`.
+The merge-base rebuild and the browser download are the two obvious candidates
+and neither has been measured — measure before touching, per `CLAUDE.md`.
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
@@ -229,7 +258,22 @@ it irrelevant for 221 of the files and marginal for the remaining 44.
 3. **`strict` without a merge queue does not scale past a handful of PRs.** The
    rule is right; the missing half of the pair is what made it quadratic.
 
-4. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
+4. **The generated snapshot has TWO inputs, and the forgettable one is the
+   baseline.** Within an hour of opening #2131 its own gate turned red, and the
+   cause was not a migration: #2106 edited `src/db/schema.sql`. Both feed
+   `gen:test-schema`, but "regenerate after adding a migration" is the sentence
+   everyone remembers, so the audit's own error message said exactly that and
+   pointed the reader at the wrong directory. Fixed to name both. A gate that
+   fires correctly and explains incorrectly still costs the next person the
+   afternoon.
+
+5. **Fixing the slowest job just promotes the second-slowest.** `backend-tests`
+   went 380s → 141s and the run did not get 240s faster for the author, because
+   `frontend` was already sitting at ~285s behind it. Always re-read the whole
+   job table after a win; the number that matters is the max, not the one that
+   moved.
+
+6. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
    the shard count against "112 files" and a "334s" suite. Both are long stale
    (277 files; a single shard now runs ~380s), and every later decision that
    trusted those numbers inherited the error. Sizing comments must be
