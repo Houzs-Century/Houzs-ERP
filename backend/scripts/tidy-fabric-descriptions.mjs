@@ -44,6 +44,7 @@
 import postgres from "postgres";
 import { parse, canonId } from "./lib/fabric-code.mjs";
 import { normColour } from "./lib/fabric-colour-match.mjs";
+import { isCatalogueSeries } from "./lib/catalogue-series.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -120,7 +121,7 @@ async function tidy(table, codeCol, descCol, label) {
      ORDER BY 1`);
   out(`${rows.length} row(s) read${hasActive ? "" : " (no active flag on this table)"}`);
 
-  const change = [], skipTomb = [], skipJunk = [], skipNoName = [], already = [];
+  const change = [], skipTomb = [], skipJunk = [], skipNoName = [], skipCatalogue = [], already = [];
   for (const r of rows) {
     if (isTombstone(r.descr)) { skipTomb.push(r); continue; }
     if (isJunk(r.code))       { skipJunk.push(r); continue; }
@@ -128,6 +129,14 @@ async function tidy(table, codeCol, descCol, label) {
     const p = parse(r.code);
     // A code the ONE parser cannot read is reported, never guessed at.
     if (!p) { skipNoName.push({ ...r, why: "code does not parse" }); continue; }
+    /* The owner dictated twelve series by hand, spelling included. This script
+       derives; it must not derive over a decision. Without this it reported 249
+       of his own rows (78 here, 171 in the selling library) as
+       `code is not canonical (would be DE-01) — fix the CODE first`, measured
+       on the 2026-08-14 production plan. It changed nothing — every one of them
+       failed the canonicality guard below and fell into the same bucket as real
+       problems, which is how a real problem stops being read. */
+    if (isCatalogueSeries(p.series)) { skipCatalogue.push(r); continue; }
     const canon = canonId(p);
     if (SERIES_FILTER.length && !SERIES_FILTER.includes(p.series)) continue;
 
@@ -163,6 +172,7 @@ async function tidy(table, codeCol, descCol, label) {
   out(`\n-- already correct: ${already.length}`);
   out(`-- tombstones left verbatim: ${skipTomb.length}`);
   out(`-- UNMATCHED junk bucket left alone: ${skipJunk.length}`);
+  out(`-- the owner\u0027s own 12 catalogue series, left exactly as he dictated: ${skipCatalogue.length}`);
   out(`-- reported, NOT changed (no name / unparseable code): ${skipNoName.length}`);
   for (const s of skipNoName.slice(0, 40)) out(`     ${s.code.padEnd(22)} ${JSON.stringify(s.descr).padEnd(40)} ${s.why}`);
   if (skipNoName.length > 40) out(`     ... and ${skipNoName.length - 40} more`);
