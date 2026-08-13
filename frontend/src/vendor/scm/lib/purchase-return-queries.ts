@@ -24,6 +24,29 @@ import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
+/* ── movementErrors: a SUCCESS that moved no stock ─────────────────────────
+   Every purchase-return write that touches inventory answers with the document
+   AND an optional `movementErrors: string[]` — the return is saved, the stock
+   write was refused (writeMovements never throws, it returns { ok:false }). The
+   HTTP status is a success, so `onError` never fires and the operator sees
+   nothing unless a success handler looks. That silence is the defect this
+   surfaces; the write itself deliberately stands, because an edit must not be
+   rolled back for a ledger hiccup.
+
+   Raised here, in the shared hook layer, rather than per page: these hooks are
+   the only thing desktop and mobile would both call, and a warning that lives in
+   one page is a warning the other surface does not have. */
+type WithMovementErrors = { movementErrors?: string[] };
+
+const reportMovementErrors = (title: string, res: WithMovementErrors | undefined | void): void => {
+  const errs = res?.movementErrors;
+  if (!errs?.length) return;
+  writeFailedAs(title)(new Error(
+    `${errs.join('\n')}\n\n` +
+    'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
+  ));
+};
+
 /* ── Purchase Returns ────────────────────────────────────────────────── */
 export const usePurchaseReturns = (status?: string) =>
   useQuery({
@@ -54,11 +77,14 @@ export const useCreatePurchaseReturn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      authedFetch<{ id: string; returnNumber: string }>(`/purchase-returns`,
+      authedFetch<{ id: string; returnNumber: string } & WithMovementErrors>(`/purchase-returns`,
         idempotentInit(idempotencyKey, {
           method: 'POST', body: JSON.stringify(body),
         })),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // The route has returned movementErrors since it was written; nothing read
+      // it, so a return whose stock OUT was refused still reported "created".
+      reportMovementErrors('Return created, but stock did not move', data);
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
       /* PR-DRAFT-removal: the POST creates the return already POSTED and writes
          the stock OUT inline, so a create moves stock. (The route's own header
@@ -141,10 +167,11 @@ export const useUpdatePurchaseReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, itemId, ...body }: { id: string; itemId: string } & Record<string, unknown>) =>
-      authedFetch<{ ok: true }>(`/purchase-returns/${id}/items/${itemId}`, {
+      authedFetch<{ ok: true } & WithMovementErrors>(`/purchase-returns/${id}/items/${itemId}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      reportMovementErrors('Line saved, but stock did not move', data);
       qc.invalidateQueries({ queryKey: ['purchase-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
       // Editing a line posts the qty DELTA as a movement on a POSTED return.
@@ -157,9 +184,13 @@ export const useUpdatePurchaseReturnItem = () => {
 export const useDeletePurchaseReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({
+    /* 200 `{ ok, movementErrors? }`, not the old 204: a 204 cannot carry the
+       reversal failure at all. authedFetch parses the JSON body the same way it
+       returned undefined for the 204, so the only change here is the type. */
     mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
-      authedFetch<void>(`/purchase-returns/${id}/items/${itemId}`, { method: 'DELETE' }),
-    onSuccess: (_, vars) => {
+      authedFetch<{ ok: true } & WithMovementErrors>(`/purchase-returns/${id}/items/${itemId}`, { method: 'DELETE' }),
+    onSuccess: (data, vars) => {
+      reportMovementErrors('Line deleted, but stock did not come back', data);
       qc.invalidateQueries({ queryKey: ['purchase-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
       // Dropping a line reverses that line's stock OUT via a delta movement.

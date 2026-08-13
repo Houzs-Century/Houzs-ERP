@@ -92,9 +92,9 @@ One guard, `scm.procurement.pr`, over the whole router — read and write.
 | PATCH | `/:id/complete` | POSTED → COMPLETED, optional `creditNoteRef` |
 | PATCH | `/:id/cancel` | `cancelPurchaseReturnHandler` |
 | PATCH | `/:id` | Update the header |
-| POST | `/:id/items` | Add a line |
-| PATCH | `/:id/items/:itemId` | Update a line |
-| DELETE | `/:id/items/:itemId` | Remove a line |
+| POST | `/:id/items` | Add a line — 201 `{ item, movementErrors? }` (§4a) |
+| PATCH | `/:id/items/:itemId` | Update a line — 200 `{ ok, movementErrors? }` (§4a) |
+| DELETE | `/:id/items/:itemId` | Remove a line — 200 `{ ok, movementErrors? }` (§4a) |
 
 Handler file: `backend/src/scm/routes/purchase-returns.ts` (~1,400 lines — use
 `docs/generated/route-locator.md` to jump to a handler instead of reading it
@@ -104,6 +104,39 @@ whole).
 joined rows as arrays even for to-one FKs**, so `grn` and `purchase_order` come
 back as arrays and the handler unwraps them. Any new join here needs the same
 unwrap.
+
+### 4a. `movementErrors` — a SUCCESS that moved no stock
+
+Every write on this module that touches inventory answers with the document AND
+an optional **`movementErrors: string[]`**, one entry per refused movement,
+shaped `OUT|IN <returnNumber>: <reason>`. It is the same field and the same
+shape on `POST /` (create) and on all three line verbs, so a client handles ONE
+shape for one concept.
+
+Why it exists: `writeMovements` **never throws** — it logs and returns
+`{ ok:false, reason }` — so a `try{}catch{}` around it catches nothing and the
+result must be READ. Until 2026-08-13 the three line verbs discarded it, so a
+line add / qty edit / delete moved `qty_returned`, `grn_items.returned_qty` and
+the refund rollup while the compensating movement was refused, and answered a
+clean 201 / 200 / 204.
+
+The policy is **best-effort, and the write COMMITS** — an edit is not rolled back
+for a ledger hiccup. Three things happen instead:
+
+1. the response carries `movementErrors`;
+2. a `RECOUNT_FAILED` row lands on `scm.entity_audit_log` under entity type
+   `PURCHASE_RETURN` (the shape `grns.ts` and `delivery-orders-mfg.ts` already
+   use). It is written for an investigator and for `GET /inventory/reconcile`,
+   not for a tab — the frontend History drawer does not render this entity type,
+   exactly as it does not render `DELIVERY_ORDER`;
+3. the frontend raises it: `reportMovementErrors` in
+   `frontend/src/vendor/scm/lib/purchase-return-queries.ts` calls the shared
+   `writeFailedAs` for create / line-edit / line-delete.
+
+**`DELETE /:id/items/:itemId` answers 200, not 204** — a 204 has no body and so
+cannot carry the failure at all. Every sibling line-delete
+(`consignment-notes.ts`, `consignment-returns.ts`, `delivery-returns.ts`) already
+answered 200 `{ ok, movementErrors? }`.
 
 ---
 
@@ -162,6 +195,15 @@ row filter** here — procurement is not scoped own+downline.
   legitimate. The guard is what keeps that from being a bypass.
 - **Tenancy check before state guard** on `/complete`, so error messages stay
   honest.
+- **`writeMovements` never throws.** Capture and read its result, or the failure
+  is invisible — see §4a. The same is true of `writePrLineDeltaMovement`, which
+  now returns the error array rather than void.
+- **The desktop detail page has no line editor.** `useUpdatePurchaseReturnItem` /
+  `useDeletePurchaseReturnItem` exist in `purchase-return-queries.ts` with no
+  consumer, and the list/detail "Edit" buttons navigate to `?edit=1`, a param
+  `PurchaseReturnDetailV2.tsx` reads nowhere. `POST /:id/items` has no frontend
+  caller at all. The line verbs are reachable by API only today, so the
+  `movementErrors` wiring in the hooks is what a future editor inherits.
 - **Joined to-one FKs come back as arrays** from Supabase typegen.
 - **Consignment returns are a different module.**
 - **No mobile twin.**

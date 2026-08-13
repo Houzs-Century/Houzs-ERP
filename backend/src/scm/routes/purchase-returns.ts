@@ -39,6 +39,7 @@ import {
   type StockShortage,
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { recordEntityAudit } from '../lib/entity-audit';
 
 export const purchaseReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseReturns.use('*', supabaseAuth);
@@ -497,7 +498,13 @@ async function checkPrStockAvailability(
    single-line delta movement so add/increase = more OUT, reduce/delete =
    compensating IN. deltaQty>0 → OUT (more goods leave to supplier); deltaQty<0
    → IN (goods come back). Resolves the line's source-GRN warehouse exactly
-   like the create path. Best-effort: never throws (mirrors writeMovements). */
+   like the create path. Best-effort: never throws (mirrors writeMovements).
+
+   RETURNS the create path's `movementErrors` shape — `string[]`, one
+   `OUT|IN <returnNumber>: <reason>` per failure, exactly what
+   writePurchaseReturnMovements produces. It used to return void, so the
+   three line verbs had nothing to report even though the failure was known
+   here; see their response comments. */
 async function writePrLineDeltaMovement(
   sb: any,
   args: {
@@ -507,16 +514,26 @@ async function writePrLineDeltaMovement(
             material_name: string | null; item_group?: string | null; variants?: VariantAttrs | null };
     deltaQty: number;
   },
-) {
-  if (!args.deltaQty) return;
+): Promise<string[]> {
+  if (!args.deltaQty) return [];
+  const isOut = args.deltaQty > 0;
+  const dir = isOut ? 'OUT' : 'IN';
+  /* Set the moment writeMovements confirms the insert. A throw AFTER that point
+     comes from a best-effort follow-up (retro-cost, SO re-allocation), and
+     reporting it as a failed stock write would be a different lie than the one
+     being fixed — the ledger did move. */
+  let wrote = false;
   try {
     const lineWh = await resolvePrLineWarehouses(
       sb, [{ id: args.line.id, grn_item_id: args.line.grn_item_id ?? null }], args.headerGrnId, args.companyId,
     );
     const warehouseId = lineWh.get(args.line.id) ?? null;
-    if (!warehouseId) return;
+    /* No warehouse resolved → no movement is ATTEMPTED, and the create path
+       drops the same line silently (writePurchaseReturnMovements filters it out
+       and reports nothing). Same concept, same shape: do not invent a second
+       error class here. */
+    if (!warehouseId) return [];
     const variantKey = computeVariantKey(args.line.item_group, args.line.variants ?? null);
-    const isOut = args.deltaQty > 0;
     // Batch: resolve THIS line's OWN dye-lot deterministically from its source GRN
     // line's PO (grn_item_id → purchase_order_item_id → PO number). Not a .limit(1)
     // bucket lookup, which could grab a sibling line's batch when two lines of the
@@ -568,13 +585,34 @@ async function writePrLineDeltaMovement(
        compensating stock movement missing and every caller answering 201/200:
        precisely the desync this function was written to end. The create path in
        this same file already captures it (:394) and its comment says why. */
-    const res = await writeMovements(sb, deltaRows, (prHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    const movementCompanyId = (prHeader as { company_id?: number | null } | null)?.company_id ?? null;
+    const res = await writeMovements(sb, deltaRows, movementCompanyId);
     if (!res.ok) {
       /* eslint-disable-next-line no-console */
       console.error('[pr-line-delta] stock movement NOT written — PR line changed, inventory did not:',
-        args.returnNumber, 'line', args.line.id, isOut ? 'OUT' : 'IN', Math.abs(args.deltaQty), res.reason ?? 'unknown');
-      return;
+        args.returnNumber, 'line', args.line.id, dir, Math.abs(args.deltaQty), res.reason ?? 'unknown');
+      /* Two durable traces, neither of which rolls the edit back — the shape the
+         DO resync (delivery-orders-mfg.ts, resyncInventoryForDo) took from the
+         GRN recount precedent (grns.ts postGrnAndRollup): a RECOUNT_FAILED row
+         on the document's own trail, plus movementErrors on the response. The
+         edit STANDS; an edit must not be rolled back for a ledger hiccup. */
+      try {
+        await recordEntityAudit(sb, {
+          entityType: 'PURCHASE_RETURN',
+          entityId: args.prId,
+          entityDocNo: args.returnNumber,
+          action: 'RECOUNT_FAILED',
+          companyId: movementCompanyId ?? args.companyId ?? null,
+          source: 'writePrLineDeltaMovement',
+          note:
+            `Line change committed on this return but its ${dir} delta movement ` +
+            `(qty ${Math.abs(args.deltaQty)}, line ${args.line.id}) was NOT written: ${res.reason ?? 'unknown'}. ` +
+            `The ledger does not reflect this change until /inventory/reconcile repairs it.`,
+        });
+      } catch { /* the trail is the backstop, not another way to lose the edit */ }
+      return [`${dir} ${args.returnNumber}: ${res.reason ?? 'unknown'}`];
     }
+    wrote = true;
     /* Oversell retro-cost (0154) — a REVERSING delta is an IN: the goods never
        went back to the supplier, so they re-open a lot a prior "ship anyway" DO
        can be costed from. Wired 2026-07-29; before that only a GRN reconciled
@@ -588,7 +626,13 @@ async function writePrLineDeltaMovement(
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-line-delta failed:', e); }
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pr-line-delta] movement failed:', e); }
+    return [];
+  } catch (e) {
+    /* eslint-disable-next-line no-console */
+    console.error('[pr-line-delta] movement failed:', e);
+    /* Reported only when the write was never confirmed — see `wrote` above. */
+    return wrote ? [] : [`${dir} ${args.returnNumber}: ${(e as Error)?.message ?? 'unknown'}`];
+  }
 }
 
 purchaseReturns.post('/', async (c) => {
@@ -1244,7 +1288,7 @@ async function prLineLock(sb: any, prId: string): Promise<{ error: string; messa
   return null;
 }
 
-purchaseReturns.post('/:id/items', async (c) => {
+export const addPurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1345,12 +1389,13 @@ purchaseReturns.post('/:id/items', async (c) => {
   /* Audit fix #5 — write the inventory OUT for the newly added line. Without
      this, adding a line to a POSTED PR touched returned_qty + money but never
      the physical stock, leaving inventory permanently over the books. */
+  let movementErrors: string[] = [];
   if (qtyReturned > 0) {
     const { data: hdr } = await sb.from('purchase_returns')
       .select('return_number, grn_id').eq('id', prId).maybeSingle();
     const inserted = data as unknown as { id: string } | null;
     if (hdr && inserted?.id) {
-      await writePrLineDeltaMovement(sb, {
+      movementErrors = await writePrLineDeltaMovement(sb, {
         prId,
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1368,11 +1413,17 @@ purchaseReturns.post('/:id/items', async (c) => {
       });
     }
   }
-  return c.json({ item: data }, 201);
-});
+  /* REPORTED, not discarded — the same `movementErrors: string[]` the CREATE
+     path (POST /) returns. This returned a clean 201 while the line's stock OUT
+     was refused, so qty_returned, grn_items.returned_qty and the refund rollup
+     all moved with no compensating movement and the operator was told it
+     worked. The line STAYS (best-effort ledger, as everywhere on these paths). */
+  return c.json({ item: data, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
+};
+purchaseReturns.post('/:id/items', addPurchaseReturnItemHandler);
 
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_returned. ── */
-purchaseReturns.patch('/:id/items/:itemId', async (c) => {
+export const patchPurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id'); const itemId = c.req.param('itemId');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1444,13 +1495,14 @@ purchaseReturns.patch('/:id/items/:itemId', async (c) => {
   /* Audit fix #5 — write the compensating inventory movement for the qty
      change. delta>0 → more goods leave (OUT); delta<0 → goods come back (IN).
      Uses the effective (possibly edited) material identity. */
+  let movementErrors: string[] = [];
   if (delta !== 0) {
     const { data: hdr } = await sb.from('purchase_returns')
       .select('return_number, grn_id').eq('id', prId).maybeSingle();
     if (hdr) {
       const effGroup = (it.itemGroup ?? (prev as { item_group?: string | null }).item_group) as string | null | undefined;
       const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as VariantAttrs | null | undefined;
-      await writePrLineDeltaMovement(sb, {
+      movementErrors = await writePrLineDeltaMovement(sb, {
         prId,
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1468,11 +1520,16 @@ purchaseReturns.patch('/:id/items/:itemId', async (c) => {
       });
     }
   }
-  return c.json({ ok: true });
-});
+  /* REPORTED, not discarded — same field, same shape as the CREATE path (POST /).
+     A qty edit that moved qty_returned, returned_qty and the refund while its
+     compensating movement was refused used to answer a clean 200. The edit
+     STANDS; the operator is told, and the trail carries a RECOUNT_FAILED row. */
+  return c.json({ ok: true, movementErrors: movementErrors.length ? movementErrors : undefined });
+};
+purchaseReturns.patch('/:id/items/:itemId', patchPurchaseReturnItemHandler);
 
 /* ── DELETE /:id/items/:itemId — remove a line + recompute header. ── */
-purchaseReturns.delete('/:id/items/:itemId', async (c) => {
+export const deletePurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
@@ -1488,6 +1545,7 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
   if (!line) return c.json(NOT_THIS_COMPANY, 404);
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
+  let movementErrors: string[] = [];
   if (line) {
     const l = line as { qty_returned: number; grn_item_id: string | null; material_code: string; material_name: string | null; item_group: string | null; variants: VariantAttrs | null };
     // Release: decrement returned_qty by the deleted line's qty (helper clamps ≥0).
@@ -1501,7 +1559,7 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
       const { data: hdr } = await sb.from('purchase_returns')
         .select('return_number, grn_id').eq('id', prId).maybeSingle();
       if (hdr) {
-        await writePrLineDeltaMovement(sb, {
+        movementErrors = await writePrLineDeltaMovement(sb, {
           prId,
           returnNumber: (hdr as { return_number: string }).return_number,
           headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1521,5 +1579,12 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
     }
   }
   await recomputePrTotals(sb, prId);
-  return c.body(null, 204);
-});
+  /* 200 + body, not 204. A deleted line reverses its return with a compensating
+     IN, and a refused IN left the goods deducted for good while the response
+     said 204 No Content — a status that cannot carry the failure at all. Every
+     sibling line-delete already answers 200 `{ ok, movementErrors? }`
+     (consignment-notes.ts, consignment-returns.ts, delivery-returns.ts), and
+     authedFetch parses a JSON 200 the same way it swallowed the 204. */
+  return c.json({ ok: true, movementErrors: movementErrors.length ? movementErrors : undefined });
+};
+purchaseReturns.delete('/:id/items/:itemId', deletePurchaseReturnItemHandler);
