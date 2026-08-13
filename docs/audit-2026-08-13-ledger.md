@@ -42,9 +42,9 @@ are its labels, not disjoint sets.
 | B1 | **A discounted sofa build was invoiced for MORE than it was ordered.** Discount validated against the whole build, then dumped on module 0 whose price is one share; `senOrZero` guards NaN not sign; DO/SI clamp the negative away. RM8,000 build − RM3,000 → ordered RM5,000, invoiced RM6,000. | **DONE** — `distributeBuildDiscount` at all 3 split sites + 6 tests |
 | B2 | `POST /purchase-invoices/from-grn` summed line totals UNCLAMPED while writing them CLAMPED, so `total_centi` ≠ Σ lines. Its sibling `/from-grn-items` already clamps inside the reduce and says why. GRN stores an unbounded `discount_centi` (grns.ts:1695), so the premise is real. | **DONE** |
 | B3 | Three SO paths lower the unit price and keep the stored discount: variant edit, product swap, sofa exchange. Negative total → clamped downstream → over-billing again. | **DONE** — all three now 422 `discount_exceeds_new_price`, following this file's own "reject-don't-normalize" rule (`:6199`, audit 2026-06-11 C-2) |
-| B4 | The **persisted** sofa selling price is quantised to whole ringgit per module and per combo (`sofa-build.ts:503/533/1260`), so RM1,299.50 × 4 bills RM5,200 instead of RM5,198. Only bites when a module price is not a whole ringgit; every writer of those columns is operator-entered. | **OPEN** — needs a data check before changing a pricing engine |
+| B4 | The **persisted** sofa selling price is quantised to whole ringgit per module and per combo (`sofa-build.ts:503/533/1260`), so RM1,299.50 × 4 bills RM5,200 instead of RM5,198. Only bites when a module price is not a whole ringgit; every writer of those columns is operator-entered. | **CHECK BUILT** — `check-sofa-price-rounding.mjs` + `sofa-price-rounding-check.yml` (Actions → Run workflow). Counts the part-ringgit values in the THREE inputs the engine actually reads, traced in source because the column names mislead: `seat_height_prices` carries both a cost (`priceSen`) and a selling (`sellingPriceSen`) figure, and the combo charged price is neither column alone but `comboChargedPrices`' merge of `selling_prices_by_height` over `prices_by_height`. Zero ⇒ a guard at data entry; non-zero ⇒ the engine has to carry sen. Nobody has to open a SQL console to find out |
 | B5 | Landed-freight per-unit rounding doubled a sub-sen allocation: 50 sen over 100 units → `round(0.5)` = 1 sen/unit → 100 sen capitalised, once per source. | **DONE** — the charge is added as a TOTAL and the aggregate divides once, so `allocateLandedCharges`' exactness survives to the lot |
-| B6 | A shipped-DO line reduction returns stock at a cost blended over costed and uncosted units. | **OWNER** — documented at the line, not guessed. Which units come back is not knowable from a qty delta, so the blend is wrong in one direction or the other. The durable fix is to route the resync through `fn_reverse_do_out` (mig 0198), which the DO CANCEL already uses to restore the ORIGINAL lot by id — a costing change |
+| B6 | A shipped-DO line reduction returns stock at a cost blended over costed and uncosted units, and mints a lot at that invented figure. | **DONE** — owner chose "按原成本退回". Mig 0286 `fn_return_do_units_at_cost` is the PARTIAL form of `fn_reverse_do_out` (0198): it unwinds `inventory_lot_consumptions` newest-first, returns each unit to the lot that paid for it at that lot's cost, restamps the OUT's COGS from what survives, and writes one balancing IN at cost 0 with its minted lot closed. Uncosted units return at nothing and are REPORTED, never smeared. LIFO is stated as a choice in the migration header because nothing in the data implies it. 9 pg tests, the first asserting the OLD arithmetic is wrong so the suite cannot pass vacuously |
 
 ## C. Permission gates
 
@@ -161,11 +161,21 @@ and the three checkers print their own buckets.
 | silent failure, backend (§D) | **closed**, all nine |
 | silent failure, frontend | **0 SILENT**; 41 UNRESOLVED reported as unresolved, not as a pass |
 | permission gates (§C) | **closed** — GL, inventory cost, AR reconciliation gated; quotes left open by owner decision |
-| money (§B) | B1/B2/B3/B5 fixed; **B4 open** (sofa price quantised to whole ringgit); B6 documented at the line as an owner costing decision |
+| money (§B) | B1/B2/B3/B5/B6 fixed — B6 by mig 0286, in the direction the owner chose. **B4 is the only one left**, and it is one workflow click from an answer rather than an open question |
 | COEs | 8 corrected — several described code that no longer exists |
 | module guides | all 27 now say their line numbers are indicative and point at the generated locator; one UNDECLARED permission key found and declared |
 | rule mirrors | 0 DIVERGED |
 
-**Still owner decisions:** B4 (needs a data check first), the fabric-tier
-single-column PKs, the desktop SO address rule, the SO confirm marker-vs-gate
-mismatch, and whether a shipped consignment note may be reopened to LOADED.
+**Still owner decisions — four, and none of them is a bug waiting on a fix.**
+Each is a question about how the business should work, which is not this
+audit's to answer:
+
+| # | question | what it costs to get wrong |
+|---|---|---|
+| B4 | Should a sofa module ever be priced in cents? | Run **Actions → Sofa price rounding check (read-only)**. Zero part-ringgit rows ⇒ add a guard at data entry; non-zero ⇒ the pricing engine has to carry sen and past documents need an impact pass |
+| E4 | Should desktop `SalesOrderNew` require a delivery address the way mobile and the backend already do? | Adding a required field changes what every salesperson must type |
+| E5 | `SalesOrderNew`'s confirm gate demands variants "date or no date"; the line card marks nothing required without a date. Which is the rule? | One of the two surfaces is lying to the operator today |
+| F2 | `model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` are single-column-PK'd, so one company's upsert overwrites the other's — same defect as the POS cart. | The migration is mechanical (0284 is the template); whether the two companies should have SEPARATE tier overrides at all is the business question |
+
+The consignment LOADED-reopen question is **resolved**: §J caps returns at the
+sibling documents' rule, which is what the owner chose.
