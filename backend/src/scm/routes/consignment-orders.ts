@@ -217,18 +217,33 @@ const deriveCountryFromState = async (
 };
 
 /* Sales/shipping Location (warehouse) follows the customer's State. Returns the
-   warehouse code for the state, or null when unmapped. */
+   warehouse code for the state, or null when unmapped.
+
+   COMPANY-SCOPED, like the mfg-SO twin this was copied from
+   (mfg-sales-orders.ts deriveSalesLocationFromState). `state` stopped being a
+   global key at migration 0092, which added `company_id NOT NULL` to
+   scm.state_warehouse_mappings and rebuilt its UNIQUE as
+   `(company_id, state)` — its header says the table "was never company-scoped
+   at all". The unscoped lookup here therefore had two failure modes and both
+   are wrong: with only the other company's row present it stamped THAT
+   company's warehouse onto this order's Sales Location, and once both
+   companies map the same state `.maybeSingle()` matches two rows, errors
+   (PGRST116) into the discarded `error`, and the field silently stops deriving
+   at all. */
 const deriveSalesLocationFromState = async (
   sb: any,
   state: string | null | undefined,
+  c: any,
 ): Promise<string | null> => {
   if (!state) return null;
   const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await sb
-    .from('state_warehouse_mappings')
-    .select('warehouse_id')
-    .eq('state', key)
-    .maybeSingle();
+  const { data: m } = await scopeToCompany(
+    sb
+      .from('state_warehouse_mappings')
+      .select('warehouse_id')
+      .eq('state', key),
+    c,
+  ).maybeSingle();
   const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
   if (!whId) return null;
   const { data: w } = await sb
@@ -915,6 +930,7 @@ consignmentOrders.post('/', async (c) => {
     (await deriveSalesLocationFromState(
       sb,
       (body.customerState as string | null | undefined) ?? null,
+      c,
     ));
 
   const { error: hErr } = await insertWithDocNoRetry<{ doc_no: string }>(
@@ -1250,6 +1266,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
       const derived = await deriveSalesLocationFromState(
         sb,
         body['customerState'] as string | null,
+        c,
       );
       if (derived) updates['sales_location'] = derived;
     }

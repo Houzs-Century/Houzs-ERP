@@ -183,6 +183,46 @@ export function buildAllocations(
    src/db/migrations-pg/0147_scm_settle_pi_paid_centi.sql for how that
    over-pays. */
 
+/* ── The allocation's pi_id is CALLER-SUPPLIED, so it is checked here ────────
+   An allocation row is stamped with the ACTIVE company (stampCompany, below),
+   but `piId` arrives in the request body and nothing verified that the invoice
+   it names is this company's. Post the voucher and settlePiPaidCenti moves that
+   invoice's paid_centi and status by id alone — the service-role client bypasses
+   RLS (mig 0061 enabled it with NO policies) — so a company-A voucher marked a
+   company-B supplier invoice PARTIALLY_PAID / PAID, and the FX-adoption branch
+   further down POST /:id/post could then rewrite that invoice's exchange_rate
+   and re-cost the GRN behind it. Company B sees an invoice settle with no
+   voucher of its own to explain it.
+
+   Checked where the id ENTERS, not at post time: nothing has been written yet,
+   so the operator gets a straight refusal instead of a voucher that silently
+   settles nothing. scm.purchase_invoices.company_id is NOT NULL (mig 0083), so
+   this filter is exact — an invoice of this company can never fail it.
+
+   FAILS CLOSED on a read error: absence is what REFUSES here, so folding a blip
+   into "all present" would authorise exactly the write this guard exists to
+   stop. Returns the offending ids. */
+async function allocationPisOutsideCompany(
+  sb: any,
+  c: any,
+  piIds: string[],
+): Promise<string[]> {
+  const ids = [...new Set(piIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(
+    sb.from('purchase_invoices').select('id').in('id', ids), c,
+  );
+  if (error) return ids;
+  const seen = new Set(((data ?? []) as Array<{ id: string }>).map((r) => r.id));
+  return ids.filter((id) => !seen.has(id));
+}
+
+const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
+  error: 'allocation_not_in_company',
+  message: 'One of the invoices this voucher applies to is not available in the company you are working in.',
+  purchaseInvoiceIds: ids.slice(0, 20),
+});
+
 /* ────────────────────────────────────────────────────────────────────────
    List / get
    ──────────────────────────────────────────────────────────────────────── */
@@ -241,7 +281,10 @@ paymentVouchers.get('/:id', async (c) => {
    Create (DRAFT)
    ──────────────────────────────────────────────────────────────────────── */
 
-paymentVouchers.post('/', async (c) => {
+/* Exported for the same reason postPaymentVoucherHandler and
+   cancelPaymentVoucherHandler are: the supabaseAuth bridge cannot run in the
+   vitest harness, so the scope test mounts the handler on a bare Hono app. */
+export const createPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
@@ -266,6 +309,12 @@ paymentVouchers.post('/', async (c) => {
   }
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  // Every applied-to invoice must be THIS company's — see allocationPisOutsideCompany.
+  {
+    const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+  }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
      unless the body sends an explicit one; MYR ⇒ 1, a strict no-op. */
@@ -338,7 +387,8 @@ paymentVouchers.post('/', async (c) => {
   });
 
   return c.json({ id: h.id, pvNumber: h.pv_number }, 201);
-});
+};
+paymentVouchers.post('/', createPaymentVoucherHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    Update — DRAFT only (a POSTED / CANCELLED voucher is read-only)
@@ -430,6 +480,14 @@ paymentVouchers.patch('/:id', async (c) => {
     const total = newTotal ?? Number(before.total_centi);
     if (allocBuilt.total > total) {
       return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total }, 400);
+    }
+    /* Same check as the create path, and it has to be here too: a DRAFT edit is
+       the other door the caller-supplied pi_id comes through, and it REPLACES
+       the whole allocation set. Refused before the delete, so a rejected edit
+       cannot leave the voucher with no allocations at all. */
+    {
+      const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
     }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {

@@ -35,7 +35,8 @@ import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
@@ -705,6 +706,9 @@ purchaseConsignmentReceives.get('/:id/linked', async (c) => {
 });
 
 purchaseConsignmentReceives.post('/', async (c) => {
+  /* company-scope: the parent PC Order named in the body is refused when it
+     belongs to another company (isCrossCompanySource, below); the other by-id
+     writes roll back the header this handler just inserted. Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Consignment receives post immediately on create.' }, 400);
@@ -752,8 +756,18 @@ purchaseConsignmentReceives.post('/', async (c) => {
   const pcOrderId = (body.purchaseConsignmentOrderId as string | undefined) ?? null;
   let pcOrderNo: string | null = null;
   if (pcOrderId) {
-    const { data: pcoHead } = await sb.from('purchase_consignment_orders').select('pc_number').eq('id', pcOrderId).maybeSingle();
-    pcOrderNo = (pcoHead as { pc_number: string } | null)?.pc_number ?? null;
+    const { data: pcoHead } = await sb.from('purchase_consignment_orders').select('pc_number, company_id').eq('id', pcOrderId).maybeSingle();
+    const pco = pcoHead as { pc_number?: string | null; company_id?: number | null } | null;
+    /* CROSS-COMPANY SOURCE (lib/companyScope) — the parent PC Order arrives as a
+       body field and the receive below is stamped `activeCompanyId(c)`, so a PC
+       Order id from the other company would have this company receive against
+       it and recomputePcoReceived would then move that company's received_qty.
+       A manual receive sends no parent, resolves to no source, and is
+       unaffected. Refused before the doc number is committed to. */
+    if (pco && isCrossCompanySource(pco.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(pco.pc_number ?? null, pco.company_id, c), 409);
+    }
+    pcOrderNo = pco?.pc_number ?? null;
   }
 
   // Created POSTED directly — no inventory IN is written.
@@ -830,6 +844,9 @@ purchaseConsignmentReceives.post('/', async (c) => {
 // Batch-convert multiple PC Orders into ONE PC Receive (same supplier).
 // Pre-fills qty_received + qty_accepted with the outstanding qty per line.
 purchaseConsignmentReceives.post('/from-pcos', async (c) => {
+  /* company-scope: every source PC Order is refused when it belongs to another
+     company (isCrossCompanySource, below); the by-id writes are this handler's
+     own rollback. Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseConsignmentOrderIds?: string[]; deliveryNoteRef?: string; notes?: string; warehouseId?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -837,11 +854,20 @@ purchaseConsignmentReceives.post('/from-pcos', async (c) => {
   if (pcoIds.length === 0) return c.json({ error: 'pco_ids_required' }, 400);
 
   const { data: pcos, error: pcoErr } = await sb.from('purchase_consignment_orders')
-    .select('id, pc_number, supplier_id, status')
+    .select('id, pc_number, supplier_id, status, company_id')
     .in('id', pcoIds);
   if (pcoErr) return c.json({ error: 'load_failed', reason: pcoErr.message }, 500);
-  const pcoList = (pcos ?? []) as Array<{ id: string; pc_number: string; supplier_id: string; status: string }>;
+  const pcoList = (pcos ?? []) as Array<{ id: string; pc_number: string; supplier_id: string; status: string; company_id?: number | null }>;
   if (pcoList.length === 0) return c.json({ error: 'pcos_not_found' }, 404);
+
+  /* CROSS-COMPANY CONVERSION (lib/companyScope) — the PC Orders are read by id
+     with no company predicate and the receive below stamps the ACTIVE company,
+     so the other company's consignment order would be received into this
+     company's books and its received_qty advanced from here. */
+  {
+    const foreign = pcoList.find((p) => isCrossCompanySource(p.company_id, c));
+    if (foreign) return c.json(crossCompanyConversionBlocked(foreign.pc_number, foreign.company_id, c), 409);
+  }
 
   const supplierIds = new Set(pcoList.map((p) => p.supplier_id));
   if (supplierIds.size > 1) {

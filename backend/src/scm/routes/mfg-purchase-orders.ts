@@ -39,7 +39,8 @@ import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import {
   loadLeadTimeBase,
@@ -1325,6 +1326,14 @@ mfgPurchaseOrders.post('/', async (c) => {
   );
 
   if (hErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
@@ -1634,11 +1643,14 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     /* Owner 2026-08-10 (migration 0274) — the SO line's photos ride along to the
        PO line. R2 keys, not bytes: the PO points at the SAME objects. */
     photo_urls: string[] | null;
-    so: { sales_location: string | null; customer_delivery_date: string | null } | null;
+    so: { sales_location: string | null; customer_delivery_date: string | null; company_id?: number | null } | null;
   };
   const SO_ITEM_SELECT =
     'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
-    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
+    /* company_id rides the embed for the cross-company conversion guard below —
+       the source SO lines are read by id / (doc_no, item_code) with no company
+       predicate, and the PO this core emits is stamped with the ACTIVE company. */
+    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date, company_id )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
   const normSo = (r: { so: unknown }): SoItem['so'] => {
@@ -1664,6 +1676,18 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
+      /* CROSS-COMPANY CONVERSION (lib/companyScope) — this core stamps the PO
+         with `activeCompanyId(c)` and mints under companyDocPrefix(c), while the
+         SO lines above are read by id with no company predicate. Converting the
+         other company's order therefore RE-COMPANIES the demand: a Houzs PO,
+         Houzs doc number, Houzs supplier commitment, raised against an order
+         Houzs never sold — and po_qty_picked advances on that company's SO line.
+         This is the same shape companyScope.ts names for SO->DO and SO->SI; PO
+         was the converter with no guard. REFUSE, because the destination stamps
+         the ACTIVE company rather than inheriting the source's. */
+      if (isCrossCompanySource(row.so?.company_id, c)) {
+        return c.json(crossCompanyConversionBlocked(row.doc_no, row.so?.company_id, c), 409);
+      }
       /* A retired line has no demand to purchase against. The line-level bind
          (soLinkTargetRefusal) has refused this since it was written and the
          From-SO picker never lists one, but THIS is the bulk create — reached by
@@ -1704,6 +1728,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const r of (rows ?? []) as unknown as SoItem[]) byKey.set(`${r.doc_no}|${r.item_code}`, { ...r, so: normSo(r) });
     for (const it of soItems) {
       const row = byKey.get(`${it.soDocNo}|${it.itemCode}`);
+      /* Same cross-company conversion guard as the picks branch. Only a REAL
+         matched row is checked: the fabricated fallback below carries `so: null`,
+         which isCrossCompanySource degrades to allowed exactly as it does for a
+         pre-migration NULL company_id — an unknown doc must not start failing. */
+      if (row && isCrossCompanySource(row.so?.company_id, c)) {
+        return c.json(crossCompanyConversionBlocked(row.doc_no, row.so?.company_id, c), 409);
+      }
       // Even if no SO row found, fabricate a minimal one so PO still gets created.
       pickedItems.push({
         row: row ?? {

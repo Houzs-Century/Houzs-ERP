@@ -42,7 +42,8 @@ import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { recomputePcoReceived } from './purchase-consignment-receives';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 
 export const purchaseConsignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseConsignmentReturns.use('*', supabaseAuth);
@@ -427,6 +428,9 @@ purchaseConsignmentReturns.get('/:id/linked', async (c) => {
 });
 
 purchaseConsignmentReturns.post('/', async (c) => {
+  /* company-scope: the source PC Receive named in the body is refused when it
+     belongs to another company (isCrossCompanySource, below); the only by-id
+     write is this handler's own rollback. Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Consignment returns post immediately on create.' }, 400);
@@ -435,6 +439,21 @@ purchaseConsignmentReturns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* CROSS-COMPANY SOURCE (lib/companyScope) — the bare-create path takes the
+     source receive as a body field and everything below stamps the ACTIVE
+     company: the header, the lines, and the inventory OUT the resync books. A
+     pcReceiveId from the other company would have this company return that
+     company's consigned goods and net down its received_qty. Optional by design
+     — a manual return sends no pcReceiveId and is unaffected. */
+  if (body.pcReceiveId) {
+    const { data: srcRecv } = await sb.from('purchase_consignment_receives')
+      .select('receive_number, company_id').eq('id', body.pcReceiveId as string).maybeSingle();
+    const src = srcRecv as { receive_number?: string | null; company_id?: number | null } | null;
+    if (src && isCrossCompanySource(src.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(src.receive_number ?? null, src.company_id, c), 409);
+    }
+  }
 
   /* Reject (don't clamp) any PC-receive-linked line that exceeds its remaining
      (qty_accepted - returned_qty) — matches the add-line + edit paths, which
@@ -542,6 +561,9 @@ purchaseConsignmentReturns.post('/', async (c) => {
 // Batch-convert multiple POSTED PC Receives into ONE PC Return. Aggregates all
 // qty_rejected lines across the selected receives (must share a supplier).
 purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
+  /* company-scope: every source PC Receive is refused when it belongs to another
+     company (isCrossCompanySource, below); the by-id write is this handler's own
+     rollback. Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveIds?: string[]; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -549,11 +571,18 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
   if (receiveIds.length === 0) return c.json({ error: 'pc_receive_ids_required' }, 400);
 
   const { data: receives, error: recvErr } = await sb.from('purchase_consignment_receives')
-    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status')
+    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
     .in('id', receiveIds);
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
-  const recvList = (receives ?? []) as Array<{ id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string }>;
+  const recvList = (receives ?? []) as Array<{ id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null }>;
   if (recvList.length === 0) return c.json({ error: 'pc_receives_not_found' }, 404);
+
+  /* CROSS-COMPANY CONVERSION (lib/companyScope) — sources read by id with no
+     company predicate, destination stamped with the ACTIVE company. */
+  {
+    const foreign = recvList.find((r) => isCrossCompanySource(r.company_id, c));
+    if (foreign) return c.json(crossCompanyConversionBlocked(foreign.receive_number, foreign.company_id, c), 409);
+  }
 
   const notPosted = recvList.filter((g) => g.status !== 'POSTED');
   if (notPosted.length > 0) {
@@ -644,6 +673,10 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
    Single-receive convert. Copies ALL of the receive's accepted lines (remaining
    only) into a NEW PC Return so the user can trim qty in the draft. */
 purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
+  /* company-scope: the source PC Receive is refused when it belongs to another
+     company (isCrossCompanySource, below); the remaining by-id statements read
+     that verified receive's lines and roll back this handler's own header.
+     Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveId?: string; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -651,11 +684,15 @@ purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
   if (!receiveId) return c.json({ error: 'pc_receive_id_required' }, 400);
 
   const { data: receive, error: recvErr } = await sb.from('purchase_consignment_receives')
-    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status')
+    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
     .eq('id', receiveId).maybeSingle();
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
   if (!receive) return c.json({ error: 'pc_receive_not_found' }, 404);
-  const g = receive as { id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string };
+  const g = receive as { id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null };
+  // CROSS-COMPANY CONVERSION — same rule and reason as the /from-pc-receives twin.
+  if (isCrossCompanySource(g.company_id, c)) {
+    return c.json(crossCompanyConversionBlocked(g.receive_number, g.company_id, c), 409);
+  }
   if (g.status !== 'POSTED') return c.json({ error: 'pc_receive_not_posted', status: g.status }, 409);
 
   const { data: items } = await sb.from('purchase_consignment_receive_items')
