@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   getBrandingForCompany,
   resolveCompanyCode,
@@ -173,6 +174,30 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.text("Not found", 404);
+
+  /* Multi-company: getAssrDetail's SQL is `WHERE c.id = ?` with no company
+     predicate, so this route rendered ANY company's service case to anyone
+     holding service_cases.read — the permission alone says nothing about
+     which company's cases you may see.
+
+     The JSON detail route already applies this exact guard (assr.ts, "a case
+     must fall inside the caller's ASSR company scope"); the PRINTABLE one,
+     which emits the same content as a document with letterhead, did not.
+
+     Same semantics, deliberately: an UNRESOLVED scope (undefined —
+     pre-migration / the D1 test mirror) skips the check, while an EMPTY scope
+     means the caller is granted no active company and every company-stamped
+     case must 404. Those two used to share `[]` and the merged state failed
+     open. Out-of-scope answers 404, indistinguishable from a missing id. */
+  const allowedCo = allowedCompanyIds(c as any);
+  if (allowedCo) {
+    const caseCo = Number(
+      (detail.case as any)?.companyId ?? (detail.case as any)?.company_id ?? NaN,
+    );
+    if (Number.isFinite(caseCo) && !allowedCo.includes(caseCo)) {
+      return c.text("Not found", 404);
+    }
+  }
 
   const { case: cs, items, attachments, activity, logistics } = detail;
 
