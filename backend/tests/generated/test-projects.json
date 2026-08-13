@@ -158,6 +158,7 @@
     "src/services/autocount-sofa-collapse.test.ts",
     "src/services/autocount-writeback.test.ts",
     "src/services/passwordStrength.test.ts",
+    "src/services/po.test.ts",
     "tests/agentCompany.test.ts",
     "tests/agentGovernance.test.ts",
     "tests/arAgingSnapshot.test.ts",
