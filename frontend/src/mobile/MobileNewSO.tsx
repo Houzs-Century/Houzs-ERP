@@ -12,7 +12,8 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
   buildAmendmentHeaderChanges,
@@ -1077,6 +1078,10 @@ export function MobileNewSO({
     const hit = list.find((m) => m.state === state);
     return hit?.warehouse?.code ?? "";
   }, [state, stateWarehousesQ.data]);
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   /* Effective venue to SEND on save — the operator's manual pick when they
      changed it, otherwise the derived default (resolvedVenueId already folds
@@ -1764,6 +1769,19 @@ export function MobileNewSO({
       setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with desktop via soStockLocationError. Create only: an EDIT enqueues an
+       AutoCount edit, which leaves the account book's own Location alone. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+      isEdit,
+    });
+    if (locationErr) { setError(soErrorText(locationErr)); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from
