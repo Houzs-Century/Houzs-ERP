@@ -401,7 +401,7 @@ PATCH,/api/scm/addons/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requi
 DELETE,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
 GET,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
 POST,/api/scm/admin/categories/:id/hero-image,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.procurement.products"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
-GET,/api/scm/ar/reconciliation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-reconciliation.ts
+GET,/api/scm/ar/reconciliation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.outstanding"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/ar-reconciliation.ts
 GET,/api/scm/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/categories.ts
 POST,/api/scm/categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts
 DELETE,/api/scm/categories/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/categories.ts

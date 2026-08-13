@@ -1216,12 +1216,15 @@ app.get("/payment-statuses", (c) => c.json({ data: PAYMENT_STATUSES }));
 // still matches projects whose sections were cloned from an older
 // template version.
 app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
+  /* "Most recent active template" is now resolved WITHIN the active company
+     (mig 0288). Company-blind, this filter row showed 2990 the stage names of
+     whichever company happened to own the highest template id. */
   const rows = await c.env.DB.prepare(
     `SELECT s.name, s.sort_order
        FROM project_checklist_template_sections s
       WHERE s.template_id = (
         SELECT MAX(t.id) FROM project_checklist_templates t
-         WHERE t.active = 1
+         WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
       )
       ORDER BY s.sort_order, s.id`
   ).all<{ name: string; sort_order: number }>();
@@ -1239,7 +1242,8 @@ app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
        FROM project_checklist_template_items i
        LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
       WHERE i.template_id = (
-        SELECT MAX(t.id) FROM project_checklist_templates t WHERE t.active = 1
+        SELECT MAX(t.id) FROM project_checklist_templates t
+         WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
       )
       ORDER BY s.sort_order, i.seq, i.id`
   ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
@@ -1513,8 +1517,51 @@ app.delete("/venues/:id", requirePermission("projects.manage"), async (c) => {
 // project_checklist_templates row. Items live in
 // project_checklist_template_items. These routes let admins manage
 // the template body that gets cloned into every new project.
+//
+// PER-COMPANY since mig 0288. Every route below scopes at the point the id
+// enters the request: a TEMPLATE id in the URL is resolved through
+// findTemplateInCompany, a CHILD id (itemId / sectionId) is scoped by that row's
+// own company_id exactly as PATCH /venues/:id and PATCH /brands/:id do. Creates
+// resolve the company through requireActiveCompanyId and REFUSE when it is
+// unknown, matching POST /venues — a create that cannot name its company must
+// not fall through to the column DEFAULT, which would write the row into HOUZS
+// and then hide it from the 2990 operator who just saw "saved".
+
+/**
+ * The company boundary for any /checklist-templates route carrying a TEMPLATE id.
+ * Resolves the template WITHIN the active company, so a 2990-context request
+ * holding a HOUZS template id resolves nothing.
+ *
+ * Callers answer 404 on null, which is deliberately the same answer as "no such
+ * template" — confirming that another company's id exists is itself a leak
+ * (companyScope's NOT_THIS_COMPANY makes the same choice). This is the predicate
+ * half of the rule that a STAMP IS NOT A PREDICATE: stamping company_id on a new
+ * item says nothing about whose template it was hung under, so the parent is
+ * re-checked separately on every create and reorder.
+ *
+ * Degrades exactly as activeCompanySql does — no predicate on a genuinely
+ * unresolved / single-company context, `1=0` once the context has resolved but no
+ * active company could be picked.
+ */
+async function findTemplateInCompany(
+  c: { env: Env; get(key: string): unknown },
+  templateId: number,
+): Promise<{ id: number } | null> {
+  return await c.env.DB.prepare(
+    `SELECT id FROM project_checklist_templates WHERE id = ?${activeCompanySql(c)}`
+  )
+    .bind(templateId)
+    .first<{ id: number }>();
+}
 
 app.get("/checklist-templates", requirePageAccess("projects.list"), async (c) => {
+  /* Company-scoped since mig 0288 (owner 2026-08-13: 应该按公司分开). The template
+     master used to be SHARED — blind on the read AND the write, so both companies
+     edited one set of rows. project_brands / project_venues sit in this same
+     router, carry company_id from the same mig 0093, and were already split; the
+     templates were the odd ones out. Same activeCompanySql idiom as GET /brands,
+     including its degrade-to-no-predicate on a genuinely unresolved context. */
+  const coSql = activeCompanySql(c, "t.company_id");
   const templates = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description,
             (SELECT COUNT(*) FROM project_checklist_template_items WHERE template_id = t.id) AS item_count,
@@ -1522,6 +1569,7 @@ app.get("/checklist-templates", requirePageAccess("projects.list"), async (c) =>
                FROM project_event_types et
               WHERE et.default_template_id = t.id) AS used_by
        FROM project_checklist_templates t
+      ${coSql ? `WHERE 1=1${coSql}` : ""}
       ORDER BY t.name`
   ).all();
   return c.json({ data: templates.results ?? [] });
@@ -1533,6 +1581,15 @@ app.get(
   async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    /* Company gate on the PARENT (mig 0288). This read used to hand the whole
+       body of any template to anyone holding its id, whichever company they were
+       in. The children below stay keyed on template_id alone on purpose: passing
+       this check is the only way to reach them, so a second predicate on the
+       child rows could not refuse anything extra — it could only make a row
+       invisible-but-present, a state no code path produces. */
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     // Return items + sections together so the editor renders one
     // round-trip. mig 050: section_id + requires_review on items.
     const items = await c.env.DB.prepare(
@@ -1578,6 +1635,17 @@ app.post(
     }>();
     const title = (body.title || "").trim();
     if (!title) return c.json({ error: "title required" }, 400);
+    /* Resolve the company for this WRITE, or refuse in words (mig 0288). Falling
+       through to the company_id DEFAULT would write the row into HOUZS and the
+       scoped read would never show it again — the "save succeeded, then it was
+       gone" failure POST /venues already paid for. */
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    /* A STAMP IS NOT A PREDICATE: the stamp below records whose item this is, it
+       does not establish whose template we are appending to. Check the parent. */
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     // If no seq given, append at end.
     let seq = body.seq;
     if (seq == null) {
@@ -1591,8 +1659,8 @@ app.post(
     const r = await c.env.DB.prepare(
       `INSERT INTO project_checklist_template_items
          (template_id, seq, title, description, required_perm, role_label,
-          crew_visible, due_offset_days, section_id, requires_review)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          crew_visible, due_offset_days, section_id, requires_review, company_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -1604,7 +1672,8 @@ app.post(
         body.crew_visible ? 1 : 0,
         body.due_offset_days ?? null,
         body.section_id ?? null,
-        body.requires_review ? 1 : 0
+        body.requires_review ? 1 : 0,
+        co.companyId
       )
       .run();
     return c.json({ id: r.meta.last_row_id, seq }, 201);
@@ -1651,11 +1720,18 @@ app.patch(
       binds.push(body.crew_visible ? 1 : 0);
     }
     if (sets.length === 0) return c.json({ ok: true });
-    await c.env.DB.prepare(
-      `UPDATE project_checklist_template_items SET ${sets.join(", ")} WHERE id = ?`
+    /* company-scope (mig 0288): `itemCoSql` is activeCompanySql, appended to the
+       WHERE, and the `!r.meta.changes` check below turns a cross-company miss
+       into an observable 404 rather than a silent "ok". There is no template id
+       in this URL, so the row's OWN company_id is the predicate — the same shape
+       as PATCH /venues/:id and PATCH /brands/:id. */
+    const itemCoSql = activeCompanySql(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE project_checklist_template_items SET ${sets.join(", ")} WHERE id = ?${itemCoSql}`
     )
       .bind(...binds, id)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -1666,11 +1742,14 @@ app.delete(
   async (c) => {
     const id = parseInt(c.req.param("itemId"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-    await c.env.DB.prepare(
-      `DELETE FROM project_checklist_template_items WHERE id = ?`
+    // Same company guard as the PATCH above: a 2990-context request must not
+    // delete a HOUZS template item by its id (mig 0288).
+    const r = await c.env.DB.prepare(
+      `DELETE FROM project_checklist_template_items WHERE id = ?${activeCompanySql(c)}`
     )
       .bind(id)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -1695,11 +1774,18 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
+    /* Company-scope BOTH halves (mig 0288): the parent template must be this
+       company's, and each row is scoped again so a foreign id smuggled into the
+       array is the documented no-op rather than a cross-company reseq. */
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const coSql = activeCompanySql(c);
     const stmts = ids.map((itemId, idx) =>
       c.env.DB.prepare(
         `UPDATE project_checklist_template_items
             SET seq = ?
-          WHERE id = ? AND template_id = ?`
+          WHERE id = ? AND template_id = ?${coSql}`
       ).bind((idx + 1) * 10, itemId, id)
     );
     await c.env.DB.batch(stmts);
@@ -4372,6 +4458,14 @@ app.post(
     const body = await c.req.json<{ name?: string; sort_order?: number }>();
     const name = (body.name || "").trim();
     if (!name) return c.json({ error: "name is required" }, 400);
+    // Resolve the company for this WRITE or refuse in words, then prove the
+    // parent template is this company's before hanging a section under it
+    // (mig 0288). Same pair as POST /checklist-templates/:id/items.
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     let order = body.sort_order;
     if (order == null) {
       const max = await c.env.DB.prepare(
@@ -4383,10 +4477,10 @@ app.post(
       order = (max?.s ?? 0) + 10;
     }
     const r = await c.env.DB.prepare(
-      `INSERT INTO project_checklist_template_sections (template_id, name, sort_order)
-       VALUES (?, ?, ?)`
+      `INSERT INTO project_checklist_template_sections (template_id, name, sort_order, company_id)
+       VALUES (?, ?, ?, ?)`
     )
-      .bind(id, name, order)
+      .bind(id, name, order, co.companyId)
       .run();
     return c.json({ id: r.meta.last_row_id, name, sort_order: order }, 201);
   }
@@ -4422,11 +4516,17 @@ app.patch(
     }
     if (sets.length === 0) return c.json({ error: "No fields to update" }, 400);
     binds.push(sectionId);
-    await c.env.DB.prepare(
-      `UPDATE project_checklist_template_sections SET ${sets.join(", ")} WHERE id = ?`
+    /* company-scope (mig 0288): `sectionCoSql` is activeCompanySql appended to
+       the WHERE, and `!r.meta.changes` makes a cross-company miss an observable
+       404. No template id in this URL, so the row's own company_id is the
+       predicate — same shape as PATCH /venues/:id. */
+    const sectionCoSql = activeCompanySql(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE project_checklist_template_sections SET ${sets.join(", ")} WHERE id = ?${sectionCoSql}`
     )
       .bind(...binds)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -4437,11 +4537,13 @@ app.delete(
   async (c) => {
     const sectionId = parseInt(c.req.param("sectionId"), 10);
     if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
-    await c.env.DB.prepare(
-      `DELETE FROM project_checklist_template_sections WHERE id = ?`
+    // Same company guard as the PATCH above (mig 0288).
+    const r = await c.env.DB.prepare(
+      `DELETE FROM project_checklist_template_sections WHERE id = ?${activeCompanySql(c)}`
     )
       .bind(sectionId)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -4463,12 +4565,17 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
+    // Both halves scoped, as in the items reorder above (mig 0288).
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const coSql = activeCompanySql(c);
     const stmts = ids.map((sectionId, idx) =>
       c.env.DB
         .prepare(
           `UPDATE project_checklist_template_sections
               SET sort_order = ?
-            WHERE id = ? AND template_id = ?`
+            WHERE id = ? AND template_id = ?${coSql}`
         )
         .bind((idx + 1) * 10, sectionId, id)
     );

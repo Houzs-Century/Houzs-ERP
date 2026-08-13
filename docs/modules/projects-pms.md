@@ -121,6 +121,35 @@ its existing-by-name upsert to the caller's company so it can't hijack another
 company's same-named row. `PATCH`/`DELETE /venues/:id` carry the same
 `activeCompanySql(c)` guard on their WHERE; PATCH returns **404** on a scoped miss.
 
+**Checklist TEMPLATES carry that same lock since PG mig 0288** (owner decision
+2026-08-13: *应该按公司分开*). They were the odd ones out — company-BLIND on the
+read *and* the write side, i.e. one shared master both companies edited — while
+`project_brands` and `project_venues`, in the same router and stamped by the same
+mig 0093, were already split. The templates are a PER-COMPANY master now:
+
+- **Reads.** `GET /checklist-templates` filters on `activeCompanySql(c, "t.company_id")`.
+  `GET /sections-distinct` and `GET /task-titles-distinct` resolve their
+  "newest active template" `MAX(t.id)` *inside* the company — company-blind, they
+  handed one company the other's stage names whenever the other owned the higher id.
+- **Template id in the URL** (`/checklist-templates/:id/...`) resolves through
+  `findTemplateInCompany(c, id)` and answers **404** on a miss — the same answer as
+  "no such template", deliberately, because confirming another company's id exists
+  is itself a leak.
+- **Child id in the URL** (`items/:itemId`, `sections/:sectionId`) is scoped by the
+  row's own `company_id` exactly as `PATCH /venues/:id` is, and returns **404** on a
+  scoped miss instead of a silent `ok`.
+- **Creates** resolve via `requireActiveCompanyId(c)` and **refuse with
+  `company_unresolved` (409)** rather than falling through to the `NOT NULL DEFAULT
+  <HOUZS>` column default, then stamp `company_id` — *and* re-check the parent
+  template, because a stamp is not a predicate: stamping the new item says nothing
+  about whose template it was hung under.
+
+Not covered, deliberately: `project_event_types.default_template_id`, the pointer
+the clone-on-create path (`services/projects.ts::instantiateChecklistFromEventType`)
+follows into a template. `project_event_types` carries **no `company_id` at all** —
+mig 0093 did not stamp it — so there is nothing to scope it by. Making event types
+per-company is a separate owner decision, not an implementation detail to invent.
+
 A venue carries an optional free-text `size` column (PG mig 0222) — the owner
 writes a physical area (`"12,000 sqft"`) or a hall label (`"Hall 3"`), so it is
 `text`, not a number. It is read in `GET /venues`, and accepted on `POST`
