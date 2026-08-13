@@ -1453,6 +1453,34 @@ export const SalesOrderNew = () => {
        confirm means "this is a real order", proceed means "this is
        buildable". Save as Draft was never gated either way. */
     if (processingDate) {
+      /* Delivery completeness is the SAME proceed rule (owner 2026-08-13: "只要
+         是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。就是
+         processing date。电话、电脑都一样的"). The server has enforced exactly
+         this since 2026-07-31 — shared/so-save-problems.ts `if (facts.procDate
+         && facts.completeness)` — and this page enforced NOTHING, so a
+         salesperson who set a Processing Date with a blank address (or with
+         "Fill in address later" still ticked, which BLANKS the address out of
+         the payload) got a bare validation_failed from the round-trip with no
+         idea which field.
+
+         Mobile had a third rule again: it required the address only once BOTH
+         dates were set, so procDate-without-delivDate slipped through there
+         too. All three now say the same thing. */
+      const addrMissing = [
+        !debtorName.trim() ? 'customer name' : null,
+        fillAddressLater || !address1.trim() ? 'address line 1' : null,
+        fillAddressLater || !postcode.trim() ? 'postcode' : null,
+        !deliveryDate.trim() ? 'delivery date' : null,
+      ].filter(Boolean) as string[];
+      if (addrMissing.length > 0) {
+        notify({
+          title: 'A Processing Date means this order is proceeding, so it needs a delivery address.',
+          body: `Still missing: ${addrMissing.join(', ')}.`
+            + (fillAddressLater ? '\n\nUntick "Fill in address later" to enter it.' : ''),
+          tone: 'error',
+        });
+        return;
+      }
       const missOf = (l: SoLineDraft): string[] =>
         missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
       const variantGaps = validLines

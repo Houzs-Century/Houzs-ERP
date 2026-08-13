@@ -1255,12 +1255,21 @@ export function MobileNewSO({
   const emailErr = emailProvided && !emailFormatOk; // only an error when a BAD email is typed
   const dateXorErr = Boolean(procDate) !== Boolean(delivDate); // set together or both empty
 
-  /* Address-required rule (owner 2026-07-03) — the delivery address is optional
-     by default (name + phone are the only required customer fields). BUT once
-     BOTH a Processing date AND a Delivery date are set the order is a firm
-     delivery, so State + City + Postcode + Address Line 1 become required. When
-     the dates aren't both set, an empty address simply saves empty. */
-  const addressRequired = Boolean(procDate) && Boolean(delivDate);
+  /* Address-required rule — the delivery address is optional by default (name +
+     phone are the only required customer fields). A PROCESSING DATE makes it
+     required: that date is the proceed signal, and a proceeding order has to be
+     deliverable.
+
+     It used to read `procDate && delivDate` (owner 2026-07-03). Corrected 2026-08-13
+     on the owner's own words: "只要是 proceed 的单，它都必须填；如果没有 proceed，
+     就不需要必填。就是 processing date。电话、电脑都一样的." The old AND was not
+     merely stricter or looser — it disagreed with the SERVER, which has required
+     the address on procDate alone since 2026-07-31
+     (shared/so-save-problems.ts: `if (facts.procDate && facts.completeness)`,
+     and it demands the delivery date in the same breath). So a procDate with no
+     delivDate showed no required-field marks here and was then refused on save.
+     Desktop SalesOrderNew had no rule at all; all three now agree. */
+  const addressRequired = Boolean(procDate);
   const missingAddress = addressRequired
     ? [
         !state.trim() ? "state" : null,
