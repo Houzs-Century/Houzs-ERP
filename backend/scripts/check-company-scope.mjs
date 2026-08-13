@@ -133,6 +133,26 @@ const SCOPE_PRIMITIVES = [
 /** Hand-written scoping: .eq('company_id', …) / .in('company_id', …). */
 const MANUAL_SCOPE = /\.(eq|in)\(\s*['"`]company_id['"`]/;
 
+/* A STAMP IS NOT A PREDICATE — the FIFTH blind spot, 2026-08-13.
+   `.from('x').insert({ company_id: activeCompanyId(c), ... })` contains both a
+   real `.from(` query and the string `activeCompanyId`, so every test above
+   counted it as scoped. It is the opposite: stamping the ACTIVE company onto a
+   row you are writing says nothing about WHOSE row you loaded, and when the two
+   disagree the stamp is what makes the damage silent — the payment lands on
+   company B's invoice tagged as company A's.
+
+   Seven confirmed cross-company MONEY writes hid behind exactly this, in
+   sales-invoices.ts and delivery-orders-mfg.ts, while this script printed 0
+   WRITE findings. One of them had a comment above it reading "multi-company:
+   match the SI's company" over a line that never compared anything.
+
+   So the payload of an insert/upsert is removed before the statement is tested.
+   `.eq('company_id', ...)` chained onto the SAME statement still counts, because
+   that IS a predicate. */
+function stripInsertPayload(stmt) {
+  return stmt.replace(/\.(insert|upsert)\s*\(([\s\S]*?)\)(?=\s*[.;\n]|$)/g, ".$1(<payload>)");
+}
+
 /** A row-targeting predicate: .eq('id', x) or .eq('<something>_id', x). */
 const ID_PREDICATE = /\.eq\(\s*['"`](id|[a-z_]+_id)['"`]/;
 
@@ -388,7 +408,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
     const delegated = DELEGATION_GUARDS.some((h) => joined.includes(h));
     const hasScopedQuery = scanBody.some((l, i) => {
       if (!l.includes(".from(")) return false;
-      const stmt = statementAround(i);
+      const stmt = stripInsertPayload(statementAround(i));
       return SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
     });
     /* THE BUILDER-IN-A-VARIABLE SHAPE, which is legitimate and common:
@@ -544,6 +564,11 @@ const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
     keysOf(".eq('paid_centi', prev)").length === 0 &&   // concurrency guard, not identity
     keysOf(".eq('status', 'USED')").length === 0 &&     // state filter, not identity
     MANUAL_SCOPE.test(".eq('company_id', args.companyId)") &&
+    /* A stamp is not a predicate. Asserted so the fifth blind spot cannot
+       return: seven cross-company MONEY writes hid behind this exact shape. */
+    !MANUAL_SCOPE.test(stripInsertPayload(".from('x').insert({ company_id: activeCompanyId(c) })")) &&
+    !stripInsertPayload(".from('x').insert({ company_id: activeCompanyId(c) })").includes("activeCompanyId") &&
+    MANUAL_SCOPE.test(stripInsertPayload(".from('x').insert({ a: 1 }).eq('company_id', co)")) &&
     LIB_WRITE.test(".update({ status: 'USED' })") &&
     !LIB_WRITE.test(".select('code')");
   if (!ok) {
