@@ -1012,6 +1012,10 @@ function humanize(msg: string): string {
     race_conflict: "Another operator just converted overlapping quantity. Refresh and try again.",
     nothing_to_invoice: "This Goods Receipt is already fully invoiced.",
     nothing_to_return: "This Goods Receipt is already fully returned.",
+    /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
+       tick lives on the desktop receipt screen, so this says where to go rather
+       than leaving the operator at a code they cannot act on. */
+    zero_cost_receipt: "Some lines would be received at zero cost, but those items have been bought at a real price before. Enter the unit price from the supplier's goods-received document, or open the receipt on desktop and tick \"Received free\" on the line.",
     grn_not_posted: "Only a posted Goods Receipt can be converted. Post it first.",
     grn_not_found: "That Goods Receipt no longer exists. Refresh and try again.",
     grn_id_required: "Select a Goods Receipt first.",

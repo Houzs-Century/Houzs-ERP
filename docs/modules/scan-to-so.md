@@ -187,7 +187,10 @@ The two surfaces seed the **SO's** Processing Date from different facts:
 - `MobileNewSO`'s `scanPrefill` prop is **never supplied** — the screen union in
   `MobileApp.tsx:83` declares it, but neither `setScreen({t:"new-so"})` call site
   passes it. The live mobile scan path is `createDraftFromPrefill`, which sends
-  `internalExpectedDd: null` outright.
+  `processingDate: null` outright (`MobileNewSO.tsx:476`). Note the stale
+  COMMENT twenty lines further down at `:730` still says `internalExpectedDd:
+  null` — this bullet used to be written off that comment rather than off the
+  code, which is how it outlived the rename.
 - Desktop's `soScanPrefill` sessionStorage handoff has a **reader and no
   writer** — `ScanOrderModal` became a pure `/enqueue` surface (§4).
 

@@ -30,11 +30,7 @@ import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
-/* POS auto-Proceed (Loo 2026-06-09) — when a handover arrives already complete
-   (customer + address + delivery date + the company's deposit) AND carries a
-   Processing Date, the order lands in Proceed without a manual click. Same gate
-   the POS "Move to Proceed" button uses, so the two never drift; and the same
-   date, because having one is what being proceeded MEANS (owner 2026-08-13). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
@@ -168,6 +164,12 @@ import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender,
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import {
+  SO_PROCESSING_DATE_COLUMN,
+  readSoProcessingDateFromBody,
+  soDatePairCascadeColumns,
+  soDatePairRefusal,
+} from '../shared/so-processing-date';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -300,31 +302,13 @@ async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise
   return res;
 }
 
-/* ── SO processing-date lock (Owner 2026-06-12) ─────────────────────────────
-   Once the SO's processing day has PASSED (from midnight Malaysia time, UTC+8,
-   the day AFTER the processing date) the SO is LOCKED: locked orders are what
-   we PO to the supplier, so header edits, line add/edit/delete and price
-   overrides are all rejected with 409 so_locked_processing. Status transitions
-   (deliver / cancel flow), payments, PO/DO conversions and reads stay open.
-   The UI's "Processing Date" lives in processing_date — the ONE column, and
-   now the ONE name (mig 0284 renamed it from internal_expected_dd; the dead
-   legacy column that used to squat on this name went in 0189). */
+/* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCKED_RESPONSE = {
   error: 'so_locked_processing',
   reason: 'Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)',
 } as const;
 
-/* ── SO purchase-order lock (Owner 2026-08-12, 2990 only) ───────────────────
-   The SAME soft lock, reached by the other road: a live PO already claims one
-   of this SO's lines, so the order is with a supplier regardless of what the
-   processing date says. Rationale, scope and the fail-closed contract live in
-   lib/so-po-lock.ts — read that before widening this to Houzs.
-
-   A SEPARATE response from the processing-date one on purpose: the two are
-   fixed by different actions ("wait / talk to production" vs "the PO is out,
-   raise an amendment so purchasing can re-send"), and an operator told the
-   wrong reason goes looking in the wrong place. Both are 409 + amendment-
-   eligible, so the FE routing is unchanged. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PO_LOCKED_RESPONSE = {
   error: 'so_locked_po_raised',
   reason: 'A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.',
@@ -459,32 +443,13 @@ export function soProcessingLocked(
      Locked strictly AFTER the processing day — procYmd === today stays open. */
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   if (!(procYmd < todayMY)) return false;
-  /* Owner 2026-07-16 — the lock fires once the processing day has passed on a
-     CONFIRMED-or-later order. A Processing Date can only be SET on a ≥30%-paid
-     order and IS production's "ready to build" signal, so once it elapses the
-     order is committed regardless of whether the explicit Proceed (IN_PRODUCTION)
-     toggle was ever pressed. The prior rule ALSO required `proceeded_at` — but
-     that is stamped only at the IN_PRODUCTION transition, so a CONFIRMED SO whose
-     processing date had passed stayed directly editable (a salesperson could
-     change a line's colour after we had already PO'd it). DRAFT (not yet
-     confirmed) and CANCELLED stay editable. When the caller's header select omits
-     `status` we fall back to the `proceeded_at` marker so a status-blind read can
-     never OVER-lock a row. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
   const status = String(header.status ?? '').toUpperCase();
   if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
   return Boolean(header.proceeded_at);
 }
 
-/* Shared route guard — fetches the two date columns and returns the 409 body
-   when locked, null when free. Callers that already hold the header row use
-   soEditLocked / soProcessingLocked directly instead of re-querying.
-
-   Owner 2026-08-12: now also answers the PO lock, so the ~6 writers that reach
-   the lock through THIS helper (line add/edit/delete, price override, …) picked
-   up the new rule without 6 separate edits — the shape that let previous guards
-   land on some writers and not others. The date lock is evaluated FIRST and its
-   response wins when both apply: it is the older, better-understood reason, and
-   an SO past its processing date with a PO on it is locked either way. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingLockBlocked(
   sb: any,
   docNo: string,
@@ -572,25 +537,13 @@ function soStatusTransitionError(
   };
 }
 
-/* ── SO Proceed gate (FIX 2, 2026-07-16) ────────────────────────────────────
-   meetsProceedGate (shared order-rules) was only consulted at CREATE
-   auto-proceed. The two MANUAL proceed paths — PATCH /:docNo/status →
-   IN_PRODUCTION (stamps proceeded_at) and PATCH /:docNo proceededAt — stamped
-   proceeded_at with NO ≥50%-paid / full-address check, so mobile / API could
-   proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
-   shared gate on both manual paths so create + manual + client can't drift.
-   `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
-   the SO's local_total_centi — no new threshold invented (the per-company
-   fraction is processingDateThresholdFor, inside meetsProceedGate). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCEED_GATE_RESPONSE = {
   error: 'proceed_gate_unmet',
   reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
 } as const;
 
-/* Σ collected vs the header total, both centi — the deposit facts every
-   Processing-Date gate weighs. One reader because there is one rule: the Proceed
-   gate and the aggregated save report must not be able to disagree about how
-   much has been paid, only about how to report it. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soDepositFacts(
   sb: any,
   docNo: string,
@@ -633,15 +586,7 @@ async function soProceedGateBlocked(
   return ok ? null : SO_PROCEED_GATE_RESPONSE;
 }
 
-/* Every reason a Processing Date may NOT be set on THIS order, read live off the
-   row instead of off a patch body — the same aggregated list the header PATCH
-   builds (collectProcessingGateProblems), from the same facts.
-
-   It exists because proceeding now WRITES the date (owner: a Processing Date is
-   what "proceeded" means). That write has to clear exactly what a date set on the
-   header clears — variants, colour-KIV, deposit, completeness, the date rules —
-   or the proceed route becomes the way around the gate that guards the shop
-   floor. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingDateProblemsForDoc(
   sb: any,
   docNo: string,
@@ -695,60 +640,10 @@ const SO_IDENTITY_LOCK_COLS = new Set<string>([
   'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
 ]);
 
-/* Owner 2026-06-12 + Loo 2026-06-13 — after the processing date passes the SO is
-   what we PO to the supplier, so the columns that feed the supplier PO freeze on
-   the header PATCH. The rest of the customer / delivery-address / payment fields
-   stay editable in the Proceed lane (POS "edit in Proceed"); items have their
-   own per-route processing lock. Keyed by DB column name.
-
-   Owner 2026-06-16 — customer_state + sales_location ALSO freeze here. State
-   drives each SO line's warehouse_id (deriveWarehouseIdFromState), and that
-   warehouse is what the PO ships from. Once the SO is locked the line warehouse
-   is frozen + PO'd, so letting State change afterwards would silently desync the
-   warehouse / PO from the customer's address. The REST of the address (address
-   lines / city) + payment stay editable — the State (and the Location it
-   derives) plus the Postcode lock.
-
-   Owner 2026-07-05 — postcode ALSO freezes here. Like State, the postcode is
-   part of the PO delivery location the supplier ships to, so it must not drift
-   after the SO is locked + PO'd.
-
-   Owner 2026-07-17 — this Set is no longer written by hand. It is DERIVED from
-   the shared SO_HEADER_FIELD_POLICY table (scm/shared/so-field-policy.ts),
-   which is the single source of truth for the FREE / CONTROLLED split and is
-   drift-tested against the frontend's vendored copy. `city` joined the set
-   there: the mobile UI already disabled City and named it in its lock copy, but
-   no backend set contained it, so a posted City change wrote straight through
-   on a locked, PO'd SO — and no amendment could carry it either.
-
-   One correction the policy table records and this comment used to get wrong:
-   State freezes because it RESOLVES the warehouse. Postcode and City freeze
-   because they are printed on the supplier PO as the delivery destination.
-   Postcode resolves nothing — state_warehouse_mappings has no postcode column. */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCK_COLS = soProcessingLockColumns();
 
-/* ── Amendable header fields (Owner 2026-07-16) ─────────────────────────────
-   Every column SO_PROCESSING_LOCK_COLS freezes above is rejected by the header
-   PATCH once the SO is locked. The amendment workflow is the sanctioned channel
-   for changing a locked SO — so this is EXACTLY the set an amendment must be
-   able to carry, or a field would be frozen with no way to request it at all
-   (owner: "應該是全部可以 request 啊 然後看有沒有 approval"; the Delivery Date was
-   the concrete casualty).
-
-   Keyed by the camelCase payload name the header PATCH already accepts, mapped
-   to its column. `sales_location` is in the lock Set but NOT amendable directly:
-   it is DERIVED from customer_state, and applySoAmendment re-derives it exactly
-   as the header PATCH does. Mirrors the frontend AMENDABLE_HEADER_KEYS
-   (vendor/scm/lib/so-amendment-header.ts) — keep the two in step.
-
-   This allow-list is the trust boundary: an amendment's header_changes jsonb is
-   client-authored, so any key not listed here is REJECTED at create rather than
-   written through to the SO on approve.
-
-   Owner 2026-07-17 — also DERIVED from SO_HEADER_FIELD_POLICY now, so the lock
-   Set and this allow-list cannot fall out of step: every CONTROLLED row is in
-   both, every DERIVED row is in the lock only. That invariant used to be prose
-   in three files; it is a test now (soFieldPolicy.test.ts). */
+/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields();
 
 /* Loose equality for the lock diff — null / undefined / '' all collapse so a
@@ -3463,13 +3358,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
     /* Processing + Delivery are all-or-nothing (both set or both empty). Kept as
        a SHORT-CIRCUIT (not aggregated): an unpaired date is a structurally-
-       incomplete input, not one of several field-level fixes. */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+       incomplete input, not one of several field-level fixes. The predicate is
+       shared/so-processing-date's, not a local Boolean() compare, so the five
+       write paths that enforce this rule cannot drift apart again. No originals
+       — every date on a create is new, so nothing is grandfathered. */
+    const createPairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (createPairRefusal) return c.json(createPairRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
        (Commander 2026-05-29 — a Processing Date means "ready to build", so every
@@ -5104,7 +5000,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      cannot exist: proceeded, in production, with no day the factory starts. The
      create refuses nothing extra for it — the order is simply created un-
      proceeded, and gets its date (and its Proceed) when someone picks one. */
-  const procDateOnCreate = (body.internalExpectedDd as string | null | undefined) || null;
+  /* Read through the shared helper, not a literal. This line said
+     `body.internalExpectedDd`, a key NO client sends — desktop New SO, both
+     mobile surfaces, from-products and this route's own INSERT all send
+     `processingDate` — so `autoProceed` was always false and an order created
+     WITH a Processing Date was created UN-proceeded, the inverse of the owner's
+     pinned rule. An absent property is `undefined`, not an error, so nothing
+     said a word. The helper accepts the legacy spelling too. */
+  const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
   const autoProceed = !!procDateOnCreate && meetsProceedGate({
@@ -5844,9 +5747,12 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // roll back the status change).
 mfgSalesOrders.patch('/:docNo/status', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
-  /* `internalExpectedDd` — the Processing Date a move to IN_PRODUCTION proceeds
-     WITH, for a caller proceeding an order that does not carry one yet. */
-  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; internalExpectedDd?: string };
+  /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
+     WITH, for a caller proceeding an order that does not carry one yet.
+     `internalExpectedDd` is the legacy spelling of the same key and is still
+     accepted (readSoProcessingDateFromBody); it is the name this route's
+     contract was documented under, and no live client sends it. */
+  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; processingDate?: string; internalExpectedDd?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
@@ -5976,11 +5882,13 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     updated_at: new Date().toISOString(),
   };
   if (toStatus === 'IN_PRODUCTION') {
+    /* Column bound to the constant — see "WHY A CONSTANT" in
+       shared/so-processing-date.ts. */
     const { data: cur } = await sb.from('mfg_sales_orders')
-      .select('proceeded_at, internal_expected_dd, debtor_name, email, address1, postcode, customer_delivery_date')
+      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; internal_expected_dd?: string | null;
+      proceeded_at?: string | null; processing_date?: string | null;
       debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
@@ -5992,8 +5900,11 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
        The date the proceed proceeds WITH is either already on the order or comes
        in on this request; there is no third source, and today is a guess. */
     const resolved = resolveProceedProcessingDate({
-      supplied: typeof body.internalExpectedDd === 'string' ? body.internalExpectedDd : null,
-      stored: curRow?.internal_expected_dd ?? null,
+      /* Both spellings — the canonical `processingDate` every live client
+         actually sends, and the legacy `internalExpectedDd` this route's
+         contract was documented under. */
+      supplied: readSoProcessingDateFromBody(body as Record<string, unknown>),
+      stored: curRow?.[SO_PROCESSING_DATE_COLUMN] ?? null,
     });
     if (!resolved.ok) return c.json(resolved.refusal, 422);
     if (resolved.write) {
@@ -6013,7 +5924,19 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
         deliveryDate: curRow?.customer_delivery_date,
       }, c.get('companyCode') ?? null);
       if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
-      patch.internal_expected_dd = resolved.date;
+      /* The pair rule, on the one write path that reaches the date without a
+         header patch. soProcessingDateProblemsForDoc above already refuses a
+         missing delivery date through the completeness gate; this is the same
+         invariant stated where the WRITE is, so a future edit to that helper's
+         facts cannot quietly re-open the hole. */
+      const pairRefusal = soDatePairRefusal({
+        nextProc: resolved.date,
+        nextDeliv: curRow?.customer_delivery_date ?? null,
+        origProc: curRow?.[SO_PROCESSING_DATE_COLUMN] ?? null,
+        origDeliv: curRow?.customer_delivery_date ?? null,
+      });
+      if (pairRefusal) return c.json(pairRefusal, 400);
+      patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;
     }
     if (!curRow?.proceeded_at) {
       /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
@@ -7122,6 +7045,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      another date, stays governed by the existing gates (payment ≥30%, variants
      complete, not-in-the-past, processing lock). */
   let superAdminClearsProc = false;
+  /* Set by the date-pair block below when clearing the Processing Date also
+     clears a Delivery Date the request never named. Read at the RPC call so the
+     line-level cascade runs for it too. */
+  let cascadedDeliveryClear = false;
   {
     const proc = body['processingDate'];
     const origProc =
@@ -7242,7 +7169,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        already be on the row; what it may not do is mark an order proceeded with
        no day the factory starts. A date arriving in THIS patch is gated by the
        aggregated Processing-Date block below, which runs before any write. */
-    if (!effOf('internal_expected_dd')?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
+    /* Bound to the constant — this read named `internal_expected_dd`, which
+       migration 0286 renamed away, so `effOf` resolved undefined for EVERY
+       order and this line refused every proceed that came through the header
+       PATCH, including ones whose date arrived in the same request. */
+    if (!effOf(SO_PROCESSING_DATE_COLUMN)?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
   }
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
@@ -7267,16 +7198,41 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     /* Owner 2026-07-04 — Processing + Delivery are all-or-nothing (both set or
        both empty). Kept as a SHORT-CIRCUIT (not aggregated): an unpaired date is a
        structurally-incomplete input, not one of several field-level fixes — there
-       is no meaningful "and also" to report against half a date pair. Only fires
-       when THIS request touches a date; a patch that doesn't touch dates
-       grandfathers any legacy unpaired row through. */
-    const touchesDates = typeof proc === 'string' || typeof deliv === 'string';
-    if (touchesDates && Boolean(effProc) !== Boolean(effDeliv)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+       is no meaningful "and also" to report against half a date pair. The
+       predicate is shared/so-processing-date's, so this path, the create path,
+       the CO paths and both amendment paths state the rule ONCE; the grandfather
+       carve-out (a stored unpaired pair this save leaves alone) lives inside it
+       rather than in a `touchesDates` flag each caller re-derived.
+
+       CLEARING ONE CLEARS BOTH (owner: 同时有或者同时没有). Removing the
+       Processing Date is already super-admin-only (superAdminClearsProc above);
+       once that removal is authorised the Delivery Date it was promised against
+       goes with it, so a caller that sends only `processingDate: ''` no longer
+       has to know to send the delivery key too. Computed BEFORE the refusal so
+       the cascade is what the refusal is judged against. The reverse — clearing
+       only the delivery date — deliberately does NOT cascade: it would clear the
+       Processing Date, which is exactly the write that permission guards. */
+    const cascadeCols = soDatePairCascadeColumns({
+      procCleared: superAdminClearsProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of cascadeCols) updates[col] = null;
+    /* The header column is only half the write: apply_so_header_cas cascades a
+       delivery-date change down to every line_delivery_date behind
+       p_apply_delivery_date, which keys off the request body. A cascade the
+       body never mentioned would move the header and leave every LINE on the
+       old date — the exact split MRP reads (it orders by line_delivery_date).
+       Flagged here so the RPC call below applies both halves. */
+    cascadedDeliveryClear = cascadeCols.length > 0;
+    const effDelivAfterCascade = cascadedDeliveryClear ? null : effDeliv;
+    const pairRefusal = soDatePairRefusal({
+      nextProc: effProc,
+      nextDeliv: effDelivAfterCascade,
+      origProc,
+      origDeliv,
+    });
+    if (pairRefusal) return c.json(pairRefusal, 400);
     /* The aggregated report — variants (collected above), the 30% deposit
        (collected above), and the past-date / processing-≤-delivery date rules,
        ALL in one response so the coordinator fixes them in a single pass. The
@@ -7289,7 +7245,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
          processingDateThresholdFor falls back to the LOOSER 30% on purpose. */
       companyCode: c.get('companyCode') ?? null,
       procDate: effProc,
-      delivDate: effDeliv,
+      /* Post-cascade, so the aggregated report judges the row this save will
+         actually leave behind rather than the one the body described. */
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -7395,8 +7353,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       : null,
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
-    p_apply_delivery_date: body['customerDeliveryDate'] !== undefined,
-    p_delivery_date: (body['customerDeliveryDate'] as string | null | undefined) ?? null,
+    p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
+    p_delivery_date: cascadedDeliveryClear
+      ? null
+      : (body['customerDeliveryDate'] as string | null | undefined) ?? null,
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
     p_company_id: activeCompanyId(c) ?? null,
@@ -12064,7 +12024,13 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const nextProc = 'processingDate' in headerChanges ? ymd(headerChanges['processingDate']) : curProc;
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    if ((nextProc !== '') !== (nextDeliv !== '')) {
+    /* Same predicate as every other write path (shared/so-processing-date), with
+       this path's own error code kept: `amendment_dates_xor` is what the
+       amendment UI branches on, and the aim is one RULE, not one string. The
+       stored pair is passed as the originals so an amendment that touches
+       neither date on a legacy unpaired order is still submittable — that is
+       what the amendment queue exists to fix. */
+    if (soDatePairRefusal({ nextProc, nextDeliv, origProc: curProc, origDeliv: curDeliv })) {
       return c.json({
         error: 'amendment_dates_xor',
         reason: 'Processing Date and Delivery Date must be set together — request both, or clear both.',

@@ -91,9 +91,18 @@ four-arm sweep strand stock.*
 
 ## The jsonb write
 
-`jsonb_set(..., to_jsonb($1::text))` over plain text binds. Nothing
-pre-serialized is ever handed to a jsonb parameter, and there is no `||` merge
-whose operand could be a non-object — the two failure modes that destroyed the
+`jsonb_set(..., to_jsonb($1::text))` over plain text binds. That is the rule for
+writing a scalar string into ONE jsonb key, which is all this tool does.
+
+**It is only half the rule.** Writing a whole OBJECT to a jsonb column from
+`sql.unsafe` needs **`$n::text::jsonb`**, where the `::text` is load-bearing:
+`$n::jsonb` alone is a no-op once postgres.js has typed the bind as jsonb, and
+stores a jsonb STRING instead of parsing an object. That is not hypothetical —
+it damaged seven production rows on 2026-08-13. See
+`docs/jsonb-double-encoding-coe.md`, *IT RECURRED*.
+
+Beyond that: nothing pre-serialized is ever handed to a jsonb parameter here,
+and there is no `||` merge whose operand could be a non-object — the two failure modes that destroyed the
 `variants` column three times on 2026-08-10
 (`docs/jsonb-double-encoding-coe.md`). The post-apply read counts array-shaped
 `variants` blocks on **every arm `backend/scripts/lib/fabric-write.mjs` declares
