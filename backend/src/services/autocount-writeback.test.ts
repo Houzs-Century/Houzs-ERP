@@ -165,31 +165,46 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
     expect(composeCreateSo(header, [line()], opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
 
-  /* THE DEFECT THIS REPLACES. Until now the composer ran with identityResolver
-     and `resolve(...).acItemCode ?? l.item_code`, so an unmapped line was sent
-     to the live account book under its ERP code — an item AutoCount has never
-     heard of. Measured over the whole enumerable ERP catalogue, 1658 of 1834
-     codes (90.4%) are in that state. The document must not sync at all. */
-  test('an unmapped code REFUSES the whole document instead of sending the ERP code', () => {
-    expect(() => composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts))
-      .toThrow(ItemCodeError);
+  /* THE DEFECT THIS REPLACED, and the assertion that still guards it. The
+     composer once ran with identityResolver and `resolve(...).acItemCode ??
+     l.item_code`, so a MAPPED line could silently go out under its ERP code.
+     That must never happen: if the book knows this item, we send the book's
+     name for it. */
+  test('a mapped code is NEVER sent as itself', () => {
+    const d = composeCreateSo(header, [line()], opts).Details[0];
+    expect(d.ItemCode).toBe('AC-CODE-1');
+    expect(d.ItemCode).not.toBe(line().item_code);
   });
 
-  test('one unmapped line among mapped ones still refuses — no partial document', () => {
-    expect(() => composeCreateSo(header, [
+  /* What CHANGED, 2026-08-13. An unmapped code used to refuse the whole
+     document, which was right while sending it meant referencing an item the
+     licensed book does not hold. /ensure-masters opens the item first now
+     (AcSyncService.cs:495-521), and the old rule's cost was total: whole
+     product ranges are in no cutover row, so every order containing one was
+     blocked with no way forward. */
+  test('an unmapped code goes out under its own name instead of sinking the order', () => {
+    const d = composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts).Details[0];
+    expect(d.ItemCode).toBe('SKU-NOT-IN-THE-BOOK');
+  });
+
+  test('a document mixing mapped and unmapped lines ships whole, each line its own answer', () => {
+    const p = composeCreateSo(header, [
       line(),
       line({ item_code: 'SKU-NOT-IN-THE-BOOK' }),
       line({ item_code: 'SKU-2' }),
-    ], opts)).toThrow(ItemCodeError);
+    ], opts);
+    expect(p.Details.map((d) => d.ItemCode)).toEqual(['AC-CODE-1', 'SKU-NOT-IN-THE-BOOK', 'AC-CODE-2']);
   });
 
-  test('the refusal names every failing line, so an operator does not fix them one at a time', () => {
+  /* A blank code is the one input with no answer, so ItemCodeError is still
+     reachable and still names every failing line at once — an operator fixing
+     one and re-saving into the next is how a divergence outlives everyone who
+     remembers it. */
+  test('a blank code still refuses, and the refusal names every failing line', () => {
     let msg = '';
     try {
-      composeCreateSo(header, [line({ item_code: 'NOPE-1' }), line({ item_code: 'NOPE-2' })], opts);
+      composeCreateSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], opts);
     } catch (e) { msg = (e as Error).message; }
-    expect(msg).toContain('NOPE-1');
-    expect(msg).toContain('NOPE-2');
     expect(msg).toContain('2 line(s)');
   });
 });

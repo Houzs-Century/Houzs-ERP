@@ -167,8 +167,13 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
     expect(base.ok).toBe(true);
     const comp = resolveAcItemCode('5526-1A(LHF)');
     expect(comp.ok).toBe(true);
-    expect(comp.ok && comp.via).toBe('sofa-model');
-    expect(comp.ok && comp.acItemCode).toBe(base.ok && base.acItemCode);
+    /* IDENTICAL to the base, answer and reason both. A compartment resolves by
+       asking the same question of the model base code, so `via` reports how the
+       BASE was settled rather than a 'sofa-model' of its own — and the two can
+       no longer diverge, which they did: the alias expansion gave a compartment
+       of 9028 an extra HOK candidate the base never saw, and the HOK preference
+       took it. */
+    expect(comp).toEqual(base);
   });
 
   it('measures how much of the map is invertible without a supplier', () => {
@@ -187,14 +192,29 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
   });
 });
 
-describe('REFUSAL, never a fallback to material_code', () => {
-  it('refuses an ERP code the account book has never heard of', () => {
+/* This block used to be titled "REFUSAL, never a fallback to material_code",
+   and the rule was right for the reason it gave: sending a code the licensed
+   book does not hold would reference a nonexistent item, and on a purchase
+   order the resulting line cannot be deleted.
+
+   The PREMISE changed, not the reasoning. /ensure-masters opens the item before
+   the document that names it is sent (AcSyncService.cs:495-521), so the code no
+   longer arrives at a book that has never heard of it — it arrives at one where
+   it was just opened, properly, with an item group, stock control and a base
+   UOM. And the cost of the old rule turned out to be total: whole product ranges
+   are in no cutover row, so every order containing one was refused outright with
+   no way forward.
+
+   The guard that makes this safe is upstream, in the UI. SoLineCard refuses text
+   matching no catalogue product — "typed text that matches NO catalog product
+   can never become a line" — so the only strings that reach here are codes
+   already opened in the ERP's own product master. A blank code is still refused
+   below, because that is the one input with no answer. */
+describe('an unknown code is OPENED under its own name, not refused', () => {
+  it('resolves an ERP code the account book has never heard of', () => {
     const r = resolveAcItemCode('TOTALLY-MADE-UP-SKU');
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.reason).toBe('unmapped');
-    expect(!r.ok && r.detail).toContain('TOTALLY-MADE-UP-SKU');
-    // the input must NOT come back out as an answer
-    expect(JSON.stringify(r)).not.toContain('"acItemCode"');
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('TOTALLY-MADE-UP-SKU'); expect(r.via).toBe('erp-canonical'); }
   });
 
   it('refuses a blank item code', () => {
@@ -204,50 +224,44 @@ describe('REFUSAL, never a fallback to material_code', () => {
   });
 
   /**
-   * THE REGRESSION THIS WHOLE MODULE EXISTS FOR. Before the fix, toDetails did
-   * `resolve(l.item_code).acItemCode ?? l.item_code` — the ?? was the silent
-   * fallback, and with the default identityResolver it fired on EVERY line. An
-   * unmapped SKU therefore sailed into a create payload as its own ItemCode.
+   * THE ORIGINAL REGRESSION, and it is still a regression. Before D10, toDetails
+   * did `resolve(l.item_code).acItemCode ?? l.item_code` — a SILENT `??`
+   * fallback that fired on every line and put unmapped SKUs into create
+   * payloads without anyone deciding to.
+   *
+   * The ERP code going through is now the DELIBERATE answer, which looks the
+   * same from outside and is not. The difference is /ensure-masters: the item is
+   * opened before the document names it. The assertion that still matters is
+   * that a mapped code NEVER comes through as itself.
    */
-  it('composeDetails THROWS on an unmapped line instead of sending the ERP code', () => {
-    expect(() => composeDetails([line({ item_code: 'NOT-IN-AUTOCOUNT' })]))
-      .toThrow(ItemCodeError);
-    try {
-      composeDetails([line({ item_code: 'NOT-IN-AUTOCOUNT' })]);
-    } catch (e) {
-      expect(e).toBeInstanceOf(ItemCodeError);
-      expect((e as ItemCodeError).failures).toHaveLength(1);
-      expect((e as ItemCodeError).failures[0].erpItemCode).toBe('NOT-IN-AUTOCOUNT');
-    }
+  it('an unmapped line is sent under its own code, and opened', () => {
+    const { details } = composeDetails([line({ item_code: 'NOT-IN-AUTOCOUNT' })]);
+    expect(details).toHaveLength(1);
+    expect(details[0].ItemCode).toBe('NOT-IN-AUTOCOUNT');
   });
 
-  it('reports EVERY failing line at once, not just the first', () => {
-    try {
-      composeDetails([
-        line({ item_code: 'NOPE-1' }),
-        line({ item_code: 'MISC' }),
-        line({ item_code: 'NOPE-2' }),
-      ]);
-      throw new Error('should have refused');
-    } catch (e) {
-      expect(e).toBeInstanceOf(ItemCodeError);
-      const f = (e as ItemCodeError).failures;
-      expect(f.map((x) => x.erpItemCode)).toEqual(['NOPE-1', 'NOPE-2']);
-      // index is into the composed line list, so it points at a real row
-      expect(f.every((x) => x.index >= 0)).toBe(true);
-    }
+  it('a MAPPED code is never sent as itself — that would be the old bug', () => {
+    const { details } = composeDetails([line({ item_code: 'MISC' })]);
+    expect(details[0].ItemCode).toBe('Miscellaneous');
+    expect(details[0].ItemCode).not.toBe('MISC');
   });
 
-  it('refuses the WHOLE document — one bad line does not ship the good ones', () => {
+  it('every line resolves — one unknown code no longer sinks the document', () => {
+    const { details } = composeDetails([
+      line({ item_code: 'NOPE-1' }),
+      line({ item_code: 'MISC' }),
+      line({ item_code: 'NOPE-2' }),
+    ]);
+    expect(details.map((d) => d.ItemCode)).toEqual(['NOPE-1', 'Miscellaneous', 'NOPE-2']);
+  });
+
+  it('a document mixing known and unknown codes ships whole', () => {
     const good = line({ item_code: 'MISC' });
-    expect(() => composeCreateSo(
+    const p = composeCreateSo(
       { doc_no: 'SO-9999', customer_name: 'X' } as never,
       [good, line({ item_code: 'NOPE' })],
-    )).toThrow(ItemCodeError);
-    // and the same document without the bad line composes fine
-    const ok = composeCreateSo({ doc_no: 'SO-9999', customer_name: 'X' } as never, [good]);
-    expect(ok.Details).toHaveLength(1);
-    expect(ok.Details[0].ItemCode).toBe('Miscellaneous');
+    );
+    expect(p.Details.map((d) => d.ItemCode)).toEqual(['Miscellaneous', 'NOPE']);
   });
 });
 
@@ -261,12 +275,13 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
   ].join('\n');
   const index = buildAcItemIndex(TSV);
 
-  it('refuses a collapsed code when the document names no supplier', () => {
+  it('with no supplier and no preference to apply, it falls back to our own code', () => {
+    /* Neither candidate is HOK or NB and neither is named like the ERP code, so
+       the chain runs out and step 5 answers. It must NOT pick one of the two by
+       ordering — that is the coin flip the whole design refuses to make. */
     const r = resolveAcItemCode('SHARED-CODE', { index });
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.reason).toBe('ambiguous');
-    expect(!r.ok && r.candidates).toEqual(['AC-FROM-A', 'AC-FROM-B']);
-    expect(!r.ok && r.detail).toContain('names no supplier');
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('SHARED-CODE'); expect(r.via).toBe('erp-canonical'); }
   });
 
   it('resolves the same code once the creditor is known', () => {
@@ -274,7 +289,10 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
       .toEqual({ ok: true, acItemCode: 'AC-FROM-B', via: 'direct' });
   });
 
-  it('refuses — does not fall back — when the supplier matches nothing', () => {
+  it('a PO whose creditor holds none of the candidates is still REFUSED', () => {
+    /* Deliberately unchanged. On a purchase order the supplier is known, so
+       "this creditor has no such item" is a real contradiction worth stopping
+       for — and a PO line, once written, cannot be deleted from the book. */
     const r = resolveAcItemCode('SHARED-CODE', { index, supplierCode: '400-ZZZZ' });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.detail).toContain('none belongs to supplier');
@@ -288,12 +306,13 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
     );
     expect(po.Details[0].ItemCode).toBe('AC-FROM-B');
 
-    // the same PO with no creditor cannot choose, and says so
-    expect(() => composeCreatePo(
+    // with no creditor there is nothing to choose with, so it takes our own code
+    const blind = composeCreatePo(
       { po_number: 'PO-1', creditor_code: null, creditor_name: null } as never,
       [line({ item_code: 'SHARED-CODE' })],
       { itemIndex: index },
-    )).toThrow(ItemCodeError);
+    );
+    expect(blind.Details[0].ItemCode).toBe('SHARED-CODE');
   });
 });
 
@@ -333,9 +352,10 @@ describe('the live supplier binding resolves what the cutover snapshot cannot', 
     if (r.ok) { expect(r.acItemCode).toBe('NB-BRANDNEW'); expect(r.via).toBe('binding'); }
   });
 
-  test('and without one it is still REFUSED, never guessed from material_code', () => {
+  test('and without one it now resolves to itself, which is what gets opened', () => {
     const r = resolveAcItemCode('BRAND-NEW-SKU', {});
-    expect(r.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('BRAND-NEW-SKU'); expect(r.via).toBe('erp-canonical'); }
   });
 
   test('the binding WINS over the snapshot — the book can be renamed and the CSV cannot know', () => {
