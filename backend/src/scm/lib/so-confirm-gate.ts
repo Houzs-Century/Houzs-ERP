@@ -12,14 +12,23 @@
 //      to confirm. No venue-less order class exists in code: the venue
 //      resolver's "empty is honest" rule (venue-binding.ts) governs
 //      AUTO-RESOLUTION only — when it resolves nothing, a human picks one.
-//   4. HC-SO-2607-008's bedframe line Y103-(Q) confirmed with NO variant
-//      selections — every goods line must carry its category-required variant
-//      axes (the EXISTING so-variant-rule machinery: sofa seat/fabric,
-//      bedframe divan/leg/gap/fabric; mattress / accessory / service / others
-//      have no axes and pass). A colour-KIV line (fabric SERIES committed,
-//      colour confirmed later — isColourKiv) SATISFIES the fabric axis here:
-//      KIV is a legitimate confirmed-order state and only blocks the
-//      Processing Date (owner rule 2026-07-24), not confirm.
+//   4. WITHDRAWN 2026-08-13. This gate also demanded every goods line's
+//      category-required variant axes, from HC-SO-2607-008's bedframe line
+//      Y103-(Q) confirmed with no selections at all. The owner narrowed it the
+//      same week: "只要是没有 proceed 这一张订单，其实都不一定是需要填写的，除非
+//      它是 proceed 了" — an order that has not been PROCEEDED does not have to
+//      be spec-complete; the moment it is proceeded, it does.
+//
+//      That rule already exists and is unchanged: setting a Processing Date is
+//      what "proceed" means, and so-variant-check.ts gates it on the FULL axis
+//      list (and on colour-KIV, owner 2026-07-24). Requiring the same axes at
+//      CONFIRM merely moved the deadline earlier than the owner wanted — a
+//      salesperson taking a deposit before the customer has chosen a seat
+//      height could not book the order at all. Confirm now means "this is a
+//      real order for a real customer"; proceed still means "this is buildable".
+//
+//      Kept out of this file rather than softened to a warning: two gates for
+//      one rule is how the two drifted apart in the first place.
 //
 // DRAFTS STAY FREELY SAVEABLE. The gate runs on the DRAFT→CONFIRMED status
 // transition and on creates that land directly CONFIRMED (asDraft !== true) —
@@ -32,14 +41,14 @@
 // reason list through the existing humanApiError / SaveProblemsList path with
 // no new client contract.
 // ----------------------------------------------------------------------------
-import { missingConfirmVariantAxes } from '../shared';
 import type { SaveProblem } from '../shared/so-save-problems';
 
 export type SoConfirmLineFacts = {
   itemCode: string | null | undefined;
-  /** item_group / itemGroup, any case. */
+  /** item_group / itemGroup, any case. Kept because a confirm problem names
+   *  the category, not because any rule here reads the line's variants — those
+   *  belong to the PROCEED gate (so-variant-check.ts). */
   group: string | null | undefined;
-  variants: Record<string, unknown> | null | undefined;
   /** For naming a product-less line in the message. */
   lineNo?: number | null;
   description?: string | null;
@@ -106,39 +115,9 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
     }
   });
 
-  // Category-required variants — one problem per (line, axis), same wording
-  // shape as the Processing-Date gate so the two read alike. The fabric axis
-  // is satisfied by a colour-KIV line (series committed, colour later) —
-  // missingConfirmVariantAxes IS that rule, shared with both frontends.
-  for (const l of facts.lines) {
-    const code = String(l.itemCode ?? '').trim();
-    if (!code) continue; // already reported as product-less above
-    /* `code` is the THIRD argument, and it was not being passed — while sitting
-       two lines above, already computed, and used for the message below.
-
-       That argument is the whole exemption mechanism: missingVariantAxes reads
-       it for isDivanOnly (skip `gap`) and isDivanlessFrame (skip divanHeight /
-       legHeight / gap) — the owner's rules of 2026-08-09 and 2026-08-10, the
-       latter quoted verbatim in so-variant-rule.ts:82 ("电动床/抽拉床…像 DIVAN
-       ONLY 一样豁免 — 要"). Without it a DIVAN ONLY mattress or an ADJUSTABLE /
-       pull-out bed with Gap blank could not be CONFIRMED at all: 422
-       variants_incomplete, for a field those products physically do not have.
-
-       The Processing-Date gate does pass it (so-variant-check.ts:56), so the
-       exemption worked in one gate and was dead in the other.
-       BUG-HISTORY.md:3913 records the fix as threaded through "every desktop +
-       mobile call site" — three of four never got it, and neither
-       check-shared-mirrors (which compares module BODIES, not call-site
-       arguments) nor check-company-scope can see this class. */
-    for (const axis of missingConfirmVariantAxes(l.group ?? '', l.variants ?? null, code)) {
-      out.push({
-        code: 'variants_incomplete',
-        message: `${code} — ${axis.label} is required before this order can be confirmed`,
-        line: code,
-        field: axis.label,
-      });
-    }
-  }
+  /* NO VARIANT CHECK HERE — see rule 4 in the header. Variant completeness is
+     the PROCEED rule (so-variant-check.ts, gated on the Processing Date), not
+     the confirm rule. */
 
   return out;
 }
@@ -160,11 +139,11 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
   };
   const { data: items } = await sb
     .from('mfg_sales_order_items')
-    .select('item_code, item_group, variants, description, line_no, cancelled')
+    .select('item_code, item_group, description, line_no, cancelled')
     .eq('doc_no', docNo);
   const lines = ((items ?? []) as Array<{
     item_code: string | null; item_group: string | null;
-    variants: Record<string, unknown> | null; description: string | null;
+    description: string | null;
     line_no: number | null; cancelled: boolean | null;
   }>).filter((i) => !i.cancelled);
 
@@ -186,7 +165,6 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
     lines: lines.map((i) => ({
       itemCode: i.item_code,
       group: i.item_group,
-      variants: i.variants,
       lineNo: i.line_no,
       description: i.description,
     })),

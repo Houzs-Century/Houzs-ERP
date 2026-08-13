@@ -72,7 +72,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -1440,31 +1440,27 @@ export const SalesOrderNew = () => {
       notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
       return;
     }
-    // Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CONFIRMING
-    // requires every line's category-required axes, date or no date. With a
-    // Processing Date the full rule applies (missingRequiredVariants — a
-    // colour-KIV line blocks a date, owner 2026-07-24); a date-less confirm
-    // applies the confirm rule (missingConfirmVariantAxes — colour-KIV
-    // satisfies the fabric axis). Save as Draft still saves with gaps.
-    if (!asDraft || processingDate) {
+    /* Variant completeness is the PROCEED rule, and only the proceed rule
+       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
+       的，除非它是 proceed 了"). A Processing Date IS proceed, so it demands the
+       full axis list — the same rule the server applies (so-variant-check via
+       collectProcessingGateProblems), together with the address / postcode /
+       delivery-date completeness the same date requires.
+
+       It briefly ALSO ran at confirm, date or no date (2026-08-08,
+       HC-SO-2607-008). That made a salesperson unable to book a real order
+       from a real customer who had not yet picked a seat height. Removed:
+       confirm means "this is a real order", proceed means "this is
+       buildable". Save as Draft was never gated either way. */
+    if (processingDate) {
       const missOf = (l: SoLineDraft): string[] =>
-        processingDate
-          ? missingRequiredVariants(l.itemGroup, l.variants, l.itemCode)
-          /* l.itemCode is the exemption argument — isDivanOnly skips `gap`,
-             isDivanlessFrame skips divanHeight/legHeight/gap (owner 2026-08-09
-             and 2026-08-10). Omitting it made this form refuse a DIVAN ONLY or
-             ADJUSTABLE line for a field that product does not have. Mobile
-             (MobileNewSO.tsx:1749) passed it; desktop and the backend gate did
-             not. */
-          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode).map((a) => a.label);
+        missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
       const variantGaps = validLines
         .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         notify({
-          title: asDraft
-            ? 'Complete all variant selections before saving:'
-            : 'Complete all variant selections before confirming:',
+          title: 'Complete all variant selections before setting a Processing Date:',
           body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
           tone: 'error',
         });

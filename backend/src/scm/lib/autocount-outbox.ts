@@ -42,6 +42,7 @@ import {
   composeDescription2,
   composeDetails,
   composeEdit,
+  acUdfDate,
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
@@ -196,8 +197,11 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
+/* internal_expected_dd is the SO's "Processing date" — the ONE storage behind
+   that UI label since mig 0189 dropped the legacy processing_date column. It
+   leaves as the PDate UDF. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, internal_expected_dd, linked_ac_docno';
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -1419,6 +1423,13 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
   const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
   if (venue) udf.VENUE = venue;
   if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
+     in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
+     this function — a cleared date sends nothing rather than blanking the
+     account book's value, which is the conservative half of the pair and the
+     one that cannot destroy data. */
+  const pdate = acUdfDate(h.internal_expected_dd as string | null | undefined);
+  if (pdate) udf.PDate = pdate;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
