@@ -34,7 +34,6 @@ import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
-import events from "./routes/events";
 import projects from "./routes/projects";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -343,7 +342,6 @@ app.route("/api/notifications", notifications);
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
-app.route("/api/events", events);
 app.route("/api/projects", projects);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
