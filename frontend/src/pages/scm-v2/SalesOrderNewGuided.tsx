@@ -53,7 +53,7 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -258,10 +258,12 @@ export function SalesOrderNewGuided() {
 
     /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
        runs, so a bad build surfaces one plain sentence here instead of a raw
-       server 400/409. The wizard collects no dates or payments (added on the SO
-       detail after save), so soDateGuardError / soSliplessPaymentError operate
-       on empty inputs and pass — kept for single-logic-layer parity so a future
-       date/payment field on this flow is guarded automatically. Every line here
+       server 400/409. The wizard collects no dates (added on the SO detail
+       after save), so soDateGuardError operates on empty inputs and passes —
+       kept for single-logic-layer parity so a future date field on this flow is
+       guarded automatically. Payments are not guarded at all: the slip is
+       optional everywhere (Owner 2026-08-13) and this flow collects no payment.
+       Every line here
        is a sofa module, so hasSofaMixConflict can't fire in practice, but the
        check mirrors the Full form verbatim. Variant completeness
        (missingRequiredVariants) is enforced only once a processing date is set
@@ -281,8 +283,7 @@ export function SalesOrderNewGuided() {
         salesLocation: "",
         state: "",
         asDraft: true,
-      }) ??
-      soSliplessPaymentError([]);
+      });
     if (preErr) {
       setPostError(soErrorText(preErr));
       return;

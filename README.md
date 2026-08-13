@@ -4,6 +4,26 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 
 ---
 
+> ## ⚠️ Parts of this README are out of date. Trust the code-backed docs instead.
+>
+> This file and [`docs/CODEBASE-MAP.md`](docs/CODEBASE-MAP.md) / [`CLAUDE.md`](CLAUDE.md)
+> disagree about several things. **Where they disagree, the map and `CLAUDE.md` are
+> right** — each claim below was checked against the tree on 2026-08-13. This banner
+> is deliberately a pointer, not a rewrite: the README is being corrected section by
+> section, and a silent merge would have hidden which half was wrong.
+>
+> | This README says | The code says | Authority |
+> |---|---|---|
+> | Data store is **Cloudflare D1 (SQLite)** | D1 was **removed 2026-06-13**; there is no `env.DB` binding in prod. Supabase Postgres via Hyperdrive (`[[hyperdrive]]` in `backend/wrangler.toml`) | `CLAUDE.md`, `docs/CODEBASE-MAP.md` §4 |
+> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (286 files, to `0285_*`) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
+> | "No backend/frontend unit tests exist yet" | **167** backend test files under `backend/tests/`, run by vitest in `deploy.yml` | `docs/CODEBASE-MAP.md` §1 |
+> | The Modules table (Overview, Orders, PO, ASSR, Projects, Logistics, Team, Settings) | Omits **`/scm/*` entirely** — the vendored SCM supply-chain surface is the largest part of the app | `docs/CODEBASE-MAP.md` §2-3 |
+>
+> **Start at [`docs/README.md`](docs/README.md)** — it maps every doc to the one thing
+> it is authoritative for.
+
+---
+
 ## Stack
 
 | Layer | Tech | Lives in |
