@@ -34,6 +34,8 @@
 //
 // plan (default) writes nothing and pins the session read-only.
 // apply needs CONFIRM='I HAVE REVIEWED THE DRY-RUN'.
+//
+// RE-RUN: inert. A special is only in scope while it still carries the category being removed, which the write removes.
 
 import postgres from "postgres";
 

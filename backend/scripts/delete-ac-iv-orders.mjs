@@ -10,6 +10,8 @@
 // ERP delivery order or stock allocation against it is SKIPPED and reported
 // (none should — they were imported tonight). Deletes payments + items + header
 // in one transaction per order. DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. The documents it removes are gone.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

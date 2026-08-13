@@ -33,6 +33,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: inert. Every document must hold EXACTLY ONE bare -1S sofa line; the split re-codes that line, so a second run finds none and refuses.
  */
 import postgres from "postgres";
 

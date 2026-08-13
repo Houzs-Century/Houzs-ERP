@@ -119,17 +119,14 @@ type SoRow = {
   customer_country: string | null;
   city: string | null;
   postcode: string | null;
-  /* No `processing_date`. The CO's Processing Date is `internal_expected_dd`
-     below — one field, one name. The raw scm.consignment_sales_orders.processing_date
-     column has never had a writer, the API no longer selects it, and it is being
-     dropped; declaring it here only invited a future accessor to bind to a
-     permanently-null value. See the note on the CO HEADER select in
-     backend/src/scm/routes/consignment-orders.ts. */
   customer_delivery_date: string | null;
-  /* PR-E — Internal expected delivery date (commander's privately tracked
-     ETA, distinct from the customer-facing customer_delivery_date). Hidden
-     by default — coordinator reveals via right-click. */
-  internal_expected_dd: string | null;
+  /* The Processing Date — the ONE internal date, distinct from the
+     customer-facing customer_delivery_date. Hidden by default; coordinator
+     reveals via right-click. Was `internal_expected_dd` until mig 0284 settled
+     the column on the name everyone already says; the dead legacy
+     `processing_date` this row type used to ALSO carry (never written by
+     anything) went with it. */
+  processing_date: string | null;
   /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp). */
   target_date: string | null;
   /* PR #143 — Header-level payment method (cash | transfer | merchant) +
@@ -1488,26 +1485,18 @@ const buildAllColumns = (
     searchValue: (r) => r.postcode ?? '',
   },
   {
-    /* "Processing Date" is the UI label for the internal_expected_dd column —
-       the ONE storage this concept has. PR #121/#140 renamed it app-wide: SO
-       New / SO Detail / OrderInfoCard all read+write internal_expected_dd under
-       this label, and every accessor below does the same.
-
-       `key` IS NOT A DATABASE COLUMN. It is the persisted identifier for this
-       column in each user's saved table layout, and it is deliberately left as
-       the string 'processing_date' so those saved layouts keep resolving —
-       renaming it would silently drop the column from every layout that already
-       names it. Nothing reads a `processing_date` FIELD off the row: the raw
-       scm.consignment_sales_orders.processing_date column never had a writer, is
-       no longer selected by the API, and is being dropped (see the CO HEADER
-       note in backend/src/scm/routes/consignment-orders.ts). Do not "fix" this
-       key into an accessor. Duplicate "Internal DD" column removed. Commander
-       2026-05-28. */
+    /* Label, column key and field are now the SAME word. This column used to
+       be keyed 'processing_date' (a dead column nothing ever wrote) while
+       reading `internal_expected_dd` under the "Processing Date" label — the
+       key was kept only to preserve saved column layouts, and the mismatch is
+       the whole reason mig 0284 settled the concept on one name. Saved layouts
+       still match, because the key never changed. Duplicate "Internal DD"
+       column removed, commander 2026-05-28. */
     key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.internal_expected_dd),
-    searchValue: (r) => `${r.internal_expected_dd ?? ''} ${compactDate(r.internal_expected_dd)}`,
-    filterType: 'date', dateValue: (r) => r.internal_expected_dd,
+    accessor: (r) => compactDate(r.processing_date),
+    searchValue: (r) => `${r.processing_date ?? ''} ${compactDate(r.processing_date)}`,
+    filterType: 'date', dateValue: (r) => r.processing_date,
   },
   {
     key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,

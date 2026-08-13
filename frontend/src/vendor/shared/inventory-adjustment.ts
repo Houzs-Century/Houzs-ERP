@@ -36,10 +36,15 @@ export function adjustmentIncreaseErrors(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
   batchNo: string | null | undefined,
+  /* The SKU. A DIVAN ONLY / adjustable / bunk frame has no divan base, so it
+     has no Divan Height, Leg Height or Gap to state — the same exemption the
+     order forms apply, which this gate silently lacked while itemCode was an
+     optional parameter nobody here passed. */
+  itemCode: string | null,
 ): string[] {
   const errors: string[] = [];
 
-  const missing = missingVariantAxes(itemGroup, variants);
+  const missing = missingVariantAxes(itemGroup, variants, itemCode);
   if (missing.length > 0) {
     const labels = missing.map((m) => m.label).join(', ');
     const cat = (itemGroup ?? '').toLowerCase();

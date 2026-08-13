@@ -40,13 +40,16 @@
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { recomputeSoStockAllocation } from "../src/scm/lib/so-stock-allocation.ts";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const APPLY = process.env.APPLY === "1" || process.argv.includes("--apply");
 const COMPANY_2990 = 2;
 
-// Same terminal set the recompute itself excludes (so-stock-allocation.ts): a
-// CANCELLED/CLOSED/SHIPPED/DELIVERED/INVOICED/DRAFT order is not allocatable.
-const NON_ALLOCATABLE = ["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"];
+// THE terminal set the recompute itself excludes, imported rather than
+// restated - so-stock-allocation.ts now reads the same constant. A snapshot
+// taken through a different lens than the function it is checking is not a
+// narrower answer, it is a wrong one.
+const NON_ALLOCATABLE = SO_TERMINAL_STATES;
 
 // Resolve one field from .dev.vars for local runs WITHOUT printing the value
 // (repo secret-safety rule: match the field, never echo the raw line). CI passes

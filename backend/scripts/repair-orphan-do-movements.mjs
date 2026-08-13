@@ -46,6 +46,7 @@
 
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -68,7 +69,9 @@ if (process.env.APPLY === "true" && !APPLY) {
   console.log(`APPLY requested but CONFIRM did not match "${CONFIRM_PHRASE}" — running DRY-RUN instead.\n`);
 }
 
-const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+/* The read-side "stock has already gone out" set — one declaration, in
+   lib/do-shipped-states.mjs. */
+const SHIPPED = DO_STOCK_OUT_STATES;
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 const num = (v) => Number(v ?? 0);

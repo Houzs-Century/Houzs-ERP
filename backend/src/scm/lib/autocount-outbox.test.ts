@@ -19,67 +19,10 @@ import {
   type AcOutboxRow,
 } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
-
-type Row = Record<string, any>;
-
-/* PostgREST stand-in over in-memory tables. Supports the shapes this module
-   uses: select/eq/neq/in/lt/order/limit/maybeSingle, insert and update.
-   `missing` names columns the table does NOT have: asking for one fails the
-   whole query with 42703 and a null body, exactly as PostgREST does — the only
-   way a test can catch a read that quietly becomes "this document has no
-   lines". */
-function fakeSb(tables: Record<string, Row[]>, missing: Record<string, string[]> = {}) {
-  const from = (table: string) => {
-    tables[table] ??= [];
-    const filters: Array<(r: Row) => boolean> = [];
-    let limitN: number | null = null;
-    let pendingInsert: Row | null = null;
-    let pendingUpdate: Row | null = null;
-    let columnError: { code: string; message: string } | null = null;
-    let wantCount = false;
-    const rows = () => {
-      const rs = tables[table].filter((r) => filters.every((f) => f(r)));
-      return limitN == null ? rs : rs.slice(0, limitN);
-    };
-    const settle = () => {
-      if (columnError) return { data: null, error: columnError };
-      /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
-         to decide whether a transfer leaves any of the parent's lines behind,
-         and a fake that answered `undefined` would make every test take the
-         refusal branch for the wrong reason. */
-      if (wantCount) return { data: null, count: rows().length, error: null };
-      if (pendingInsert) {
-        tables[table].push({ id: `row-${tables[table].length + 1}`, ...pendingInsert });
-        return { data: null, error: null };
-      }
-      if (pendingUpdate) {
-        for (const r of rows()) Object.assign(r, pendingUpdate);
-        return { data: null, error: null };
-      }
-      return { data: rows(), error: null };
-    };
-    const builder: any = {
-      select(cols?: string, opts?: { count?: string; head?: boolean }) {
-        const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
-        if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
-        if (opts?.count) wantCount = true;
-        return builder;
-      },
-      insert(payload: Row) { pendingInsert = payload; return builder; },
-      update(patch: Row) { pendingUpdate = patch; return builder; },
-      eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
-      neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
-      in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
-      lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
-      order() { return builder; },
-      limit(n: number) { limitN = n; return builder; },
-      maybeSingle: async () => (columnError ? { data: null, error: columnError } : { data: rows()[0] ?? null, error: null }),
-      then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
-    };
-    return builder;
-  };
-  return { from, tables } as never as { from: (t: string) => any; tables: Record<string, Row[]> };
-}
+/* The fake used to live here. It moved when autocount-requeue.test.ts needed
+   the same one — two copies of a fake drift, and this one earns its keep by
+   answering 42703 for a column the table does not have. */
+import { fakeSb, type Row } from './fake-postgrest';
 
 /** app_config seeded to whatever the test needs the toggle to say. */
 const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missing: Record<string, string[]> = {}) =>
@@ -1241,28 +1184,36 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     location: 'KL',
   }));
 
-  test('without a binding it is still refused, and the reason names the base code', async () => {
+  test('with NO binding at all it now sends, one line per compartment', async () => {
+    /* This refused outright until 2026-08-13: 9028-1S is two brand items in the
+       cutover map and a sales order names no creditor. A create no longer folds
+       the build, so each compartment goes in under its own code and
+       /ensure-masters opens them on first use. */
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
       supplier_material_bindings: [],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(false);
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
     const [row] = outbox(sb);
-    expect(row.status).toBe('skipped');
-    expect(String(row.last_error)).toContain('ItemCodeError');
-    expect(String(row.last_error)).toContain('9028-1S');
+    expect(row.status).not.toBe('skipped');
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
   });
 
-  test('a binding on the MODEL BASE CODE is found and the document sends', async () => {
+  test('a binding on the COMPARTMENT is found and the document sends', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
       /* The row an operator can actually create: the ERP model code on the
          left, the account book's item on the right. Before the fix this row
          existed and changed nothing, because the query never asked for it. */
+      /* Keyed by the code the line actually carries. Before 2026-08-13 the
+         resolver was handed a synthesised '9028-1S' that no ERP line held, and
+         bindingsFor queried the raw codes — so the two never met and the
+         override could not fire for any sofa. */
       supplier_material_bindings: [{
-        company_id: 1, material_code: '9028-1S', material_kind: 'mfg_product',
+        company_id: 1, material_code: '9028-1A(LHF)', material_kind: 'mfg_product',
         supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
       }],
     });
@@ -1270,8 +1221,9 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
     expect(row.op).toBe('create_so');
-    /* ONE line, and it carries the AutoCount code the binding named. */
-    expect(row.payload.body.Details).toHaveLength(1);
-    expect(row.payload.body.Details[0].ItemCode).toBe('AMN-SF9028 SOFA');
+    /* The bound line takes the AutoCount code the binding named; the other
+       keeps its own. */
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['AMN-SF9028 SOFA', '9028-2A(RHF)']);
   });
 });
