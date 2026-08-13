@@ -35,15 +35,24 @@ describe('so-processing-date — the constants name the SAME field the policy ta
     expect(row!.payloadKey).toBe(SO_PROCESSING_DATE_PAYLOAD_KEY);
   });
 
-  it('lists the current name among the legacy inbound names, not an empty list', () => {
-    /* Empty is indistinguishable from "somebody forgot". Before a rename the
-       current name IS the name other systems send. */
-    expect([...SO_PROCESSING_DATE_LEGACY_COLUMNS]).toContain(SO_PROCESSING_DATE_COLUMN);
+  it('lists the OLD inbound name, because 2990 still sends it', () => {
+    /* Empty is indistinguishable from "somebody forgot". Before the rename this
+       list held the CURRENT name (the alias was a proven no-op); migration 0284
+       landed on 2026-08-13, so it must now hold the OLD one. 2990 is a separate
+       repo on its own deploy schedule, and without the alias its mirror payload
+       loses the key against information_schema, returns 200, and the date never
+       arrives. */
+    expect([...SO_PROCESSING_DATE_LEGACY_COLUMNS]).toContain('internal_expected_dd');
+    expect([...SO_PROCESSING_DATE_LEGACY_COLUMNS]).not.toContain(SO_PROCESSING_DATE_COLUMN);
   });
 
-  it('is an identity alias map today — this seam changes nothing until a rename lands', () => {
+  it('maps the OLD payload key onto the current one, and never onto itself', () => {
+    /* The seam was an identity map until the rename landed. Now every entry
+       must MOVE a key: an entry mapping a name to itself is a leftover that
+       makes the map look wired when it is not. */
+    expect(SO_HEADER_LEGACY_PAYLOAD_KEYS.internalExpectedDd).toBe(SO_PROCESSING_DATE_PAYLOAD_KEY);
     for (const [from, to] of Object.entries(SO_HEADER_LEGACY_PAYLOAD_KEYS)) {
-      expect(from).toBe(to);
+      expect(from, `${from} maps to itself — that is not an alias`).not.toBe(to);
     }
   });
 });
@@ -54,13 +63,23 @@ describe('canonicaliseSoHeaderChanges', () => {
     expect(canonicaliseSoHeaderChanges(undefined)).toBeNull();
   });
 
-  it('leaves a stored amendment untouched under today\'s identity map', () => {
+  it('rewrites a stored amendment that was frozen under the OLD key', () => {
+    /* This is the silent failure the seam exists for. A Processing-Date
+       amendment REQUESTED before the rename and APPROVED after it carries the
+       old key; applySoAmendment `continue`s on any key absent from the
+       amendable allow-list, so without this the approval succeeds, the date
+       never moves, and the audit line does not mention it. Other keys pass
+       through untouched. */
     const stored = {
       internalExpectedDd: '2026-09-01',
       customerDeliveryDate: '2026-09-20',
       postcode: '47500',
     };
-    expect(canonicaliseSoHeaderChanges(stored)).toEqual(stored);
+    expect(canonicaliseSoHeaderChanges(stored)).toEqual({
+      processingDate: '2026-09-01',
+      customerDeliveryDate: '2026-09-20',
+      postcode: '47500',
+    });
   });
 
   it('does not mutate the caller\'s object', () => {

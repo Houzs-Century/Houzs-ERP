@@ -562,20 +562,8 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      Re-validate against the SO's CURRENT other date at the moment of
      approval: the last write that can still say no. Fail-open on a missing SO
      row — the apply path right below owns that refusal. */
-<<<<<<< HEAD
-  /* Legacy stored spellings rewritten onto today's keys BEFORE any of the three
-     `in headerChanges` tests below reads them. Both gates in this block — the
-     date-pair re-check and the deposit gate — are keyed on the literal payload
-     key, so a rename would let a pre-deploy amendment slip past BOTH of them and
-     then apply nothing. Identity map until a rename lands; see
-     shared/so-processing-date.ts, and applySoAmendment does the same on the
-     write side. */
-  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
-  if (headerChanges && ('internalExpectedDd' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
-=======
   const headerChanges = amendment.header_changes ?? null;
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
     const { data: soDates } = await sb.from('mfg_sales_orders')
       .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
       .eq('doc_no', amendment.so_doc_no)

@@ -33,15 +33,6 @@ export type ServiceGuardResult =
   | { ok: false; reason: string };
 
 /** Returns the distinct item codes among `lines` that are SERVICE lines —
-<<<<<<< HEAD
- *  by payload signals or by catalog category. `ok` with an empty array → all
- *  clear; `ok: false` → the catalog could not be consulted, decide nothing. */
-export async function findServiceLineCodes(
-  sb: any,
-  lines: ServiceGuardLine[],
-  companyId?: number | null,
-): Promise<ServiceGuardResult> {
-=======
  *  by payload signals or by catalog category. Empty array → all clear.
  *
  *  companyId is REQUIRED (an explicit `null` still means "no predicate"). The
@@ -55,8 +46,7 @@ export async function findServiceLineCodes(
   sb: any,
   lines: ServiceGuardLine[],
   companyId: number | null | undefined,
-): Promise<string[]> {
->>>>>>> origin/sweep/optional-param-noop
+): Promise<ServiceGuardResult> {
   const offenders = new Set<string>();
   const lookupCodes = new Set<string>();
   for (const l of lines) {

@@ -38,10 +38,10 @@
  * wrong shape and is stop-writing / stop-reading before it can be dropped. This
  * is the one storage.
  */
-export const SO_PROCESSING_DATE_COLUMN = 'internal_expected_dd' as const;
+export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
 
 /** The camelCase key the header PATCH and amendment payloads carry it under. */
-export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'internalExpectedDd' as const;
+export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'processingDate' as const;
 
 /**
  * Column names an INBOUND payload may still use for this date.
@@ -60,10 +60,12 @@ export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'internalExpectedDd' as const;
  * the drainer is behind). Confirm by reading a mirrored company-2 SO's
  * Processing Date, not by reading 2990's source.
  *
- * Today every entry equals SO_PROCESSING_DATE_COLUMN, so the alias is a proven
- * no-op — see mirror-map.test.ts. That is the correct state BEFORE a rename;
- * the list is not empty because an empty list is indistinguishable from a list
- * somebody forgot to fill in.
+ * The rename landed on 2026-08-13 (migration 0284), so this list is no longer
+ * a no-op: 2990 is a SEPARATE repo on its own deploy schedule and keeps sending
+ * `internal_expected_dd`. Without the alias the mirror's applyMap drops the key
+ * against information_schema, the upsert returns 200, and the date silently
+ * never arrives. Remove an entry only once the sending repo is confirmed off
+ * that name.
  */
 export const SO_PROCESSING_DATE_LEGACY_COLUMNS: readonly string[] = [
   'internal_expected_dd',

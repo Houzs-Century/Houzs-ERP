@@ -1426,7 +1426,12 @@ const FabricColourCombobox = ({
 export function missingRequiredVariants(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  itemCode?: string | null,
+  /* REQUIRED, like the rule it wraps. A wrapper that keeps the parameter
+     optional re-opens the hole one layer up: the DIVAN ONLY / adjustable-bed
+     exemptions key off this code, and a caller that omits it silently gets the
+     un-exempted answer with no compile error. Pass null where there is
+     genuinely no code — nothing is exempted then. */
+  itemCode: string | null,
 ): string[] {
   return missingVariantAxes(itemGroup, variants, itemCode).map((a) => a.label);
 }

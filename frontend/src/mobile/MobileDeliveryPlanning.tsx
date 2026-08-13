@@ -92,16 +92,7 @@ type BoardRow = {
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
-<<<<<<< HEAD
-  /* The SALES ORDER's Processing Date. NULL on the board's synthetic ASSR / DP /
-     project rows — those are jobs, not orders, and carry `job_date` instead. */
-  internal_expected_dd: string | null;
-  /* A synthetic job row's own leg date (ASSR trigger / DP requested date / PMS
-     window start). NULL on `so` rows. */
-  job_date: string | null;
-=======
   processing_date: string | null;
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
   days_left: number | null;
   address: string | null;
   postcode: string | null;
@@ -191,12 +182,7 @@ const hhmm = (ts: string | null | undefined): string => {
 const effDateOf = (o: BoardRow): string | null =>
   o.effective_delivery_date ||
   o.customer_delivery_date ||
-<<<<<<< HEAD
-  o.internal_expected_dd ||
-  o.job_date ||
-=======
   o.processing_date ||
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
   null;
 
 // House type — HC raw-data field, falling back to the SO building_type.

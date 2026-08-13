@@ -5077,10 +5077,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      the same act. depositTotalCenti = the POS deposit on this create;
      grandTotal = order total — both in scope from the autoProceed block. */
   {
-<<<<<<< HEAD
-=======
     const procDateOnCreate = (body.processingDate as string | null | undefined) || null;
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
     /* Emits the SAME aggregated `validation_failed` shape as the early gate block
        (owner 2026-07-18) so the client renders every Processing-Date failure the
        same way — this gate simply can't live up there because the order total

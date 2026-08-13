@@ -7,17 +7,7 @@ the shape).
 
 Verified against `main` @ `8f8427ed`. Line citations are that commit.
 
-> The delivery-COST layer — rate-card config, the pure cost calculator, and the
-> 3PL charge reconciliation + COGS-attribution seam — is Fleet **Module C**,
-> documented separately in [`delivery-rate-card.md`](./delivery-rate-card.md).
-> It reads `scm.trips.three_pl_cost_centi` (captured in A3) but does NOT touch
-> the FIFO money-path.
 
-> Conventions: everything here lives in the **`scm`** schema and is served under
-> `/api/scm/*` via the PostgREST client (`c.get('supabase')`) — with two
-> deliberate exceptions that read `public.*` through the D1 shim
-> (`c.env.DB.prepare`): service cases and PMS projects. Money is integer sen
-> (`*_centi`). Dates display DD/MM/YYYY; "today" is MYT (`todayMY()`).
 
 ---
 
@@ -57,15 +47,6 @@ re-add it.
 
 ### Trips = Delivery Time Arrangement — the board IS the page
 
-> 2026-08-08 (owner's four-message spec): the time-arrangement board, previously
-> a panel below the trip grid, is now the PAGE BODY. The trip-state chip bar
-> (All / in progress / planned / completed / cancelled) and the page-top "No
-> trips in this state" / "Pick a trip to see its stops" panels are GONE; the
-> trip list + stop sheet render under the **Time arranged** tab instead (see
-> below). The board is split by the derived arrangement stage — **Pending Time
-> Arrangement** (the inbox: date confirmed, no trip yet; the default) vs **Time
-> arranged** (on a live trip), with an "awaiting date arrangement" count linking
-> to the Delivery Date Arrangement page.
 
 It is the **EXACT Delivery Planning board** — the shared
 `DeliveryPlanningBoard` component — LOCKED to `state=PENDING_SCHEDULE` (owner
@@ -225,21 +206,9 @@ writes them onto `trip_stops` (stop lands in the proposed position with its ETA,
 mig 0134 columns). Omitted on a plain schedule → behaviour unchanged. No new
 schedule endpoint, no new trip logic.
 
-> **COST pattern.** Geocodes are cache-first (bill once per address, ever);
-> Distance Matrix is called ONCE per "Propose times + route" click and never on
-> render or on a drag-reorder (the matrix is reused). Both the geocode helper and
-> the matrix are hard-gated on `GOOGLE_MAPS_API_KEY`, so nothing bills until the
-> owner sets it. The Maps JS render needs a SEPARATE browser key
-> (`VITE_GOOGLE_MAPS_API_KEY`, referrer-restricted).
 
 ### Live driver tracking — "Live location" (Phase 4)
 
-> **Phase 5 (2026-08-03): the native app takes over the capture.** Everything
-> below still describes the BROWSER path, which remains the fallback and is
-> unchanged. What changed is that it is no longer the only path — see
-> *Background capture* at the end of this section. Owner: *"我们想要的是实时知道
-> 司机已经在哪里了... 肯定是要让顾客知道目前司机在哪里了、到达了没有"*, and on the
-> browser's limitation, *"是的，所以我才说，好像我们需要原生 APP"*.
 
 
 The dispatcher watches the driver move in real time, with **no websockets** —
@@ -278,18 +247,7 @@ posts). Falls back gracefully: `VITE_GOOGLE_MAPS_API_KEY` unset → the last-see
 time still updates without the map; a trip with no pings yet → an empty map with
 a "waiting for the driver's first location" caption.
 
-> **PRIVACY.** Capture happens ONLY during an active (IN_PROGRESS) trip, ONLY on
-> the driver's own trip, ONLY while the delivery page is open and foregrounded;
-> it stops on completion / backgrounding. The log is append-only and
-> company-scoped, and cascades away with its trip. No background or persistent
-> tracking. The location endpoints have NO Google dependency (they only
-> store/read coordinates) — only the dispatcher's map RENDER needs the browser
-> `VITE_GOOGLE_MAPS_API_KEY`.
 
-> **Backend pure parts** live in `backend/src/scm/lib/tripLocation.ts`
-> (`validatePing`, `shouldAcceptPing`, `latestPerDriver`), unit-tested in
-> `tripLocation.test.ts`. The rate cap and the "IN_PROGRESS only" gate are
-> enforced there; `PING_ACCEPTED_STATUSES = {IN_PROGRESS}`.
 
 #### Background capture — the native app (Phase 5)
 
@@ -558,12 +516,9 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
-<<<<<<< HEAD
    (`customer_delivery_date` or the Processing Date `internal_expected_dd`),
    paginated so the
-=======
    (`customer_delivery_date` or `processing_date`), paginated so the
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
 2. **Service Cases** (`row_type: 'assr'`, `:1034`) — read from **`public.assr_cases`
@@ -779,11 +734,6 @@ to `KL` if configured, else the first active region (`:201-205`). When the
 config tables are empty the hardcoded `FALLBACK_REGIONS` keeps today's five
 tabs (`:98-103`): KL/SEL, Northern, Southern, East Coast, EM.
 
-> Not the same thing: `routeRegion()` in `backend/src/services/autocount.ts:280-287`
-> returns `WEST | EAST | SG | null` from the SO's address line 3 and
-> `SalesLocation`. It belongs to the AutoCount ASSR sync
-> (`services/pull.ts:61`, `routes/assr.ts:1267`) and has nothing to do with the
-> delivery board's buckets.
 
 ### Driver / Helper / Lorry routing model
 
@@ -942,15 +892,6 @@ fleet row with no link to `public.users`. (2) A `user_id` link on
 `scm.drivers` / `scm.helpers` that `resolveDeliveryScope` reads
 (`backend/src/scm/lib/deliveryScope.ts:131-132`) to decide row scope.
 
-> **Unverified / gap.** The `user_id` link columns and the "internal staff →
-> fleet row" sync that `deliveryScope.ts:24-28` describes are **not created by
-> any migration in this repo** — `grep drivers backend/src/db/migrations-pg/`
-> returns only `0015`, `0022`, `0053`, `0083`; `0066_scm_staff_user_sync.sql:9,22`
-> refers to a "migration 0060" that is an unrelated file locally. The sync
-> therefore lives outside this repo (the 2990 full-schema import; see the note
-> at `drivers.ts:9`). On any database built from this repo's migrations alone,
-> `resolveDeliveryScope` fails open to `mode: 'all'` (`deliveryScope.ts:146`).
-> I could not verify the production state of those columns from the repo.
 
 Separately, `backend/src/routes/fleet.ts:25-29` (`GET /api/fleet/staff`, gate
 `requirePermissionOrSalesView("users.read")`) uses a **different** driver/helper
@@ -998,11 +939,6 @@ EAST_COAST / EM; Singapore folds into Southern). A fresh environment seeded from
 `0053` alone differs from production until `0159` runs — the code comment at
 `delivery-planning.ts:92-97` says so too.
 
-> `backend/src/db/schema.pg.ts` models **none** of these. It carries only the
-> legacy `public` Drizzle tables (`lorries` `:306`, `trips` `:321`, `trip_stops`
-> `:334`, `order_details` `:389`), and `public.lorries` was dropped by
-> `0055_drop_old_fleet_lorries.sql`. The scm TMS tables are reached through
-> PostgREST only, never Drizzle — so do not expect type help here.
 
 ---
 
@@ -1097,32 +1033,8 @@ Where it is enforced:
 | Trips list / detail / status | `trips.ts:128-131`, `:153-154`, `:292-293` |
 | DP orders list + act | `dp-orders.ts:102`, `:118-125`, `:247` |
 
-> **Deliberately unscoped — owner ruling 2026-07-22. Do not "fix" this.**
-> `PATCH /delivery-planning/:type/:id/schedule` — the route that assigns driver
-> and lorry and creates trips — does **not** call `resolveDeliveryScope`, and
-> must not. Scheduling is a ONE-PERSON function: a single dispatcher assigns the
-> whole operation's jobs. Narrowing the handler to the caller's own assignments
-> would lock that dispatcher out of every job they do not already own — the
-> exact opposite of what the business needs. Its gate is the area guard's `edit`
-> level on `scm.transportation.drivers`, and that is intended to be the complete
-> gate.
 >
-> The asymmetry with `/fields` (`:1553-1566`, which **does** scope) is the point.
-> `/fields` narrows because editing a job's own data — steps, POD, execution
-> timestamps — is a per-owner act. Assignment is the opposite act: it decides
-> whose job it becomes, so it cannot be scoped by ownership it creates. Adding
-> the scope call to make the two routes match would be a behaviour change against
-> a standing ruling, not a consistency fix. The handler carries the same note at
-> `delivery-planning.ts:1682-1704`, and
-> `backend/tests/scheduleScopeRuling.test.ts` fails loudly if a scope call is
-> added.
 >
-> What would justify revisiting: if scheduling ever stops being one person —
-> per-region or per-depot dispatchers each owning a slice of the board — then
-> `resolveDeliveryScope` is the mechanism to reach for, extended with a
-> region/depot mode rather than the existing `self` (which keys on crew
-> assignment and would be the wrong axis). Until the operation actually splits,
-> unscoped is correct.
 
 ### Frontend gates
 
@@ -1137,18 +1049,6 @@ Where it is enforced:
 No `PageGuard` wraps any delivery route — `PageGuard` is for the
 service-case / sales / projects family.
 
-> **Frontend re-derivation, by design but worth knowing.** The board's
-> "Convert to DO" actions are gated by `canOperateDeliveryOrders(user, can,
-> pageAccess)` (`DeliveryPlanning.tsx:526`), which is
-> `canOperateScmSalesDoc` (`frontend/src/auth/salesAccess.ts:187-206`):
-> `can("*") || !isSalesStaff(user) && ACCESS_RANK[pageAccess("scm.sales.delivery")]
-> >= edit`. It restates two backend terms — the area guard's `edit` requirement
-> and `salesJdWriteDenial` — in the frontend, deliberately, so a button it shows
-> cannot 403 (its own docblock `:157-186` explains the four hand-copies it
-> replaced). It is a mirror, not the authority: the backend still refuses.
-> Unlike `scm.maintenance.open` there is **no backend capability** covering this
-> today (`backend/src/services/capabilities.ts` has none for delivery), so if a
-> third rule term ever lands, this mirror is where it will drift.
 
 ---
 

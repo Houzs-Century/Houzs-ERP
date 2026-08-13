@@ -4,8 +4,6 @@ Per-module technical doc — the data flow from the screen down to the database,
 plus the performance characteristics. First of the per-module set; the same
 structure applies to PO / DO / SI / GRN (they are near-identical clones).
 
-> Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
-> UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 
 ---
 
@@ -329,12 +327,6 @@ answer. Before this, `2990-SO-2607-028`'s two-module LOTTI set rendered as TWO
 rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo}` ``
 — and the split was in the backend's own allocation, not only on screen.
 
-> **Never fall back to a SIBLING LINE's warehouse.** MRP, balances and
-> allocation are strictly per-warehouse, and the `WH_NONE` bucket exists to stop
-> unbound demand pooling stock across that boundary. Borrowing another line's
-> warehouse would silently pool them. Falling back to the SO's OWN header
-> cannot: every line of one order shares one header, which is exactly what makes
-> the warehouse a property of the order.
 
 Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
@@ -342,8 +334,6 @@ approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
 
 #### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
 
-> Owner, verbatim intent: *"Company 1 (Houzs Century) 开单必须有 State。Company 2
-> (2990) 不需要。其他公司也不必填。以后要加新公司我会再讲。"*
 
 The AutoCount write-back refused both of the owner's first two test orders —
 `HC-SO-2608-002` came back `refused, nothing sent (MissingLocationError)`,
@@ -388,13 +378,6 @@ an AutoCount *edit*, which leaves the book's own Location alone),
 `SalesOrderNewGuided` (inert — that flow always lands a DRAFT, wired so it is
 gated automatically if that ever changes) and `SalesOrderNewFromProducts`.
 
-> **`SalesOrderNewFromProducts` cannot raise a company-1 order.** That flow
-> collects no address by design ("address is added on the SO detail after
-> save") and lands CONFIRMED, so under company 1 it has no way to resolve a
-> warehouse. The page now says so up front and points at *Switch to Full form*,
-> rather than letting the operator build a cart and meet a 422. The backend
-> would refuse it either way — this is the UI telling the truth earlier, not a
-> second rule.
 
 **Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
 Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
@@ -467,16 +450,12 @@ PATCH, the amendment approver, any future caller — cannot write half a pair.
 Grandfathered like the past-date rules: a stored unpaired date the save leaves
 untouched still saves), remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
-<<<<<<< HEAD
 elapses (`so-field-policy`).
-=======
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `processing_date`.
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
-<<<<<<< HEAD
 `meetsProceedGate` in `order-rules` is the single rule behind ALL of it: setting
 `internal_expected_dd`, the create's auto-proceed, and both manual proceed paths
 (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`). Net
@@ -506,14 +485,12 @@ day with nothing to show it was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
 lock and the gate table. `proceeded_at` is still written and still read (the
 stock allocator sorts by it), but it is no longer what makes an order proceeded.
-=======
 `meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
 setting `processing_date`, the create-time auto-stamp of `proceeded_at`, and
 both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
 /:docNo` `proceededAt`). Net effect: the proceed paths LOOSENED by one condition
 (email), the processing-date path TIGHTENED by four (name / address / postcode /
 delivery date), and the threshold became per-company.
->>>>>>> origin/pd/silent-surfaces
 
 **And then the STORAGE too (owner 2026-08-13).** *"把 internal expected date、
 processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2079 moved
@@ -544,8 +521,6 @@ it, and the removal condition for each legacy alias is written there.
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 
-> Owner, verbatim, on HC-SO-2607-013's line "Square pillow Col: BO315-22":
-> *"为什么会有这样的 sku square pillow 你可以允许 freetext 的吗!?"*
 
 **The rule.** Every SO line names a REAL catalog SKU (`scm.mfg_products`,
 company-scoped — see "Looking a product up by CODE" below). Typed text that
@@ -672,14 +647,6 @@ processing-date LOCK was verified to ignore DRAFTs on both ends
 and every backend caller passes `status`), so a stamped draft misleads — it
 does not lock.
 
-> **Do not confuse this date with the two the scanner reads.** The OCR payload
-> once used the word `processingDate` for three unrelated facts. Since
-> 2026-08-13 the slip's own written date is `slipDate` and a card receipt's
-> printed transaction date is `receiptTxnDate`; only the SO's factory-start date
-> (`internal_expected_dd`) is still called a Processing Date. See
-> [`scan-to-so.md` §2b](./scan-to-so.md) — including the still-open mismatch
-> that mobile seeds this field from the slip's date while desktop derives it
-> from Delivery − 6 weeks.
 
 **Existing damage** (pre-guard rows): Actions → **SO non-catalog lines check
 (read-only)** (`backend/scripts/check-so-noncatalog-lines.mjs`) lists every
@@ -709,16 +676,6 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
 
 ### Delivery fee — every ringgit is a line (owner ruling 2026-08-07)
 
-> Owner, verbatim intent: *"正常来说,全部都会有 SKU 的,不可能没有 SKU,一定要有
-> SKU 才可以 … 怎么可以走后门呢?"*, reinforced the same day: *"无论是 POS
-> 系统也好,什么情况也好,它一定要有这一个 SKU 出来"* — **every ringgit on a
-> Sales Order is a LINE (SKU) row, on EVERY path, no exceptions.** The delivery
-> fee's one correct shape is an `SVC-DELIVERY*` service line (e.g.
-> 2990-SO-2608-005: `SVC-DELIVERY qty 1 MYR 250.00`, inside the subtotal). The
-> header `delivery_fee_centi` column is a dual-write MIRROR of those lines — it
-> may only ever equal Σ(SVC-DELIVERY* lines), **never carry money the lines
-> don't**. A fee that reaches the TOTAL without a line is a back door and must
-> not exist.
 
 **One derivation, one write path.** The fee amount is owned by the pure
 `computeSoDeliveryFee` (`scm/shared/pricing.ts` — the base is

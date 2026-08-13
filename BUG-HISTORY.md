@@ -1,9 +1,3 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 ## An order with no delivery State saved happily, then AutoCount refused it for having no stock location [high]
 
 **Symptom** - the owner's second AutoCount write-back test, `HC-SO-2608-002`,
@@ -379,7 +373,6 @@ either converges by construction or has to refuse. Every script in
 `backend/scripts` that writes now states its re-run behaviour in its own header,
 because "is it safe to run this again" was a question nobody could answer without
 reading the whole file - and three times this month somebody answered it wrong.
-=======
 ## MRP and the Inventory page disagree about whether a DRAFT or SHIPPED order still demands stock [med, LEFT OPEN]
 
 **Symptom** - not a report from staff; found by grep on 2026-08-13 while
@@ -475,8 +468,6 @@ when the truth moved. Import it, or pin it with a test - a citation is not a
 mechanism.
 
 **Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
->>>>>>> origin/sweep/duplicated-list-drift
-=======
 ## BUG CLASS - optional-param-noop: an optional argument that decides something [high]
 
 **The shape** - a parameter is OPTIONAL, and its ABSENCE changes an answer: a
@@ -567,10 +558,8 @@ existed, because it is.
 
 **Ref** - `sweep/optional-param-noop`, 2026-08-13. Origin: PR #1763 and the
 `fix/variant-itemcode-required` follow-up.
->>>>>>> origin/sweep/optional-param-noop
 
 ---
-=======
 ## Every company-scoped WRITE in the system was missing its company predicate [high]
 
 **Symptom** - no operator-visible symptom, which is the point. A caller switched
@@ -616,8 +605,6 @@ is not follow-up work, it is the same bug.
 
 **Ref** - `sweep/unscoped-write`, 2026-08-13. Convention now in `CLAUDE.md`
 (Coding conventions) and `docs/MULTICOMPANY-MODULE-MAP.md`.
->>>>>>> origin/sweep/unscoped-write
-=======
 ## The Processing Date has surfaces that read it by NAME, and every one of them fails in silence [high]
 
 **Symptom (latent, not yet fired)** - the owner, 2026-08-13, after saying it more
@@ -718,8 +705,6 @@ only and a "Processing" column blanks with no error.
 flattened header. The grid `key: 'processing_date'` in three lists is a SAVED
 LAYOUT key persisted per user (migration 142) - it is already the unified name
 and must not move.
->>>>>>> origin/pd/silent-surfaces
-=======
 ## The word "processingDate" meant three different facts in the scan payloads, and an audit had already been fooled by it [medium]
 
 **Symptom** - no runtime failure. The damage shows up as repeated bugs around
@@ -787,9 +772,7 @@ a reviewer stop looking.
 no migration, no API path change. **NOT verified:** no real slip was
 round-tripped through a live model, so the vision model's compliance with the
 renamed OUTPUT keys is reasoned from the prompt, not observed.
->>>>>>> origin/pd/overloaded-names
 
-=======
 ## The Processing Date answered to three names, and the column was the last one still disagreeing [medium]
 
 **Symptom** - not a crash; a recurring class. Owner, 2026-08-13, after saying it
@@ -863,7 +846,6 @@ broken* (the view's output column). Those are exactly the two that fail silently
 
 ---
 
->>>>>>> origin/pd/rename-internal-expected-dd-to-processing-date
 ## The first sales order after the write-back went live was refused, and the documented remedy could not be applied [high]
 
 **Symptom** - `scm.autocount_writeback` was switched to `"1"` on 2026-08-13 and
