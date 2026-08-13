@@ -490,4 +490,97 @@ app.get("/status-export", async (c) => {
   return c.json({ count: cases.length, cases });
 });
 
+// ── Delivery-date write-back (Nico 2026-08-12) ─────────────────
+//
+// The reverse leg of the status export: when dispatch schedules a
+// case's job row in Delivery Details (INSPECTION / PICKUP / SERVICE),
+// the sheet's Apps Script POSTs the scheduled date here so the ERP
+// case carries it — shown on the detail page and the print copies.
+// Same dual-key guard as /status-export. Idempotent: an unchanged
+// date is acknowledged without touching the row or the timeline.
+
+const SCHED_COL: Record<string, "sched_inspection_date" | "sched_pickup_date" | "sched_delivery_date"> = {
+  INSPECTION: "sched_inspection_date",
+  PICKUP: "sched_pickup_date",
+  SERVICE: "sched_delivery_date",
+};
+
+// Sheet dates arrive as display text — "2026/08/15", "15/08/2026", an
+// ISO string, or a Date serialised by Apps Script. Normalise to
+// YYYY-MM-DD; anything unparseable is skipped (never guessed).
+function normSheetDate(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+app.post("/delivery-dates", async (c) => {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
+  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
+  if (!ok) {
+    const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
+    await new Promise((r) => setTimeout(r, 250));
+    if (limited) return limited;
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  const body = await c.req
+    .json<{ updates?: Array<{ assr_no?: string; job?: string; date?: string }> }>()
+    .catch(() => null);
+  const updates = Array.isArray(body?.updates) ? body!.updates! : [];
+  if (!updates.length) return c.json({ error: "updates array is required" }, 400);
+  if (updates.length > 300) return c.json({ error: "too many updates in one call" }, 413);
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const u of updates) {
+    const assrNo = String(u.assr_no ?? "").trim();
+    const col = SCHED_COL[String(u.job ?? "").trim().toUpperCase()];
+    const date = normSheetDate(u.date);
+    if (!assrNo || !col || !date) {
+      results.push({ assr_no: assrNo || null, skipped: "bad_input" });
+      continue;
+    }
+    const row = await c.env.DB.prepare(
+      `SELECT id, ${col} AS cur FROM assr_cases WHERE assr_no = ?`
+    )
+      .bind(assrNo)
+      .first<{ id: number; cur: string | null }>();
+    if (!row) {
+      results.push({ assr_no: assrNo, skipped: "no_case" });
+      continue;
+    }
+    if ((row.cur ?? "").slice(0, 10) === date) {
+      results.push({ assr_no: assrNo, ok: true, unchanged: true });
+      continue;
+    }
+    await c.env.DB.prepare(
+      `UPDATE assr_cases SET ${col} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(date, row.id)
+      .run();
+    const jobWord = String(u.job).trim().toUpperCase();
+    await c.env.DB.prepare(
+      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, category, source_channel)
+       VALUES (?, 'note', ?, ?, ?, 'system', 'sheet_sync')`
+    )
+      .bind(
+        row.id,
+        row.cur,
+        date,
+        `Delivery sheet scheduled ${jobWord} on ${date}${row.cur ? ` (was ${row.cur.slice(0, 10)})` : ""}`
+      )
+      .run();
+    results.push({ assr_no: assrNo, ok: true, [col]: date });
+  }
+
+  return c.json({ ok: true, results });
+});
+
 export default app;

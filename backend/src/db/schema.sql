@@ -16,7 +16,12 @@ CREATE TABLE sales_orders (
   remark2 TEXT,
   remark3 TEXT,
   remark4 TEXT,
-  processing_date TEXT,
+  -- AutoCount's own SO.UDF_PDate, mirrored verbatim by services/pull.ts. NOT the
+  -- ERP's Processing Date (that is scm.mfg_sales_orders.internal_expected_dd —
+  -- one column, different table, different document). Renamed from
+  -- `processing_date` alongside mig 0285, which renames it on Postgres; this
+  -- baseline is what the D1 test tree is built from, so the two must agree.
+  ac_udf_pdate TEXT,
   expiry_date TEXT,
   note TEXT,
   po_doc_no TEXT,

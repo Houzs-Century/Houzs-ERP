@@ -1526,6 +1526,7 @@ hr.post('/payout/reopen', async (c) => {
       reopen_reason: reason,
     })
     .eq('id', existing.period.id)
+    .eq('company_id', co.companyId) // the predicate IS the isolation — service-role bypasses RLS
     .eq('status', 'CLOSED') // lost race → 0 rows, never a double-reopen
     .select(PERIOD_SELECT)
     .maybeSingle();

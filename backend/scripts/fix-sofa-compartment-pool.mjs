@@ -20,6 +20,8 @@
 //
 // SAFETY: refuses to drop a code that any mfg_products SKU, sales-order line or
 // purchase-order line actually uses. DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent, but APPENDS. The pool is written to the same value; the maintenance_config_history row is added again on every run.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

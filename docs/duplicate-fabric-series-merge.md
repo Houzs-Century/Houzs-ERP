@@ -90,7 +90,12 @@ pre-serialized is ever handed to a jsonb parameter, and there is no `||` merge
 whose operand could be a non-object — the two failure modes that destroyed the
 `variants` column three times on 2026-08-10
 (`docs/jsonb-double-encoding-coe.md`). The post-apply read counts array-shaped
-`variants` blocks on all four arms and fails the run if any exist.
+`variants` blocks on **every arm `backend/scripts/lib/fabric-write.mjs` declares
+in `ARMS`** and fails the run if any exist. That list is the only place the arms
+are written down — it was four arms when this document was first written and
+fifteen since 2026-08-13, so read `ARMS`, never a count quoted in prose. The
+figures in the APPLIED section below are what was measured on 2026-08-11,
+against the four-arm list of that day; they are a record, not a current claim.
 
 ---
 

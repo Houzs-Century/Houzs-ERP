@@ -168,7 +168,8 @@ const CATALOGUE = [
 const labelFor = (e) => {
   if (!e.name) return e.id;
   // GD2502 reads with a '#' in its label, which is how every existing row reads
-  if (e.series === "GD2502") return `${e.id.replace("-", "#")} ${e.name}`;
+  // GD2502 used to read "GD2502#04 OAK". The owner unified the shape on
+  // 2026-08-11 ("# 要不要一起去掉 ... OK"), so the '#' is gone here too.
   return `${e.id} ${e.name}`;
 };
 
@@ -253,7 +254,7 @@ async function main() {
     return refCache.get(code);
   };
 
-  const plan = { create: [], rename: [], merge: [], ok: [], newSeries: new Set() };
+  const plan = { create: [], rename: [], merge: [], ok: [], reparent: [], newSeries: new Set() };
   const claimed = new Set();
 
   for (const e of wanted) {
@@ -288,6 +289,25 @@ async function main() {
     if (lose.length) plan.merge.push({ e, win, lose, needsRename });
     else if (needsRename) plan.rename.push({ e, win });
     else plan.ok.push({ e });
+
+    /* The winner can be sitting under the WRONG series row, and renaming its
+       colour_id does not move it. The 2026-08-11 apply left exactly two that
+       way: AM275-07 stayed under the space-spelled series "AM 275", and NX016
+       stayed under a one-colour junk series literally called "NX016". The
+       colour is then correct and still invisible in its own series' picker.
+
+       merge-duplicate-fabric-series cannot fix these two. It picks the side
+       production references more, which for AM 275 / AM275 is the SPACE one
+       (it holds the 2 live lines), so applying it would move 16 real colours
+       onto the junk name - backwards. And NX / NX016 share no colour code at
+       all, so its detector is blind to the pair and says so.
+
+       Re-parenting is the narrow fix: move the colour to the series its code
+       names, and repoint any live line that named the old series. */
+    const canonical = libByStripped.get(e.series)?.id ?? e.series;
+    if (normColour(win.r.fabric_id) !== normColour(canonical) && !plan.newSeries.has(e.series)) {
+      plan.reparent.push({ e, row: win.r, from: win.r.fabric_id, to: canonical });
+    }
   }
 
   // rows sitting in the owner's series that his list does not mention
@@ -299,7 +319,7 @@ async function main() {
   });
 
   note("");
-  note(`PLAN  create ${plan.create.length} | merge ${plan.merge.length} | rename ${plan.rename.length} | already correct ${plan.ok.length}`);
+  note(`PLAN  create ${plan.create.length} | merge ${plan.merge.length} | rename ${plan.rename.length} | re-parent ${plan.reparent.length} | already correct ${plan.ok.length}`);
   note(`      new SERIES to open: ${plan.newSeries.size ? [...plan.newSeries].join(", ") : "none"}`);
   note(`      rows in these series the list does not mention (LEFT ALONE): ${extras.length}`);
 
@@ -323,6 +343,11 @@ async function main() {
       note(`  "${r.win.r.colour_id}" / ${JSON.stringify(r.win.r.label)}  ->  "${r.e.id}" / ${JSON.stringify(labelFor(r.e))}  (${r.win.refs} live line(s))`);
     }
   }
+  if (plan.reparent.length) {
+    note("");
+    note(`--- RE-PARENT (${plan.reparent.length}) — the colour is right, its SERIES is not ---`);
+    for (const p of plan.reparent) note(`  "${p.e.id}" moves from series "${p.from}" to "${p.to}"`);
+  }
   if (extras.length) {
     note("");
     note(`--- NOT IN THE OWNER'S LIST, left exactly as they are (${extras.length}) ---`);
@@ -338,7 +363,7 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let created = 0, merged = 0, renamed = 0, moved = 0, seriesOpened = 0;
+  let created = 0, merged = 0, renamed = 0, moved = 0, seriesOpened = 0, reparented = 0, skippedSettled = 0;
   await sql.begin(async (tx) => {
     let sortCursor = Math.max(0, ...libs.map((l) => Number(l.sort_order) || 0));
     for (const s of plan.newSeries) {
@@ -354,6 +379,13 @@ async function main() {
     }
     for (const m of plan.merge) {
       for (const l of m.lose) {
+        /* A row that is ALREADY superseded is done. Re-stamping it appends the
+           note a second time - "X [superseded by Y on D] [superseded by Y on D]"
+           - so a script that is safe to re-run would still corrupt its own
+           audit trail a little more on every run. The 2026-08-11 plan re-run
+           reported all 39 pairs again for exactly this reason: the losing rows
+           still exist (they must - nothing is deleted) and still match. */
+        if (l.r.active === false) { skippedSettled++; continue; }
         if (normColour(l.r.colour_id) !== m.e.id) {
           const r = await repoint(tx, l.r.colour_id, m.e.id);
           const n = r.reduce((a, b) => a + b.n, 0);
@@ -389,8 +421,39 @@ async function main() {
                ON CONFLICT (fabric_id, colour_id) DO NOTHING`;
       created++;
     }
+    /* Move the colour onto the series its own code names, take any live line
+       that pointed at the old series with it, and then retire that series if
+       re-parenting emptied it of anything active. An emptied series is retired,
+       never dropped - the same rule the colours follow. */
+    for (const p of plan.reparent) {
+      const clash = await tx`SELECT 1 FROM scm.fabric_colours
+                              WHERE company_id = ${CO} AND fabric_id = ${p.to} AND colour_id = ${p.e.id}`;
+      if (clash.length) { bad(`"${p.e.id}" already exists under "${p.to}" - re-parent skipped, this is a real duplicate to look at`); continue; }
+      await tx`UPDATE scm.fabric_colours SET fabric_id = ${p.to}
+                WHERE company_id = ${CO} AND fabric_id = ${p.from} AND colour_id = ${p.e.id}`;
+      for (const arm of ARMS) {
+        const r = await tx.unsafe(
+          `UPDATE ${arm.t} i
+              SET variants = jsonb_set(i.variants, '{fabricId}', to_jsonb($3::text))
+            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
+              AND i.variants->>'fabricId' = $2 AND i.variants->>'fabricCode' = $4`,
+          [CO, p.from, p.to, p.e.id]);
+        moved += r.count;
+      }
+      reparented++;
+      const left = await tx`SELECT COUNT(*)::int AS n FROM scm.fabric_colours
+                             WHERE company_id = ${CO} AND fabric_id = ${p.from} AND active`;
+      if (left[0].n === 0) {
+        await tx`UPDATE scm.fabric_library
+                    SET active = false,
+                        label = ${`${p.from} [emptied into ${p.to} on ${STAMP}]`}
+                  WHERE company_id = ${CO} AND id = ${p.from}`;
+        note(`  series "${p.from}" retired - re-parenting left it with no active colour`);
+      }
+      note(`  re-parented "${p.e.id}": "${p.from}" -> "${p.to}"`);
+    }
   });
-  note(`  series opened ${seriesOpened} | created ${created} | superseded ${merged} | renamed ${renamed} | live lines repointed ${moved}`);
+  note(`  series opened ${seriesOpened} | created ${created} | superseded ${merged} | renamed ${renamed} | re-parented ${reparented} | already-superseded left alone ${skippedSettled} | live lines repointed ${moved}`);
 
   /* Verify on a SECOND, FRESH connection - a read inside the writing session
      can see its own uncommitted work and would prove nothing. */

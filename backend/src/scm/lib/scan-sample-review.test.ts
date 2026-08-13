@@ -92,7 +92,7 @@ const extractedSlip = (over: Row = {}): Row => ({
   city: 'Skudai', postcode: '81300',
   addressStateMatch: { value: 'Johor', confidence: 0.9, reason: 'read' },
   phones: ['127778888'],
-  location: 'JB fair', deliveryDate: null, processingDate: null, salesRep: 'Aaron',
+  location: 'JB fair', deliveryDate: null, slipDate: null, salesRep: 'Aaron',
   customerSoRef: 'HC14032', paymentMethod: 'cash dep 500',
   depositRm: 500, totalRm: 1200, remarks: 'call before deliver', approvalCode: null,
   paymentMethodMatch: { value: 'Cash', confidence: 0.9, reason: 'read' },
@@ -144,7 +144,14 @@ describe('buildCorrectedSlipFromSo — an untouched SO must produce ZERO diff', 
     // into the pair. Pinned against the documented exclusion list.
     expect(CARRIED_NOT_INVERTED).toContain('locationMatch');
     expect(CARRIED_NOT_INVERTED).toContain('remarks');
-    expect(CARRIED_NOT_INVERTED).toContain('processingDate');
+    /* The SLIP'S OWN DATE. It is deliberately NOT inverted from the SO, because
+       the SO's Processing Date (internal_expected_dd) is a DIFFERENT fact — the
+       factory start date the operator keys at review. Both were once called
+       "processingDate"; if this entry ever drifts back to that name, or drops
+       out of the array, the inverter starts teaching the model to read the
+       factory date off the slip's date line. */
+    expect(CARRIED_NOT_INVERTED).toContain('slipDate');
+    expect(CARRIED_NOT_INVERTED).not.toContain('processingDate');
     expect(CARRIED_NOT_INVERTED).toContain('priceRmGuess');
     const ai = extractedSlip();
     const out = buildCorrectedSlipFromSo(ai, soHeader(), [soItem()]);

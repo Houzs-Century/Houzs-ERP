@@ -3,8 +3,7 @@
 // NO React, no I/O. Desktop `SalesOrderNew` and mobile `MobileNewSO` both feed
 // their own state into these, so a guard can't exist on one surface and be
 // missing on the other (mobile was missing the past-date / processing>delivery
-// guards, and silently DROPPED a slip-less payment — a real money bug where a
-// cashier's payment never posted).
+// guards desktop had).
 //
 // Each guard returns the FIRST blocking error as `{ title, body? }` (both
 // surfaces short-circuit on the first failure) or null when the input passes.
@@ -110,29 +109,111 @@ export function soDateGuardError(i: SoDateGuardInput): SoFormError | null {
   return null;
 }
 
-export interface SoPaymentGuardRow {
-  /** Payment amount in sen/cents. */
-  amountCenti: number;
+/* NO SLIP GUARD LIVES HERE ANY MORE (Owner 2026-08-13) — "其实 SalesOrder
+   所有的付款都不强制 ... 如果是 manually 填写的话,基本上不需要强求." A payment
+   slip is OPTIONAL on every SO surface, so `soSliplessPaymentError` is gone
+   rather than kept as a guard that always passes.
+
+   What replaced it is NOT another guard: it is the requirement that every
+   amount-bearing row is actually POSTED. The rule this file used to enforce
+   only existed because both surfaces' post-create writers SKIPPED a slip-less
+   row, so refusing the save was the only thing standing between a cashier and
+   a payment that silently never booked. Both writers now post on AMOUNT alone
+   (`recordNewPayments` on mobile, `flushPaymentDrafts` on desktop), which is
+   what makes dropping the guard safe. `so-slip-optional-contract.test.ts`
+   pins that pairing on both surfaces — if a writer ever goes back to
+   filtering on the slip, that is the money bug returning, not a style change. */
+
+/**
+ * The companies whose orders must resolve a stock location before they can be
+ * created. MIRRORS `LOCATION_REQUIRED_COMPANY_CODES` in
+ * `backend/src/scm/lib/so-location-gate.ts` — the backend is the authoritative
+ * gate; this list only decides whether the operator is told before or after the
+ * round-trip. Add a company's `companies.code` to BOTH.
+ */
+export const LOCATION_REQUIRED_COMPANY_CODES: readonly string[] = ["HOUZS"];
+
+/**
+ * Does this company's order need a stock location? Mirrors
+ * `companyRequiresStockLocation` in the backend gate, including the
+ * deliberately UNGATED unknown/absent code — a surface that has not resolved
+ * its branding yet must not start refusing orders.
+ *
+ * Exported so a surface can ask the QUESTION without pretending to answer the
+ * whole guard: `SalesOrderNewFromProducts` collects no address, so it needs to
+ * know which companies would refuse a CONFIRMED create in order to land a
+ * DRAFT for them instead — and it must read the one list, never re-derive it.
+ */
+export function companyRequiresStockLocation(
+  companyCode: string | null | undefined,
+): boolean {
+  const code = (companyCode ?? "").trim().toUpperCase();
+  if (!code) return false;
+  return LOCATION_REQUIRED_COMPANY_CODES.includes(code);
+}
+
+export interface SoLocationGuardInput {
+  /** Active company code from `useBranding().companyCode` ('HOUZS' | '2990'). */
+  companyCode: string | null | undefined;
   /**
-   * True when this amount-bearing row has proof attached — a freshly uploaded
-   * slip session OR (desktop) a scanned receipt whose R2 key IS the slip.
+   * The read-only "Sales Location" the form resolved from the picked State
+   * (state_warehouse_mappings). '' when nothing resolved — which is the ONLY
+   * thing AutoCount actually cares about, and it covers both causes at once.
    */
-  hasSlip: boolean;
+  salesLocation: string;
+  /** The picked State ('' when none) — used only to name the right cause. */
+  state: string;
+  /**
+   * False while `useStateWarehouseMappings()` has not answered yet, on a
+   * surface that resolves the location from it. An unloaded mapping table makes
+   * every State look unmapped, and refusing a legitimate order because a query
+   * is in flight is worse than letting the server (which reads the mappings
+   * directly) have the last word. Defaults TRUE for surfaces that resolve no
+   * location at all and must still be gated.
+   */
+  mappingsLoaded?: boolean;
+  /** True for Save-as-draft. A draft is never written to AutoCount. */
+  asDraft?: boolean;
+  /**
+   * True on an EDIT of an existing order. An edit enqueues an AutoCount EDIT,
+   * which leaves the account book's own Location alone — only a CREATE has a
+   * foreign key to satisfy.
+   */
+  isEdit?: boolean;
 }
 
 /**
- * Every amount-bearing payment must carry a slip before the SO is saved — the
- * POST /:docNo/payments route 400s a slip-less payment, and (the bug this
- * closes on mobile) silently dropping such a row loses the payment entirely.
- * Mirrors desktop `SalesOrderNew.onSave` Spec D4.
+ * A Sales Order this company writes to AutoCount must ship from a warehouse.
+ *
+ * Owner 2026-08-13, after both write-back test orders were refused: "Company 1
+ * (Houzs Century) 开单必须有 State。Company 2 (2990) 不需要。其他公司也不必填。"
+ * The order's warehouse is derived from the customer's State through
+ * state_warehouse_mappings, and AutoCount rejects a document line whose
+ * Location is not in `dbo.Location` — so a State-less order is refused by the
+ * account book AFTER the salesperson has been told it saved.
+ *
+ * Gates on the RESOLVED Sales Location, not on the State being picked: a State
+ * with no warehouse mapping resolves nothing either, and that second case is an
+ * administrator's job, so it gets its own sentence rather than telling the
+ * salesperson to pick a State they already picked.
  */
-export function soSliplessPaymentError(rows: SoPaymentGuardRow[]): SoFormError | null {
-  const n = rows.filter((r) => r.amountCenti > 0 && !r.hasSlip).length;
-  if (n === 0) return null;
+export function soStockLocationError(i: SoLocationGuardInput): SoFormError | null {
+  if (i.asDraft || i.isEdit) return null;
+  if (i.mappingsLoaded === false) return null;
+  if (!companyRequiresStockLocation(i.companyCode)) return null;
+  if (i.salesLocation.trim() !== "") return null;
+
+  const state = i.state.trim();
+  if (!state) {
+    return {
+      title: "Pick the delivery State before creating this order.",
+      body:
+        "The State decides which warehouse the order ships from, and an order with no " +
+        "warehouse cannot be created. Fill in the delivery address, then try again.",
+    };
+  }
   return {
-    title: "Each payment needs a slip uploaded before saving.",
-    body:
-      `${n} payment row${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} missing a slip — upload ` +
-      `${n === 1 ? "it" : "them"} (the "Slip *" button) and try again.`,
+    title: `${state} has no warehouse mapped, so this order has no stock location.`,
+    body: "Ask an administrator to map that State to a warehouse, then try again.",
   };
 }

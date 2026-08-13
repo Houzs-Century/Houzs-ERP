@@ -6,7 +6,19 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
+   the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
+async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -812,7 +824,19 @@ async function verifyGrnOverReceipt(
     }
     return null;
   } catch {
-    // Best-effort: a verification read failure must not block the receipt.
+    // Best-effort: a thrown verification failure must not block the receipt.
+    /* ⚠️ AND THE THREE READS ABOVE DROP THEIR `error` — a PostgREST failure is
+       RETURNED, not thrown, so it never reaches this catch. It folds to
+       `?? []`, the cap check finds nothing over, and an over-received line
+       stays committed. That is the 2026-08-13 swallowed-error class ("a guard
+       that says all clear because it could not look", BUG-HISTORY.md), left
+       here DELIBERATELY: reading those errors means 409-ing legitimate
+       receipts on a transient blip, which reverses the best-effort policy this
+       comment states, and that is the owner's call. The sweep fixed the guards
+       whose fail-closed answer costs nothing; this one is listed, not churned.
+       Same note applies to the add-line verifier below and to the over-invoice
+       / over-return twins in purchase-invoices.ts, purchase-returns.ts and the
+       purchase-consignment routes. */
     return null;
   }
 }
@@ -1813,6 +1837,28 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalCenti is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
+     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
+     need not have a parent PO. AutoCount has no create for a GRN at all; it
+     builds one only by transferring a PO's lines. Even when a purchaseOrderId
+     IS supplied here, sending a conversion would be WRONG rather than merely
+     approximate: AcSyncService resolves the source lines from AutoCount's own
+     outstanding predicate (DtlKeys()), so the account book would receive the
+     PO's outstanding lines, not the quantities the receiver actually typed and
+     accepted on this form. That is a wrong value, and a wrong value is worse
+     than a blank — so the divergence is recorded instead of guessed.
+     The two real conversion routes are POST /from-pos and /from-po-items. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: h.grn_number,
+    docId: h.id,
+    missing: (body.purchaseOrderId as string | undefined)
+      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
+      : 'no source Purchase Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -2479,16 +2525,22 @@ grns.patch('/:id/cancel', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* Cancelling reverses stock and re-opens a PO, so it must never reach another
+     company's receipt. Same strict pattern as POST /:id/post above: refuse an
+     unresolved company outright, then pin every read AND every status flip. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // Read → guard → update → reverse (mirrors PO cancel's split-to-avoid-PGRST116).
-  const { data: cur, error: readErr } = await sb.from('grns')
+  const { data: cur, error: readErr } = await scopeToCompanyId(sb.from('grns')
     .select('id, status, grn_number, warehouse_id')
-    .eq('id', id).maybeSingle();
+    .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
-  if (!cur) return c.json({ error: 'not_found' }, 404);
+  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as { id: string; status: string; grn_number: string; warehouse_id: string | null };
   // Idempotent — already cancelled, echo back without re-reversing.
   if (head.status === 'CANCELLED') {
-    const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+    const { data } = await scopeToCompanyId(sb.from('grns').select(HEADER).eq('id', id), co.companyId).maybeSingle();
     return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
   }
 
@@ -2504,9 +2556,9 @@ grns.patch('/:id/cancel', async (c) => {
      inventory OUT + PO recount below would over-reverse (drive stock negative /
      wrongly re-open a PO). Short-circuit: just flip DRAFT → CANCELLED. */
   if (head.status === 'DRAFT') {
-    const { data } = await sb.from('grns')
+    const { data } = await scopeToCompanyId(sb.from('grns')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .eq('id', id).eq('status', 'DRAFT').select(HEADER).maybeSingle();
+      .eq('id', id).eq('status', 'DRAFT'), co.companyId).select(HEADER).maybeSingle();
     /* Still recorded even though nothing was reversed: the document existed and
        someone voided it, and the note is what tells a reader why no stock moved. */
     await recordEntityAudit(sb, {
@@ -2548,13 +2600,13 @@ grns.patch('/:id/cancel', async (c) => {
      UPDATE excludes CANCELLED so two concurrent cancels race on the row and
      only ONE flips it (the other gets no row back → idempotent no-op), so the
      inventory reversal + PO recount below run exactly once, never double. */
-  const { data: updRow, error: updErr } = await sb.from('grns')
+  const { data: updRow, error: updErr } = await scopeToCompanyId(sb.from('grns')
     .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-    .eq('id', id).neq('status', 'CANCELLED').select('id').maybeSingle();
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
   if (!updRow) {
     // Lost the race — a concurrent cancel already flipped it. Echo idempotently.
-    const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+    const { data } = await scopeToCompanyId(sb.from('grns').select(HEADER).eq('id', id), co.companyId).maybeSingle();
     return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
   }
 
@@ -2671,13 +2723,23 @@ grns.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* Multi-company: the service-role client bypasses RLS, so an app-level
+     predicate is the ONLY isolation. The GET at :1382 was scoped by the
+     2026-08-10 audit; this PATCH — the write — was not, on either its read or
+     its UPDATE, so a GRN id from the other company could be loaded here and
+     edited. Reads were hardened then and writes were left, which is the
+     systemic half of that audit. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
      also the BEFORE half of every from->to pair recorded at the end of the
      handler. An audit entry carrying only the new value does not answer "what
      changed". One read serves both — the relocation block below reads its
      warehouse / status / rate out of the same row it always did. */
-  const { data: beforeRow } = await sb.from('grns')
-    .select(GRN_AUDIT_SELECT).eq('id', id).maybeSingle();
+  const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
+    .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* Before the relocation block below, which writes inventory movements — those
@@ -2800,8 +2862,13 @@ grns.patch('/:id', async (c) => {
       rateChanged = true;
     }
   }
-  const { data, error } = await sb.from('grns').update(updates).eq('id', id).select(HEADER).single();
+  const { data, error } = await scopeToCompanyId(sb.from('grns')
+    .update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  /* maybeSingle, not single: the company predicate can legitimately match zero
+     rows, and `single()` would turn that into a 500 rather than the 404 that
+     tells the truth. */
+  if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
   /* Diff the NORMALISED values actually written (`updates`), not the raw body —
      currency is upper-cased, exchange_rate is derived from it and the allocation
@@ -2834,6 +2901,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
+  await queueAcGrnEdit(c, id);
   return c.json({ grn: data });
 });
 
@@ -3071,6 +3139,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
+  await queueAcGrnEdit(c, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3082,13 +3151,20 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* A line edit moves stock and money, so it gets the same strict company gate
+     as the header writes: refuse an unresolved company, and pin the GRN gate
+     read AND the line UPDATE to it. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return c.json({
@@ -3246,7 +3322,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { error } = await sb.from('grn_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('grn_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row.
@@ -3347,6 +3423,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
+  await queueAcGrnEdit(c, grnId);
   return c.json({ ok: true });
 });
 
@@ -3360,13 +3437,18 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase'); const user = c.get('user');
 
+  // Same strict company gate as the line PATCH — a delete reverses stock too.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return c.json({
@@ -3415,7 +3497,12 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { error } = await sb.from('grn_items').delete().eq('id', itemId);
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'grn_items', itemId);
+
+  const { error } = await scopeToCompanyId(sb.from('grn_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the GRN and it still exists. DELETE on
@@ -3499,5 +3586,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
+  await queueAcGrnEdit(c, grnId, retire);
   return c.body(null, 204);
 });

@@ -82,13 +82,22 @@ const DIGIT_REGEX = /[0-9]/;
 // ---------------------------------------------------------------------------
 // validatePasswordStrength — single source of truth for "is this password
 // strong enough to land in users.passwordHash". Returns first violation so
-// the UI guides the user to fix one rule at a time. Pass `email` to also
-// block passwords that contain the local-part (the bit before @) of the
-// owner's email — that's the most common "set password = my username" trap.
+// the UI guides the user to fix one rule at a time. `email` also blocks
+// passwords that contain the local-part (the bit before @) of the owner's
+// email — that's the most common "set password = my username" trap.
+//
+// `email` is REQUIRED (pass null/undefined where the caller truly has none).
+// It used to be optional, and an optional argument on a GATE is a rule that
+// applies only where someone remembered it: omitting it silently dropped the
+// username-as-password check, with no compile error and nothing failing. Every
+// caller does have an address in hand — the sign-up form, the invite row, the
+// reset token's user, the profile's own user — so the required form costs
+// nothing and makes the one path that genuinely lacks one say so out loud
+// (optional-param-noop sweep 2026-08-13).
 // ---------------------------------------------------------------------------
 export function validatePasswordStrength(
   pw: string,
-  email?: string,
+  email: string | null | undefined,
 ): PasswordStrengthResult {
   // Length is the single most-correlated factor with crack-time, so it's
   // first. 12 is the NIST 2024 minimum for human-chosen passwords.

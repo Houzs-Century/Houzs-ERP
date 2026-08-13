@@ -92,7 +92,7 @@ type BoardRow = {
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   days_left: number | null;
   address: string | null;
   postcode: string | null;
@@ -173,11 +173,16 @@ const hhmm = (ts: string | null | undefined): string => {
   ).padStart(2, "0")}`;
 };
 
-// The effective delivery date the run-sheet buckets on.
+/* The effective delivery date the run-sheet buckets on.
+   `job_date` sits beside internal_expected_dd rather than replacing it: a
+   synthetic job row now carries its leg date there instead of in the SO's
+   Processing-Date field. Behaviour is unchanged — a synthetic row always sets
+   effective_delivery_date and customer_delivery_date to the same leg date, so
+   neither tail was ever reached on those rows. */
 const effDateOf = (o: BoardRow): string | null =>
   o.effective_delivery_date ||
   o.customer_delivery_date ||
-  o.internal_expected_dd ||
+  o.processing_date ||
   null;
 
 // House type — HC raw-data field, falling back to the SO building_type.

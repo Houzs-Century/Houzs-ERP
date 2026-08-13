@@ -11,6 +11,8 @@
 // AutoCount prefix stays intact for cross-referencing.
 //
 // DRY-RUN default; APPLY=1 writes. One transaction.
+//
+// RE-RUN: inert. The rewrite is computed from the current supplier_sku and a corrected value no longer matches the pattern it looks for.
 import postgres from "postgres";
 
 const APPLY = process.env.APPLY === "1";

@@ -59,7 +59,30 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # The AutoCount write-back composes against two GENERATED files: the
+      # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
+      # run on (D9). Both are compiled from backend/scripts/data/ because the
+      # backend suite runs in workerd and cannot read the filesystem. Refreshing
+      # an export without regenerating them would leave the composer resolving
+      # against last month's account book while the suite stayed green.
+      - run: npm run audit:ac-item-map
+      - run: npm run audit:ac-sofa-corpus
+      # tests/generated/ is the collapsed baseline+migrations that
+      # tests/setup.ts applies instead of replaying the history per test file.
+      # A migration merged without regenerating it would leave the whole suite
+      # asserting against a schema production does not have — green, and
+      # meaningless. Cheap (~2s) and it belongs here, in the job that fails
+      # fastest.
+      - run: npm run audit:test-schema
+      # Keeps a new test file from quietly landing in the expensive project.
+      - run: npm run audit:test-projects
       - run: npm run typecheck
+      # The 221-file pure-logic suite. It lives here, in the job that already
+      # finishes in about a minute, because it takes ~7 SECONDS — it used to be
+      # spread across the four workerd shards below at ~1.76s of startup per
+      # file. Not sharded: sharding 7s of work across runners costs more in
+      # checkout than it saves.
+      - run: npm run test:light
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
   # workerd worker (`singleWorker: true` in backend/vitest.config.ts). That is
@@ -75,14 +98,27 @@ jobs:
   # worker at the same concurrency it uses today. Nothing about the pool config
   # changes; there are just fewer files per pool.
   #
-  # Why 4: per-shard cost is ~28s fixed (checkout + setup-node + cached npm ci)
-  # plus 334s/N of tests. N=2 -> 3m17s, N=3 -> 2m21s, N=4 -> 1m54s,
-  # N=6 -> 1m26s. Going 3->4 buys 27s for one more runner; 4->6 buys only 28s
-  # more for two more runners, by which point fixed overhead is a third of the
-  # job. 4 is the knee, and 112/4 = 28 files per shard exactly.
+  # Why 4 — ORIGINAL sizing, against a 112-file / 334s suite: per-shard cost is
+  # ~28s fixed (checkout + setup-node + cached npm ci) plus 334s/N of tests.
+  # N=2 -> 3m17s, N=3 -> 2m21s, N=4 -> 1m54s, N=6 -> 1m26s. 4 was the knee, and
+  # 112/4 = 28 files per shard exactly.
+  #
+  # THAT SIZING IS STALE — as of 2026-08-13 the suite is 277 files and one
+  # shard runs ~380s, not the ~114s budgeted above. Read the numbers above as
+  # history, not as the current shape, and re-measure before reasoning from
+  # them. Two things that look obvious here are not:
+  #
+  #   - Shard count does NOT free runner slots. 4x440s and 2x880s occupy the
+  #     same runner-seconds; sharding trades latency for slots at fixed total
+  #     cost, so cutting it does nothing for a saturated pool.
+  #   - The cost is NOT the SQL. Measured inside the pool, the old per-file
+  #     migration replay was 391ms of a ~2s/file setup; the rest is workerd
+  #     startup, paid 277 times because vitest.config.mts runs files serially.
+  #
+  # Full working: docs/ci-capacity-coe.md.
   #
   # Sharding is by file-path hash, not by measured duration, so the slowest
-  # shard runs somewhat above the 84s mean. Budget ~2-2.5min wall.
+  # shard runs somewhat above the mean.
   backend-tests:
     runs-on: ubuntu-latest
     strategy:
@@ -93,7 +129,14 @@ jobs:
       # `backend` roll-up below still fails if any shard fails.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        # 2, not 4. This job now runs ONLY the files that need the Workers
+        # runtime — 44 of the 265 that used to be here, ~99s in total — because
+        # the other 221 moved to `test:light` in backend-typecheck above. Two
+        # shards put each at ~50s, which is already below the fixed
+        # checkout+install overhead; a third would buy seconds and cost a slot
+        # the account does not have (see docs/ci-capacity-coe.md on the 20-job
+        # ceiling).
+        shard: [1, 2]
     defaults:
       run:
         working-directory: backend
@@ -107,7 +150,12 @@ jobs:
       - run: npm ci
       # job-total is the matrix size, so the shard count follows the matrix
       # automatically and index/count can never drift apart.
-      - run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      # `test:workers`, not `test`. `npm test` now runs the light suite AND the
+      # workers suite, and `npm test -- --shard=...` appends the flag to the
+      # LAST command only — so every shard would re-run all 221 light files to
+      # shard the 44 workers ones. Same append trap documented for `pretest` in
+      # docs/SCALE-PERFORMANCE-HARNESS.md, one script along.
+      - run: npm run test:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
   # Roll-up so the backend gate keeps ONE stable check name. Before this PR the
   # required-looking check was `backend`; after the split the real work lives in
@@ -135,7 +183,16 @@ jobs:
     # The full 100k evidence run is deliberately PR-only. GitHub emits both a
     # push and pull_request event for an open branch; running this job twice
     # would spend twice the time without adding an independent environment.
-    if: github.event_name == 'pull_request'
+    #
+    # `merge_group` is included because the merge queue is the tree that
+    # actually reaches main, and a queue whose gate is weaker than the PR gate
+    # is worse than no queue: it would let a change through on evidence
+    # gathered against a different tree. Without this line the job simply never
+    # runs once the queue is switched on — silently, since a job that does not
+    # run reports nothing. See docs/ci-capacity-coe.md.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:

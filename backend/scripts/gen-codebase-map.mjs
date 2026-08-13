@@ -159,7 +159,27 @@ function runnerDir(scriptName) {
 }
 
 const deployYml = read(path.join(repoRoot, ".github", "workflows", "deploy.yml"));
-const vitestConfig = read(path.join(backendRoot, "vitest.config.ts"));
+/* The vitest config is what tells us which migration tree the tests read, and
+   its EXTENSION has moved: #925 renamed vitest.config.ts to .mts for the Vitest
+   4 / Vite 8 toolchain. This script kept reading the old name and has therefore
+   CRASHED on every run since — which is the real reason
+   docs/generated/codebase-map-facts.md was last regenerated on 2026-07-21 and
+   then drifted to claiming 122 route modules against a real 135, and 164
+   migrations against 281. Nobody ignored the generator; it threw ENOENT before
+   it could write a line, and `audit:map` is deliberately not a CI gate (a stale
+   doc must never block a deploy), so nothing ever surfaced the crash.
+   Try each known name rather than pinning one, so the next rename degrades into
+   a wrong-but-present fact instead of a hard stop. */
+const vitestConfig = (() => {
+  for (const name of ["vitest.config.mts", "vitest.config.ts", "vitest.config.js"]) {
+    const full = path.join(backendRoot, name);
+    if (fs.existsSync(full)) return read(full);
+  }
+  throw new Error(
+    `No vitest config found in ${backendRoot} (tried .mts/.ts/.js). ` +
+      `If it was renamed again, add the new name to this list.`,
+  );
+})();
 
 function migrationTree(dirName, runner) {
   const dir = path.join(backendRoot, dirName.replace(/^src\//, "src/"));

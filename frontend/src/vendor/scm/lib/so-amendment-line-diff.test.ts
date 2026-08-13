@@ -83,7 +83,7 @@ describe('SO-2607-018/A1 — a colour-only amendment keeps the rest of the spec'
   it('flags the variants as the only changed field', () => {
     const changed = amendmentLineChangedFields(colourOnlyLine());
     expect(changed).toEqual({
-      itemCode: false, qty: false, unitPrice: false, variants: true,
+      itemCode: false, qty: false, unitPrice: false, variants: true, remark: false,
     });
   });
 
@@ -217,5 +217,71 @@ describe('ADD and REMOVE are unaffected', () => {
   it('treats a REMOVE as wholly a change', () => {
     const remove = colourOnlyLine({ change_type: 'REMOVE', new_variants: undefined });
     expect(amendmentLineIsChange(remove)).toBe(true);
+  });
+});
+
+/* ── REMARK (mig 0280) — owner 2026-08-11, 2990-SO-2608-016 ────────────────
+   The operator amended a processing-locked SO purely to put an instruction on a
+   SVC-ADDON line: "Please take back Cody Bedframe (King Size) 2 units". The
+   remark had no column, so it was dropped on submit AND the line scored as
+   no-change — the request reached nobody and the SO showed an RM0 line naming
+   only its SKU. These pin the field as carryable and as a real change. */
+describe('a remark-only amendment is a request', () => {
+  const remarkOnly = colourOnlyLine(
+    {
+      new_variants: { ...BEDFRAME_SPEC },   // spec untouched
+      new_remark: 'Please take back Cody Bedframe (King Size) 2 units',
+    },
+    { remark: '' },
+  );
+
+  it('flags the remark as the only changed field', () => {
+    expect(amendmentLineChangedFields(remarkOnly)).toEqual({
+      itemCode: false, qty: false, unitPrice: false, variants: false, remark: true,
+    });
+  });
+
+  it('survives visibleAmendmentLines instead of being filtered as a no-op', () => {
+    expect(amendmentLineIsChange(remarkOnly)).toBe(true);
+    expect(visibleAmendmentLines([remarkOnly])).toHaveLength(1);
+  });
+
+  it('carries the remark on an ADD line — the case that lost the instruction', () => {
+    const add: DiffableAmendmentLine = {
+      change_type: 'ADD',
+      new_item_code: 'SVC-ADDON',
+      new_qty: 1,
+      new_unit_price_sen: 0,
+      new_remark: 'Please take back Cody Bedframe (King Size) 2 units',
+    };
+    expect(amendmentLineChangedFields(add).remark).toBe(true);
+  });
+});
+
+describe('a remark the request does not touch is never a change', () => {
+  it('ignores an absent new_remark (every row raised before mig 0280)', () => {
+    const legacy = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC } },
+      { remark: 'Deliver before 5pm' },
+    );
+    expect(amendmentLineChangedFields(legacy).remark).toBe(false);
+    // …and with nothing else moving, the row stays the no-op it always was.
+    expect(amendmentLineIsChange(legacy)).toBe(false);
+  });
+
+  it('ignores a resubmitted identical remark', () => {
+    const same = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC }, new_remark: 'Deliver before 5pm' },
+      { remark: 'Deliver before 5pm' },
+    );
+    expect(amendmentLineChangedFields(same).remark).toBe(false);
+  });
+
+  it('treats an emptied remark as a real request to clear it', () => {
+    const cleared = colourOnlyLine(
+      { new_variants: { ...BEDFRAME_SPEC }, new_remark: '' },
+      { remark: 'Deliver before 5pm' },
+    );
+    expect(amendmentLineChangedFields(cleared).remark).toBe(true);
   });
 });

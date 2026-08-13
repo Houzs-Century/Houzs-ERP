@@ -38,6 +38,8 @@
 //
 //   APPLY=true CONFIRM="I HAVE REVIEWED THE DRY-RUN" node backend/scripts/repair-phantom-lots.mjs
 // ---------------------------------------------------------------------------
+//
+// RE-RUN: inert. A phantom lot is deleted or absorbed, so it is not found again.
 
 import { readFileSync } from "node:fs";
 import postgres from "postgres";

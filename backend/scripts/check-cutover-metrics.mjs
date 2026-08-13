@@ -64,9 +64,14 @@ async function main() {
   for (const r of spNo) log(`   SP no-size ${r.doc_no} ${r.item_code} :: "${snip(r.description2)}"`);
 
   // ---- 3. processed bedframe completeness ----
+  /* "Processed" is the STATE "this order carries a Processing Date", and that
+     date lives in internal_expected_dd — the column the UI writes and every
+     screen reads. proceeded_at is stamped only at the IN_PRODUCTION transition,
+     so counting it measured a different, smaller population than the one the
+     owner sees (2026-08-13). */
   const pb = await sql`SELECT i.id, i.item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.doc_no
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.proceeded_at IS NOT NULL AND i.item_group = 'bedframe'`;
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.internal_expected_dd IS NOT NULL AND i.item_group = 'bedframe'`;
   const pbBad = pb.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));
   log(`processed bedframe lines: ${pb.length}; complete: ${pb.length - pbBad.length}; INCOMPLETE: ${pbBad.length}`);
   for (const r of pbBad.slice(0, 40)) {
@@ -100,7 +105,7 @@ async function main() {
   const [cov] = await sql`SELECT COUNT(*) total,
     COUNT(emergency_contact_phone) emergency,
     COUNT(building_type) building,
-    COUNT(proceeded_at) processed,
+    COUNT(internal_expected_dd) processed,
     COUNT(customer_delivery_date) deliv
     FROM scm.mfg_sales_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const [lcov] = await sql`SELECT COUNT(*) total, COUNT(line_delivery_date) with_date
@@ -112,9 +117,13 @@ async function main() {
   // Owner 2026-08-10: "有 processing date 才来分配,没有 processing date 不分配 —
   // 2990 跟整套系统都是这样子的". The company-1 gate shipped; this measures what
   // flipping it GLOBAL would regress per company before touching 2990's pipeline.
+  /* Deliberately still proceeded_at, unlike section 3: this reproduces the gate
+     so-stock-allocation.ts actually applies today, and that allocator has not
+     been re-pointed yet. Move this in the SAME change that moves it, or the
+     number stops describing what production does. */
   const gateRows = await sql`SELECT company_id, COUNT(*) n FROM scm.mfg_sales_orders
     WHERE status = 'READY_TO_SHIP' AND proceeded_at IS NULL GROUP BY company_id ORDER BY company_id`;
-  log(`READY_TO_SHIP without processing date (would regress under a global gate): ${gateRows.length ? gateRows.map((r) => `company ${r.company_id}: ${r.n}`).join("; ") : "none"}`);
+  log(`READY_TO_SHIP whose allocator gate column (proceeded_at) is NULL — regresses on the next recompute: ${gateRows.length ? gateRows.map((r) => `company ${r.company_id}: ${r.n}`).join("; ") : "none"}`);
 
   // ---- 8. fabric master lookup for the hand-parse colour stragglers ----
   // Owner 2026-08-10: "NB KS 都是 fabric 啊" + "silver cream 我们有什么 fabric?"

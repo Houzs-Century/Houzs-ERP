@@ -5,6 +5,8 @@
 // delete-ac-iv-orders: only linked imports, skip anything with an ERP delivery
 // order or stock allocation. DOCS = comma-separated AutoCount doc numbers.
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. The documents it removes are gone.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

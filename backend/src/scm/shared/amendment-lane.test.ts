@@ -16,7 +16,7 @@ import { soAmendableHeaderKeys } from './so-field-policy';
 
 describe('classifyHeaderKey', () => {
   it('routes the Processing Date to LINES — purchasing re-times the supplier (owner 2026-07-27)', () => {
-    expect(classifyHeaderKey('internalExpectedDd')).toBe('LINES');
+    expect(classifyHeaderKey('processingDate')).toBe('LINES');
   });
 
   it('routes delivery schedule + location + address/disposal fields to DELIVERY', () => {
@@ -66,13 +66,13 @@ describe('splitAmendmentByLane', () => {
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
     const split = splitAmendmentByLane<L>(
-      { customerDeliveryDate: '2026-08-01', internalExpectedDd: '2026-07-30' },
+      { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [{ id: 'a', code: 'PC151-01' }, { id: 'b', code: 'SVC-DELIVERY' }],
       byCode,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
     expect(split.perLane.LINES.lines.map((l) => l.id)).toEqual(['a']);
-    expect(split.perLane.LINES.headerChanges).toEqual({ internalExpectedDd: '2026-07-30' });
+    expect(split.perLane.LINES.headerChanges).toEqual({ processingDate: '2026-07-30' });
     expect(split.perLane.DELIVERY.lines.map((l) => l.id)).toEqual(['b']);
     expect(split.perLane.DELIVERY.headerChanges).toEqual({
       customerDeliveryDate: '2026-08-01',
@@ -88,12 +88,12 @@ describe('splitAmendmentByLane', () => {
 
   it('a both-dates reschedule splits into two one-signature documents', () => {
     const split = splitAmendmentByLane<L>(
-      { customerDeliveryDate: '2026-08-01', internalExpectedDd: '2026-07-30' },
+      { customerDeliveryDate: '2026-08-01', processingDate: '2026-07-30' },
       [],
       byCode,
     );
     expect(split.lanes).toEqual(['LINES', 'DELIVERY']);
-    expect(split.perLane.LINES.headerKeys).toEqual(['internalExpectedDd']);
+    expect(split.perLane.LINES.headerKeys).toEqual(['processingDate']);
     expect(split.perLane.DELIVERY.headerKeys).toEqual(['customerDeliveryDate']);
   });
 

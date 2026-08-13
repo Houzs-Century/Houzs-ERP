@@ -604,15 +604,24 @@ A rule change to the PO touches both surfaces. The pairs:
 | Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — there is no mobile PO detail surface at all (only PO amendments) |
 
 **Line photos are backend-only today, deliberately.** The keys are on the detail
-row and the signed-URL route serves them, but no surface renders them yet. The
-SO's `PhotoThumb` is ~110 lines defined INSIDE
-`vendor/scm/components/SoLineCard.tsx`, hard-wired to
-`fetchSoItemPhotoSignedUrl(docNo, itemId, key)` plus two module-level caches
-(`signedUrlCache`, `thumbMissingKeys`) and its own CSS-module classes. Reusing it
-for the PO means extracting it with an injectable fetcher, adding a PO signed-URL
-query, threading `photoUrls` through the PO detail type into `PoLineCard.tsx`, and
-building the phone surface that does not exist. That is a UI project, not a field
-add — do it as its own PR, extracting the thumb rather than copying it.
+row and both the signed-URL route and the proxy route serve them, but no PO
+surface renders them yet.
+
+The extraction this section used to ask for HAS HAPPENED on the SO side: the
+resolver is no longer buried in `SoLineCard.tsx`. It lives in
+`frontend/src/vendor/scm/lib/so-line-photo.ts` as `useSoLinePhoto`, and both SO
+surfaces (the edit card's `PhotoThumb`, the V2 read-only
+`components/scm-v2/SoLinePhotoStrip.tsx`) are thin chrome over it. Read that
+file's header before touching it — three production regressions have lived in
+that state machine.
+
+What is still missing for the PO is the FETCHER SEAM, not the state machine:
+`useSoLinePhoto` calls `fetchSoItemPhotoSignedUrl` / `fetchSoItemPhotoBlob`
+directly, and the PO's routes are `/mfg-purchase-orders/:id/items/:itemId/…`.
+So the remaining work is: make the two fetchers injectable (or add a PO-shaped
+sibling that passes the PO pair), thread `photoUrls` through the PO detail type
+into `PoLineCard.tsx`, and build the phone surface that does not exist. Still
+its own PR — but a seam plus wiring now, not a rewrite. Do NOT copy the hook.
 
 Shared, so a change lands on both at once: the backend route, and the
 `suppliers-queries.ts` hooks (mobile's convert wizard and POD screens call
