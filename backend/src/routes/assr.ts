@@ -1500,7 +1500,7 @@ app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
     .map(() => `LOWER(COALESCE(sales_agent, '')) LIKE ?`)
     .join(" OR ");
   const rows = await c.env.DB.prepare(
-    `SELECT id, assr_no, stage, status, priority, doc_no,
+    `SELECT id, assr_no, stage, status, priority, doc_no, ref_no,
             customer_name, phone, complained_date, deadline_at,
             complaint_issue, item_code, sales_agent
        FROM assr_cases

@@ -2450,7 +2450,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
    services/agents/agent-company.ts's UNRESOLVED-vs-STALE_PIN, and it is quiet
    for the same reason — the two states agree on every field a caller reads. */
 export type TripWiring =
-  | { state: 'WIRED'; trip: { id: string; trip_no: string } }
+  | { state: 'WIRED'; trip: { id: string; trip_no: string }; stopCreated?: boolean; stopSkippedReason?: string }
   | { state: 'NOT_REQUESTED' }
   | { state: 'FAILED'; reason: string };
 
@@ -2755,11 +2755,32 @@ async function scheduleOntoTrip(
     /* The stop is written; the trip EXISTS. A blank trip_no here means only that
        the echo read came back empty, so this stays WIRED — the wiring is what is
        being reported, not the label. */
+
+    /* SAY WHEN NO STOP WAS WRITTEN. The insert above is guarded by
+       `!already && (doId || soId)`, and on the SO-DIRECT path BOTH are null —
+       doId because there is no DO, soId because it is set to null right above
+       (scm.mfg_sales_orders has a TEXT doc_no PK and no uuid, while
+       trip_stops.so_id is a uuid). So scheduling an SO straight from the board
+       creates no stop at all, and this returned WIRED anyway: the dispatcher
+       saw success, the driver's sheet stayed empty, and lorry capacity counted
+       nothing.
+
+       The stop is NOT invented — there is genuinely no key to file it under,
+       and guessing one would put a job on a route that cannot be traced back
+       to its order. What changes is that the answer stops lying. The existing
+       fields are untouched so no caller breaks; a caller that reads
+       stopCreated can now tell the operator the job still needs its DO. */
+    const stopCreated = Boolean(already) || Boolean(doId || soId);
     return {
       state: 'WIRED',
       trip: tr
         ? { id: tripIdStr, trip_no: (tr.tripNo ?? tr.trip_no ?? '') }
         : { id: tripIdStr, trip_no: '' },
+      stopCreated,
+      ...(stopCreated ? {} : {
+        stopSkippedReason:
+          'This Sales Order has no Delivery Order yet, so there is no stop to put on the lorry — the date is saved, but the job will not appear on a driver sheet until the DO exists.',
+      }),
     };
   } catch (e) {
     /* Still best-effort — the header schedule already committed, so throwing

@@ -63,7 +63,7 @@
                re-parenting those colours onto the winner first; that changes
                the library's CONTENT, not just its shape, so it is opt-in.
 
-   FOUR DOCUMENT ARMS, NOT TWO. The reference COUNT above is taken off SO and PO
+   EVERY DOCUMENT ARM, NOT FOUR. The reference COUNT above is taken off SO and PO
    lines, which is what decides the canonical side. The REPOINT has to reach
    every table whose variants block can name a series, or a merge leaves an arm
    pointing at a superseded row - which is exactly the unswept-arm bug #1964
@@ -80,6 +80,7 @@
    transaction per pair, and verifies on a SECOND, FRESH connection. */
 import postgres from "postgres";
 import { normColour, foldColour, markColour } from "./lib/fabric-colour-match.mjs";
+import { ARMS } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
 const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
@@ -91,22 +92,25 @@ const MOVE_COLOURS = process.env.MOVE_COLOURS === "1";
 const ONLY = (process.env.PAIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const STAMP = process.env.NOTE_DATE || new Date().toISOString().slice(0, 10);
 
-/* Every table whose `variants` can name a fabric series, with how each row
-   reaches its company. These are literal constants, never user input - they are
-   interpolated as identifiers because a table name cannot be a bind parameter.
-   Every VALUE below is still a bind parameter, and none of them is jsonb. */
-const ARMS = [
-  { name: "SO", t: "scm.mfg_sales_order_items", join: "JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no" },
-  { name: "PO", t: "scm.purchase_order_items", join: "JOIN scm.purchase_orders h ON h.id = i.purchase_order_id" },
-  { name: "GRN", t: "scm.grn_items", join: "JOIN scm.grns h ON h.id = i.grn_id" },
-  { name: "DO", t: "scm.delivery_order_items", join: "JOIN scm.delivery_orders h ON h.id = i.delivery_order_id" },
-];
+/* THE ARM LIST IS THE SHARED ONE, not a private copy.
+
+   This file used to declare its own four — SO, PO, GRN, DO — beside the four
+   that lib/fabric-write.mjs declared, and the header above still says "FOUR
+   DOCUMENT ARMS, NOT TWO" as if four were the whole system. It never was: a
+   2026-08-13 audit found fifteen line tables carrying a fabric colour, and
+   extending the shared list did nothing for this script because this script
+   was not reading it. Two lists for one fact is how the GRN arm went unswept
+   in #1964 and how five copies of the colour matcher drifted apart in #1893.
+
+   The shared arms carry an EXISTS clause rather than a JOIN, so every query
+   below tests `WHERE EXISTS (${arm.ex})` and binds the company as $1. An
+   EXISTS also serves an UPDATE's subquery unchanged, which a JOIN does not. */
 
 /* live lines on a series, per colour, across one arm */
 const armLines = (client, arm, series) => client.unsafe(
   `SELECT i.variants->>'fabricCode' AS colour, COUNT(*)::int AS n
-     FROM ${arm.t} i ${arm.join}
-    WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object'
+     FROM ${arm.t} i
+    WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
       AND i.variants->>'fabricId' = $2
     GROUP BY 1 ORDER BY 1`, [CO, series]);
 
@@ -147,6 +151,16 @@ const codeKeys = (r) => {
 };
 
 async function main() {
+  /* Echo what actually arrived. The first DECLARE run did nothing and merged
+     the auto-detected pairs instead, because the workflow declared the input
+     but never passed it through as an env var — the script saw no DECLARE, and
+     silently widened to every pair. A run whose whole point was one declared
+     pair must not look identical to a run with none, so the settings are
+     printed before any work. */
+  note(`settings: MODE=${APPLY ? "apply" : "plan"} COMPANY=${CO} MOVE_COLOURS=${MOVE_COLOURS ? "1" : "0"}`);
+  note(`  DECLARE=${process.env.DECLARE ? `"${process.env.DECLARE}"` : "(none — only auto-detected pairs)"}`);
+  note(`  PAIRS=${ONLY.length ? ONLY.join(",") : "(none — not restricted)"}`);
+
   const allCols = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const libs = await sql`SELECT id, label, tier, default_surcharge, active FROM scm.fabric_library WHERE company_id = ${CO}`;
 
@@ -296,20 +310,38 @@ async function main() {
      The summary above says how many lines move. It does NOT say whether the
      losing side holds a colour the winner cannot express, and that is the only
      question that decides whether a merge is safe to apply. Answer it colour by
-     colour, across all four document arms, before writing anything. */
+     colour, across EVERY document arm, before writing anything. */
   const keysOf = new Map(cols.map((r) => [pk2(r.fabric_id, r.colour_id), codeKeys(r)]));
-  const bothSides = new Set([...droppedSeries].filter((d) => plan.some((p) => p.keep === d)));
-  for (const s of bothSides) bad(`series "${s}" is KEEP in one pair and DROP in another - chained merge, refused`);
 
-  note(`\n=== PER-PAIR PLAN ===`);
+  /* ── WHICH PAIRS ARE IN SCOPE ────────────────────────────────────────────
+     Decide this BEFORE looking for chains. A chain — A absorbs B while B
+     absorbs C — is only dangerous if both merges actually RUN; if one of them
+     is out of scope there is no chain, just two unrelated pairs that happen to
+     share a series name.
+
+     This ordering was wrong and it cost a run. FG66151 is the WINNER of the
+     detected pair "FG66151 <= UNMATCHED" and the LOSER of the owner-declared
+     "PC151 <= FG66151". Computing chains over the WHOLE plan flagged it, and
+     the declared pair — the only pair the run was asked to do, and the only
+     one in scope — was skipped as "chained merge" against a pair that was
+     never going to run. */
   for (const p of plan) {
     p.skip = null;
     /* DECLARE names ONE pair the owner asked for. Letting the run also apply
        every pair the detector happened to find would merge things nobody
        asked about in the same transaction batch, so a declared run is
        restricted to the declared pairs unless PAIRS explicitly widens it. */
-    if (DECLARED.length && !ONLY.length && !p.declared) { p.skip = "DECLARE set — only declared pairs run"; continue; }
-    if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; continue; }
+    if (DECLARED.length && !ONLY.length && !p.declared) { p.skip = "DECLARE set — only declared pairs run"; }
+    else if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; }
+  }
+  const inScope = plan.filter((p) => !p.skip);
+  const scopedDrops = new Set(inScope.map((p) => p.drop));
+  const bothSides = new Set([...scopedDrops].filter((d) => inScope.some((p) => p.keep === d)));
+  for (const s of bothSides) bad(`series "${s}" is KEEP in one pair and DROP in another - chained merge, refused`);
+
+  note(`\n=== PER-PAIR PLAN ===`);
+  for (const p of plan) {
+    if (p.skip) continue;
     if (bothSides.has(p.drop) || bothSides.has(p.keep)) { p.skip = "chained merge"; continue; }
 
     const keepCols = colsBySeries.get(p.keep) || [];
@@ -352,7 +384,7 @@ async function main() {
 
     note(`\n  "${p.keep}"  <=  "${p.drop}"     ${p.verdict}`);
     note(`      winner holds ${keepCols.length} colour(s); loser holds ${dropCols.length}, of which ${p.uncovered.length} the winner does NOT have`);
-    note(`      live lines on the loser, all four arms: ${p.liveTotal}`);
+    note(`      live lines on the loser, all ${ARMS.length} arms: ${p.liveTotal}`);
     for (const [c, v] of [...p.live].sort()) {
       const tgt = c == null ? null : p.cover.get(c);
       const where = Object.entries(v.byArm).map(([k, n]) => `${k}=${n}`).join(" ");
@@ -445,13 +477,13 @@ async function main() {
         for (const arm of ARMS) {
           const back = await tx.unsafe(
             `UPDATE ${arm.t} SET variants =
-                jsonb_set(jsonb_set(variants, '{fabricId}', to_jsonb($1::text)),
-                          '{fabricCode}', to_jsonb($2::text))
-              WHERE id IN (SELECT i.id FROM ${arm.t} i ${arm.join}
-                            WHERE h.company_id = $3 AND jsonb_typeof(i.variants) = 'object'
+                jsonb_set(jsonb_set(variants, '{fabricId}', to_jsonb($2::text)),
+                          '{fabricCode}', to_jsonb($3::text))
+              WHERE id IN (SELECT i.id FROM ${arm.t} i
+                            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
                               AND i.variants->>'fabricId' = $4
                               AND i.variants->>'fabricCode' = $5)
-             RETURNING id::text AS id`, [p.keep, toColour, CO, p.drop, colour]);
+             RETURNING id::text AS id`, [CO, p.keep, toColour, p.drop, colour]);
           if (back.length) repointed.push(`${arm.name}:${colour}->${toColour}=${back.length}`);
         }
       }
@@ -459,8 +491,8 @@ async function main() {
       /* 3. nothing may still name the losing series before it is superseded */
       for (const arm of ARMS) {
         const left = await tx.unsafe(
-          `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
-            WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object'
+          `SELECT COUNT(*)::int AS n FROM ${arm.t} i
+            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
               AND i.variants->>'fabricId' = $2`, [CO, p.drop]);
         if (left[0].n) throw new Error(`${arm.name} still has ${left[0].n} line(s) naming "${p.drop}" - not superseding`);
       }
@@ -494,8 +526,8 @@ async function main() {
       let left = 0;
       for (const arm of ARMS) {
         const r = await v.unsafe(
-          `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
-            WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'object' AND i.variants->>'fabricId' = $2`,
+          `SELECT COUNT(*)::int AS n FROM ${arm.t} i
+            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object' AND i.variants->>'fabricId' = $2`,
           [CO, p.drop]);
         left += r[0].n;
       }
@@ -512,8 +544,8 @@ async function main() {
        array by a bad jsonb write. This is the shape the 2026-08-10 COE is about. */
     for (const arm of ARMS) {
       const r = await v.unsafe(
-        `SELECT COUNT(*)::int AS n FROM ${arm.t} i ${arm.join}
-          WHERE h.company_id = $1 AND jsonb_typeof(i.variants) = 'array'`, [CO]);
+        `SELECT COUNT(*)::int AS n FROM ${arm.t} i
+          WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'array'`, [CO]);
       note(`  ${arm.name}: variants blocks of ARRAY shape (must be 0): ${r[0].n}`);
       if (r[0].n) { fails++; bad(`${arm.name} holds ${r[0].n} array-shaped variants block(s)`); }
     }

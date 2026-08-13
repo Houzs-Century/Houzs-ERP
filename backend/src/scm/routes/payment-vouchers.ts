@@ -475,19 +475,23 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  /* Scoped before the load, for the same reason cancelPaymentVoucherHandler is
-     (audit PR #826 item 4) — and this is the half that pass MISSED. Everything
-     downstream keys off this row: the GL entry is written from pv.pv_number,
-     pv.credit_account_code and pv.company_id, so an unscoped load let one
-     company POST another company's voucher and stamp a journal entry into that
-     company's ledger. Cancel and post are the same door; only one of them was
-     locked. */
+  /* Scoped before the load. POSTING is a write, and the service-role client
+     bypasses RLS (mig 0061 enabled it with NO policies), so an app-level
+     predicate is the ONLY isolation there is. Everything downstream keys off
+     this row — the GL entry is written from pv.pv_number, pv.credit_account_code
+     and pv.company_id — so an unscoped load let one company POST another
+     company's voucher and stamp a journal entry into that company's ledger. The
+     GET at :208 and cancelPaymentVoucherHandler both already scoped it; post is
+     the same door and was the one left unlocked.
+
+     Found twice independently — by this audit and by #2086 — which is why the
+     merge of the two kept the shared NOT_THIS_COMPANY refusal rather than a
+     second bespoke `not_found` shape. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: pvRaw } = await scopeToCompanyId(
-    sb.from('payment_vouchers').select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id),
-    co.companyId,
-  ).maybeSingle();
+
+  const { data: pvRaw } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id), co.companyId).maybeSingle();
   if (!pvRaw) return c.json(NOT_THIS_COMPANY, 404);
   const pv = pvRaw as unknown as {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
@@ -500,12 +504,26 @@ export const postPaymentVoucherHandler = async (c: any) => {
 
   // Idempotency — an ACTIVE (non-reversed) PV JE already exists? (mirror
   // postPiAccounting). Flip POSTED + echo without re-writing the GL.
-  const { data: existingRows } = await sb.from('journal_entries')
-    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number);
+  /* The error is READ, not dropped. This is the idempotency check: if the
+     query fails, `existingRows` is undefined, `?? []` turns that into "no
+     journal entry exists", and the handler goes on to post a SECOND one
+     against the same voucher. A failed read must never read as an absence
+     when the absence is what authorises the write.
+
+     Scoped as well — a pv_number is unique per company, so an unscoped lookup
+     could match the other company's JE and skip a posting that never happened
+     here. */
+  const { data: existingRows, error: existingErr } = await scopeToCompanyId(sb.from('journal_entries')
+    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number), co.companyId);
+  if (existingErr) {
+    return c.json({ error: 'post_failed', message: `Could not check whether this voucher is already posted: ${existingErr.message}` }, 500);
+  }
   const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>).find((r) => !r.reversed);
   if (active) {
     if (pv.status !== 'POSTED') {
-      await sb.from('payment_vouchers').update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+      await scopeToCompanyId(sb.from('payment_vouchers')
+        .update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', id), co.companyId);
     }
     return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id });
   }
