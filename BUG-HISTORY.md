@@ -428,6 +428,12 @@ carrying a NUL.
 double-encoding class corrupts data you can still query; this one removes the
 diff, so review and audit both silently see nothing.
 
+**The check caught itself first.** Its own `git ls-files -z` split was written
+with the raw separator, so the very first CI run of the gate failed on the gate:
+`backend/tests/noNulBytesInSource.node.mjs (first at byte 1943 of 2878)`. That is
+the strongest evidence it works, and it is why the escape — not the byte — has
+to be the habit: even the person writing the rule reached for the byte.
+
 **Ref** - `fix/nul-byte-in-source`, 2026-08-14
 ## The description tidier called 249 of the owner's own fabric codes broken [medium]
 
