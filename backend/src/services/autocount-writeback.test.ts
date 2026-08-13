@@ -8,6 +8,7 @@ import { describe, expect, test, vi } from 'vitest';
 import {
   composeCreateSo,
   composeCreatePo,
+  composeDetails,
   composeEdit,
   KeylessLineError,
   MissingLocationError,
@@ -164,31 +165,46 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
     expect(composeCreateSo(header, [line()], opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
 
-  /* THE DEFECT THIS REPLACES. Until now the composer ran with identityResolver
-     and `resolve(...).acItemCode ?? l.item_code`, so an unmapped line was sent
-     to the live account book under its ERP code — an item AutoCount has never
-     heard of. Measured over the whole enumerable ERP catalogue, 1658 of 1834
-     codes (90.4%) are in that state. The document must not sync at all. */
-  test('an unmapped code REFUSES the whole document instead of sending the ERP code', () => {
-    expect(() => composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts))
-      .toThrow(ItemCodeError);
+  /* THE DEFECT THIS REPLACED, and the assertion that still guards it. The
+     composer once ran with identityResolver and `resolve(...).acItemCode ??
+     l.item_code`, so a MAPPED line could silently go out under its ERP code.
+     That must never happen: if the book knows this item, we send the book's
+     name for it. */
+  test('a mapped code is NEVER sent as itself', () => {
+    const d = composeCreateSo(header, [line()], opts).Details[0];
+    expect(d.ItemCode).toBe('AC-CODE-1');
+    expect(d.ItemCode).not.toBe(line().item_code);
   });
 
-  test('one unmapped line among mapped ones still refuses — no partial document', () => {
-    expect(() => composeCreateSo(header, [
+  /* What CHANGED, 2026-08-13. An unmapped code used to refuse the whole
+     document, which was right while sending it meant referencing an item the
+     licensed book does not hold. /ensure-masters opens the item first now
+     (AcSyncService.cs:495-521), and the old rule's cost was total: whole
+     product ranges are in no cutover row, so every order containing one was
+     blocked with no way forward. */
+  test('an unmapped code goes out under its own name instead of sinking the order', () => {
+    const d = composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts).Details[0];
+    expect(d.ItemCode).toBe('SKU-NOT-IN-THE-BOOK');
+  });
+
+  test('a document mixing mapped and unmapped lines ships whole, each line its own answer', () => {
+    const p = composeCreateSo(header, [
       line(),
       line({ item_code: 'SKU-NOT-IN-THE-BOOK' }),
       line({ item_code: 'SKU-2' }),
-    ], opts)).toThrow(ItemCodeError);
+    ], opts);
+    expect(p.Details.map((d) => d.ItemCode)).toEqual(['AC-CODE-1', 'SKU-NOT-IN-THE-BOOK', 'AC-CODE-2']);
   });
 
-  test('the refusal names every failing line, so an operator does not fix them one at a time', () => {
+  /* A blank code is the one input with no answer, so ItemCodeError is still
+     reachable and still names every failing line at once — an operator fixing
+     one and re-saving into the next is how a divergence outlives everyone who
+     remembers it. */
+  test('a blank code still refuses, and the refusal names every failing line', () => {
     let msg = '';
     try {
-      composeCreateSo(header, [line({ item_code: 'NOPE-1' }), line({ item_code: 'NOPE-2' })], opts);
+      composeCreateSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], opts);
     } catch (e) { msg = (e as Error).message; }
-    expect(msg).toContain('NOPE-1');
-    expect(msg).toContain('NOPE-2');
     expect(msg).toContain('2 line(s)');
   });
 });
@@ -394,7 +410,10 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
       compartment('9028-1A(RHF)'),
     ], sofaOpts);
     expect(p.Lines).toHaveLength(1);
-    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801, ItemCode: 'AC-SOFA-9028' });
+    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801 });
+    /* The item is AutoCount's on a line it already holds — see the edit rule in
+       composeEdit. The key is how the line is addressed; the item is not resent. */
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
     expect((p.Lines[0] as { Retire?: boolean }).Retire).toBeUndefined();
   });
 });
@@ -437,5 +456,67 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   test('an EDIT omits the key entirely rather than blanking the book, and never refuses', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [line({ linked_ac_dtlkey: 991 })], opts);
     expect(p.Lines[0]).not.toHaveProperty('Location');
+  });
+});
+
+/* Owner 2026-08-13. Each of four sofa models was opened in AutoCount as TWO
+   brand items, which a sales order can never choose between — it does not know
+   the brand until purchasing does. The answer is one canonical item per model,
+   named as the ERP names it. That is right for a NEW order and WRONG for the
+   194 real lines the book already holds under a brand item: an edit that sent
+   the canonical code would move them, silently, in a licensed ledger. */
+describe('an edit never rewrites the item on a line AutoCount already owns', () => {
+  /* The real cutover map, not the synthetic TEST_INDEX — the whole behaviour
+     turns on 9028-1S being genuinely ambiguous there. */
+  const real = {};
+  const compartment = (comp: string, over: Partial<ErpLine> = {}): ErpLine => ({
+    item_code: `9028-${comp}`,
+    description: `SOFA 9028 ${comp}`,
+    description2: '1A(LHF) + 2A(RHF) (28")',
+    qty: 1,
+    unit_price_centi: 0,
+    ...over,
+  });
+
+  test('a policy-chosen ItemCode is OMITTED, so the book keeps its own', () => {
+    const p = composeEdit('SO', 'SO-000021', { Ref: 'R2' }, [
+      compartment('1A(LHF)', { linked_ac_dtlkey: 991, unit_price_centi: 399_000 }),
+      compartment('2A(RHF)', { linked_ac_dtlkey: 991 }),
+    ], real);
+    /* D9 folds the build into one line, addressed by its key. */
+    expect(p.Lines).toHaveLength(1);
+    expect(p.Lines[0].DtlKey).toBe(991);
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
+  });
+
+  test('a CREATE carries it — one line per compartment, each its own code', () => {
+    const { details } = composeDetails([
+      compartment('1A(LHF)', { unit_price_centi: 399_000 }),
+      compartment('2A(RHF)'),
+    ], real);
+    expect(details).toHaveLength(2);
+    expect(details.map((d) => d.ItemCode)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
+  });
+
+  test('an ordinary line the book owns keeps its item too — not just the sofas', () => {
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      { item_code: 'AKEMI APEX MATT (SP)', description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 55 },
+    ], real);
+    expect(p.Lines[0].DtlKey).toBe(55);
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
+  });
+
+  test('a swap still propagates, because a swap is a DELETE plus an ADD', () => {
+    /* The removed row arrives in `retired` and is zeroed; the added row has no
+       DtlKey, so it keeps its ItemCode and is appended. This is the path that
+       makes dropping the in-place item safe. */
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      { id: 'new-1', item_code: 'AKEMI ARISTOI MATT (SP)', description: 'M2', qty: 1, unit_price_centi: 100 },
+    ], { ...real, newLineIds: new Set(['new-1']) }, [{ DtlKey: 55, ItemCode: 'AK-APEX MATT (SP)' }]);
+    const added = p.Lines.find((l) => l.DtlKey == null);
+    expect(added?.ItemCode).toBe('AK-ARISTOI MATT (SP)');
+    expect((added as { IsNewLine?: true }).IsNewLine).toBe(true);
+    const gone = p.Lines.find((l) => l.DtlKey === 55);
+    expect((gone as { Retire?: true }).Retire).toBe(true);
   });
 });
