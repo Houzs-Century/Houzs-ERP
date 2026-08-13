@@ -6,6 +6,8 @@
 //
 // NOTE: the showroom's venue only RESOLVES once 2990s PJ has a venue_name set —
 // this parking + backfill-2990-so-venue.mjs both wait on that one field.
+//
+// RE-RUN: convergent. Parks the same staff at the same showroom, overwriting a showroom a person may have changed since.
 import postgres from "postgres";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }

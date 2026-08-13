@@ -825,13 +825,24 @@ both sides; **the fix is not yet deployed to the host**, so PO create and `po-to
 unproven. The full foreign-key chain and the values known to exist are in
 `docs/modules/autocount-writeback.md` section 7m.
 
-**One test assumption was wrong and is recorded so nobody rebuilds it.** `qa-convert.ps1` step 6
-cancels the parent SO while its DO is still live and expects that to FAIL, on the theory that
-AutoCount refuses to cancel a transferred document. **It does not** — the cancel succeeded. That is
-a fact about AutoCount's cancel semantics, not a defect in the convert (`so-to-do` returned
-`DO-011260`, which is what proves the link). It matters for the owner's *cancel must not diverge*
-rule: cancelling an ERP sales order whose delivery order is still open will be accepted by
-AutoCount, leaving the DO behind.
+**CORRECTION, 2026-08-12.** An earlier revision of this section said AutoCount does NOT refuse to
+cancel a document already transferred downstream. **That was wrong**, and it was written from a
+test result rather than from the book. The service log says the opposite in as many words:
+
+```
+ERROR /cancel: AutoCount.Invoicing.TransferedDocNotAllowToCancelException:
+  The document was transfered to other document, so it is not allow to cancel.
+```
+
+**AutoCount DOES refuse.** Cancel the child before the parent — which is what the teardown in
+`qa-convert.ps1` already does, and why it succeeds.
+
+The false reading came from the harness, not the book: `qa-convert.ps1`'s `Call` helper returns
+`status = 0` when a `WebException` carries no `Response` object, and step 6 asserts `status >= 400`.
+A genuine refusal therefore scored as a failure. The same defect made `/create-po`'s foreign-key
+error read as `status=0` instead of 500. **A test whose failure path cannot tell "refused" from
+"could not ask" will eventually report the world backwards** — and it did, into this document,
+which is why the correction is written here rather than quietly edited out.
 
 **The asymmetry is entirely on the ERP side.** The AutoCount service already serves more than the
 ERP asks of it:
@@ -884,7 +895,7 @@ they were fine.
 | 4 | **An uncompilable over-transfer handler** — still on `main` today, fix on `fix/acsync-overqty-uncompilable` | The SDK raises a WinForms dialog for over-transfer, and the service carries a handler to answer it programmatically: four `doc.ConfirmOverTransferedQtyEvent += OverQty` subscriptions (`AcSyncService.cs:316, 325, 334, 344`) and the handler at `:358`. `AutoCount.Invoicing.ConfirmOverTransferedQtyEventArgs` is **not public**, so that method cannot compile — the file on `main` does not build | Reading the reflected SDK surface rather than the documentation, while preparing the host build. Replaced by making the condition unreachable: only ever transfer what is outstanding. **A file that compiles on exactly one machine in the building gets no CI, which is why this sat undetected** |
 | 5 | **`/health` reported a book it was not connected to** (same branch) | `BOOK` was a hardcoded `"AED_HOUZS"` constant, separate from the value that builds the DB connection line. A build pointed at a test book **still announced the live one** — on the single signal an operator uses to check exactly that | Found while preparing the test-book verification, at the moment the two values had to differ. Now `__BOOK__`, substituted from the same source as the connection line |
 | 6 | **The SO list named no purchase order for 91% of the orders that had one** (`fix/so-list-po-and-specials-display`) | `HC-SO-011733` rendered an em-dash in the PO No. column while its own Relationship Map showed `HC-PO-008783` linked. Every row on page one showed the em-dash. The column reads `source_po_union` and **both its arms require EXECUTION**; the line-link content had been demoted to a tooltip by the previous fix for this same bug | Measured on production over all **2,723** Houzs Century sales orders: at most **53** can light either source arm, while **277** carry a real non-cancelled PO on the line link — *"blank for ~91% of the orders that have a purchase order"*. After the fix, **53 to 295**, a gain of **242**. Class lesson recorded: "the column is empty for every row on page one" is a **population** question, not a row question |
-| 7 | **The amendment path repriced migrated orders** (`#1954`) | Approving **any** amendment on a migrated SO — including a quantity-only one — overwrote `unit_price_centi` with `mfg_products.sell_price_sen`, restating a historical customer price. `recomputeFromSnapshot` takes `trustOperatorSelling` as its **15th** positional parameter; `recomputeOneLine` called it with **14**, so the flag could not be passed at all | Traced by **argument count** against the three call sites that do pass it. The regression guard is behavioural: three tests drive `recomputeOneLine` through a stubbed client, and dropping the forwarded argument fails two of them — verified by reverting the line. Not yet observed in production only because the importer never sets `internal_expected_dd`, so a migrated SO is never processing-locked |
+| 7 | **The amendment path repriced migrated orders** (`#1954`) | Approving **any** amendment on a migrated SO — including a quantity-only one — overwrote `unit_price_centi` with `mfg_products.sell_price_sen`, restating a historical customer price. `recomputeFromSnapshot` takes `trustOperatorSelling` as its **15th** positional parameter; `recomputeOneLine` called it with **14**, so the flag could not be passed at all | Traced by **argument count** against the three call sites that do pass it. The regression guard is behavioural: three tests drive `recomputeOneLine` through a stubbed client, and dropping the forwarded argument fails two of them — verified by reverting the line. Not yet observed in production only because the importer never sets `processing_date`, so a migrated SO is never processing-locked |
 | 8 | **Editing a shipped delivery order never reached the stock ledger** (`#1957`) | An operator changes a line quantity on a DO that has already shipped. The document saves, the screen agrees, the paperwork is right — and **inventory does not move**. `resyncInventoryForDo` writes delta movements into the same `(source_doc_type, source_doc_id, product_code, variant_key)` bucket the first ship already wrote, and production carries a partial unique index on exactly that key with `movement_type` **not** in it | Measured on production, Actions run **31426819498**: **zero** movements anywhere carry the function's own notes marker — it had never landed a single row. The index (`uq_inv_mov_do_source`) is prod-only DDL that exists in **no file in this repository**. Read against the migration tree the old belief was reasonable; read against `pg_indexes` it was false |
 | 9 | **Three document-level hard deletes** (`fix/po-no-hard-delete`, `fix/remove-remaining-hard-deletes`) | `DELETE /mfg-purchase-orders/:id` purged a CANCELLED PO, header and lines by cascade. `DELETE /purchase-consignment-orders/:id` did the same, and **without even the audit row**, because the module is a line-for-line clone. `DELETE /quotes/:id` purged a quote with **no status guard at all**, at any point in its life, including one already promoted to a sales order | The first by reading the code's own comment — the audit row is documented as *"the ONLY remaining evidence that the PO existed"*. **When a comment has to explain that an action destroys the only evidence of its own subject, the comment is the review finding.** The other two by the sweep that should have happened first: `docs/hard-delete-inventory.md` classifies all **70** `DELETE` handlers on the SCM surface as VIOLATION / COMPLIANT / ROLLBACK-KEEP. Three found on three separate occasions, one at a time, is the signature of ad-hoc discovery rather than an audit |
 

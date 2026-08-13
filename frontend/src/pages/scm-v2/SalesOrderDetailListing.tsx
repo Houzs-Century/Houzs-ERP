@@ -172,7 +172,7 @@ const heightSortValue = (v: number | string | null): number =>
      31. Account Sheet 32. Approval Code 33. Collected By
    Hidden long tail (14 cols): debtor_code · uom · currency · inclusive? ·
    tax (header/line) · detail tax code · creditor code · post to PO ·
-   total ex · plus 2990-extras (customer_delivery_date · internal_expected_dd ·
+   total ex · plus 2990-extras (customer_delivery_date · processing_date ·
    customer_state · payment_method).
    ───────────────────────────────────────────────────────────────────────── */
 const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[] => {
@@ -424,14 +424,15 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       groupValue: (r) => r.remark2 ?? '(none)',
     },
     /* 27 */ {
-      /* "Processing Date" = internal_expected_dd (renamed app-wide PR #121/#140;
-         SO New/Detail/OrderInfoCard read+write it under this label; the legacy
-         snapshot column was dropped in mig 0189). Key kept for saved column
-         layouts. Duplicate "Internal DD" column removed. Commander 2026-05-28. */
+      /* "Processing Date" = processing_date. SO New / Detail / OrderInfoCard
+         all read+write this one field, and since mig 0284 the label, the column
+         and the API field are the same word. The column key never changed, so
+         saved column layouts still match. Duplicate "Internal DD" column
+         removed, commander 2026-05-28. */
       key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
-      accessor: (r) => { const v = opt(r, 'internal_expected_dd'); return v ? compactDate(v) : '—'; },
-      searchValue: (r) => opt(r, 'internal_expected_dd'),
-      filterType: 'date', dateValue: (r) => opt(r, 'internal_expected_dd'),
+      accessor: (r) => { const v = opt(r, 'processing_date'); return v ? compactDate(v) : '—'; },
+      searchValue: (r) => opt(r, 'processing_date'),
+      filterType: 'date', dateValue: (r) => opt(r, 'processing_date'),
     },
     /* 28 */ {
       key: 'tax_expiry', label: 'Tax Exemption Expiry', width: 150, sortable: true,

@@ -1,0 +1,79 @@
+name: census-fabric-colour
+
+# Count a fabric colour code in EVERY carrier that can hold it.
+#
+# The fabric catalogue has been cleaned several times and has never come out
+# clean. A 2026-08-13 source audit found why: the shared sweep helper knows FOUR
+# document arms, and 43 carriers exist — and NOT ONE foreign key protects any of
+# them, because every colour reference is a bare TEXT string inside jsonb or
+# inside a pipe-joined stock key. Nothing in the database can catch a miss.
+#
+# So a merge is not "done" because someone reasoned it through. It is done when
+# this prints CLEAN.
+#
+# Run it BEFORE retiring a colour to size the work, and AGAIN after with
+# require_clean=1 — which exits non-zero unless every LIVE carrier reports 0.
+# History (frozen revisions, audit logs, scan samples) is counted and shown but
+# never required to be zero: rewriting it would forge the record.
+#
+# Read-only. See backend/scripts/census-fabric-colour.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      codes:
+        description: 'comma-separated colour codes, e.g. M2402-8-YELLOW,GARFIELD-1-SOFT LINEN'
+        required: true
+        type: string
+      require_clean:
+        description: "1 = FAIL the run unless every live carrier is 0 (use AFTER a migration)"
+        required: false
+        default: "0"
+        type: string
+      verbose:
+        description: "1 = also list the carriers that reported zero"
+        required: false
+        default: "0"
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: census-fabric-colour
+  cancel-in-progress: false
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Census
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          CODES: ${{ inputs.codes }}
+          REQUIRE_CLEAN: ${{ inputs.require_clean }}
+          VERBOSE: ${{ inputs.verbose }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and require_clean silently passes
+        run: |
+          set -o pipefail
+          node scripts/census-fabric-colour.mjs | tee colour-census.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: census-fabric-colour
+          path: backend/colour-census.txt
+          retention-days: 90

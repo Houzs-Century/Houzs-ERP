@@ -27,6 +27,8 @@
 // non-zero.
 //
 // Usage:  DOC_NO=2990-SO-2607-019 [CONFIRM_DOC=… APPLY=1] node scripts/delete-test-so.mjs
+//
+// RE-RUN: inert. The documents it removes are gone.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

@@ -93,21 +93,58 @@ export function isEditable(docType: LockedDocType, counts: DownstreamCounts): bo
   return downstreamVerdict(docType, counts) === null;
 }
 
+/* ── A FAILED COUNT IS NOT ZERO ─────────────────────────────────────────────
+   Every function below used to drop the PostgREST `error` and read `count ?? 0`
+   / `data ?? []`. A read that FAILED then arrived at downstreamVerdict as "this
+   document has no children", which is exactly the absence that authorises the
+   cancel or the line edit the whole module exists to refuse — one dropped error
+   and a shipped SO is cancellable again, against the owner's rule at the top of
+   this file. A failed read must never read as an absence when the absence is
+   what authorises the write.
+
+   So an unreadable count refuses too, with its own code. Call sites are
+   unchanged: they already do `if (lock) return c.json(lock, 409)`, and a 409
+   the operator can retry is the right answer to "we could not check". */
+export const DOWNSTREAM_CHECK_FAILED = 'downstream_check_failed';
+
+const checkFailedRefusal = (docType: LockedDocType, reason: string): DownstreamRefusal => ({
+  error: DOWNSTREAM_CHECK_FAILED,
+  message: `Could not check whether this ${docType} has downstream documents, so it is locked for safety — try again (${reason}).`,
+});
+
 type Sb = SupabaseClient<any, any, any>;
+
+/** A live-child count, or the reason it could not be taken. Never a bare number:
+ *  the caller must not be able to spend an unreadable count as a zero. */
+type LiveCount = { ok: true; count: number } | { ok: false; reason: string };
 
 const liveCount = async (
   sb: Sb,
   table: string,
   col: string,
   val: string,
-): Promise<number> => {
-  const { count } = await sb
+): Promise<LiveCount> => {
+  const { count, error } = await sb
     .from(table)
     .select('id', { head: true, count: 'exact' })
     .eq(col, val)
     .neq('status', 'CANCELLED');
-  return count ?? 0;
+  if (error) return { ok: false, reason: `${table}: ${error.message}` };
+  return { ok: true, count: count ?? 0 };
 };
+
+/** Fold the reads into the verdict — but refuse outright if ANY of them failed,
+ *  before a single unreadable count can be counted as zero. */
+function verdictFromReads(
+  docType: LockedDocType,
+  reads: Array<[keyof DownstreamCounts, LiveCount]>,
+): DownstreamRefusal | null {
+  const failed = reads.filter(([, r]) => !r.ok) as Array<[keyof DownstreamCounts, { ok: false; reason: string }]>;
+  if (failed.length > 0) return checkFailedRefusal(docType, failed.map(([, r]) => r.reason).join('; '));
+  const counts: DownstreamCounts = {};
+  for (const [kind, r] of reads) if (r.ok) counts[kind] = r.count;
+  return downstreamVerdict(docType, counts);
+}
 
 /** An SO locks on any live Delivery Order or Sales Invoice against it. */
 export async function soHasDownstream(sb: Sb, soDocNo: string): Promise<DownstreamRefusal | null> {
@@ -115,14 +152,14 @@ export async function soHasDownstream(sb: Sb, soDocNo: string): Promise<Downstre
     liveCount(sb, 'delivery_orders', 'so_doc_no', soDocNo),
     liveCount(sb, 'sales_invoices', 'so_doc_no', soDocNo),
   ]);
-  return downstreamVerdict('SO', { deliveryOrders, salesInvoices });
+  return verdictFromReads('SO', [['deliveryOrders', deliveryOrders], ['salesInvoices', salesInvoices]]);
 }
 
 /** A PO locks on any live GRN against it. A Purchase Invoice cannot exist
  *  without one, because grnHasDownstream refuses to cancel an invoiced GRN. */
 export async function poHasDownstream(sb: Sb, poId: string): Promise<DownstreamRefusal | null> {
   const grns = await liveCount(sb, 'grns', 'purchase_order_id', poId);
-  return downstreamVerdict('PO', { grns });
+  return verdictFromReads('PO', [['grns', grns]]);
 }
 
 /** A DO locks on any live Delivery Return or Sales Invoice against it. */
@@ -131,7 +168,7 @@ export async function doHasDownstream(sb: Sb, doId: string): Promise<DownstreamR
     liveCount(sb, 'delivery_returns', 'delivery_order_id', doId),
     liveCount(sb, 'sales_invoices', 'delivery_order_id', doId),
   ]);
-  return downstreamVerdict('DO', { deliveryReturns, salesInvoices });
+  return verdictFromReads('DO', [['deliveryReturns', deliveryReturns], ['salesInvoices', salesInvoices]]);
 }
 
 /**
@@ -143,8 +180,9 @@ export async function doHasDownstream(sb: Sb, doId: string): Promise<DownstreamR
  * CANCELLED invoices — which a plain row count over purchase_invoices would not.
  */
 export async function grnHasDownstream(sb: Sb, grnId: string): Promise<DownstreamRefusal | null> {
-  const { data } = await sb.from('grn_items')
+  const { data, error } = await sb.from('grn_items')
     .select('invoiced_qty, returned_qty').eq('grn_id', grnId);
+  if (error) return checkFailedRefusal('GRN', `grn_items: ${error.message}`);
   const drawn = ((data ?? []) as Array<{ invoiced_qty: number; returned_qty: number }>)
     .filter((r) => (r.invoiced_qty ?? 0) > 0 || (r.returned_qty ?? 0) > 0).length;
   return downstreamVerdict('GRN', { purchaseInvoices: drawn });

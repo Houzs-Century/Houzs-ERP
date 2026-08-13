@@ -117,13 +117,17 @@ posting.
      normalized phone parts (`:706-710`); `from`/`to` on `invoice_date`.
    - `statusCounts` = five `head:true count:'exact'` in one `Promise.all` (`:728-734`).
 3. **Enrichment — one batched read** (`stampSoDates`, defined above the list
-   handler). Pulls `mfg_sales_orders.internal_expected_dd` +
+   handler). Pulls `mfg_sales_orders.processing_date` +
    `customer_delivery_date` for the distinct `so_doc_no` set and stamps
-   **`so_internal_expected_dd`** (the linked SO's "Processing date") and
+   **`so_processing_date`** (the linked SO's "Processing date") and
    **`so_customer_delivery_date`** (delivery-date fallback for pre-snapshot SIs)
    on each row — both list paths. Feeds the SI quick-view drawer (desktop
-   `SalesInvoicesListV2` + mobile `MobileModuleList`). There is still no
-   `has_children` on an SI because nothing hangs off it.
+   `SalesInvoicesListV2` + mobile `MobileModuleList`). **Both are DERIVED
+   response keys read as strings** (mobile via `pick(r, "soInternalExpectedDd",
+   "so_internal_expected_dd")`), so a rename of the SO column must move this key
+   on BOTH ends or neither — a backend-only rename blanks the column with no
+   error. See docs/modules/sales-order.md, "surfaces that read this date by
+   NAME". There is still no `has_children` on an SI because nothing hangs off it.
    `stampSourcePos` (both list paths) additionally stamps **`source_pos`** per
    row — **since 2026-08-02 via `resolveSiHeaderSources`: the union of the SI's
    OWN invoiced lines' traces (each line matched into its DO's ledger buckets,

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // ---------------------------------------------------------------------------
 // repair-so-fee-line-integrity.mjs — materialise the SVC-DELIVERY line a
 // header-carried delivery fee lost.
@@ -51,6 +50,15 @@
 //
 // After an APPLY: re-run "SO fee-line integrity check (read-only)" — it should
 // report CLEAN (or only the refused rows, which need a human).
+//
+// NO `#!/usr/bin/env node` line here, deliberately (the other scripts carry one):
+// tests/soFeeLineRepairRow.test.ts imports buildFeeLineRow/dateOnly from this
+// module, and on Windows vitest INLINES it — the source is wrapped in a function
+// before vm.runInThisContext, so a `#!` that is no longer at byte 0 is a hard
+// "SyntaxError: Invalid or unexpected token" and the suite fails to load (Linux CI
+// externalizes the same file, where node strips the shebang itself — which is why
+// this was green on CI and red locally). Every caller runs it as
+// `node backend/scripts/...`, so the shebang bought nothing. Don't re-add it.
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";

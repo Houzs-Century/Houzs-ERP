@@ -15,7 +15,15 @@
 //   (b) prefix doc-NUMBER columns with `2990-`,
 //   (c) force columns whose target master isn't reconciled across companies,
 //   (d) drop source columns absent from the Houzs dest table (schema drift),
-//   (e) copy every id (uuid and integer) AS-IS.
+//   (e) copy every id (uuid and integer) AS-IS,
+//   (f) RENAME a source column Houzs has renamed and 2990 has not (aliasCols).
+//
+// (f) is the counterweight to (d). 2990 is a separate repository on its own
+// deploy schedule, so the day Houzs renames a column the old name keeps
+// arriving — and (d) drops it in silence: no error, the upsert returns 200, and
+// the value just stops appearing on company-2 rows. An alias is guarded on both
+// sides (old name gone from dest, new name present), so it is a no-op until the
+// rename lands and the fix the moment it does. See MirrorTableConfig.aliasCols.
 //
 // (e) is the load-bearing one. The old mirror remapped FK/self ids (uuid ->
 // '2990'+slice, serial +100000), which matched NO imported row -> FK violation
@@ -76,6 +84,23 @@ export type MirrorTableConfig = {
   preserveCols?: string[];
   /** Per-column value coercion, e.g. status vocabulary guards. */
   normalize?: Record<string, (v: unknown) => unknown>;
+  /** INBOUND column renames: `{ nameTheSourceStillSends: nameHouzsNowHas }`.
+   *
+   *  The source is a SEPARATE REPOSITORY (2990) that deploys on its own
+   *  schedule, so the day Houzs renames a column, 2990 keeps POSTing the old
+   *  one. Rule (d) then drops it — no error, the upsert returns 200, and the
+   *  value simply stops arriving. That is the quietest failure this receiver
+   *  has, because nothing about the delivery looks wrong.
+   *
+   *  Each entry is applied ONLY when the old name is absent from the dest table
+   *  AND the new name is present, so before the rename it is a proven no-op and
+   *  after it is the fix — see applyMap and mirror-map.test.ts. Registering an
+   *  alias early therefore costs nothing and cannot be forgotten later.
+   *
+   *  NOT a general column map. Use it for a rename Houzs has made and the
+   *  source has not; a column that only ever existed on one side is rule (d)'s
+   *  job, and it should keep being dropped. */
+  aliasCols?: Record<string, string>;
 };
 
 export type TableMap = {
@@ -83,6 +108,7 @@ export type TableMap = {
   forceCols: Record<string, unknown>;
   preserveCols: Set<string>;
   normalize: Record<string, (v: unknown) => unknown>;
+  aliasCols: Record<string, string>;
   destCols: Set<string>;
   arrayCols: Set<string>;
 };
@@ -134,6 +160,7 @@ export function createMirrorMapper(config: Record<string, MirrorTableConfig>): M
       forceCols: cfg.forceCols ?? {},
       preserveCols: new Set(cfg.preserveCols ?? []),
       normalize: cfg.normalize ?? {},
+      aliasCols: cfg.aliasCols ?? {},
       destCols: new Set(rows.map((r: { col: string }) => r.col)),
       // Postgres array-typed dest columns (e.g. mfg_sales_order_items.photo_urls
       // text[]). The D1-shim coerces a bound JS array by stringification, turning an
@@ -148,7 +175,40 @@ export function createMirrorMapper(config: Record<string, MirrorTableConfig>): M
     return m;
   }
 
-  function applyMap(row: Record<string, unknown>, m: TableMap): Record<string, unknown> {
+  /** Apply the inbound renames in TableMap.aliasCols, before the dest-column
+   *  filter can drop the old name.
+   *
+   *  GUARDED ON BOTH SIDES, and that is what makes registering an alias early
+   *  safe: `from` must be GONE from the dest table (so it can only be a stale
+   *  source name, never a live column with its own meaning) and `to` must be
+   *  PRESENT (so it is a real destination). Before the rename both names are
+   *  the same string and `from` is still a dest column, so nothing fires and
+   *  the row is returned unchanged — literally the same object.
+   *
+   *  A payload carrying BOTH spellings keeps the new one: the source has been
+   *  deployed and is stating the value under its current name; the old key is
+   *  then just a leftover the receiver has no business preferring. */
+  function aliasInbound(row: Record<string, unknown>, m: TableMap): Record<string, unknown> {
+    // hasOwnProperty, not `in`: the row is JSON.parse'd request body, so `in`
+    // would resolve inherited Object.prototype names and rename a key that is
+    // not there. Same reason so-revision guards its header_changes walk.
+    const has = (o: Record<string, unknown>, k: string) =>
+      Object.prototype.hasOwnProperty.call(o, k);
+    let out: Record<string, unknown> | null = null;
+    for (const [from, to] of Object.entries(m.aliasCols)) {
+      if (from === to) continue;
+      if (!has(row, from)) continue;
+      if (m.destCols.has(from) || !m.destCols.has(to)) continue;
+      if (has(row, to)) continue;
+      out = out ?? { ...row };
+      out[to] = out[from];
+      delete out[from];
+    }
+    return out ?? row;
+  }
+
+  function applyMap(rawRow: Record<string, unknown>, m: TableMap): Record<string, unknown> {
+    const row = aliasInbound(rawRow, m);
     const out: Record<string, unknown> = {};
     // Keep only columns that exist in the Houzs dest table (drop 2990-only cols).
     // Array-typed dest columns get an explicit Postgres array literal (see toPgArray).

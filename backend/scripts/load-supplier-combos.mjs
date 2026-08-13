@@ -12,6 +12,8 @@
 //
 // DRY-RUN default; APPLY=1 writes. Dedupe per scope on
 // (base_model, tier, modules-key).
+//
+// RE-RUN: inert while the tiers are unshifted - it dedupes on (scope, base_model, tier, modules). retier-sofa-tiers.mjs MOVES those tiers, so a run after the shift would not recognise its own rows and would insert all 159 again.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

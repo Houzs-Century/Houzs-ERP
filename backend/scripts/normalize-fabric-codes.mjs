@@ -29,18 +29,38 @@
    NOTHING IS DELETED. A row that loses is superseded - active = false, label
    records what absorbed it - the same rule #1972 set and the catalogue script
    follows. Live lines are repointed on BOTH axes (fabricCode and fabricId)
-   across all four arms, through lib/fabric-write.
+   across EVERY arm lib/fabric-write knows (fifteen as of 2026-08-13), together
+   with the stored description2, the variant_key stock bucket and the model's
+   allowed_options whitelist — a code change that moves only variants is what
+   stranded stock on 2026-08-11.
 
    THE OWNER'S OWN 12 SERIES ARE SKIPPED. seed-owner-fabric-catalogue.mjs
    already drove those to their canonical form from his list, including colour
    names this script cannot know. Re-deriving them here would fight it.
 
+   RE-RUN: safe and inert - a colour already in the canonical shape plans no
+   change, because the colour NAME is read back out of the LABEL (nameFromLabel)
+   as well as out of the code. Until 2026-08-13 it was not: run two parsed the
+   clean code, found no name, and proposed rewriting 200 labels down to a bare
+   code, deleting the colour name from every one of them.
+
    MODE=plan (default) prints and writes nothing.
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
-import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel } from "./lib/fabric-code.mjs";
-import { countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy } from "./lib/fabric-write.mjs";
+import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel, nameFromLabel } from "./lib/fabric-code.mjs";
+import {
+  countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy,
+  /* A colour CODE change is not just a variants edit. The same string is also
+     materialised into the physical stock bucket (variant_key), rendered into
+     the stored description2 every PDF prints, and listed in the model's
+     allowed_options whitelist. Repointing variants alone is what left
+     BO315-2-FEATHER's 3 SO lines and 3 PO lines pointing at one code while its
+     3 inventory_movements and 3 inventory_lots rows stayed in the other —
+     found by the census on 2026-08-13, after the 2026-08-11 pass. */
+  repointDescription2, repointVariantKey, repointAllowedOptions, skippedArms,
+  countColoursBulk,
+} from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -70,10 +90,21 @@ async function main() {
                            FROM scm.fabric_colours WHERE company_id = ${CO}`;
   note(`library: ${libs.length} series / ${cols.length} colours`);
 
-  const refCache = new Map();
+  /* ONE PASS FOR EVERY COLOUR, not one round trip each. This asks for a
+     reference count per code, and the library holds hundreds of them; when the
+     shared arm list went from 4 tables to 15 that became twelve thousand
+     queries and a plan run that used to take a minute was still going after
+     fifteen. countColoursBulk answers all of them with one query per arm.
+
+     Warmed for every colour up front, and countColour is kept as the fallback
+     for a code the warm-up did not see (a canonical target that no row carries
+     yet), so no path silently reports zero. */
+  const refCache = await countColoursBulk(sql, CO, cols.map((r) => r.colour_id));
+  note(`reference counts warmed for ${refCache.size} colour(s) in one pass per arm`);
   const refs = async (code) => {
-    if (!refCache.has(code)) refCache.set(code, sum(await countColour(sql, CO, code)));
-    return refCache.get(code);
+    const k = String(code).toUpperCase();
+    if (!refCache.has(k)) refCache.set(k, sum(await countColour(sql, CO, code)));
+    return refCache.get(k);
   };
 
   /* Group every ACTIVE colour by the canonical code it should carry. A group
@@ -109,9 +140,17 @@ async function main() {
     const [win, ...lose] = scored;
 
     /* The winner's NAME is the best one in the group: its own if it has one,
-       otherwise any sibling's. A merge must not lose the only colour name. */
-    let best = win.p.name;
-    if (!best) for (const s of scored) if (s.p.name) { best = s.p.name; break; }
+       otherwise any sibling's. A merge must not lose the only colour name.
+
+       THE LABEL COUNTS AS A SOURCE, and that is what makes a second run safe.
+       Run one moves the name out of the code and into the label; run two parses
+       a now-clean code, finds no name, and - before this - rebuilt the label
+       without one, erasing it. nameFromLabel reads it back out of the label it
+       just wrote, but only from a label whose own series+number canonicalise to
+       this same id, so the name can never come from a different colour. */
+    const nameOf = (s) => s.p.name || nameFromLabel(s.r.colour_id, s.r.label);
+    let best = nameOf(win);
+    if (!best) for (const s of scored) { const n = nameOf(s); if (n) { best = n; break; } }
     const target = { ...win.p, name: best };
     const newId = canonId(target), newLabel = canonLabel(target);
 
@@ -256,7 +295,12 @@ async function main() {
           const r = await repointColour(tx, CO, l.r.colour_id, m.newId);
           const n = sum(r);
           movedLines += n;
-          if (n) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)})`);
+          /* Same transaction, same rename: the printed text, the stock bucket
+             and the model whitelist follow the code or they contradict it. */
+          const d2 = busy(await repointDescription2(tx, CO, l.r.colour_id, m.newId));
+          const vk = busy(await repointVariantKey(tx, CO, l.r.colour_id, m.newId));
+          const md = (await repointAllowedOptions(tx, CO, l.r.colour_id, m.newId)).n;
+          if (n || d2 || vk || md) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)}) desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
         }
         await tx`UPDATE scm.fabric_colours
                     SET active = false,
@@ -270,6 +314,10 @@ async function main() {
       const from = c.win.r.colour_id;
       if (normColour(from) !== c.newId) {
         movedLines += sum(await repointColour(tx, CO, from, c.newId));
+        const d2 = busy(await repointDescription2(tx, CO, from, c.newId));
+        const vk = busy(await repointVariantKey(tx, CO, from, c.newId));
+        const md = (await repointAllowedOptions(tx, CO, from, c.newId)).n;
+        if (d2 || vk || md) note(`  carried with "${from}" -> "${c.newId}": desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
       }
       const seriesNow = plan.seriesRename.get(c.win.r.fabric_id)?.to ?? c.win.r.fabric_id;
       const clash = await tx`SELECT 1 FROM scm.fabric_colours
@@ -304,6 +352,11 @@ async function main() {
     for (const s of plan.seriesRename.values()) {
       const still = sum(await countSeries(v, CO, s.from));
       if (still) { fails++; bad(`${still} line(s) still name series "${s.from}"`); }
+    }
+    const skipped = skippedArms();
+    if (skipped.length) {
+      note(`  ARMS SKIPPED (absent from this database — never sweep silently):`);
+      for (const sk of skipped) note(`    ${sk.kind.padEnd(12)} ${String(sk.table).padEnd(42)} ${sk.why}`);
     }
     for (const a of await arrayShapeCheck(v, CO)) {
       note(`  ${a.arm}: array-shaped variants blocks (must be 0): ${a.n}`);

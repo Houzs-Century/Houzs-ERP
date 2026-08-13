@@ -67,7 +67,15 @@ const DOC = {
   GRN: "(SELECT h2.grn_number FROM scm.grns h2 WHERE h2.id = i.grn_id)",
   DO: "(SELECT h2.do_number FROM scm.delivery_orders h2 WHERE h2.id = i.delivery_order_id)",
 };
-const ARMS = BASE_ARMS.map((a) => ({ ...a, doc: DOC[a.name] }));
+/* ARMS grew from 4 to 15 on 2026-08-13. Without a fallback the new arms
+   interpolate `undefined` straight into `SELECT ${arm.doc}` and the query dies
+   — a shared list growing under a consumer that assumed its contents, which is
+   the same class of break as the four-arm sweep itself. The line's own id is
+   always present and always resolves the row, so an arm with no document-number
+   expression yet degrades to that instead of to a crash. Add a real expression
+   here as each module's header column is confirmed against the live database. */
+const DOC_FALLBACK = "i.id::text";
+const ARMS = BASE_ARMS.map((a) => ({ ...a, doc: DOC[a.name] ?? DOC_FALLBACK }));
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }

@@ -68,7 +68,7 @@ const MOCK: SoListRow[] = [
     doc_no: 'SO-2406-0231', status: 'Confirmed', customer_name: 'Tan Residence',
     phone: '012-345 6789', email: '', customer_type: '', salesperson_name: '',
     customer_so_no: 'PO-8841', building_type: '', venue_name: '',
-    internal_expected_dd: '12 Jun', customer_delivery_date: '20 Jun',
+    processing_date: '12 Jun', customer_delivery_date: '20 Jun',
     sales_location: '', note: '', address1: '', address2: '', city: '',
     customer_state: 'Selangor', postcode: '', total_centi: 1289000, paid_centi: 644500,
     items: [], payments: [],
@@ -78,7 +78,7 @@ const MOCK: SoListRow[] = [
     doc_no: 'SO-2406-0230', status: 'Submitted', customer_name: 'Lim Wei Siang',
     phone: '019-887 2210', email: '', customer_type: '', salesperson_name: '',
     customer_so_no: 'REF-2231', building_type: '', venue_name: '',
-    internal_expected_dd: '08 Jun', customer_delivery_date: '15 Jun',
+    processing_date: '08 Jun', customer_delivery_date: '15 Jun',
     sales_location: '', note: '', address1: '', address2: '', city: '',
     customer_state: 'Kuala Lumpur', postcode: '', total_centi: 458000, paid_centi: 0,
     items: [], payments: [],
@@ -88,7 +88,7 @@ const MOCK: SoListRow[] = [
     doc_no: 'SO-2405-0198', status: 'Confirmed', customer_name: 'Sunrise Hotel Group',
     phone: '03-2201 5566', email: '', customer_type: '', salesperson_name: '',
     customer_so_no: 'SH-0044', building_type: '', venue_name: '',
-    internal_expected_dd: '28 May', customer_delivery_date: '05 Jun',
+    processing_date: '28 May', customer_delivery_date: '05 Jun',
     sales_location: '', note: '', address1: '', address2: '', city: '',
     customer_state: 'Johor', postcode: '', total_centi: 3240000, paid_centi: 3240000,
     items: [], payments: [],
@@ -98,7 +98,7 @@ const MOCK: SoListRow[] = [
     doc_no: 'SO-2405-0187', status: 'Confirmed', customer_name: 'Wong Family',
     phone: '016-778 9012', email: '', customer_type: '', salesperson_name: '',
     customer_so_no: '', building_type: '', venue_name: '',
-    internal_expected_dd: '15 May', customer_delivery_date: '22 May',
+    processing_date: '15 May', customer_delivery_date: '22 May',
     sales_location: '', note: '', address1: '', address2: '', city: '',
     customer_state: 'Penang', postcode: '', total_centi: 875000, paid_centi: 875000,
     items: [], payments: [],
@@ -151,7 +151,7 @@ export function MobileSoList({ orders = MOCK, onOpenMenu, onNew, onOpen }: Mobil
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, fontSize: 11, color: '#414539', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                   <span style={{ color: '#9aa093', fontWeight: 600 }}>Processing</span>
-                  <span className="money" style={{ fontWeight: 600 }}>{r.internal_expected_dd}</span>
+                  <span className="money" style={{ fontWeight: 600 }}>{r.processing_date}</span>
                   <span style={{ color: '#c2c6bd' }}>&rarr;</span>
                   <span style={{ color: '#9aa093', fontWeight: 600 }}>Delivery</span>
                   <span className="money" style={{ fontWeight: 600 }}>{r.customer_delivery_date}</span>

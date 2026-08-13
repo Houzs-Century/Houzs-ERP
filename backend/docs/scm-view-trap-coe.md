@@ -99,6 +99,27 @@ is the source of truth.** Don't trust the migration ledger; pg-migrate has had
 duplicates (CLAUDE.md). Before assuming a view carries a column, read its live
 definition against prod.
 
+**P-6 — RENAMING a base column does not break the view, it makes the view LIE.
+Rename the view's output column too, and do NOT drop the view to do it.**
+Added by mig 0284 (`internal_expected_dd` → `processing_date`), verified on a
+PGlite replica of the base table + view + both grantee roles:
+
+* `ALTER TABLE scm.mfg_sales_orders RENAME COLUMN a TO b` **succeeds** with the
+  view in place — Postgres stores the rewrite rule by attribute number, so
+  `pg_get_viewdef` afterwards reads `so.b AS a`. No error, no drop, ACL and
+  owner untouched.
+* The view's own output column is still called `a`. So the base table has `b`,
+  the view has `a`, and the first route that selects `b` from the view 500s with
+  "column b does not exist". That is the same failure surface as the classic
+  trap, arrived at from the opposite direction.
+* The fix is `ALTER VIEW scm.… RENAME COLUMN a TO b` — a catalog rename, no
+  DROP, so it does **not** re-run the 0189 → 0190 → 0191 grant-loss incident.
+  0284 does this as a `pg_class` sweep over `relkind IN ('v','m')` rather than
+  naming the one view, because the whole lesson of this COE is that the one view
+  gets missed.
+* Never reach for DROP VIEW → rename → CREATE VIEW here. That path is P-1's, it
+  costs the ACL and the owner, and a rename does not need it.
+
 ---
 
 ## 5. Houzs checklist for any change that touches the shared `HEADER`
@@ -114,6 +135,9 @@ definition against prod.
 - [ ] Did I apply the view migration BEFORE deploying the route code
       (migrate-before-deploy)?
 - [ ] Did I re-verify with `pg_get_viewdef` against staging/prod after applying?
+- [ ] If I RENAMED a base column, did I also rename the view's output column
+      (P-6), and confirm the view answers to the NEW name — not just that the
+      `ALTER TABLE` succeeded? A successful rename is not a working view.
 
 ---
 

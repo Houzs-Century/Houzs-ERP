@@ -206,7 +206,7 @@ export const StockAdjustmentNew = () => {
     // INCREASE gate — sofa / bedframe must carry their variant attributes (and
     // sofa a batch number) before the found stock can be saved.
     if (type === 'increase' && hasVariantGroup) {
-      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo);
+      const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
       if (errs.length > 0) {
         void notify({ title: "This adjustment can't be saved yet", body: errs.join('\n'), tone: 'error' });
         return;
