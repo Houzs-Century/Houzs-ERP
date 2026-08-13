@@ -155,9 +155,12 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     setBusy(true);
     try {
       // Deliver action — the DO status endpoint persists the POD signature
-      // (base64 PNG) onto delivery_orders.signature_data and the delivery
-      // photo's R2 key onto delivery_orders.pod_r2_key. GPS stays client-side
-      // (no server column).
+      // (base64 PNG) onto delivery_orders.signature_data, the delivery photo's
+      // R2 key onto delivery_orders.pod_r2_key, and (since mig 0249) the GPS
+      // reading onto pod_lat / pod_lng / pod_accuracy_m / pod_located_at. The
+      // last sentence here used to read "GPS stays client-side (no server
+      // column)", which stopped being true at 0249 and is corrected in place
+      // rather than left to teach the next reader the old shape.
       // Upload the photo to R2 FIRST (shared slip Worker-proxy pipeline) so
       // its key rides the same PATCH. A failed upload aborts the whole action —
       // we never mark delivered while claiming a photo we didn't store.
@@ -166,7 +169,22 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
         const { r2Key } = await uploadSlipFull({ file: photoFile });
         podKey = r2Key;
       }
-      const sig = (() => { try { return sigRef.current?.toDataURL("image/png") ?? ""; } catch { return ""; } })();
+      /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
+         An untouched pad is a sized, fully transparent bitmap, so
+         `toDataURL("image/png")` returns a perfectly valid non-empty data URL
+         for it; `sig ? …` was therefore true on EVERY confirm once the pad had
+         mounted, and every delivery stored a blank PNG into
+         `delivery_orders.signature_data`. The screen said "Ask the customer to
+         sign above" and filed the delivery as signed anyway — worse than storing
+         nothing, because a blank image is indistinguishable from a real POD that
+         failed to render, and it is the only customer-side evidence the DO
+         carries. `hasSignature` is set by the pad's own `start()` on the first
+         pointerdown (and cleared by Clear), so it is the one flag that means a
+         human drew something. `podKey` and `gps` in the same object literal were
+         already gated on real capture; this brings the third field in line. */
+      const sig = hasSignature
+        ? (() => { try { return sigRef.current?.toDataURL("image/png") ?? ""; } catch { return ""; } })()
+        : "";
       await authedFetch(`/delivery-orders-mfg/${encodeURIComponent(doId)}/status`, {
         method: "PATCH",
         body: JSON.stringify({

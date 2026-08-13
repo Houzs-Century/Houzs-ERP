@@ -43,6 +43,7 @@ import { DateField } from './DateField';
 import {
   DEFAULT_DATA_GRID_LAYOUT,
   type DataGridLayout,
+  materializeDataGridLayout,
   readDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
@@ -747,23 +748,19 @@ function DataGridInner<T>({
     setLayout((l) => ({ ...l, hidden: [], order: [], widths: {} }));
     setColumnsMenuOpen(false);
   }, [setLayout, onUserAdjustColumns]);
+  /* Shared materialisation of the pristine-defaults overlay (see
+     materializeDataGridLayout) — every layout mutator below starts from it. */
+  const materialize = useCallback((l: DataGridLayout) => materializeDataGridLayout(l, columns), [columns]);
   const toggleColumn = useCallback((colKey: string) => {
     onUserAdjustColumns?.();
-    setLayout((l) => {
-      /* If we're still on the pristine-defaults overlay (no explicit
-         choices yet) materialize the current set of hidden keys before
-         toggling, so the first interaction doesn't silently un-hide every
-         defaultHidden column. */
-      const pristine = l.order.length === 0 && l.hidden.length === 0;
-      const baseHidden = pristine
-        ? columns.filter((c) => c.defaultHidden).map((c) => c.key)
-        : l.hidden;
-      const hidden = baseHidden.includes(colKey)
-        ? baseHidden.filter((k) => k !== colKey)
-        : [...baseHidden, colKey];
+    setLayout((raw) => {
+      const l = materialize(raw);
+      const hidden = l.hidden.includes(colKey)
+        ? l.hidden.filter((k) => k !== colKey)
+        : [...l.hidden, colKey];
       return { ...l, hidden };
     });
-  }, [columns, setLayout, onUserAdjustColumns]);
+  }, [materialize, setLayout, onUserAdjustColumns]);
   /* "Show all" — every column visible. Materializes the order when the layout
      is still pristine: an empty order + empty hidden would put the layout back
      on the defaults overlay and instantly re-hide every defaultHidden column. */
@@ -1334,17 +1331,20 @@ function DataGridInner<T>({
   };
 
   // ── Header context menu actions ──────────────────────────────────
+  /* All three materialize first — see materialize, above. */
   const hideColumn = (key: string) => {
     onUserAdjustColumns?.();
-    setLayout((l) => ({ ...l, hidden: l.hidden.includes(key) ? l.hidden : [...l.hidden, key] }));
+    setLayout((raw) => { const l = materialize(raw);
+      return { ...l, hidden: l.hidden.includes(key) ? l.hidden : [...l.hidden, key] }; });
   };
   const showColumn = (key: string) => {
     onUserAdjustColumns?.();
-    setLayout((l) => ({ ...l, hidden: l.hidden.filter((k) => k !== key) }));
+    setLayout((raw) => { const l = materialize(raw);
+      return { ...l, hidden: l.hidden.filter((k) => k !== key) }; });
   };
   const pinLeft = (key: string) =>
-    setLayout((l) => {
-      // pin = move to front of order
+    setLayout((raw) => {
+      const l = materialize(raw); // pin = move to front of order
       const orderNow = (l.order.length ? l.order : columns.map((c) => c.key)).filter((k) => k !== key);
       orderNow.unshift(key);
       return { ...l, order: orderNow };
