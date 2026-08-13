@@ -63,8 +63,8 @@ async function main() {
   const bySrc = await sql`
     SELECT coalesce(status::text, '(null)') AS status,
            count(*)::int AS n,
-           min(created_at)::date AS first_seen,
-           max(created_at)::date AS last_seen
+           to_char(min(created_at), 'YYYY-MM-DD') AS first_seen,
+           to_char(max(created_at), 'YYYY-MM-DD') AS last_seen
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}
        AND internal_expected_dd IS NULL AND customer_delivery_date IS NOT NULL
@@ -86,14 +86,47 @@ async function main() {
   note(`\n  created in the last 30 days: ${recent.n}${Number(recent.n) ? "  <- still being produced" : "  (historical only)"}`);
 
   const eg = await sql`
-    SELECT doc_no, status, customer_delivery_date, created_at::date AS created
+    SELECT doc_no, status, to_char(customer_delivery_date, 'YYYY-MM-DD') AS deliv,
+           to_char(created_at, 'YYYY-MM-DD') AS created,
+           to_char(proceeded_at, 'YYYY-MM-DD') AS proceeded
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO} AND internal_expected_dd IS NULL
        AND customer_delivery_date IS NOT NULL
      ORDER BY created_at DESC LIMIT 15`;
   note(`\n=== newest 15 ===`);
   for (const r of eg) {
-    note(`  ${String(r.doc_no).padEnd(18)} ${String(r.status ?? "-").padEnd(12)} deliv=${r.customer_delivery_date}  created=${r.created}`);
+    note(`  ${String(r.doc_no).padEnd(18)} ${String(r.status ?? "-").padEnd(14)} deliv=${r.deliv}  created=${r.created}  proceeded_at=${r.proceeded ?? "-"}`);
+  }
+
+  /* ── WHERE DID THE PROCESSING DATE GO? ───────────────────────────────────
+     'both dates set: 0' is not a rounding artefact — if it holds, NOT ONE
+     order in this company carries a Processing Date, and internal_expected_dd
+     is the ONLY thing soProcessingLocked reads ('const proc =
+     header.internal_expected_dd ?? null; if (!proc) return false'). Nothing
+     would be spec-gated and nothing would be edit-locked.
+
+     There is a candidate explanation in the import: backfill-so-dates.mjs
+     maps AutoCount's UDF_PDate (the header processing date) onto
+     `proceeded_at`, NOT onto internal_expected_dd. If proceeded_at is
+     populated on the same rows whose internal_expected_dd is null, the dates
+     are not missing — they are in the column the ERP does not read. */
+  const [where] = await sql`
+    SELECT
+      count(*) FILTER (WHERE internal_expected_dd IS NOT NULL)::int AS has_ied,
+      count(*) FILTER (WHERE proceeded_at IS NOT NULL)::int AS has_proceeded,
+      count(*) FILTER (WHERE internal_expected_dd IS NULL AND proceeded_at IS NOT NULL)::int AS proceeded_but_no_ied,
+      count(*) FILTER (WHERE internal_expected_dd IS NULL AND proceeded_at IS NOT NULL
+                         AND customer_delivery_date IS NOT NULL)::int AS proceeded_deliv_no_ied
+    FROM scm.mfg_sales_orders WHERE company_id = ${CO}`;
+  note(`\n=== where the processing date actually is ===`);
+  note(`  internal_expected_dd set (the ERP's Processing Date): ${where.has_ied}`);
+  note(`  proceeded_at set:                                     ${where.has_proceeded}`);
+  note(`  proceeded_at set but internal_expected_dd NULL:        ${where.proceeded_but_no_ied}`);
+  note(`     ... of those, also carrying a delivery date:        ${where.proceeded_deliv_no_ied}`);
+  if (Number(where.has_ied) === 0) {
+    note(`  → NO order carries a Processing Date. soProcessingLocked reads only`);
+    note(`    internal_expected_dd, so no order is edit-locked and no order is`);
+    note(`    spec-gated, whatever proceeded_at says.`);
   }
 
   await sql.end({ timeout: 5 });
