@@ -20,6 +20,11 @@ on:
         required: false
         default: "0"
         type: string
+      confirm:
+        description: "apply only — type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: repair-migrated-po-lines-${{ inputs.target }}
@@ -39,6 +44,7 @@ jobs:
       - run: node scripts/repair-migrated-po-lines.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
   run-prod:
@@ -53,4 +59,5 @@ jobs:
       - run: node scripts/repair-migrated-po-lines.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
