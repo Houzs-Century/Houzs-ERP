@@ -41,7 +41,14 @@ jobs:
           node-version: 22
       # The gate's own logic, on node:test with zero dependencies — hence no
       # `npm ci` anywhere in this job. A checker nobody runs is not a checker.
+      #
+      # A GLOB, not one named file. The named form silently skipped
+      # working-agreement.escapes.test.mjs the moment it was added — a second
+      # test file next to the first is the obvious thing to write, and it would
+      # never have run. (`node --test scripts/lib/` is NOT the fix: on node 22 a
+      # bare directory is resolved as a module and dies MODULE_NOT_FOUND.)
+      # Measured: this runs 30 tests across 2 files, and exits 1 when any fails.
       - name: Test the gate
-        run: node --test scripts/lib/working-agreement.test.mjs
+        run: node --test scripts/lib/*.test.mjs
       - name: Check the working agreement
         run: node scripts/check-working-agreement.mjs
