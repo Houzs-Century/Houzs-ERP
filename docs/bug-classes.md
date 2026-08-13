@@ -102,8 +102,11 @@ makes these three states identical: *the query failed*, *you are not allowed*, a
 *there is genuinely nothing here*. The next line writes it.
 
 **Count — 20 entries**, plus the corpus's own tag `reference_houzs_nullish_hides_ignorance`
-on 10. Live census at d33ac743: **954** `const { data … } = await …` with no
-`error` bound and **76** bare `.catch(() => {})` and siblings, across 145 files.
+on 10. Live census: **938** `const { data … } = await …` with no `error` bound
+and **76** bare `.catch(() => {})` and siblings, across 143 files. (Every one of
+the 938 reads is in `backend/src`; the frontend's 76 → 38 share is all bare
+catches. The census stood at 954 when the gate was written, and 16 have since
+been fixed — see *The first descent* below.)
 
 **Worst consequence — real money, twice.** 2026-07-17: *"A blip on the payments
 read told the driver an already-paid order still owed the full total — and POD
@@ -119,23 +122,61 @@ The owner: 「它們不會報錯。它們悄悄發生，你兩個月後對帳才
 (`backend/scripts/check-swallowed-reads.mjs`, wired into ci.yml `backend-typecheck`).
 
 Per-file ceilings in `backend/scripts/data/swallowed-read-baseline.json`, over
-**both** trees. Site 955 fails the build. Ceilings may only fall: a file whose real
+**both** trees. Site 939 fails the build. Ceilings may only fall: a file whose real
 count drops below its ceiling also fails, with `--update` as the fix, so the ratchet
 descends instead of merely holding.
 
-**Why a ratchet and not a ban.** 954 sites predate the rule and most are certainly
+**Why a ratchet and not a ban.** The sites predate the rule and most are certainly
 fine; nothing separates the safe ones from the dangerous ones, and no honest PR
-deletes 954 destructures. What is provable is the direction: the 2026-07-17 census
+deletes 938 destructures. What is provable is the direction: the 2026-07-17 census
 counted 785 of 1,277, the class was declared fixed across 15 money documents, and
 four weeks later it stood at 954 of 1,794. **The class did not recur despite the
 fix — it grew during it, because nothing counted.** That is the thing the gate
 removes.
 
-**What it does not cover.** It counts sites; it cannot tell a dangerous one from a
-harmless one. The structural fix is a query layer returning a discriminated result
-(`{ ok: true; rows } | { ok: false; error }`) so `?? []` has nothing to coalesce
-and `tsc` forces the branch. `findServiceLineCodes` in
-`backend/src/scm/lib/service-line-guard.ts` already has that shape and is the model.
+### The first descent — ranked by what the absence AUTHORISES
+
+Counting sites cannot tell a dangerous one from a harmless one, so the sites were
+ranked by consequence rather than by file. A read whose empty result blanks a
+display field is low grade. A read whose empty result **lets a write proceed** is
+where the money moved twice. **16 of those were fixed and the ceilings lowered by
+exactly that** (954 → 938).
+
+The rule each fix carries, in the repo's own words — it was already written by
+`backend/src/scm/lib/downstream-lock.ts`, which is the model for all of them:
+
+> A failed read must never read as an absence when the absence is what authorises
+> the write.
+
+| Decision the read gates | Where it was | Guard now |
+| --- | --- | --- |
+| remaining-qty / over-receipt cap (10 sites, 5 route files) | the whole cap lived inside `if (row) { … }`, so a failed read stepped over it entirely and the line was written **uncapped** | `lib/qty-cap.ts` → `qty_cap_check_failed` (409) |
+| "nothing still references this" before a delete | `findSkuUsage` did `if (error) continue`; `findModelUsage` read `skus ?? []` — an unreadable probe reported a live SKU as never sold | `lib/sku-usage.ts` → `usage_check_failed` (409) |
+| "nothing still references this" before a delete | `categories.ts` folded a failed count with `count ?? 0`, passing `category_in_use` | `category_in_use_check_failed` (409) |
+| "does this already exist" before a destructive cascade | `mfg-products.ts` rename read as "no duplicate", and the cascade re-points **referencing tables first**, so `UNIQUE(company_id, code)` only fires after two SKUs' stock and bindings are merged | `duplicate_check_failed` (409) |
+| a gate that decides a state change | `so-confirm-gate.ts` folded a failed lines read into an order with no lines, returned **zero problems**, and the DRAFT was confirmed and enqueued to AutoCount | `so_confirm_check_failed` problem (422) |
+
+Each is pinned twice: a unit test that makes the mock's read **reject** and asserts
+a refusal (`qty-cap.test.ts`, `sku-usage.test.ts`, `so-confirm-gate.test.ts`), and
+a route-level test that asserts the handler refuses **and the row is still there**
+(`backend/tests/destructiveGuardsRefuseUnreadableProbe.test.ts` — a status-only
+assertion would pass on a 409 that had already deleted). The ten cap call sites are
+pinned by the lowered ceilings: reverting one to the inline destructure now takes
+`purchase-invoices.ts` from 38 to 39 and fails `audit:swallowed-reads`, which at
+the old ceiling of 40 it would not have.
+
+**Deliberately not touched:** the POST-insert over-receipt verifiers in `grns.ts`
+and `purchase-invoices.ts`. Those run after the row is committed, so refusing means
+deleting a receipt the operator watched succeed — the fail-closed answer is not free
+there, and the files say so in their own comments. This pass took only the pre-write
+gates, where a refusal costs a retry.
+
+**What the gate still does not cover.** It counts sites; it cannot tell a dangerous
+one from a harmless one. The structural fix is a query layer returning a
+discriminated result (`{ ok: true; rows } | { ok: false; error }`) so `?? []` has
+nothing to coalesce and `tsc` forces the branch. `findServiceLineCodes` in
+`backend/src/scm/lib/service-line-guard.ts` already has that shape and is the model;
+`lib/qty-cap.ts` and `lib/sku-usage.ts` are now two more.
 
 ---
 

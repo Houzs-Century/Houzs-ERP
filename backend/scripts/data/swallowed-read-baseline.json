@@ -177,20 +177,12 @@
       "reads": 1,
       "catches": 0
     },
-    "backend/src/scm/lib/sku-usage.ts": {
-      "reads": 1,
-      "catches": 0
-    },
     "backend/src/scm/lib/so-audit.ts": {
       "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/so-cancel-vouchers.ts": {
       "reads": 4,
-      "catches": 0
-    },
-    "backend/src/scm/lib/so-confirm-gate.ts": {
-      "reads": 3,
       "catches": 0
     },
     "backend/src/scm/lib/so-delivery-sync.ts": {
@@ -242,7 +234,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/categories.ts": {
-      "reads": 6,
+      "reads": 5,
       "catches": 1
     },
     "backend/src/scm/routes/consignment-notes.ts": {
@@ -298,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 54,
+      "reads": 52,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -326,7 +318,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-products.ts": {
-      "reads": 6,
+      "reads": 5,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
@@ -366,19 +358,19 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-consignment-receives.ts": {
-      "reads": 31,
+      "reads": 29,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-consignment-returns.ts": {
-      "reads": 23,
+      "reads": 21,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-invoices.ts": {
-      "reads": 40,
+      "reads": 38,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
-      "reads": 30,
+      "reads": 28,
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {
