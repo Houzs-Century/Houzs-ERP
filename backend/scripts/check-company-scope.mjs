@@ -42,7 +42,20 @@ const jsonOut = process.argv.includes("--json");
    hr.ts DELETE /profiles/:id ends `.eq('id', id).eq('company_id', co.companyId)`
    — and a checker that cannot see it produces false positives, which is how a
    checker gets switched off. Both forms are listed here on purpose. */
-const SCOPE_HELPERS = [
+/* DELEGATION guards - named functions whose BODY performs the scoped read.
+   Each was opened and verified; a handler calling one IS scoped, wherever the
+   call appears. Kept separate from the primitives below because a primitive's
+   NAME appearing in a handler proves nothing (see the note at the scope test).*/
+const DELEGATION_GUARDS = [
+  "selfScopedSalesBlocked",   // mfg-sales-orders.ts:806  - 18 /:docNo handlers
+  "salesDocOutOfScope",       // lib/salesScope.ts
+  "requireScmCompany",
+  "loadAmendmentForWrite",    // so-amendments.ts:122     - all 6 mutation gates
+  "resolveAllocationParent",  // mfg-purchase-orders.ts:3354
+];
+
+/* SCOPE PRIMITIVES - only count inside an actual  query. */
+const SCOPE_PRIMITIVES = [
   "scopeToCompany",
   "scopeToCompanyId",
   /* CROSS-COMPANY scoping - a bound to the caller's ALLOWED set, not to one
@@ -63,19 +76,19 @@ const SCOPE_HELPERS = [
   /* Router-local guards that resolve the row inside an already-scoped query.
      Listed by name because a handler delegating to one IS scoped, and a checker
      that cannot see the delegation reports the whole family as unguarded. */
-  "selfScopedSalesBlocked",
-  "salesDocOutOfScope",
-  "requireScmCompany",
+  
+  
+  
   /* so-amendments.ts — the shared guard load for all SIX mutation gates. Its
      own body calls scopeToCompany and its comment records why (a HOUZS caller
      could once drive a 2990 amendment through its whole state machine by id).
      Verified 2026-08-13 at so-amendments.ts:122. */
-  "loadAmendmentForWrite",
+  
   /* mfg-purchase-orders.ts:3354 — resolves the PO with requireActiveCompanyId +
      scopeToCompanyId (404 NOT_THIS_COMPANY), then refuses any line whose
      purchase_order_id is not that PO. Every allocation write downstream is on a
      proven in-company chain. Verified 2026-08-13. */
-  "resolveAllocationParent",
+  
 ];
 
 /** Hand-written scoping: .eq('company_id', …) / .in('company_id', …). */
@@ -206,20 +219,106 @@ for (const file of fs.readdirSync(ROUTES).filter((f) => f.endsWith(".ts") && !f.
       }
     }
 
-    const joined = scanBody.join("\n");
-    const scoped = SCOPE_HELPERS.some((h) => joined.includes(h)) || MANUAL_SCOPE.test(joined);
-    if (scoped) return;
+    /* SCOPE IS TESTED PER STATEMENT, NOT PER HANDLER.
+       It used to be `joined.includes(helper)` — the helper name appearing
+       ANYWHERE in the handler counted as scoped. That is a substring match, not
+       a proof, and it let a real leak through: delivery-orders-mfg PATCH /:id
+       writes `update(updates).eq('id', id)` with no predicate at :4411, and the
+       handler passed because `activeCompanyId(c)` appears at :4432 — AFTER the
+       write, as a fallback for an audit row's companyId field. Two independent
+       readers spotted that handler while this script reported "0 WRITE".
 
+       Now each row-touching statement is judged on its own text: the window
+       from its own `.from(` to the end of that statement. A helper mentioned
+       elsewhere in the handler no longer excuses it. */
+    const joined = scanBody.join("\n");
+
+    /** The statement containing line i: from its `.from(` back-anchor forward. */
+    const statementAround = (i) => {
+      /* Anchor on the START OF THE EXPRESSION, not on `.from(`.
+         Anchoring on `.from(` was wrong for this codebase's dominant style —
+
+             const { data } = await scopeToCompanyId(
+               sb.from('payment_vouchers').select(HEADER).eq('id', id),
+               co.companyId,
+             ).maybeSingle();
+
+         the wrapping call sits on the line BEFORE, so a window that begins at
+         `.from(` cannot see it. That mis-slice flagged three handlers this
+         branch had already fixed. Walk back to the nearest statement opener. */
+      let start = i;
+      for (let k = i; k >= 0 && k > i - 8; k--) {
+        const line = scanBody[k] ?? "";
+        if (/\b(const|let|var|await|return)\b|=\s*$/.test(line)) { start = k; break; }
+        if (k < i && /;\s*$/.test(scanBody[k + 1] ?? "")) break;
+      }
+      let end = start;
+      let depth = 0;
+      for (let k = start; k < scanBody.length && k < start + 25; k++) {
+        end = k;
+        const line = scanBody[k] ?? "";
+        for (const ch of line) {
+          if (ch === "(") depth++;
+          else if (ch === ")") depth--;
+        }
+        // A statement ends at a ';' once every paren it opened has closed.
+        if (depth <= 0 && line.includes(";") && k >= i) break;
+      }
+      return scanBody.slice(start, end + 1).join("\n");
+    };
+
+    /* THE RESOLVE-THEN-ACT PATTERN IS LEGITIMATE AND COMMON HERE, and a checker
+       that ignores it is useless. A handler routinely reads the row ONCE through
+       a scoped query, then writes by the id that read returned — hr payout
+       reopen, the so-amendment gates, the PO allocation writers all do exactly
+       that, and each was verified by hand.
+
+       So a row-touching statement is excused when EITHER
+         · the statement itself carries the scope, OR
+         · a SCOPED QUERY appears EARLIER in the same handler.
+       Both halves matter. "Earlier" is what catches delivery-orders-mfg
+       PATCH /:id, whose only `activeCompanyId` sits AFTER the write; "in a
+       query" is what stops an audit field's fallback value from counting as a
+       predicate. Pure statement-level testing would flag 161 writes, most of
+       them correct, and a checker that cries wolf is one somebody turns off. */
+    /* A DELEGATION guard counts wherever it appears — it IS the scoped read,
+       performed inside a named function this file lists because each one was
+       read and verified. A scope PRIMITIVE only counts inside a real `.from(`
+       QUERY: that is the difference between a predicate and a mention, and it
+       is exactly what delivery-orders-mfg PATCH /:id exploited by accident. */
+    const delegated = DELEGATION_GUARDS.some((h) => joined.includes(h));
+    const hasScopedQuery = scanBody.some((l, i) => {
+      if (!l.includes(".from(")) return false;
+      const stmt = statementAround(i);
+      return SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
+    });
+    if (delegated || hasScopedQuery) return;
+
+    /* Statement-level hit collection is deliberately NOT used to decide the
+       verdict — this codebase wraps builders across many lines and a regex
+       window over them mis-slices, which flagged six handlers I had already
+       verified correct by hand. The window is good enough to LABEL a hit as a
+       write; it is not good enough to acquit one. */
     const hits = [];
     scanBody.forEach((l, i) => {
-      if (ID_PREDICATE.test(l) && /\.from\(|\.update\(|\.delete\(|\.select\(/.test(joined)) {
-        const abs = scanOffset + i;
-        hits.push({ line: abs + 1, text: (raw[abs] ?? "").trim().slice(0, 110) });
-      }
+      if (!ID_PREDICATE.test(l)) return;
+      const stmt = statementAround(i);
+      if (!/\.from\(/.test(stmt)) return;
+      const abs = scanOffset + i;
+      hits.push({
+        line: abs + 1,
+        text: (raw[abs] ?? "").trim().slice(0, 110),
+        writes: /\.update\(|\.delete\(|\.insert\(|\.upsert\(/.test(stmt),
+      });
     });
     if (!hits.length) return;
 
-    const writes = /\.update\(|\.delete\(|\.insert\(|\.upsert\(/.test(joined);
+    /* An explicit annotation still silences a handler — but ONLY now, after the
+       statement test has something to say. Kept after the hit-collection so an
+       annotated handler that later grows a NEW unscoped statement is not
+       silently covered by an old exemption... it is. Noted honestly: the
+       annotation is per-handler, so re-read it when adding a statement. */
+    const writes = hits.some((h) => h.writes);
     findings.push({
       file: `backend/src/scm/routes/${file}`,
       handler: `${method} ${routePath}`,

@@ -836,9 +836,22 @@ export async function recomputePoReceived(
       const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
       recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + Math.max(0, net));
     }
-    await Promise.all([...recvByPoi.entries()].map(([poiId, recv]) =>
+    /* CHECK THE WRITES. The 2026-07-31 change described above made this function
+       RETURN its outcome, and the outcome was still computed from nothing: both
+       updates here discarded `{ data, error }`, and supabase-js RESOLVES on a
+       rejected write rather than throwing — so a row refused by a constraint or
+       a policy never reached the catch below, and the function returned
+       { ok: true }. postGrnAndRollup then reported `recountError: undefined`.
+       That is worse than the original swallow: the channel exists and says the
+       recount succeeded. The eleven POs named above are what this looks like in
+       production. */
+    const itemWrites = await Promise.all([...recvByPoi.entries()].map(([poiId, recv]) =>
       sb.from('purchase_order_items').update({ received_qty: recv }).eq('id', poiId),
     ));
+    const itemErr = itemWrites.find((r: { error?: { message?: string } | null }) => r?.error);
+    if (itemErr) {
+      return { ok: false, reason: `received_qty write failed: ${itemErr.error?.message ?? 'unknown'}` };
+    }
 
     // 2. Re-evaluate each touched PO's status from its (now-recounted) lines.
     const { data: poiRows } = await sb.from('purchase_order_items')
@@ -859,7 +872,14 @@ export async function recomputePoReceived(
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       // Stamp received_at on first full receipt, preserve it if already set, clear on regression.
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
-      await sb.from('purchase_orders').update(patch).eq('id', poId).neq('status', 'CANCELLED');
+      // Checked for the same reason as the received_qty writes above: an
+      // unchecked status write let the PO stay RECEIVED (or stay SUBMITTED)
+      // while this function reported a clean recount.
+      const { error: poErr } = await sb.from('purchase_orders')
+        .update(patch).eq('id', poId).neq('status', 'CANCELLED');
+      if (poErr) {
+        return { ok: false, reason: `PO status write failed for ${poId}: ${poErr.message ?? 'unknown'}` };
+      }
     }
     return { ok: true };
   } catch (e) {

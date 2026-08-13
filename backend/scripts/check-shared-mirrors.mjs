@@ -129,7 +129,19 @@ function exportedBodies(text) {
         "every shared function is identical" — about an empty set. so-field-policy
         (392 vs 216 lines) and payment-methods (80 vs 33) both passed that way.
         A verdict computed over nothing must never read as a pass. */
-  for (const m of text.matchAll(/export\s+const\s+([A-Za-z_$][\w$]*)(?::[^=]*)?=\s*/g)) {
+  /* `\s*` BEFORE the `=` — its absence is why this branch matched only
+     TYPE-ANNOTATED consts. `export const X: T = …` matched (the annotation ate
+     the space); `export const fmtMoney = (n) => …` did NOT, because the pattern
+     demanded `fmtMoney=` with no gap. So `format` and `maintenance-pools`
+     reported NO-OVERLAP while sharing 8 and 9 exported symbols.
+
+     THIRD dead pattern in this repo's checkers in one day. The other two had a
+     startup self-test; THIS FILE HAD NONE — which is why it shipped. One is
+     added below, and it deliberately exercises the form the pattern is most
+     likely to MISS (the un-annotated arrow), not the form it was written
+     against. A self-test that only asserts the case you had in mind is a self-
+     test that passes for the same reason the bug exists. */
+  for (const m of text.matchAll(/export\s+const\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=\s*/g)) {
     const at = m.index + m[0].length;
     const arrow = text.slice(at).match(/^(?:async\s*)?\([^)]*\)\s*(?::[^=]*?)?=>\s*/);
     let body = null;
@@ -146,6 +158,28 @@ function exportedBodies(text) {
   return out;
 }
 
+/* SELF-TEST. This file previously had none, and that is exactly how it shipped
+   a pattern that extracted only TYPE-ANNOTATED consts — so nine of thirteen
+   pairs compared ZERO functions and the script printed "every shared function
+   is identical" about an empty set. Refuse to report from a pattern that cannot
+   see the forms this codebase actually writes. */
+{
+  const seen = exportedBodies(
+    "export const fmtMoney = (n: number): string => `RM${n}`;\n" +
+      "export const writeFailed = (e: unknown): void => { void e; };\n" +
+      "export const CORE: readonly string[] = ['a'];\n" +
+      "export function plain(a) { return a; }\n" +
+      "export async function later(a) { return a; }\n",
+  );
+  const missing = ["fmtMoney", "writeFailed", "CORE", "plain", "later"].filter((k) => !seen.has(k));
+  if (missing.length) {
+    console.error(
+      `check-shared-mirrors: self-test FAILED - these exports were not extracted: ${missing.join(", ")}. Not reporting.`,
+    );
+    process.exit(2);
+  }
+}
+
 const rows = [];
 for (const f of fs.readdirSync(BE).filter(isRule)) {
   const base = f.replace(/\.ts$/, "");
@@ -159,7 +193,16 @@ for (const f of fs.readdirSync(BE).filter(isRule)) {
   const beFn = exportedBodies(beText);
   const feFn = exportedBodies(feText);
   const shared = [...beFn.keys()].filter((k) => feFn.has(k));
-  const differing = shared.filter((k) => beFn.get(k) !== feFn.get(k));
+  /* An EXPLAINED divergence is silenced with `mirror-ok: <fn> - <reason>` in the
+     FRONTEND copy. Deliberately per-function and deliberately not a loosening of
+     the comparison: cellEdges differs only by an `| undefined` annotation that
+     the vendored file already explains (2990's tsconfig sets
+     noUncheckedIndexedAccess and Houzs's does not), and stripping type
+     annotations to hide it would also hide a real signature change. Naming the
+     function is the cost of the exemption. */
+  const differing = shared
+    .filter((k) => beFn.get(k) !== feFn.get(k))
+    .filter((k) => !new RegExp(`mirror-ok:\\s*${k}\\b`).test(feText));
 
   rows.push({
     base,

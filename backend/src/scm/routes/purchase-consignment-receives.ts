@@ -46,7 +46,7 @@ purchaseConsignmentReceives.use('*', supabaseAuth);
    Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
    (recompute-from-live) and flips the receive to POSTED; the inventory IN is then
    booked by resyncReceiveInventory (called at the end of this helper). */
-async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true } | { ok: false; reason: string; status?: number }> {
+async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true; recountError?: string } | { ok: false; reason: string; status?: number }> {
   const { data: items } = await sb.from('purchase_consignment_receive_items')
     .select('pc_order_item_id')
     .eq('pc_receive_id', receiveId);
@@ -54,7 +54,10 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // Recount received_qty + re-evaluate PC Order status from live receive lines.
   const touchedPcoItemIds = (items ?? [])
     .map((it: { pc_order_item_id: string | null }) => it.pc_order_item_id);
-  await recomputePcoReceived(sb, touchedPcoItemIds);
+  /* Carried, not discarded — the counterpart postGrnAndRollup returns its
+     recountError and this one dropped it, so a PC Order could keep a stale
+     received_qty while the receive reported a clean post. */
+  const recount = await recomputePcoReceived(sb, touchedPcoItemIds);
 
   // Receives are created POSTED directly; this is idempotent on already-POSTED
   // rows (matches any non-CLOSED status). The inventory IN is booked by the
@@ -72,7 +75,7 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // + best-effort).
   try { await resyncReceiveInventory(sb, receiveId, null); } catch { /* best-effort */ }
 
-  return { ok: true };
+  return recount.ok ? { ok: true } : { ok: true, recountError: recount.reason };
 }
 
 /* ── resyncReceiveInventory — self-healing IN ledger for a PC Receive ──────────
@@ -328,9 +331,20 @@ async function verifyPcReceiveOverReceipt(
    sum of qty_accepted (net of returned_qty) across ALL live (non-cancelled)
    receive lines that point at it, then re-evaluate the parent PC Order's status.
    No inventory is touched. Never resurrects a CANCELLED PC Order. Best-effort. */
-export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | null | undefined>) {
+/* Reports its outcome, the way recomputePoReceived does.
+   It used to return void and only console.error, so the PC lane never received
+   the 2026-07-31 upgrade that followed eleven POs sitting with their goods in
+   the warehouse and received_qty untouched for seventeen days — the only trace
+   being a console line in an ephemeral Worker log. Both writes below are now
+   CHECKED for the same reason the PO twin's are: supabase-js RESOLVES on a
+   rejected write instead of throwing, so an unchecked failure never reaches the
+   catch and the function would report a recount that never happened. */
+export async function recomputePcoReceived(
+  sb: any,
+  pcoItemIds: Array<string | null | undefined>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const ids = [...new Set(pcoItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return { ok: true };
 
   try {
     const { data: rlines } = await sb.from('purchase_consignment_receive_items')
@@ -351,9 +365,13 @@ export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | n
       const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
       recvByPcoi.set(r.pc_order_item_id, (recvByPcoi.get(r.pc_order_item_id) ?? 0) + Math.max(0, net));
     }
-    await Promise.all([...recvByPcoi.entries()].map(([pcoiId, recv]) =>
+    const itemWrites = await Promise.all([...recvByPcoi.entries()].map(([pcoiId, recv]) =>
       sb.from('purchase_consignment_order_items').update({ received_qty: recv }).eq('id', pcoiId),
     ));
+    const itemErr = itemWrites.find((r: { error?: { message?: string } | null }) => r?.error);
+    if (itemErr) {
+      return { ok: false, reason: `received_qty write failed: ${itemErr.error?.message ?? 'unknown'}` };
+    }
 
     // Re-evaluate each touched PC Order's status from its (now-recounted) lines.
     const { data: pcoiRows } = await sb.from('purchase_consignment_order_items')
@@ -373,10 +391,16 @@ export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | n
       const prevReceivedAt = (head as { received_at: string | null } | null)?.received_at ?? null;
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
-      await sb.from('purchase_consignment_orders').update(patch).eq('id', pcoId).neq('status', 'CANCELLED');
+      const { error: pcoErr } = await sb.from('purchase_consignment_orders')
+        .update(patch).eq('id', pcoId).neq('status', 'CANCELLED');
+      if (pcoErr) {
+        return { ok: false, reason: `PC order status write failed for ${pcoId}: ${pcoErr.message ?? 'unknown'}` };
+      }
     }
+    return { ok: true };
   } catch (e) {
     console.error('[recomputePcoReceived] best-effort recount failed', { pcoItemIds: ids, error: e });
+    return { ok: false, reason: (e as Error)?.message ?? 'recount threw' };
   }
 }
 
@@ -933,7 +957,11 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   const res = await postPcReceiveAndRollup(sb, id);
   if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
   const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).single();
-  return c.json({ receive: data });
+  /* recountError surfaced, matching the GRN post which returns the same field.
+     The receive IS posted — a stale received_qty on the parent PC Order must not
+     un-post it — but the operator and /inventory/reconcile now learn that the
+     roll-up did not land, instead of a clean 200 hiding it. */
+  return c.json({ receive: data, ...(res.recountError ? { recountError: res.recountError } : {}) });
 });
 
 /* ── PATCH /:id/cancel — cancel a PC Receive ────────────────────────────────

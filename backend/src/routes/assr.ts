@@ -37,6 +37,7 @@ import {
   allowedCompanyIds,
   allowedCompaniesSql,
   activeCompanyId,
+  type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
@@ -127,8 +128,17 @@ function requireServiceCaseAccess(
 // "" / [] / undefined when the companies master is unresolved (pre-migration /
 // D1 test mirror / cold-start), so legacy single-company SQL runs unchanged.
 //
-// Exported for backend/tests/assrCompanyScope.test.ts.
-export function assrCompanySql(c: Context<any>, col = "company_id"): string {
+/* Exported for backend/tests/assrCompanyScope.test.ts AND for routes/search.ts,
+   which used to keep its own copy. That copy still applied the HOUZS pin removed
+   here on 2026-07-20, so global search and /api/assr answered the same rep
+   differently. Sharing the function is what stops that recurring; a comment
+   asking two files to agree is not a mechanism.
+
+   Typed CompanyScopeCtx rather than Context<any> for the same reason
+   companyScope.ts gives for its own helpers: what this needs from a context is
+   a `get`, and demanding a whole Hono Context makes it request-only, which is
+   what pushes callers into re-implementing it locally. */
+export function assrCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   return allowedCompaniesSql(c, col);
 }
 // `number[] | undefined` — `undefined` = company context unresolved (degrade to

@@ -102,15 +102,19 @@ check leaves the PR pending forever.
 Three dependency-free checks (they run in a fresh worktree with no
 `node_modules`). Full story in `docs/one-sided-rules-coe.md`.
 
-**Their HEADLINE metrics are at zero as of 2026-08-13 — that is not the same as
-"nothing left".** Stated precisely, because an over-claim here is exactly the
-kind of thing this file exists to stop: 0 unscoped WRITES (6 read-side findings
-remain), 0 SILENT mutations (53 UNRESOLVED ones are listed for a human), 0
-DIVERGED rule pairs (2 pairs share no symbols and were NOT compared). Each
-script prints its own buckets — read them, do not read this paragraph.
+**Run them; do not quote a number from this file.** An earlier version of this
+paragraph said all three were "at ZERO", and that was wrong — not because the
+code changed but because `check-company-scope.mjs` was. It counted a handler as
+scoped when a helper NAME appeared anywhere in its body, so
+`delivery-orders-mfg PATCH /:id` passed while writing `update(updates).eq('id',
+id)` with no predicate, on the strength of an `activeCompanyId(c)` twenty lines
+LATER inside an audit field. Two independent readers found that handler while
+the script reported zero. It now requires the helper to sit inside a real
+`.from(` QUERY, and the honest count went 0 → 20 unscoped writes.
 
-**On `origin/main` today those numbers are 33 unscoped writes and 41 silent
-mutations.** The fixes live on `fix/company-scope-sweep`, unmerged.
+That is the third dead-or-too-loose pattern found in these checkers in one day.
+Treat their output as evidence, and this sentence as a pointer to where the
+evidence lives.
 
 ```
 node backend/scripts/check-company-scope.mjs     # 632 SCM handlers: rows touched by id with no company predicate

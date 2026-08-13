@@ -26,7 +26,7 @@ are its labels, not disjoint sets.
 
 | cluster | artifact count | status |
 |---|---|---|
-| cross-company scope | 56 (27 high) | **DONE** — scanner built; WRITE findings 25 → 0; 6 read findings remain, each judged; PR-gated in CI |
+| cross-company scope | 56 (27 high) | **REOPENED 2026-08-13** — the scanner was too loose (see §I). Honest count is now **20 unscoped WRITES, 18 reads**, not 0. 13 handlers fixed and verified so far; the rest are listed by the script |
 | permission / access gate | 11 (4 high) | 3 HIGH **DONE**, 4 **OPEN** (§C) |
 | money / quantity arithmetic | 47 (12 high) | 3 **DONE** incl. the top HIGH, 3 **OPEN** (§B) |
 | silent failure | 33 (5 high) | frontend 35 → 0 **DONE**; backend 2 CRITICAL **DONE**, 7 **OPEN** (§D) |
@@ -103,3 +103,43 @@ quantity invariants, lock predicates).
 On `origin/main` **today**: 33 unscoped cross-company WRITES, 41 silent mutations.
 On this branch: 0 and 0. The three checkers are now PR-gated in `ci.yml`; before
 this branch they existed nowhere and were wired into nothing.
+
+---
+
+## I. The checker was wrong, twice over — corrected 2026-08-13
+
+**What it did.** A handler counted as scoped when a helper NAME appeared
+anywhere in its body — `joined.includes("activeCompanyId")`. That is a substring
+match, not a proof.
+
+**What it let through.** `delivery-orders-mfg.ts PATCH /:id` (`:4296`) writes
+`update(updates).eq('id', id)` at `:4411` with no company predicate. Its only
+`activeCompanyId(c)` is at `:4432` — AFTER the write, as a fallback for an audit
+row's companyId field. Two independent readers found the handler while this
+script reported **0 WRITE findings**.
+
+**The correction, and why it took three attempts.**
+
+1. Per-statement testing → **161 writes flagged**. Too strict: the repo's normal
+   and correct pattern is to resolve a row through one scoped read and then act
+   on the id it returned.
+2. Statement + "a scoped query appears earlier" → **118**. Still flagged six
+   handlers already verified correct by hand, because the statement window
+   anchored on `.from(` and this codebase wraps builders across lines —
+   `scopeToCompanyId(` sits on the line BEFORE.
+3. Final: DELEGATION guards (named functions whose body does the scoped read)
+   count wherever they appear; scope PRIMITIVES only count inside a real `.from(`
+   query; the statement window anchors on the statement opener, not on `.from(`.
+   **38 findings, 20 writes**, every hand-verified handler excused, the real leak
+   caught.
+
+**Honest count: 20 unscoped writes remain, not 0.** The CI step is report-only
+until they reach zero — gating on a backlog fails every PR and gets the gate
+deleted, which is how the previous generation of checks died.
+
+**The lesson, now in CLAUDE.md.** Three of this repo's checkers were wrong in
+one day: a lost `\s`/`\b` made one scan the wrong function bodies; a missing
+`\s*` made another compare zero functions and print "identical" about an empty
+set; and this one accepted a mention as a predicate. Each looked like a clean
+run. **A checker's failure mode is silence, so the only trustworthy number is
+one you re-derive after reading its logic.**
