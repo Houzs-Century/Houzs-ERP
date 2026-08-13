@@ -308,6 +308,41 @@ Resolving one of these by hand also demonstrated the treadmill: the fix was
 pushed, and `main` had moved again before GitHub finished recomputing. Manual
 resolution does not converge while the base branch is live.
 
+### The half of this that does NOT work — read before relying on it
+
+**GitHub's server side does not honour `.gitattributes merge=union`.** Tested
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`:
+
+```
+$ git merge origin/main          # local, in a worktree
+   0 unresolved files            # union applied, clean
+
+$ gh pr update-branch 1905
+   X Cannot update PR branch due to conflicts
+```
+
+Same two commits, opposite answers. The attribute is applied by the git that
+performs the merge, and the "Update branch" button is GitHub's git, which reads
+its own configuration and not the repository's.
+
+So the fix is real but its reach is narrower than it looks:
+
+| how the branch is updated | union applies |
+| --- | --- |
+| `git merge origin/main` locally, then push | **yes** |
+| GitHub's *Update branch* button / `gh pr update-branch` | **no** |
+
+**The practical consequence:** when a PR is behind and its only conflict is
+`BUG-HISTORY.md`, do not press *Update branch* — it will refuse. Merge `main`
+into the branch locally and push. The union driver resolves the ledger on the
+way through and the push lands a branch GitHub then sees as clean.
+
+This was initially reported here as working server-side, on the strength of a
+local `git merge-tree` returning no conflict. That was local git applying the
+attribute, being mistaken for GitHub's behaviour — the same shape of error as
+the `391ms` and merge-queue mistakes recorded above: a local observation read as
+a platform guarantee.
+
 ## The fix that switched off its own alarm
 
 The worst thing found all day was caused by the work itself, and it was found by
