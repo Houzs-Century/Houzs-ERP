@@ -295,7 +295,10 @@ const STATUS_CLASS: Record<string, string> = {
    used in commander's vocabulary. Underlying enum values stay (no schema
    migration) — only the display label maps. Mapping:
      CONFIRMED      → Confirmed   (订单已经 Confirm)
-     IN_PRODUCTION  → Proceed     (已经 Proceed — processing_date set)
+     IN_PRODUCTION  → Proceed     (已经 Proceed — Processing Date set, i.e.
+                                   internal_expected_dd, the one storage this
+                                   concept has; NOT the retired processing_date
+                                   column)
      READY_TO_SHIP  → Stock Ready (stock 已经 ready)
      SHIPPED        → Arranged    (已经安排送货)
      DELIVERED      → Delivered   (已经 deliver)
