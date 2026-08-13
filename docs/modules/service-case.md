@@ -407,6 +407,20 @@ Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 `assrCreateCompanyId` (`:124`), and an SO-attached case inherits the SO's own
 company (`createAssrCase`).
 
+**The PRINTABLE route was the exception, until 2026-08-13.**
+`backend/src/routes/assr_print.ts` GET `/:id` was guarded by
+`requirePermission("service_cases.read")` and nothing else, while
+`getAssrDetail`'s SQL is `WHERE c.id = ?` with no company predicate at all — so
+it rendered ANY company's service case, as a document with letterhead, to anyone
+holding the read permission. **A permission says what you may do, never whose.**
+PR #2086 applied `allowedCompanyIds(c)` there with the same semantics the JSON
+detail route documents, and the distinction matters: an **UNRESOLVED** scope
+(`undefined` — pre-migration / the D1 test mirror) skips the check, while an
+**EMPTY** scope means the caller is granted no active company and every
+company-stamped case must 404. Those two used to share `[]`, and the merged state
+failed open. Out-of-scope answers 404, indistinguishable from a missing id. See
+BUG-HISTORY, *"The writes the read-hardening audit left"*.
+
 **The PRINT route applies both halves too (2026-08-14).**
 `GET /api/assr-print/:id` (`routes/assr_print.ts`) emits the same case content as
 the JSON detail route, as a letterheaded document. It had the company check and
