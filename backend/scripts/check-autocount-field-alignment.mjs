@@ -124,7 +124,15 @@ function alignment(rows, read, alt, map, { fatal }) {
       out.nulledValues.set(k, (out.nulledValues.get(k) ?? 0) + 1);
     }
   }
-  out.broken = out.bothBlank + out.readBlankAltSet + out.nulled;
+  /* WHAT COUNTS AS A LOSS DEPENDS ON WHICH WAY THE FIELD FAILS.
+     On a FATAL field an empty value is not "nothing to send" — it is sent, as
+     "", and it fails a foreign key, so an order with no value anywhere is just
+     as dead as one whose value the map dropped. On a UDF, blank everywhere means
+     the ERP genuinely has nothing and nothing is lost by not sending it; only a
+     value the ERP HOLDS and the composer does not read is a loss. Counting
+     those two the same way is how a report turns an empty column into a
+     scandal, or a scandal into a footnote. */
+  out.broken = out.readBlankAltSet + out.nulled + (fatal ? out.bothBlank : 0);
   out.fatal = fatal;
   return out;
 }
@@ -176,8 +184,12 @@ try {
   const say = (label, a, howItFails) => {
     notice(
       `${label}: ${a.broken} of ${a.total} would ${a.fatal ? "FAIL" : "be LOST"} — ` +
-        `${a.readBlankAltSet} blank-here-but-set-elsewhere, ${a.bothBlank} blank everywhere, ` +
-        `${a.nulled} carry a value the map turns into null. ${howItFails}`,
+        `${a.readBlankAltSet} blank here but set in the other column, ` +
+        `${a.nulled} carry a value the map turns into null` +
+        (a.fatal
+          ? `, ${a.bothBlank} blank everywhere (still fatal — "" is sent either way). `
+          : ` (a further ${a.bothBlank} are blank everywhere, so there is nothing to lose). `) +
+        howItFails,
     );
     if (a.nulledValues.size) {
       notice(`  values the map nulls (${a.nulledValues.size} distinct): ${top(a.nulledValues)}`);
