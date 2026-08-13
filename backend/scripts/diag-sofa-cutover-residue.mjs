@@ -71,6 +71,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,6 +82,9 @@ const LIST = process.env.LIST !== "0";
 const CAP = Number(process.env.CAP || 25);
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const modelOf = (code) => { const c = norm(code); const d = c.indexOf("-"); const b = d < 0 ? c : c.slice(0, d); return SOFA_MODEL_ALIAS[b] || b; };
@@ -138,7 +142,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe', 'sofa')
-       AND h.internal_expected_dd IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   /* Sections B/C/D need EVERY sofa/bedframe SO line, proceeded or not, because

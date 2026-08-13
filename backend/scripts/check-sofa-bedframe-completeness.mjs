@@ -41,6 +41,7 @@ import { missingVariantAxes } from "./lib/variant-axes.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { K, mapPhrase as mapSofaPhrase, skey } from "./lib/sofa-special-map.mjs";
 import { mapSpecial as mapBedframeSpecial } from "./lib/bedframe-special-map.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -49,6 +50,9 @@ const LIST = process.env.LIST !== "0";
 const CAP = Number(process.env.CAP || 25); // per-cell detail cap
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const txt = (v) => (v === undefined || v === null ? "" : String(v).trim());
@@ -184,7 +188,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.internal_expected_dd IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, dead: r.cancelled ? "CANCELLED line" : null }));
 
   for (const [pop, rows] of [["PO", poRows], ["SO", soRows]]) {
