@@ -253,4 +253,12 @@ if (jsonOut) {
   }
 }
 
-process.exit(strict && findings.length ? 1 : 0);
+/* --strict gates on the WRITE findings only.
+   A cross-company WRITE corrupts the other company's data; a read-side finding
+   is a disclosure and often a deliberate cross-company surface, so gating a PR
+   on the raw count would fail on legitimate code — and a gate that cries wolf is
+   a gate someone switches off. The read findings are still printed above.
+   Sibling checks make the same split: check-silent-mutations gates on SILENT
+   (not CAUGHT/UNRESOLVED), check-shared-mirrors on DIVERGED (not COSMETIC). */
+const writeFindings = findings.filter((f) => f.writes).length;
+process.exit(strict && writeFindings ? 1 : 0);

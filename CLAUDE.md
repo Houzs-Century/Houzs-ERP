@@ -100,8 +100,17 @@ check leaves the PR pending forever.
 ## ⚠️ Run the audit scripts — they answer questions no doc can
 
 Three dependency-free checks (they run in a fresh worktree with no
-`node_modules`). All three are at ZERO as of 2026-08-13; a non-zero result is a
-finding, not noise. Full story in `docs/one-sided-rules-coe.md`.
+`node_modules`). Full story in `docs/one-sided-rules-coe.md`.
+
+**Their HEADLINE metrics are at zero as of 2026-08-13 — that is not the same as
+"nothing left".** Stated precisely, because an over-claim here is exactly the
+kind of thing this file exists to stop: 0 unscoped WRITES (6 read-side findings
+remain), 0 SILENT mutations (53 UNRESOLVED ones are listed for a human), 0
+DIVERGED rule pairs (2 pairs share no symbols and were NOT compared). Each
+script prints its own buckets — read them, do not read this paragraph.
+
+**On `origin/main` today those numbers are 33 unscoped writes and 41 silent
+mutations.** The fixes live on `fix/company-scope-sweep`, unmerged.
 
 ```
 node backend/scripts/check-company-scope.mjs     # 632 SCM handlers: rows touched by id with no company predicate

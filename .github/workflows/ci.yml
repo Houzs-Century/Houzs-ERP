@@ -67,6 +67,23 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # ── The three defect-class checks (2026-08-13) ────────────────────────
+      # Each exists because the same class kept coming back. They are PR gates,
+      # NEVER deploy gates: audit:routes as a deploy gate jammed production
+      # twice, and a check that can block a release is a check someone disables.
+      #
+      # --strict fails on the HEADLINE bucket only, on purpose:
+      #   company-scope   -> WRITE findings (read-side ones are listed, not gated)
+      #   silent-mutations-> SILENT (CAUGHT and UNRESOLVED are listed, not gated)
+      #   shared-mirrors  -> DIVERGED (COSMETIC and NO-OVERLAP are listed)
+      # Gating on the raw counts would fail on legitimate code and get switched
+      # off, which is how the previous generation of checks died.
+      #
+      # No `npm ci` needed for the frontend one: all three are dependency-free
+      # (node:fs / node:path only) so they run before any install.
+      - run: node scripts/check-company-scope.mjs --strict
+      - run: node scripts/check-shared-mirrors.mjs --strict
+      - run: node ../frontend/scripts/check-silent-mutations.mjs --strict
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single

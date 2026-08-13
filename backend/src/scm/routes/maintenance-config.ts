@@ -307,8 +307,29 @@ maintenanceConfig.post('/changes', createChangeHandler);
 // which atomically renames the compartment code text across the SKU
 // master, every doc-line snapshot, Modular allowed-options, combos, quick
 // picks, in-flight carts and the maintenance config blobs themselves.
-// Admin-gated inside the function (is_admin()); 403 surfaces here.
+/* GATED HERE, and it was not.
+   This comment used to read "Admin-gated inside the function (is_admin()); 403
+   surfaces here." It is not, and the migration that ported the function says so
+   in the opposite direction — scripts/scm-schema/port-missing-functions-triggers.sql:165:
+
+     "The 2990 body opens with `IF NOT is_admin() THEN RAISE forbidden`. scm has
+      no is_admin()/auth machinery ... The admin gate now lives in the
+      route/RBAC layer - the DB-level gate is dropped here ... (Behaviour
+      change - flagged.)"
+
+   The DB handed the gate to the route; the route believed the DB still had it;
+   nobody wrote one. So this handler - which renames a compartment code across
+   the SKU master, EVERY historical doc-line snapshot, Modular allowed-options,
+   combos, quick picks and in-flight carts, irreversibly - opened straight at
+   c.req.json() while its two siblings in this same file (POST /changes:237,
+   DELETE /changes/:id:347) both check canWriteScmConfig.
+
+   The `42501 -> 403` branch below is dead for the same reason: service-role
+   client, RLS bypassed, and the RAISE was removed with the gate. */
 maintenanceConfig.post('/sofa-compartments/rename', async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to rename a compartment code." }, 403);
+  }
   let body: { from?: string; to?: string };
   try {
     body = (await c.req.json()) as typeof body;
