@@ -395,7 +395,10 @@ describe('a HALF-cancelled sofa build is refused, never half-retired', () => {
       compartment('9028-1A(RHF)'),
     ], sofaOpts);
     expect(p.Lines).toHaveLength(1);
-    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801, ItemCode: 'AC-SOFA-9028' });
+    expect(p.Lines[0]).toMatchObject({ DtlKey: 8801 });
+    /* The item is AutoCount's on a line it already holds — see the edit rule in
+       composeEdit. The key is how the line is addressed; the item is not resent. */
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
     expect((p.Lines[0] as { Retire?: boolean }).Retire).toBeUndefined();
   });
 });
@@ -481,11 +484,25 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
     expect(defaultChosen[0]).toBe(true);
   });
 
-  test('a code read off the BOOK is still sent on an edit — a real swap must propagate', () => {
+  test('an ordinary line the book owns keeps its item too — not just the sofas', () => {
     const p = composeEdit('SO', 'SO-000021', {}, [
       { item_code: 'AKEMI APEX MATT (SP)', description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 55 },
     ], real);
     expect(p.Lines[0].DtlKey).toBe(55);
-    expect(p.Lines[0].ItemCode).toBe('AK-APEX MATT (SP)');
+    expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
+  });
+
+  test('a swap still propagates, because a swap is a DELETE plus an ADD', () => {
+    /* The removed row arrives in `retired` and is zeroed; the added row has no
+       DtlKey, so it keeps its ItemCode and is appended. This is the path that
+       makes dropping the in-place item safe. */
+    const p = composeEdit('SO', 'SO-000021', {}, [
+      { id: 'new-1', item_code: 'AKEMI ARISTOI MATT (SP)', description: 'M2', qty: 1, unit_price_centi: 100 },
+    ], { ...real, newLineIds: new Set(['new-1']) }, [{ DtlKey: 55, ItemCode: 'AK-APEX MATT (SP)' }]);
+    const added = p.Lines.find((l) => l.DtlKey == null);
+    expect(added?.ItemCode).toBe('AK-ARISTOI MATT (SP)');
+    expect((added as { IsNewLine?: true }).IsNewLine).toBe(true);
+    const gone = p.Lines.find((l) => l.DtlKey === 55);
+    expect((gone as { Retire?: true }).Retire).toBe(true);
   });
 });

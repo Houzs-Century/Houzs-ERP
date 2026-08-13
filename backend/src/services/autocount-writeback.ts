@@ -631,7 +631,7 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  const { details, collapsed, defaultChosen } = composeDetails(lines, opts);
+  const { details, collapsed } = composeDetails(lines, opts);
   /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
      line has one DtlKey, and a sofa build's compartments only carry line
      identity when every one of them holds the same key — anything else
@@ -672,24 +672,25 @@ export function composeEdit(
       return line;
     }
     if (dtlKey == null) return d;
-    /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT OVERWRITTEN — the same rule
-     * Location runs under, applied to the item itself.
+    /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
+     * Location runs under, applied to the item itself. Owner 2026-08-13: an
+     * edit to an order that came in through the API changes its Description 2,
+     * never its SKU.
      *
-     * When the ItemCode came from the STANDING CHOICE, the ERP did not read it
-     * off the account book; it picked one by policy because a sales order names
-     * no brand. On a line AutoCount ALREADY HOLDS, that guess is not new
-     * information and the book's own value is the truth. Sending it rewrites
-     * history: measured 2026-08-13, 194 real sofa lines are held under the two
-     * brand items the cutover collapsed, and an edit to any of those orders
-     * would have moved them onto the canonical code — silently, in a licensed
-     * ledger. Omitting the key leaves them exactly as they are.
+     * The ERP's answer for these codes is a POLICY, not a reading of the book.
+     * A sales order does not know the brand, so four sofa models resolve to one
+     * canonical item — right for a new order, wrong for the 194 real lines the
+     * book already holds under the two brand items the cutover collapsed. An
+     * edit that sent the canonical code would move every one of them, silently,
+     * in a licensed ledger.
      *
-     * A code resolved from the book (direct, sofa-model, binding) still goes,
-     * so genuinely swapping the product on a line still propagates. */
-    const { ItemCode, ...rest } = d;
-    return defaultChosen[i]
-      ? { ...rest, DtlKey: dtlKey } as AcEditLine
-      : { ...d, DtlKey: dtlKey };
+     * Swapping the product on a line still propagates, because that is a DELETE
+     * plus an ADD: the removed row arrives in `retired` and is zeroed, and the
+     * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
+     * an in-place item change on a line the book owns is dropped, and the ERP
+     * has no such operation. */
+    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a
