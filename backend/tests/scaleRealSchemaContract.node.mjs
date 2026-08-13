@@ -77,23 +77,31 @@ test("PR CI executes and retains the full 100k PostgreSQL evidence run", async (
 // binary and leaves vitest unsharded: every runner executing the whole suite,
 // green, at several times the wall time sharding exists to remove.
 //
-// The carrier changed. `test` is now `test:light && test:workers` (the pure-
-// logic project plus the Workers-pool one) and is deliberately NOT what CI
-// shards; ci.yml shards `test:workers`, which is the single command. The
-// invariant is unchanged — only the script it applies to.
+// The CARRIER KEEPS CHANGING and the invariant does not. It was `test`; #2131
+// made that an `&&` chain and moved CI to `test:workers`; the coverage ratchet
+// moved it again to `test:coverage:workers` (same single command, `--coverage`
+// added). Each time, a guard naming the script failed on a change that
+// satisfied the rule perfectly — and this one gates `pretest`, so a false
+// failure takes `npm test`, and deploy.yml's backend suite, down with it.
+//
+// So: read the script name OUT OF ci.yml and assert THAT script is a single
+// command. The next rename needs no edit here, and a real `&&` in any carrier
+// still fails.
 test("the sharded backend script stays a single command so CI sharding still reaches vitest", async () => {
   const pkg = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
-  assert.equal(pkg.scripts["test:workers"], "vitest run");
-  assert.ok(
-    !pkg.scripts["test:workers"].includes("&&"),
-    "test:workers must stay a single command — CI appends --shard to it",
-  );
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(
-    workflow,
-    /npm run test:workers -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/,
+  const sharded = workflow.match(
+    /npm run ([\w:-]+) -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/,
+  );
+  assert.ok(sharded, "ci.yml must shard the backend suite with `npm run <script> -- --shard=i/n`");
+  const script = pkg.scripts[sharded[1]];
+  assert.ok(script, `ci.yml shards \`${sharded[1]}\`, which backend/package.json does not define`);
+  assert.ok(
+    !script.includes("&&"),
+    `ci.yml shards \`${sharded[1]}\` = "${script}". npm appends --shard to the LAST command, ` +
+      `so an && chain leaves vitest unsharded and every runner executes the whole suite.`,
   );
 });
 

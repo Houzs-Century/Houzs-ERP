@@ -7,6 +7,12 @@ import {
 import { defineConfig } from "vitest/config";
 import { classifyTests } from "./scripts/lib/classify-tests.mjs";
 
+// The ratcheted areas, from the ONE list the gate also reads. Deriving
+// coverage.include from it is what stops the gate auditing a directory vitest
+// never instrumented — the failure mode where a shrinking denominator reads as
+// a RISING percentage.
+import { includeGlobsFor } from "../scripts/coverage-areas.mjs";
+
 // Wires vitest into the Cloudflare Workers runtime. Each test file gets
 // its own isolated D1 instance with the same schema as production
 // (schema.sql baseline + migrations under src/db/migrations applied at
@@ -116,6 +122,25 @@ export default defineConfig(async () => {
       // workerd coordinator cannot hit the RPC starvation cliff seen in CI.
       fileParallelism: false,
       maxWorkers: 1,
+      // ISTANBUL, NOT V8, and that is not a preference: the Workers runtime has
+      // no functional `node:inspector`, so the v8 provider cannot collect
+      // anything here and the pool refuses it outright with that message.
+      //
+      // `all: true` is the load-bearing flag. Without it a file no test imports
+      // is absent from the report entirely, so the denominator is only the
+      // tested files and the percentage reads far higher than the truth. The
+      // gate cross-checks the report against the tree and FAILS if a file on
+      // disk is missing from it, so turning this off is caught rather than
+      // silently rewarded.
+      //
+      // Enabled only when --coverage is passed; a plain `npm test` pays nothing.
+      coverage: {
+        provider: "istanbul",
+        all: true,
+        include: includeGlobsFor("backend", "backend"),
+        reporter: ["text-summary", "json"],
+        reportsDirectory: "./coverage/workers",
+      },
     },
   };
 });
