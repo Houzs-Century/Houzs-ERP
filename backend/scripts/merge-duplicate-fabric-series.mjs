@@ -308,18 +308,36 @@ async function main() {
      question that decides whether a merge is safe to apply. Answer it colour by
      colour, across all four document arms, before writing anything. */
   const keysOf = new Map(cols.map((r) => [pk2(r.fabric_id, r.colour_id), codeKeys(r)]));
-  const bothSides = new Set([...droppedSeries].filter((d) => plan.some((p) => p.keep === d)));
-  for (const s of bothSides) bad(`series "${s}" is KEEP in one pair and DROP in another - chained merge, refused`);
 
-  note(`\n=== PER-PAIR PLAN ===`);
+  /* ── WHICH PAIRS ARE IN SCOPE ────────────────────────────────────────────
+     Decide this BEFORE looking for chains. A chain — A absorbs B while B
+     absorbs C — is only dangerous if both merges actually RUN; if one of them
+     is out of scope there is no chain, just two unrelated pairs that happen to
+     share a series name.
+
+     This ordering was wrong and it cost a run. FG66151 is the WINNER of the
+     detected pair "FG66151 <= UNMATCHED" and the LOSER of the owner-declared
+     "PC151 <= FG66151". Computing chains over the WHOLE plan flagged it, and
+     the declared pair — the only pair the run was asked to do, and the only
+     one in scope — was skipped as "chained merge" against a pair that was
+     never going to run. */
   for (const p of plan) {
     p.skip = null;
     /* DECLARE names ONE pair the owner asked for. Letting the run also apply
        every pair the detector happened to find would merge things nobody
        asked about in the same transaction batch, so a declared run is
        restricted to the declared pairs unless PAIRS explicitly widens it. */
-    if (DECLARED.length && !ONLY.length && !p.declared) { p.skip = "DECLARE set — only declared pairs run"; continue; }
-    if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; continue; }
+    if (DECLARED.length && !ONLY.length && !p.declared) { p.skip = "DECLARE set — only declared pairs run"; }
+    else if (ONLY.length && !ONLY.includes(p.drop)) { p.skip = "not in PAIRS"; }
+  }
+  const inScope = plan.filter((p) => !p.skip);
+  const scopedDrops = new Set(inScope.map((p) => p.drop));
+  const bothSides = new Set([...scopedDrops].filter((d) => inScope.some((p) => p.keep === d)));
+  for (const s of bothSides) bad(`series "${s}" is KEEP in one pair and DROP in another - chained merge, refused`);
+
+  note(`\n=== PER-PAIR PLAN ===`);
+  for (const p of plan) {
+    if (p.skip) continue;
     if (bothSides.has(p.drop) || bothSides.has(p.keep)) { p.skip = "chained merge"; continue; }
 
     const keepCols = colsBySeries.get(p.keep) || [];
