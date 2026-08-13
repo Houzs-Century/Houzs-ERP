@@ -1,3 +1,70 @@
+## Proceed wrote a column migration 0286 had renamed away, and three write paths never asked the both-dates rule [high]
+
+**Symptom** — two faults on the same rule, found together while auditing every
+write path that can set or clear the Processing Date.
+
+1. Moving an SO to IN_PRODUCTION could not write the date it was proceeding
+   with. `PATCH /:docNo/status` SELECTed `internal_expected_dd`, compared it,
+   and assigned `patch.internal_expected_dd` — a column that stopped existing
+   when mig 0286 renamed it to `processing_date`. The header PATCH's proceed
+   branch read the same dead name through `effOf('internal_expected_dd')`, which
+   resolves `undefined` for every order, so that path returned
+   `proceed_needs_processing_date` unconditionally.
+2. Three write paths could store exactly one of the two dates: the CO header
+   PATCH, the amendment APPROVE path, and the `/status` proceed. The owner's
+   rule is *"processing date 和 delivery date 必须同时有或者同时没有"*.
+
+**Root cause, traced not guessed** — the rule was never in one place. It was
+hand-written in FIVE files (SO create, SO header PATCH, CO create, amendment
+submit, and one direction inside `so-save-problems`) and absent from three. Five
+copies is also why the two directions disagreed: `so-save-problems` asked
+delivery→processing under `processing_delivery_must_pair`, while
+processing→delivery lived in the completeness block behind
+`if (facts.procDate && facts.completeness)` — and neither consignment path
+passes `completeness`, so on a CO a Processing Date with no Delivery Date raised
+nothing at all. `so-save-problems.ts` said as much in a comment ("the CO header
+PATCH runs no pair check of its own") and the comment was correct.
+
+The dead column is the same class one layer down. Mig 0286's own header warns
+that `jsonb_populate_record` IGNORES a JSON key that is not a column, so a stale
+caller "would not error — the date would just stop saving", and says "the
+callers are renamed in this same commit". The `/status` block was not. Nothing
+the compiler sees can catch a column name that lives inside a string, so it
+built, typechecked and shipped. `routes/so-amendments.ts` had the matching
+shape: it IMPORTED `canonicaliseSoHeaderChanges` and never called it, so its
+approve-time gates read the raw stored jsonb while `so-revision.ts` (which
+applies the change) reads the canonical one — an amendment stored under the
+pre-rename payload key walked past the deposit, completeness and date gates and
+was applied anyway.
+
+**Fix** — one predicate, `soDatePairRefusal` in
+`backend/src/scm/shared/so-processing-date.ts`, called by every path that can set
+or clear either date: SO create, SO header PATCH, SO `/status` proceed, amendment
+submit, amendment approve, CO create, CO header PATCH, the aggregated
+`so-save-problems` report (both directions now), and `unify-processing-date.mjs`,
+whose single-column UPDATE now re-asserts `customer_delivery_date IS NOT NULL`
+and refuses the transaction rather than writing half a pair. Grandfathering — a
+stored unpaired pair the save leaves untouched — moved INSIDE the predicate, so
+no caller re-derives it. Clearing the Processing Date now clears the Delivery
+Date with it (header and every `line_delivery_date`, via
+`p_apply_delivery_date`); the reverse stays a refusal, because cascading it would
+clear the Processing Date and become the road around
+`scm.so.remove_processing_date`. The `/status` and header-PATCH reads are bound
+to `SO_PROCESSING_DATE_COLUMN`, and `so-amendments.ts` now actually calls the
+canonicaliser it imported. The 2990 mirror is the ONE deliberate exclusion — it
+replicates rows 2990 already committed, and a refusal there wedges its outbox
+retrying forever — and the route now says so in a comment the test asserts.
+
+**Why the test is a source scan.** `tests/soDatePairWiring.test.ts` anchors on
+each path's source, with comments stripped, and fails if one stops calling the
+predicate; it also fails on any live mention of `internal_expected_dd`. Eleven of
+its fifteen assertions fail against the tree this PR branched from. A unit test
+over the predicate would have passed throughout the entire bug: the logic was
+never wrong, the enumeration was.
+
+**Ref** — 2026-08-14, this PR. Related: **BUG CLASS optional-param-noop** below
+(same shape, different mechanism: there the compiler was silenced by `?`, here by
+the value being a string).
 ## The zero-cost ack migration took 0277, which main had already spent [med]
 
 **Symptom** — `backend/tests/migrationNumbers.test.ts` fails on this branch:
@@ -27,6 +94,44 @@ were repointed to 0280; the ones naming `scm.autocount_outbox` are genuinely
 `zero-cost-receipt-guard.test.ts` are `33 passed` together.
 
 **Ref** — PR #1907 `fix/zero-cost-po-exposure`, 2026-08-11.
+
+
+## The file-size ratchet charged every open PR for one file it had never opened [high]
+
+**Symptom** — on 2026-08-14 every open pull request failed `file-size`, all of
+them naming the same file: `backend/src/scm/routes/grns.ts`, 3,591 lines against
+a ceiling of 3,482. None of them had opened it. One of the blocked PRs was the
+fix for a **live production defect** in the sales-order proceed path.
+
+**Root cause** — two facts that are each fine alone:
+
+1. `file-size` is NOT one of the ruleset's required checks (those are
+   `backend-typecheck` and `frontend`), so a pull request CAN merge with it red,
+   and one did — main outgrew its own manifest.
+2. The gate charged whichever branch ran next for every violation in the tree,
+   not for the files that branch had touched.
+
+Together they turn one merged violation into a repository-wide stop: nobody can
+merge until someone else shrinks a file they are not working on. The ratchet was
+built to stop growth; it stopped shipping.
+
+**Fix** — the gate now resolves the merge base, diffs it, and FAILS only on
+files present in that diff. A violation in an untouched file is still printed in
+full with its numbers, under a heading that says whose problem it is — silence
+would let the tree drift, which is the thing this gate exists to prevent. If the
+merge base cannot be resolved, every violation is charged again: a gate that
+cannot tell whose fault it is must not let anything through.
+
+**The check** — `scripts/check-file-size-ratchet.mjs` gains a case that pins the
+split: one violation in a touched file fails, one in an untouched file is
+reported with its 109 lines intact.
+
+**Class** — *a gate whose blast radius is wider than its subject*. Same shape as
+the fabric census that counted the tombstone a merge leaves on purpose, so
+`require_clean` could never pass. Both fail on something nobody in the loop can
+act on.
+
+**Ref** - `fix/file-size-blames-the-toucher`, 2026-08-14
 
 ## The cost-stamping script priced a queen bed from a king's purchase line [high, money]
 
@@ -359,6 +464,82 @@ finding gets its entry here when its fix ships. The ERP-side counts come from
 
 **Ref** — PR #2149, 2026-08-14. Instances already fixed: #2093 / #2095 / #2119
 (supplier_sku), #2112 (location), the `salesperson_id` fix in flight.
+## Proceed wrote a column migration 0286 had renamed away, and three write paths never asked the both-dates rule [high]
+
+**Symptom** — two faults on the same rule, found together while auditing every
+write path that can set or clear the Processing Date.
+
+1. Moving an SO to IN_PRODUCTION could not write the date it was proceeding
+   with. `PATCH /:docNo/status` SELECTed `internal_expected_dd`, compared it,
+   and assigned `patch.internal_expected_dd` — a column that stopped existing
+   when mig 0286 renamed it to `processing_date`. The header PATCH's proceed
+   branch read the same dead name through `effOf('internal_expected_dd')`, which
+   resolves `undefined` for every order, so that path returned
+   `proceed_needs_processing_date` unconditionally. SIX literals in all, the
+   sixth quieter than the rest: the create's auto-proceed read
+   `body.internalExpectedDd`, a PAYLOAD key no client sends, so `autoProceed`
+   was always false and an order created WITH a Processing Date was created
+   UN-proceeded — the exact inverse of the owner's pinned rule, with nothing
+   anywhere saying so. (The six were catalogued independently by #2149's
+   documentation audit while this fix was being written; that audit's CORRECTION
+   box is now the RESOLVED box in `docs/modules/sales-order.md`.)
+2. Three write paths could store exactly one of the two dates: the CO header
+   PATCH, the amendment APPROVE path, and the `/status` proceed. The owner's
+   rule is *"processing date 和 delivery date 必须同时有或者同时没有"*.
+
+**Root cause, traced not guessed** — the rule was never in one place. It was
+hand-written in FIVE files (SO create, SO header PATCH, CO create, amendment
+submit, and one direction inside `so-save-problems`) and absent from three. Five
+copies is also why the two directions disagreed: `so-save-problems` asked
+delivery→processing under `processing_delivery_must_pair`, while
+processing→delivery lived in the completeness block behind
+`if (facts.procDate && facts.completeness)` — and neither consignment path
+passes `completeness`, so on a CO a Processing Date with no Delivery Date raised
+nothing at all. `so-save-problems.ts` said as much in a comment ("the CO header
+PATCH runs no pair check of its own") and the comment was correct.
+
+The dead column is the same class one layer down. Mig 0286's own header warns
+that `jsonb_populate_record` IGNORES a JSON key that is not a column, so a stale
+caller "would not error — the date would just stop saving", and says "the
+callers are renamed in this same commit". The `/status` block was not. Nothing
+the compiler sees can catch a column name that lives inside a string, so it
+built, typechecked and shipped. `routes/so-amendments.ts` had the matching
+shape: it IMPORTED `canonicaliseSoHeaderChanges` and never called it, so its
+approve-time gates read the raw stored jsonb while `so-revision.ts` (which
+applies the change) reads the canonical one — an amendment stored under the
+pre-rename payload key walked past the deposit, completeness and date gates and
+was applied anyway.
+
+**Fix** — one predicate, `soDatePairRefusal` in
+`backend/src/scm/shared/so-processing-date.ts`, called by every path that can set
+or clear either date: SO create, SO header PATCH, SO `/status` proceed, amendment
+submit, amendment approve, CO create, CO header PATCH, the aggregated
+`so-save-problems` report (both directions now), and `unify-processing-date.mjs`,
+whose single-column UPDATE now re-asserts `customer_delivery_date IS NOT NULL`
+and refuses the transaction rather than writing half a pair. Grandfathering — a
+stored unpaired pair the save leaves untouched — moved INSIDE the predicate, so
+no caller re-derives it. Clearing the Processing Date now clears the Delivery
+Date with it (header and every `line_delivery_date`, via
+`p_apply_delivery_date`); the reverse stays a refusal, because cascading it would
+clear the Processing Date and become the road around
+`scm.so.remove_processing_date`. The `/status` and header-PATCH reads are bound
+to `SO_PROCESSING_DATE_COLUMN`; the two request-body reads go through a new
+`readSoProcessingDateFromBody`, which takes the canonical `processingDate` and
+still accepts the legacy spelling; and `so-amendments.ts` now actually calls the
+canonicaliser it imported. The 2990 mirror is the ONE deliberate exclusion — it
+replicates rows 2990 already committed, and a refusal there wedges its outbox
+retrying forever — and the route now says so in a comment the test asserts.
+
+**Why the test is a source scan.** `tests/soDatePairWiring.test.ts` anchors on
+each path's source, with comments stripped, and fails if one stops calling the
+predicate; it also fails on any live mention of `internal_expected_dd`. Eleven of
+its fifteen assertions fail against the tree this PR branched from. A unit test
+over the predicate would have passed throughout the entire bug: the logic was
+never wrong, the enumeration was.
+
+**Ref** — 2026-08-14, this PR. Related: **BUG CLASS optional-param-noop** below
+(same shape, different mechanism: there the compiler was silenced by `?`, here by
+the value being a string).
 
 ## The sofa purchase orders were never dedicated, and the delivery dates were lost to a renamed key [high]
 

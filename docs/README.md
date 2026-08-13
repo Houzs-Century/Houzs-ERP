@@ -33,8 +33,11 @@ lists the disagreements already found.
 ## 2. Generated — never hand-edit, never copy the numbers out
 
 `generated/` is computed from the tree by `backend/scripts/gen-codebase-map.mjs`.
-Regenerate with `npm --prefix backend run audit:map`. It is deliberately not a CI
-gate — a stale navigation doc must never block a deploy.
+**Regenerate with the generator itself — `node backend/scripts/gen-codebase-map.mjs`.**
+`npm --prefix backend run audit:map` is `--check`: it reports drift and exits 1,
+it does NOT rewrite the file. (This line said "Regenerate with … audit:map"
+until 2026-08-14.) The check is deliberately not a CI gate — a stale navigation
+doc must never block a deploy.
 
 | File | Authoritative for |
 |---|---|

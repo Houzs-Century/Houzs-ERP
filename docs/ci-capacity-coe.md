@@ -49,6 +49,13 @@ Measured over 24h: **173 CI runs across 35 open PRs**. One branch,
 `e2e-contract`. With several PRs pushing together the demand is 60–90
 concurrent jobs against a **20-job free-plan ceiling**.
 
+> **That fan-out is the INCIDENT-DAY shape and both fixes in this document
+> changed it.** On `origin/main` today `backend-tests` is `shard: [1, 2]` (two,
+> per #2131) and `frontend` is four jobs (`frontend-checks`, `frontend-build`,
+> `frontend-perf` and the `frontend` roll-up, per #2142) — eleven slots, not
+> ten, arranged differently. Read this paragraph as the measurement that
+> motivated the work, not as a description of CI now.
+
 At the moment of measurement: **24 jobs unfinished, 5 sitting in `queued`**.
 Worst observed waits: 132s at job level, **850s (14 minutes)** at run level.
 
@@ -158,11 +165,11 @@ here as such so nobody later cites it as established.
 
 | Item | Why deferred | Owner |
 | --- | --- | --- |
-| **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
+| ~~**`frontend` is now the slowest job (~285s) and gates every PR**~~ — **CLOSED by #2142, 2026-08-13** | It was deferred as "untouched by this work, both plausible, neither measured". It was then measured and split: `frontend` on `main` is now a ROLL-UP over `frontend-checks` / `frontend-build` / `frontend-perf`, with the Playwright browser cached. See the Fixes table above. | — |
 | **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
 | ~~Enable the merge queue~~ — **NOT POSSIBLE on this repo, see below** | `hello-houzs` is a **User** account, and GitHub's merge queue is organization-only. The ruleset page simply does not offer the option | — |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
+| Nearly every workflow file is a one-off `workflow_dispatch` data script (289 of 300 carry `secrets.DATABASE_URL`, re-counted 2026-08-14; this row said "286 of 296") | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -218,6 +225,10 @@ step. The staleness they guarded against is no longer representable.
 
 **Before adopting a convention, ask what it is defending against.**
 
+> Current size of the split, for scale rather than as a fact to maintain —
+> re-run `classifyTests()` rather than trusting this line: **light 236 /
+> workers 44** on 2026-08-14.
+
 ### What this replaced, and why `fileParallelism` was not the answer
 
 Raising pool concurrency was measured first (same 20 files, all green locally):
@@ -233,8 +244,6 @@ Also measured and recorded so it is not re-investigated: the four test bindings
 total ~320 KB shipped into every isolated worker, and shrinking the largest
 (`TEST_MIGRATIONS`, 201 KB) bought ~8% of setup. Not pursued — the split makes
 it irrelevant for 221 of the files and marginal for the remaining 44.
-| Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -247,16 +256,23 @@ per-shard the same job cost before:
 | --- | --- | --- |
 | `backend-tests (1)` | ~380s | **141s** |
 | `backend-tests (2)` | ~380s | **127s** |
-| `backend-typecheck` | ~55s | 92s (it now also runs the 234-file light suite) |
+| `backend-typecheck` | ~55s | 92s (it now also runs the light suite — 234 files at the time of this run; 236 as of 2026-08-14, and the split is derived at config time by `classifyTests()`, so run that rather than trusting this cell) |
 | `scale-postgres-contract` | ~80s | 70s |
 | `backend-postgres` | ~60s | 38s |
 | `e2e-contract` | ~18s | 17s |
-| **`frontend`** | ~285s | **~285s — untouched** |
+| **`frontend`** | ~285s | **~285s — untouched by #2131** |
 
-**The critical path is now `frontend`, and nothing in this work touched it.**
-A CI run finishes when its slowest job finishes; that used to be
-`backend-tests` at ~380s and it is now `frontend` at ~285s. Further backend
-work buys the PR author almost nothing from here.
+**As of #2131 the critical path was `frontend`, and nothing in THAT PR touched
+it.** A CI run finishes when its slowest job finishes; that used to be
+`backend-tests` at ~380s and it became `frontend` at ~285s.
+
+> **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
+> story.** `frontend` was then split three ways and the Playwright browser
+> cached; on `origin/main` today `frontend` is a ROLL-UP job over
+> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`), not the one
+> serial block described below. The paragraph is kept because the ANALYSIS below
+> is what identified the two candidates that #2142 acted on — read it as the
+> diagnosis, not as the current shape of the job.
 
 That job does, in one serial block: `npm ci`, `check:test-focus`, `typecheck`,
 `test`, two `node --test` gate scripts, `build`, **a second full `vite build` of
@@ -303,6 +319,11 @@ pull requests that turned `DIRTY` after an unrelated merge landed:
 | #1914 | `BUG-HISTORY.md` |
 | #1867 | `BUG-HISTORY.md` |
 | #2037 | `docs/modules/autocount-writeback.md` |
+
+> The table lists FOUR of the five, so the ratio below cannot be re-derived from
+> it. The fifth PR — the one whose conflict was in code, and therefore the whole
+> point of the comparison — was never written down. Noted 2026-08-14 rather than
+> invented: the claim is plausible and unverifiable as published.
 
 **Four out of five, and not one line of code.** `BUG-HISTORY.md` is
 append-at-the-top and mandatory, so with N branches open, every one of them
