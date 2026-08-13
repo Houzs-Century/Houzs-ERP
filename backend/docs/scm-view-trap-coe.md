@@ -119,6 +119,15 @@ PGlite replica of the base table + view + both grantee roles:
   gets missed.
 * Never reach for DROP VIEW → rename → CREATE VIEW here. That path is P-1's, it
   costs the ACL and the owner, and a rename does not need it.
+* **A replica is not prod, and P-5 applies to a rename too.** Everything above
+  was established on a PGlite replica built from this repo's own SQL, which
+  proves 0284 is consistent with the source tree and nothing more. The sweep
+  filters `nspname = 'scm'`, so a view in another schema is renamed by nobody and
+  caught by nobody; every step is catalog-guarded, so a mismatched prod turns the
+  migration into a silent no-op rather than a red run. Read the live catalog
+  first: `.github/workflows/probe-rename-preconditions.yml` →
+  `backend/scripts/probe-rename-preconditions.mjs`, read-only, one MATCHES /
+  DIFFERS line at the end.
 
 ---
 
@@ -138,6 +147,10 @@ PGlite replica of the base table + view + both grantee roles:
 - [ ] If I RENAMED a base column, did I also rename the view's output column
       (P-6), and confirm the view answers to the NEW name — not just that the
       `ALTER TABLE` succeeded? A successful rename is not a working view.
+- [ ] Did I read the LIVE catalog before the window — every dependent view with
+      its owner and grants, and every other object on the column — rather than
+      trusting a replica built from this repo?
+      (`probe-rename-preconditions` workflow; it must end in MATCHES.)
 
 ---
 
@@ -147,6 +160,9 @@ PGlite replica of the base table + view + both grantee roles:
 - `backend/src/scm/routes/delivery-planning.ts` — secondary view consumer
 - `backend/scripts/scm-schema/apply-scm-views.mjs` — pulls 2990 view defs (the
   origin of the current Houzs view definition)
+- `backend/scripts/probe-rename-preconditions.mjs` +
+  `.github/workflows/probe-rename-preconditions.yml` — read-only pre-flight that
+  asks the LIVE catalog whether 0284's assumptions hold (P-5 / P-6)
 - `backend/src/db/migrations-pg/0033_so_scan_slip_image.sql` — added slip_image_key (detail-only)
 - `backend/src/db/migrations-pg/0034_so_scan_receipt_image.sql` — added receipt_image_key (detail-only)
 - `backend/src/db/migrations-pg/0053_scm_delivery_planning_tms.sql` — added 8 cols (all detail-only, has its own VIEW-TRAP note at lines 8-16)

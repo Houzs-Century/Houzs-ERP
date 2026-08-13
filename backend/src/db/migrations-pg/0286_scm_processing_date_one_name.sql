@@ -1,4 +1,4 @@
--- 0284 — ONE NAME for the Processing Date: rename
+-- 0286 — ONE NAME for the Processing Date: rename
 -- scm.mfg_sales_orders.internal_expected_dd -> processing_date, and the
 -- consignment twin scm.consignment_sales_orders.internal_expected_dd
 -- identically.
@@ -93,7 +93,7 @@ BEGIN
          AND attname = 'processing_date' AND attnum > 0 AND NOT attisdropped
      ) THEN
     ALTER TABLE scm.consignment_sales_orders DROP COLUMN processing_date;
-    RAISE NOTICE '0284: dropped the dead legacy scm.consignment_sales_orders.processing_date';
+    RAISE NOTICE '0286: dropped the dead legacy scm.consignment_sales_orders.processing_date';
   END IF;
 END $$;
 
@@ -149,7 +149,7 @@ BEGIN
         'ALTER VIEW %s RENAME COLUMN internal_expected_dd TO processing_date', v.rel
       );
     END IF;
-    RAISE NOTICE '0284: renamed internal_expected_dd -> processing_date on %', v.rel;
+    RAISE NOTICE '0286: renamed internal_expected_dd -> processing_date on %', v.rel;
   END LOOP;
 END $$;
 
@@ -220,7 +220,7 @@ BEGIN
        WHERE attrelid = 'scm.mfg_sales_orders'::regclass
          AND attname = 'processing_date' AND attnum > 0 AND NOT attisdropped
      ) THEN
-    RAISE EXCEPTION '0284: scm.mfg_sales_orders.processing_date is missing after the rename';
+    RAISE EXCEPTION '0286: scm.mfg_sales_orders.processing_date is missing after the rename';
   END IF;
 
   IF to_regclass('scm.consignment_sales_orders') IS NOT NULL
@@ -229,7 +229,7 @@ BEGIN
        WHERE attrelid = 'scm.consignment_sales_orders'::regclass
          AND attname = 'processing_date' AND attnum > 0 AND NOT attisdropped
      ) THEN
-    RAISE EXCEPTION '0284: scm.consignment_sales_orders.processing_date is missing after the rename';
+    RAISE EXCEPTION '0286: scm.consignment_sales_orders.processing_date is missing after the rename';
   END IF;
 
   -- The view must answer to the new name, or every backend read of it 500s.
@@ -240,7 +240,7 @@ BEGIN
          AND attname = 'processing_date' AND attnum > 0 AND NOT attisdropped
      ) THEN
     RAISE EXCEPTION
-      '0284: scm.mfg_sales_orders_with_payment_totals does not project processing_date';
+      '0286: scm.mfg_sales_orders_with_payment_totals does not project processing_date';
   END IF;
 
   -- Nothing anywhere in scm may still answer to the retired name.
@@ -254,7 +254,7 @@ BEGIN
     AND a.attname = 'internal_expected_dd'
     AND a.attnum > 0 AND NOT a.attisdropped;
   IF leftovers IS NOT NULL THEN
-    RAISE EXCEPTION '0284: internal_expected_dd still exists on: %', leftovers;
+    RAISE EXCEPTION '0286: internal_expected_dd still exists on: %', leftovers;
   END IF;
 
   -- ...and no stored payload key may either.
@@ -264,7 +264,7 @@ BEGIN
        WHERE header_changes ? 'internalExpectedDd'
           OR old_header_snapshot ? 'internalExpectedDd'
      ) THEN
-    RAISE EXCEPTION '0284: scm.so_amendments still stores the internalExpectedDd key';
+    RAISE EXCEPTION '0286: scm.so_amendments still stores the internalExpectedDd key';
   END IF;
 
   IF to_regclass('scm.mfg_so_audit_log') IS NOT NULL
@@ -272,7 +272,7 @@ BEGIN
        SELECT 1 FROM scm.mfg_so_audit_log
        WHERE field_changes @> '[{"field": "internalExpectedDd"}]'::jsonb
      ) THEN
-    RAISE EXCEPTION '0284: scm.mfg_so_audit_log still stores the internalExpectedDd field name';
+    RAISE EXCEPTION '0286: scm.mfg_so_audit_log still stores the internalExpectedDd field name';
   END IF;
 END $$;
 

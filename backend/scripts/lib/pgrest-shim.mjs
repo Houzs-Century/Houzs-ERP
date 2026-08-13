@@ -11,7 +11,7 @@
 // LOGIC stays canonical and only the TRANSPORT is mimicked.
 //
 // SCOPE — deliberately the exact surface those functions use, nothing more:
-//   from(t).select(cols).eq/.in/.not(col,'is',null)/.not(col,'in','(A,B)')
+//   from(t).select(cols).eq/.neq/.in/.not(col,'is',null)/.not(col,'in','(A,B)')
 //          /.or('a.is.null,b.lt.X')/.order/.limit/.range
 //          .maybeSingle()/.single()          -> { data, error }
 //   from(t).update(obj).eq(...)[.or(...)][.select(cols).maybeSingle()]
@@ -183,6 +183,16 @@ export function pgrestShim(sql, schema = "scm") {
       update(obj) { state.mode = "update"; state.updateObj = obj; return proxied; },
       insert(rows) { state.mode = "insert"; state.insertRows = rows; return proxied; },
       eq(col, v) { state.filters.push({ op: "eq", col, v }); return proxied; },
+      /* PostgREST's neq is SQL's <>, NULL semantics and all: a row whose column
+         IS NULL is excluded by both, so the literal translation is faithful.
+         `neq(col, null)` is NOT that — PostgREST spells "has a value" as
+         not(col,'is',null), which this shim already has — so it is a loud gap
+         rather than a silent `<> NULL` that matches nothing. */
+      neq(col, v) {
+        if (v === null) return gap(`neq(${col}, null) — use .not('${col}', 'is', null)`);
+        state.filters.push({ op: "cmp", cmp: "<>", col, v });
+        return proxied;
+      },
       in(col, arr) { state.filters.push({ op: "in", col, v: arr }); return proxied; },
       /* Scalar comparisons. The allocator filters open lots with .gt('qty', 0);
          these four are the same shape as .eq and carry no PostgREST-specific
