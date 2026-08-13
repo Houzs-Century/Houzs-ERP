@@ -8,8 +8,9 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build:frontend": "npm --prefix frontend run build",
     "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
-    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
-    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update",
+    "check:file-size": "node scripts/check-file-size.mjs",
+    "check:file-size:update": "node scripts/check-file-size.mjs --update",
+    "check:file-size:list": "node scripts/check-file-size.mjs --list",
     "deploy:backend": "npm --prefix backend run deploy",
     "deploy:frontend": "npm --prefix frontend run deploy",
     "deploy:all": "npm run deploy:frontend && npm run deploy:backend",
@@ -17,6 +18,8 @@
     "db:reset:remote:DANGER": "npm --prefix backend run db:reset:remote:DANGER",
     "db:reset:local": "npm --prefix backend run db:reset:local",
     "db:migrate": "npm --prefix backend run db:migrate",
-    "install:all": "npm --prefix backend install && npm --prefix frontend install"
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
+    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update"
   }
 }

@@ -170,11 +170,34 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 
 Configured in `backend/wrangler.toml → [triggers] crons`. Dispatched by `backend/src/index.ts → scheduled(event, env, ctx)`.
 
-| Schedule | Job | Entrypoint |
+**Read `backend/src/index.ts → scheduled()` for the authoritative list** — three
+`event.cron` branches at `:479`, `:550`, `:635`. The table below was re-derived
+from those branches on **2026-08-14** and is a snapshot, not a binding.
+
+| Schedule | Jobs (in branch order) | Entrypoints |
 |----------|-----|------------|
-| `*/5 * * * *` | Sales-order incremental sync (`/SalesOrder/getSince` + checkpoint) | `services/sync.ts → runPull` |
-| `*/30 * * * *` | Purchase-order sync — `/PurchaseOrder/getAll` (docs) + `/PurchaseOrder/getOutstanding` (lines) | `services/po.ts → runPOPull` + `runPODocsPull` |
-| `0 2 * * *` | Daily batch — overdue auto-extension, ASSR SLA escalation, project due-date reminder emails, `/Creditor/getAll` resync, stock-items refresh (re-resolves `assr_cases.creditor_code` when upstream `MainSupplier` changes) | `services/overdue.ts`, `services/assr.ts`, `services/projects.ts`, `services/creditors.ts`, `services/stockItems.ts` |
+| `*/5 * * * *` (`:479`) | Hyperdrive keep-warm ping · durable email outbox retry · AutoCount inbound SO pull (`/SalesOrder/getSince` + checkpoint) · amendment write-back drain · ERP→AutoCount outbox drain · SO stock-allocation recompute sweep · iOS fleet-reminder push (UTC hour 0 only) · orphan payment-slip reaper | `services/pull.ts → runPull`, `drainEmailOutbox`, `drainCommands`, `drainAutoCountOutbox`, `drainStockAllocationRecompute`, `services/pushFleetReminders.ts`, the slip `reapOnce` |
+| `*/30 * * * *` (`:550`) | ASSR per-stage alert scanner · ASSR lead-time scheduled activations · agent heartbeat | `services/assrAlerts.ts → runAssrAlerts`, `runScheduledLeadTimeActivations`, `runAgentHeartbeat` |
+| `0 2 * * *` (`:635`) | ASSR SLA escalation · AutoCount DO-header mirror refresh · ASSR daily digest · project due-date reminder emails · client-error digest + 90-day sweep · idempotency-key TTL sweep · `scm.mv_ar_aging` refresh · scan-SO weekly rule distill (Sundays only) | `services/assrEscalation.ts → runSlaEscalation`, `services/doMirror.ts → runDoMirrorSync`, `services/assrAlerts.ts → runAssrDailyDigest`, `services/projectReminders.ts → runProjectDueReminders`, `services/clientErrors.ts → runClientErrorDigest`, inline SQL ×2, `scm/routes/scan-so.ts → distillAllSalespersonRules` |
+
+> **CORRECTED 2026-08-14.** Every row above was wrong. The table named
+> `services/sync.ts`, `services/po.ts`, `services/overdue.ts` and
+> `services/creditors.ts`; **none of those files exists** — `overdue.ts` and
+> `creditors.ts` were deleted by `dfa1111a` "chore: strip ERP to core modules"
+> (`git log --diff-filter=D`), and the SO pull has always lived in
+> `services/pull.ts`. It described a `*/30` purchase-order sync:
+> `grep -rn 'runPOPull\|runPODocsPull' backend/src` returns nothing — that job
+> does not exist. And it credited the daily batch with overdue auto-extension, a
+> `/Creditor/getAll` resync and a stock-items refresh; none of the three appears
+> in the `0 2 * * *` branch (`grep -n 'stockItems\|reditor\|overdue'
+> backend/src/index.ts` returns only the `routes/stockItems` import at `:49`).
+> Anyone debugging "why did the creditor code not resync" was starting from a
+> file deleted months ago — **while this same README said so 45 lines further
+> down**: *"there is no PO, creditor or overdue cron service in
+> `backend/src/services/` … Earlier versions of this table listed them as live;
+> they were not."* The AutoCount section was corrected on 2026-08-12 and the cron
+> table three screens above it was not, because nothing ties the two. That is the
+> whole failure mode in one file.
 
 Everything else runs on-demand from user actions (Refresh buttons, panel interactions, manual `Sync All`).
 

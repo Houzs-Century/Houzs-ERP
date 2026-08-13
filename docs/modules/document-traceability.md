@@ -653,7 +653,11 @@ alongside `nodes` / `edges` / `rootSos`: `{ id, soDocNo, amendmentNo, status,
 createdAt }` for every `so_amendments` row whose `so_doc_no` is one of the
 company-scoped `rootSos` (so the amendments inherit the exact company scope the
 graph already enforces — no new gate). The field is ADDITIVE: existing consumers
-(`DocumentTraceability.tsx`, the vendor `DocumentFlowModal`) ignore it.
+(the vendor `frontend/src/vendor/scm/components/DocumentFlowModal.tsx` and
+`frontend/src/mobile/MobileRelationshipMap.tsx`) ignore it. *Corrected
+2026-08-14: this line also named `DocumentTraceability.tsx`, which `:832` of this
+same file records as DELETED — and it is: `frontend/src/components/DocumentTraceability.tsx`
+does not exist on `origin/main` `0c2a4e88`.*
 
 The Sales Order relationship map (`so-relationship-map.ts` →
 `DocumentRelationshipMapModal`, used by both `SalesOrderDetailV2` and the
