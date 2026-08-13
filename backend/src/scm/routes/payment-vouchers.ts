@@ -475,9 +475,20 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  const { data: pvRaw } = await sb.from('payment_vouchers')
-    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id).maybeSingle();
-  if (!pvRaw) return c.json({ error: 'not_found' }, 404);
+  /* Scoped before the load, for the same reason cancelPaymentVoucherHandler is
+     (audit PR #826 item 4) — and this is the half that pass MISSED. Everything
+     downstream keys off this row: the GL entry is written from pv.pv_number,
+     pv.credit_account_code and pv.company_id, so an unscoped load let one
+     company POST another company's voucher and stamp a journal entry into that
+     company's ledger. Cancel and post are the same door; only one of them was
+     locked. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: pvRaw } = await scopeToCompanyId(
+    sb.from('payment_vouchers').select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!pvRaw) return c.json(NOT_THIS_COMPANY, 404);
   const pv = pvRaw as unknown as {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
     credit_account_code: string; total_centi: number; currency: string | null;

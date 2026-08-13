@@ -75,6 +75,32 @@ const NAMED_HANDLER =
 /** Handler opener: router.get('/...', ... — captures method and path. */
 const HANDLER = /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]*)['"`]/;
 
+/** `export const fooHandler = async (c) => {` / `async function fooHandler(` */
+const declRegex = (fn) =>
+  new RegExp("(?:async function|function|const)\\s+" + fn + "\\b");
+
+/** The next top-level declaration — where a named handler's body ends. */
+const NEXT_DECL = /^(?:export\s+)?(?:async\s+function|function|const|class)\s/;
+
+/* SELF-TEST. The two patterns above were broken for weeks by a lost backslash
+   and the failure was invisible: a regex that matches nothing produces a
+   plausible report. Assert them against a known string before scanning, and
+   refuse to report at all rather than report from a dead pattern. */
+{
+  const ok =
+    declRegex("cancelPaymentVoucherHandler").test(
+      "export const cancelPaymentVoucherHandler = async (c) => {",
+    ) &&
+    !declRegex("cancelFoo").test("export const cancelFooBar = async (c) => {") &&
+    NEXT_DECL.test("async function reversePvAccounting(") &&
+    NEXT_DECL.test("export const other = 1") &&
+    !NEXT_DECL.test("  const inner = 1");
+  if (!ok) {
+    console.error("check-company-scope: internal pattern self-test FAILED - not reporting.");
+    process.exit(2);
+  }
+}
+
 function stripComments(lines) {
   let inBlock = false;
   return lines.map((raw) => {
@@ -132,17 +158,30 @@ for (const file of fs.readdirSync(ROUTES).filter((f) => f.endsWith(".ts") && !f.
        scopeToCompanyId and says so in its own comment - sat further down the
        file. A checker that mis-slices its unit produces noise, and noise is how
        a checker gets ignored. */
+    /* THIS BLOCK SILENTLY DID NOTHING until 2026-08-13. Both patterns lost a
+       backslash on the way in: `"...\s+"` inside a double-quoted JS string is
+       not the whitespace class, it is the letter `s`, and `"\b"` is not a word
+       boundary, it is the BACKSPACE character 0x08 — so declRe could never
+       match any real declaration. declAt stayed -1, the code fell back to the
+       naive registration-to-next-registration slice, and the scan read the
+       WRONG BODY for every named handler: payment-vouchers POST /:id/cancel was
+       reported against reversePvAccounting's lines, three functions further
+       down. A regex that cannot match fails silently and looks like a clean
+       result, which is the worst way for a checker to be wrong.
+
+       Built with RegExp escapes doubled, and asserted at startup below so a
+       future edit cannot re-break it quietly. */
     let scanBody = body;
     let scanOffset = start;
     const named = NAMED_HANDLER.exec(code[start]);
     if (named) {
       const fnName = named[1];
-      const declRe = new RegExp("(?:async function|function|const)\s+" + fnName + "\b");
+      const declRe = declRegex(fnName);
       const declAt = code.findIndex((l) => declRe.test(l));
       if (declAt >= 0) {
         let stop = code.length;
-        for (let k = declAt + 1; k < code.length && k < declAt + 250; k++) {
-          if (/^(?:async function|function|const|export)s/.test(code[k])) { stop = k; break; }
+        for (let k = declAt + 1; k < code.length && k < declAt + 400; k++) {
+          if (NEXT_DECL.test(code[k])) { stop = k; break; }
         }
         scanBody = code.slice(declAt, stop);
         scanOffset = declAt;
