@@ -193,3 +193,78 @@ describe('soConfirmProblemsForDoc', () => {
     expect(await soConfirmProblemsForDoc(makeSb(withOwn), 'HC-SO-2607-013')).toEqual([]);
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE ITEMCODE EXEMPTIONS — owner 2026-08-09 (DIVAN ONLY) and 2026-08-10
+   (electric / pull-out beds: "电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要").
+
+   These products physically have no divan base, so there is no Divan Height,
+   Leg Height or Gap to state. missingVariantAxes reads the itemCode to skip
+   those axes — and collectSoConfirmProblems was NOT passing it, while computing
+   it two lines above and using it for the message. So the exemption worked on
+   the Processing-Date gate (so-variant-check.ts passes it) and was dead on the
+   confirm gate: a DIVAN ONLY or ADJUSTABLE line with Gap blank could not be
+   confirmed at all.
+
+   BUG-HISTORY.md:3913 records that fix as threaded through "every desktop +
+   mobile call site". Three of four never got it. Neither repo checker can see
+   this class: check-shared-mirrors compares module BODIES, not the arguments
+   at a call site.
+   ═══════════════════════════════════════════════════════════════════════════ */
+describe('confirm gate — itemCode-driven exemptions', () => {
+  const base = {
+    salespersonId: 'staff-1',
+    agent: null,
+    venue: 'PJ Showroom',
+    venueId: null,
+  };
+
+  it('a DIVAN ONLY line confirms with Gap blank', () => {
+    const problems = collectSoConfirmProblems({
+      ...base,
+      lines: [{
+        itemCode: 'AKEMI DIVAN ONLY (Q)',
+        group: 'bedframe',
+        // no gap
+        variants: { divanHeight: '10"', legHeight: '6"', fabricCode: 'BO315-22' },
+      }],
+    } as Parameters<typeof collectSoConfirmProblems>[0]);
+    expect(problems).toEqual([]);
+  });
+
+  it('an ADJUSTABLE bed confirms with divan height, leg height AND gap blank', () => {
+    const problems = collectSoConfirmProblems({
+      ...base,
+      lines: [{
+        itemCode: 'TRION ADJUSTABLE (KING)',
+        group: 'bedframe',
+        variants: { fabricCode: 'BO315-22' },
+      }],
+    } as Parameters<typeof collectSoConfirmProblems>[0]);
+    expect(problems).toEqual([]);
+  });
+
+  it('a pull-out combo (S+S) is exempt the same way', () => {
+    const problems = collectSoConfirmProblems({
+      ...base,
+      lines: [{
+        itemCode: 'NOVA (S+S)',
+        group: 'bedframe',
+        variants: { fabricCode: 'BO315-22' },
+      }],
+    } as Parameters<typeof collectSoConfirmProblems>[0]);
+    expect(problems).toEqual([]);
+  });
+
+  it('an ORDINARY bedframe is still blocked — the exemption must not leak', () => {
+    const problems = collectSoConfirmProblems({
+      ...base,
+      lines: [{
+        itemCode: 'Y103-(Q)',
+        group: 'bedframe',
+        variants: { divanHeight: '5"', legHeight: '6"', fabricCode: 'BO315-22' },
+      }],
+    } as Parameters<typeof collectSoConfirmProblems>[0]);
+    expect(problems.map((p) => p.code)).toContain('variants_incomplete');
+  });
+});

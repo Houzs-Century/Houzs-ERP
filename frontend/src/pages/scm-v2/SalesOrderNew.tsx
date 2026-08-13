@@ -1450,7 +1450,13 @@ export const SalesOrderNew = () => {
       const missOf = (l: SoLineDraft): string[] =>
         processingDate
           ? missingRequiredVariants(l.itemGroup, l.variants, l.itemCode)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants).map((a) => a.label);
+          /* l.itemCode is the exemption argument — isDivanOnly skips `gap`,
+             isDivanlessFrame skips divanHeight/legHeight/gap (owner 2026-08-09
+             and 2026-08-10). Omitting it made this form refuse a DIVAN ONLY or
+             ADJUSTABLE line for a field that product does not have. Mobile
+             (MobileNewSO.tsx:1749) passed it; desktop and the backend gate did
+             not. */
+          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode).map((a) => a.label);
       const variantGaps = validLines
         .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
         .filter((x) => x.miss.length > 0);

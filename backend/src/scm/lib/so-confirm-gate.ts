@@ -113,7 +113,24 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
   for (const l of facts.lines) {
     const code = String(l.itemCode ?? '').trim();
     if (!code) continue; // already reported as product-less above
-    for (const axis of missingConfirmVariantAxes(l.group ?? '', l.variants ?? null)) {
+    /* `code` is the THIRD argument, and it was not being passed — while sitting
+       two lines above, already computed, and used for the message below.
+
+       That argument is the whole exemption mechanism: missingVariantAxes reads
+       it for isDivanOnly (skip `gap`) and isDivanlessFrame (skip divanHeight /
+       legHeight / gap) — the owner's rules of 2026-08-09 and 2026-08-10, the
+       latter quoted verbatim in so-variant-rule.ts:82 ("电动床/抽拉床…像 DIVAN
+       ONLY 一样豁免 — 要"). Without it a DIVAN ONLY mattress or an ADJUSTABLE /
+       pull-out bed with Gap blank could not be CONFIRMED at all: 422
+       variants_incomplete, for a field those products physically do not have.
+
+       The Processing-Date gate does pass it (so-variant-check.ts:56), so the
+       exemption worked in one gate and was dead in the other.
+       BUG-HISTORY.md:3913 records the fix as threaded through "every desktop +
+       mobile call site" — three of four never got it, and neither
+       check-shared-mirrors (which compares module BODIES, not call-site
+       arguments) nor check-company-scope can see this class. */
+    for (const axis of missingConfirmVariantAxes(l.group ?? '', l.variants ?? null, code)) {
       out.push({
         code: 'variants_incomplete',
         message: `${code} — ${axis.label} is required before this order can be confirmed`,

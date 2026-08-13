@@ -270,7 +270,9 @@ export function SalesOrderNewFromProducts() {
        would refuse a direct-CONFIRMED create outright. Accessory / mattress /
        others carts carry no axes and keep confirming directly. */
     const needsCompletion = items.some(
-      (i) => missingConfirmVariantAxes(i.itemGroup, i.variants).length > 0,
+      // i.itemCode carries the DIVAN ONLY / divanless-frame exemptions; without
+      // it this forced such a cart to DRAFT for a field the product lacks.
+      (i) => missingConfirmVariantAxes(i.itemGroup, i.variants, i.itemCode).length > 0,
     );
     const body: Record<string, unknown> = {
       customerName: customer.name.trim(),
