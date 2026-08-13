@@ -2,6 +2,7 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 ## An order with no delivery State saved happily, then AutoCount refused it for having no stock location [high]
 
 **Symptom** - the owner's second AutoCount write-back test, `HC-SO-2608-002`,
@@ -717,6 +718,75 @@ flattened header. The grid `key: 'processing_date'` in three lists is a SAVED
 LAYOUT key persisted per user (migration 142) - it is already the unified name
 and must not move.
 >>>>>>> origin/pd/silent-surfaces
+=======
+## The word "processingDate" meant three different facts in the scan payloads, and an audit had already been fooled by it [medium]
+
+**Symptom** - no runtime failure. The damage shows up as repeated bugs around
+the Sales Order's Processing Date, and as documentation that confidently
+describes the wrong thing: `docs/ocr-prompt-audit.md` C-2 stated that "scan-so
+never reads a receipt's `paidAt`/swipe date", which was false when written.
+scan-so has always read each receipt's printed transaction date; it just called
+that field `processingDate`, so it did not read as a receipt date to the person
+auditing it.
+
+**Root cause** - one word, three unrelated facts, all reachable from the same
+scan payload:
+
+1. `ExtractedSlip.processingDate` - the HANDWRITTEN SLIP'S OWN DATE (the day the
+   rep wrote the order). Read by the duplicate probe as `slipDate`, a local
+   variable that already used the honest name.
+2. `ExtractedPayment.processingDate` - a CARD TERMINAL'S PRINTED TRANSACTION
+   DATE, coalesced in `planReceiptPayments` and clamped by `resolvePaidAt` into
+   the payment-ledger row's `paid_at`. This one moves money to a date.
+3. `processingDate` proper - the Sales Order's Processing Date,
+   `scm.mfg_sales_orders.internal_expected_dd`, the factory-start date.
+
+Nothing in the types, the prompt or the docs distinguished them, so the next
+person picks whichever one autocomplete offers.
+
+**Fix** - (1) is now `slipDate` and (2) is now `receiptTxnDate`, across the
+Claude vision prompt (extraction rule 6, the `payments[]` rule, both OUTPUT
+schema blocks), the `ExtractedSlip` / `ExtractedPayment` types, `normalizeSlip`,
+the duplicate probe, `PlanReceiptPaymentsInput.slipProcessingDate` →
+`slipDate`, the planner's `paidAt` resolution, the two tests, and the frontend
+types the wire shape flows into (`ScanOrderModal`'s `ExtractedSlip` /
+`ScanPrefill`, `ReconciledPrefill`, `MobileScanPrefill`). Only the third fact is
+still called `processingDate`. `CARRIED_NOT_INVERTED` carries `'slipDate'`, and
+its test now also asserts `'processingDate'` is NOT in the array, so the entry
+cannot silently drift back to the overloaded name.
+
+**Back-compat** - stored `so_scan_samples.extracted` / `corrected` blobs still
+carry the old key, and the few-shot pool feeds those blobs into the prompt
+verbatim, so the model can echo `processingDate` back. `normalizeSlip` reads
+`slipDate ?? processingDate` and `receiptTxnDate ?? processingDate`. Without
+that, a scan whose example pool predates the rename would lose its receipt date
+and book `paid_at` at today.
+
+**Deliberately NOT done** - no value was moved. The rename exposed a real
+two-surfaces-one-field divergence, left exactly as it was with comments saying
+so: `MobileNewSO` seeds the SO's Processing Date from `slipDate` (the day the
+rep WROTE the slip), while desktop derives it from Delivery − 6 weeks and never
+reads the slip's date. Both then invert the SO's Processing Date back into the
+slip's `slipDate` when building a `corrected` blob. **All of it is latent, not
+live:** `MobileNewSO`'s `scanPrefill` prop is never supplied by any
+`setScreen({t:"new-so"})` call site (the live mobile path,
+`createDraftFromPrefill`, sends `internalExpectedDd: null`), desktop's
+`soScanPrefill` handoff has a reader and no writer, and the `corrected` blob is
+inert because `slipDate` is in `CARRIED_NOT_INVERTED`. It fires the moment
+someone re-wires either handoff - which this module has done before. Written up
+in `docs/modules/scan-to-so.md` §2b rather than fixed inside a rename.
+
+**Lesson** - **a name that fits three facts will eventually be read as the wrong
+one, and the first casualty is the documentation, not the code.** The audit
+entry that got this wrong was written by someone reading the prompt carefully;
+the name defeated them. Renaming is not cosmetic when the old name is what makes
+a reviewer stop looking.
+
+**Ref:** `pd/overloaded-names`, 2026-08-13. Naming only - no behaviour change,
+no migration, no API path change. **NOT verified:** no real slip was
+round-tripped through a live model, so the vision model's compliance with the
+renamed OUTPUT keys is reasoned from the prompt, not observed.
+>>>>>>> origin/pd/overloaded-names
 
 ## The first sales order after the write-back went live was refused, and the documented remedy could not be applied [high]
 
@@ -6760,7 +6830,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Root cause (traced at `origin/main`, and by two independent passes before any edit).** All three distillers select `status='CONFIRMED'` (`scan-so.ts:1875`, `:1998`, `:2108`, `:2220`). `CONFIRMED` was written in exactly one place, `POST /scan-so/samples/:id/confirm` (`:4732`). That endpoint has exactly two callers — `frontend/src/pages/scm-v2/SalesOrderNew.tsx:1320` and `frontend/src/mobile/MobileNewSO.tsx:1392` — and **both are gated on a scan handoff nothing performs any more**: desktop needs `?fromScan=1` plus `sessionStorage[SCAN_PREFILL_KEY]`, and `SCAN_PREFILL_KEY` is only *defined* and *read*, never written (`ScanOrderModal.tsx:88`); mobile needs a `scanPrefill` screen prop that neither `setScreen({t:"new-so"})` call site supplies. `ScanOrderModal` says why in its own words — it became a pure `/enqueue` surface and "there is no review-first branch any more". The one live writer, `noteScanDraftAccepted`, wrote **`ACCEPTED` only** and deliberately refused to write anything for an edited draft. Net: confirm a scanned draft unchanged and the few-shot pool learns; confirm it **with edits** — the corrections, the only diff-bearing signal any distiller can mine — and **nothing was written at all**.
 - **The question asked before the fix, because the answer changed the design.** The owner approved reconnecting this and was told it would cost an extra review step. It does not. `noteScanDraftAccepted` already runs on DRAFT → CONFIRMED, already resolves the sample via `scan_jobs.sample_id`, and already decides "did a human edit this" from `mfg_so_audit_log`. The server therefore already knows both *this came from a scan* and *a human corrected it*, with zero UI involvement — so the only open question was whether the corrected content can be rebuilt server-side into the shape the distillers read. It can. **Option (A), server-side capture, shipped. No new screen, no extra click, no change to the salesperson's workflow.** Option (B) (restoring the dead review handoff) was not needed and was not built.
 - **Fix.** `noteScanDraftAccepted` now branches on the edit flag it was already computing. Unchanged → `ACCEPTED` with `corrected = extracted`, byte-for-byte the previous behaviour. Edited → `CONFIRMED` with a `corrected` blob rebuilt from the operator's final SO by the new pure function `buildCorrectedSlipFromSo`.
-- **The rebuild is an overlay, not a reversal of the lossy mapper — that distinction is the whole safety argument.** It starts from the AI's own `extracted` blob and overwrites a **curated** set of faithfully-invertible fields, and **only where the value genuinely moved**. Blind overwriting is what would make this dangerous: re-stamping an unchanged `skuMatch` with `reason:'operator-confirmed'` would make every line of every sample "differ", and the distillers turn every difference into a rule. So each overlay compares on the axis that carries meaning (trimmed text, the match VALUE, the code set) and leaves the AI's object in place when they agree. Everything whose forward mapping is lossy, derived or overwritten downstream is **carried across untouched and contributes no diff** — enumerated in code as `CARRIED_NOT_INVERTED`, each with its reason: the venue (the create core's by-active-project autofill resolves a venue the slip never named), the remark (the dedup path prefixes `POSSIBLE DUPLICATE of …`), the processing date (pinned to today by owner rule, never the slip's), the **line price** (the create core REPRICES every goods line, so `unit_price_centi` is the catalog's figure and not the operator's correction), the installment plan (the header stores an integer; the pool's label spelling is unrecoverable and inventing one breaks the module's never-invent rule) and the online type (no such column exists on the SO header). Service lines, free-gift lines and cancelled lines are excluded — they are not slip lines.
+- **The rebuild is an overlay, not a reversal of the lossy mapper — that distinction is the whole safety argument.** It starts from the AI's own `extracted` blob and overwrites a **curated** set of faithfully-invertible fields, and **only where the value genuinely moved**. Blind overwriting is what would make this dangerous: re-stamping an unchanged `skuMatch` with `reason:'operator-confirmed'` would make every line of every sample "differ", and the distillers turn every difference into a rule. So each overlay compares on the axis that carries meaning (trimmed text, the match VALUE, the code set) and leaves the AI's object in place when they agree. Everything whose forward mapping is lossy, derived or overwritten downstream is **carried across untouched and contributes no diff** — enumerated in code as `CARRIED_NOT_INVERTED`, each with its reason: the venue (the create core's by-active-project autofill resolves a venue the slip never named), the remark (the dedup path prefixes `POSSIBLE DUPLICATE of …`), the processing date (pinned to today by owner rule, never the slip's) — *[twice superseded: the pin-to-today rule was dropped 2026-08-08 (a DRAFT carries neither date), and the field itself is now `slipDate`, the slip's OWN written date, renamed 2026-08-13; the array entry is `'slipDate'`]* — the **line price** (the create core REPRICES every goods line, so `unit_price_centi` is the catalog's figure and not the operator's correction), the installment plan (the header stores an integer; the pool's label spelling is unrecoverable and inventing one breaks the module's never-invent rule) and the online type (no such column exists on the SO header). Service lines, free-gift lines and cancelled lines are excluded — they are not slip lines.
 - **Line pairing refuses to guess.** `alignSoLinesToSlip` anchors monotonically on unchanged item codes and fills each gap between anchors positionally **only when both sides of the gap are the same length**. An unequal gap is genuinely ambiguous (which slip row was deleted, which item was added?) and mis-pairing `rawText` with a code would teach the alias distiller a handwriting → SKU mapping nobody wrote, so there the line keeps the operator's code and qty but asserts **no** slip provenance. Losing signal is acceptable; a wrong pair is not.
 - **The old rule is honoured, not relaxed.** `scan-sample-review.ts`'s header refused edited drafts because writing `corrected = extracted` for one would assert "the AI read this correctly" about a reading a human had just fixed. That is still never done. And when the edit touched only things the OCR does not emit, the rebuilt blob EQUALS `extracted` — a zero-diff `CONFIRMED` row would teach the distillers nothing and, inside their `LIMIT` window, evict a real correction, while downgrading it to `ACCEPTED` would make exactly the false claim the old header forbade. So that case writes **nothing**, which is precisely today's behaviour.
 - **Deliberately NOT done.** (a) The distillers are NOT triggered from here. `/samples/:id/confirm` fires them in `waitUntil`, but that is a scan-owned surface; this is the SO status transition, and hanging three sequential billed Anthropic calls off every DRAFT → CONFIRMED puts API traffic on a hot order path — and would need an import of `scan-so.ts`, which imports `mfg-sales-orders.ts`, which imports this module: a cycle. The weekly Sunday cron rebuild is the backstop for the distilled rule layers, and the few-shot pool reads `corrected` live at extract time, so a new sample takes effect on the very next scan. **Consequence, stated plainly: corrections now land immediately, distilled rules refresh weekly rather than instantly.** (b) The distillers' selection logic, the `ACCEPTED` semantics, the few-shot pool and the prompt-injection order are untouched — this reconnects a feed, it does not redesign the learner. (c) The dead confirm endpoint and its two orphaned callers are left alone: they are unreachable but not made *more* unreachable by this change, and deleting them is a separate revertable commit that this PR does not make. (d) No migration — `so_scan_samples.status` is free text with no CHECK constraint, and `CONFIRMED` is already in its vocabulary.

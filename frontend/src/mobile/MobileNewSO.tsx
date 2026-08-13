@@ -719,7 +719,18 @@ export function MobileNewSO({
   // Order info
   // Reconciled against the live building_type catalog — seed it straight (see custType).
   const [buildingType, setBuildingType] = useState(scanPrefill?.buildingType ?? "");
-  const [procDate, setProcDate] = useState(scanPrefill?.processingDate ?? "");
+  /* SEEDING NOTE (unchanged by the 2026-08-13 rename, flagged by it): this is
+     the Sales Order's PROCESSING DATE (internal_expected_dd, the factory-start
+     date), but it is seeded from `slipDate` — the day the rep WROTE the slip.
+     Those are different facts. Desktop derives the same field from
+     Delivery − 6 weeks and never reads the slip's date.
+     LATENT, not live: no `setScreen({t:"new-so"})` call site supplies
+     `scanPrefill` (MobileApp.tsx declares it in the union and never passes it),
+     and the live mobile scan path is createDraftFromPrefill, which sends
+     internalExpectedDd: null. Re-wire that handoff and this starts stamping
+     factory dates off slip handwriting. Fixing it is a behaviour change, not a
+     rename — see docs/modules/scan-to-so.md §2b. */
+  const [procDate, setProcDate] = useState(scanPrefill?.slipDate ?? "");
   const [delivDate, setDelivDate] = useState(scanPrefill?.deliveryDate ?? "");
   const [note, setNote] = useState(scanPrefill?.note ?? "");
 
@@ -864,7 +875,9 @@ export function MobileNewSO({
           phone: toE164(scanPrefill.phone),
           custType: custType, buildingType: buildingType,
           note: scanPrefill.note,
-          procDate: scanPrefill.processingDate, delivDate: scanPrefill.deliveryDate,
+          // Coerced the SAME way procDate is seeded above (from the slip's own
+          // date), so the "scanned" badge and the learning diff agree with it.
+          procDate: scanPrefill.slipDate, delivDate: scanPrefill.deliveryDate,
           addr1: scanPrefill.address1, state: state,
           city: scanPrefill.city, postcode: scanPrefill.postcode,
         }
@@ -1419,7 +1432,13 @@ export function MobileNewSO({
       phones: phone.trim() ? [phone.trim()] : ai.phones,
       location: ai.location,
       deliveryDate: delivDate || ai.deliveryDate,
-      processingDate: procDate || ai.processingDate,
+      /* UNCHANGED MAPPING, now visibly odd (see the procDate seed above): the
+         SO's Processing Date field is written back into the slip's own
+         `slipDate`. It is only consistent because mobile SEEDED procDate from
+         slipDate, so an untouched field inverts to exactly the AI's read and
+         contributes no diff. Backend `CARRIED_NOT_INVERTED` lists slipDate for
+         precisely this reason. Rewiring it is a behaviour change, not a rename. */
+      slipDate: procDate || ai.slipDate,
       salesRep: scanSalesperson || ai.salesRep,
       customerSoRef: custRef.trim() || ai.customerSoRef,
       paymentMethod: ai.paymentMethod,
