@@ -64,7 +64,7 @@ import {
 /* SO-SKU spec P3 — a POS sofa build splits into per-compartment module lines
    (SO-2606-018 reference shape). Pure decomposition in shared; the build-level
    recompute + drift gate stay authoritative for the money. */
-import { splitSofaBuildIntoModuleLines } from '../shared/so-sofa-split';
+import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../shared/so-sofa-split';
 /* SO line ORDER rules (Loo 2026-06-12) — persisted row order: mains
    (sofa/mattress/bedframe) first, accessories after, services last; within a
    rank the cart order is preserved. Shared with the Backend PDF + POS print
@@ -4508,6 +4508,30 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
            `depth` alias here does NOT change the geometry. */
         const { cells: _cells, ...sharedVariants } =
           canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
+        /* SPREAD THE DISCOUNT ACROSS THE MODULES, don't dump it on module 0.
+           The line discount was validated against the WHOLE BUILD's unit price
+           (`discI > qtyI * unitI` above), but module 0 carries only its own
+           share of that price — so a legitimate build-level discount larger
+           than the first module's share made that row's total NEGATIVE, and
+           senOrZero (`Number.isFinite(v) ? v : 0`) passes negatives through.
+
+           Every downstream document then CLAMPED the negative away —
+           `Math.max(0, (qty * unit) - discount)` at delivery-orders-mfg.ts:4016
+           (SO->DO convert), :3673, :4872, and sales-invoices.ts:374 — so the
+           discount was silently deleted rather than carried. A 4-module RM8,000
+           build with an RM3,000 discount ordered at RM5,000 and INVOICED at
+           RM6,000.
+
+           Proof it was never intended: this same file's item PATCH (:8439)
+           re-validates the discount against the MODULE's unit price and 422s,
+           so such a row can be created but not edited.
+
+           distributeProportionally is exact (residue on the last line), and
+           because each share is `discount * unit_i / SUM(unit)` while the gate
+           above guarantees `discount <= qty * SUM(unit)`, every share is
+           <= `qty * unit_i` — precisely the invariant :8439 enforces. The
+           header total is computed BEFORE the split, so it is unchanged. */
+        const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
         const moduleRows = split.map((s, i) => {
           const moduleVariants: Record<string, unknown> = {
             ...sharedVariants,
@@ -4517,7 +4541,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             y: s.y,
             rot: s.rot,
           };
-          const moduleLineTotal = senOrZero((qty * s.unitPriceSen) - (i === 0 ? discount : 0));
+          const moduleLineTotal = senOrZero((qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0));
           const moduleLineCost = senOrZero(qty * s.unitCostSen);
           const row = {
             ...baseRow,
@@ -4525,7 +4549,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             description: s.description,
             description2: buildVariantSummary('sofa', moduleVariants) || null,
             unit_price_centi: s.unitPriceSen,
-            discount_centi: i === 0 ? discount : 0,
+            discount_centi: moduleDiscounts[i] ?? 0,
             total_centi: moduleLineTotal,
             total_inc_centi: moduleLineTotal,
             balance_centi: moduleLineTotal,
@@ -8028,6 +8052,10 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
          ran on the raw it.variants. */
       const { cells: _cells, freeItem: _clientFreeItem, ...sharedVariants } =
         canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
+      /* Spread across the modules - see the create path for the full trace. Dumping
+         the build-level discount on module 0 drove that row NEGATIVE, and every
+         downstream Math.max(0, ...) then deleted it, invoicing MORE than the order. */
+      const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
       const moduleRows = split.map((s, i) => {
         const moduleVariants: Record<string, unknown> = {
           ...sharedVariants,
@@ -8041,7 +8069,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
              the split build, exactly mirroring the create-path behaviour. */
           ...(addLineFreeItem ? { freeItem: addLineFreeItem } : {}),
         };
-        const moduleLineTotal = (qty * s.unitPriceSen) - (i === 0 ? discount : 0);
+        const moduleLineTotal = (qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0);
         const moduleLineCost = qty * s.unitCostSen;
         return {
           ...baseRow,
@@ -8053,7 +8081,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
           description: s.description,
           description2: buildVariantSummary('sofa', moduleVariants) || null,
           unit_price_centi: s.unitPriceSen,
-          discount_centi: i === 0 ? discount : 0,
+          discount_centi: moduleDiscounts[i] ?? 0,
           total_centi: moduleLineTotal,
           total_inc_centi: moduleLineTotal,
           balance_centi: moduleLineTotal,
@@ -9954,11 +9982,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   let rows: Array<Record<string, unknown>>;
   if (split && split.length > 0) {
     const { cells: _cells, ...sharedVariants } = persistVariants;
+    /* Spread across the modules - see the create path for the full trace. Dumping
+       the build-level discount on module 0 drove that row NEGATIVE, and every
+       downstream Math.max(0, ...) then deleted it, invoicing MORE than the order. */
+    const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
     rows = split.map((s, i) => {
       const moduleVariants: Record<string, unknown> = {
         ...sharedVariants, buildKey: newBuildKey, cellIndex: s.cellIndex, x: s.x, y: s.y, rot: s.rot,
       };
-      const moduleLineTotal = (qty * s.unitPriceSen) - (i === 0 ? discount : 0);
+      const moduleLineTotal = (qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0);
       const moduleLineCost = qty * s.unitCostSen;
       return {
         ...baseRow,
@@ -9966,7 +9998,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         description: s.description,
         description2: buildVariantSummary('sofa', moduleVariants) || null,
         unit_price_centi: s.unitPriceSen,
-        discount_centi: i === 0 ? discount : 0,
+        discount_centi: moduleDiscounts[i] ?? 0,
         total_centi: moduleLineTotal,
         total_inc_centi: moduleLineTotal,
         balance_centi: moduleLineTotal,
