@@ -6,7 +6,7 @@
     "migrationReversalNoteRequiredFrom: every backend/src/db/migrations-pg file numbered at or above this must carry a `-- REVERSAL:` note. It may only come DOWN.",
     "Written once, on 2026-08-13, from the tree as it then stood. Nothing regenerates it: a generator would let the list grow back, which is the one thing it must not do."
   ],
-  "migrationReversalNoteRequiredFrom": 287,
+  "migrationReversalNoteRequiredFrom": 289,
   "scripts": {
     "_staging-setup.mjs": [
       "mode-gate",
@@ -681,5 +681,6 @@
     "zero-duplicate-do-lines.mjs": [
       "confirm-phrase"
     ]
-  }
+  },
+  "undefined": "undefined RAISED 287 -> 289 on 2026-08-14, once and for a reason that can be checked: 0287 and 0288 landed on main while this gate waited in review, and main deploys run pg-migrate, so both are APPLIED on prod. pg-migrate records filename + CHECKSUM and VERIFIES every already-applied file on each run (backend/scripts/pg-migrate.mjs:3-4, lib/migration-checksum.mjs) - so adding even a comment line to them would make the runner refuse the next deploy. Backfilling their notes is not available; exempting them is. Every migration from 0289 must carry the note."
 }
