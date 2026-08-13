@@ -9,7 +9,7 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive** | `backend/src/db/client.ts` (`getDb` → `drizzle-orm/postgres-js`), binding in `backend/wrangler.toml` `[[hyperdrive]]` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -292,15 +292,34 @@ npm test                                     # hits BASE_URL (default localhost)
 npm test -- --base-url=https://…             # override
 ```
 
-No backend/frontend unit tests exist yet — Vitest is the planned pick when a service grows complex enough to warrant them.
+Vitest, on both sides, and the backend suite GATES THE DEPLOY. `backend/tests/`
+holds 163 `*.test.ts` files plus colocated ones under `backend/src/`; the
+frontend has 131. Both `package.json`s define `"test": "vitest run"`, and
+`.github/workflows/deploy.yml` runs the backend suite sharded 4× as a job the
+deploy depends on. Real-Postgres integration tests live in `backend/tests-pg/`
+and run against CI's `postgres:16` service container (`npm run test:pg`); they
+SKIP rather than fail without `TEST_DATABASE_URL`.
 
 ---
 
 ## Migrations discipline
 
-- Every schema change goes through a new numbered file in `backend/src/db/migrations/`.
-- Files are applied in numeric order by `npm run db:migrate`; the script tracks applied files in the `d1_migrations` table and skips them on re-run.
-- Don't edit a migration after it's been applied to prod. Write a new one.
+**There are TWO migration trees and only one reaches production.** Putting a
+change in the wrong one is the trap `CLAUDE.md` warns about by name: it ships,
+passes CI, merges — and the database never changes.
+
+- **`backend/src/db/migrations-pg/` is the LIVE tree.**
+  `.github/workflows/deploy.yml` runs `node scripts/pg-migrate.mjs` on every push
+  to `main`, so a merged file is applied to production automatically. A file that
+  fails there blocks every later migration until it is fixed.
+- **`backend/src/db/migrations/` is the older D1 / test mirror.** Kept for
+  test parity only. Production does not read it.
+- `pg-migrate` tracks applied files by FULL FILENAME, so number gaps and
+  out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the
+  number at MERGE time by re-listing the tree, not when you branch.
+- Don't edit a migration after it has been applied to prod — and note that
+  RENAMING one counts as editing: the tracker keys on the filename, so a renamed
+  applied file runs a second time against a schema it already changed.
 - SQLite can't `DROP COLUMN` when the column is referenced by an index or a foreign key. Pattern: `DROP INDEX` first, or rebuild the table (see `036_drop_legacy_suppliers.sql` for the projects-table rebuild example).
 - Use `IF EXISTS` and `IF NOT EXISTS` liberally — it keeps the migration idempotent against re-runs on half-applied state.
 

@@ -33,7 +33,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const ROUTES = path.join(backendRoot, "src", "scm", "routes");
+/* BOTH route trees. It scanned only scm/routes until 2026-08-13, leaving
+   src/routes — 41 files, 693 registrations, about a fifth of the backend's route
+   surface — completely unchecked. That is not a hypothetical gap: routes/
+   projects.ts serves the SO venue picker from scm.warehouses with no company
+   predicate, while the SAME handler scopes project_venues twelve lines earlier
+   and says in a comment why. The checker could not see it.
+
+   The native tree has its own companyContext middleware, so expect a different
+   false-positive profile here; each finding still has to be read. */
+const ROUTE_DIRS = [
+  path.join(backendRoot, "src", "scm", "routes"),
+  path.join(backendRoot, "src", "routes"),
+];
 const strict = process.argv.includes("--strict");
 const jsonOut = process.argv.includes("--json");
 
@@ -97,6 +109,28 @@ const MANUAL_SCOPE = /\.(eq|in)\(\s*['"`]company_id['"`]/;
 /** A row-targeting predicate: .eq('id', x) or .eq('<something>_id', x). */
 const ID_PREDICATE = /\.eq\(\s*['"`](id|[a-z_]+_id)['"`]/;
 
+/* RAW SQL — the shape this checker was BLIND to.
+   Adding src/routes to the scan changed the handler count 632 -> 1022 and
+   produced ZERO new findings, which looked like a clean tree and was not: the
+   native routers do not use the supabase-js builder at all. They write
+   `c.env.DB.prepare(\`SELECT ... FROM scm.warehouses WHERE ...\`)`, so every
+   pattern above misses them by construction — including routes/projects.ts:1341,
+   which serves the SO venue picker from scm.warehouses with no company predicate
+   while the SAME handler scopes project_venues twelve lines earlier and explains
+   in a comment why.
+
+   A statement is flagged when it reads or writes a COMPANY-SCOPED table and
+   carries no company_id predicate and no raw-SQL scope fragment
+   (activeCompanySql / allowedCompaniesSql / houzsCompanySql / companyScopeSql
+   return exactly those fragments). The table list is deliberately narrow — only
+   tables proven to carry company_id — because a wide list on a checker that
+   cannot parse SQL would produce noise, and noise is how a checker dies. */
+const RAW_SQL_STMT = /\.prepare\(|\bsql`|\bdb\.query\(/;
+const RAW_SQL_SCOPED =
+  /company_id\s*(=|IN)|activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred/i;
+const RAW_SQL_TABLES =
+  /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:scm\.)?(warehouses|mfg_sales_orders|delivery_orders|purchase_orders|grns|purchase_invoices|sales_invoices|payment_vouchers|suppliers|mfg_products|project_venues|trips|stock_transfers|consignment_sales_orders|consignment_delivery_orders)\b/i;
+
 /* A registration whose body is a NAMED function declared elsewhere:
      paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
    Captures the handler name so the scan can follow it. */
@@ -158,8 +192,10 @@ function stripComments(lines) {
 const findings = [];
 let handlersChecked = 0;
 
-for (const file of fs.readdirSync(ROUTES).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
-  const full = path.join(ROUTES, file);
+for (const dir of ROUTE_DIRS) {
+const relDir = path.relative(backendRoot, dir).split(path.sep).join("/");
+for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
+  const full = path.join(dir, file);
   const raw = fs.readFileSync(full, "utf8").split(/\r?\n/);
   const code = stripComments(raw);
 
@@ -300,6 +336,21 @@ for (const file of fs.readdirSync(ROUTES).filter((f) => f.endsWith(".ts") && !f.
        verified correct by hand. The window is good enough to LABEL a hit as a
        write; it is not good enough to acquit one. */
     const hits = [];
+    /* RAW-SQL pass — a different shape entirely, so it gets its own loop rather
+       than being bolted onto the builder test above. */
+    scanBody.forEach((l, i) => {
+      if (!RAW_SQL_STMT.test(l)) return;
+      const stmt = scanBody.slice(i, Math.min(i + 12, scanBody.length)).join("\n");
+      if (!RAW_SQL_TABLES.test(stmt)) return;
+      if (RAW_SQL_SCOPED.test(stmt)) return;
+      const abs = scanOffset + i;
+      hits.push({
+        line: abs + 1,
+        text: (raw[abs] ?? "").trim().slice(0, 110),
+        writes: /\bUPDATE\b|\bDELETE\b|\bINSERT\b/i.test(stmt),
+        raw: true,
+      });
+    });
     scanBody.forEach((l, i) => {
       if (!ID_PREDICATE.test(l)) return;
       const stmt = statementAround(i);
@@ -320,13 +371,14 @@ for (const file of fs.readdirSync(ROUTES).filter((f) => f.endsWith(".ts") && !f.
        annotation is per-handler, so re-read it when adding a statement. */
     const writes = hits.some((h) => h.writes);
     findings.push({
-      file: `backend/src/scm/routes/${file}`,
+      file: `backend/${relDir}/${file}`,
       handler: `${method} ${routePath}`,
       line: start + 1,
       writes,
       hits: hits.slice(0, 3),
     });
   });
+}
 }
 
 findings.sort((a, b) => Number(b.writes) - Number(a.writes) || a.file.localeCompare(b.file) || a.line - b.line);
