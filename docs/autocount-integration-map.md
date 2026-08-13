@@ -12,6 +12,7 @@ has to rediscover the shape of the thing by probing production.
 | `docs/autocount-migration-record.md` | how the one-time migration was done, the coverage matrix, the Friday runbook |
 | `docs/autocount-service-deploy.md` | building and swapping the exe on the host |
 | `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md` | where the cutover stands right now |
+| `docs/autocount-writeback-golive-coe.md` | **the day the write-back was switched on and nothing reached the book** — seven faults in one chain, and the one shape that caused three of them |
 | `docs/autocount-writeback-exposure-coe.md` | the API key that was being published |
 | `docs/autocount-read-relay-exposure-coe.md` | the read relay that answers the public internet without a key |
 

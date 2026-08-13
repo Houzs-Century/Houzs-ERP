@@ -1,0 +1,47 @@
+name: Stale branch report (read-only)
+
+# Reports branches whose pull request closed more than 30 days ago. It NEVER
+# deletes: the script has no delete call and this workflow grants no write
+# permission, so the job physically cannot remove a branch even if the script
+# were changed to try.
+#
+# Why a report and not a cleaner: on 2026-08-13 this repo had 183 remote
+# branches, 101 of them belonging to PRs that had already merged or closed. The
+# merged half is handled automatically once `delete_branch_on_merge` is on (see
+# docs/repo-hygiene.md — it needs an admin, which CI does not have). What this
+# covers is the rest: PRs closed WITHOUT merging, branches from before the
+# setting, and branches with no PR at all, which no automation should ever
+# remove on its own.
+#
+# Read the result on the run page — it writes a job summary, not just a log.
+
+on:
+  schedule:
+    # 01:00 UTC Monday = 09:00 Monday in Kuala Lumpur, so the list is waiting at
+    # the start of the week rather than arriving mid-Friday.
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Report branches whose PR closed more than this many days ago'
+        required: false
+        default: '30'
+
+# Read-only by construction. `contents: read` cannot delete a ref.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Report stale branches
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/report-stale-branches.mjs --days "${{ github.event.inputs.days || '30' }}"
