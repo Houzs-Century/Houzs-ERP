@@ -172,6 +172,41 @@ export const countColour = async (client, co, code) => Promise.all((await armsFo
 }));
 export const countSeries = (client, co, id) => countBy(client, co, "fabricId", id);
 
+/* COUNT MANY COLOURS IN ONE PASS, because counting them one at a time stopped
+   being viable the moment the arm list went from 4 to 15.
+
+   normalize-fabric-codes asks for a reference count PER CODE, and the library
+   holds ~800 of them: 800 x 15 arms is twelve thousand round trips, and a prod
+   plan run that used to finish in a minute was still going after fifteen. The
+   widening was right; the per-code loop behind it was not.
+
+   One query per arm, GROUP BY the colour the row actually carries, restricted
+   to the codes asked for. Returns Map<UPPERCASE code, total across all arms> —
+   uppercase because the callers hold normColour'd codes and a Map is
+   case-sensitive where the comparison should not be.
+
+   The COALESCE picks whichever alias the row uses, in the same order
+   COLOUR_ALIASES declares, so a row is counted once and under one name even
+   when it carries two of them. */
+export const countColoursBulk = async (client, co, codes) => {
+  const want = [...new Set(codes.map((c) => String(c).trim()).filter(Boolean))];
+  const out = new Map(want.map((c) => [c.toUpperCase(), 0]));
+  if (!want.length) return out;
+  const pick = `COALESCE(${COLOUR_ALIASES.map((k) => `i.variants->>'${k}'`).join(", ")})`;
+  for (const arm of await armsFor(client, "variants")) {
+    const rows = await client.unsafe(
+      `SELECT ${pick} AS code, COUNT(*)::int AS n FROM ${arm.t} i
+        WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
+          AND ${pick} = ANY($2)
+        GROUP BY 1`, [co, want]);
+    for (const r of rows) {
+      const k = String(r.code).toUpperCase();
+      out.set(k, (out.get(k) ?? 0) + r.n);
+    }
+  }
+  return out;
+};
+
 /* Move every live line from one colour string to another, on every alias the
    row might be carrying it under, writing back to that same key. */
 export const repointColour = async (client, co, from, to) => Promise.all((await armsFor(client, 'variants')).map(async (arm) => {
