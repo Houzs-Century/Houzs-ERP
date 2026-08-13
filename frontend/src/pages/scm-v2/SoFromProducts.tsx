@@ -168,7 +168,7 @@ function buildTestBatch(
 
 const specToBody = (s: SoSpec) => ({
   debtorName: s.customerName,
-  internalExpectedDd: s.processingDate,
+  processingDate: s.processingDate,
   customerDeliveryDate: s.deliveryDate,
   items: s.lines.map((l) => ({
     itemCode: l.itemCode,

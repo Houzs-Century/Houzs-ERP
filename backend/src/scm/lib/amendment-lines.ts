@@ -22,6 +22,12 @@ export type SubmittedAmendmentLine = {
   newVariants?: unknown;
   newQty?: number | null;
   newUnitPriceSen?: number | null;
+  /* Migration 0280 — the line's REMARK: the free-text instruction an operator
+     types for whoever executes the line ("Please take back Cody Bedframe (King
+     Size) 2 units"). undefined/null = this request does not touch the remark;
+     '' = clear it. Before 0280 it had no column, so submit dropped it in
+     silence and a SVC-ADDON line reached the driver saying nothing at all. */
+  newRemark?: string | null;
   oldSnapshot?: unknown;
 };
 
@@ -33,6 +39,7 @@ export type AmendmentLineRow = {
   new_variants: unknown;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  new_remark: string | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -66,12 +73,19 @@ export async function buildAmendmentLineRows(
   )];
 
   const itemGroupById = new Map<string, string | null>();
+  /* The line's CURRENT remark, read from the order for the same reason the item
+     group is (mig 0280): the snapshot is the approver's evidence of what the
+     line WAS, so its before-side comes from the record, never from the browser
+     asking to change it. A client-supplied "was" could show the approver a
+     remark that was never on the line. */
+  const remarkById = new Map<string, string | null>();
   if (referencedItemIds.length > 0) {
     const { data, error } = await sb.from('mfg_sales_order_items')
-      .select('id, item_group').eq('doc_no', docNo).in('id', referencedItemIds);
+      .select('id, item_group, remark').eq('doc_no', docNo).in('id', referencedItemIds);
     if (error) return { ok: false, reason: 'unreadable' };
-    for (const r of (data ?? []) as Array<{ id: string; item_group: string | null }>) {
+    for (const r of (data ?? []) as Array<{ id: string; item_group: string | null; remark: string | null }>) {
       itemGroupById.set(r.id, r.item_group);
+      remarkById.set(r.id, r.remark);
     }
     const missingIds = referencedItemIds.filter((id) => !itemGroupById.has(id));
     if (missingIds.length > 0) return { ok: false, reason: 'missing', missingIds };
@@ -85,6 +99,13 @@ export async function buildAmendmentLineRows(
     const group = l.salesOrderItemId
       ? itemGroupById.get(l.salesOrderItemId) ?? null
       : ((l.newVariants as Record<string, unknown> | null)?.itemGroup ?? null);
+    /* An ADD line has no persisted remark either — its before-side is simply
+       absent, which is what the diff reads as "added". */
+    const wasRemark = l.salesOrderItemId ? remarkById.get(l.salesOrderItemId) ?? null : null;
+    const stamped = {
+      ...(group != null ? { itemGroup: String(group) } : {}),
+      ...(wasRemark != null ? { remark: String(wasRemark) } : {}),
+    };
     return {
       amendment_id:        amendmentId,
       sales_order_item_id: l.salesOrderItemId ?? null,   // null = added line
@@ -93,8 +114,12 @@ export async function buildAmendmentLineRows(
       new_variants:        l.newVariants ?? null,
       new_qty:             l.newQty ?? null,
       new_unit_price_sen:  l.newUnitPriceSen ?? null,
-      old_snapshot:        snapshot || group != null
-        ? { ...(snapshot ?? {}), ...(group != null ? { itemGroup: String(group) } : {}) }
+      /* undefined (key absent) and null both mean "not requested" — normalised
+         to NULL so applySoAmendment's `!= null` test is the ONE gate on whether
+         the remark is written. '' survives as a real request to clear it. */
+      new_remark:          l.newRemark ?? null,
+      old_snapshot:        snapshot || Object.keys(stamped).length > 0
+        ? { ...(snapshot ?? {}), ...stamped }
         : null,
     };
   });

@@ -12,7 +12,8 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
   buildAmendmentHeaderChanges,
@@ -74,7 +75,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -165,7 +166,7 @@ type Payment = {
   key: string;
   /** Money idempotency key — minted ONCE per payment row and reused by every
    *  retry of that row, so a re-submitted create cannot book it twice.
-   *  recordSlipBackedPayments has two call sites and the rows survive a failed
+   *  recordNewPayments has two call sites and the rows survive a failed
    *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
   method: string; // Cash / Merchant / Online / Installment
@@ -213,7 +214,7 @@ type SoHeader = {
   customer_state: string | null;
   city: string | null;
   postcode: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   customer_delivery_date: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
@@ -472,7 +473,7 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
     city: prefill.city.trim() || null,
     postcode: prefill.postcode.trim() || null,
     // DRAFT: no dates (the interactive "Save draft" nulls these too).
-    internalExpectedDd: null,
+    processingDate: null,
     customerDeliveryDate: null,
     /* EXPLICIT draft flag — the backend statuses the SO on body.asDraft === true
        (mfg-sales-orders.ts POST /), NOT on empty dates. Without it a scanned,
@@ -718,7 +719,18 @@ export function MobileNewSO({
   // Order info
   // Reconciled against the live building_type catalog — seed it straight (see custType).
   const [buildingType, setBuildingType] = useState(scanPrefill?.buildingType ?? "");
-  const [procDate, setProcDate] = useState(scanPrefill?.processingDate ?? "");
+  /* SEEDING NOTE (unchanged by the 2026-08-13 rename, flagged by it): this is
+     the Sales Order's PROCESSING DATE (internal_expected_dd, the factory-start
+     date), but it is seeded from `slipDate` — the day the rep WROTE the slip.
+     Those are different facts. Desktop derives the same field from
+     Delivery − 6 weeks and never reads the slip's date.
+     LATENT, not live: no `setScreen({t:"new-so"})` call site supplies
+     `scanPrefill` (MobileApp.tsx declares it in the union and never passes it),
+     and the live mobile scan path is createDraftFromPrefill, which sends
+     internalExpectedDd: null. Re-wire that handoff and this starts stamping
+     factory dates off slip handwriting. Fixing it is a behaviour change, not a
+     rename — see docs/modules/scan-to-so.md §2b. */
+  const [procDate, setProcDate] = useState(scanPrefill?.slipDate ?? "");
   const [delivDate, setDelivDate] = useState(scanPrefill?.deliveryDate ?? "");
   const [note, setNote] = useState(scanPrefill?.note ?? "");
 
@@ -770,7 +782,7 @@ export function MobileNewSO({
      `hasOpenAmend` blocks raising a SECOND amendment while one is in flight. */
   const [amendEligible, setAmendEligible] = useState(false);
   const [hasOpenAmend, setHasOpenAmend] = useState(false);
-  /* FIX D2/D3 — the PERSISTED processing date (internal_expected_dd) drives the
+  /* FIX D2/D3 — the PERSISTED processing date (processing_date) drives the
      processing-date lock. Kept separate from the editable procDate form value so
      the lock reflects what the backend has, not an in-flight edit. */
   const [origProcDate, setOrigProcDate] = useState<string>("");
@@ -863,7 +875,9 @@ export function MobileNewSO({
           phone: toE164(scanPrefill.phone),
           custType: custType, buildingType: buildingType,
           note: scanPrefill.note,
-          procDate: scanPrefill.processingDate, delivDate: scanPrefill.deliveryDate,
+          // Coerced the SAME way procDate is seeded above (from the slip's own
+          // date), so the "scanned" badge and the learning diff agree with it.
+          procDate: scanPrefill.slipDate, delivDate: scanPrefill.deliveryDate,
           addr1: scanPrefill.address1, state: state,
           city: scanPrefill.city, postcode: scanPrefill.postcode,
         }
@@ -903,8 +917,8 @@ export function MobileNewSO({
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
-        setProcDate((h.internal_expected_dd ?? "").slice(0, 10));
-        setOrigProcDate((h.internal_expected_dd ?? "").slice(0, 10));
+        setProcDate((h.processing_date ?? "").slice(0, 10));
+        setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
         setOrigDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
         setNote(h.note ?? "");
@@ -951,7 +965,7 @@ export function MobileNewSO({
           city: h.city ?? "",
           postcode: h.postcode ?? "",
           salesLocation: h.sales_location ?? "",
-          procDate: (h.internal_expected_dd ?? "").slice(0, 10),
+          procDate: (h.processing_date ?? "").slice(0, 10),
           delivDate: (h.customer_delivery_date ?? "").slice(0, 10),
           ecName: h.emergency_contact_name ?? "",
           ecPhone: toE164(h.emergency_contact_phone),
@@ -1077,6 +1091,10 @@ export function MobileNewSO({
     const hit = list.find((m) => m.state === state);
     return hit?.warehouse?.code ?? "";
   }, [state, stateWarehousesQ.data]);
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   /* Effective venue to SEND on save — the operator's manual pick when they
      changed it, otherwise the derived default (resolvedVenueId already folds
@@ -1117,15 +1135,15 @@ export function MobileNewSO({
 
   /* ── FIX D2/D3 — processing-date LOCK (mirror the backend + SalesOrderDetail).
      The backend locks an SO once "today (MYT)" is strictly AFTER its processing
-     date (internal_expected_dd) on a non-DRAFT / non-CANCELLED order: line
+     date (processing_date) on a non-DRAFT / non-CANCELLED order: line
      add/edit/delete + the identity columns State / City / Postcode are rejected
      409 so_locked_processing. Delegated to the SHARED procLockActive() (which
-     reads internal_expected_dd + status against todayMyt()) so this edit form
+     reads processing_date + status against todayMyt()) so this edit form
      can't drift from the mobile detail screen or desktop — DRAFT / CANCELLED
      stay editable. In EDIT mode we DISABLE line editing + State/City/Postcode,
      but keep the rest of the customer info + address lines + note editable. */
   const procLocked = useMemo(
-    () => isEdit && procLockActive({ internal_expected_dd: origProcDate, status: soStatus }),
+    () => isEdit && procLockActive({ processing_date: origProcDate, status: soStatus }),
     [isEdit, origProcDate, soStatus],
   );
   /* AMENDMENT MODE (desktop SalesOrderDetail parity) — the SO is
@@ -1414,7 +1432,13 @@ export function MobileNewSO({
       phones: phone.trim() ? [phone.trim()] : ai.phones,
       location: ai.location,
       deliveryDate: delivDate || ai.deliveryDate,
-      processingDate: procDate || ai.processingDate,
+      /* UNCHANGED MAPPING, now visibly odd (see the procDate seed above): the
+         SO's Processing Date field is written back into the slip's own
+         `slipDate`. It is only consistent because mobile SEEDED procDate from
+         slipDate, so an untouched field inverts to exactly the AI's read and
+         contributes no diff. Backend `CARRIED_NOT_INVERTED` lists slipDate for
+         precisely this reason. Rewiring it is a behaviour change, not a rename. */
+      slipDate: procDate || ai.slipDate,
       salesRep: scanSalesperson || ai.salesRep,
       customerSoRef: custRef.trim() || ai.customerSoRef,
       paymentMethod: ai.paymentMethod,
@@ -1455,10 +1479,19 @@ export function MobileNewSO({
     );
   };
 
-  /* Post-create payment recording — records each SLIP-BACKED row AFTER the SO
-     exists, through the same POST /:docNo/payments the SO-detail screen uses. */
-  async function recordSlipBackedPayments(createdDocNo: string) {
-    const rows = pays.filter((p) => p.slipSession && toCenti(p.amount) > 0);
+  /* Post-create payment recording — records each amount-bearing row AFTER the
+     SO exists, through the same POST /:docNo/payments the SO-detail screen uses.
+
+     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT. It used to also demand a
+     slipSession, which silently dropped a slip-less row: the cashier's payment
+     never posted and the SO read unpaid (BUG-HISTORY, the money bug that
+     produced the shared slipless guard). With the slip now OPTIONAL everywhere
+     (Owner 2026-08-13) that guard is gone, so this filter is the only thing
+     deciding whether the money is recorded — it must never look at the slip
+     again. The route accepts a null uploadSessionId and records the row
+     slip-less. */
+  async function recordNewPayments(createdDocNo: string) {
+    const rows = pays.filter((p) => toCenti(p.amount) > 0);
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
@@ -1471,7 +1504,8 @@ export function MobileNewSO({
         accountSheet: p.account.trim() || null,
         approvalCode: p.approval.trim() || null,
         collectedBy: p.collectedBy || null,
-        uploadSessionId: p.slipSession,
+        // '' when no slip was attached — send null, not an empty session id.
+        uploadSessionId: p.slipSession || null,
       };
       if (code === "merchant") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
       else if (code === "installment") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
@@ -1486,7 +1520,7 @@ export function MobileNewSO({
     }
     if (failed > 0) {
       const detail = firstError ? ` ${firstError}` : "";
-      void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment slip(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
+      void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
     }
   }
 
@@ -1589,6 +1623,13 @@ export function MobileNewSO({
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
     if (toCenti(l.price) !== (snap.unit_price_centi ?? 0)) return true;
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
+    /* mig 0280 — the remark is a carryable field now, so a remark-only edit IS
+       a request. Stated explicitly rather than relying on the variants compare
+       above: buildVariants copies the remark into variants.remark, so this was
+       incidentally caught here while desktop's signature (four fields, no
+       variants.remark side channel) missed it entirely and silently requested
+       nothing. Both platforms now test the same five fields on purpose. */
+    if (l.remark.trim() !== (snap.remark ?? "").trim()) return true;
     return false;
   };
 
@@ -1658,6 +1699,12 @@ export function MobileNewSO({
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
         newUnitPriceSen: toCenti(l.price),
+        /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
+           new_remark is "not requested", which is what keeps the apply from
+           rewriting a remark this session never touched. */
+        ...(l.remark.trim() !== (snap.remark ?? "").trim()
+          ? { newRemark: l.remark.trim() }
+          : {}),
         oldSnapshot: {
           itemCode: snap.item_code,
           variants: snap.variants ?? null,
@@ -1692,6 +1739,11 @@ export function MobileNewSO({
         newVariants: buildVariants(l),
         newQty: num(l.qty) || 1,
         newUnitPriceSen: toCenti(l.price),
+        /* mig 0280 — desktop parity: an added line carries its typed remark to
+           the mfg_sales_order_items.remark COLUMN, not only inside the variants
+           blob. A service line added purely to carry an instruction is the case
+           that lost the owner's text on 2990-SO-2608-016. */
+        ...(l.remark.trim() ? { newRemark: l.remark.trim() } : {}),
       });
     }
     return out;
@@ -1714,25 +1766,20 @@ export function MobileNewSO({
       setError(SOFA_MIX_MESSAGE);
       return;
     }
-    /* Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CREATING a
-       CONFIRMED order requires every line's category-required axes, date or
-       no date. With a Processing Date the full rule applies
-       (missingVariantAxes — colour-KIV blocks a date, owner 2026-07-24);
-       a date-less confirmed CREATE applies the confirm rule
-       (missingConfirmVariantAxes — colour-KIV satisfies the fabric axis).
-       Drafts still save with gaps, and the EDIT sheet keeps its original
-       procDate-only rule — editing an existing order (e.g. fixing a remark)
-       must never be hostage to gaps the edit didn't touch; the confirm gate
-       on the status route owns those at Create Sales Order time. */
-    if (!asDraft && (procDate || !isEdit)) {
-      const missOf = (l: LineItem) =>
-        procDate
-          ? missingVariantAxes(l.itemGroup, l.variants, l.itemCode)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode);
+    /* Variant completeness is the PROCEED rule, and only the proceed rule
+       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
+       的，除非它是 proceed 了"). A Processing Date IS proceed — colour-KIV also
+       blocks a date, owner 2026-07-24 — so the axes are demanded exactly when
+       a date is being set, on create and on edit alike. This briefly also ran
+       on a date-less CONFIRMED create (2026-08-08, HC-SO-2607-008); that made
+       a real order for a real customer unbookable before the customer had
+       picked a seat height, and is removed. Drafts were never gated. */
+    if (!asDraft && procDate) {
+      const missOf = (l: LineItem) => missingVariantAxes(l.itemGroup, l.variants, l.itemCode);
       const offender = namedLines.find((l) => missOf(l).length > 0);
       if (offender) {
         const miss = missOf(offender).map((a) => a.label).join(", ");
-        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}".`);
+        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}" before setting a Processing Date.`);
         return;
       }
     }
@@ -1751,6 +1798,19 @@ export function MobileNewSO({
       setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with desktop via soStockLocationError. Create only: an EDIT enqueues an
+       AutoCount edit, which leaves the account book's own Location alone. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+      isEdit,
+    });
+    if (locationErr) { setError(soErrorText(locationErr)); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from
@@ -1789,21 +1849,18 @@ export function MobileNewSO({
       const addrMsg = missingAddressMsg();
       if (addrMsg) { setError(addrMsg); return; }
     }
-    /* Every amount-bearing payment row needs its slip uploaded (slipSession set)
-       BEFORE save — SHARED with desktop via soSliplessPaymentError. This closes
-       a money bug: recordSlipBackedPayments only POSTs rows WITH a slipSession,
-       so a row with an amount but no slip was silently dropped and the payment
-       never posted. Guards only the NEW rows in `pays`; already-recorded
-       payments live in existingPays (read-only) and are untouched. */
-    const sliplessErr = soSliplessPaymentError(
-      pays.map((p) => ({ amountCenti: toCenti(p.amount), hasSlip: !!p.slipSession })),
-    );
-    if (sliplessErr) { setError(soErrorText(sliplessErr)); return; }
+    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
+       The guard that used to sit here existed because `recordNewPayments` only
+       POSTed rows carrying a slipSession, so refusing the save was all that
+       stood between a cashier and a payment that silently never booked. That
+       writer now posts on AMOUNT alone, so the row lands either way and there
+       is nothing left to refuse. Removing the guard WITHOUT that change would
+       re-introduce the exact money bug it was written for. */
     /* Cascade guard — a chosen method needs its sub-field(s): Merchant → Bank +
        Plan, Online → Sub-Type, Cash → none. Uses the SHARED desktop rule
        (missingMethodSubField) at the SAME point desktop runs it: BEFORE the SO is
        created. Without it, save() passed every check, the SO was created, and
-       recordSlipBackedPayments then POSTed the incomplete row — the server 400s
+       recordNewPayments then POSTed the incomplete row — the server 400s
        payment_method_field_required, which is caught below and surfaced only as
        the generic "record them again" toast, AFTER the order already exists. The
        payment never books and the SO reads unpaid. Only amount-bearing rows are
@@ -1845,7 +1902,7 @@ export function MobileNewSO({
            split can't drift. */
         const { changes: headerChanges } = buildAmendmentHeaderChanges(
           {
-            internalExpectedDd:   procOut,
+            processingDate:   procOut,
             customerDeliveryDate: delivOut,
             customerState:        state,
             postcode:             postcode.trim(),
@@ -1857,7 +1914,7 @@ export function MobileNewSO({
             address2:             addr2.trim(),
           },
           {
-            internalExpectedDd:   origProcDate,
+            processingDate:   origProcDate,
             customerDeliveryDate: origDelivDate,
             customerState:        origState,
             postcode:             origPostcode,
@@ -1868,7 +1925,7 @@ export function MobileNewSO({
         );
         const outgoingPatch = amendmentMode
           ? withFrozenHeaderFieldsReverted(patch, {
-              internalExpectedDd:   origProcDate,
+              processingDate:   origProcDate,
               customerDeliveryDate: origDelivDate,
               customerState:        origState,
               postcode:             origPostcode,
@@ -1932,8 +1989,8 @@ export function MobileNewSO({
             setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
             return;
           }
-          // A slip-backed payment recorded alongside the amendment still posts.
-          await recordSlipBackedPayments(docNo);
+          // A payment recorded alongside the amendment still posts, slip or not.
+          await recordNewPayments(docNo);
           /* useCreateAmendment invalidated the SO lists already; that raw payment
              lands after it and moves the list's paid / outstanding aggregates. */
           invalidateSoShared(qc);
@@ -2009,7 +2066,7 @@ export function MobileNewSO({
           loadedVersionRef.current = headerResult.version;
           activeLineLeaseRef.current = null;
         }
-        await recordSlipBackedPayments(docNo);
+        await recordNewPayments(docNo);
 
         /* The header PATCH + line diff + payments above are raw authedFetch, so
            nothing has told the desktop SO list its rows moved. Invalidate once
@@ -2033,17 +2090,20 @@ export function MobileNewSO({
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
-        /* GATE-ONLY, never booked. recordSlipBackedPayments runs AFTER this
+        /* GATE-ONLY, never booked. recordNewPayments runs AFTER this
            create, so at CREATE time the backend saw RM0 and the Processing-Date
            deposit gate refused the save with the money plainly on screen — and
            the create had to succeed before the payments could ever be posted.
            Deadlock, identical to the desktop screen (same fix, same PR: the two
            surfaces share this rule and only one of them being fixed is the
-           recurring bug class in CLAUDE.md). Same filter recordSlipBackedPayments
-           uses, so this can never claim money it is not about to record. */
+           recurring bug class in CLAUDE.md). Same filter recordNewPayments
+           uses — the AMOUNT, and only the amount — so this can never claim
+           money it is not about to record. It used to also demand a
+           slipSession; once the slip became optional (Owner 2026-08-13) that
+           would have re-opened this very deadlock for a slip-less deposit. */
         pendingDepositCenti: (() => {
           const c = pays
-            .filter((p) => p.slipSession && toCenti(p.amount) > 0)
+            .filter((p) => toCenti(p.amount) > 0)
             .reduce((sum, p) => sum + toCenti(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
@@ -2053,11 +2113,11 @@ export function MobileNewSO({
       const res = await createSo.mutateAsync({ ...body, idempotencyKey: soIdemKey });
       if (res?.docNo) {
         await uploadStagedPhotos(res.docNo);
-        await recordSlipBackedPayments(res.docNo);
+        await recordNewPayments(res.docNo);
       }
       maybeLearnFromScan();
       /* useCreateMfgSalesOrder already invalidated the SO lists at POST success,
-         but recordSlipBackedPayments posts RAW (not via useAddSalesOrderPayment)
+         but recordNewPayments posts RAW (not via useAddSalesOrderPayment)
          and lands after it, moving the list's paid / outstanding aggregates. */
       invalidateSoShared(qc);
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
@@ -2544,9 +2604,13 @@ export function MobileNewSO({
                   ))}
                 </div>
                 <button className="addline" onClick={() => setPays((p) => [...p, newPayment()])}>+ Add Payment</button>
+                {/* Owner 2026-08-13 — the slip is optional, so this line no
+                    longer claims a row without one is only "planned". Every
+                    amount-bearing row is recorded; the slip can follow later
+                    from the SO detail screen. */}
                 {!!pays.length && (
-                  <div style={{ fontSize: 10, color: "#a16a2e", marginTop: 6 }}>
-                    Each payment needs a slip to be recorded. Slip-backed rows are saved to the order on {isEdit ? "Save" : "Create"}; rows without a slip stay as planned entries — add their slip here or from the SO detail screen.
+                  <div style={{ fontSize: 10, color: "#767b6e", marginTop: 6 }}>
+                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. A slip is optional — attach one here, or add it later from the SO detail screen.
                   </div>
                 )}
               </div>
@@ -2773,7 +2837,7 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
     city: v.city.trim() || null,
     postcode: v.postcode.trim() || null,
     salesLocation: v.salesLocation || undefined,
-    internalExpectedDd: v.procDate || null,
+    processingDate: v.procDate || null,
     customerDeliveryDate: v.delivDate || null,
     emergencyContactName: v.ecName.trim() || null,
     emergencyContactPhone: v.ecPhone.trim() || null,
@@ -3664,9 +3728,11 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
             </button>
           </div>
         </div>
-        {pay.slipPhase !== "done" && (
-          <div style={{ fontSize: 10, color: "#a16a2e" }}>Planned — add a slip to record this payment on the order.</div>
-        )}
+        {/* The per-row amber warning is gone (Owner 2026-08-13): it called a
+            slip-less row a mere plan, which was true only while the writer
+            filtered on the slip. The slip is optional and the row is recorded
+            on its amount, so that line asked for something not required and
+            implied the money would not book without it. */}
       </div>
     </div>
   );

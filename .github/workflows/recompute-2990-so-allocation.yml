@@ -1,3 +1,19 @@
+# BROKEN, AND A TRAP FOR ANYONE COPYING IT — 2026-08-13
+#
+# This workflow references SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. Neither
+# secret exists in this repository: not at repo level, not in Production, not
+# in Staging. It has therefore never run and cannot run as written.
+#
+# It is also named three characters away from "recompute-so-allocation.yml",
+# which DOES work — that one reaches the same Worker-side function through
+# backend/scripts/lib/pgrest-shim.mjs over DATABASE_URL, the credential every
+# other workflow here uses. A new workflow was written by copying THIS file and
+# failed on its first dispatch with both secrets empty.
+#
+# To fix: swap the two secrets for DATABASE_URL and build the client with
+# pgrestShim, exactly as recompute-so-allocation.mjs does. Left unfixed here
+# only because that script is untested from this side; see CLAUDE.md, "Never
+# ask the owner to run a query".
 name: Recompute 2990 SO stock allocation (DRY-RUN gated)
 
 # One-shot sweep for migrated 2990 Sales Orders (company_id = 2) whose stock

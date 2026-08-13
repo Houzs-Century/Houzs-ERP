@@ -14,6 +14,8 @@
 //
 // Gated like every repair here: MODE=dry-run (default, rolls back),
 // MODE=apply requires CONFIRM="I HAVE REVIEWED THE DRY-RUN".
+//
+// RE-RUN: inert. Every INSERT is skipped when the series/colour already exists, so a second run adds nothing.
 import postgres from "postgres";
 
 const MODE = (process.env.MODE || "dry-run").toLowerCase();

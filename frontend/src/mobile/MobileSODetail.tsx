@@ -134,9 +134,9 @@ type SoHeader = {
   city: string | null;
   postcode: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   /* proceeded_at — when the salesperson proceeded the order (server-stamped).
-     Used with internal_expected_dd to reflect the processing-date LOCK. */
+     Used with processing_date to reflect the processing-date LOCK. */
   proceeded_at: string | null;
   so_date: string | null;
   created_at: string | null;
@@ -156,6 +156,10 @@ type SoHeader = {
      open_amendment is the light summary of any in-flight amendment (status NOT IN
      SENT/REJECTED). Same flags the desktop SalesOrderDetail routes on. */
   amendment_eligible: boolean | null;
+  /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
+     only). Feeds soProcLockActive (line ~390), so the phone freezes the same
+     fields the desktop does with no processing date involved. */
+  po_locked: boolean | null;
   has_open_amendment: boolean | null;
   open_amendment: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Scan-flow proof photos (migrations 0033 + 0034) — R2 keys for the
@@ -204,6 +208,10 @@ type SoItem = {
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
+  /* The operator's free-text instruction for whoever executes this line (the
+     line card's "Type remarks…" box). Served by GET /:docNo all along and
+     rendered on neither platform until 2026-08-11 — see the render site. */
+  remark?: string | null;
 };
 type SoPayment = {
   id: string;
@@ -992,7 +1000,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Venue" value={val(h.venue ?? h.venue_id)} /></div></div>
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing date" value={dl(h.internal_expected_dd)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery date" value={dl(h.customer_delivery_date)} mono /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop
                   SalesOrderDetailV2 parity), reusing THIS screen's own amber family
@@ -1068,6 +1076,16 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", overflowWrap: "anywhere" }}>{primary || "—"}</div>
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
+                    {/* The line's REMARK — desktop parity (SalesOrderDetailV2's
+                        Item column). Free text that appears nowhere else on the
+                        row: a service line's whole job lives here ("Please take
+                        back Cody Bedframe (King Size) 2 units"). Wraps, never
+                        truncates — half an instruction is worse than none. */}
+                    {(it.remark ?? "").trim() ? (
+                      <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 3, fontStyle: "italic", whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.35 }}>
+                        {it.remark!.trim()}
+                      </div>
+                    ) : null}
                     {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
@@ -1462,7 +1480,7 @@ const HIST_FIELD_LABEL: Record<string, string> = {
   debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
   phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
   paymentMethod: "Payment method", depositCenti: "Deposit",
-  internalExpectedDd: "Processing date", customerSoNo: "Customer SO ref",
+  processingDate: "Processing date", customerSoNo: "Customer SO ref",
   customerPo: "Customer PO", customerDeliveryDate: "Delivery date",
   amendedDeliveryDate: "Amended delivery date",
   amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",
@@ -1987,6 +2005,11 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                               ) : ""}
                             </div>
                             {old.description2 ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mStrikeIf(chg.variants) }}>{old.description2}</div> : null}
+                            {/* mig 0280 — the remark this request replaces (only
+                                when the request touches it). Desktop parity. */}
+                            {chg.remark && (old.remark ?? "").trim() ? (
+                              <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, fontStyle: "italic", ...mStrikeIf(true) }}>{"“"}{old.remark}{"”"}</div>
+                            ) : null}
                           </>
                         )}
                       </div>
@@ -2005,6 +2028,13 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}
+                            {/* mig 0280 — the REQUESTED remark: on a service line
+                                it is the whole request, so it renders here too. */}
+                            {chg.remark ? (
+                              <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, fontStyle: "italic", ...mEmphIf(true) }}>
+                                {(l.new_remark ?? "").trim() ? `“${l.new_remark}”` : "Remark cleared"}
+                              </div>
+                            ) : null}
                           </>
                         )}
                       </div>

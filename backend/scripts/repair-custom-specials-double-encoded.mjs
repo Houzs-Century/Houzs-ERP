@@ -39,6 +39,8 @@
 // untouched; and variants.specials carries the codes.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. Keyed on jsonb_typeof(custom_specials) = 'string', which the write turns into NULL.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

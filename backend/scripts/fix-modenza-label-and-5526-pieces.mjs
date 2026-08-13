@@ -20,6 +20,8 @@
 // master pool - because skipping any one of them half-works.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent. Writes one fixed label and one fixed compartment set; a second run writes the same values and appends another maintenance_config_history row.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

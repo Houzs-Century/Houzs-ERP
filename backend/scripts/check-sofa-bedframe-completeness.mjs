@@ -173,6 +173,10 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
      ORDER BY p.po_number`).map((r) => ({ ...r, dead: r.po_status === "CANCELLED" ? "on a CANCELLED PO" : null }));
 
+  /* The proceeded population is "carries a Processing Date", and that date is
+     internal_expected_dd — what the UI writes and what soProcessingLocked and
+     MRP read. proceeded_at is only the IN_PRODUCTION stamp, so it named a
+     narrower set than the orders the factory is actually building from. */
   const soRows = (await sql`
     SELECT i.id, h.doc_no AS doc, h.linked_ac_docno AS ac, i.item_code AS code,
            i.item_group AS grp, i.description2 AS d2, i.variants, i.custom_specials,
@@ -180,7 +184,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.internal_expected_dd IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, dead: r.cancelled ? "CANCELLED line" : null }));
 
   for (const [pop, rows] of [["PO", poRows], ["SO", soRows]]) {
@@ -196,8 +200,16 @@ async function main() {
     for (const [, b] of groupSofaBuilds(rows)) {
       const f = b[0];
       const model = modelOf(f.code);
-      if (b.some((r) => /SOFA UNPARSED/.test(r.remark || ""))) {
-        for (const r of b) buildIssue.set(r.id, "COMPARTMENT: placeholder, never decoded (SOFA UNPARSED)");
+      /* The remark marks the LINE the decoder could not read, not the build.
+         Failing the whole build on any one line's remark over-reported by 11 of
+         30 in production: HC-PO-009018 is correctly decomposed to
+         1A(LHF)+1NA+1A(RHF) and was failed only because it also carries a
+         STOOL, whose own Desc2 is a dimension with no structure to parse and
+         none needed - STOOL IS its compartment. Only a line that fell back to
+         the bare 1S placeholder is genuinely undecoded. */
+      const undecoded = b.filter((r) => /SOFA UNPARSED/.test(r.remark || "") && /^1S$/i.test(compartmentOf(r.code)));
+      if (undecoded.length) {
+        for (const r of undecoded) buildIssue.set(r.id, "COMPARTMENT: the build collapsed to a bare 1S placeholder, never decoded");
         continue;
       }
       const ps = parseSofa(f.d2, model, reclOf(model));

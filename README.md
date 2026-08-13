@@ -162,21 +162,26 @@ Every scheduled run writes one row to `execution_logs` (`type`, `status`, `messa
 
 ## AutoCount integration
 
-AutoCount is treated as the **system of record** for anything procurement- or finance-related. The D1 tables `sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`, `creditors`, and `stock_items` are mirrors — refreshed on cron, read-mostly from the SPA.
+**Start at `docs/autocount-integration-map.md`** — there is more than one channel and they run in opposite directions. This section covers only the legacy READ relay; the ERP -> AutoCount write-back is a different service and is documented there.
 
-| AutoCount endpoint | Used by | Refreshed |
+**The ERP is the master.** Documents are created and edited in the ERP and pushed into AutoCount, which is a receiving end for the accounts. This section used to open by calling AutoCount "the system of record" — that was true before the cutover and is the wrong way round now.
+
+### The legacy read relay (`AUTOCOUNT_API_URL`, `it-houzs.dev`)
+
+Inbound only. Gated by `AUTOCOUNT_SYNC_DISABLED` (`wrangler.toml [vars]`, currently `"false"` = pulls ON). The client is `backend/src/services/autocount.ts`; it authenticates with `AUTOCOUNT_API_KEY` and writes a `FAILED` row to `execution_logs` on failure.
+
+| AutoCount endpoint | Used by | When |
 |-|-|-|
-| `/SalesOrder/getSince` | Orders incremental pull | `*/5` cron |
-| `/SalesOrder/getAll` | Settings → Sync → "Full Refresh" | Manual |
-| `/SalesOrder/update` | Orders delivery-field edits (push back) | On save |
-| `/PurchaseOrder/getAll` | PO documents pull | `*/30` cron |
-| `/PurchaseOrder/getOutstanding` | Outstanding lines (dashboard counts) | `*/30` cron |
-| `/PurchaseOrder/getDetail` | PO side-panel drill-down (on-demand) | Click |
-| `/Creditor/getAll` | Creditors mirror | Daily + manual |
-| `/Creditor/getSingle` | On-demand creditor refresh | Click |
-| `/StockItem/getSingle` | Service cases' `item_code → main_supplier` lookup (cached) | Daily + case save |
+| `/SalesOrder/getSince` | SO mirror into `sales_orders` (`services/pull.ts`) | `*/5` cron |
+| `/DeliveryOrder/getSince`, `/DeliveryOrder/getAll` | DO header mirror (`services/doMirror.ts`); incremental first, full dump as fallback | daily `0 2` cron |
+| `/SalesOrder/getSingle`, `/SalesOrder/getDetail` | ASSR service cases resolving their SO context | on demand |
+| `/StockItem/getSingle` | `item_code -> main_supplier` for case routing, cached in `stock_items` | on demand + refresh route |
 
-The Worker's client (`backend/src/services/autocount.ts`) prefixes every request with `AUTOCOUNT_API_URL` (`wrangler.toml [vars]`) and authenticates with `AUTOCOUNT_API_KEY` (secret). On failure it writes a `FAILED` row to `execution_logs` and returns a 500; the SPA surfaces the error via toast.
+**Everything else the client can call has no caller.** Verified against `main`, 2026-08-12: `getOverdue`, `getOutstandingPOs`, `getAllPODocs`, `getPODetail`, `getAllCreditors`, `getSingleCreditor` are all zero-callsite, and there is no PO, creditor or overdue cron service in `backend/src/services/`. Earlier versions of this table listed them as live; they were not. There are no `purchase_orders` / `creditors` refresh jobs.
+
+**The two write methods on this client are inert.** `pushSalesOrder` and `pushPODates` short-circuit on the compile-time constant `AUTOCOUNT_WRITES_DISABLED = true` and have no callers. A push path did once exist (`routes/orders.ts` called it on save) and was removed with the Orders module in the strip-to-core change — which is why older docs describe delivery-field edits pushing back. They do not.
+
+**Known defect, not yet fixed:** Settings -> Sync calls `/api/sync/status`, `/api/sync/pull` and `/api/sync/retry-errors`. Only the five `*-mirror` receivers are mounted under `/api/sync`, so those three 404. The tab's checkpoint display and both buttons are dead.
 
 ---
 

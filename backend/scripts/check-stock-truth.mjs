@@ -101,6 +101,7 @@ import { gunzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { DO_SHIPPED_STATES } from "./lib/do-shipped-states.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, "data");
@@ -692,7 +693,13 @@ async function sectionB(state) {
 /* ════════════════════════════════════════════════════════════════════════════
    SECTION C — delivered COGS
    ════════════════════════════════════════════════════════════════════════════ */
-const SHIPPED_STATES = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED"];
+/* The WRITE-trigger set, deliberately not DO_STOCK_OUT_STATES: section C
+   measures COGS on lines whose OUT this status fired. A COMPLETED delivery
+   order is therefore out of scope here while check-doc-line-vs-movement.mjs
+   includes it — the two audits ask different questions, so they read
+   different constants BY NAME instead of two hand-typed lists that looked
+   like a typo for each other. */
+const SHIPPED_STATES = DO_SHIPPED_STATES;
 
 async function sectionC(state) {
   notice("");

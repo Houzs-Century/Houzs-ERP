@@ -1,4 +1,4 @@
-# Fragmentation Map (2026-07-23)
+# Fragmentation Map (2026-07-23, re-measured 2026-08-13)
 
 The owner noticed the codebase has "3-4 of the same thing" not integrated. A
 read-only audit confirmed it and mapped every instance. This is that map, plus
@@ -11,6 +11,68 @@ The recurring shape: a consolidation *was* started, its file even calls itself
 "the single source" — and the sweep to convert the old call sites was never
 finished. The habit fix: finish the sweep in the SAME PR that creates the
 canonical helper, and add a CI parity/grep guard where money is involved.
+
+## Done (2026-08-13) — duplicated CONSTANT LISTS
+
+A narrower sweep than the table below: not duplicated *helpers*, duplicated
+*lists of facts* — a set of table names, a status set, an alias chain. Every
+count here was measured by grep on 2026-08-13, not carried over.
+
+- **[FIXED] Payment-method vocabulary — 7 copies, not the "1" the table below
+  says.** `PAYMENT_METHOD_CODES` (`scm/shared/payment-methods.ts`) was
+  re-typed as `z.enum(['merchant','transfer','cash','installment'])` in
+  `mfg-sales-orders.ts` (×3), `consignment-orders.ts`, `consignment-notes.ts`,
+  `delivery-orders-mfg.ts`, `sales-invoices.ts` — in a **different order**, one
+  of them commented "kept in sync with PAYMENT_METHOD_CODES in
+  `packages/shared/src/payment-methods.ts`", a path this repo does not have.
+  All seven now read the constant; `tests/paymentMethodEnum.test.ts` greps the
+  route sources so an eighth cannot appear. Accepted set unchanged.
+- **[FIXED] DO status sets — 11 files, two spellings.**
+  `DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED/INVOICED` and the same list +
+  `COMPLETED` were hand-typed in `delivery-orders-mfg.ts`,
+  `consignment-notes.ts`, `lib/reconcile-ledger.ts`, `agents/delivery-agent.ts`
+  and seven audit scripts. The two spellings answer different questions (write
+  trigger vs "has the OUT already been written"), and the copies had lost that
+  distinction: two audits scanned different sets for the same kind of finding,
+  and the delivery agent's `DO_STATUSES` had dropped `COMPLETED`, so its DO
+  pipeline omitted that bucket. Now `scm/shared/do-shipped-states.ts` +
+  `scripts/lib/do-shipped-states.mjs`, pinned by
+  `tests/doShippedStatesMirror.test.ts`.
+- **[FIXED] SO terminal-status set — 14 copies across ten files, four names.** The six
+  statuses that mean "this order no longer demands stock" were hand-typed as
+  `SO_DONE` / `ALLOC_EXCLUDED` / `NON_ALLOCATABLE` / `EXCLUDED` in `mrp.ts` and
+  eight `.mjs` audits, as a raw PostgREST `not.in` string in
+  `so-stock-allocation.ts`, and again as inline SQL `NOT IN (...)` inside four
+  of those same scripts (a copy inside a copy). Every one carried a comment
+  promising to track another file — "mrp.ts verbatim", "Keep this replica in
+  lockstep or its figures lie". SHIPPED had to be *added* to the set on
+  2026-08-01 for exactly the reason you would expect. Now
+  `scm/shared/so-terminal-states.ts` + `scripts/lib/so-terminal-states.mjs`,
+  pinned by `tests/soTerminalStatesMirror.test.ts`; the PostgREST string renders
+  byte-identically to the literal it replaced.
+- **[FIXED] Fabric arm lists — the census re-declared the repair's tables.**
+  `scripts/lib/colour-carriers.mjs` held its own copy of the 15 line tables, the
+  8 `variant_key` buckets and the 5-key colour alias chain that
+  `scripts/lib/fabric-write.mjs` already declared. It now derives all three, so
+  a table added to the repair cannot be missing from the proof that the repair
+  worked. `tests/colourCarrierArms.test.ts` pins it.
+
+### Found by the same sweep, deliberately NOT collapsed (measured 2026-08-13)
+
+Each of these is the same shape, and each would change behaviour to merge. They
+are listed so the next person does not have to re-find them — and so nobody
+merges one thinking it is a formatting difference.
+
+| The list | Where it disagrees | Why it was left |
+|---|---|---|
+| **"SO no longer demands stock"** | `shared/so-terminal-states.ts` has **6**. `routes/inventory.ts` `GET /products` (`:494`) has **4** (no DRAFT, no SHIPPED); `GET /reservations` (`:1424`) has **5** (adds SHIPPED) — the two halves of one file disagree with each other. ~15 cutover/parity scripts use a fourth spelling (5 statuses, no DRAFT, different members). | Aligning any of them moves committed / available / surplus on the Inventory page. Owner's call; BUG-HISTORY 2026-08-13. Both `inventory.ts` sites now say so in comments. |
+| **Fabric colour alias chain** | THREE lengths in use: 5 keys (`fabric-write.mjs`, adds `colourId`), 4 keys (`so-variant-rule.ts` ×2 + its FE mirror ×2, `variant-axes.mjs` ×2, `fabric-supplier-code.ts`, `check-so-noncatalog-lines.mjs` ×2, `check-sofa-bedframe-completeness.mjs` ×2), 3 keys (`supplier-doc-data.ts`, `sales-order-pdf.ts` — no `colourCode`). Plus ~8 inline `a ?? b ?? c` chains. | A 3-key site that starts reading `colourCode` renders a fabric code where it renders none today. Needs a per-site decision, not a sweep. |
+| **`variant-axes.mjs` vs `so-variant-rule.ts`** | The axes TABLE is pinned by `variantAxesMirror.test.ts`, but the .mjs has an extra exemption the TS does not (`isSeatlessPiece` — CONSOLE/CT lines skip `seatHeight`). The mirror test's `CODES` fixture contains no CONSOLE code, so it passes while the two genuinely disagree. | Either direction changes a gate: adding it to TS relaxes the app's confirm check, removing it from .mjs re-flags console lines the owner exempted. Widen the fixture only together with that decision. |
+| **`EXPLICIT_APPROVAL_KEYS`** | `services/permissions.ts:216` and `auth/projectAccess.ts:158` — identical 4 keys, FE comment says "Mirror of backend". | A permission set across the wire; no shared package. Cheapest real fix is a byte-comparison test, not a merge. |
+| **`ASSISTANT_KNOWN_POSITIONS`** | `services/assistant-scope.ts:103` and `auth/assistantAccess.ts:35` — 17 positions each, **verified identical 2026-08-13**. Both are copies of `positionAccessSnapshot.ts`, which is deliberately unwired. | Same as above: a guard test is the fix. Note this one FAILS CLOSED on a miss, so drift denies access rather than granting it. |
+| **`payment-methods.ts` FE vs BE** | `PAYMENT_METHOD_VALUE_TO_CODE` has **3** entries in BE, **4** in FE (FE still maps `Installment`), despite the FE header saying "Vendored VERBATIM". | Changes what `isCorePaymentMethodRow` returns on the FE. BE is the authority for the lock, so the FE copy is cosmetic today — but it is drift, not a design. |
+| **SO/DO/SI money-column projections** | `mattress_sofa_centi …` appears as a SELECT list in 3 lengths: 11 (`consignment-notes`, `consignment-returns`, `delivery-returns`), 12 (`consignment-orders`, `ConsignmentOrders.tsx`), 13 (`delivery-orders-mfg`, `sales-invoices`). `lib/finance-keys.ts` is canonical for the STRIP list but not for these projections. | A projection and a strip list are different facts. Merging changes what each endpoint returns. |
+| **SKU-rename cascade vs `sku-usage.ts`** | `mfg-products.ts:756` lists 21 (table, column) pairs that carry an item code; `lib/sku-usage.ts:15` lists 3 of them; `lib/autocount-outbox.ts:870` maps 6 line tables to their code column. | Three questions (rename everywhere / has-it-been-used / what does AutoCount call it), not one list. Worth a shared table→column map eventually. |
 
 ## Done (2026-07-23)
 
@@ -51,9 +113,9 @@ real risk for a cosmetic gain — do them behind the staging bench (see
 | Concept | Canonical target | N copies | Value | Risk | Notes |
 |---|---|---|---|---|---|
 | **MYT date (cosmetic dedup)** | `scm/lib/my-time.ts` / `vendor/scm/lib/dates.ts` | ~10 `+8h` inline + a full parallel kit in `agent-console.ts` | MED | LOW | All correct MYT already; converging is cleanliness, not a bug fix (the only bug was the sofa one, fixed). |
-| **`shared/` pure-logic drift guard** | add CI parity check | FE/BE copies of `mfg-pricing`, `sofa-*`, `maintenance-pools` | HIGH | LOW | `maintenance-pools.ts` also drifted (FE gained `restrictPricedToPool`). A CI diff-check on the pure-logic copies prevents the next sofa-style drift. |
+| **`shared/` pure-logic drift guard** | add CI parity check | **18 pairs; 11 have drifted** (measured 2026-08-13 by `cmp`) | HIGH | LOW | Every `frontend/src/vendor/shared/*.ts` compared against `backend/src/scm/shared/*.ts` (5 more FE files have no BE pair and are excluded). **Identical (7):** `mfg-pricing`, `phone`, `service-sku`, `so-line-display`, `sofa-quick-presets`, `sofa-tier`, `variant-summary`. **Drifted (11),** differing lines in brackets: `maintenance-pools` [101], `index` [74], `free-item-campaign` [68], `sofa-build` [54], `format` [49], `so-variant-rule` [34], `sofa-combo-pricing` [11], `variant-key` [9], `adjustment-reasons` [4], `inventory-adjustment` [4], `effective-delivery` [2]. **Only `variant-summary.ts` has a byte-for-byte guard** (`frontend/src/vendor/shared/variant-summary.test.ts`) — and it is the one pair nobody worries about. Add that same guard to the other **6** identical pairs first: free, and it stops them joining the eleven. |
 | **Money formatting** | `vendor/shared/format.ts fmtMoneyCenti` | ~20 page-local `fmtMoney` | MED-HIGH | LOW | Each local copy also renders "MYR NaN" on null; converging fixes that too. Display-only. |
-| **Hardcoded `VALID_CURRENCIES` / payment methods** | the `currencies` master + `PAYMENT_METHOD_CODES` | 2 currency, 1 payment, + `VALID_KINDS`/`VALID_TIERS` twins | MED | LOW-MED | The hardcoded currency sets SHADOW the UI-editable master — adding a currency in the UI is silently rejected by PO/PC creation. This one is behavioral, verify carefully. |
+| **Hardcoded `VALID_CURRENCIES`** | the `currencies` master | `['MYR','RMB','USD','SGD']` at 5 sites (`mfg-purchase-orders.ts`, `purchase-consignment-orders.ts`, `suppliers.ts`, `SupplierDetail.tsx`, `Suppliers.tsx`), + the `VALID_KINDS` `['mfg_product','fabric','raw']` twin at 3 of them | MED | LOW-MED | The hardcoded currency sets SHADOW the UI-editable master — adding a currency in the UI is silently rejected by PO/PC creation. Behavioural: converging is a real fix, not a tidy-up, so verify carefully. *(Payment methods split out of this row and FIXED 2026-08-13 — see Done above; the "1 payment" copy counted here was actually 7.)* |
 | **State lists** | `vendor/scm/components/StatePicker` / lookup | 3 (`Projects.tsx`, `Sales.tsx`, `delivery-planning-queries.ts`) | MED | LOW | Penang vs "Pulau Pinang" spelling split breaks cross-module matching. |
 | **`projectScopeWhere(user)`** | build it in `projectAcl.ts` | 5 hand-written SQL predicates | MED | LOW-MED | CLAUDE.md's own roadmap item; now 5 sites (was 3 — drift). |
 | **Upload MIME mechanism** | one `lib/uploads.ts` | ~6 per-route copies | MED | MED | Keep per-surface allow-lists; share the mechanism. Partially touched by the XSS PRs. |

@@ -44,6 +44,8 @@
 //
 // MODE=dry-run (default) runs the whole transaction and rolls it back;
 // MODE=apply requires CONFIRM="I HAVE REVIEWED THE DRY-RUN".
+//
+// RE-RUN: convergent, but APPENDS a maintenance_config_history row on every run; the model, SKU and line re-codes all test the current state first.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
