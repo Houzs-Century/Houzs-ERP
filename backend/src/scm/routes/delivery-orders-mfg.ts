@@ -1762,9 +1762,23 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
         ...(batch_no ? { batch_no } : {}),
       });
     } else {
-      // delta < 0 — operator reduced a line qty or deleted a line. Give stock back.
-      // Cost basis = weighted average of the original OUTs so the reversing IN
-      // re-opens the lot at the same cost (matches reverseMovements semantics).
+      /* delta < 0 — operator reduced a line qty or deleted a line. Give stock back.
+         Cost basis = weighted average of the original OUTs so the reversing IN
+         re-opens the lot at the same cost (matches reverseMovements semantics).
+
+         KNOWN LIMIT, owner decision pending (audit ledger B6). When the original
+         OUT was PARTLY uncosted — a "ship anyway" oversell, where the FIFO
+         consumer could not cover every unit and wrote total_cost_sen 0 for the
+         short ones — this average blends real cost with zeros. Returning 4 of an
+         OUT of 10 where 6 cost 100 sen and 4 cost nothing gives 60 sen/unit: too
+         much if the 4 returned were the uncosted ones, too little if they were
+         the costed ones. Which units come back is not knowable from a qty delta.
+
+         Left as-is deliberately rather than guessed at. The DO CANCEL path does
+         not have this problem — fn_reverse_do_out (mig 0198) restores the
+         ORIGINAL lot by id — so the durable answer is to route this resync
+         through the same function, which is a costing change and the owner's
+         call. A fully-uncosted OUT is unaffected: 0 in, 0 back. */
       const unit_cost_sen = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
       writes.push({
         movement_type: 'IN',
