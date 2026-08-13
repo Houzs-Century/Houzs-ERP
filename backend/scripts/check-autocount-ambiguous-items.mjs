@@ -150,6 +150,28 @@ try {
     }
   }
 
+  /* The shape of the table an operator (or a setter script) has to write into.
+     scm.supplier_material_bindings predates the migrations-pg tree, so its DDL
+     is in no file here — the live catalogue is the only honest source, and
+     guessing at NOT NULLs or the unique key is how an upsert becomes a 42P10
+     or a duplicate row. */
+  const [cols, cons] = await Promise.all([
+    pg`SELECT column_name, data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'scm' AND table_name = 'supplier_material_bindings'
+        ORDER BY ordinal_position`,
+    pg`SELECT conname, pg_get_constraintdef(oid) AS def
+         FROM pg_constraint
+        WHERE conrelid = 'scm.supplier_material_bindings'::regclass
+        ORDER BY contype, conname`,
+  ]);
+  notice("");
+  notice("=== scm.supplier_material_bindings — live shape ===");
+  for (const c of cols) {
+    notice(`  ${c.column_name} ${c.data_type}${c.is_nullable === "NO" ? " NOT NULL" : ""}${c.column_default ? ` default ${c.column_default}` : ""}`);
+  }
+  for (const c of cons) notice(`  CONSTRAINT ${c.conname}: ${c.def}`);
+
   /* Non-sofa ambiguity is summarised, not listed line by line: 113 codes is a
      wall of text, and the binding path already worked for them. What matters
      is how many are still unresolved. */
