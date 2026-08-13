@@ -327,6 +327,17 @@ stockTakes.get('/:id', getStockTakeDetailHandler);
 // body: { warehouseId, assigneeStaffId, takeDate?, scopeType, scopeValue?,
 //         notes?, blind? }
 export const createStockTakeHandler = async (c: any) => {
+  /* company-scope: two by-id statements here, both correct.
+       · the ROLLBACK delete targets the header this handler inserted moments
+         earlier (insertWithDocNoRetry stamps the active company), so its id is
+         not caller-supplied.
+       · the scm.staff existence check MUST NOT be company-filtered. Mig 0089
+         lists staff under "Deliberately NOT stamped (shared / per-staff
+         reference data)", which is exactly why hr_salesperson_profiles is
+         UNIQUE(company_id, staff_id): ONE staff row holds one profile PER
+         company. Adding a company predicate there would reject a legitimate
+         assignee — a "fix" that manufactures a bug.
+     Verified 2026-08-13 by reading the handler end to end. */
   const sb = c.get('supabase');
   const user = c.get('user');
   let body: Record<string, unknown>;

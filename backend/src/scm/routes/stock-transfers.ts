@@ -256,6 +256,11 @@ async function writeTransferMovements(
 // PR-DRAFT-removal: row is inserted as POSTED and inventory_movements
 // are written inline. No separate /post call needed.
 stockTransfers.post('/', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     insertHeader / insertWithDocNoRetry stamp the active company on that row, so
+     the id is not caller-supplied and cannot name another company's document.
+     Verified 2026-08-13 by reading the handler end to end. */
   const sb = c.get('supabase');
   const user = c.get('user');
   let body: Record<string, unknown>;

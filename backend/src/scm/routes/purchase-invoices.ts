@@ -1511,6 +1511,10 @@ purchaseInvoices.patch('/:id/cancel', async (c) => {
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
 purchaseInvoices.post('/from-grn-items', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     The insert stamps the active company, so the id is not caller-supplied.
+     Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: {
     picks?: Array<{ grnItemId: string; qty: number }>;

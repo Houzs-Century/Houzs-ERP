@@ -4234,6 +4234,13 @@ async function resolveScanUploaderStaffId(
 // pipeline in waitUntil. Same multipart contract as /extract.
 // ---------------------------------------------------------------------------
 scanSo.post('/enqueue', async (c) => {
+  /* company-scope: the by-id reads the checker attributes to this handler are
+     NOT in it. Its slice runs from this registration to the next one, and
+     `processScanQueueMessage` (:4499) is declared in between — a QUEUE CONSUMER,
+     invoked by the Workers runtime with the jobId this endpoint itself enqueued,
+     never with a caller-supplied id. It selects company_id off the job row and
+     carries it forward. Verified 2026-08-13 by locating the enclosing function
+     of each reported line. */
   let formData: FormData;
   try {
     formData = await c.req.formData();

@@ -1474,6 +1474,11 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
     binds.push(body.notes ?? null);
   }
   if (sets.length === 0) return c.json({ ok: true });
+  /* company-scope: `venueCoSql` (:1449, activeCompanySql) is appended to the
+     WHERE, and the `!r.meta.changes` check below turns a cross-company miss into
+     an observable 404 rather than a silent "ok". Flagged only because the
+     checker's raw-SQL window starts at the .prepare( line and cannot see a
+     predicate composed above it. Verified 2026-08-13. */
   const r = await c.env.DB.prepare(
     `UPDATE project_venues SET ${sets.join(", ")} WHERE id = ?${venueCoSql}`
   )

@@ -253,7 +253,14 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
 
     handlersChecked++;
 
-    // Opt-out: an explicit annotation on any line of the handler.
+    /* Opt-out: an explicit annotation on any line of the handler.
+       NOTE the deliberate ordering — this first test uses the NAIVE slice
+       (registration to registration) so an annotation written next to the
+       REGISTRATION works. A second, identical test runs after the named-handler
+       resolution below, so an annotation written inside the resolved FUNCTION
+       BODY works too. Both are natural places to put it, and checking only one
+       meant a correctly annotated handler kept being reported — which is how an
+       opt-out mechanism gets ignored. */
     if (rawBody.some((l) => l.includes("company-scope:"))) return;
 
     /* If the registration names a handler declared elsewhere, scan THAT body.
@@ -305,6 +312,11 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
        Now each row-touching statement is judged on its own text: the window
        from its own `.from(` to the end of that statement. A helper mentioned
        elsewhere in the handler no longer excuses it. */
+    /* Second opt-out pass — see the note on the first. For a NAMED handler the
+       body scanned above is somewhere else in the file, so an annotation
+       written as the function's first line is invisible to the naive slice. */
+    if (raw.slice(scanOffset, scanOffset + scanBody.length).some((l) => l.includes("company-scope:"))) return;
+
     const joined = scanBody.join("\n");
 
     /** The statement containing line i: from its `.from(` back-anchor forward. */

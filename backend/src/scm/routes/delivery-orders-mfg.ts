@@ -3740,6 +3740,10 @@ function buildItemRow(
         One DO line per pick (qty = picked qty, so_item_id = soItemId).
      4. recomputeTotals + deductInventoryForDo (both idempotent). */
 deliveryOrdersMfg.post('/from-sos', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     The insert stamps the active company, so the id is not caller-supplied.
+     Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ soItemId?: string; qty?: number }>; confirmShortStock?: boolean; warehouseId?: string; asDraft?: boolean; dropShip?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
