@@ -180,4 +180,16 @@ try {
 } catch (e) {
   console.error(`requeue-autocount-skipped failed: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);
+} finally {
+  /* CLOSE THE POOL OR THE JOB NEVER ENDS.
+   *
+   * This script was written against supabase-js, which is HTTP: nothing to
+   * close, and falling off the end exited. It now holds a `postgres` pool, and
+   * an open pool keeps the event loop alive forever — so the FIRST run that
+   * actually SUCCEEDED hung, while every earlier failure had exited cleanly
+   * through process.exit(1) above. A green run that never ends looks like a
+   * slow query, which is the worst way for this to present.
+   *
+   * Same finally the health check has had since it was written. */
+  await pg.end({ timeout: 5 });
 }
