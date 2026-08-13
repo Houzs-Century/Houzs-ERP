@@ -1,3 +1,122 @@
+## A refused write reached nobody — 35 mutations across the SCM UI [high]
+
+**Symptom (owner).** "我点了 deactivate 它也是没反应." Press Deactivate on a
+fabric: the row does not change, no message appears, nothing in the console. The
+button reads as broken.
+
+**Root cause (traced).** `vendor/scm/lib/fabric-queries.ts` had NINE mutations,
+nine `onSuccess`, and ZERO `onError`. The server's refusal — the SCM area guard
+wanting `edit` where the grid's GET only needs `view`
+(`scm/middleware/area-guard.ts:16`), a 409 while the active company has not
+resolved, a 404 on the other company's row — arrived, was correct, and was
+dropped on the floor. `serviceNotify` was ALREADY imported in that file, used for
+one SUCCESS toast on the tier update; only the failure half was missing.
+
+This is the worst shape a defect can take here: the USER cannot report it
+usefully, and the DEVELOPER cannot see it either.
+
+**Fix.** Shared `writeFailed` (`vendor/scm/lib/mutation-error.ts`) showing the
+SERVER's own sentence — `authedFetch` throws Errors carrying it, and a generic
+"something went wrong" would only send the next person hunting again.
+
+**System-wide.** New `frontend/scripts/check-silent-mutations.mjs`: 297
+`useMutation` sites, 270 with no `onError`. It does a SECOND pass over each
+hook's consumers, because "no onError" is not "nobody catches it" — 182 are
+CAUGHT (`mutateAsync`, `.isError`, or per-call `.mutate(vars, { onError })`), 53
+UNRESOLVED and listed for a human, **35 genuinely SILENT**. All 35 fixed.
+
+**The checker's own first answer was 104, and it was wrong** — it could not see
+the per-call `.mutate(vars, { onError })` form, which `ConsignmentNoteNew` uses.
+Reading the source of a case it had flagged is what found it. 104 → 35. The raw
+270 was never the bug count.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13. See `docs/one-sided-rules-coe.md`.
+
+## Variants were demanded on 9 forms whose own servers never asked [high]
+
+**Symptom (owner).** "明明是当我有 ProcessingDate 和 DeliveryDate 的时候，它才
+compulsory，现在怎么变成就算没有 ProcessingDate，也强制要求我填写了？"
+
+**Root cause — a default, not a rule.** `SoLineCard` declared
+`variantsRequired = true`, commented "DEFAULT true so Consignment + any other
+consumer is unchanged (owner 2026-07-14)". ELEVEN render sites exist; TWO passed
+the prop, one passed false, and the other NINE silently inherited `true`.
+
+Checked against each document's OWN route:
+- `consignment-orders.ts:687` runs the check `procDate ? ... : []`; its PATCH
+  (`:1267`) only collects offenders when `internalExpectedDd` is set. CONDITIONAL.
+- `consignment-notes.ts` / `consignment-returns.ts` / `delivery-returns.ts` /
+  `sales-invoices.ts` — `findIncompleteVariantLines` appears **zero** times. The
+  requirement was pure client-side invention.
+
+**Fix.** CO New + Detail pass the conditional; the eight downstream cards pass
+false (the rule `DeliveryOrderNewV2` already states for the DO). **The default is
+gone** — `variantsRequired` is a REQUIRED prop, so the next caller that forgets
+it fails to compile instead of shipping a field the operator cannot get past.
+
+**NOT changed.** `SalesOrderNew`'s confirm gate (`:1443`, owner 2026-08-08,
+HC-SO-2607-008) requires category axes on CONFIRM "date or no date". That is an
+explicit owner decision; its marker and its gate disagree and that is an owner
+call, recorded not silently resolved.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## The UI locked a payment method the API would have let you delete [medium]
+
+**Symptom.** SO Maintenance renders the `Installment` payment-method row locked
+— value / active / delete disabled, tooltip "it can't be removed or turned off"
+— while the API would have accepted deleting it.
+
+**Root cause.** `isCorePaymentMethodRow` was inferred from
+`PAYMENT_METHOD_VALUE_TO_CODE`, so ONE constant answered two questions with
+opposite needs: `paymentMethodCodeForValue` deliberately EXCLUDES `Installment`
+(legacy installment ledger rows persist the code directly), while the lock check
+must INCLUDE it (it is wired into order logic — the DO payment schema is
+`z.enum([...,'installment'])`). The frontend and backend copies landed on
+opposite answers, and their comments said so out loud: frontend "the FOUR core
+method rows … the API mirrors this with a 409"; backend "the THREE locked core
+rows … 'Installment' is NOT core".
+
+**Fix.** `PAYMENT_METHOD_CORE_VALUES` declared explicitly on both sides, four
+entries. `VALUE_TO_CODE` keeps its documented three.
+
+**How it was found, and the general lesson.** New
+`backend/scripts/check-shared-mirrors.mjs`. The frontend does NOT import the
+backend's rule modules — it VENDORS COPIES. Only `phone.ts` has a byte-identical
+canonical test, which is exactly why phone normalisation has never drifted. Of 41
+rule modules, this was the one real divergence.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## Two audit scripts reported a clean run because their regex could not match [high]
+
+**Symptom.** `check-company-scope.mjs` reported 34 findings. After a one-line
+repair it reported 37 — and the extra was `POST /payment-vouchers/:id/post`,
+which posts a journal entry into the voucher's company ledger with no company
+predicate. The tool had been hiding it.
+
+**Root cause.** Two escapes lost on the way into a JS string: `"\s"` is not the
+whitespace class, it is the letter `s`; `"\b"` is not a word boundary, it is
+BACKSPACE (0x08). The named-handler resolver could therefore never match a
+declaration, `declAt` stayed -1, and the scan silently fell back to slicing
+"this registration to the next" — reading a DIFFERENT function's body.
+`POST /:id/cancel` was being reported against `reversePvAccounting`, three
+functions away.
+
+The same day, `check-shared-mirrors.mjs` extracted only `export function` and
+missed `export const foo = () => {}`. Nine of thirteen pairs compared ZERO
+functions and it printed "every shared function is identical" — about an empty
+set.
+
+**Fix.** Escapes doubled; arrow-function form parsed; NO-OVERLAP is its own
+verdict, never folded into a pass. **Every checker now self-tests its patterns at
+startup and exits non-zero rather than reporting from a dead one.**
+
+**Lesson.** A regex that cannot match fails SILENTLY and looks exactly like
+success. A verdict computed over nothing must never read as a pass.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
 ## Switching company destroyed the salesperson's POS cart, silently [high]
 
 **Symptom** - a salesperson who works both companies builds a Houzs POS cart,

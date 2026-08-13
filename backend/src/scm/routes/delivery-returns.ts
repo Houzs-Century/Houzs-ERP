@@ -434,11 +434,16 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
    any number of delta rows coexist. IDEMPOTENT by construction: re-running finds
    delta 0 (the prior ADJUSTMENT already closed the gap) → no write. Best-effort:
    a movement failure never blocks the edit/cancel. */
-async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string) {
+/* Returns the movement-write failures, [] when clean - the SAME contract as
+   increaseInventoryForReturn above, whose own comment records why: a swallowed
+   result meant the DR was created with the goods NOT booked back and the caller
+   was never told. That fix landed on the CREATE path only. writeMovements never
+   throws, so the four best-effort try/catch callers below caught nothing. */
+async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
   const { data: drHeader } = await sb.from('delivery_returns')
     .select('return_number, status, warehouse_id, company_id')
     .eq('id', deliveryReturnId).maybeSingle();
-  if (!drHeader) return;
+  if (!drHeader) return [];
   const drStatus = ((drHeader as { status: string | null }).status ?? '').toUpperCase();
   const drHeaderWarehouseId = (drHeader as { warehouse_id: string | null }).warehouse_id ?? null;
   const drNo = (drHeader as { return_number: string }).return_number ?? deliveryReturnId;
@@ -555,8 +560,10 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       });
     }
   }
+  const resyncErrors: string[] = [];
   if (writes.length > 0) {
-    await writeMovements(sb, writes, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    const wrote = await writeMovements(sb, writes, (drHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    if (!wrote.ok) resyncErrors.push('return resync: ' + (wrote.reason ?? 'unknown'));
     /* Oversell retro-cost (0154) — a resync that RAISES the returned qty writes a
        lot-opening IN / positive ADJUSTMENT, so it is a stock IN and gets the same
        retro-cost as the create path. Negative deltas are filtered out. */
@@ -574,6 +581,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
      cancelled/reduced return re-covers it back to DELIVERED. Run unconditionally
      (not gated on inventory writes) so the status always tracks the lines. */
   await reopenSoFromReturn(sb, deliveryReturnId, performedBy);
+  return resyncErrors;
 }
 
 /* DR 3B (Wei Siang 2026-06-01) — reconcile the Sales Order(s) behind a Delivery
@@ -1388,8 +1396,13 @@ deliveryReturns.post('/:id/items', async (c) => {
   /* Adding a return line must put its goods back into stock, same as the line
      edit/delete paths below — otherwise on-hand stays short by the added qty.
      Idempotent + best-effort (resync targets net-IN = sum of current lines). */
-  try { await resyncInventoryForReturn(sb, id, c.get('user')?.id); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
+     failed stock resync returned a clean 200. Same contract the CREATE path
+     already uses. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncInventoryForReturn(sb, id, c.get('user')?.id); }
+  catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
+  return c.json({ item: data, movementErrors: resyncErrs.length ? resyncErrs : undefined }, 201);
 });
 
 deliveryReturns.patch('/:id/items/:itemId', async (c) => {
@@ -1481,8 +1494,13 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
   await recomputeTotals(sb, id);
   /* A DR put goods back into stock on create; an edited qty must re-sync that
      stock or on-hand stays inflated. Idempotent + best-effort. */
-  try { await resyncInventoryForReturn(sb, id, user?.id); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
+     failed stock resync returned a clean 200. Same contract the CREATE path
+     already uses. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncInventoryForReturn(sb, id, user?.id); }
+  catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
+  return c.json({ ok: true, movementErrors: resyncErrs.length ? resyncErrs : undefined });
 });
 
 deliveryReturns.delete('/:id/items/:itemId', async (c) => {
@@ -1503,8 +1521,13 @@ deliveryReturns.delete('/:id/items/:itemId', async (c) => {
   await recomputeTotals(sb, id);
   /* Deleting a returned line must take its re-stocked goods back out, or on-hand
      stays inflated by the removed qty. Idempotent + best-effort. */
-  try { await resyncInventoryForReturn(sb, id, user?.id); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
+     failed stock resync returned a clean 200. Same contract the CREATE path
+     already uses. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncInventoryForReturn(sb, id, user?.id); }
+  catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
+  return c.json({ ok: true, movementErrors: resyncErrs.length ? resyncErrs : undefined });
 });
 
 // ── Status transition ──────────────────────────────────────────────────────
@@ -1587,12 +1610,20 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   // source_doc_id, product_code, variant_key) key, which the partial UNIQUE index
   // uq_inv_mov_dr_source (migration 0102, keyed WITHOUT movement_type) rejects →
   // the insert silently fails and the returned stock stays added.
+  // Hoisted: the response below is OUTSIDE this block, so a block-scoped
+  // declaration would leave the cancel path unable to report its failures.
+  let resyncErrs: string[] = [];
   if (body.status === 'CANCELLED') {
     // Unified rollback: target net = 0 for a cancelled DR, so the resync drains
     // back out exactly the stock still booked by this return (the create IN minus
     // any line-edit adjustments). Same code path as line edit/delete — they can't
     // drift. Idempotent + best-effort.
-    try { await resyncInventoryForReturn(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED: writeMovements never throws, so this catch caught nothing and a
+       failed stock resync returned a clean 200. Same contract the CREATE path
+       already uses. */
+    resyncErrs = [];
+    try { resyncErrs = await resyncInventoryForReturn(sb, id, user.id); }
+    catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
     /* DR cancel pulled stock back out → other READY SOs that relied on it may
        now regress to PENDING. Re-walk allocation. Best-effort. */
     try {
@@ -1601,6 +1632,6 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-cancel failed:', e); }
   }
 
-  return c.json({ deliveryReturn: data });
+    return c.json({ deliveryReturn: data, movementErrors: resyncErrs.length ? resyncErrs : undefined });
 };
 deliveryReturns.patch('/:id/status', patchDeliveryReturnStatusHandler);

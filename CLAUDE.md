@@ -97,6 +97,49 @@ name carries an index that changes with the shard count, and `backend` is a
 roll-up that is legitimately `skipped` on frontend-only PRs — a skipped required
 check leaves the PR pending forever.
 
+## ⚠️ Run the audit scripts — they answer questions no doc can
+
+Three dependency-free checks (they run in a fresh worktree with no
+`node_modules`). All three are at ZERO as of 2026-08-13; a non-zero result is a
+finding, not noise. Full story in `docs/one-sided-rules-coe.md`.
+
+```
+node backend/scripts/check-company-scope.mjs     # 632 SCM handlers: rows touched by id with no company predicate
+node frontend/scripts/check-silent-mutations.mjs # 297 mutations: a server refusal that reaches nobody
+node backend/scripts/check-shared-mirrors.mjs    # 41 rule pairs: frontend copy vs backend original
+```
+
+**Three traps this repo produced repeatedly. Each is now a rule.**
+
+1. **A default is a decision nobody reviews.** `SoLineCard`'s
+   `variantsRequired = true` made nine forms demand a field their own server
+   never asked for; `scm.pos_carts`' `staff_id PRIMARY KEY` (a column added by
+   mig 0100, the KEY left alone) let one company's cart overwrite the other's.
+   Where the right answer differs per caller, make the parameter REQUIRED so
+   forgetting it fails to compile.
+
+2. **A failure that reaches nobody is worse than a crash.** Thirty-five write
+   paths refused correctly and told no one — the owner reported it as "the
+   button does nothing". Budget an error path per mutation the way you budget a
+   success path (`vendor/scm/lib/mutation-error.ts`).
+
+3. **A checker that cannot match reports a clean run.** Two scripts did this in
+   one day: a lost `\s`/`\b` made one scan the wrong function bodies for weeks,
+   and repairing it took the count from 34 findings UP to 37 — the extra being a
+   cross-company GL posting. Every checker here now self-tests its patterns at
+   startup and refuses to report rather than report from a dead one. **A verdict
+   computed over nothing must never read as a pass.**
+
+**Read the DDL's own words, not its column list.** Counting `company_id` columns
+gave the WRONG answer twice in opposite directions on the fleet tables. The
+authority is the migration header plus the READ path — migs 0202/0203/0204/0238
+each say `company_id` is stamped "for provenance but NOT used to scope reads",
+and `GET /fleet-maintenance/dashboard` reads every row with no predicate. And
+`error.code === '42501' → 403` in a handler is NOT a database permission check
+doing your scoping: mig 0061 enabled RLS with NO policies and the SCM client is
+the SERVICE-ROLE client, which bypasses RLS. The only boundary is the predicate
+in the route.
+
 ## Read the map before exploring
 
 - **`docs/CODEBASE-MAP.md`** — what each area is FOR, which trees are dead,

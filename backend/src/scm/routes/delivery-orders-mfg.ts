@@ -1859,7 +1859,19 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
    IDEMPOTENT: an existence check for a prior ADJUSTMENT row tagged with this DO's
    id skips a re-reversal. Best-effort — a movement failure never un-cancels the
    DO (audit-DLQ pattern). */
-async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string) {
+/* Returns the movement-write failures, [] when clean — the SAME contract as its
+   sibling resyncInventoryForDo (:1786) and as increaseInventoryForReturn.
+
+   It used to return void and DISCARD writeMovements' result, which matters more
+   here than anywhere else in this file: writeMovements never throws (it logs and
+   returns {ok:false}), so the caller's best-effort try/catch caught NOTHING,
+   and the cancel response's existing `movementErrors` field was
+   left undefined. A cancelled DO whose reversal failed therefore reported a
+   clean 200 while the shipped stock stayed permanently deducted — which is the
+   exact outcome the caller's own comment says reverseInventoryForDo exists to
+   prevent. The 2026-08-05 fix that gave resyncInventoryForDo a failure trace was
+   applied to that twin and not to this one. */
+async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
   // Idempotency guard — has this DO already been reversed? Reversal rows are
   // tagged source_doc_type='ADJUSTMENT' + this DO's id. They may be ADJUSTMENT
   // (non-sofa) OR a batch-restoring IN (sofa, Stage 4), so DON'T filter on
@@ -1869,7 +1881,7 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
     .select('id', { head: true, count: 'exact' })
     .eq('source_doc_type', 'ADJUSTMENT')
     .eq('source_doc_id', deliveryOrderId);
-  if ((existing ?? 0) > 0) return; // already reversed — no-op
+  if ((existing ?? 0) > 0) return []; // already reversed — no-op
 
   /* Forward-compat (mig 0057): is_dropship column may not exist yet — retry without it. */
   let hdrRes = await sb.from('delivery_orders')
@@ -1983,7 +1995,32 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
   });
   // Multi-company: reversal movements inherit the DO's company.
   if (movements.length > 0) {
-    await writeMovements(sb, movements, (doHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    const companyId = (doHeader as { company_id?: number | null } | null)?.company_id ?? null;
+    const wrote = await writeMovements(sb, movements, companyId);
+    if (!wrote.ok) {
+      const reason = wrote.reason ?? 'unknown';
+      /* eslint-disable-next-line no-console */
+      console.error(`[do-reverse] reversal movements FAILED for DO ${deliveryOrderId}: ${reason}`);
+      /* Same shape as the resync twin above and the GRN recount precedent: the
+         cancel STANDS (a ledger hiccup must never un-cancel a DO), and the trail
+         records that the stock did not come back, so /inventory/reconcile and a
+         human have something to find. */
+      try {
+        await recordEntityAudit(sb, {
+          entityType: 'DELIVERY_ORDER',
+          entityId: deliveryOrderId,
+          entityDocNo: (doHeader as { do_number?: string | null } | null)?.do_number ?? null,
+          action: 'RECOUNT_FAILED',
+          companyId,
+          source: 'reverseInventoryForDo',
+          note:
+            `DO cancelled but the reversing movements were NOT written (${movements.length} row(s)): ${reason}. ` +
+            `The shipped stock is still deducted until /inventory/reconcile or a re-cancel repairs it.`,
+        });
+      } catch { /* audit is best-effort too — the console line above still stands */ }
+      // The ledger did not move, so re-costing would only re-read stale state.
+      return [`DO reversal movements failed: ${reason}`];
+    }
     /* Oversell retro-cost (0154) — a cancelled DO puts its shipment back on the
        shelf (a reversing IN, or a positive ADJUSTMENT for a plain bucket), so a
        prior "ship anyway" DO that went out at RM0 in this warehouse can now be
@@ -1991,6 +2028,7 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
        post reconciled (COE §2). Best-effort — never un-cancels the DO. */
     await reconcileUncostedAfterIn(sb, movements, performedBy);
   }
+  return [];
 }
 
 /* ── doLineConsumedQty (Commander 2026-05-30, TASK #24) ───────────────────────
@@ -5358,7 +5396,16 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      the reversal actually lands. Idempotent (ADJUSTMENT existence check) +
      best-effort (a movement failure never un-cancels the DO). */
   if (toStatus === 'CANCELLED') {
-    try { await reverseInventoryForDo(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED, not just best-effort. The response below already carries a
+       movementErrors field; on the cancel branch it was never populated, so a
+       failed reversal returned a clean 200 and the stock stayed deducted with
+       nobody told. The catch stays (an unexpected throw must not un-cancel), but
+       the ordinary failure path now has somewhere to go. */
+    try {
+      movementErrors.push(...(await reverseInventoryForDo(sb, id, user.id)));
+    } catch (e) {
+      movementErrors.push(`DO reversal threw: ${(e as Error)?.message ?? 'unknown'}`);
+    }
     /* REC P4 — put the physical rack stock back (mirror of the dispatch
        stock-out). Best-effort + idempotent; never blocks the cancel. */
     try {
