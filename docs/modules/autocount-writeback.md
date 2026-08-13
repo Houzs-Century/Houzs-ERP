@@ -14,12 +14,41 @@ After go-live the ERP is master and every document it creates must appear in
 AutoCount. This is the ERP half. The AutoCount half already exists and was
 proven against the live `AED_HOUZS` book on 2026-08-07.
 
-> **It ships OFF.** `scm.app_config` key `scm.autocount_writeback` is seeded
-> `'off'` by migration 0277, and `AC_SYNC_URL` is unset. With either of those
-> two, nothing is queued and nothing is sent.
+> **It ships OFF — but on ONE gate now, not two.** `scm.app_config` key
+> `scm.autocount_writeback` is seeded `'off'` by migration 0277, and while it is
+> off nothing is queued and nothing is drained.
+>
+> **`AC_SYNC_URL` is NO LONGER unset.** It was SET on 2026-08-11
+> (`backend/wrangler.toml:42` = `https://autocount.houzscentury.com`, in the
+> top-level `[vars]` block) after the Cloudflare tunnel was repointed at
+> AcSyncService and the service answered `{"ok":true,"book":"AED_HOUZS"}` on
+> `/health`. So the URL gate is OPEN and the DB toggle is the only thing between
+> the ERP and the live licensed account book. Both must be on for a document to
+> reach it; today exactly one is.
+>
+> **The two gates are not symmetric.** The DB toggle stops ENQUEUEING —
+> `enqueueAcOp` returns false before the insert (`autocount-outbox.ts:172-175`).
+> `AC_SYNC_URL` stops only the DRAIN (`ac_service_not_configured`): the enqueue
+> path takes no `Env` and never reads it. So clearing the URL would leave rows
+> piling up in the outbox, whereas the toggle keeps the queue empty.
+>
+> The third gate is the `AC_SYNC_KEY` SECRET. `wrangler.toml:232-236` records it
+> as not set, but a comment is not the secret store — whether prod actually holds
+> it is UNVERIFIED as of 2026-08-13 and needs a `wrangler secret list`.
 
-The one-time IMPORT that came the other way (AutoCount -> ERP) is a different
-thing entirely and is recorded in `docs/autocount-cutover-ledger.md`.
+**Do not describe either direction as "the sync".** There are THREE independent
+switches and they are in different states — reading one as the whole gives a
+wrong answer:
+
+| direction | switch | state |
+|---|---|---|
+| **Inbound PULL** (AutoCount -> ERP, recurring cron SO/PO/overdue/creditors/stock + manual `/api/sync/pull`) | `AUTOCOUNT_SYNC_DISABLED` (`wrangler.toml:24`, prod `[vars]`) | **`"false"` — LIVE.** Disabled 2026-06-13 at owner request, RE-ENABLED 2026-07-14. Staging is `"true"` (`:302`) |
+| **Legacy outbound writes** (the old `services/autocount.ts` push, not this outbox) | `AUTOCOUNT_WRITES_DISABLED`, a hard-coded `const … = true` (`autocount.ts:28`) | **OFF**, returns `skipped: AUTOCOUNT_WRITES_DISABLED` (`:138-143`). Not env-driven — flipping it is a code change |
+| **This module** (ERP -> AutoCount outbox write-back) | `scm.app_config` `scm.autocount_writeback` | **`'off'`** (above) |
+
+The one-time cutover IMPORT is a fourth, separate thing — a finished historical
+migration, recorded in `docs/autocount-cutover-ledger.md`. It is not the
+recurring inbound pull in the table above.
 
 ---
 
@@ -27,7 +56,7 @@ thing entirely and is recorded in `docs/autocount-cutover-ledger.md`.
 
 | Half | Where | What it is |
 |---|---|---|
-| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. Eight POST routes. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
+| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. NINE POST routes (`/create-so`, `/create-po`, `/so-to-do`, `/po-to-gr`, `/do-to-iv`, `/gr-to-pi`, `/cancel`, `/edit`, `/ensure-masters`) plus `GET /health`. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
 | ERP | `backend/src/scm/lib/autocount-outbox.ts` + `backend/src/services/autocount-writeback.ts` | An outbox: routes enqueue, a cron drains, the returned AutoCount document number is recorded back onto the ERP row. |
 
 AcSyncService's routes, and the outbox `op` that targets each:
@@ -42,7 +71,7 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |
 | `/cancel` | `cancel` | cancel — all six types (SO, PO, DO, GR, IV, PI) |
 | `/edit` | `edit` | edit — all six types: header, lines, variant/SKU changes |
-| `/ensure-masters` | `ensure_masters` | opens the items and salespeople a document names, BEFORE it is sent |
+| `/ensure-masters` | **none** | opens the items and salespeople a document names, BEFORE it is sent. It is called INLINE by the drain (`autocount-outbox.ts:1767-1780`), never queued — 0277's `op` CHECK admits only the eight ops above |
 
 There is deliberately **no create route for DO / GRN / Invoice / Purchase
 Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
@@ -172,8 +201,10 @@ Each hook sits at the point the document becomes permanent — after the
 
 | Flow | File | Anchor |
 |---|---|---|
-| SO create | `scm/routes/mfg-sales-orders.ts` | after `recordSoAudit(... 'CREATE')`, before `c.json({ docNo }, 201)` |
-| PO create | `scm/routes/mfg-purchase-orders.ts` | after `recordPoCreate(...)` |
+| SO create | `scm/routes/mfg-sales-orders.ts` | after `recordSoAudit(... 'CREATE')`, before `c.json({ docNo }, 201)` — **never for `asDraft`** (`:5637-5639`): a draft is the scan's guess, not an order |
+| SO create (draft confirmed) | `scm/routes/mfg-sales-orders.ts` | `PATCH /:docNo/status` when the transition LEAVES DRAFT (`:5989-5999`) — the second create anchor |
+| PO create | `scm/routes/mfg-purchase-orders.ts` | after `recordPoCreate(...)` — **never for a DRAFT PO** (`:1401-1408`) |
+| PO create (draft confirmed) | `scm/routes/mfg-purchase-orders.ts` | `PATCH /:id/confirm`, after the flip (`:4075-4079`) — a third create anchor |
 | SO -> DO | `scm/routes/delivery-orders-mfg.ts` | `POST /` (SO-linked only) and `POST /from-sos` |
 | PO -> GRN | `scm/routes/grns.ts` | `POST /from-pos` and `POST /from-po-items` (per bucket) |
 | DO -> SI | `scm/routes/sales-invoices.ts` | `POST /from-dos` |
@@ -285,7 +316,7 @@ An AutoCount document line has no identity the ERP can set. The SDK's only
 handle is `DtlKey`, assigned by AutoCount at save, and `/edit` addresses a line
 with `doc.EditDetail(dtlKey)`. The ERP stores it in
 `scm.mfg_sales_order_items.linked_ac_dtlkey` and
-`scm.purchase_order_items.linked_ac_dtlkey` (migration 0273).
+`scm.purchase_order_items.linked_ac_dtlkey` (migration 0273) — and, since migration **0280**, on all four downstream line tables too (`delivery_order_items`, `grn_items`, `sales_invoice_items`, `purchase_invoice_items`). All six carry it; 0280 is what made a DO / GRN / SI / PI edit expressible at all.
 
 ### The defect this section exists for
 
@@ -309,13 +340,13 @@ Two causes, both now closed:
 
 `composeEdit` throws `KeylessLineError` when **any** line lacks a usable
 `DtlKey`, and the whole edit is refused. `enqueueEdit` catches it and writes a
-`skipped` outbox row whose `last_error` starts `refused, nothing sent:` and names
+`skipped` outbox row whose `last_error` starts `refused, nothing sent (<ErrorName>): ` — the parenthetical carries the refusal class (`KeylessLineError`, `SofaCollapseError`, `ItemCodeError`, `MissingLocationError`) — and names
 the offending line. Nothing is POSTed.
 
 ```sql
 SELECT doc_type, doc_no, last_error, created_at
   FROM scm.autocount_outbox
- WHERE status = 'skipped' AND last_error LIKE 'refused, nothing sent:%'
+ WHERE status = 'skipped' AND last_error LIKE 'refused, nothing sent (%'
  ORDER BY created_at DESC;
 ```
 
@@ -355,10 +386,13 @@ A genuinely new line on an existing AutoCount document is refused too, because
 the ERP cannot yet tell it apart from a legacy line whose key was never stored.
 
 `AcSyncService` accepts an explicit `IsNewLine: true` marker on a line for
-exactly this case, and **nothing in the ERP sets it**. Before anything does, the
-ERP needs positive evidence that a keyless line is new rather than unbackfilled —
-the honest signal is a document whose every other line is keyed AND whose backfill
-is known to have covered it completely. Setting `IsNewLine` on a guess re-opens
+exactly this case. **The SO side now sets it; the PO side does not.** The SO
+line-add routes pass the rows they just inserted as `newLineIds`
+(`mfg-sales-orders.ts:266-284`, `:8157`, `:8208`), and `composeEdit`
+(`autocount-writeback.ts:696-710`) marks a keyless line `IsNewLine` ONLY when
+every keyless line on the document is one of those declared-new rows — the
+positive evidence the guess would otherwise lack. The PO routes pass nothing, so
+a genuinely new PO line is still refused. Setting `IsNewLine` on a guess re-opens
 the duplicate-append defect one line at a time.
 
 ### Retirement — `Retire: true`
@@ -426,8 +460,11 @@ holds the per-gap evidence and the order to do it in.
 ## 7b. The two shape mismatches the composer resolves — D9 and D10
 
 Between the ERP's line list and AutoCount's, two things do not line up. Both are
-handled in `composeDetails` (`src/services/autocount-writeback.ts`), in this
-order, and **both refuse the WHOLE document rather than send part of it.**
+handled in `composeDetails` (`src/services/autocount-writeback.ts`): the sofa
+collapse (**D9**) runs FIRST, then item-code resolution (**D10**) on the
+collapsed lines (`:424-439`). The order is load-bearing — a compartment code has
+no AutoCount item of its own. **Both refuse the WHOLE document rather than send
+part of it.**
 
 ### D10 — `material_code` is not `ItemCode`
 
@@ -704,7 +741,7 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 |---|---|
 | It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
 | It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human |
-| It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
+| The ERP never ASKS for a DEBTOR | `EnsureMasters` HAS a Debtors branch (`AcSyncService.cs:574-592`) and would open one if sent; the narrowing is the ERP's — `mastersOf` emits no `Debtors` array (`autocount-outbox.ts:1496-1499`, `:1576-1583`). Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 | It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
 | It DOES add a BRANDING / VENUE option | Owner 2026-08-11. **Read, append, write back the whole set** — see below |
 
@@ -869,7 +906,7 @@ completely different problems.
 
 | Name | Kind | Notes |
 |---|---|---|
-| `AC_SYNC_URL` | `[vars]` in `wrangler.toml` | Base URL of AcSyncService. **Config, not a secret** — a hostname and a port. Absent = the drain is a no-op and says `ac_service_not_configured` |
+| `AC_SYNC_URL` | `[vars]` in `wrangler.toml` | Base URL of AcSyncService. **Config, not a secret** — a hostname and a port. Absent = the drain is a no-op and says `ac_service_not_configured`. **Present since 2026-08-11** (`https://autocount.houzscentury.com`), so this is no longer a gate |
 | `AC_SYNC_KEY` | **wrangler secret** | The service's `X-API-KEY`. `wrangler secret put AC_SYNC_KEY`, never in `wrangler.toml` |
 | `scm.app_config` / `scm.autocount_writeback` | DB row | The runtime toggle (§4) |
 
@@ -881,16 +918,14 @@ lives in this repository.
 
 ## 9. Operating it
 
-**Turn it on** (after the write freeze lifts, and never before someone has
-watched a single document land):
-
-```sql
-UPDATE scm.app_config SET value = '1', updated_at = now()
- WHERE key = 'scm.autocount_writeback';
-```
-
-**Turn it off** — set `value = 'off'`. Takes effect within 30 seconds (the cache
-TTL). Queued rows stay `pending` and drain when it is turned back on.
+**Turn it on or off** (on only after the write freeze lifts, and never before
+someone has watched a single document land): Actions ->
+**AutoCount write-back (on/off)** -> Run workflow
+(`.github/workflows/set-autocount-writeback.yml`). It writes
+`scm.app_config['scm.autocount_writeback']` for you. Takes effect within 30
+seconds (the cache TTL). Queued rows stay `pending` while it is off and drain
+when it is turned back on. **Do not hand the owner the SQL** — this workflow is
+what replaced it (repo rule: never ask the owner to run a query).
 
 **What to watch — run the check, do not read the tail.** Actions ->
 **AutoCount write-back queue — health (read-only)** -> Run workflow. It reports

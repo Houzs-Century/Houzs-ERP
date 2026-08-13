@@ -63,7 +63,7 @@ One row per priced rule; `rule_type` selects the dimension.
 | `OVERAGE` | `tier_position` = cap N | each unit beyond N is a flat surcharge (caps the tier ladder) |
 | `SOFA_BRACKET` | `bracket_min`..`bracket_max` (null=open) | sofa priced by compartment band; one bracket per sofa, additive |
 | `OUTSTATION` | `zone` | destination-zone surcharge, per ORDER / costing unit (priced inside `computeDeliveryCost`) |
-| `OUTSTATION_TRIP` (mig 0212, WS4c) | `zone` | FIXED fee per TRIP by destination zone, applied ONCE per trip regardless of drop count. Priced OUTSIDE `computeDeliveryCost` (it is not per-drop): the reconcile adds `tripOutstationFeeCenti(rules, destinationZone)` once after the per-drop total. The two OUTSTATION rule types are the owner's two outstation layers (per-order + per-trip) and can both sit on one card |
+| `OUTSTATION_TRIP` (mig 0212, WS4c) | `zone` | FIXED fee per TRIP by destination zone, applied ONCE per trip regardless of drop count. Priced INSIDE `computeDeliveryCost` under `opts.perTrip`, as the last line BEFORE the min/cap/rounding envelope (`delivery-rate-card.ts:360-372`). It used to be bolted on by the reconcile after the call returned, which put it outside the envelope — a capped card could bill above its own cap and `/compute` never showed the fee at all. `tripOutstationFeeCenti` still exists and is what the flag calls; the reconcile no longer calls it directly. The two OUTSTATION rule types are the owner's two outstation layers (per-order + per-trip) and can both sit on one card |
 | `DISPOSE` / `SETUP` / `DISMANTLE` | — | occurrence charge (rate × count) |
 | `SERVICE` / `PICKUP` / `INSPECTION` / `TRANSFER` | — | the owner's order-type charges, own rate each |
 
@@ -72,12 +72,14 @@ calculator ignores if unknown.
 
 ## 3. The pure calculator — `backend/src/scm/lib/delivery-rate-card.ts`
 
-`computeDeliveryCost(card, facts)` is PURE (no DB, no clock) and unit-tested
-(`delivery-rate-card.test.ts`, 18 cases). It prices, in order: charging-unit
-positional tiers (+ overage cap) → sofa compartment brackets → outstation zone →
-dispose → setup → dismantle → service/pickup/inspection/transfer, then the
-min/cap/rounding envelope. Returns an itemised `{ totalCenti, subtotalCenti,
-lines[] }`.
+`computeDeliveryCost(card, facts, opts)` is PURE (no DB, no clock) and
+unit-tested (`delivery-rate-card.test.ts`, 43 cases). It prices, in order:
+charging-unit positional tiers (+ overage cap) → sofa compartment brackets →
+outstation zone → dispose → setup → dismantle →
+service/pickup/inspection/transfer → the fixed per-TRIP outstation fee when
+`opts.perTrip` is set, then the min/cap/rounding envelope. Returns an itemised
+`{ totalCenti, subtotalCenti, lines[] }`; `subtotalCenti` is the sum of the
+priced lines before the envelope, `totalCenti` after it.
 
 **Separation of concerns:** the tiers count over `setCount`/`itemCount`, which
 EXCLUDE sofas — a sofa is priced only by its compartment bracket. This matches
@@ -98,7 +100,7 @@ the owner's worked example, which the test asserts to the sen:
 | `POST/PATCH/DELETE /delivery-rate-cards/:id/rules[/:ruleId]` | rule CRUD |
 | `POST /delivery-rate-cards/:id/compute` | run the pure calculator for a set of facts → itemised breakdown |
 | `GET /delivery-rate-cards/reconcile?from&to` | 3PL charge reconciliation (below) |
-| `GET /delivery-rate-cards/meta` | carriers (lorries) + zones for the editor selects |
+| `GET /delivery-rate-cards/meta` | `{ carriers (lorries), companies (active 3PL companies), ruleTypes, zones }` for the editor selects |
 
 `/meta` and `/reconcile` are registered before `/:id` (single-segment collision,
 mirrors trips `/day`).
@@ -107,9 +109,21 @@ mirrors trips `/day`).
 
 Lists OUTSOURCE trips (`is_outsourced=true`) that carry a captured billed cost
 (`scm.trips.three_pl_cost_centi`, set in Fleet A3), matches each to its carrier's
-rate card (by `carrier_lorry_id = trip.lorry_id`), derives the drop's facts from
-the trip's stops, computes the EXPECTED cost, and flags the delta
-(`billed - expected`). Example: billed RM620 vs expected RM560 → **+RM60 flagged**.
+rate card, derives the trip's facts from its stops, computes the EXPECTED cost,
+and flags the delta (`billed - expected`). Example: billed RM620 vs expected
+RM560 → **+RM60 flagged**.
+
+**Card match order (WS4b):** `trip.lorry_id → lorries.threepl_company_id →
+card.carrier_company_id` first, falling back to `card.carrier_lorry_id =
+trip.lorry_id` for own-fleet / legacy per-lorry cards. Only `is_active` cards
+are considered.
+
+The cost is computed **once per TRIP**, not per drop and summed: `setCount` is
+totalled across the trip's drops, `dropCount` is its distinct SO docs,
+`customerCount` collapses drops sharing a debtor AND a normalised address, and
+the zone passed is the FARTHEST of every zone the trip touches (`farthestZone`)
+— it used to be whichever row the query returned first, so a Melaka→Johor trip
+could be charged Melaka's rate and re-run differently.
 
 **What is auto-derived vs not.** Set count (from the stops' SO lines via
 `deriveSetCount`) and destination zone (from the stops' SO postcodes via the A1

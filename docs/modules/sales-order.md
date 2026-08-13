@@ -392,14 +392,22 @@ writes `internal_expected_dd`.
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
-`meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
-setting `internal_expected_dd`, the create-time auto-stamp of `proceeded_at`, and
-both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
-/:docNo` `proceededAt`). `proceeded_at` stays a separate COLUMN because it is a
-timestamp the system writes, not a date a user picks — what was unified is the
-RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
-(email), the processing-date path TIGHTENED by four (name / address / postcode /
-delivery date), and the threshold became per-company.
+What was unified is the RULE, not the FUNCTION — there are **two enforcement
+sites** and changing one does not change the other:
+
+| path | enforced by |
+|---|---|
+| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts:69`), called at `mfg-sales-orders.ts:5016` and `:600` — its only two call sites |
+| setting `internal_expected_dd` | `so-save-problems.ts` — the four completeness checks written out inline (`:159-173`) plus `meetsProcessingDatePaymentGate` for the money (`:186`). It does **not** call `meetsProceedGate` |
+
+Both sites read the same per-company threshold through the shared
+`processingDateThresholdFor`, and both demand the same four facts, so the rule
+is one rule today. Edit either and re-check the other.
+
+`proceeded_at` stays a separate COLUMN because it is a timestamp the system
+writes, not a date a user picks. Net effect: the proceed paths LOOSENED by one
+condition (email), the processing-date path TIGHTENED by four (name / address /
+postcode / delivery date), and the threshold became per-company.
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 
@@ -457,7 +465,10 @@ become a `special_addons` row). The two are **complementary, not alternatives**:
 
 45 of the 49 lines that say HYDRAULIC carry both and must keep carrying both;
 dropping the height in favour of the tick would discard a measurement someone
-took. The chain — slip Desc2 to parser phrase to picker code, *and* the height
+took. (The count disagrees with this section's own later figures — 49 lines
+minus the 3 with no `divanHeight` is 46, which is also what the re-run below
+reports. 45 vs 46 is UNVERIFIED as of 2026-08-13: settling it needs production
+data, not the tree.) The chain — slip Desc2 to parser phrase to picker code, *and* the height
 surviving — is pinned end-to-end in `backend/tests/parseBedframeHydraulic.test.ts`.
 The code is created **at price 0** (`seed-hydraulic-special-addon.mjs`); the
 owner sets the price when he is ready, and it must stay 0 while the 49 migrated
@@ -495,7 +506,12 @@ third is a real HILTON line whose entire Desc2 is the word `hydraulic`.
 
 A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
 object; rebuilding deletes every key it has not heard of. `custom_specials` is a
-DERIVED output of the pricing recompute and is written by no script at all.
+DERIVED output of the pricing recompute (`mfg-pricing-recompute.ts:90`), which is
+why picker codes belong in `variants.specials` and not there — but it is **not**
+script-free: `backfill-sofa-special-orders.mjs:132` and
+`apply-variant-patch.mjs:56,:82` both write the column (union / `COALESCE`, never
+wholesale replace, DRY-RUN by default). Anything written there is still liable to
+be rewritten by the next recompute.
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.

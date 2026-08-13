@@ -38,21 +38,20 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 |---------|------|-------|
 | Desktop board | `frontend/src/pages/scm-v2/DeliveryPlanning.tsx` | Thin host: PageHeader + data fetch (region server-side) + selection + drawers, rendering the shared **`DeliveryPlanningBoard`**. The 4 state tabs + region chips + inline Driver / Lorry cells + expand + multiselect all live in the shared component now. |
 | Desktop DP-order registry | `frontend/src/pages/scm-v2/DpOrders.tsx` | Route `/scm/dp-orders`, nav "DP Orders" under Transportation (after Delivery Planning). The FLAT `dp_orders` list over `GET /dp-orders` (`useDpOrders`) — every status, including the source-linked orders the board's anti-double-count guard hides and cancelled jobs the board drops. DataTable + client search; Schedule… (pending rows, reuses `ScheduleDpOrderDrawer` via its `ScheduleDpOrderTarget` subset prop) + Cancel + New DP order (reuses `NewDpOrderDrawer`). Status pill = `StatusPill docType="dpOrder"`. The optional P3 list of `docs/delivery-planning-jobtypes-spec.md`. |
-| Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by both DeliveryPlanning and the Trips "To schedule" panel: the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
+| Shared board grid | `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx` | The board itself, extracted so it is reused UNCHANGED by all four pipeline pages — Delivery Planning, Delivery Date Arrangement (`AutoSchedule.tsx`), Delivery Time Arrangement (`Trips.tsx`) and Last Mile Delivery (`FleetDay.tsx`): the CONFIG-DRIVEN region chip row, the optional 4 state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-style cell editors, the SO line-item drill-down and the full HC column set. Props: `stateTabs?` (present → tab row + client state-filter; omitted → locked to the passed single-state fetch), `selectedKeys`/`onToggle`/`onToggleAll`/`onClearSelection`, `bulkExtras` (page-injected Convert / Schedule buttons), `contextMenu`, `onRowDoubleClick`. The page owns the `useDeliveryPlanning` fetch so `region` stays a server-side filter. |
 | Desktop trips | `frontend/src/pages/scm-v2/Trips.tsx` | **Delivery Time Arrangement** (pipeline stage 3, 2026-08-08). The page IS the time-arrangement queue: the EXACT shared board locked to PENDING_SCHEDULE, split Pending Time Arrangement (the inbox) vs Time arranged. Multiselect carries TWO actions: **"Propose time (N)"** — the per-date, per-zone STOP-SEQUENCE proposal (owner's final division 2026-08-08: this page is 排单, sequencing only). Runs the sequence-assign engine under the confirmed-date discipline of `vendor/scm/lib/propose-time.ts` (one call per confirmed delivery date, started AT that date, pinned to that one day; the depot is derived from the selected orders' majority warehouse via `depotForDocNos` so routes — and therefore delivery windows — can be computed at all), then `vendor/scm/lib/anonymous-runs.ts` folds the engine's crewed trips into anonymous **"Trip 1 / Trip 2"** cards per date: every crew/vehicle identity field is stripped (the opaque `vehicleSlotId` survives as Apply plumbing only — a stop needs a trip and a trip keys on (lorry, date)); each stop shows its **estimated delivery window** (`estWindowOf`: engine arrival → finish [installation folded in via residence rules] + `DELIVERY_UNLOAD_BUFFER_MIN`) beside the ALLOWED residence window; a proposal with no geocodable depot gets a LOUD red box naming the warehouse to fix. Applying a trip stages the sequence + dates through the schedule PATCH with NO driver/helper written — and the manual **Schedule (N)** → `ScheduleTripDrawer` (unchanged). The crew machinery (AssignTripCard / 3PL overflow) moved on to Last Mile Delivery (2026-08-08); the shared presentation pieces live in `pages/scm-v2/delivery-propose-ui.tsx`. The trip list + stop sheet (+ route optimiser + Phase-4 live map) render UNDER the "Time arranged" tab; the old page-top trip-state chip bar is gone (CANCELLED dropped, ordering IN_PROGRESS → PLANNED → COMPLETED). |
 | Desktop fleet day-map (A4) | `frontend/src/pages/scm-v2/FleetDay.tsx` | **Last Mile Delivery** — the EXECUTION + CREW stage (pipeline stage 4; owner's final division 2026-08-08: 智能 assign driver + lorry lives HERE). Route `/scm/fleet-day`. Same page skeleton as the family: split chips (All / Time arranged / Delivered for the picked day) + the shared board over the day's SO rows on a live trip (the pure fold `vendor/scm/lib/last-mile.ts` over the server-stamped `trip_date`; state=ALL so a delivered order stays visible as done). **"Propose crew"**: ONE leave-aware sequence-assign call over the day's time-arranged orders; the engine's per-run crew picks re-attach to the day's REAL numbered trips by stop overlap (`matchCrewSuggestions`), each trip carrying editable Lorry + Driver 1/2 + Helper 1/2 selects (crew-leave marked) and per-trip Apply → `PATCH /trips/:id` (trip row) + `PUT /delivery-orders-mfg/:id/crew` per live DO (the `delivery_order_crew` snapshot the board shows — the only driver-2 store, hence no migration). The 3PL overflow section (carrier + captured cost) lives here. The board's inline Driver / Lorry cells stay as the manual path. **Option B (2026-08-08):** the day map is now the RIGHT PANEL of the board/map split (see "The Option B side map" below) — the old "Lorries today" side list merged into the trip/crew cards under the map, run-sheet links kept, and the trip-focus click filters the board. The map read for the run-sheet (`GET /trips/day`) is unchanged. |
 | Desktop driver run-sheet (A4) | `frontend/src/pages/scm-v2/FleetRunSheet.tsx` | Route `/scm/fleet-run-sheet?date=&warehouseId=&trip=`. The printable paper the driver takes: one clean sheet PER lorry (`@media print`, one lorry per page) — trip summary (date, driver, helper, plate, drops, revenue), the lorry's route map, and the ordered stop table (no., customer, full address, phone, house type, time window, ETA, access note). Same `GET /trips/day` data as the day-map. |
 | Desktop fleet masters | `frontend/src/pages/scm-v2/Fleet.tsx:78` | `DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`; `LorryDetail.tsx:71` mounts as a drawer from `Fleet.tsx:613`. |
 | Desktop regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions.tsx:40` | Region master + per-state mapping editor. |
-| Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`, nav "Residence Rules" under Transportation. NOT wired to any scheduler yet. |
+| Desktop residence rules | `frontend/src/pages/scm-v2/DeliveryResidenceRules.tsx` | Per residence / building-type CONFIG the Phase-3 scheduler will read: service duration (shown in hours, stored as minutes), optional no-delivery time windows, lift-booking / registration flags. Owner-editable master, mirrors the Regions page (DataGrid + inline edit buffers + create drawer). Route `/scm/delivery-residence-rules`; not a nav row — it opens as the Residence Rules section of Coverage & Fleet. **Wired and read by three endpoints**: `GET /trips/day` (`trips.ts:308`), `POST /trips/propose-schedule` (`:910`) and `POST /delivery-zones/sequence-assign` (`delivery-zones.ts:562`), for per-building-type service duration and the allowed delivery window; shaping in `scm/lib/fleet-day-view.ts`. |
 | Desktop capacity | `frontend/src/pages/scm-v2/LorryCapacity.tsx:140` | |
-| Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
+| Desktop delivery zones (A1) | `frontend/src/pages/scm-v2/DeliveryZones.tsx` | Route `/scm/delivery-zones`, nav "Delivery Zones" under Transportation > Maintenance. Owner-editable postcode-prefix -> area-zone map (`scm.delivery_zone_postcodes`, mig 0205). Each row maps a first-two-digit postcode RANGE to one of the 14 zones; the classifier picks the NARROWEST matching range so a fine rule overrides a broad one. Ships with a "using the built-in default" banner + one-click "load the default map". Mirrors the Residence Rules master (DataGrid + inline edit + create drawer). |
 | Desktop auto-schedule (A1) | `frontend/src/pages/scm-v2/AutoSchedule.tsx` | **Delivery Date Arrangement** (pipeline stage 2; dates-first rewrite 2026-08-08). Route `/scm/auto-schedule`. The page IS the queue board — the EXACT shared `DeliveryPlanningBoard` locked to PENDING_SCHEDULE (full column fidelity), split Pending Date Arrangement vs Date arranged over the server-stamped `arrangement_stage`. Flow: MULTISELECT rows → **"Propose dates (N)"** (the A1 packer `/delivery-zones/propose`; depot + capacity ceilings ride the server defaults silently, only a start-date input — default today — sits beside the button) → proposal grouped by DAY + postcode-zone (`vendor/scm/lib/propose-days.ts`, a pure fold that DROPS the lorry dimension — no lorry name renders on this page) → **"Apply proposed dates"** fans out `useScheduleDelivery` → `amended_delivery_date`, never `customer_delivery_date`, no lorry assignment. Per-day LOCK/unlock stays; "Needs attention" lists unzoned orders. The old config/controls row (Depot / Start date / Depart time / capacity / max-trips), the per-lorry packing cards, "Sequence & assign" and the 3PL tools all MOVED to Delivery Time Arrangement (`Trips.tsx`). |
-| Desktop crew leave (A3 / WS2) | `frontend/src/pages/scm-v2/DriverLeave.tsx` | Route `/scm/driver-leave`, nav "Crew Leave" under Transportation. The date-ranged crew-absence master (`scm.driver_leave`, mig 0206 + **0208**) the A2 auto-assigner reads to skip on-leave crew. **WS2:** covers DRIVERS and HELPERS (a Who toggle picks which; storekeepers are in the helper list). Create form (who + from/to + reason) + table (Type/Name) + remove. On the covered days the person also drops off the manual trip picker (`ScheduleTripDrawer` filters `activeDrivers` by leave on the trip date). Mirrors the Residence Rules / Delivery Zones masters. |
-| Desktop delivery maintenance | `frontend/src/pages/scm-v2/DeliveryMaintenance.tsx` | Route `/scm/delivery-maintenance`, nav "Maintenance" under Transportation — since 2026-08-01 the **ONLY** Transportation reference-data nav row (the six child rows were removed from `Sidebar.tsx`; their ROUTES stay registered, so deep links and bookmarks still work). Owner: "Regions、Residentials 和 Fleet 其实是一个整体 — 这三个一个" + "Rate Card 与 3PL Company：这两个一个". So THREE parts, not six sections: **Regions + Residence Rules + Fleet**, **Delivery Zones**, **3PL Companies + Rate Cards**. EVERY LEVEL FOLDS (owner: "要不然页面拉得太长了") — the part folds, and inside a grouped part each screen folds too; nothing is open on a cold visit. A jump row above the parts opens a part before scrolling to it. Each screen renders THE SAME component its standalone route renders, with `embedded` suppressing that page's own `PageHeader`; there is no second copy. Part and screen keys share one `?open=` set (`components/CollapsibleSection.tsx`), so `?open=carriers,threepl` is a real link. A closed section is UNMOUNTED, so its queries do not fire. **Rate Cards takes `onCreateCompany`** — this page passes a handler that opens its own 3PL block, which is why those two are one part. |
-| Desktop 3PL companies (WS4a) | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, nav "3PL Companies" under Transportation > Maintenance. The 3PL carrier company master (`scm.threepl_companies`, mig 0210): create/edit/activate/delete + per-company lorry count. Attach a lorry to a company from the lorry drawer (`LorryDetail` "3PL company" selector). Rate card is priced per company (WS4b). |
-| Desktop 3PL companies | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, nav "3PL Companies" under Transportation > Maintenance. The 3PL carrier company master (`scm.threepl_companies`, migs 0210 + **0237**). Registers the carrier's PARTICULARS (name, SSM `registration_no`, contact person + phone, `office_phone`, `email`, `address`) and, in an expandable per-company block, its FLEET — lorries (plate + L/W/H), drivers (code/name/phone/IC) and helpers (code/name/contact/IC). Those rows are created through `/lorries`, `/drivers`, `/helpers` carrying `threeplCompanyId`, so they land in the SHARED fleet masters flagged OUTSOURCE. A lorry can still be attached from the lorry drawer instead. Rate card is priced per company. |
-| Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | 2,408 lines. Driver job-card run sheet. Carries the Phase-4 `MobileTrackingBanner` in its header. |
+| Desktop crew leave (A3 / WS2) | `frontend/src/pages/scm-v2/DriverLeave.tsx` | Route `/scm/driver-leave`, nav "Crew Leave" under Transportation. The date-ranged crew-absence master (`scm.driver_leave`, mig 0206 + **0208**) the A2 auto-assigner reads to skip on-leave crew. **WS2:** covers DRIVERS and HELPERS (a Who toggle picks which; the picker lists every active helper — whether storekeepers actually hold `scm.helpers` rows is UNVERIFIED as of 2026-08-13: production data, not readable from the tree). Create form (who + from/to + reason) + table (Type/Name) + remove. On the covered days the person is **MARKED, never hidden**, on the manual pickers — `ScheduleTripDrawer` stamps a `leaveNote` via `crewLeaveLabel` and still offers the driver, because a driver back early from MC has to stay assignable (`ScheduleTripDrawer.tsx:111-121`). Only the AUTO assigner refuses to crew them. Mirrors the Residence Rules / Delivery Zones masters. |
+| Desktop delivery maintenance | `frontend/src/pages/scm-v2/DeliveryMaintenance.tsx` | Route `/scm/delivery-maintenance`, page title **"Coverage & Fleet"**, nav Transportation > Maintenance > Coverage & Fleet. Owner 2026-08-01: "Regions、Residentials 和 Fleet 其实是一个整体 — 这三个一个" — but owner 2026-08-02 REVERSED the rest ("我要原本的UI", "delivery zones和carriers 根本都不需要dropdown啊"), so this page holds **exactly those three sections: Regions, Residence Rules, Fleet** (`DeliveryMaintenance.tsx:39-55`). Delivery Zones, Carriers & Rates and Fleet Health are their own Maintenance nav rows pointing at their own pages. **Regions opens on arrival** (`useOpenSections(['regions'])`, `:60-62`) — landing on three closed chevrons is the "table of contents instead of the page" the owner rejected. Each section renders THE SAME component its standalone route renders, with `embedded` suppressing that page's own `PageHeader`; there is no second copy. Open sections live in `?open=` (`components/CollapsibleSection.tsx`); the only valid keys are `regions`, `residence-rules`, `fleet`. A closed section is UNMOUNTED, so its queries do not fire. `DeliveryRateCards.tsx` owns its own `onCreateCompany` (`:82,:87,:148`) and this page has no rate-card or 3PL wiring at all. |
+| Desktop 3PL companies | `frontend/src/pages/scm-v2/ThreePLCompanies.tsx` | Route `/scm/threepl-companies`, **not a nav row** — it opens from the "New 3PL company" control at the top right of Carriers & Rates, because a rate card is priced per carrier (`Sidebar.tsx:556-558`). The 3PL carrier company master (`scm.threepl_companies`, migs 0210 + **0237**). Registers the carrier's PARTICULARS (name, SSM `registration_no`, contact person + phone, `office_phone`, `email`, `address`) and, in an expandable per-company block, its FLEET — lorries (plate + L/W/H), drivers (code/name/phone/IC) and helpers (code/name/contact/IC). Those rows are created through `/lorries`, `/drivers`, `/helpers` carrying `threeplCompanyId`, so they land in the SHARED fleet masters flagged OUTSOURCE. A lorry can still be attached from the lorry drawer instead. Rate card is priced per company. |
+| Mobile run-sheet | `frontend/src/mobile/MobileDeliveryPlanning.tsx:277` | Driver job-card run sheet (the module's largest mobile file — current size in `docs/generated/`). Carries the Phase-4 `MobileTrackingBanner` in its header. |
 | Mobile POD | `frontend/src/mobile/MobilePOD.tsx:71` | Photo / signature capture. |
 | Mobile GPS capture | `frontend/src/mobile/MobileTrackingBanner.tsx` | Phase-4 driver-capture banner. Self-gating: finds the driver's active trip + runs `useTripLocationCapture`; renders + captures only when a trip is IN_PROGRESS and the page is open. |
 | Desktop live map | `frontend/src/vendor/scm/components/LiveTripMap.tsx` | Phase-4 dispatcher live driver markers (same maps layer as `ScheduleRouteMap`). Shown in `Trips.tsx` under a selected IN_PROGRESS trip. |
@@ -467,9 +466,10 @@ STICKY map panel on the right.
 ### The four state tabs
 
 `DELIVERY_STATES` (`frontend/src/vendor/scm/lib/delivery-planning-queries.ts:19-21`)
-with labels at `:24-29`; re-exported as `STATE_TABS` in the page
-(`DeliveryPlanning.tsx:192`) and rendered with an "All" tab prepended at
-`:1148-1151`.
+with labels at `:24-29`; re-exported as `STATE_TABS` in the **shared board**
+(`DeliveryPlanningBoard.tsx:189`) and rendered there with an "All" tab prepended
+(`:1141-1144`) — only when the host page passes `stateTabs`. It moved out of
+`DeliveryPlanning.tsx` when the board was extracted; that page is now 404 lines.
 
 | Tab | `delivery_state` | Means |
 |---|---|---|
@@ -552,7 +552,7 @@ these routers is gated by `scmAreaGuard('scm.transportation.drivers')`** — see
 | GET | `/trips/active/locations` | `trips.ts` | **Phase 4.** Latest position per driver across EVERY IN_PROGRESS trip (board-level overview). Read-only, scoped to allowed companies + own trips |
 | GET/PATCH/PUT | `/lorry-capacity`, `/lorry-capacity/lorries/:id/*` | `lorry-capacity.ts:132,354,389` | Capacity dashboard, in-house flag, repair days |
 | POST/GET/PATCH | `/dp-orders`, `/dp-orders/:id/cancel`, `/:id/schedule` | `dp-orders.ts:190,234,281,313,348` | Manual DP jobs with no source document |
-| PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). **No frontend caller exists** — grep `frontend/src` for `/crew` returns nothing. |
+| PUT | `/delivery-orders-mfg/:id/crew` | `delivery-orders-mfg.ts:3314` | The only writer of `scm.delivery_order_crew` (driver 1/2 + helper 1/2 + lorry). Written by Last Mile Delivery's per-trip Apply — `useAssignDoCrew` (`vendor/scm/lib/delivery-planning-queries.ts:772-784`) fires one PUT per live DO, called from `FleetDay.tsx:174,341-342`. It is the only store with a driver-2 seat, which is why no migration was needed. |
 
 Machine-generated gate list: `docs/generated/route-capability-matrix.csv`
 (rows for `/delivery-planning`, `/trips`, `/drivers`, `/helpers`, `/lorries`).
@@ -787,31 +787,33 @@ Three masters, one shared fleet across companies. `drivers.ts:31-34` and
 
 | Path | What it writes | Who calls it |
 |---|---|---|
-| `PATCH /delivery-planning/:type/:id/schedule` (`:1705`) | schedule date, optional `deliveryState` override, and `{lorryId, driverId, tripId?, tripDate?, warehouseId?}` → **finds or creates a `scm.trips` row** for (lorry, date) and adds a `trip_stops` DELIVERY row (`:1909-1946`). `is_outsourced` derives from the lorry's `is_internal` (`:1705-1712`); trip numbers are minted max+1 via `mintMonthlyDocNo` (`:1716-1722`). | The board's `DriverEditCell` (`DeliveryPlanning.tsx:305`) and `LorryEditCell` (`:340`), and the bulk apply (`:660-665`). |
-| `PUT /delivery-orders-mfg/:id/crew` (`delivery-orders-mfg.ts:3314`) | the full `scm.delivery_order_crew` row — driver 1/2, **helper 1/2**, lorry, plus name/IC/contact/plate snapshots — and syncs `driver_id` / `driver_name` / `vehicle` onto the DO header (`:3412-3414`). | **Nobody, at this commit.** No frontend file references `/crew`. |
+| `PATCH /delivery-planning/:type/:id/schedule` (`:1705`) | schedule date, optional `deliveryState` override, and `{lorryId, driverId, tripId?, tripDate?, warehouseId?}` → **finds or creates a `scm.trips` row** for (lorry, date) and adds a `trip_stops` DELIVERY row (`:1909-1946`). `is_outsourced` derives from the lorry's `is_internal` (`:1705-1712`); trip numbers are minted max+1 via `mintMonthlyDocNo` (`:1716-1722`). | The SHARED board's `DriverEditCell` (`DeliveryPlanningBoard.tsx:273`) and `LorryEditCell` (`:312`), and its bulk-bar `applyBulk`. Both moved out of `DeliveryPlanning.tsx` when the board was extracted. |
+| `PUT /delivery-orders-mfg/:id/crew` (`delivery-orders-mfg.ts:3314`) | the full `scm.delivery_order_crew` row — driver 1/2, **helper 1/2**, lorry, plus name/IC/contact/plate snapshots — and syncs `driver_id` / `driver_name` / `vehicle` onto the DO header (`:3412-3414`). | `FleetDay.tsx`'s per-trip crew card Apply, via `useAssignDoCrew` — one call per live DO, alongside `PATCH /trips/:id`. |
 
 Consequences worth knowing before you touch this:
 
-- **There is no helper assignment UI on the delivery board or on Trips.** The
-  schedule payload has no helper field (`scheduleSchema` `:1642-1662`), the
-  board renders no helper cell, and the mobile detail shows Driver + Helper
-  **read-only** (`MobileDeliveryPlanning.tsx:1612-1613`). Helpers can be
-  assigned only via `POST /trips` / `PATCH /trips/:id` (`trips.ts:164-173`
-  accept `helper1Id` / `helper2Id`) — and `frontend/src/vendor/scm/lib/trips-queries.ts`
-  exports no create/update hook, so no UI reaches it either.
+- **Helper assignment lives on Last Mile Delivery, not on the board or Trips.**
+  `scheduleSchema` DOES accept `helper1Id` / `helper2Id`
+  (`delivery-planning.ts:2225-2226`), written to `scm.trips.helper_1_id` /
+  `helper_2_id` on a trip CREATE only (`:2620-2621`). The editing surface is
+  `FleetDay.tsx:502-505` — per-trip Helper 1 / Helper 2 selects applied through
+  `useUpdateTrip` (`trips-queries.ts:110-132`) → `PATCH /trips/:id`, plus the DO
+  crew snapshot. The delivery board and Trips still render no helper cell, and
+  the mobile detail shows Driver + Helper **read-only**
+  (`MobileDeliveryPlanning.tsx:1612-1613`).
 - Driver / Lorry cells are **name-matched, not id-linked**: the board row
   carries `crew.driver_1_name` / `crew.lorry_plate`, and the cell preselects by
   matching that string against the master list, keeping an off-list current
   value selectable so an existing assignment never silently blanks
-  (`DeliveryPlanning.tsx:311-336`, `:345-366`).
+  (in the shared `DeliveryPlanningBoard.tsx`, not the page).
 - ASSR rows are **assignable** (PR #947): picking a lorry wires the leg onto a
   real trip via `scheduleAssrOntoTrip`, so a service visit consumes fleet
   capacity like an SO/DO delivery. The stop links back to its case through
   `scm.trip_stops.assr_case_id` (mig 0166), and the board re-reads the trip's
   crew on every load (the "ASSR crew echo") so the assignment survives a
-  refresh. **DP** rows still show "not applicable" for Driver / Lorry
-  (`DeliveryPlanning.tsx:307`, `:342`); project rows are read-only mirrors
-  (`:309`, `:344`).
+  refresh. **DP** rows still show "not applicable" for Driver / Lorry, and
+  project rows are read-only mirrors — both in the shared
+  `DeliveryPlanningBoard.tsx`, not in `DeliveryPlanning.tsx` (404 lines).
 - **One job = one stop — on BOTH paths.** A job re-scheduled to another lorry or
   day resolves to a different trip, so the wiring deletes that job's stops on
   every other trip. Without it `/lorry-capacity` counts the job against both
@@ -926,8 +928,8 @@ fleet row with no link to `public.users`. (2) A `user_id` link on
 
 > **Unverified / gap.** The `user_id` link columns and the "internal staff →
 > fleet row" sync that `deliveryScope.ts:24-28` describes are **not created by
-> any migration in this repo** — `grep drivers backend/src/db/migrations-pg/`
-> returns only `0015`, `0022`, `0053`, `0083`; `0066_scm_staff_user_sync.sql:9,22`
+> any migration in this repo** — thirteen migration files now mention `drivers`,
+> and NONE adds `user_id` to `scm.drivers` or `scm.helpers`; `0066_scm_staff_user_sync.sql:9,22`
 > refers to a "migration 0060" that is an unrelated file locally. The sync
 > therefore lives outside this repo (the 2990 full-schema import; see the note
 > at `drivers.ts:9`). On any database built from this repo's migrations alone,
@@ -1029,10 +1031,13 @@ that re-derives a backend rule locally is called out below.
 
 Every TMS router is mounted behind `scmAreaGuard('scm.transportation.drivers')`
 (`backend/src/scm/index.ts:431-467` (`/drivers` :431, `/delivery-planning` :436, `/delivery-planning-regions` :449, `/trips` :451, `/dp-orders` :453, `/lorry-capacity` :458, `/helpers` :460, `/lorries` :462, `/lorry-service-records` :466)) — `/drivers`, `/delivery-planning`,
-`/delivery-planning-regions` (plus `{ openRead: true }`), `/trips`,
-`/dp-orders`, `/lorry-capacity`, `/helpers`, `/lorries`,
-`/lorry-service-records`. There is no per-endpoint `requirePermission` in this
-module.
+`/delivery-planning-regions` (the only one adding `{ openRead: true }`),
+`/trips`, `/dp-orders`, `/lorry-capacity`, `/helpers`, `/lorries`,
+`/lorry-service-records` — **plus seven more this list used to omit**:
+`/delivery-residence-rules`, `/threepl-companies`, `/delivery-zones`,
+`/delivery-rate-cards`, `/driver-leave`, `/delivery-messages` and
+`/scan-lorry-invoice`. Sixteen mounts in total, all on the same key. There is no
+per-endpoint `requirePermission` anywhere in this module.
 
 `scmAreaGuard` (`backend/src/scm/middleware/area-guard.ts:112-210`) resolves in
 this order:
@@ -1139,7 +1144,7 @@ service-case / sales / projects family.
 | Change | Desktop | Mobile | Shared / authority |
 |---|---|---|---|
 | The 4 states, their labels, their meaning | `vendor/scm/components/DeliveryPlanningBoard.tsx` (`STATE_TABS`, tab row) — the tabs are rendered only when the host passes `stateTabs` | `mobile/MobileDeliveryPlanning.tsx` (`Bucket` `:64`, pills) | `vendor/scm/lib/delivery-planning-queries.ts:19-29` for the constants; `derivePlanningState` (`backend/.../delivery-planning.ts:283-308`) for the RULE |
-| Board row shape / new column | `vendor/scm/components/DeliveryPlanningBoard.tsx` columns (the shared grid — a new column changes BOTH DeliveryPlanning and the Trips "To schedule" panel at once) | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
+| Board row shape / new column | `vendor/scm/components/DeliveryPlanningBoard.tsx` columns (the shared grid — a new column changes Delivery Planning, Delivery Date Arrangement, Delivery Time Arrangement and Last Mile Delivery at once) | `MobileDeliveryPlanning.tsx` `BoardRow` `:79` and the job card | `PlanningOrder` type in `delivery-planning-queries.ts:47` — add the field there first |
 | Region model | `DeliveryPlanningRegions.tsx` | `MobileModuleList.tsx:1957` (`delivery-planning-regions`) | `stateToRegionsFromConfig` + the two config tables |
 | Driver / Helper / Lorry masters | `Fleet.tsx` (`DriversSection` `:98`, `HelpersSection` `:294`, `LorriesSection` `:461`) | `MobileModuleList.tsx:1327` / `:1357` / `:1857` | `drivers-queries.ts` / `helpers-queries.ts` / `lorries-queries.ts` |
 | Assignment + scheduling | `DeliveryPlanningBoard.tsx` `DriverEditCell` / `LorryEditCell` / the bulk-bar `applyBulk` (shared grid) | read-only rows `MobileDeliveryPlanning.tsx:1612-1613` | `useScheduleDelivery` (`delivery-planning-queries.ts:397`) → `PATCH …/schedule` |
@@ -1201,12 +1206,12 @@ columns.
   lorries; the A1-preferred lorry gets first refusal), driver paired by plate
   (`drivers.vehicle`) else least-used, helper least-used, each crew member used at
   most once per day. A3 extends this same lib with driver-leave exclusion + 3PL
-  overflow (see Module A3 below). Tests: `fleet-assign.test.ts` (16).
+  overflow (see Module A3 below). Tests: `fleet-assign.test.ts`.
 - **`backend/src/scm/lib/sequence-stops.ts`** — `buildSequenceProposal` shapes ONE
   trip's route by REUSING the Phase-3 nearest-neighbour sequencer
   (`propose-route.ts`) verbatim — same earliest-is-hard / service-into-clock /
   `windowViolated` rules — and adds the `eta_offset_s` / leg metrics the schedule
-  path persists. Tests: `sequence-stops.test.ts` (5).
+  path persists. Tests: `sequence-stops.test.ts`.
 - **`backend/src/scm/lib/fleet-availability.ts`** — thin DB loader: the depot's
   active in-house lorries WITH their Module-B `deriveVehicleStatus` / `canDispatch`
   folded in (reuses the pure `services/fleet-status.ts` core over compliance docs,
@@ -1324,9 +1329,10 @@ that fans out `useScheduleDelivery` with `{ lorryId: carrier, threePlCostCenti,
 tripDate }` (cost captured once on the trip CREATE). The "Max trips / lorry /
 day" control was retired with the config row — the request omits it and the
 server default (1) applies. New page **`DriverLeave.tsx`** at
-`/scm/driver-leave` (nav "Driver Leave" under Transportation) — the leave master
-(create form + table + remove). `STAFF_ROUTE_PATTERNS` 131 -> 132, `ROUTE_CONTRACT`
-139 -> 140.
+`/scm/driver-leave` (nav **"Crew Leave"** under Transportation — renamed when
+leave became a crew concept, not a driver one) — the leave master
+(create form + table + remove). Route-manifest counts are enforced by
+`routeManifestDrift.test.ts`; do not type them here.
 
 ### Leave on the MANUAL pickers (2026-08-01) — marked, never hidden
 
@@ -1399,7 +1405,7 @@ a duplicate `public.lorries` once; this module does not repeat that.
 It is NOT a CHECK constraint or a trigger: a cross-column CHECK would have to pin
 existing rows, and a trigger would be a second writer of a field the routes
 already own. The cost is that a direct SQL write can still disagree; the benefit
-is one testable rule instead of three handlers restating it. 12 unit tests.
+is one testable rule instead of three handlers restating it. Tests: `threepl-link.test.ts`.
 
 **Leave is still not recorded for a 3PL's crew.** `POST /driver-leave` refuses an
 external driver (422 `external_driver`) and that is unchanged — a carrier's

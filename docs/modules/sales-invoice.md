@@ -124,8 +124,12 @@ posting.
      so_doc_no, debtor_name, debtor_code, ref, branding, sales_location` plus
      normalized phone parts (`:706-710`); `from`/`to` on `invoice_date`.
    - `statusCounts` = five `head:true count:'exact'` in one `Promise.all` (`:728-734`).
-3. **Enrichment — one batched read** (`stampSoDates`, defined above the list
-   handler). Pulls `mfg_sales_orders.internal_expected_dd` +
+3. **Enrichment — THREE batched, row-mutating passes**, all called on BOTH list
+   paths: `stampSoDates`, `stampDoNumber` and `stampSourcePos`. None is per-row.
+   `stampDoNumber` exists because the SI stores its Delivery Order only as
+   `delivery_order_id` (there is no `do_doc_no` column), so the list cannot show
+   a readable "From DO" without resolving the ids.
+   `stampSoDates` pulls `mfg_sales_orders.internal_expected_dd` +
    `customer_delivery_date` for the distinct `so_doc_no` set and stamps
    **`so_internal_expected_dd`** (the linked SO's "Processing date") and
    **`so_customer_delivery_date`** (delivery-date fallback for pre-snapshot SIs)
@@ -227,9 +231,10 @@ includes DRAFT.
 
 **A Sales Invoice moves NO inventory, in either direction, at any status.**
 
-Verified: `backend/src/scm/routes/sales-invoices.ts` contains **zero** references
-to `inventory_movements`, `writeMovements`, or any movement table (grep over the
-whole 2,242-line file returns nothing). The goods left at the **Delivery Order**
+Verified 2026-08-13: `backend/src/scm/routes/sales-invoices.ts` contains **zero**
+references to `inventory_movements`, `writeMovements`, or any movement table
+(grep over the whole 2,547-line file returns nothing). The goods left at the
+**Delivery Order**
 (`docs/modules/delivery-order.md` §5); by the time an SI exists the stock has
 already moved.
 
@@ -337,8 +342,10 @@ helper (`salesAccess.ts:187-196`).
 ## 9. Performance summary
 
 Optimized:
-- List does **zero** per-row enrichment reads (`:743-744`) — it is the cheapest of
-  the four sibling lists.
+- List does **zero** per-row enrichment reads — its three enrichment passes
+  (`stampSoDates` / `stampDoNumber` / `stampSourcePos`) are each ONE batched read
+  keyed by the page's ids, and there is still no `has_children` to compute
+  because nothing hangs off an SI.
 - Detail loads header + items in one `Promise.all` (`:761-766`).
 - Desktop list is server-paginated (50/page) with server-side search, sort and
   status counts.

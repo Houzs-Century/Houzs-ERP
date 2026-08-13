@@ -94,9 +94,20 @@ master as publicly readable** and do not add anything else to that relay.
 - **It is not the write path.** `autocount.houzscentury.com` is a different
   hostname fronting `AcSyncService`, whose every route requires `X-API-KEY` and
   which refuses everything with 503 if the key file is missing (fail-closed,
-  `#2025`). `/health` there is deliberately open and returns only
-  `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}` — it names the book
-  and nothing else.
+  `#2025`).
+
+  > **Corrected 2026-08-13: `/health` is NOT open, and this document said it
+  > was.** The original text read *"`/health` there is deliberately open and
+  > returns only `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}`."*
+  > Read the source: `backend/scripts/autocount-service/AcSyncService.cs:160-168`
+  > runs the empty-key 503 and the `X-API-KEY` comparison **before** the
+  > `/health` dispatch, with its own comment — *"AFTER the key, deliberately:
+  > which account book this is connected to is not something to hand an
+  > anonymous caller on a public hostname."* That gating landed in `54769163`,
+  > **the same PR #2025 this bullet cites for the fail-closed 503**, on
+  > 2026-08-11 — the day before this COE was written. The service has no
+  > unauthenticated surface at all, which strengthens the bullet's conclusion
+  > and refutes its stated fact.
 - **It is not new.** No recent change opened it; it has been up since before the
   cutover.
 - **It is not a Cloudflare misconfiguration.** The relay itself answers — the

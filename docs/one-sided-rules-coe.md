@@ -83,6 +83,11 @@ not the same as "nobody catches it": 182 are CAUGHT (a consumer awaits
 53 are UNRESOLVED and listed for a human, and **35 were genuinely SILENT**. All
 35 fixed.
 
+**Re-run 2026-08-13: 297 sites, 190 CAUGHT, 0 SILENT, 0 UNRESOLVED.** The 53
+were worked off on this same branch (`3a759fe6` decided 41 of them, `056a4904`
+found four more by teaching the checker to read components). The numbers above
+are the state when this section was written; run the script for today's.
+
 ### 2.4 A column added without changing the key
 
 `scm.pos_carts` arrived from the 2990 import keyed `staff_id uuid PRIMARY KEY`.
@@ -97,8 +102,19 @@ So a salesperson who works both companies: builds a Houzs cart → switches to
 is gone**. No error, and the loss is indistinguishable from "I never saved it".
 
 Migration `0284_scm_pos_cart_company_key.sql` re-keys it `(staff_id, company_id)`.
-The same shape is UNFIXED in `model_fabric_tier_overrides` and
-`compartment_fabric_tier_overrides` — see §5.
+
+**Both siblings named here have since been settled, in opposite directions
+(`59e61025`, mig `0287`) — and the difference was only visible in the PARENT
+table.** `compartment_fabric_tier_overrides` was REAL and is fixed: its
+catalogue `scm.compartment_library` carries no `company_id`, so both companies
+genuinely reference the same compartment ids, and the PUT's
+`onConflict: 'compartment_id'` let 2990 overwrite HOUZS's delta — a delta that
+is a PRICE (`mfg-pricing-recompute.ts` reads this table), so it silently
+repriced sofa builds. Now keyed `(compartment_id, company_id)`.
+`model_fabric_tier_overrides` was NOT real: `product_models` rows are created
+with `company_id` and listed through `scopeToCompany`, so each company owns its
+own model uuids and two companies cannot contend for one `model_id`. Identical
+DDL shape, opposite verdicts — §6 lesson 3 again.
 
 ### 2.5 A guard on one sibling and not the other
 
@@ -110,7 +126,15 @@ Repeatedly, and it is worth listing because the pattern is the finding:
 | `GET /trips/active/locations` | `GET /trips/:id/locations/latest` — live driver GPS |
 | every stock-take sibling (2026-07-22 audit) | `stock-transfers PATCH /:id/cancel` |
 | SO/CO variant rule | consignment + downstream forms |
-| mobile SO address rule (owner 2026-07-03) | desktop `SalesOrderNew` has **no** address rule |
+| mobile SO address rule (owner 2026-07-03) | desktop `SalesOrderNew` had **no** address rule — CLOSED `1d7d36cc`, see below |
+
+The last row is no longer open. `1d7d36cc` (2026-08-13) put one rule on all
+three surfaces, gated on the Processing Date alone:
+`SalesOrderNew.tsx:1455-1483` now names every missing field (customer name /
+address line 1 / postcode / delivery date) and tells the operator to untick
+"Fill in address later", and `MobileNewSO.tsx` dropped its extra
+`AND deliveryDate` term. The backend rule it matches is
+`shared/so-save-problems.ts` `if (facts.procDate && facts.completeness)`.
 
 ---
 
@@ -139,7 +163,17 @@ a branch that is still moving. Run `git rev-list --count origin/main..HEAD`.)
 - `frontend/scripts/check-silent-mutations.mjs` — 297 mutations. **35 SILENT → 0.**
 - `backend/scripts/check-shared-mirrors.mjs` — 41 rule pairs. **1 DIVERGED → 0.**
 
-None is wired as a CI gate yet — see §5.
+**The handler count moved after this was written: the scanner now reports 1019
+SCM route handlers, 17 by-id reads with no company helper, 0 of them WRITE.**
+It went up because the checker was taught to read raw SQL and component-level
+callers (`b746a5c1`, `056a4904`), not because routes were added — §6 lesson 5.
+Run the scripts; do not quote these numbers.
+
+**They ARE wired as CI gates now** — `.github/workflows/ci.yml:89-91`, on the
+PR and the merge queue, never on deploy. `check-shared-mirrors` and
+`check-silent-mutations` run `--strict`; `check-company-scope` is deliberately
+report-only until its remaining WRITE backlog is judged (that comment in
+`ci.yml` predates the backlog reaching zero).
 
 ---
 
@@ -181,10 +215,10 @@ theory already disproved.
 
 | Item | Why it is yours |
 |---|---|
-| `model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` PK is the single business column (`2990s-full-schema.sql:770`, mig 0025:11). One company's upsert overwrites the other's. | Making it `(company_id, model_id)` is a migration AND a business question: do you want per-company fabric-tier deltas at all, or is one shared table the intent? |
-| The desktop `SalesOrderNew` has no address rule; mobile and the backend both have one. | Adding a required field is your call, not a bug fix. |
-| `SalesOrderNew`'s confirm gate (`:1443`, your decision 2026-08-08, HC-SO-2607-008) requires category axes on CONFIRM "date or no date", while the line card shows nothing required without a date. The marker and the gate disagree. | Which side moves is a product decision. |
-| Wiring the three checks as PR-gated CI. | They are at zero now, so `--strict` would hold. Gate on the PR, **never** on deploy — `audit:routes` as a deploy gate jammed production twice. |
+| ~~`model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` PK is the single business column. One company's upsert overwrites the other's.~~ | **NOT AN OWNER QUESTION — SETTLED `59e61025`.** It was not a business question: the same file's GET already filtered by company while its PK permitted one row globally, so somebody had already decided the deltas are per-company and only the key was left behind. `compartment_fabric_tier_overrides` re-keyed `(compartment_id, company_id)` (mig `0287`); `model_fabric_tier_overrides` refuted — its parent `product_models` stamps `company_id`, so the two companies cannot contend for a `model_id`. **Still yours, and stated plainly: the deltas already overwritten are gone — the upsert replaced them in place and nothing recorded the previous values.** |
+| ~~The desktop `SalesOrderNew` has no address rule; mobile and the backend both have one.~~ | **DECIDED + SHIPPED `1d7d36cc`.** Owner 2026-08-13: "只要是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。就是 processing date。电话、电脑都一样的." All three surfaces now gate on the Processing Date alone. |
+| ~~`SalesOrderNew`'s confirm gate (`:1443`) requires category axes on CONFIRM "date or no date", while the line card shows nothing required without a date.~~ | **REFUTED — the two never disagreed by the time this was written.** `SalesOrderNew.tsx:1443-1455` is `if (processingDate)`, and its own comment records that the date-or-no-date form (2026-08-08, HC-SO-2607-008) was REMOVED because it stopped a salesperson booking a real order before the customer had picked a seat height. The line card is fed `variantsRequired={!!processingDate}`. Same condition on both. |
+| ~~Wiring the three checks as PR-gated CI.~~ | **DONE — `ci.yml:89-91`**, PR + merge_group, never deploy. Two run `--strict`; `check-company-scope` is report-only pending its own comment being refreshed. |
 
 ---
 

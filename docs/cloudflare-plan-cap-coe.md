@@ -39,7 +39,18 @@ So the source is a single deliberate act of remembering, by someone who was ther
 
 Two artefacts bracket the plan change. Both rely on an external fact about Cloudflare's product tiers, stated here explicitly so a future reader can re-check it rather than inherit it:
 
-**Lower bound — the account was on FREE as of 2026-04-30.** `backend/wrangler.toml:179` still reads: `# Cron schedule (kept under the Workers free-plan trigger cap).` That comment traces to `7b98025b` (2026-04-30, *"fix(cron): fold monthly gifting reset into daily 02:00 batch"*) — a commit that **reduced the number of cron triggers to stay under a free-plan ceiling**. The config carries three crons to this day. The comment survives unchanged at `9db13349` and is now, at best, stale; nobody removed it when the plan changed.
+**Lower bound — the account was on FREE as of 2026-04-30.** The evidence is `7b98025b` (2026-04-30, *"fix(cron): fold monthly gifting reset into daily 02:00 batch"*) — a commit that **reduced the number of cron triggers to stay under a free-plan ceiling** — and the comment it left in `backend/wrangler.toml`: `# Cron schedule (kept under the Workers free-plan trigger cap).` The config carries three crons to this day.
+
+> **Corrected 2026-08-13: that comment is GONE, and this paragraph used to
+> claim the opposite.** It read *"`backend/wrangler.toml:179` still reads …"*
+> and *"nobody removed it when the plan changed"*. Somebody did:
+> **`a4b186f9` (PR #974, 2026-07-21 23:49)** rewrote the clause into the
+> self-retiring prose now at `backend/wrangler.toml:250-262`, seventy minutes
+> after the `9db13349` this document pins as its as-of. §5 row 2 recorded the
+> rewrite; §3 was never updated, so the two sections contradicted each other on
+> the same line of the same file. **The lower bound now rests on `7b98025b`'s
+> own diff, not on a surviving comment** — which is the stronger source anyway.
+> Line `:179` today is inside the `[[queues.producers]]` block.
 
 **Upper bound — the account was on Workers Paid by 2026-07-04.** `backend/wrangler.toml:131-140` binds a Cloudflare Queues producer and consumer (`houzs-scan-ocr`), added by **PR #260** (`3112c6da`, 2026-07-04, *"feat(scan): move background OCR onto Cloudflare Queues"*), with the note *"Queue + DLQ already created on the account."* **Cloudflare Queues is a Workers Paid product** — it cannot be created or bound on the free plan. The queue exists and production uses it, so the account was Paid by then.
 
@@ -100,6 +111,6 @@ Those mitigations are load-bearing and pervasive — the "subrequest diet" is de
 ## See also
 
 - `BUG-HISTORY.md:3422` — the sole primary source, and its "reconstructed after the fact, dates approximate" caveat at `:3414-3416`.
-- `backend/wrangler.toml:179` (free-plan trigger cap comment, likely stale), `:131-140` (Queues binding — the Paid-plan upper bound).
+- `backend/wrangler.toml:250-262` (the `[triggers]` clause that retires the free-plan cap in prose — it replaced the comment this document used to cite at `:179`), `:178-186` (the `houzs-scan-ocr` Queues producer/consumer — the Paid-plan upper bound).
 - `backend/src/scm/routes/mfg-sales-orders.ts:1973-1976` — the fully-traced *subrequest*-cap incident, inherited from 2990, which this document is careful **not** to claim as the Houzs incident.
 - `docs/system-foundation-coe.md`, `docs/api-fetch-hardening-coe.md`, `docs/pg-migration-dropped-defaults-coe.md` — the other three producers of "mass 500s".

@@ -12,9 +12,11 @@ Production's frontend silently stopped tracking main. On 2026-07-17 it happened 
 
 ### Root cause — three correct mechanisms composing into a wrong one
 
-`.github/workflows/deploy.yml` at the time (and still, at `9db13349`):
+`.github/workflows/deploy.yml` **as it was**, verified at `9db13349`
+(2026-07-21). All three mechanisms below are historical — §5 records which fix
+closed each, and none of them describes the file today:
 
-1. **It is push-only.** `on: push: branches: [main]` (`:3-5`). There is no `workflow_dispatch`, so there is no way to deploy without a new commit.
+1. **It is push-only.** `on: push: branches: [main]` (`:3-5`). There is no `workflow_dispatch`, so there is no way to deploy without a new commit. (Today there is: `deploy.yml:6`.)
 2. **Queued runs collapse.** `concurrency: group: deploy-${{ github.ref }}` with `cancel-in-progress: false` (`:7-9`). GitHub keeps *one* running and *one* pending run per group; when a third arrives the pending one is **cancelled**. So in a burst, the running deploy finishes and every queued run except the newest is cancelled — cancelled **before its `frontend` job ever exists**.
 3. **The survivor computes the wrong diff.** `dorny/paths-filter@v3` (`:24-33`) on a push event compares `github.event.before..github.sha` — that is *this push's* range, not "everything since the last successful deploy". The one surviving run sees only the **last** merge's diff. If that last merge happened to be backend-only, `frontend` evaluates to `false` and the frontend job is **skipped**.
 
@@ -85,7 +87,7 @@ Five days after this COE was written, the same mechanism stranded **10 commits**
 | **A filter diff window that spans everything since the last successful deploy**, rather than one push's range. | — | **RESOLVED, differently on each side.** The frontend dropped the condition entirely; the backend got a window that spans everything since the last run whose backend job actually succeeded — see the row below, which was already marked FIXED while this row still described the asymmetry as open. |
 | **The backend keeps a diff window that #992 proves untrustworthy.** #992's premise is that a per-push path diff cannot prove what is live; its remedy was applied only to the frontend. | — | **FIXED.** The `changes` job now resolves the SHA of the last run whose **backend job** concluded success (a run can be green with backend skipped — that is precisely how the 2026-07-22 window stayed invisible) and passes it to `dorny/paths-filter` as `base`. The filter now asks "is anything unreleased?" rather than "did this one push touch backend?". Fails OPEN: unresolvable base -> the backend job runs anyway. |
 | **Refuse to publish an ancestor of what is already live.** | — | **FIXED.** The backend job compares `GITHUB_SHA` against the last released backend SHA with `git merge-base --is-ancestor` before anything is built, and fails with a sentence explaining itself. Equal SHAs are allowed (a rerun of the live commit is how the 2026-07-22 window was recovered); an unknown base skips the check, same fail-open rule. |
-| **Interim rule, in force now:** *after any burst merge, check that the last deploy's `frontend` job says **success**, not **skipped**.* Recorded at `sw.js:328-329`. | Everyone merging to main | Manual. It is a human check standing in for a pipeline guarantee, and it will be forgotten. |
+| ~~**Interim rule, in force now:** *after any burst merge, check that the last deploy's `frontend` job says **success**, not **skipped**.* Recorded at `sw.js:328-329`.~~ | — | **RETIRED — and its stated home is gone.** Re-checked 2026-08-13: `sw.js` no longer records that rule anywhere (`grep skipped` returns nothing); the comment beside the constant now reads *"The release gate now fixes the class instead of relying on another bump: deploy.yml always rebuilds the latest main frontend after a completed run and exposes workflow_dispatch as a one-click recovery."* There is nothing left to check by hand: the `frontend` job cannot be skipped (`deploy.yml:246-253`), and the deploy ends in a smoke that asserts the LIVE entry chunk and `sw` VERSION equal the ones just built — a machine check where this row asked for a human one. |
 
 ---
 

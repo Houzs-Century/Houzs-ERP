@@ -321,8 +321,9 @@ material while leaving the link off: the stock goes in, `received_qty` does not
 move, `verifyGrnOverReceipt` sees nothing, and the same delivery can be received
 again. It is the receiving-side mirror of the delivery-side defect in
 `docs/unlinked-line-duplicate-coe.md` (owner: *"包括 GR 那边也是"*). A production
-scan on 2026-08-04 found **no** GRN in this state — the guard is preventative
-here, corrective on the delivery side.
+scan on 2026-08-04 found **no** GRN in this state (UNVERIFIED as of 2026-08-13:
+needs production data) — the guard is preventative here, corrective on the
+delivery side.
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse

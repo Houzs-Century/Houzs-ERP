@@ -126,10 +126,15 @@ lines (no grnItemId) stay uncapped."*
 | item IS on the named GRN but the line does not link to it | **REFUSED** — link it |
 
 A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
-is preventative. It was added anyway because the cost is one query on a path
-already doing several, and the cost of not having it on the delivery side was
-three weeks of a double deduction nobody could see
-(`docs/unlinked-line-duplicate-coe.md`).
+is preventative (UNVERIFIED as of 2026-08-13: needs production data). It was
+added anyway because the cost is one query on a path already doing several, and
+the cost of not having it on the delivery side was three weeks of a double
+deduction nobody could see (`docs/unlinked-line-duplicate-coe.md`).
+
+**Unlike Delivery Return, this narrow rule is the ONLY link guard here.** The DR
+side additionally refuses every unlinked line outright (409 `do_link_required`);
+purchase returns have no equivalent, so the two "allowed" rows above really are
+reachable and `grn_item_id` NULL rows really do get written.
 
 ---
 

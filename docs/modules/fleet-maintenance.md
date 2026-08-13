@@ -46,8 +46,10 @@ NOT create a parallel master.
 
 ## 2. The one new table (migration `0202_scm_lorry_compliance_vault.sql`)
 
-> ⚠️ Migration number is a **placeholder** — `0200/0201` were taken by parallel
-> branches; re-check and renumber to highest-on-main + 1 at MERGE (file header).
+> `0202_scm_lorry_compliance_vault.sql` is MERGED and APPLIED under this number.
+> **Do NOT renumber it.** `pg-migrate` tracks applied files by full filename, so a
+> rename makes it a new file and re-runs its SQL against a schema it has already
+> changed.
 
 ### `scm.lorry_compliance_documents` — the compliance vault
 One row per issued/renewed document across **PUSPAKOM / ROAD_TAX / INSURANCE /
@@ -56,9 +58,33 @@ and (PUSPAKOM) PASS/FAIL result + reinspection deadline. `lorry_id` FK →
 `scm.lorries(id)` ON DELETE CASCADE. **Append-only**: renewing INSERTs a new row;
 the current document per `(lorry, doc_type)` is the latest-expiring row.
 
-**Company scope matches `scm.lorry_service_records`**, NOT a hard scope: the
-fleet is unified across companies (`scm.lorries` has no `company_id`), so
-`company_id` here is stamped on insert but never used to scope reads.
+**Company scope matches `scm.lorry_service_records`**, NOT a hard scope:
+`company_id` here is stamped on insert but never used to scope reads. Verified
+2026-08-13 against BOTH the migration headers (`0202:29-34`, `0203:38-40`,
+`0204:42-43`, each saying "STAMPED on insert for provenance but NOT used to
+scope reads") AND the read path — `GET /dashboard` reads the vault, plans,
+mileage, breakdowns, work orders and WO parts with ZERO company predicates
+(`fleet-maintenance.ts:635-649`), and `GET /lorries` is explicitly unscoped
+(`lorries.ts:132-134`, "one shared lorry fleet across ALL companies").
+
+> **Correction (2026-08-13):** those headers justify themselves with "`scm.lorries`
+> has no `company_id`", and that premise is **false** — migration
+> `0083_multicompany_company_id.sql:313` added the column, backfilled it to HOUZS,
+> set it `NOT NULL`, gave it an FK to `public.companies(id)` and indexed it, and
+> `lorries.ts:182` stamps it on every insert. The BEHAVIOUR is still unified,
+> because the read path carries no predicate — but do not re-derive that from the
+> column list, which is exactly the mistake `CLAUDE.md` records as having given
+> the wrong answer twice in opposite directions on these tables.
+
+> **The rule is about LORRIES and the vault — do not generalise it to the whole
+> module.** `scm.workshops` IS company-scoped on read: `GET /workshops` filters
+> `.eq("company_id", activeCompanyId(c))` (`fleet-maintenance.ts:2060`),
+> `PATCH /workshops/:id` scopes by id AND company (`:2136`), and
+> `mintWorkshopCode` / `mintRecordNo` mint per company (`:2041`, `:2051`) behind
+> `UNIQUE (company_id, code)` (mig 0241). The route file carries the same caveat
+> inline at `:258`. §11 introduces the workshop master but lists none of its
+> three endpoints — `GET`, `POST` and `PATCH /workshops/:id` appear in no table
+> in this doc.
 
 **Denormalization sync.** For ROAD_TAX / INSURANCE / PUSPAKOM the append route
 updates the matching flat column on `scm.lorries` to the latest vault expiry, so
@@ -81,7 +107,7 @@ lorry routes.
 
 | Route | Gate | What |
 |---|---|---|
-| `GET /dashboard` | `fleet.read` | All lorries + current compliance per type (vault-latest, else flat column) + derived status + KPI ribbon (incl. real this-month repair spend + costliest vehicle from service records). |
+| `GET /dashboard` | `fleet.read` | Every ACTIVE, IN-HOUSE lorry only (`inHouseLorries`: `.eq("active", true)` + `is_internal` null-or-true, `fleet-maintenance.ts:231-232`, narrowed 2026-08-02) — an outsourced or deactivated lorry never reaches the board, though `GET /vehicles/:id` still reads it by id. Plus current compliance per type (vault-latest, else flat column) + derived status + KPI ribbon (incl. real this-month repair spend + costliest vehicle from service records). |
 | `GET /vehicles/:id` | `fleet.read` | One lorry + full vault history per type + maintenance windows + latest service record. |
 | `GET /reminders` | `fleet.read` | Fleet-wide actionable expiries, most urgent first. The computation is the exported `computeFleetReminders()` in the same file — the route AND the daily iOS push job (`services/pushFleetReminders.ts`, 08:00 MYT cron) both call it. Change the rules in one place. |
 | `POST /vehicles/:id/compliance` | `fleet.write` | **Append** a compliance document (renewal) + sync the flat column. |
@@ -145,7 +171,9 @@ Gated `Guard perm="fleet.read"`; nav entry in `Sidebar.tsx` (operations,
 `ResizableDetailDrawer`, `PageHeader`, tone pills) — not the mockup's dark theme.
 Region + status filters are URL state; region options are derived from the
 warehouses actually present. Registered in `routing/routeManifest.ts` so the
-mobile shell resolves it to a desktop-only dead-end (no mobile screen in Phase 1).
+mobile shell resolves `/fleet-health` to the DRIVER'S MILEAGE-CAPTURE screen
+(`MobileApp.tsx:132`, shipped with Phase 2) while desktop mounts this admin
+dashboard at the same URL — one product, two presentations. See §9.5.
 
 **The drawer is a quick look, not the record** — see section 12. Everything a
 lorry has ever had lives on `/fleet-health/:lorryId`.
@@ -193,8 +221,8 @@ not counted.
 
 ### 9.1 New tables (migration `0203_scm_lorry_plans_mileage.sql`)
 
-> ⚠️ Migration number is a **placeholder** — re-check and renumber to
-> highest-on-main + 1 at MERGE (header carries `RE-CHECK NUMBER AT MERGE`).
+> `0203_scm_lorry_plans_mileage.sql` is MERGED and APPLIED under this number.
+> **Do NOT renumber it** — see the note under §2.
 
 **`scm.lorry_maintenance_plans` — one plan per COMPONENT per lorry.** Child of
 `scm.lorries(id)` ON DELETE CASCADE, company-stamped-not-scoped like the vault.
@@ -275,9 +303,9 @@ derived due) + `mileage[]` (recent readings).
 
 ### 10.1 New tables (migration `0204_scm_lorry_workorders_breakdowns_components.sql`)
 
-> ⚠️ Migration number is a **placeholder** — header carries `RE-CHECK NUMBER AT
-> MERGE`. At branch time main was at 0203; re-list the tree at merge and renumber
-> to highest-on-main + 1 if 0204 was taken. All five tables are children of
+> `0204_scm_lorry_workorders_breakdowns_components.sql` is MERGED and APPLIED
+> under this number. **Do NOT renumber it** — see the note under §2. All five
+> tables are children of
 > `scm.lorries` ON DELETE CASCADE, company-stamped-not-scoped like the Phase-1/2
 > siblings. Money is BIGINT `*_centi`.
 
@@ -295,8 +323,10 @@ status column (`BREAKDOWN` is more specific than `OUT_OF_SERVICE`, so the case
 must NOT also open an OOS window or the machine would report `OUT_OF_SERVICE`).
 
 **`scm.lorry_work_orders`** — the maintenance work order. State machine
-(`status` CHECK): `REPORTED → DIAGNOSED → APPROVED → IN_REPAIR → WAITING_PARTS →
-COMPLETED → VERIFIED`, with the `IN_REPAIR ⇄ WAITING_PARTS` loop and
+(`status` CHECK): `REPORTED → DIAGNOSED → QUOTED → APPROVED → IN_REPAIR →
+WAITING_PARTS → COMPLETED → VERIFIED` — `QUOTED` arrived with mig 0247 (see
+§10.2) — with the direct `DIAGNOSED → APPROVED` edge for unquoted jobs, the
+`IN_REPAIR ⇄ WAITING_PARTS` loop and
 `WAITING_PARTS → COMPLETED`. An OPEN WO in `IN_REPAIR` feeds
 `PLANNED_MAINTENANCE`; in `WAITING_PARTS` feeds `WAITING_PARTS` (COMPLETED /
 VERIFIED are closed and feed nothing). Money legs `labour_centi`,
@@ -499,7 +529,8 @@ Copying them by hand is how one copy quietly loses a fix. Both surfaces read the
 same `GET /api/fleet-maintenance/vehicles/:id`, so there is one payload shape.
 
 Gated exactly as `/fleet-health` is (`fleet.read`); registered in
-`routing/routeManifest.ts` (desktop-only, like its parent).
+`routing/routeManifest.ts`. Desktop-only — UNLIKE its parent `/fleet-health`,
+which does have a mobile surface.
 
 ### The four dates a lorry's life is measured from (mig `0245`)
 

@@ -102,8 +102,10 @@ bypassed. Each fragment is `""` ONLY when the company context is unresolved;
 a resolved-but-restricted caller gets a match-nothing predicate. Never fail open.
 
 - projects → `activeCompanySql` (follows the ACTIVE company)
-- ASSR → `assrCompanySql`, mirroring `routes/assr.ts`: rank-and-file Sales are
-  PINNED to HOUZS, office/backend/directors widen to their allowed set
+- ASSR → `assrCompanySql`, IMPORTED from `routes/assr.ts` (not copied), where it
+  is `allowedCompaniesSql` — the caller's GRANTED companies, no role pin. The
+  local copy that pinned rank-and-file Sales to HOUZS was deleted when the owner
+  removed that pin on 2026-07-20; it had already drifted out of sync
 - users → global (an unscoped shared directory, matching `/api/users`)
 - all SCM sources → `scopeToCompany`
 

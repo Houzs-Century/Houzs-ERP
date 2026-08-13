@@ -31,18 +31,30 @@ Line references are against `feat/doc-traceability-display` off `origin/main`
 Before a Delivery Order exists, ALL supply-demand matching belongs to the
 floating MRP allocator — pooled by (warehouse, item_code, variant_key),
 constrained by one-batch-per-SOFA-set (bedframes exempt), ordered by delivery
-date then doc_no. Nothing persisted before the DO may bind execution:
-`purchase_order_items.so_item_id` and the mig-0235 allocation sub-lines are
-**procurement provenance** — they record why we bought, they are displayed and
-audited, and they influence NO cap, NO batch expectation, NO coverage
-precedence.
+date then doc_no. Nothing persisted before the DO governs **MRP matching**:
+`purchase_order_items.so_item_id` and the mig-0235 allocation sub-lines carry NO
+cap and NO coverage precedence inside `computeMrp` (`mrp.ts:174` — "informational
+only now").
 
-At DO creation the allocator decides binding **live** — including which incoming
-PO batch a ship-before-arrival commits to — and records it on the DO line
-(`committed_po_batch_no`, mig 0230). From that moment everything is anchored
-history: committed batches, OUT movements, lot consumptions, COGS, delivered
-attribution. Post-DO records are never recomputed from provenance, and
-provenance is never "hardened" into them.
+They are **not** inert at DO time, and the model below is what SHIPPED, not what
+this section used to describe. At DO creation `resolveShipCommitments` decides
+binding from four facts — sofa detection, the SO line's `allocated_batch_no`, the
+STORED `so_item_id` raise-link resolved in `block` mode
+(`resolveExpectedBatchBySoItem`, `dropship-batch.ts:62-80`), and the live
+shortage list — and records the answer on the DO line (`committed_po_batch_no`,
+mig 0230, written at `delivery-orders-mfg.ts:3789`). **The MRP allocator is not
+consulted: `computeMrp` is never called anywhere in `delivery-orders-mfg.ts`.**
+So the stored pre-DO link IS hardened into the DO, and that stamp then drives
+receipt-time netting and MRP's own `applyCommittedSupply` deduction
+(`mrp.ts:283-294`).
+
+From that moment everything is anchored history: committed batches, OUT
+movements, lot consumptions, COGS, delivered attribution. Post-DO records are
+never recomputed.
+
+> Whether "provenance binds nothing before the DO" was meant as a design RULE
+> that `resolveShipCommitments` violates, or was simply superseded by it, is an
+> OWNER DECISION (UNVERIFIED as of 2026-08-13). The code above is what runs.
 
 A stored-link-vs-delivered divergence is therefore NOT a defect; a double-SERVE
 in the delivered ledger IS. Do not reintroduce the stored link into any
@@ -64,7 +76,7 @@ whole point of this doc is to record which one answers which question.
 | # | Linkage | Where it lives | Semantics | Survives delivery? |
 |---|---------|----------------|-----------|--------------------|
 | A | **Floating MRP coverage** | `mrp.ts` `computeMrp()` → `mrpLineCoverage()` | Which outstanding PO currently covers which SO line, greedy by delivery date over a POOLED supply. `MrpLine.poNumber` is the forward map (SO line → PO). | **No** — computes over OUTSTANDING demand only; a delivered line is subtracted out (`effQtyOf` / `soDeliverableRemaining`) and `SO_DONE` statuses are excluded. The coverage evaporates the moment the line ships. |
-| B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO "From SOs:" note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — these are immutable stored links; the graph resolves the whole family for any anchor. |
+| B | **Stored raise-link + document relationship** | `document-flow.ts` (`/document-flow/:type/:id`) | The SAP-B1 relationship graph. Real stored FKs: `purchase_order_items.so_item_id` (the SO line a PO line was RAISED from, 2026-07-09 onward), the PO "From SOs:" note (pre-MRP shared buys), `grns.purchase_order_id`, `purchase_invoices.grn_id`, `delivery_orders.so_doc_no`, `sales_invoices.*`. | **Yes** — they survive delivery, which floating coverage does not. But they are RECORDED, not ENFORCED: every one is nullable (an ad-hoc DO line is written with `so_item_id ?? null` straight from the client payload, `delivery-orders-mfg.ts:3752`), and several have been rewritten by repair scripts (`backfill-po-so-item-links.mjs`, `repair-2990-doc-refs.mjs`) — so they are not immutable either. |
 | C | **Physical batch/lot trail** | `soLineShippedSourcePos()` (`delivery-orders-mfg.ts`) | `batch_no = source PO number` (stamped by the GRN, mig 0120, copied onto the FIFO lot by the trigger). Recovers, for a SHIPPED SO line, the PO(s) its goods physically came from, via DO OUT movements ∪ `inventory_lot_consumptions` → `inventory_lots.batch_no`. | **Yes, but only for BATCHED stock** — plain-FIFO un-batched stock carries no batch, so the trail is best-effort and incomplete. |
 
 Key trap: **A ≠ B.** For a PO raised via convert-from-SO, `so_item_id` (B) is the
@@ -106,7 +118,9 @@ identities of §2.10 (since 2026-08-07; this supersedes the original two-way
 dashed-vs-"Locked" rendering): **anchored** (source `delivered`) solid,
 **provenance** (source `linked`) muted with "bought for" wording, **floating**
 (source `mrp` / `locked:false`) dashed + trailing "~". A line with no
-assignment at any layer renders **"—"**.
+assignment at any layer renders a subtle **`STOCK`** tag, not a dash —
+`emptyMeans="stock"` on the drill-down line cell and on the PO / GRN / PI list
+header cells (`DocumentLinesExpansion.tsx:683-684`, `:837`). See §2.9.
 
 Backend: `GET /po-so-coverage/:type/:id` returns `{ poNumber, poId, origins, delivered }`
 where `origins: [{ itemCode, assignments: [{ soDocNo, deliveryDate, locked,
@@ -808,9 +822,10 @@ Relationship Map graph, linkage B).
 When a covering PO is received (GRN), the line flips to READY-by-STOCK; the
 floating coverage (A) drops the PO (demand satisfied) and, until the line ships,
 the physical trail (C) has no DO yet — so `coverage_po` goes null in that window.
-- **SOFA:** derivable IF `mfg_sales_order_items.allocated_batch_no` (= locked
-  source PO, sofa-only, mig 0121, forward-compat-guarded) is read — it is NOT in
-  the SO `ITEM` select today.
+- **SOFA:** shipped 2026-08-01 (§2.8). `mfg_sales_order_items.allocated_batch_no`
+  (= locked source PO, sofa-only, mig 0121) IS in the SO `ITEM` select on both
+  the detail and list paths (`mfg-sales-orders.ts:1095`, `:1578`), and
+  `soLineReadySourcePos` surfaces it.
 - **Non-sofa:** NOT derivable — FIFO-pool stock has no per-line batch allocation
   before it ships, so there is no stored PO trail for a READY-by-stock line
   without new persistence.

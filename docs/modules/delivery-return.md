@@ -34,8 +34,9 @@ The two facts that make this module easy to get wrong:
 1. **A return line MOVES STOCK.** It is not paperwork. Every non-service line
    with `qty_returned > 0` writes an inventory IN.
 2. **A return line that names no DO line still moves that stock**, but counts
-   toward no parent line — which is exactly the hole closed on 2026-08-04. See
-   §5.
+   toward no parent line. The write paths now refuse such a line outright
+   (409 `do_link_required`), on top of the narrower cross-chain guard added
+   2026-08-04. See §5.
 
 ---
 
@@ -116,15 +117,29 @@ receiving chains — one definition of "the same item", one shape of refusal:
 
 | situation | outcome |
 |---|---|
-| header names no DO | allowed — nothing to bypass |
-| item is NOT on the named DO | allowed — genuinely ad-hoc / goodwill |
-| item IS on the named DO but the line does not link to it | **REFUSED** — link it |
+| header names no DO | passes THIS guard |
+| item is NOT on the named DO | passes THIS guard |
+| item IS on the named DO but the line does not link to it | **REFUSED** 409 `unlinked_so_lines` — link it |
 
-A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
-is preventative. It was added anyway because the cost is one query on a path
-already doing several, and the cost of not having it on the delivery side was
-three weeks of a double deduction nobody could see
-(`docs/unlinked-line-duplicate-coe.md`).
+**But a second, blanket guard runs right after it and refuses every unlinked
+line anyway.** "Bug #16 — no DO, no Return" (Commander 2026-05-31): `POST /`
+(`delivery-returns.ts:1012-1020`) and `POST /:id/items` (`:1363-1370`) both 409
+`do_link_required` when a line carries no `doItemId`, whatever the header names.
+So the two "passes" rows above are unreachable through the API — the narrow
+guard only decides WHICH refusal you get. `convertDoLinesToReturn` always writes
+`do_item_id`, so `/from-do` and `/from-dos` never reach either guard.
+
+A production scan on 2026-08-04 found **zero** rows of the narrow shape, so that
+guard is preventative (UNVERIFIED as of 2026-08-13: needs production data). It
+was added anyway because the cost is one query on a path already doing several,
+and the cost of not having it on the delivery side was three weeks of a double
+deduction nobody could see (`docs/unlinked-line-duplicate-coe.md`).
+
+Two more refusals live on the same write paths, both 409: SERVICE lines are not
+returnable goods at all (`serviceLinesNotReturnableResponse`, `:1005`, `:1383`),
+and `checkDrOverRemaining` (`:653`) caps every DO-linked line at its live
+remaining-to-return pool, with a post-insert re-derive + rollback closing the
+read-before-write race (`:1047-1060`).
 
 ---
 
@@ -168,15 +183,20 @@ Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already
 normalised. `CANCELLED` is the value that matters — it is what drives the
 drain-to-zero path, and the cancel handler is idempotent (cancelling an already-
-CANCELLED return returns success without rewriting).
+CANCELLED return returns success without rewriting; the CANCELLED update is also
+conditional on `.neq('status','CANCELLED')` so a lost race echoes instead of
+reversing twice). **CANCELLED is FINAL**: any other transition out of it is 409
+`dr_cancelled_final` — the drain already ran, so un-cancelling would leave the
+books saying "returned" with an empty shelf. Raise a new return instead.
 
 ---
 
 ## 8. Traps, collected
 
-- **`do_item_id` is nullable and always will be** — goodwill lines are
-  legitimate. The guard is what keeps that from being a bypass; do not "fix" it
-  by making the column NOT NULL.
+- **`do_item_id` is nullable in the DDL, but no write path will produce a NULL
+  one** — `do_link_required` refuses it on create and on add-item. The column
+  stays nullable for legacy / migrated rows; the guards are what keep it from
+  being a bypass.
 - **The resync is a target walk.** Never add an incremental `+qty` write beside
   it; the two would double-apply.
 - **SERVICE lines are excluded from stock, everywhere.** Check

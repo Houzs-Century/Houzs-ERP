@@ -279,8 +279,9 @@ de-dupes an identical still-unread notice (`:68-87`).
 | Slip-scan completion | `backend/src/scm/routes/scan-so.ts:3581` (wrapper `postScanNotice`) | `'scan'` | 7 days |
 | Service-case create / reassign | `backend/src/services/assrNotify.ts:148-155` | `'service_case'` | 14 days (default) |
 
-Grep confirms exactly three `INSERT INTO announcements` sites in the tree: these
-two (via one helper) and the human composer at `announcements.ts:873`.
+Grep confirms exactly **two** `INSERT INTO announcements` statements in the whole
+tree: `personalNotice.ts` (the one helper both producers above call) and the
+human composer in `announcements.ts`. Two producers, one insert path.
 
 ---
 

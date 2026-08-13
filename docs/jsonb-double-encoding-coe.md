@@ -139,13 +139,29 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
   still hold the double-encoded shape. #1938's probe now measures both so the
   size is known. Decision owner: the specials workstream, which already has
   `check-specials-and-ocr.mjs` reading these rows.
+
+  **Updated 2026-08-13 — a repair tool now exists for the `custom_specials`
+  half.** `backend/scripts/repair-custom-specials-double-encoded.mjs` +
+  `.github/workflows/repair-custom-specials-double-encoded.yml`, DRY-RUN by
+  default, `APPLY=1` to write. It sets the column to **NULL rather than
+  decoding it back**, for three reasons written into its own header:
+  `custom_specials` is a derived cache the pricing recompute overwrites
+  wholesale, the pre-encoding value was already the wrong shape (a bare
+  `string[]` of slip phrases, not `Array<{description, surchargeSen}>`), and
+  the owner ruled on 2026-08-11 that migrated lines must not reprice. The
+  `variants.specials` half is claimed clean by a named re-run of
+  `backfill-specials-into-variants.mjs` (run `31419290223`, cited at that
+  script's `:33-34`). **Whether either has been APPLIED against production
+  cannot be settled from the repository** — that needs a workflow run history
+  or a live read.
 - **`public.mfg_sales_order_items` shadowing `scm.`** with `public` ahead of
   `scm` on the search_path. Nothing hit it today because everything is
   schema-qualified. Decision owner: the owner / IT, as a schema cleanup.
 - **Every other `res.count`-only writer in `backend/scripts`.** #1938 fixed the
-  reporting in the scripts it touched. There are ~50 scripts using `sql.begin`;
-  any that report success from a command tag can mislead the same way even
-  without this encoding bug.
+  reporting in the scripts it touched. There are **76** scripts using
+  `sql.begin` (re-counted 2026-08-13; this line said ~50); any that report
+  success from a command tag can mislead the same way even without this
+  encoding bug.
 
 ## Lessons
 

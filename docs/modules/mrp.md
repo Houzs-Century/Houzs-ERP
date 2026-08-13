@@ -82,7 +82,8 @@ invariant (po-so-coverage.ts: "SO->PO and PO->SO can never disagree").
 | Consumer | File | includeUndated | Reads |
 |----------|------|----------------|-------|
 | MRP page `GET /mrp` | `mrp.ts` route | query param, default **false** | `skus[]` + `sofaSets[]` (the plan) |
-| SO drill-down Stock column | `mfg-sales-orders.ts` (2 call sites) | true | `mrpLineCoverage` (SO->PO) |
+| SO drill-down Stock column | `mfg-sales-orders.ts` (`:2916`, `:3075`) | true | `mrpLineCoverage` (SO->PO) |
+| SO LIST ready-chip enrichment | `mfg-sales-orders.ts` (`:1561`) | true | the raw `MrpResult`; fail-soft — a thrown MRP just drops READY chips |
 | PO / GRN / PI "Assigned SO" | `po-so-coverage.ts` (single + list) | true | `mrpReverseCoverage` (PO->SO) |
 | Outstanding-SO shortage cap | `mfg-purchase-orders.ts` | true | per-line `shortageQty` |
 | Reservations assigned/free | `inventory.ts` `/inventory/reservations` | true | `mrpStockAssignment` (stock side) |

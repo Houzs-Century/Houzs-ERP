@@ -135,7 +135,7 @@ received REMOVE, header change, audit row).
 
 ---
 
-## 5. Database — mig `0192_scm_po_amendment_workflow.sql`
+## 5. Database — mig `0194_scm_po_amendment_workflow.sql`
 
 New: enum `scm.po_amendment_status ('REQUESTED','APPROVED','REJECTED')`, tables
 `scm.po_amendments` + `scm.po_amendment_lines`. Reused (both from mig 0080):
@@ -156,8 +156,9 @@ New: enum `scm.po_amendment_status ('REQUESTED','APPROVED','REJECTED')`, tables
 `company_id` is nullable, no FK (companies master is Phase 0f) — matches every
 amendment table in 0080.
 
-> **Migration number caveat:** taken as `0192` at branch time. Parallel PRs
-> collide on numbers — re-check and renumber at MERGE by re-listing the tree.
+> **Migration number caveat:** taken as `0192` at branch time and renumbered to
+> `0194` at merge — the number in this section is the one on disk. Parallel PRs
+> collide on numbers; re-check and renumber at MERGE by re-listing the tree.
 
 ---
 
