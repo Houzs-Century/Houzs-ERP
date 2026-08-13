@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -335,6 +336,7 @@ export function useUpdateStockTransfer() {
       qc.invalidateQueries({ queryKey: ['stock-transfers'] });
       qc.invalidateQueries({ queryKey: ['stock-transfers', vars.id] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -351,6 +353,7 @@ export function usePostStockTransfer() {
       // Posting moves stock — invalidate inventory views too.
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
+    onError: writeFailedAs('Stock transfer not posted'),
   });
 }
 
@@ -377,6 +380,7 @@ export function useDeleteStockTransfer() {
     mutationFn: (id: string) =>
       authedFetch<{ ok: true }>(`/stock-transfers/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['stock-transfers'] }),
+    onError: writeFailedAs('Stock transfer not deleted'),
   });
 }
 

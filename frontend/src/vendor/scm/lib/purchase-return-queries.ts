@@ -19,7 +19,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -133,6 +133,7 @@ export const useUpdatePurchaseReturnHeader = () => {
       qc.invalidateQueries({ queryKey: ['purchase-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -149,6 +150,7 @@ export const useUpdatePurchaseReturnItem = () => {
       // Editing a line posts the qty DELTA as a movement on a POSTED return.
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -163,5 +165,6 @@ export const useDeletePurchaseReturnItem = () => {
       // Dropping a line reverses that line's stock OUT via a delta movement.
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
+    onError: writeFailedAs('Line not deleted'),
   });
 };

@@ -200,6 +200,7 @@ export function useUpdateRateRule(cardId: string) {
     mutationFn: ({ id, ...body }: Partial<NewRateRule> & { id: string }) =>
       authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+    onError: writeFailed,
   });
 }
 

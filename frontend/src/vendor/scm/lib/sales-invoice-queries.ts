@@ -17,7 +17,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -196,6 +196,7 @@ export const useConvertDosToSi = () => {
       qc.invalidateQueries({ queryKey: ['delivery-returns', 'returnable-do-lines'], refetchType: 'all' });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
     },
+    onError: writeFailedAs('Invoice not created'),
   });
 };
 
@@ -214,6 +215,7 @@ export const useAppendDoToSalesInvoice = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoices', 'invoiceable-do-lines'], refetchType: 'all' });
       qc.invalidateQueries({ queryKey: ['delivery-returns', 'returnable-do-lines'], refetchType: 'all' });
     },
+    onError: writeFailedAs('DO lines not added to this invoice'),
   });
 };
 
@@ -230,6 +232,7 @@ export const useUpdateSalesInvoiceHeader = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoices'] });
       qc.invalidateQueries({ queryKey: ['sales-invoice-detail', vars.id] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -246,6 +249,7 @@ export const useAddSalesInvoiceItem = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoice-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['sales-invoices'] });
     },
+    onError: writeFailedAs('Line not added'),
   });
 };
 
@@ -260,6 +264,7 @@ export const useUpdateSalesInvoiceItem = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoice-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['sales-invoices'] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -272,6 +277,7 @@ export const useDeleteSalesInvoiceItem = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoice-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['sales-invoices'] });
     },
+    onError: writeFailedAs('Line not deleted'),
   });
 };
 

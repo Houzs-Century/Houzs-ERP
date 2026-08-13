@@ -20,7 +20,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -260,5 +260,6 @@ export const useDeleteConsignmentNotePayment = () => {
       qc.invalidateQueries({ queryKey: ['consignment-note', vars.id, 'payments'] });
       qc.invalidateQueries({ queryKey: ['consignment-note-detail', vars.id] });
     },
+    onError: writeFailedAs('Payment not deleted'),
   });
 };

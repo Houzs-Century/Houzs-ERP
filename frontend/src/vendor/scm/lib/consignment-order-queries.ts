@@ -24,7 +24,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -254,6 +254,7 @@ export const useDeleteConsignmentItemPhoto = () => {
       qc.invalidateQueries({ queryKey: ['consignment-order', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['consignment-order-detail', vars.docNo] });
     },
+    onError: writeFailedAs('Photo not deleted'),
   });
 };
 
@@ -271,6 +272,7 @@ export const useOverrideConsignmentLinePrice = () => {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['consignment-order-detail', vars.docNo] });
     },
+    onError: writeFailedAs('Price override not saved'),
   });
 };
 
@@ -326,6 +328,7 @@ export const useDeleteConsignmentOrderPayment = () => {
       qc.invalidateQueries({ queryKey: ['consignment-order', vars.docNo, 'payments'] });
       qc.invalidateQueries({ queryKey: ['consignment-order', vars.docNo] });
     },
+    onError: writeFailedAs('Payment not deleted'),
   });
 };
 

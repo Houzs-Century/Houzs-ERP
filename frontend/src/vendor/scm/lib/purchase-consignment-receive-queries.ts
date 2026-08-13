@@ -22,7 +22,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { serviceNotify } from './dialog-service';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -129,6 +129,7 @@ export const useAddPurchaseConsignmentReceiveItem = () => {
       qc.invalidateQueries({ queryKey: ['pc-receive-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['pc-receive'] });
     },
+    onError: writeFailedAs('Line not added'),
   });
 };
 

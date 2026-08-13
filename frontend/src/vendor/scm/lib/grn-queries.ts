@@ -5,7 +5,7 @@
 // /return query surface + verified-save + supabase + serviceNotify). Only the
 // GRN hooks are pulled here, copied VERBATIM except for the boundary:
 //   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 //     → /api/scm), instead of the source's relative './authed-fetch' that pulled
 //     in supabase.
 //   • the dropped `import { supabase }` / `verifiedSave` machinery — none of the
@@ -55,6 +55,7 @@ export const useGrnFromPos = () => {
       /* Force picker refetch so received PO lines drop off. */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('GRN not created'),
   });
 };
 
@@ -71,6 +72,7 @@ export const usePurchaseReturnFromGrns = () => {
       /* Force picker refetch so returned/invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase return not created'),
   });
 };
 
@@ -257,6 +259,7 @@ export const usePurchaseInvoiceFromGrn = () => {
       /* Force picker refetch so already-invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase invoice not created'),
   });
 };
 
@@ -309,5 +312,6 @@ export const usePurchaseReturnFromGrn = () => {
       /* Force picker refetch so returned GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase return not created'),
   });
 };

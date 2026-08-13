@@ -8,7 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -950,6 +950,7 @@ export function useConvertPoFromSo() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', vars.poId] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
     },
+    onError: writeFailedAs('Sales order lines not copied into this PO'),
   });
 }
 
