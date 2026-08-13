@@ -664,9 +664,9 @@ function siTransitionReject(prev: string, next: string): string {
 
 // ── List ────────────────────────────────────────────────────────────────
 /* Stamp the linked SO's dates onto SI list rows for the quick-view drawer:
-   so_internal_expected_dd (the "Processing date" — mfg_sales_orders.
-   internal_expected_dd, the one true user date since the legacy
-   processing_date column was dropped, mig 0189) and so_customer_delivery_date
+   so_processing_date (the "Processing date" — mfg_sales_orders.processing_date,
+   the one true user date, and since mig 0284 under the one name the UI, the API
+   and every human already use) and so_customer_delivery_date
    (fallback for pre-snapshot SIs whose own customer_delivery_date is null).
    One batched read keyed by so_doc_no; mutates rows in place, same style as
    gateSiFinance. Called on BOTH list paths (legacy + paginated). */
@@ -674,17 +674,17 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const soDocNos = [...new Set(list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
-  const byDoc = new Map<string, { internal_expected_dd: string | null; customer_delivery_date: string | null }>();
+  const byDoc = new Map<string, { processing_date: string | null; customer_delivery_date: string | null }>();
   if (soDocNos.length > 0) {
     const { data } = await sb.from('mfg_sales_orders')
-      .select('doc_no, internal_expected_dd, customer_delivery_date').in('doc_no', soDocNos);
-    for (const s of ((data ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null; customer_delivery_date: string | null }>)) {
-      if (s.doc_no) byDoc.set(s.doc_no, { internal_expected_dd: s.internal_expected_dd ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
+      .select('doc_no, processing_date, customer_delivery_date').in('doc_no', soDocNos);
+    for (const s of ((data ?? []) as Array<{ doc_no: string | null; processing_date: string | null; customer_delivery_date: string | null }>)) {
+      if (s.doc_no) byDoc.set(s.doc_no, { processing_date: s.processing_date ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
     }
   }
   for (const r of list) {
     const so = byDoc.get((r.so_doc_no as string | null) ?? '');
-    r.so_internal_expected_dd = so?.internal_expected_dd ?? null;
+    r.so_processing_date = so?.processing_date ?? null;
     r.so_customer_delivery_date = so?.customer_delivery_date ?? null;
   }
 }

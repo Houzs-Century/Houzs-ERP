@@ -360,8 +360,10 @@ for the 2990 SOURCE database, never written here. Rule:
 
 ### Processing-Date save gates (aggregated `validation_failed`)
 
-Setting or changing the Processing Date (`internal_expected_dd` — the UI's
-"Processing Date"; the `processing_date` column is a dead legacy snapshot) runs
+Setting or changing the Processing Date (`scm.mfg_sales_orders.processing_date`
+— one column, and since mig 0284 one NAME: the UI label, the API field
+`processingDate` and the column are the same word. It was `internal_expected_dd`,
+and an older dead column squatted on `processing_date` until 0189 dropped it) runs
 EVERY gate and reports all failures at once (`so-save-problems.ts` →
 `{ error: 'validation_failed', problems: [...] }`, HTTP 422; rendered by the
 shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
@@ -378,12 +380,12 @@ Related short-circuit gates: Processing + Delivery all-or-nothing
 (`processing_delivery_must_pair`), remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
-writes `internal_expected_dd`.
+writes `processing_date`.
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
 `meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
-setting `internal_expected_dd`, the create-time auto-stamp of `proceeded_at`, and
+setting `processing_date`, the create-time auto-stamp of `proceeded_at`, and
 both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
 /:docNo` `proceededAt`). `proceeded_at` stays a separate COLUMN because it is a
 timestamp the system writes, not a date a user picks — what was unified is the
@@ -505,7 +507,7 @@ DRAFT banner / list Confirm surface the refusal list via the existing
 `humanApiError` problems rendering.
 
 **A DRAFT never carries a Processing Date** (owner 2026-08-08 addendum,
-2990-SO-2608-007 — `internal_expected_dd` equal to its SO date). The only
+2990-SO-2608-007 — `processing_date` equal to its SO date). The only
 silent stamper was the backend scan job (`buildDraftSoBodyFromSlip`'s
 2026-07-04 "slip delivery date ⇒ pin processing to today" rule, now
 superseded): scan drafts land with BOTH dates null, and the operator keys the
@@ -800,7 +802,7 @@ If a migrated line's price genuinely must change, the amendment carries
 re-price a migrated line.
 
 Note the reachability gate: a migrated SO is only `amendment_eligible` once it is
-processing-locked, and the importer does not set `internal_expected_dd`, so today
+processing-locked, and the importer does not set `processing_date`, so today
 most migrated orders cannot reach this path at all. The exemption exists so that
 giving one a Processing Date does not silently destroy its price later.
 

@@ -45,7 +45,7 @@ export interface ProceedGateInput {
  *  Proceed 的意思。如果分两个的话,会不会很乱?"*
  *
  *  It answers ONE question — may this order start production? — and every path
- *  that used to ask its own version now asks this: setting `internal_expected_dd`
+ *  that used to ask its own version now asks this: setting `processing_date`
  *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
  *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
  *  timestamp the system writes, not a date the user picks; what is unified is the

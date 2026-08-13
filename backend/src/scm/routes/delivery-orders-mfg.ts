@@ -2831,9 +2831,9 @@ deliveryOrdersMfg.get('/', async (c) => {
   }
   const sortedNos = (set: Set<string> | undefined): string[] =>
     set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
-  /* Linked-SO Processing date (mfg_sales_orders.internal_expected_dd — the one
-     true user date since the legacy processing_date column was dropped, mig
-     0189). The DO quick-view drawer shows it next to the DO's own delivery
+  /* Linked-SO Processing date (mfg_sales_orders.processing_date — the one true
+     user date, one column since 0189 and one name since 0284).
+     The DO quick-view drawer shows it next to the DO's own delivery
      date; one batched read keyed by so_doc_no, same pattern as the DR/SI child
      reads above. */
   const soProcByDoc = new Map<string, string | null>();
@@ -2841,9 +2841,9 @@ deliveryOrdersMfg.get('/', async (c) => {
     const soDocNos = [...new Set(rows.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
     if (soDocNos.length > 0) {
       const { data: soRows } = await sb.from('mfg_sales_orders')
-        .select('doc_no, internal_expected_dd').in('doc_no', soDocNos);
-      for (const s of ((soRows ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null }>)) {
-        if (s.doc_no) soProcByDoc.set(s.doc_no, s.internal_expected_dd ?? null);
+        .select('doc_no, processing_date').in('doc_no', soDocNos);
+      for (const s of ((soRows ?? []) as Array<{ doc_no: string | null; processing_date: string | null }>)) {
+        if (s.doc_no) soProcByDoc.set(s.doc_no, s.processing_date ?? null);
       }
     }
   }
@@ -2875,7 +2875,7 @@ deliveryOrdersMfg.get('/', async (c) => {
       ...r,
       has_children: childIds.has(r.id),
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
-      so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
+      so_processing_date: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
       source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
       source_sos: sourceSosByDo.get(r.id) ?? [],
       source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,

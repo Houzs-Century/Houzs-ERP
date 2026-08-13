@@ -112,11 +112,13 @@ export interface ErpSoHeader {
   ref: string | null;
   po_doc_no: string | null;
   /** The SO's "Processing date" — the field with that label in the UI, and the
-   *  owner's 账目日期. Its storage is `internal_expected_dd` and there is only
-   *  ONE such field: mig 0189 dropped the legacy `processing_date` column
-   *  precisely because two columns for one label kept producing blank dates.
-   *  Do not reintroduce a second source for it. Goes out as the `PDate` UDF. */
-  internal_expected_dd?: string | null;
+   *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
+   *  such field: 0189 dropped a dead second column carrying this label, and 0284
+   *  renamed the surviving one (internal_expected_dd) onto the name everybody
+   *  says, because two names for one field kept producing blank dates just as
+   *  reliably as two columns did. Do not reintroduce a second source, or a
+   *  second name, for it. Goes out as the `PDate` UDF. */
+  processing_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -535,7 +537,7 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
-      PDate: acUdfDate(header.internal_expected_dd),
+      PDate: acUdfDate(header.processing_date),
     }),
     Details: composeDetails(live(lines), {
       ...opts,

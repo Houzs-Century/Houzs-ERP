@@ -92,7 +92,7 @@ type BoardRow = {
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   days_left: number | null;
   address: string | null;
   postcode: string | null;
@@ -177,7 +177,7 @@ const hhmm = (ts: string | null | undefined): string => {
 const effDateOf = (o: BoardRow): string | null =>
   o.effective_delivery_date ||
   o.customer_delivery_date ||
-  o.internal_expected_dd ||
+  o.processing_date ||
   null;
 
 // House type — HC raw-data field, falling back to the SO building_type.

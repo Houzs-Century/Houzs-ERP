@@ -296,8 +296,9 @@ async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise
    we PO to the supplier, so header edits, line add/edit/delete and price
    overrides are all rejected with 409 so_locked_processing. Status transitions
    (deliver / cancel flow), payments, PO/DO conversions and reads stay open.
-   The UI's "Processing Date" lives in internal_expected_dd (PR #140 renamed
-   only the label; the legacy processing_date column was dropped in mig 0189). */
+   The UI's "Processing Date" lives in processing_date — the ONE column, and
+   now the ONE name (mig 0284 renamed it from internal_expected_dd; the dead
+   legacy column that used to squat on this name went in 0189). */
 const SO_PROCESSING_LOCKED_RESPONSE = {
   error: 'so_locked_processing',
   reason: 'Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)',
@@ -437,10 +438,10 @@ export function scopeSoItemToDocument<T>(
    the CONTROLLED replacement_disposal field with the SAME predicate, so the
    two surfaces can never disagree about when the lock is on. */
 export function soProcessingLocked(
-  header: { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
 ): boolean {
   if (!header) return false;
-  const proc = header.internal_expected_dd ?? null;
+  const proc = header.processing_date ?? null;
   if (!proc) return false;
   const procYmd = String(proc).slice(0, 10);            // 'YYYY-MM-DD' (date or timestamp)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(procYmd)) return false;
@@ -479,9 +480,9 @@ async function soProcessingLockBlocked(
   docNo: string,
 ): Promise<typeof SO_PROCESSING_LOCKED_RESPONSE | typeof SO_PO_LOCKED_RESPONSE | null> {
   const { data } = await sb.from('mfg_sales_orders')
-    .select('internal_expected_dd, proceeded_at, status')
+    .select('processing_date, proceeded_at, status')
     .eq('doc_no', docNo).maybeSingle();
-  if (soProcessingLocked(data as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+  if (soProcessingLocked(data as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
     return SO_PROCESSING_LOCKED_RESPONSE;
   }
   return (await soPoLocked(sb, docNo)) ? SO_PO_LOCKED_RESPONSE : null;
@@ -493,7 +494,7 @@ async function soProcessingLockBlocked(
 async function soEditLocked(
   sb: any,
   docNo: string,
-  header: { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
 ): Promise<boolean> {
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
@@ -1014,7 +1015,7 @@ const HEADER =
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   /* Task #121 — customer_country snapshot auto-derived from customer_state
      via my_localities lookup on POST/PATCH (migration 0082). */
-  'customer_state, customer_country, customer_delivery_date, internal_expected_dd, linked_do_doc_no, ' +
+  'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   /* PR #46 — POS handover */
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
@@ -2140,7 +2141,7 @@ mfgSalesOrders.get('/mine', async (c) => {
       .from('mfg_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'proceeded_at, total_revenue_centi, line_count, deposit_centi',
       )
       .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")'),
@@ -2693,7 +2694,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      Reuses the SAME soProcessingLocked helper the edit endpoints use + the
      doCount/siCount already computed above for the hard-lock signal. */
   const amendDateLocked = soProcessingLocked(
-    h.data as { internal_expected_dd?: string | null; proceeded_at?: string | null },
+    h.data as { processing_date?: string | null; proceeded_at?: string | null },
   );
   /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so a 2990 SO with a live
      PO flips the FE's Save into "Submit amendment request" exactly as an elapsed
@@ -3246,7 +3247,7 @@ export type SoCreateContext = {
   /* Active company CODE ('HOUZS' | '2990') — picks the Processing-Date deposit
      threshold (owner 2026-07-31: Houzs 30%, 2990 50%). Undefined on the headless
      scan path, which captured only the company ID at enqueue; harmless, because
-     that path creates DRAFTS with internal_expected_dd = null and the deposit
+     that path creates DRAFTS with processing_date = null and the deposit
      gate only runs when a Processing Date is actually being set. */
   get(key: 'companyCode'): string | undefined;
   env: Env;
@@ -3354,7 +3355,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           brands bill on separate SOs. (Bedframe may ride with a single-brand
           mattress; that combo stays allowed.) */
   {
-    const procDate  = (body.internalExpectedDd  as string | null | undefined) || null;
+    const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
     /* Processing + Delivery are all-or-nothing (both set or both empty). Kept as
        a SHORT-CIRCUIT (not aggregated): an unpaired date is a structurally-
@@ -4976,7 +4977,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      drift. depositTotalCenti = the POS deposit on this create; grandTotal = order
      total — both already in scope from the autoProceed block above. */
   {
-    const procDateOnCreate = (body.internalExpectedDd as string | null | undefined) || null;
+    const procDateOnCreate = (body.processingDate as string | null | undefined) || null;
     /* Emits the SAME aggregated `validation_failed` shape as the early gate block
        (owner 2026-07-18) so the client renders every Processing-Date failure the
        same way — this gate simply can't live up there because the order total
@@ -5147,10 +5148,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
-       internal_expected_dd was wired on PATCH (update header) but missed
+       processing_date was wired on PATCH (update header) but missed
        on the POST (create) — so the New SO form's Processing Date field
        never persisted; reopening the SO showed an empty field. */
-    internal_expected_dd: (body.internalExpectedDd as string) ?? null,
+    processing_date: (body.processingDate as string) ?? null,
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
        ORIGINAL `customer_delivery_date` above is NEVER overwritten by an
        amend; the customer's REQUESTED-changed date lands here, the date WE
@@ -5545,7 +5546,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   captureIfSet('localTotalCenti', total);
   captureIfSet('paymentMethod', body.paymentMethod);
   captureIfSet('depositCenti', body.depositCenti);
-  captureIfSet('internalExpectedDd', body.internalExpectedDd);
+  captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
@@ -6558,7 +6559,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
     ['customerDeliveryDate', 'customer_delivery_date'],
-    ['internalExpectedDd', 'internal_expected_dd'],
+    ['processingDate', 'processing_date'],
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
        original `customer_delivery_date` above is NEVER overwritten by an amend;
        these three columns hold the customer's REQUESTED-changed date, the date
@@ -6857,7 +6858,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   let depositFacts: { paidCenti: number; totalCenti: number } | null = null;
 
   /* PR — Commander 2026-05-28 — Server-side variant rule enforcement.
-     When the caller sets internalExpectedDd (Processing Date) to a non-null
+     When the caller sets processingDate (Processing Date) to a non-null
      value, EVERY non-cancelled line for this SO must have its category-
      required variants filled. Mirrors the UI warning in SalesOrderDetail
      (REQUIRED_BY_CATEGORY: bedframe needs divanHeight+legHeight+gap+fabricCode;
@@ -6866,7 +6867,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
      Collected (not returned) — the aggregated report at the end of the gate
      block turns the offender list into per-line+axis problems. */
-  if (body['internalExpectedDd'] !== undefined && body['internalExpectedDd'] !== null && body['internalExpectedDd'] !== '') {
+  if (body['processingDate'] !== undefined && body['processingDate'] !== null && body['processingDate'] !== '') {
     const { data: liveItems } = await sb
       .from('mfg_sales_order_items')
       .select('id, item_code, item_group, variants, cancelled')
@@ -6884,9 +6885,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        alone — remarks on an old KIV order — must never trip this, and clearing
        the date is handled by the non-null condition on this whole block. */
     {
-      const procPatch = String(body['internalExpectedDd']).slice(0, 10);
+      const procPatch = String(body['processingDate']).slice(0, 10);
       const origProcPatch = String(
-        ((before as unknown as Record<string, unknown> | null)?.['internal_expected_dd'] as string | null) ?? '',
+        ((before as unknown as Record<string, unknown> | null)?.['processing_date'] as string | null) ?? '',
       ).slice(0, 10);
       if (procPatch !== origProcPatch) {
         kivOffenders = findColourKivLines(liveLinesForCheck);
@@ -6911,9 +6912,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      complete, not-in-the-past, processing lock). */
   let superAdminClearsProc = false;
   {
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     const origProc =
-      ((before as unknown as Record<string, unknown> | null)?.['internal_expected_dd'] as string | null)
+      ((before as unknown as Record<string, unknown> | null)?.['processing_date'] as string | null)
       ?? null;
     if (proc !== undefined && norm(proc) === '' && origProc) {
       if (!hasHouzsPerm(c, 'scm.so.remove_processing_date')) {
@@ -6931,14 +6932,14 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      header edit is rejected wholesale. Status transitions (/status route),
      the payments ledger and PO/DO conversions do NOT come through this PATCH
      and stay open. Sits AFTER the cancelled/downstream-agnostic validations
-     above but before any write. (`before` carries internal_expected_dd via
+     above but before any write. (`before` carries processing_date via
      the map above.) */
   /* Owner 2026-08-12 — the PO lock (2990 only) reaches the SAME field-scoped
      diff by the other road. Evaluated once, here, so both roads share one
      rejection and a future CONTROLLED-column change cannot land on one and miss
      the other. */
   const patchDateLocked = soProcessingLocked(
-    before as unknown as { internal_expected_dd?: string | null; proceeded_at?: string | null } | null,
+    before as unknown as { processing_date?: string | null; proceeded_at?: string | null } | null,
   );
   const patchPoLocked = patchDateLocked ? false : await soPoLocked(sb, docNo);
   if (patchDateLocked || patchPoLocked) {
@@ -6983,10 +6984,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      sum(mfg_sales_order_payments.amount_centi), mirroring the paid_total_centi the
      payment view computes; `total` = the header local_total_centi. */
   {
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     if (typeof proc === 'string' && proc) {
       const origProc = String(
-        ((before as unknown as Record<string, unknown> | null)?.['internal_expected_dd'] as string | null) ?? '',
+        ((before as unknown as Record<string, unknown> | null)?.['processing_date'] as string | null) ?? '',
       ).slice(0, 10);
       if (proc.slice(0, 10) !== origProc) {
         const [{ data: totRow }, { data: pays }] = await Promise.all([
@@ -7035,9 +7036,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     const deliv = body['customerDeliveryDate'];
-    const origProc = (beforeRow?.['internal_expected_dd'] as string | null) ?? null;
+    const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     /* Owner 2026-06-03 — Process Date ≤ Delivery Date (factory start can't be
        after the promised delivery). Use the EFFECTIVE values: the patch value
@@ -7605,13 +7606,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
-  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, internal_expected_dd, proceeded_at, status, customer_id').eq('doc_no', docNo).maybeSingle();
+  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, proceeded_at, status, customer_id').eq('doc_no', docNo).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
-  if (soProcessingLocked(header as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (soProcessingLocked(header as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
     return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
   if (await soPoLocked(sb, docNo)) {
@@ -7654,8 +7655,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      ADDED to an already processing-dated SO skipped that check — so a fabric
      could be blanked on a build that's already "ready to build". Re-run the
      shared guard on this added line when the SO carries a Processing Date
-     (internal_expected_dd). Same 409 shape the header path returns. */
-  if ((header as { internal_expected_dd?: string | null }).internal_expected_dd) {
+     (processing_date). Same 409 shape the header path returns. */
+  if ((header as { processing_date?: string | null }).processing_date) {
     const addedLine = [{
       itemCode: itemCodeStr,
       group: (it.itemGroup as string | null | undefined) ?? null,
@@ -8281,15 +8282,15 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     );
     if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeAfter }, 400);
     /* Go-live review #6 — variant completeness on the LINE-EDIT route. When the
-       SO already carries a Processing Date (internal_expected_dd) the header
+       SO already carries a Processing Date (processing_date) the header
        guard (findIncompleteVariantLines) has already vouched every line is
        complete; a later line edit must not be able to blank a category-mandatory
        variant (e.g. clear a fabric) on that "ready to build" order. Only checked
        when the caller actually CHANGED variants / item code (same grandfather as
        the allowed-options gate above) so an untouched re-save is never rejected. */
     const { data: soHdr } = await sb.from('mfg_sales_orders')
-      .select('internal_expected_dd').eq('doc_no', docNo).maybeSingle();
-    if ((soHdr as { internal_expected_dd?: string | null } | null)?.internal_expected_dd) {
+      .select('processing_date').eq('doc_no', docNo).maybeSingle();
+    if ((soHdr as { processing_date?: string | null } | null)?.processing_date) {
       const editedLine = [{
         id: itemId,
         itemCode: itemCodeAfter,
@@ -11595,7 +11596,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   // + status) plus salesperson_id for the ownership scope check below, plus the
   // amendable header columns for the header-change snapshot / date checks.
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, internal_expected_dd, proceeded_at, salesperson_id, ' +
+    .select('doc_no, status, revision, processing_date, proceeded_at, salesperson_id, ' +
       'customer_delivery_date, customer_state, postcode')
     .eq('doc_no', docNo), c).maybeSingle();
   if (!soRow) return c.json({ error: 'not_found' }, 404);
@@ -11623,7 +11624,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything
      at all. Keep the two definitions in lock-step. */
-  if (!await soEditLocked(sb, docNo, soRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (!await soEditLocked(sb, docNo, soRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
@@ -11721,11 +11722,11 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      already-past date is NOT re-rejected (it is what the amendment exists to
      fix), but a NEWLY-requested past date is. */
   if (hasHeaderChanges) {
-    const cur = soRow as { internal_expected_dd?: string | null; customer_delivery_date?: string | null };
+    const cur = soRow as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: string | null | undefined): string => (v == null ? '' : String(v).slice(0, 10));
-    const curProc = ymd(cur.internal_expected_dd);
+    const curProc = ymd(cur.processing_date);
     const curDeliv = ymd(cur.customer_delivery_date);
-    const nextProc = 'internalExpectedDd' in headerChanges ? ymd(headerChanges['internalExpectedDd']) : curProc;
+    const nextProc = 'processingDate' in headerChanges ? ymd(headerChanges['processingDate']) : curProc;
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     if ((nextProc !== '') !== (nextDeliv !== '')) {
@@ -11734,7 +11735,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
         reason: 'Processing Date and Delivery Date must be set together — request both, or clear both.',
       }, 400);
     }
-    if ('internalExpectedDd' in headerChanges && nextProc !== '' && nextProc !== curProc && nextProc < todayMY) {
+    if ('processingDate' in headerChanges && nextProc !== '' && nextProc !== curProc && nextProc < todayMY) {
       return c.json({
         error: 'amendment_date_in_past',
         reason: 'The new Processing Date cannot be in the past — pick today or a future date.',

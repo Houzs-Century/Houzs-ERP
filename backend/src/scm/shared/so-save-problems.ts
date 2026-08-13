@@ -75,7 +75,7 @@ export type ProcessingGateFacts = {
    *  2026-07-24 (after SO-2607-016): the moment an SO carries a Processing
    *  Date, every line must be a fully-confirmed maintained selection — a
    *  colour-KIV line blocks the date. Routes must pass this ONLY when the save
-   *  genuinely SETS or CHANGES internal_expected_dd (the offenders are ignored
+   *  genuinely SETS or CHANGES processing_date (the offenders are ignored
    *  when procDate is null, and clearing the date never blocks), so editing
    *  e.g. a remark on an old KIV order still works. */
   kivOffenders?: readonly ColourKivOffenderLike[];

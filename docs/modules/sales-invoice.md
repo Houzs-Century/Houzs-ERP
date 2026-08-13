@@ -117,9 +117,9 @@ posting.
      normalized phone parts (`:706-710`); `from`/`to` on `invoice_date`.
    - `statusCounts` = five `head:true count:'exact'` in one `Promise.all` (`:728-734`).
 3. **Enrichment — one batched read** (`stampSoDates`, defined above the list
-   handler). Pulls `mfg_sales_orders.internal_expected_dd` +
+   handler). Pulls `mfg_sales_orders.processing_date` +
    `customer_delivery_date` for the distinct `so_doc_no` set and stamps
-   **`so_internal_expected_dd`** (the linked SO's "Processing date") and
+   **`so_processing_date`** (the linked SO's "Processing date") and
    **`so_customer_delivery_date`** (delivery-date fallback for pre-snapshot SIs)
    on each row — both list paths. Feeds the SI quick-view drawer (desktop
    `SalesInvoicesListV2` + mobile `MobileModuleList`). There is still no
