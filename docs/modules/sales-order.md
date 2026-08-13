@@ -741,6 +741,30 @@ line with incomplete variants, and DRAFT carrying a Processing Date — with a
 TEST? hint for the "Jalan Test" batch. Deliberately NO auto-repair: each row
 needs a human to pick the right SKU / salesperson / venue / dates.
 
+### The salesperson is stamped TWICE — `salesperson_id` and `agent`
+
+`salesperson_id` (a `scm.staff` uuid) is the ERP's real attribution: scope,
+commission, the Fair Report and the SO PDF all read it. `agent` is the legacy
+free-text NAME beside it, and it is the ONLY field the AutoCount write-back
+sends as the Sales Agent.
+
+**They are now written together.** `soAgentToStamp` (`scm/lib/so-agent.ts`)
+fills `agent` from the stamped salesperson's `scm.staff.name` whenever the
+caller does not supply one, at all three create sites — the header, the goods
+lines and the SERVICE lines — and the header PATCH moves it when the
+salesperson is reassigned. An explicitly supplied `body.agent` still wins
+everywhere; a blank one is not a supplied one.
+
+Until 2026-08-13 nothing wrote `agent` except `body.agent`, which **no SO form
+sends**, so it was empty on every order created since the cutover — and the live
+AutoCount book refused each one with `FK_SO_SalesAgent` on go-live day. The SO
+detail page hid it: `salespersonNameOf(agent, salesperson_id)` falls back to the
+id, so a name appeared on screen with nothing behind it.
+
+`docs/modules/autocount-writeback.md` §7n has the write-back half — how the two
+columns resolve to one Agent, and why a create with neither is refused rather
+than sent.
+
 ### Selling-price authoring — who may set the line price
 
 The unit selling price is **operator-authored** and the trust gate is by SESSION,
