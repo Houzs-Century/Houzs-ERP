@@ -45,3 +45,51 @@ export const writeFailedAs = (title: string) => (err: unknown): void => {
     tone: 'error',
   });
 };
+
+/**
+ * IN-BAND FAILURE — the request SUCCEEDED and something it depends on did not.
+ *
+ * The SCM write routes answer 200 and put the ledger's failure in the body:
+ * `{ ok: true, movementErrors: [...] }`, or `cancelErrors`, or `reversalErrors`.
+ * The write is deliberately best-effort — a document edit must not be rolled
+ * back for a ledger hiccup — so the request is genuinely a success and the
+ * stock genuinely did not move.
+ *
+ * `writeFailed` cannot help here: nothing rejects, so `onError` never fires.
+ * Call this from `onSuccess` instead.
+ *
+ * WHY IT IS SHARED RATHER THAN PER-FILE. On 2026-08-13 eight backend route
+ * files returned `movementErrors` and three frontend files read it; `POST
+ * /purchase-returns` had returned the field since it was written while
+ * PurchaseReturnNew.tsx announced "Stock OUT recorded." unconditionally, so a
+ * refused inventory write reported success for months. `cancelErrors` and
+ * `reversalErrors` had ZERO readers — including one the same session's own
+ * backend fix had just started emitting, which made that fix half a feature.
+ * One helper, one wording, and `frontend/scripts/check-inband-failures.mjs`
+ * counts producers against readers so the next field cannot ship reader-less.
+ *
+ * The message says the document IS saved on purpose. An operator who reads
+ * "failed" and re-submits creates a second document on top of a ledger that is
+ * already out of step.
+ */
+export type InBandFailure = {
+  movementErrors?: string[] | null;
+  cancelErrors?: string[] | null;
+  reversalErrors?: string[] | null;
+};
+
+export const reportInBandFailure = (
+  title: string,
+  res: InBandFailure | undefined | void,
+): void => {
+  const errs = [
+    ...(res?.movementErrors ?? []),
+    ...(res?.cancelErrors ?? []),
+    ...(res?.reversalErrors ?? []),
+  ];
+  if (!errs.length) return;
+  writeFailedAs(title)(new Error(
+    `${errs.join('\n')}\n\n` +
+    'The document is saved. Stock was NOT adjusted for this change — tell IT so the ledger can be repaired.',
+  ));
+};

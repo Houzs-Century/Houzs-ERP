@@ -18,7 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
-import { writeFailed, writeFailedAs } from './mutation-error';
+import { writeFailed, writeFailedAs, reportInBandFailure } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -361,10 +361,17 @@ export function useCancelStockTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ transfer: StockTransferRow }>(`/stock-transfers/${id}/cancel`, {
+      authedFetch<{ transfer: StockTransferRow; reversalErrors?: string[] }>(`/stock-transfers/${id}/cancel`, {
         method: 'PATCH', body: '{}',
       }),
-    onSuccess: (_data, id) => {
+    onSuccess: (data, id) => {
+      /* IN-BAND FAILURE. The cancel reverses the inter-warehouse movement, and
+         that write is best-effort: its result comes back as `reversalErrors`,
+         not as a rejection, so no `onError` can catch it. Unread until
+         check-inband-failures.mjs counted producers against readers — the field
+         had ZERO on the whole frontend. Without this the transfer shows as
+         cancelled while the stock sits in the destination warehouse. */
+      reportInBandFailure('Transfer cancelled, but the stock was not moved back', data);
       qc.invalidateQueries({ queryKey: ['stock-transfers'] });
       qc.invalidateQueries({ queryKey: ['stock-transfers', id] });
       // Cancel REVERSES the inter-warehouse movement (opposite-direction rows

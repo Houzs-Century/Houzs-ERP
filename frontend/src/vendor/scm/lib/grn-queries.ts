@@ -5,7 +5,6 @@
 // /return query surface + verified-save + supabase + serviceNotify). Only the
 // GRN hooks are pulled here, copied VERBATIM except for the boundary:
 //   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
-import { writeFailed, writeFailedAs } from './mutation-error';
 //     → /api/scm), instead of the source's relative './authed-fetch' that pulled
 //     in supabase.
 //   • the dropped `import { supabase }` / `verifiedSave` machinery — none of the
@@ -21,6 +20,7 @@ import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { writeFailed, writeFailedAs, reportInBandFailure } from './mutation-error';
 
 /* ── Batch conversions ────────────────────────────────────────────────
    BOTH hooks below have ZERO callers as of 2026-07-17 (verified across every
@@ -231,8 +231,17 @@ export const useDeleteGrnItem = () => {
 export const useCancelGrn = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch<{ grn: any }>(`/grns/${id}/cancel`, { method: 'PATCH' }),
-    onSuccess: (_, id) => {
+    mutationFn: (id: string) =>
+      authedFetch<{ grn: any; cancelErrors?: string[] }>(`/grns/${id}/cancel`, { method: 'PATCH' }),
+    onSuccess: (data, id) => {
+      /* IN-BAND FAILURE. The cancel writes a reversing OUT for everything the
+         GRN received; that write is best-effort and its result comes back in
+         `cancelErrors`, not as a rejection — so `onError` above never fires and
+         the operator would be told the cancel worked while the stock stayed
+         received. The backend started reporting this on 2026-08-13 (audit item
+         D3) and NOTHING read it until check-inband-failures.mjs counted the
+         producers against the readers and found zero. */
+      reportInBandFailure('GRN cancelled, but the stock was not reversed', data);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });

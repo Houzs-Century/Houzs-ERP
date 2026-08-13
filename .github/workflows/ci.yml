@@ -104,6 +104,14 @@ jobs:
       # (crossCompanySourceRefusal), and this asserts every conversion route
       # reaches it. That is the part that survives the session.
       - run: node scripts/check-conversion-guards.mjs --strict
+      # The sixth, and the only one that is not a bug in a checker but a SHAPE
+      # no checker was built for: a 200 that CARRIES a failure. These mutations
+      # RESOLVE — no exception, onError never fires — and the ledger's failure
+      # rides in the body as movementErrors / cancelErrors / reversalErrors. Eight
+      # route files produced movementErrors and three frontend files read it;
+      # cancelErrors and reversalErrors had ZERO readers, one of them a field
+      # THIS branch had just started emitting, which made that fix half a feature.
+      - run: node ../frontend/scripts/check-inband-failures.mjs --strict
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
