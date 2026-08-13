@@ -25,6 +25,16 @@
  *   3. a line with no photos must render nothing and fire NO request
  *   4. the fallback must fetch the `.thumb` sibling, not the full-size object,
  *      and must not re-stream bytes it has already fetched
+ *   5. the payload production ACTUALLY returns must render — see below
+ *
+ * (5) closes a hole this suite shipped with. Every case here mocked
+ * `fetchSoItemPhotoSignedUrl` as REJECTING, which is how the route behaved
+ * BEFORE the fallback landed. The fix changed the route: it no longer 500s at
+ * all, it resolves with `{ mode: 'proxy', proxyPath, thumbProxyPath,
+ * expiresAt: null, reason }` — and that resolve path, the only one production
+ * has taken since, was never exercised. The tile survived it by accident,
+ * because `isDirectlyLoadableUrl(undefined)` happens to be false. Both shapes
+ * are pinned now: a rejection (an older deploy) and a proxy payload (this one).
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode, type ReactNode, type ReactElement } from 'react';
@@ -55,6 +65,18 @@ const SIGNING_FAILED = Object.assign(
   new Error('signing_failed: R2_ACCESS_KEY_ID not configured'),
   { status: 500 },
 );
+
+/** What `GET /photos/:photoKey/signed` returns in production TODAY, for every
+ *  photo: signing is impossible, so the route reports the proxy arm with a 200.
+ *  Copied from backend/src/scm/lib/photoProxyFallback.ts ProxyPhotoPayload —
+ *  note there is deliberately no `signedUrl` on it. */
+const proxyPayload = (docNo: string, itemId: string, photoKey: string) => ({
+  mode: 'proxy' as const,
+  proxyPath: `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}`,
+  thumbProxyPath: `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(`${photoKey}.thumb`)}`,
+  expiresAt: null,
+  reason: 'R2_ACCESS_KEY_ID not configured',
+});
 
 const photoBytes = () => new Blob(['jpeg-bytes'], { type: 'image/jpeg' });
 
@@ -119,7 +141,7 @@ describe.each(MOUNTS)('SO line photo tile — signing outage fallback [$name mou
   /* THE COST FIX. Under fallback the tile used to fetch the BASE key with
      useFull(true), so a 40-line SO streamed 40 full-resolution JPEGs through
      the Worker on every drawer open. The proxy route authorises a `.thumb`
-     against its base row (mfg-sales-orders.ts:10211), so the thumb is asked
+     against its base row (mfg-sales-orders.ts, baseKeyOf), so the thumb is asked
      for first. */
   it('asks the proxy for the .thumb sibling, not the full-size object', async () => {
     const photoKey = keyFor('thumb-first');
@@ -229,7 +251,8 @@ describe.each(MOUNTS)('SO line photo tile — signing outage fallback [$name mou
   });
 
   /* The upload route's own signing-failure fallback returns a RELATIVE proxy
-     path. It is filtered before it can reach the cache (SoLineCard.tsx:1159)
+     path. It is filtered by `startsWith('http')` at the upload call site in
+     SoLineCard.tsx before it can reach the cache,
      and /signed itself cannot emit one, so this pins the invariant rather than
      a live 404: anything non-absolute must never reach <img src>. */
   it('routes to the proxy when signing returns a non-absolute URL', async () => {
@@ -259,6 +282,76 @@ describe.each(MOUNTS)('SO line photo tile — signing outage fallback [$name mou
     expect(revoked).toEqual(['blob:obj-1']);
     // Exactly one object URL was ever minted, so the revoke above is complete.
     expect(minted).toBe(1);
+  });
+
+  /* ── The shape production actually serves ─────────────────────────────────
+     Not a variant of the rejection cases above: a REJECTION and a RESOLVE with
+     a signedUrl-less body reach the proxy through two different branches of
+     loadSignedUrl, and only the rejection had a test. This is the branch every
+     real request takes. */
+  it('renders through the proxy when /signed RESOLVES with the proxy payload', async () => {
+    const photoKey = keyFor('proxy-payload');
+    fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(DOC_NO, ITEM_ID, photoKey));
+    fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
+
+    renderTile(photoKey);
+
+    const img = await screen.findByAltText('Line photo');
+    expect(img).toHaveProperty('src', 'blob:obj-1');
+    expect(screen.queryByText('err')).toBeNull();
+    // Thumb tier still applies on this branch.
+    expect(fetchSoItemPhotoBlob).toHaveBeenCalledWith(DOC_NO, ITEM_ID, `${photoKey}.thumb`);
+  });
+
+  /* The proxy path is behind the bearer-auth gate and an <img> sends no
+     Authorization header. If the payload's proxyPath ever reached <img src> it
+     would 401 invisibly — a blank tile that LOOKS fixed. */
+  it('never puts the proxy path in <img src>', async () => {
+    const photoKey = keyFor('never-img-src');
+    const payload = proxyPayload(DOC_NO, ITEM_ID, photoKey);
+    fetchSoItemPhotoSignedUrl.mockResolvedValue(payload);
+    fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());
+
+    renderTile(photoKey);
+
+    const img = await screen.findByAltText('Line photo');
+    expect(img.getAttribute('src')).not.toBe(payload.proxyPath);
+    expect(img.getAttribute('src')).not.toBe(payload.thumbProxyPath);
+    expect(img.getAttribute('src')).toMatch(/^blob:/);
+  });
+
+  /* When signing IS eventually provisioned the proxy must stop being used —
+     a fallback that fires unconditionally would pass every test above while
+     silently disabling signed URLs forever. */
+  it('still prefers the signed arm when the payload carries mode: "signed"', async () => {
+    const photoKey = keyFor('signed-mode');
+    fetchSoItemPhotoSignedUrl.mockResolvedValue({
+      mode: 'signed',
+      signedUrl: 'https://r2.example.com/full.jpg?sig=xyz',
+      thumbUrl: 'https://r2.example.com/full.jpg.thumb?sig=xyz',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+
+    renderTile(photoKey);
+
+    const img = await screen.findByAltText('Line photo');
+    // Thumb tier first, and no proxy round-trip at all.
+    expect(img).toHaveProperty('src', 'https://r2.example.com/full.jpg.thumb?sig=xyz');
+    expect(fetchSoItemPhotoBlob).not.toHaveBeenCalled();
+  });
+
+  /* The genuinely-broken case has to survive this branch too, or a missing
+     photo would render as an empty tile the operator cannot tell from a
+     loading one. */
+  it('shows "err" when the proxy payload arrives but the bytes 404', async () => {
+    const photoKey = keyFor('proxy-payload-missing');
+    fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(DOC_NO, ITEM_ID, photoKey));
+    fetchSoItemPhotoBlob.mockRejectedValue(new PhotoProxyError(404, 'photo_not_found_in_r2'));
+
+    renderTile(photoKey);
+
+    expect(await screen.findByText('err')).toBeTruthy();
+    expect(screen.queryByAltText('Line photo')).toBeNull();
   });
 
   it('fires no request when the tile has no document context', async () => {
