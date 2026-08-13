@@ -1,3 +1,78 @@
+## Reducing a line on a shipped DO returned the stock at a made-up cost, and minted a lot at it [high]
+
+**Symptom.** None visible, which is why it lasted. An operator lowers a qty on an
+already-shipped DO; the stock comes back; the numbers look plausible. What
+actually happened is that the returning units were priced at a figure no lot ever
+charged, and a NEW inventory lot was opened at that figure for the next FIFO
+consumer to eat.
+
+**Root cause.** `resyncInventoryForDo` priced the compensating IN at the bucket's
+weighted average:
+
+```
+unit_cost_sen = round(out_total_cost / out_qty)
+```
+
+That average blends units that HAVE a cost with units that do not. A "ship
+anyway" oversell leaves its short units with no lot consumption, so they
+contribute 0 to `out_total_cost` while still counting in `out_qty`. Return 4 of an
+OUT of 10 where 6 cost 100 sen and 4 cost nothing and it hands back 120 sen/unit —
+480 sen of capitalised value for stock that is worth either 1,000 or 0 depending
+on which units came back, and the qty delta does not say which.
+
+The DO CANCEL path never had this problem: `fn_reverse_do_out` (0198) walks
+`inventory_lot_consumptions`, the row-level record of which lot paid for which
+unit, and restores each unit to its own lot at its own cost. The partial path had
+no equivalent, so it invented one.
+
+**Fix.** Migration 0286 `fn_return_do_units_at_cost` — the PARTIAL form of the
+same function. Unwinds the bucket's consumptions newest-first, returns each unit
+to the lot that paid for it, shrinks or deletes the consumption row, restamps the
+OUT's COGS from what survives, and writes ONE balancing IN at cost 0 with its
+minted lot closed (the value went back to the original lots; pricing it again
+would capitalise it twice). Units with no consumption behind them return at
+nothing and are REPORTED in `qty_uncosted`, never smeared into a per-unit figure.
+The old blended row survives only as a fallback for a database without 0286,
+because a reduction that posts nothing leaves shipped stock permanently deducted —
+worse than an imprecise cost. Owner decision 2026-08-13 ("按原成本退回").
+
+**Lesson.** When the truth was recorded at the time of the event, do not
+re-derive it from an aggregate afterwards. The average was computed from
+`SUM(total_cost)/SUM(qty)` over a bucket, and every fact needed to avoid it was
+sitting one join away in `inventory_lot_consumptions`. Also: a rule that cannot be
+derived from the data — LIFO here — is a CHOICE, and it belongs in the migration
+header in words, or the next reader will read it as a fact and preserve it for
+the wrong reason.
+
+**Ref.** mig 0286 + `tests-pg/returnDoUnitsAtCost.pg.test.ts` (9 cases; the first
+asserts the OLD arithmetic is wrong on the fixture, so the suite cannot pass
+vacuously), audit ledger B6, 2026-08-13.
+
+## Posting a payment voucher stamped a journal entry into the other company's ledger [high]
+
+**Symptom.** None at the keyboard. `POST /payment-vouchers/:id/post` accepted a
+voucher id from either company and wrote the GL entry against whichever company
+that voucher belonged to.
+
+**Root cause.** The handler loaded the voucher by id with no company predicate,
+then built the journal entry from `pv.pv_number`, `pv.credit_account_code` and
+`pv.company_id` — so the leak was not a read of someone else's data, it was a
+WRITE into someone else's books. The sibling paths were already correct: the GET
+at `:208` scopes this exact read, and `cancelPaymentVoucherHandler` was hardened
+by PR #826. Post is the same door and was the one left unlocked. RLS is not a
+backstop here: mig 0061 enabled it with NO policies and the SCM client is the
+service-role client, which bypasses it.
+
+**Fix.** `requireActiveCompanyId` + `scopeToCompanyId` before the load, refusing
+with the shared `NOT_THIS_COMPANY` 404.
+
+**Lesson.** Found TWICE, independently — by this audit and by #2086 — and the two
+fixes were byte-for-byte the same idea. An audit that hardens "the reads" and
+stops has done half a job; the write paths are where the damage is, and they are
+easy to miss precisely because a write path usually starts with a read.
+
+**Ref.** #2086 and audit ledger §A, 2026-08-13.
+
 ## A system-wide destructive rename had no permission gate, because two comments each said the other side had it [high]
 
 **Symptom.** `POST /maintenance-config/sofa-compartments/rename` renames a sofa
