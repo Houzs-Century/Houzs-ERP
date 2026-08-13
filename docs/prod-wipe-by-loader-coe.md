@@ -111,9 +111,10 @@ incident.
 | Item | Owner | Note |
 |------|-------|------|
 | **All three targeting gaps are CLOSED — re-verify before trusting this line.** | — | Re-checked 2026-08-13 by reading the code. (1) The project-ref substring test is GONE: `load-d1-dump-to-pg.mjs:34-50` fail-closes on any non-loopback host, so a NEW production project is protected on day one — the string `anogrigyjbduyzclzjgn` appears nowhere in the file. (2) `copy-pg-to-pg.mjs:42-49` gained the same guard, plus a same-source-and-target refusal at `:50-53`; its `TRUNCATE` is at `:81`, not `:43`. (3) The `.dev.vars` fallback is removed — the script exits 1 demanding an explicit `DATABASE_URL`. **Still open below:** `ACK_PROD_WIPE` protects against an accident, not against a mistake, and there is still no backup step. |
+| *What these three rows USED to say, kept because the reasoning outlived them.* | — | Until 2026-08-13 this table listed the three gaps as open: the guard substring-matched `anogrigyjbduyzclzjgn` (prod had already moved twice — `xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → `anogrigyjbduyzclzjgn`, per `DB-REPOINT-RUNBOOK.md` and `wrangler.toml:68-90`) and so failed **open**; `copy-pg-to-pg.mjs` was the *documented next step* (`DB-REPOINT-RUNBOOK.md:28-31`) with no guard at all; and `load-d1-dump-to-pg.mjs` still fell back to `.dev.vars`. The prescribed fix was **invert it** — the allow-list shape of `backend/scripts/scale-target-guard.mjs` (parses the URL, checks the *username* as well as the host, covered by `backend/tests/scaleTargetGuard.node.mjs`). Both scripts now carry the inverted, fail-closed form. |
 | **`ACK_PROD_WIPE=yes` protects against an accident, not against a mistake.** | Owner | It stops the wrong-terminal case, which is the case that happened. It does not stop an operator who reads the refusal, sets the variable, and is wrong about which database they are re-cutting over. A dry-run that prints the target host, the table count and the row count it is about to destroy — and a `pg_dump` first, as `restore-owner-data.yml` already does — would. |
 | **This incident is absent from `BUG-HISTORY.md`.** | whoever lands this COE | `CLAUDE.md:6-8` makes the ledger mandatory for **every** bug. A production wipe is the largest entry that has ever been missing from it. |
-| **PR #975 (open) touches this same script.** | reviewer of #975 | It fixes the dropped-DEFAULT half. Worth stating in the review that the file has now caused **two** production incidents by two unrelated mechanisms, and that the targeting half above is still open. |
+| **PR #975 (open) touches this same script.** | reviewer of #975 | It fixes the dropped-DEFAULT half. Worth stating in the review that the file has now caused **two** production incidents by two unrelated mechanisms. (This row ended "and that the targeting half above is still open"; since 2026-08-13 it is not — see row 1. What remains open is the acknowledgement/backup row, not the targeting.) |
 
 ---
 
@@ -132,8 +133,8 @@ incident.
 
 - `backend/scripts/load-d1-dump-to-pg.mjs:15-22` (the guard) and `:130-134` (the DROP it guards).
 - `7fef9f65` — the guard plus the isolated staging environment; `git show 7fef9f65` for the one-line target resolution it replaced.
-- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.node.mjs` — the allow-list guard pattern this file should adopt.
-- `backend/scripts/copy-pg-to-pg.mjs:43` — the unguarded `TRUNCATE` on the next step of the same runbook.
+- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.node.mjs` — the allow-list guard pattern this file should adopt. (Corrected 2026-08-14: this citation, and the Deferred row that carried it, both read `scaleTargetGuard.test.mjs`, which does not exist. The `.node.mjs` suffix is load-bearing — it is how the runner picks the file up.)
+- `backend/scripts/copy-pg-to-pg.mjs:81` — the `TRUNCATE` on the next step of the same runbook. (Corrected 2026-08-14: this read `:43` and called it *unguarded*; both were true when written and neither is now — the fail-closed target guard sits at `:42-49` and the TRUNCATE moved to `:81`.)
 - `.github/workflows/restore-owner-data.yml` and PR **#24** — the backup-before-write pattern that already existed here.
 - `docs/DB-REPOINT-RUNBOOK.md:20-24, 28-31` — the procedure that puts a live URL in `.dev.vars` and then runs both scripts.
 - `docs/pg-migration-dropped-defaults-coe.md` — the other production incident caused by this same file.

@@ -85,6 +85,42 @@ trap, and a fourth (`cross-fill-so-po-variants.mjs`) and fifth
 | #1927 | Read-only probe: connection identity, relation identity in every schema, raw `variants` + `xmin` of rows an apply claims it stamped, key histogram. This is what produced the evidence above. |
 | #1938 | `tx.json(patch)` instead of `JSON.stringify` in `refresh-sofa-colours.mjs`; the same one-line change in the three other scripts still binding a stringified value to a jsonb parameter; `RETURNING` with the script counting what came BACK rather than the command tag; a shape repair driven by `jsonb_typeof(variants) = 'array'` restoring `variants -> 0`; a post-apply read on a fresh connection that prints bound-before / bound-after and emits `::error::` if the number did not move. Removes `probe-write-shapes`, which wrote through the corrupting shape. |
 
+> **CORRECTION 2026-08-14 — #1938's shape repair did not repair the shape, and
+> this table said it did for three days.** #1938's unwrap accepted a ONE-element
+> array only. The real production shape was two elements — `18e82d4b` (#2100)
+> measured it: `[ {complete variants object}, "{\"seatHeight\":\"35\\\"\"}" ]`,
+> identical in all seven rows. So the repair could not touch a single one, and
+> nothing counted the residue.
+>
+> Seven `scm.mfg_sales_order_items` rows therefore carried **no variants at all**
+> — no fabric, no seat height, no leg — until 2026-08-13. `0f918e7a` (#2096):
+> *"Seven rows had been sitting like that since August, invisible because nothing
+> had ever counted them."* They surfaced only because an unrelated fabric run
+> started printing `arrayShapeCheck`; no operator reported them.
+>
+> Repair shipped as `backend/scripts/repair-array-shaped-variants.mjs` (#2096),
+> with the recovery rule tightened by #2100: every key of every later element
+> must exist in element 0 with an EQUAL value, else the row is refused and
+> printed in full.
+>
+> **And the repair re-inflicted this COE's own bug.** Its first version wrote
+> `UPDATE … SET variants = $2::jsonb`; postgres.js already infers the bind as
+> jsonb, so `::jsonb` is a no-op and the write stored a jsonb STRING. **Seven
+> production rows went array-shaped → string-shaped** before the script's own
+> shape assertion caught it. Fixed to `$2::text::jsonb` in #2100/#2118. It was
+> caught because the verification checks `jsonb_typeof` on a fresh connection
+> rather than a row count — the one control in this COE that has now paid for
+> itself twice.
+>
+> **Post-repair count: NOT RECORDED HERE.** Per the rule below, that makes this
+> a Deferred item until someone pastes the fresh-connection `jsonb_typeof`
+> census. No production database was queried while writing this correction.
+>
+> **Rule, now stated as a rule:** a COE "Fix" line asserting a data repair must
+> carry the post-repair count measured on a fresh connection. Without it, it is
+> a Deferred item, not a fix. **This rule is currently UNENFORCED — there is no
+> CI check for it.**
+
 ## What the audit RULED OUT
 
 Each of these was a live theory and each is refuted, so nobody re-chases them:
@@ -132,28 +168,48 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
 
 ## Deferred
 
+- **The PRIMARY data damage was not repaired by #1938 either — added
+  2026-08-14.** Seven `scm.mfg_sales_order_items` rows with array-shaped
+  `variants`. See the correction under "Fixes shipped" above: repair shipped
+  2026-08-13 as #2096 / #2100 / #2118, and **no post-repair count has been
+  recorded**, so this stays Deferred. This item was missing from the list
+  entirely while the Fix table claimed the shape repair had shipped.
 - **The sibling data damage is not repaired by #1938.** The encoding is fixed in
   all four writers, but rows already written by
   `backfill-sofa-special-orders.mjs` (`custom_specials` as a jsonb string) and
   `backfill-specials-into-variants.mjs` (`variants.specials` as a jsonb string)
   still hold the double-encoded shape. #1938's probe now measures both so the
   size is known. Decision owner: the specials workstream, which already has
-  `check-specials-and-ocr.mjs` reading these rows.
+  `check-specials-and-ocr.mjs` reading these rows. **Partial follow-ups since:**
+  #1913 measured them, #1944 nulled the double-encoded `custom_specials`, #1953
+  classified the residue, #1960 established that the array-shaped
+  `custom_specials` are correct codes and stopped offering to delete them. No
+  measured after-count is recorded here, so this item stays open.
 
-  **Updated 2026-08-13 — a repair tool now exists for the `custom_specials`
-  half.** `backend/scripts/repair-custom-specials-double-encoded.mjs` +
+  **The tools those PRs left in the tree — re-read 2026-08-13.** #1944's repair
+  is `backend/scripts/repair-custom-specials-double-encoded.mjs` +
   `.github/workflows/repair-custom-specials-double-encoded.yml`, DRY-RUN by
   default, `APPLY=1` to write. It sets the column to **NULL rather than
-  decoding it back**, for three reasons written into its own header:
+  decoding it back**, for the reasons written into its own header (`:13-34`):
   `custom_specials` is a derived cache the pricing recompute overwrites
   wholesale, the pre-encoding value was already the wrong shape (a bare
-  `string[]` of slip phrases, not `Array<{description, surchargeSen}>`), and
-  the owner ruled on 2026-08-11 that migrated lines must not reprice. The
+  `string[]` of slip phrases, not `Array<{description, surchargeSen}>`), the
+  owner ruled on 2026-08-11 that migrated lines must not reprice, and NULL
+  cannot make a report show the WRONG specials. #1953/#1960's census is a
+  SECOND script, `backend/scripts/census-custom-specials-arrays.mjs`, where
+  `APPLY=1` alone is inert and the only writable class (`text[]`) additionally
+  needs `APPLY_TEXT=1` — the switch where the owner's answer gets recorded. The
   `variants.specials` half is claimed clean by a named re-run of
-  `backfill-specials-into-variants.mjs` (run `31419290223`, cited at that
-  script's `:33-34`). **Whether either has been APPLIED against production
-  cannot be settled from the repository** — that needs a workflow run history
-  or a live read.
+  `backfill-specials-into-variants.mjs` (run `31419290223`, cited in the repair
+  script at `repair-custom-specials-double-encoded.mjs:32-34`).
+
+  **What the repository can and cannot settle.** It CAN settle that the
+  `custom_specials` half was applied: `BUG-HISTORY.md` records *"#1944 NULLed
+  the 478 `custom_specials` values"* and cites read-only prod run
+  `31428435434` for the census that followed. It CANNOT settle a post-repair
+  COUNT for either half — that needs a workflow run history or a live read —
+  which is why this stays Deferred.
+
 - **`public.mfg_sales_order_items` shadowing `scm.`** with `public` ahead of
   `scm` on the search_path. Nothing hit it today because everything is
   schema-qualified. Decision owner: the owner / IT, as a schema cleanup.
