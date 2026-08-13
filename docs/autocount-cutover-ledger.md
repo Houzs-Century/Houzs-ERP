@@ -231,6 +231,14 @@ export、同一批 doc_no** 上报的是 `already imported: 0; to insert: 2275` 
 > AutoCount 的值,还会顺手把 `proceeded_at` 跟 AutoCount 重新"对上",
 > 而那正是 `unify-processing-date.mjs` 用来判断可不可以迁移的钥匙。
 > 上面三趟的数字是**当时**的,不要拿来当现在再跑一次的预期——现在应该是 0。
+>
+> **2026-08-14 补注 — 这一段里的 `proceeded_at` 不是 Processing Date。**
+> mig 0286 之后,ERP 的 Processing Date 是
+> `scm.mfg_sales_orders.processing_date`(2026-08-13T13:46:59Z 已上 prod)。
+> `backfill-so-dates.mjs` 写的仍然是 `proceeded_at`(带 `IS NULL` 保护),
+> 也就是说这个 backfill **完全不碰** Processing Date。上面的描述对代码是准的,
+> 只是当时两个名字还是同一件事;现在不是了,别照着这段去推断 Processing Date
+> 被回填过。
 | venue 文字规范 + 地址补 | `fix-imported-so-venues-address.mjs` | 31295324294 (08-09 04:47) | venue 规范化 **1,606** 单;地址补 **458** 单 |
 | venue 别名归并 | `normalize-venue-aliases.mjs` | 31348076922 (08-10 01:48) | 新建 venue **2** 个;**43** 单改名 |
 | bedframe variants 重解析(SO) | `refresh-so-variants.mjs` | 31348346813 (08-10 01:54) | **2,452** 行(最后一次;08-09 起共 APPLY 过 7 次) |
