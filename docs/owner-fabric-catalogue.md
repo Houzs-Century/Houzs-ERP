@@ -27,7 +27,22 @@
 
 **(3) 改名字 = 一次只有一个成员的 merge。** 把 `ZL-3` 改成 `ZL-03`,会改掉活跃单据
 `variants->>'fabricCode'` 里存的那个字符串。所以**改名也必须把单据一起 repoint**,
-四条 arm(SO / PO / GRN / DO)一条都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+一条 arm 都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+
+> **arm 是 15 条,不是 4 条**(2026-08-13 从 `backend/scripts/lib/fabric-write.mjs`
+> 的 `ARMS` 量出来:SO / PO / GRN / DO / SI / PI / PRT / DRT / CSO / CDO / CDRT /
+> PCO / PCR / PCRT / MOV)。这行本来写「四条 arm(SO / PO / GRN / DO)」,那是
+> 2026-08-11 当天的实况;`repair-superseded-colour-refs.mjs` 就是去收拾那次
+> 「只认得 15 条里的 4 条」留下的活单。除了 `variants` 两个轴之外,同一个码还materialise
+> 在 `description2`、库存桶 `variant_key`、和 model 的 `allowed_options` 白名单里,
+> 也要一起跟着走。**不要照抄这段清单去手写扫描,`lib/fabric-write.mjs` 才是唯一那份。**
+
+**(4) 这一家脚本可以再跑,但要看得懂 plan。** `normalize-fabric-codes.mjs` 的
+CODE / LABEL 那段里,如果 `->` 右边比左边**少了一个词**(`J9226-01 SAND` 变成
+`J9226-01`),那就是颜色名字被抹掉,不是整理。2026-08-13 的 prod plan 一次提了
+200 条这种,全部 code 没变、只掉名字。原因是名字本来住在 code 里,第一趟把它搬去
+label,第二趟再从 code 推就推不出来了。修法是把 label 也当成名字的来源
+(`lib/fabric-code.mjs` 的 `nameFromLabel`),现在第二趟是空转。
 
 ---
 

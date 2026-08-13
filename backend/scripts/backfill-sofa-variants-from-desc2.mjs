@@ -44,6 +44,8 @@
  *   COMPANY        default 1
  *   FUZZY=1        also apply the codes that resolve only through the matcher
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: by design, repeatedly - it re-parses Desc2 with the current parser. It overwrites the variant keys it owns, so a value a person picked on one of those keys is replaced.
  */
 import postgres from "postgres";
 import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";

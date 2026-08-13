@@ -24,6 +24,8 @@
 // DRY-RUN" to commit. Default is DRY-RUN: it prints every row it WOULD delete,
 // grouped by PO, inside a transaction it then ROLLs BACK. Read-only until both
 // gates are set.
+//
+// RE-RUN: inert. The allocations it deletes are gone; the rest are re-tested for being dead on every run.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

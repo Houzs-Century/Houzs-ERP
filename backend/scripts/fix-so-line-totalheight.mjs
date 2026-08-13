@@ -23,6 +23,8 @@
 //   SO="2990-SO-2606-038" ITEM="TRION-(K)" VALUE='24"' \
 //   APPLY=true CONFIRM="I HAVE REVIEWED THE DRY-RUN" node backend/scripts/fix-so-line-totalheight.mjs
 // ---------------------------------------------------------------------------
+//
+// RE-RUN: convergent. Recomputes the same height from the same line, so a second run writes the same jsonb.
 
 import { readFileSync } from "node:fs";
 import postgres from "postgres";

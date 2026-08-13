@@ -12,6 +12,8 @@
 // rows of the same code — the import inserted them in DtlKey order, so line_no
 // order and DtlKey order agree.
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. Only lines with no linked_ac_dtlkey are stamped, and the stamp is what the key tests.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

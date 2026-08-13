@@ -32,7 +32,9 @@
    MODE=plan (default) prints every row's actual content and writes nothing.
    MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN", writes one row at a
    time, and verifies on a fresh connection that no array-shaped block remains
-   on any arm. */
+   on any arm.
+
+   RE-RUN: inert. Keyed on jsonb_typeof(variants) = 'array', which the unwrap turns into 'object'. */
 import postgres from 'postgres';
 import { ARMS, skippedArms } from './lib/fabric-write.mjs';
 
