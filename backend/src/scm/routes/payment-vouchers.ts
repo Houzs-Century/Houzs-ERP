@@ -464,8 +464,16 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  const { data: pvRaw } = await sb.from('payment_vouchers')
-    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id).maybeSingle();
+  /* Multi-company: POSTING is a write, and the service-role client bypasses
+     RLS, so an app-level predicate is the ONLY isolation there is. The GET at
+     :208 already scopes this exact read; this one did not, so a voucher id
+     from the other company loaded here and went on to post a journal entry
+     against it. The earlier audit hardened the reads and left the writes. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: pvRaw } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id), co.companyId).maybeSingle();
   if (!pvRaw) return c.json({ error: 'not_found' }, 404);
   const pv = pvRaw as unknown as {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
@@ -478,12 +486,26 @@ export const postPaymentVoucherHandler = async (c: any) => {
 
   // Idempotency — an ACTIVE (non-reversed) PV JE already exists? (mirror
   // postPiAccounting). Flip POSTED + echo without re-writing the GL.
-  const { data: existingRows } = await sb.from('journal_entries')
-    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number);
+  /* The error is READ, not dropped. This is the idempotency check: if the
+     query fails, `existingRows` is undefined, `?? []` turns that into "no
+     journal entry exists", and the handler goes on to post a SECOND one
+     against the same voucher. A failed read must never read as an absence
+     when the absence is what authorises the write.
+
+     Scoped as well — a pv_number is unique per company, so an unscoped lookup
+     could match the other company's JE and skip a posting that never happened
+     here. */
+  const { data: existingRows, error: existingErr } = await scopeToCompanyId(sb.from('journal_entries')
+    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number), co.companyId);
+  if (existingErr) {
+    return c.json({ error: 'post_failed', message: `Could not check whether this voucher is already posted: ${existingErr.message}` }, 500);
+  }
   const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>).find((r) => !r.reversed);
   if (active) {
     if (pv.status !== 'POSTED') {
-      await sb.from('payment_vouchers').update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+      await scopeToCompanyId(sb.from('payment_vouchers')
+        .update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', id), co.companyId);
     }
     return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id });
   }

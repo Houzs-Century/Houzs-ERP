@@ -2604,13 +2604,23 @@ grns.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* Multi-company: the service-role client bypasses RLS, so an app-level
+     predicate is the ONLY isolation. The GET at :1382 was scoped by the
+     2026-08-10 audit; this PATCH — the write — was not, on either its read or
+     its UPDATE, so a GRN id from the other company could be loaded here and
+     edited. Reads were hardened then and writes were left, which is the
+     systemic half of that audit. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
      also the BEFORE half of every from->to pair recorded at the end of the
      handler. An audit entry carrying only the new value does not answer "what
      changed". One read serves both — the relocation block below reads its
      warehouse / status / rate out of the same row it always did. */
-  const { data: beforeRow } = await sb.from('grns')
-    .select(GRN_AUDIT_SELECT).eq('id', id).maybeSingle();
+  const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
+    .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* Before the relocation block below, which writes inventory movements — those
@@ -2733,8 +2743,13 @@ grns.patch('/:id', async (c) => {
       rateChanged = true;
     }
   }
-  const { data, error } = await sb.from('grns').update(updates).eq('id', id).select(HEADER).single();
+  const { data, error } = await scopeToCompanyId(sb.from('grns')
+    .update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  /* maybeSingle, not single: the company predicate can legitimately match zero
+     rows, and `single()` would turn that into a 500 rather than the 404 that
+     tells the truth. */
+  if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
   /* Diff the NORMALISED values actually written (`updates`), not the raw body —
      currency is upper-cased, exchange_rate is derived from it and the allocation
