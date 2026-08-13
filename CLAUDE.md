@@ -45,7 +45,12 @@ DB, not migration files") is worth more than the fix was.
 `.github/workflows/working-agreement.yml` runs
 `scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
 directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
-the migration discipline described under *Migrations* below. Before it existed
+the migration discipline described under *Migrations* below. It REPORTS: it is
+deliberately not in the `main-protection` required checks (those are
+`backend-typecheck` and `frontend`), so a red run does not block a merge and the
+owner decides. And what it measures is narrower than what these rules say — the
+seven known gaps are pinned in `scripts/lib/working-agreement.escapes.test.mjs`
+and written up in `BUG-HISTORY.md`; read them before trusting a green run. Before it existed
 they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
 as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
 said a word. (The COE rule is not checked: an incident is a judgement call, not
