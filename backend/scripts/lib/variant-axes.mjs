@@ -63,3 +63,37 @@ export function missingVariantAxes(itemGroup, variants, itemCode) {
       axis.aliases.every((k) => isEmpty(v[k])),
   );
 }
+
+/* isColourKiv, mirrored from src/scm/shared/variant-summary.ts. A line that
+   committed to a fabric SERIES (fabricId / fabricLabel) with the COLOUR still to
+   come is KIV — a legitimate confirmed-order state that satisfies the fabric
+   axis at confirm time and blocks the Processing Date instead. */
+const kivStr = (v) => (v == null ? "" : String(v).trim());
+export const isColourKiv = (variants) => {
+  if (!variants || typeof variants !== "object") return false;
+  if (!(kivStr(variants.fabricId) || kivStr(variants.fabricLabel))) return false;
+  return !(
+    kivStr(variants.fabricCode) || kivStr(variants.colorCode) ||
+    kivStr(variants.colourCode) || kivStr(variants.colourLabel) ||
+    kivStr(variants.fabricColor)
+  );
+};
+
+/* missingConfirmVariantAxes, mirrored from so-variant-rule.ts.
+   `itemCode` is REQUIRED here for the same reason it is required there: it is
+   what decides the DIVAN ONLY / divanless / seatless exemptions, and an
+   argument a caller may omit is an exemption that applies only where somebody
+   remembered it. Pass null when a script genuinely has no code — nothing is
+   exempted then. See BUG CLASS optional-param-noop in BUG-HISTORY.md.
+
+   It exists so an audit script stops hand-porting the rule. Before this,
+   check-so-noncatalog-lines.mjs carried a FIFTH copy of the axes table with no
+   itemCode parameter at all, so every DIVAN ONLY / ADJUSTABLE / (S+S) /
+   DOUBLE DECKER / DDB / CONSOLE line it looked at was reported as defective. */
+export function missingConfirmVariantAxes(itemGroup, variants, itemCode) {
+  const missing = missingVariantAxes(itemGroup, variants, itemCode);
+  if (missing.length === 0) return missing;
+  return isColourKiv(variants ?? null)
+    ? missing.filter((axis) => axis.key !== "fabricCode")
+    : missing;
+}
