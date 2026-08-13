@@ -483,7 +483,9 @@ the outstanding-only export), and **0 are miswarehoused**. Verify with
 Setting or changing the Processing Date (`scm.mfg_sales_orders.processing_date`
 — one column, and since mig **0286** one NAME: the UI label, the API field
 `processingDate` and the column are the same word. It was `internal_expected_dd`,
-and an older dead column squatted on `processing_date` until 0189 dropped it) runs
+and an older dead column squatted on `processing_date` until 0189 dropped it; two paragraphs used to stand here, one written before
+the rename and one after, each naming a different column — that is what a stale
+guide does) runs
 EVERY gate and reports all failures at once (`so-save-problems.ts` →
 `{ error: 'validation_failed', problems: [...] }`, HTTP 422; rendered by the
 shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
@@ -560,13 +562,16 @@ it, so they cannot come to different verdicts about the same deposit.
 
 **PROCEED IS THE DATE (owner, pinned 2026-08-13).** *"只要有 Processing Date，就
 代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
-date 就代表没有 proceed。"* Proceeding therefore WRITES the Processing Date; it
+date 就代表没有 proceed。"* Proceeding therefore WRITES `processing_date`; it
 does not stamp a click time. Until 2026-08-13 every proceed path wrote only
 `proceeded_at`, so an order could sit IN_PRODUCTION with no start date — and
 production queues by that date.
 
 | Path | Where the date comes from |
 |------|---------------------------|
+| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else the `internalExpectedDd` REQUEST KEY (the payload name is unchanged — only the column was renamed, and a payload rename would break every deployed client); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
+| `PATCH /:docNo` `proceededAt` | this patch's `internalExpectedDd`, else the stored one |
+| CREATE auto-proceed | `internalExpectedDd` on the create — no date means the order is created UN-proceeded, never refused |
 | `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else `internalExpectedDd` on the request body (which the route now accepts); a date written here clears the FULL gate table above, read live off the row |
 | `PATCH /:docNo` `proceededAt` | this patch's `processingDate`, else the stored one |
 | CREATE auto-proceed | `processingDate` on the create — no date means the order is created UN-proceeded, never refused |
@@ -673,7 +678,10 @@ table is the whole answer.
 
 Two rules follow from the table. **Never add a ninth name** — if you need the
 SO's Processing Date, it is `scm.mfg_sales_orders.processing_date`, read through
-`SO_PROCESSING_DATE_COLUMN`, full stop. **Never unify
+`SO_PROCESSING_DATE_COLUMN`, full stop. A column name inside a string is
+invisible to the compiler: the `/status` proceed block kept selecting, comparing
+and WRITING `internal_expected_dd` after the rename, and nothing failed to
+build. **Never unify
 across documents** — `sales_entries` and AutoCount's mirror share a *word*, not a
 concept, and merging them would destroy real distinctions.
 
