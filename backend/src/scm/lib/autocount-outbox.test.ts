@@ -1065,6 +1065,81 @@ describe('a line the ERP just added is declared, never inferred', () => {
   });
 });
 
+/* The ERP numbers its own documents, on every type. A create always sent its
+   DocNo and AutoCount took it; a conversion sent none, so AutoCount
+   auto-numbered the DO, the GRN, the invoice and the purchase invoice - four of
+   the six types carrying a number nobody here would recognise. */
+describe('every document the ERP creates carries the ERP number', () => {
+  const env = { AC_SYNC_URL: 'http://ac.local:8900', AC_SYNC_KEY: 'k' } as never;
+
+  test('a conversion sends the CHILD document number, not the parent', async () => {
+    const sb = withFlag('1', {
+      delivery_orders: [{ id: 'do-1', do_number: 'DO-2608-004', linked_ac_docno: null }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000021' }],
+      delivery_order_items: [],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO',
+      docNo: 'DO-2608-004',
+      docId: 'do-1',
+    })).toBe(true);
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(body.DocNo).toBe('DO-2608-004');
+    /* The PARENT travels separately and is resolved at drain — confusing the
+       two would ask AutoCount to number the child after the sales order. */
+    expect(body.FromDocNo).toBeUndefined();
+    expect(outbox(sb)[0].payload.fromDoc).toBeTruthy();
+  });
+
+  test('a create still sends its own number, unchanged', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{
+        doc_no: 'HC-SO-9', so_date: null, debtor_name: 'A', agent: null, sales_location: 'KL',
+        branding: null, venue: null, address1: null, address2: null, address3: null,
+        address4: null, phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
+      }],
+      mfg_sales_order_items: [{ id: 'i1', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_centi: 100 }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((outbox(sb)[0].payload.body as Record<string, unknown>).DocNo).toBe('HC-SO-9');
+  });
+});
+
+/* A PURCHASE agent is a different master from a sales one - a different table
+   (dbo.PurchaseAgent) behind a different foreign key (FK_PO_PurchaseAgent).
+   Opening OTHERS as a SALES agent does nothing for a purchase order naming it,
+   and /create-po is refused with the whole document. Proved on the live book
+   2026-08-12, after ensure-masters had already reported agent:OTHERS existing. */
+describe('the agent a PO names goes to the PURCHASE agent master, not the sales one', () => {
+  test('a purchase payload sends PurchaseAgents and no sales Agents', () => {
+    const m = mastersOf({
+      CreditorCode: '400-N002', Agent: 'OTHERS', Details: [{ ItemCode: 'A' }],
+    }) as { Agents: unknown[]; PurchaseAgents: Array<Record<string, unknown>> };
+    expect(m.PurchaseAgents).toEqual([{ PurchaseAgent: 'OTHERS' }]);
+    expect(m.Agents).toEqual([]);
+  });
+
+  test('a sales payload still sends Agents and no PurchaseAgents', () => {
+    const m = mastersOf({
+      DebtorCode: '300-C002', Agent: 'OTHERS', Details: [{ ItemCode: 'A' }],
+    }) as { Agents: Array<Record<string, unknown>>; PurchaseAgents: unknown[] };
+    expect(m.Agents).toEqual([{ Agent: 'OTHERS' }]);
+    expect(m.PurchaseAgents).toEqual([]);
+  });
+
+  test('an agent-less purchase payload invents neither', () => {
+    const m = mastersOf({ CreditorCode: '400-N002', Details: [{ ItemCode: 'A' }] }) as {
+      Agents: unknown[]; PurchaseAgents: unknown[];
+    };
+    expect(m.Agents).toEqual([]);
+    expect(m.PurchaseAgents).toEqual([]);
+  });
+});
+
 /* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
    unconditionally - so a supplier the account book does not have fails the same
    foreign key a missing item does, and takes the whole PO with it. */
@@ -1090,5 +1165,113 @@ describe('a purchase order opens its supplier too', () => {
   test('the DEBTOR is still deliberately absent — one fixed account, name overwritten', () => {
     const m = mastersOf({ DebtorCode: '300-C002', DebtorName: 'Whoever', Details: [{ ItemCode: 'A' }] });
     expect(m).not.toHaveProperty('Debtors');
+  });
+});
+
+/* Owner 2026-08-11: "Branding 和 Venue 也是要跟着开，然后仓库 Location 也是要
+   跟着开。最好全部都一起开". Everything a document names is opened. */
+describe('a document opens every master it names — warehouse and dropdowns too', () => {
+  test('the warehouse on the header AND on each line', () => {
+    const m = mastersOf({
+      SalesLocation: 'KL',
+      Details: [{ ItemCode: 'A', Location: 'PG' }, { ItemCode: 'B', Location: 'KL' }],
+    }) as { Locations: Array<Record<string, unknown>> };
+    /* Deduped, and the header's counts too. */
+    expect(m.Locations.map((l) => l.Location).sort()).toEqual(['KL', 'PG']);
+  });
+
+  test('a RETIRED line names no warehouse — it is leaving, not arriving', () => {
+    const m = mastersOf({
+      Details: [{ DtlKey: 1, ItemCode: 'A', Location: 'NOWHERE', Retire: true }],
+    });
+    expect(m).toBeNull();
+  });
+
+  test('branding and venue are taken from the UDF block actually being sent', () => {
+    const m = mastersOf({
+      Details: [{ ItemCode: 'A', Location: 'KL' }],
+      UDF: { BRANDING: 'HOUZS', VENUE: 'SOME NEW MALL', ToPONo: 'CUST-1' },
+    }) as { UdfOptions: Array<Record<string, string>> };
+    expect(m.UdfOptions).toEqual([
+      { List: 'BRANDING', Value: 'HOUZS' },
+      { List: 'VENUE', Value: 'SOME NEW MALL' },
+    ]);
+    /* ToPONo is a free-text UDF, not a dropdown — it has no option list to open. */
+    expect(m.UdfOptions.find((o) => o.List === 'ToPONo')).toBeUndefined();
+  });
+
+  test('no UDF block, no options — nothing is invented from an absent field', () => {
+    const m = mastersOf({ Details: [{ ItemCode: 'A', Location: 'KL' }] }) as { UdfOptions: unknown[] };
+    expect(m.UdfOptions).toEqual([]);
+  });
+});
+
+/* Regression: HC-SO-2608-001, 2026-08-13. The first real sales order saved
+   after the write-back was switched on was refused —
+
+     refused, nothing sent (ItemCodeError): line 1 — ERP item code '9028-1S'
+     maps to 2 AutoCount items and the document names no supplier to choose
+     between them
+
+   — and the documented remedy, a supplier SKU binding, could not be applied.
+   bindingsFor was handed the RAW line codes ('9028-1A(LHF)', '9028-2A(RHF)')
+   while resolveAcItemCode looked the binding up by the collapsed base code
+   ('9028-1S'), so the map never contained the key that was asked for. Four
+   sofa models in the cutover map are ambiguous this way (9028, 9058, 5152,
+   5080); until this, every sales order containing one of them was refused
+   with no possible fix. */
+describe('a sofa resolves through the binding recorded for its model', () => {
+  const sofaSo = {
+    doc_no: 'HC-SO-SOFA', so_date: '2026-08-13', debtor_name: 'LIM', agent: null,
+    sales_location: 'KL WAREHOUSE', branding: null, venue: null,
+    address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
+  };
+  /* Two compartments of one build, exactly as the ERP stores them: the price
+     sits on the first row and the same Desc2 on both, which is what lets D9
+     fold them into a single line carrying '9028-1S'. */
+  const compartments = ['1A(LHF)', '2A(RHF)'].map((comp, i) => ({
+    doc_no: 'HC-SO-SOFA',
+    item_code: `9028-${comp}`,
+    item_group: 'sofa',
+    description: `SOFA 9028 ${comp}`,
+    description2: '1A(LHF) + 2A(RHF) (28")',
+    qty: 1,
+    unit_price_centi: i === 0 ? 399000 : 0,
+    location: 'KL',
+  }));
+
+  test('without a binding it is still refused, and the reason names the base code', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      supplier_material_bindings: [],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(String(row.last_error)).toContain('ItemCodeError');
+    expect(String(row.last_error)).toContain('9028-1S');
+  });
+
+  test('a binding on the MODEL BASE CODE is found and the document sends', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      /* The row an operator can actually create: the ERP model code on the
+         left, the account book's item on the right. Before the fix this row
+         existed and changed nothing, because the query never asked for it. */
+      supplier_material_bindings: [{
+        company_id: 1, material_code: '9028-1S', material_kind: 'mfg_product',
+        supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
+      }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).not.toBe('skipped');
+    expect(row.op).toBe('create_so');
+    /* ONE line, and it carries the AutoCount code the binding named. */
+    expect(row.payload.body.Details).toHaveLength(1);
+    expect(row.payload.body.Details[0].ItemCode).toBe('AMN-SF9028 SOFA');
   });
 });

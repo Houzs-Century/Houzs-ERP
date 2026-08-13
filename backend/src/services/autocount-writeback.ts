@@ -111,6 +111,12 @@ export interface ErpSoHeader {
   phone: string | null;
   ref: string | null;
   po_doc_no: string | null;
+  /** The SO's "Processing date" — the field with that label in the UI, and the
+   *  owner's 账目日期. Its storage is `internal_expected_dd` and there is only
+   *  ONE such field: mig 0189 dropped the legacy `processing_date` column
+   *  precisely because two columns for one label kept producing blank dates.
+   *  Do not reintroduce a second source for it. Goes out as the `PDate` UDF. */
+  internal_expected_dd?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -311,6 +317,13 @@ export interface ComposeOptions {
    */
   requireLocation?: boolean;
   /**
+   * ERP code (uppercased) -> AutoCount ItemCode, from
+   * `scm.supplier_material_bindings`. Consulted BEFORE the compiled cutover
+   * map: the binding is the live record and the CSV is a 2026-08-05 snapshot,
+   * so only the binding can know a product opened since.
+   */
+  bindings?: Map<string, string> | null;
+  /**
    * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
    * that a keyless line is genuinely new rather than un-backfilled. Honoured
    * only when EVERY keyless line on the document is one of these; see the
@@ -422,6 +435,7 @@ export function composeDetails(
     const r = resolveAcItemCode(l.item_code, {
       supplierCode: opts.supplierCode ?? null,
       index: opts.itemIndex,
+      bindings: opts.bindings ?? null,
     });
     if (!r.ok) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
@@ -476,6 +490,28 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
   return out;
 }
 
+/**
+ * A date on its way into an AutoCount UDF, normalised to `YYYY-MM-DD`.
+ *
+ * The ERP stores these as text and they arrive in more than one shape — a bare
+ * date from a date input, a full ISO timestamp from anything that went through
+ * a Date. AutoCount's own reader hands the same field back as
+ * `SOUDF_PDate: "2026-08-12T00:00:00"`, which the inbound pull already trims
+ * with `dateOnly()`; this is that trim on the way out, so a round trip does not
+ * change the value.
+ *
+ * Anything that is not a date is dropped rather than passed through. Every UDF
+ * write inside AcSyncService is wrapped in its exception-swallowing `Set()`
+ * helper, so a value AutoCount rejects fails INVISIBLY — no error, no failed
+ * outbox row, just a field that never updates. Sending only what is
+ * unambiguously a date is the half of that we control from here.
+ */
+export function acUdfDate(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/.exec(String(v).trim());
+  return m ? m[1] : null;
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
@@ -499,6 +535,7 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
+      PDate: acUdfDate(header.internal_expected_dd),
     }),
     Details: composeDetails(live(lines), {
       ...opts,

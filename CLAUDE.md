@@ -250,6 +250,21 @@ Not generic narrative.
   tables, default roles / permissions, canonical enum rows. If a
   table needs sample rows to develop against, that's a script, not
   a migration.
+- **Anything a TEST imports lives in `backend/scripts/lib/` and carries
+  NO shebang.** Runnable scripts keep their `#!/usr/bin/env node` (~200
+  do). A module a test imports must not have one: on Windows vitest
+  INLINES it and wraps the source before `vm.runInThisContext`, so a `#!`
+  that is no longer at byte 0 is `SyntaxError: Invalid or unexpected
+  token`. It dies at LOAD, so it reports as a failed FILE with zero
+  tests, no assertion and no line number — it reads exactly like a
+  corrupt byte, and one such throw is counted TWICE (failed suite +
+  Unhandled Rejection), so it looks like two broken files. Linux
+  externalizes the same module and node strips the shebang itself, so
+  **CI stays green and only local Windows breaks** (#2062 — BUG-HISTORY
+  has the trace). Every test-imported `.mjs` already lives in
+  `scripts/lib/` and none carry a shebang: if a runnable script needs to
+  expose a function to a test, put the pure part in `scripts/lib/` and
+  import it from the script.
 - **Keep schema and data in separate migrations when both are large.**
   An `ALTER TABLE` + 100-line `INSERT` block in the same file makes
   rollback awkward and the diff hard to read. Numbered migrations are

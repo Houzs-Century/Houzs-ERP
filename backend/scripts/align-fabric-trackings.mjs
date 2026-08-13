@@ -54,7 +54,28 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
-import { ARMS, sum } from "./lib/fabric-write.mjs";
+import { parse, seriesToken, canonId } from "./lib/fabric-code.mjs";
+import { repointColour, busy } from "./lib/fabric-write.mjs";
+import { ARMS as BASE_ARMS, sum } from "./lib/fabric-write.mjs";
+
+/* The document number each arm shows a human, so an affected order can be
+   opened rather than counted. Kept here and not in lib/fabric-write because it
+   is a reporting concern, not part of the write contract. */
+const DOC = {
+  SO: "i.doc_no",
+  PO: "(SELECT h2.po_number FROM scm.purchase_orders h2 WHERE h2.id = i.purchase_order_id)",
+  GRN: "(SELECT h2.grn_number FROM scm.grns h2 WHERE h2.id = i.grn_id)",
+  DO: "(SELECT h2.do_number FROM scm.delivery_orders h2 WHERE h2.id = i.delivery_order_id)",
+};
+/* ARMS grew from 4 to 15 on 2026-08-13. Without a fallback the new arms
+   interpolate `undefined` straight into `SELECT ${arm.doc}` and the query dies
+   — a shared list growing under a consumer that assumed its contents, which is
+   the same class of break as the four-arm sweep itself. The line's own id is
+   always present and always resolves the row, so an arm with no document-number
+   expression yet degrades to that instead of to a crash. Add a real expression
+   here as each module's header column is confirmed against the live database. */
+const DOC_FALLBACK = "i.id::text";
+const ARMS = BASE_ARMS.map((a) => ({ ...a, doc: DOC[a.name] ?? DOC_FALLBACK }));
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -69,14 +90,12 @@ const STAMP = process.env.NOTE_DATE || "2026-08-11";
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
-/* The series token, exactly as normalize-fabric-codes derives it: separators
-   collapse to one dash, nothing is added or removed. Deriving it any other way
-   here is how the two halves drift apart again. */
+/* The series token comes from lib/fabric-code, never from a local copy. Its
+   own copy of this rule is what called NOVENA-1003's series "NOVENA-1" after
+   the number rule had already been fixed in the other script. */
 const seriesOfCode = (code) => {
-  const v = normColour(code);
-  const m = /^(.+)[\s\-]+\d{1,3}$/.exec(v) || /^([A-Z][A-Z0-9\- ]*?)[\s\-]*\d{1,3}$/.exec(v);
-  const head = m ? m[1] : v;
-  return head.replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const p = parse(code);
+  return p ? p.series : seriesToken(code);
 };
 
 const tierOf = (r) => [r.sofa_price_tier, r.bedframe_price_tier, r.price_tier].filter(Boolean).join("/");
@@ -121,6 +140,42 @@ async function main() {
     for (const [code, n] of [...orphanCounts].sort((a, b) => b[1] - a[1])) note(`     ${String(code).padEnd(24)} ${n}`);
   }
 
+  /* ---- 1B. THE ORPHANED LINES THAT CAN BE PUT BACK ---------------------
+     An orphaned code is not always a mystery. "CH141-1" is the pre-rename
+     spelling of "CH141-01": the shared rule resolves it, and the canonical code
+     is sitting in the library and in the Converter. Those lines were simply
+     written after the repoint pass had already counted them, so they were left
+     on the old string and stopped resolving to a price tier.
+
+     Only a code whose canonical form EXISTS as an active tracking row is moved.
+     Anything else stays orphaned and is reported - moving a line onto a code
+     that does not exist would trade one silent miss for another. */
+  const orphanFix = [];
+  for (const [code, n] of orphanCounts) {
+    const p = parse(code);
+    if (!p) continue;
+    const want = canonId(p);
+    if (normColour(want) === normColour(code)) continue;
+    if (!trkCodes.has(normColour(want))) continue;
+    orphanFix.push({ from: code, to: want, lines: n });
+  }
+  if (orphanFix.length) {
+    note("");
+    note(`--- ORPHANED LINES THAT RESOLVE (${orphanFix.length} code(s)) ---`);
+    for (const o of orphanFix) {
+      note(`  "${o.from}" -> "${o.to}"  (${o.lines} line(s))`);
+      for (const arm of ARMS) {
+        const docs = await sql.unsafe(
+          `SELECT ${arm.doc} AS doc, COUNT(*)::int AS n
+             FROM ${arm.t} i
+            WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'object'
+              AND i.variants->>'fabricCode' = $2
+            GROUP BY 1 ORDER BY 1`, [CO, o.from]);
+        for (const d of docs) note(`       ${arm.name} ${d.doc}  ${d.n} line(s)`);
+      }
+    }
+  }
+
   /* ---- 2. WHAT THE TRACKING TABLE SHOULD SAY ---------------------------- */
   const canonical = new Map();
   for (const r of cols) if (r.active !== false) canonical.set(normColour(r.colour_id), r);
@@ -141,15 +196,51 @@ async function main() {
        the label the library kept - the rewrite preserved the colour NAME, so a
        tracking code "AM275-2-BEIGE" is findable as the library row whose label
        is "AM275-02 BEIGE". Nothing is guessed: no match means it is reported. */
-    const wantSeries = seriesOfCode(code);
-    const nameless = code.replace(/[^A-Z0-9]/g, "");
+    /* Ask the SHARED rule first. Stripping the brand is precisely what it does,
+       so "ARMANI J9226-02 BUTTER CREAM" resolves to J9226-02 in one step. The
+       label comparison below only ever matched codes WITHOUT a brand prefix,
+       which left all 303 brand-prefixed rows - ARMANI, AGAZZI, GIRONA, HIVE,
+       HIRRING, PIERRO, PALERMO, ROLANDO, SANSONE, SANDRO, MORENO - reported as
+       "the library does not know this", when the library knew every one of
+       them. That is the exact set the owner pointed at. */
     let hit = null;
-    for (const [cid, row] of canonical) {
-      const lab = normColour(row.label || "").replace(/[^A-Z0-9]/g, "");
-      const cidFlat = cid.replace(/[^A-Z0-9]/g, "");
-      if (lab === nameless || cidFlat === nameless || lab.replace(/\s/g, "") === nameless) { hit = row; break; }
+    const parsed = parse(code);
+    if (parsed) {
+      const want = canonId(parsed);
+      if (canonical.has(want)) hit = canonical.get(want);
     }
-    if (!hit) { unknown.push(r); continue; }
+    /* Fallback: match on the label the rename preserved, for codes the parser
+       refuses (a colour number it cannot read, a name-only code). */
+    if (!hit) {
+      const nameless = code.replace(/[^A-Z0-9]/g, "");
+      for (const [cid, row] of canonical) {
+        const lab = normColour(row.label || "").replace(/[^A-Z0-9]/g, "");
+        const cidFlat = cid.replace(/[^A-Z0-9]/g, "");
+        if (lab === nameless || cidFlat === nameless || lab.replace(/\s/g, "") === nameless) { hit = row; break; }
+      }
+    }
+    /* THE LIBRARY NOT KNOWING A CODE IS NOT A REASON TO LEAVE IT UNTIDY.
+       Owner, on the Converter screen: "不会说今天突然有字母，明天突然没有字母".
+       Tidiness is a property of the ROW - its code, its description, its series
+       - and it does not depend on whether a selling-library colour happens to
+       exist. Binding the two left 32 rows in the old shape, "LAMB VELVET-2002"
+       with a space and an empty Series among them, sitting next to 386 tidy
+       ones. That IS the inconsistency he is describing.
+
+       So a row the library does not know is still driven to the same shape by
+       the shared rule, and its library counterpart is minted so it becomes
+       pickable too. Only a row the RULE cannot read stays untouched - and those
+       are reported, as always. */
+    if (!hit) {
+      const own = parse(code);
+      if (!own) { unknown.push(r); continue; }
+      const target = canonId(own);
+      const label = own.name ? `${target} ${own.name}` : target;
+      if (!byTarget.has(target)) byTarget.set(target, []);
+      byTarget.get(target).push(r);
+      rewrite.push({ r, target, label, series: own.series, mintLibrary: !canonical.has(normColour(target)) });
+      continue;
+    }
     const target = normColour(hit.colour_id);
     if (!byTarget.has(target)) byTarget.set(target, []);
     byTarget.get(target).push(r);
@@ -173,7 +264,13 @@ async function main() {
   const merges = [];
   for (const [target, rows] of byTarget) {
     const existing = trk.filter((r) => normColour(r.fabric_code) === target && !rows.some((x) => x.id === r.id));
-    const all = [...rows, ...existing];
+    /* A row that is already is_active = false is SETTLED. Re-merging it stamps
+       "[merged into X on D]" onto a description that already says so, and the
+       note grows on every run. The 2026-08-11 re-plan reported all 67 pairs a
+       second time for exactly this reason - correct detection, corrupting
+       apply. Same guard the catalogue seeder needed. */
+    const all = [...rows, ...existing].filter((r) => r.is_active !== false);
+    if (all.length === 0) continue;
     if (all.length === 1) { keep.add(all[0].id); continue; }
     const tiers = new Set(all.map(tierOf).filter(Boolean));
     if (tiers.size > 1) {
@@ -212,7 +309,7 @@ async function main() {
   if (doRewrite.length) {
     note("");
     note(`--- REWRITE (${doRewrite.length}) ---`);
-    for (const x of doRewrite) note(`  "${x.r.fabric_code}" -> "${x.target}" / ${JSON.stringify(x.label)}  series="${x.series}"`);
+    for (const x of doRewrite) note(`  "${x.r.fabric_code}" -> "${x.target}" / ${JSON.stringify(x.label)}  series="${x.series}"${x.mintLibrary ? "  + mint the library colour" : ""}`);
   }
   if (fillSeries.length) {
     note("");
@@ -258,8 +355,14 @@ async function main() {
 
   note("");
   note("--- APPLY ---");
-  let wrote = 0, filled = 0, mergedOff = 0, created = 0;
+  let wrote = 0, filled = 0, mergedOff = 0, created = 0, rescued = 0, mintedLib = 0;
   await sql.begin(async (tx) => {
+    for (const o of orphanFix) {
+      const r = await repointColour(tx, CO, o.from, o.to);
+      const n = sum(r);
+      rescued += n;
+      note(`  rescued ${n} orphaned line(s): "${o.from}" -> "${o.to}" (${busy(r)})`);
+    }
     for (const x of doRewrite) {
       /* fabric_trackings.id is a text PK that HAPPENS to equal the code by
          minting convention. It is not rewritten: upserts and deletes key off
@@ -269,6 +372,18 @@ async function main() {
                   SET fabric_code = ${x.target}, fabric_description = ${x.label}, series = ${x.series}
                 WHERE company_id = ${CO} AND id = ${x.r.id}`;
       wrote++;
+      /* Mirror it into the selling library the way fabric-tracking.ts does on
+         create, so a fabric that exists in the master is also pickable on an
+         order. Without this the row is tidy and still invisible to sales. */
+      if (x.mintLibrary) {
+        await tx`INSERT INTO scm.fabric_library (id, label, tier, default_surcharge, active, sort_order, company_id)
+                 VALUES (${x.series}, ${x.series}, 'standard', 0, true, 0, ${CO})
+                 ON CONFLICT (id) DO NOTHING`;
+        await tx`INSERT INTO scm.fabric_colours (fabric_id, colour_id, label, active, sort_order, company_id)
+                 VALUES (${x.series}, ${x.target}, ${x.label}, true, 0, ${CO})
+                 ON CONFLICT (fabric_id, colour_id) DO NOTHING`;
+        mintedLib++;
+      }
     }
     for (const x of fillSeries) {
       await tx`UPDATE scm.fabric_trackings SET series = ${x.want}
@@ -280,11 +395,15 @@ async function main() {
          code that only the losing row carried. */
       const donor = m.lose.find((l) => tierOf(l)) || null;
       const sup = m.lose.find((l) => l.supplier_code)?.supplier_code ?? null;
+      /* price_tier and its two siblings are scm.fabric_price_tier, an ENUM. A
+         bound string is text, and postgres will not coalesce text into an enum
+         column - the first apply died on exactly that and rolled the whole
+         transaction back. Cast explicitly; NULL casts fine too. */
       await tx`UPDATE scm.fabric_trackings
-                  SET sofa_price_tier     = COALESCE(${m.win.sofa_price_tier}, ${donor?.sofa_price_tier ?? null}),
-                      bedframe_price_tier = COALESCE(${m.win.bedframe_price_tier}, ${donor?.bedframe_price_tier ?? null}),
-                      price_tier          = COALESCE(${m.win.price_tier}, ${donor?.price_tier ?? null}),
-                      supplier_code       = COALESCE(${m.win.supplier_code}, ${sup})
+                  SET sofa_price_tier     = COALESCE(${m.win.sofa_price_tier}::scm.fabric_price_tier, ${donor?.sofa_price_tier ?? null}::scm.fabric_price_tier),
+                      bedframe_price_tier = COALESCE(${m.win.bedframe_price_tier}::scm.fabric_price_tier, ${donor?.bedframe_price_tier ?? null}::scm.fabric_price_tier),
+                      price_tier          = COALESCE(${m.win.price_tier}::scm.fabric_price_tier, ${donor?.price_tier ?? null}::scm.fabric_price_tier),
+                      supplier_code       = COALESCE(${m.win.supplier_code}::text, ${sup}::text)
                 WHERE company_id = ${CO} AND id = ${m.win.id}`;
       for (const l of m.lose) {
         await tx`UPDATE scm.fabric_trackings
@@ -303,7 +422,7 @@ async function main() {
       created++;
     }
   });
-  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created}`);
+  note(`  codes rewritten ${wrote} | series filled ${filled} | duplicates deactivated ${mergedOff} | master rows created ${created} | orphaned lines rescued ${rescued} | library colours minted ${mintedLib}`);
 
   /* Verify on a SECOND, FRESH connection, and verify the thing that matters:
      the join is whole again. */

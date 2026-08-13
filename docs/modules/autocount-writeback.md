@@ -421,6 +421,24 @@ order, and **both refuse the WHOLE document rather than send part of it.**
 
 ### D10 — `material_code` is not `ItemCode`
 
+**Two sources, and the LIVE one wins.** `scm.supplier_material_bindings` is this
+ERP's own record of the cross-ref — `material_code` is our internal code,
+`supplier_sku` is AutoCount's, one row per supplier — populated at the cutover
+precisely so ERP codes could be pushed back. It is consulted FIRST, because it
+is the only one of the two that GROWS: the compiled CSV below is a snapshot of
+the book on 2026-08-05 and cannot know a product opened since.
+
+That was not a nicety. Without it the resolver refused every post-cutover SKU; a
+refused line refuses the whole document; and the document never reached the
+drain — so `/ensure-masters` never ran for the very case it was built for. A new
+product was unwritable and the feature meant to fix that was unreachable.
+
+`is_main_supplier` orders the lookup, and **a purchase order narrows further**:
+it knows its own creditor, and that supplier's binding beats the main one. One
+internal code bound to several suppliers is the normal case, not the edge.
+
+
+
 The ERP calls a sofa `9028-1S`; the licensed book calls it `AMN-SF9028 SOFA`.
 The record of the cutover is
 `backend/scripts/data/autocount-erp-mapping-1561.csv`, compiled into
@@ -552,6 +570,18 @@ is why `create` is composed LAZILY in `composeSoState` / `composePoState` — an
 edit builds the same state object, and eagerly composing a create it will never
 send would refuse the edit for the create's reasons.
 
+**The SO side now refuses at CREATE TIME instead** (owner 2026-08-13, after
+`HC-SO-2608-002`). A `MissingLocationError` is correct but lands in the wrong
+place: hours later, in an outbox row, about an order the salesperson was told
+had saved. So company 1's sales orders are gated where the human is —
+`backend/src/scm/lib/so-location-gate.ts`, run at the two places the SO router
+enqueues a create (create, and `DRAFT -> live`). The composer's refusal stays
+exactly as it is: it is the backstop for every path that is not that gate
+(imports, the 2990 mirror, a future company not yet on the list), and it is
+what proves the gate is not merely advisory. Full rule + company list:
+`docs/modules/sales-order.md`, "Company 1 cannot create an order with no stock
+location".
+
 Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
 `npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
 export without regenerating cannot leave the composer resolving against last
@@ -675,27 +705,26 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | | |
 |---|---|
 | It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
-| It never creates a LOCATION | A new warehouse is a business decision with stock consequences. A create naming an unknown one is refused on the ERP side instead (`MissingLocationError`, section 7b) |
+| It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human |
 | It never creates a DEBTOR per customer | Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 | It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
+| It DOES add a BRANDING / VENUE option | Owner 2026-08-11. **Read, append, write back the whole set** — see below |
 
-### The one picker it will not touch: a UDF dropdown (BRANDING, VENUE)
+### The dropdown lists are edited by READ-APPEND-WRITE, never by Add()
 
-`AutoCount.UDF.UDFList` exposes `Add(name, items[])` and `Save()` — the API
-behind User Defined List Maintenance — so adding a branding or a venue option is
-technically reachable. **We do not call it.**
+`AutoCount.UDF.List` exposes `GetItems()` and `SetItems()`, so the current
+options are read first and the new value appended to them. The obvious call —
+`UDFList.Add(name, new[]{ value })` — is NOT used: whether it appends or
+REPLACES is not something the reflected signature says, and if it replaces it
+deletes every other option in a live book, roughly 95 of them on VENUE. The
+read-modify-write shape makes that impossible rather than unlikely.
 
-`Add` takes the list NAME and an ITEM ARRAY, and whether that APPENDS or
-REPLACES the list is not something the reflected signature says. The downside of
-guessing wrong is wiping the owner's ~95 venue options out of a live book, which
-is far worse than the problem being solved. Same judgement as the warehouse: a
-value that governs what staff can pick is not something a sync invents at 3am.
+**A list that does not exist is not created.** An unknown list NAME is a
+spelling mistake on our side, not a missing option, and inventing the list would
+hide it — it comes back as a `failed` entry naming the list.
 
-What happens today to a venue the dropdown does not have: the value is written
-onto the document's UDF field as free text — the list constrains AutoCount's own
-UI, not the column. So nothing fails; the value simply will not be pickable
-later. **That last sentence is reasoning from the field's shape, not a live
-observation — settle it on the throwaway document during runbook 4.1.**
+Only `BRANDING` and `VENUE` are treated as dropdowns. `ToPONo` is free text and
+has no option list to open.
 
 ## 7f. A cancel that reached AutoCount is final
 
@@ -719,6 +748,124 @@ Once `linked_ac_docno` is set, leaving CANCELLED is refused with **409
 A document with **no** `linked_ac_docno` is untouched — nothing was ever pushed
 for it, so nothing can diverge, and the reopen the Commander asked for in
 2026-06 still works exactly as before. **Raise a new document instead.**
+
+## 7g. Numbering — every document the ERP creates carries the ERP number
+
+| type | number in AutoCount |
+|---|---|
+| SO, PO | the ERP's, sent as `DocNo` on the create |
+| DO, GR, SI, PI | **the ERP's**, sent as `DocNo` on the conversion |
+
+It was not always so. A create sent its `DocNo` and AutoCount took it; a
+conversion sent none, so AutoCount auto-numbered the four converted types — and
+four of the six documents carried a number nobody in this building would
+recognise, with every reconciliation forced through `linked_ac_docno` instead of
+the number printed on the paperwork. The service was ready for it the whole
+time: `SalesHeader` and `PurchaseHeader` both apply `DocNo` when the payload
+carries one.
+
+Two consequences worth knowing:
+
+- **Supplying our own `DocNo` does NOT advance AutoCount's counter.** Anything
+  raised in AutoCount's own UI keeps issuing `SO-0000NN` in parallel, forever.
+  That is desirable — the number says which system authored the document — but
+  it is now a decision rather than an accident.
+- **Nothing enforces that the two series cannot collide.** They cannot today
+  only because the shapes differ (`DO-2608-004` against `DO-000021`). A
+  collision detector is still open work.
+
+The parent travels separately (`payload.fromDoc`, resolved at drain) and must
+never be confused with this: `DocNo` is the CHILD's number, `FromDocNo` is the
+parent's.
+## 7h. Editing a MIGRATED sofa order — why it was refused, and what fixes it
+
+An operator opens an existing sofa order, changes something, saves. The edit is
+**refused**, and the reason is line identity.
+
+`backfill-ac-line-keys.mjs` matches on `(AutoCount DocNo + ERP item code)`,
+translating AutoCount's `ItemCode` through the cutover mapping. For a sofa that
+translation lands on `9028-1S` — but the cutover **split** each sofa into
+compartment rows, so what the ERP holds is `9028-1A(LHF)`, `9028-2A(RHF)` and
+friends. The pair never matches. Every migrated sofa line kept a NULL
+`linked_ac_dtlkey`, which is the whole of the *"589 PO lines with no AutoCount
+match"* in the migration record, and `composeEdit` reads the key off the
+COLLAPSED build — a build with no key has no identity to address, so the whole
+document is refused.
+
+**Refused, not corrupted.** That is the guard working: the alternative was
+appending a duplicate set of lines into a live account book.
+
+`backfill-ac-sofa-line-keys.mjs` (workflow: **Backfill AutoCount line keys
+(SOFA)**) closes it by reproducing the D9 collapse the write-back itself uses:
+group the compartment rows into builds, resolve the build to the `<model>-1S`
+code the mapping knows, match THAT against AutoCount's lines, and give **every
+compartment row of a build the same DtlKey** — which is exactly the shape
+`composeEdit` requires.
+
+**Where the counts disagree it assigns nothing** and names the document. A wrong
+key is worse than a missing one: missing is refused loudly, wrong silently edits
+a different line in a live book.
+
+## 7l. Where this module sits
+
+This guide covers **how to call the write service**. For the shape of the whole
+relationship — the four channels, which documents are created versus converted,
+how a SKU crosses, what is automatic and what never will be — read
+**`docs/autocount-integration-map.md`** first. It is the map; this is one road on it.
+
+## 7m. The master-data foreign key chain — read this before debugging a refused document
+
+**A document is refused as a WHOLE when any master it names is missing.** The
+live book enforces foreign keys the old evaluation book did not, and they are
+discovered **one at a time**: satisfying one only reveals the next, so "I fixed
+the error and retried" buys exactly one attempt. Four have been hit so far, each
+against `AED_HOUZS`, each with the evidence beside it.
+
+| # | Constraint | Named by | Opened by | Found |
+|---|---|---|---|---|
+| 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` | 2026-08-11 |
+| 2 | `FK_SODTL_Location` | SO **line** `Location` | `ensure-masters` → `Locations` | 2026-08-11 |
+| 3 | `FK_Item_ItemGroup` | a NEW item being opened | `ensure-masters` → `Items[].ItemGroup` | 2026-08-12 |
+| 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`** | 2026-08-12 |
+
+**#3 — an item cannot be opened without a group.** `ItemGroup` is a foreign key,
+not a label, so a brand-new SKU arriving from the ERP is refused on its very
+first document. The service now defaults to `OTHER`, which exists precisely for
+this. The groups the live book holds, by item count:
+
+```
+BEDFRAME 645   MATTRESS 517   SOFA 114   ACC 99   BEDLINES 85
+DINING 55      DIFFUSER 39    OTHER 4    CARPET 2  TRANS 1
+```
+
+Everything lands in `OTHER` until somebody maps the ERP's own `item_group`
+vocabulary onto these. **That mapping is an owner decision, not a guess** — it
+decides where a new product shows up in AutoCount's own reports.
+
+**#4 — a PURCHASE agent is not a sales agent.** Different table
+(`dbo.PurchaseAgent`), different foreign key, different SDK command
+(`AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand`, whose shape mirrors
+`SalesAgentCommand` exactly). Opening `OTHERS` as a sales agent does **nothing**
+for a purchase order naming it. This one is worth remembering because
+`ensure-masters` cheerfully reported `agent:OTHERS` as *already existing* while
+`/create-po` was failing on it — the report was true and irrelevant.
+`mastersOf` now routes the agent by whether the payload carries a
+`CreditorCode`, which is the one field only a purchase document has.
+
+**Values known to exist in `AED_HOUZS`**, for a throwaway test document:
+
+| Field | Use |
+|---|---|
+| `DebtorCode` | `300-C002` |
+| `CreditorCode` | `400-N002` (NICOLLO SDN BHD, 3,326 POs) |
+| `Agent` / `PurchaseAgent` | `OTHERS`, `KINGSLEY`, `MK`, `WW`, `ALEX`, `SIANG` |
+| `Location` / `SalesLocation` | `KL`, `HQ`, `KELANA.J`, `C&C DISP`, `C&C K.J`, `EM DISP` |
+| `ItemGroup` | `OTHER` for anything unclassified |
+
+**How to read a refusal.** The HTTP response carries only a 500; the constraint
+name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
+status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
+completely different problems.
 
 ## 8. Configuration
 
@@ -747,8 +894,20 @@ UPDATE scm.app_config SET value = '1', updated_at = now()
 **Turn it off** — set `value = 'off'`. Takes effect within 30 seconds (the cache
 TTL). Queued rows stay `pending` and drain when it is turned back on.
 
-**What to watch.** The cron logs `[cron ac-writeback]` per sweep, and logs at
-ERROR level whenever a row reaches `failed` — a failed row means a document
+**What to watch — run the check, do not read the tail.** Actions ->
+**AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
+the queue by status, the FAILED rows in full (each one is a document that is in
+the ERP and not in the account book), the age of the oldest pending row, and the
+`skipped` backlog split by REASON — a refusal needs a line-key backfill, a
+merged conversion needs a human, a parentless document can never exist in
+AutoCount at all. An unrecognised reason is printed rather than counted away.
+
+An empty queue is reported as EMPTY, not as healthy: the table is append-only,
+so zero rows means nothing was ever enqueued, which is the correct state while
+the toggle is off.
+
+The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
+a row reaches `failed` — a failed row means a document
 exists in the ERP and does not exist in AutoCount, which is the exact divergence
 this mechanism exists to prevent.
 

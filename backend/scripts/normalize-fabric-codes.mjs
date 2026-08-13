@@ -29,7 +29,10 @@
    NOTHING IS DELETED. A row that loses is superseded - active = false, label
    records what absorbed it - the same rule #1972 set and the catalogue script
    follows. Live lines are repointed on BOTH axes (fabricCode and fabricId)
-   across all four arms, through lib/fabric-write.
+   across EVERY arm lib/fabric-write knows (fifteen as of 2026-08-13), together
+   with the stored description2, the variant_key stock bucket and the model's
+   allowed_options whitelist — a code change that moves only variants is what
+   stranded stock on 2026-08-11.
 
    THE OWNER'S OWN 12 SERIES ARE SKIPPED. seed-owner-fabric-catalogue.mjs
    already drove those to their canonical form from his list, including colour
@@ -39,7 +42,19 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
-import { countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy } from "./lib/fabric-write.mjs";
+import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel } from "./lib/fabric-code.mjs";
+import {
+  countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy,
+  /* A colour CODE change is not just a variants edit. The same string is also
+     materialised into the physical stock bucket (variant_key), rendered into
+     the stored description2 every PDF prints, and listed in the model's
+     allowed_options whitelist. Repointing variants alone is what left
+     BO315-2-FEATHER's 3 SO lines and 3 PO lines pointing at one code while its
+     3 inventory_movements and 3 inventory_lots rows stayed in the other —
+     found by the census on 2026-08-13, after the 2026-08-11 pass. */
+  repointDescription2, repointVariantKey, repointAllowedOptions, skippedArms,
+  countColoursBulk,
+} from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -59,64 +74,6 @@ const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `E
    owner's own list, colour names included; this script must not re-derive them. */
 const CATALOGUE_SERIES = new Set(["ZL", "MODENZA", "BO315", "NX", "GD2502", "AM275", "CH141", "M2402", "ORION", "TR", "DE", "HR805"]);
 
-const strip = (s) => normColour(s).replace(/[^A-Z0-9]/g, "");
-
-/* The SERIES keeps its own internal separator, collapsed to a single dash.
-   "SF-AT 01" is series SF-AT, and SF-AT is what the slips and the showroom
-   actually say; flattening it to SFAT makes a code nobody recognises. Same for
-   ALPINE-5311 and CHANTIC-141. Only the separator is normalised - no character
-   is added or removed. */
-const seriesToken = (s) => normColour(s).replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
-/* scm.fabric_colours grew an UNMATCHED bucket when an import could not place a
-   row - "UNMATCHED-PICCO-FG66151-11", "UNMATCHED-STAR-FABRIC-CLOUD". It is not
-   a fabric series and no rule can decide what its rows mean: the first is
-   probably FG66151-11, the second is a STAR colour called CLOUD with no number
-   at all. Reported, never rewritten. */
-const isJunkBucket = (id) => /^UNMATCHED/.test(normColour(id));
-
-/* A leading word is a BRAND only when what follows is already a complete code -
-   letters AND digits. Otherwise it belongs to the series and the space closes
-   up. See the header: this is the whole PC 1461 / ARMANI J9226 distinction. */
-const BRAND = /^([A-Z][A-Z]{2,})\s+(?=[A-Z]{1,4}\d{3,})/;
-const JOIN_SERIES = /^([A-Z]{1,4})\s+(?=\d)/;
-
-/* Split "<series><sep><number><sep><name>". The series part is GREEDY on
-   purpose: "CHANTIC-141-2" is series CHANTIC141 colour 2, not series CHANTIC
-   colour 141. A lazy match gets that backwards and would collapse a whole
-   series onto one colour. */
-const SPLIT = /^(.+?)[\s\-]+(\d{1,3})\s*#?[\s\-]*(.*)$/;
-const SPLIT_GREEDY = /^(.+)[\s\-]+(\d{1,3})\s*#?[\s\-]*([A-Z].*)?$/;
-/* No separator at all - "NB01". Only a ONE OR TWO digit tail qualifies, which
-   is what keeps "PU1910", "FG6876" and "BN125" out: nobody can tell from the
-   string whether those are PU + 1910 or PU19 + 10, so they stay unparsed and
-   get reported rather than guessed at. */
-const SPLIT_GLUED = /^([A-Z]{2,})(\d{1,2})$/;
-
-function parse(colourId) {
-  let v = normColour(colourId);
-  let brand = null;
-  const b = BRAND.exec(v);
-  if (b) { brand = b[1]; v = v.slice(b[0].length).trim(); }
-  const j = JOIN_SERIES.exec(v);
-  if (j) v = v.replace(JOIN_SERIES, "$1");
-  const m = SPLIT_GREEDY.exec(v) || SPLIT.exec(v) || SPLIT_GLUED.exec(v);
-  if (!m) return null;
-  const series = seriesToken(m[1]);
-  const num = m[2];
-  const name = (m[3] || "").replace(/^[#\s\-]+/, "").trim();
-  /* A series may be all digits - "311" is a real one - so the guard is length,
-     not the presence of a letter. */
-  if (series.length < 2) return null;
-  return { brand, series, num, name };
-}
-
-const canonId = (p) => `${p.series}-${p.num.padStart(2, "0")}`;
-const canonLabel = (p) => {
-  const id = canonId(p);
-  return p.name ? `${id} ${p.name}` : id;
-};
-
 async function main() {
   const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
   note(`MODE=${MODE} company=${CO}${ONLY.length ? ` series filter: ${ONLY.join(",")}` : ""}`);
@@ -127,10 +84,21 @@ async function main() {
                            FROM scm.fabric_colours WHERE company_id = ${CO}`;
   note(`library: ${libs.length} series / ${cols.length} colours`);
 
-  const refCache = new Map();
+  /* ONE PASS FOR EVERY COLOUR, not one round trip each. This asks for a
+     reference count per code, and the library holds hundreds of them; when the
+     shared arm list went from 4 tables to 15 that became twelve thousand
+     queries and a plan run that used to take a minute was still going after
+     fifteen. countColoursBulk answers all of them with one query per arm.
+
+     Warmed for every colour up front, and countColour is kept as the fallback
+     for a code the warm-up did not see (a canonical target that no row carries
+     yet), so no path silently reports zero. */
+  const refCache = await countColoursBulk(sql, CO, cols.map((r) => r.colour_id));
+  note(`reference counts warmed for ${refCache.size} colour(s) in one pass per arm`);
   const refs = async (code) => {
-    if (!refCache.has(code)) refCache.set(code, sum(await countColour(sql, CO, code)));
-    return refCache.get(code);
+    const k = String(code).toUpperCase();
+    if (!refCache.has(k)) refCache.set(k, sum(await countColour(sql, CO, code)));
+    return refCache.get(k);
   };
 
   /* Group every ACTIVE colour by the canonical code it should carry. A group
@@ -166,9 +134,32 @@ async function main() {
     const [win, ...lose] = scored;
 
     /* The winner's NAME is the best one in the group: its own if it has one,
-       otherwise any sibling's. A merge must not lose the only colour name. */
-    let best = win.p.name;
-    if (!best) for (const s of scored) if (s.p.name) { best = s.p.name; break; }
+       otherwise any sibling's. A merge must not lose the only colour name.
+
+       AND THE LABEL COUNTS AS A SOURCE. `parse` reads a name out of the CODE,
+       which is where names lived BEFORE the 2026-08-11 normalisation moved
+       them: "J9226-1 SAND" parsed to J9226-01 + SAND, and the label
+       "J9226-01 SAND" was written from it. Run the script again now and the
+       code is clean, so parse returns NO name — and the label was rebuilt as
+       bare "J9226-01", silently deleting SAND.
+
+       A 2026-08-13 prod PLAN caught it before any of it was applied: 200
+       rewrites, every one of the form
+           "J9226-01" / "J9226-01 SAND"  ->  "J9226-01" / "J9226-01"
+       with the CODE UNCHANGED. The script was not idempotent — its second run
+       destroyed the colour names its first run created.
+
+       So the existing LABEL is now the third source. A supersede tombstone is
+       not a name: its text is a record of what absorbed the row. */
+    const nameFromLabel = (r) => {
+      const lbl = String(r.label ?? "").trim();
+      if (!lbl || /\[(MERGED into|superseded by) /i.test(lbl)) return "";
+      const code = String(r.colour_id ?? "").trim();
+      const rest = lbl.toUpperCase().startsWith(code.toUpperCase()) ? lbl.slice(code.length) : "";
+      return normColour(rest).replace(/^[\s\-#]+/, "").trim();
+    };
+    let best = win.p.name || nameFromLabel(win.r);
+    if (!best) for (const s of scored) { best = s.p.name || nameFromLabel(s.r); if (best) break; }
     const target = { ...win.p, name: best };
     const newId = canonId(target), newLabel = canonLabel(target);
 
@@ -313,7 +304,12 @@ async function main() {
           const r = await repointColour(tx, CO, l.r.colour_id, m.newId);
           const n = sum(r);
           movedLines += n;
-          if (n) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)})`);
+          /* Same transaction, same rename: the printed text, the stock bucket
+             and the model whitelist follow the code or they contradict it. */
+          const d2 = busy(await repointDescription2(tx, CO, l.r.colour_id, m.newId));
+          const vk = busy(await repointVariantKey(tx, CO, l.r.colour_id, m.newId));
+          const md = (await repointAllowedOptions(tx, CO, l.r.colour_id, m.newId)).n;
+          if (n || d2 || vk || md) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)}) desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
         }
         await tx`UPDATE scm.fabric_colours
                     SET active = false,
@@ -327,6 +323,10 @@ async function main() {
       const from = c.win.r.colour_id;
       if (normColour(from) !== c.newId) {
         movedLines += sum(await repointColour(tx, CO, from, c.newId));
+        const d2 = busy(await repointDescription2(tx, CO, from, c.newId));
+        const vk = busy(await repointVariantKey(tx, CO, from, c.newId));
+        const md = (await repointAllowedOptions(tx, CO, from, c.newId)).n;
+        if (d2 || vk || md) note(`  carried with "${from}" -> "${c.newId}": desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
       }
       const seriesNow = plan.seriesRename.get(c.win.r.fabric_id)?.to ?? c.win.r.fabric_id;
       const clash = await tx`SELECT 1 FROM scm.fabric_colours
@@ -361,6 +361,11 @@ async function main() {
     for (const s of plan.seriesRename.values()) {
       const still = sum(await countSeries(v, CO, s.from));
       if (still) { fails++; bad(`${still} line(s) still name series "${s.from}"`); }
+    }
+    const skipped = skippedArms();
+    if (skipped.length) {
+      note(`  ARMS SKIPPED (absent from this database — never sweep silently):`);
+      for (const sk of skipped) note(`    ${sk.kind.padEnd(12)} ${String(sk.table).padEnd(42)} ${sk.why}`);
     }
     for (const a of await arrayShapeCheck(v, CO)) {
       note(`  ${a.arm}: array-shaped variants blocks (must be 0): ${a.n}`);

@@ -12,7 +12,8 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
   buildAmendmentHeaderChanges,
@@ -74,7 +75,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -1077,6 +1078,10 @@ export function MobileNewSO({
     const hit = list.find((m) => m.state === state);
     return hit?.warehouse?.code ?? "";
   }, [state, stateWarehousesQ.data]);
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   /* Effective venue to SEND on save — the operator's manual pick when they
      changed it, otherwise the derived default (resolvedVenueId already folds
@@ -1732,25 +1737,20 @@ export function MobileNewSO({
       setError(SOFA_MIX_MESSAGE);
       return;
     }
-    /* Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CREATING a
-       CONFIRMED order requires every line's category-required axes, date or
-       no date. With a Processing Date the full rule applies
-       (missingVariantAxes — colour-KIV blocks a date, owner 2026-07-24);
-       a date-less confirmed CREATE applies the confirm rule
-       (missingConfirmVariantAxes — colour-KIV satisfies the fabric axis).
-       Drafts still save with gaps, and the EDIT sheet keeps its original
-       procDate-only rule — editing an existing order (e.g. fixing a remark)
-       must never be hostage to gaps the edit didn't touch; the confirm gate
-       on the status route owns those at Create Sales Order time. */
-    if (!asDraft && (procDate || !isEdit)) {
-      const missOf = (l: LineItem) =>
-        procDate
-          ? missingVariantAxes(l.itemGroup, l.variants, l.itemCode)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode);
+    /* Variant completeness is the PROCEED rule, and only the proceed rule
+       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
+       的，除非它是 proceed 了"). A Processing Date IS proceed — colour-KIV also
+       blocks a date, owner 2026-07-24 — so the axes are demanded exactly when
+       a date is being set, on create and on edit alike. This briefly also ran
+       on a date-less CONFIRMED create (2026-08-08, HC-SO-2607-008); that made
+       a real order for a real customer unbookable before the customer had
+       picked a seat height, and is removed. Drafts were never gated. */
+    if (!asDraft && procDate) {
+      const missOf = (l: LineItem) => missingVariantAxes(l.itemGroup, l.variants, l.itemCode);
       const offender = namedLines.find((l) => missOf(l).length > 0);
       if (offender) {
         const miss = missOf(offender).map((a) => a.label).join(", ");
-        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}".`);
+        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}" before setting a Processing Date.`);
         return;
       }
     }
@@ -1769,6 +1769,19 @@ export function MobileNewSO({
       setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with desktop via soStockLocationError. Create only: an EDIT enqueues an
+       AutoCount edit, which leaves the account book's own Location alone. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+      isEdit,
+    });
+    if (locationErr) { setError(soErrorText(locationErr)); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from

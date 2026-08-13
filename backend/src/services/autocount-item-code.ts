@@ -42,6 +42,8 @@ export interface AcItemMapEntry {
 
 export interface AcItemIndex {
   byErp: Map<string, AcItemMapEntry[]>;
+  /** Every ItemCode the account book held at the cutover, uppercased. */
+  acCodes: Set<string>;
   rows: number;
 }
 
@@ -49,6 +51,7 @@ const up = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase(
 
 export function buildAcItemIndex(tsv: string = AC_ITEM_MAP_TSV): AcItemIndex {
   const byErp = new Map<string, AcItemMapEntry[]>();
+  const acCodes = new Set<string>();
   let rows = 0;
   for (const line of tsv.split('\n')) {
     if (!line) continue;
@@ -56,11 +59,12 @@ export function buildAcItemIndex(tsv: string = AC_ITEM_MAP_TSV): AcItemIndex {
     if (!ac || !erp) continue;
     rows += 1;
     const entry: AcItemMapEntry = { ac, erp, category: category ?? '', supplier: supplier || null };
+    acCodes.add(up(ac));
     const k = up(erp);
     const bucket = byErp.get(k);
     if (bucket) bucket.push(entry); else byErp.set(k, [entry]);
   }
-  return { byErp, rows };
+  return { byErp, acCodes, rows };
 }
 
 let cached: AcItemIndex | null = null;
@@ -81,7 +85,7 @@ const ALIAS_SOURCES: Map<string, string[]> = (() => {
 })();
 
 export type ItemCodeResolution =
-  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' }
+  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding' }
   | { ok: false; reason: 'unmapped' | 'ambiguous'; detail: string; candidates: string[] };
 
 /**
@@ -94,12 +98,32 @@ export type ItemCodeResolution =
  */
 export function resolveAcItemCode(
   erpItemCode: string,
-  opts: { supplierCode?: string | null; index?: AcItemIndex } = {},
+  opts: {
+    supplierCode?: string | null;
+    index?: AcItemIndex;
+    /**
+     * THE LIVE BINDING, and it wins.
+     *
+     * `scm.supplier_material_bindings` is where this ERP records what AutoCount
+     * calls each of its products: `material_code` is our internal code,
+     * `supplier_sku` is the AutoCount one, one row per supplier. It was
+     * populated at the cutover for exactly this purpose — so the ERP codes
+     * could be pushed BACK — and it is the only one of the two sources that
+     * GROWS. The compiled CSV is a snapshot of the book on 2026-08-05 and can
+     * never know a SKU opened since.
+     *
+     * Without this the resolver refused every post-cutover product, which
+     * refused the whole document, which meant /ensure-masters never even ran
+     * for the case it exists for. Keyed by UPPERCASED ERP code.
+     */
+    bindings?: Map<string, string> | null;
+  } = {},
 ): ItemCodeResolution {
   const index = opts.index ?? acItemIndex();
   const code = up(erpItemCode);
   if (!code) return { ok: false, reason: 'unmapped', detail: 'the ERP line has no item code', candidates: [] };
 
+  const bound = opts.bindings?.get(code);
   let candidates = index.byErp.get(code) ?? [];
   let via: 'direct' | 'sofa-model' = 'direct';
 
@@ -126,6 +150,47 @@ export function resolveAcItemCode(
       }
       candidates = acc;
     }
+  }
+
+  /* A TIE-BREAKER MUST NAME ONE OF THE TIED ITEMS.
+   *
+   * The binding normally WINS outright, and that is deliberate: the book can be
+   * renamed and a 2026-08-05 snapshot cannot know, so an unrecognised SKU is
+   * trusted. That reasoning holds while the map gives at most one answer.
+   *
+   * It does not hold when the code is AMBIGUOUS. There the binding is not an
+   * override, it is a tie-breaker among items the book is known to hold — and a
+   * tie-breaker naming a third string has not broken the tie, it has invented an
+   * item. A rename cannot explain it either: if one candidate had been renamed
+   * the binding would name the new name, and the OTHER candidate would still be
+   * sitting there in the map. So this is wrong data, and sending it writes an
+   * ItemCode the licensed book does not have — the exact outcome the "no
+   * fallback to material_code" rule at the top of this file exists to prevent.
+   * On a purchase order the resulting line cannot even be deleted.
+   *
+   * Measured against production on 2026-08-13, this is not hypothetical. All
+   * four ambiguous sofa models carried bindings and not one named a real item:
+   * the MAIN supplier's row for 9028-1S held the ERP's own code '9028-1S', and
+   * the rest held 'AMN-SF9028 SOFA 1S' where the book has 'AMN-SF9028 SOFA'.
+   * These refused already, because the binding was unreachable for a collapsed
+   * sofa line; making it reachable without this guard would have turned four
+   * loud refusals into phantom items opened in a licensed account book.
+   *
+   * Checked AFTER the sofa fallback so the refusal names what the book really
+   * holds, which is the whole remedy an operator needs.
+   */
+  if (bound) {
+    if (candidates.length <= 1 || index.acCodes.has(up(bound))) {
+      return { ok: true, acItemCode: bound, via: 'binding' };
+    }
+    return {
+      ok: false,
+      reason: 'ambiguous',
+      detail: `ERP item code '${erpItemCode}' is bound to '${bound}', which is not an AutoCount `
+        + `item. The account book holds this code as ${candidates.map((e) => `'${e.ac}'`).join(' or ')}`
+        + ' — correct the supplier SKU mapping to name one of those exactly.',
+      candidates: candidates.map((e) => e.ac),
+    };
   }
 
   if (!candidates.length) {

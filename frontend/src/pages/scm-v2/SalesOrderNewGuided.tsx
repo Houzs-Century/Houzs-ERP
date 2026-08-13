@@ -53,7 +53,8 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
@@ -148,6 +149,8 @@ export function SalesOrderNewGuided() {
      across a re-press after a stalled submit (the retry replays the first
      order's docNo), fresh on the next mount so a genuinely new order is new. */
   const idemKey = useIdempotencyKey();
+  /* Active company — feeds the shared stock-location guard below. */
+  const branding = useBranding();
 
   const [step, setStep] = useState<number>(0);
   const [showValidation, setShowValidation] = useState<boolean>(false);
@@ -263,10 +266,22 @@ export function SalesOrderNewGuided() {
        check mirrors the Full form verbatim. Variant completeness
        (missingRequiredVariants) is enforced only once a processing date is set
        (server parity); the guided flow sets none, so it's enforced on the SO
-       detail, not here. */
+       detail, not here.
+
+       The stock-location gate (owner 2026-08-13) is inert here for the same
+       parity reason: this flow lands a DRAFT unconditionally (see `asDraft`
+       below) and a draft is never written to AutoCount, so the guard passes —
+       but it is wired, so the day this flow stops drafting it is gated
+       automatically instead of silently minting locationless orders. */
     const preErr =
       soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
       (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
+      soStockLocationError({
+        companyCode: branding.companyCode,
+        salesLocation: "",
+        state: "",
+        asDraft: true,
+      }) ??
       soSliplessPaymentError([]);
     if (preErr) {
       setPostError(soErrorText(preErr));

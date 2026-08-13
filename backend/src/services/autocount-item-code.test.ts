@@ -11,7 +11,7 @@
  * reason and the candidates it could not choose between. A silent fallback to
  * material_code is the one behaviour that must be impossible.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import {
   AC_ITEM_MAP_ROWS,
   ItemCodeError,
@@ -289,5 +289,95 @@ describe('a sofa document refuses before it resolves', () => {
     expect(so.Details[0].ItemCode).toBe('RDS-5526 SOFA');
     expect(so.Details[0].Desc2).toBe(d2);
     expect(so.Details[0].UnitPrice).toBe(2500);
+  });
+});
+
+/* The compiled CSV is a SNAPSHOT of the book on 2026-08-05. The binding table
+   is this ERP's own live record of what AutoCount calls each product, and it is
+   the only one of the two that GROWS. Without it every post-cutover SKU was
+   refused - which refused the whole document, which meant /ensure-masters never
+   ran for the very case it exists for. */
+describe('the live supplier binding resolves what the cutover snapshot cannot', () => {
+  test('a SKU opened after the cutover resolves through its binding', () => {
+    const r = resolveAcItemCode('BRAND-NEW-SKU', {
+      bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]),
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('NB-BRANDNEW'); expect(r.via).toBe('binding'); }
+  });
+
+  test('and without one it is still REFUSED, never guessed from material_code', () => {
+    const r = resolveAcItemCode('BRAND-NEW-SKU', {});
+    expect(r.ok).toBe(false);
+  });
+
+  test('the binding WINS over the snapshot — the book can be renamed and the CSV cannot know', () => {
+    /* AERO-Y04 (K) is what the 2026-08-05 CSV holds for Y04-(K). */
+    const snapshot = resolveAcItemCode('Y04-(K)', {});
+    expect(snapshot.ok).toBe(true);
+    if (snapshot.ok) expect(snapshot.acItemCode).toBe('AERO-Y04 (K)');
+
+    const live = resolveAcItemCode('Y04-(K)', { bindings: new Map([['Y04-(K)', 'AERO-Y04-RENAMED']]) });
+    expect(live.ok).toBe(true);
+    if (live.ok) expect(live.acItemCode).toBe('AERO-Y04-RENAMED');
+  });
+
+  test('the lookup is case-insensitive on the ERP code, as every other one here is', () => {
+    const r = resolveAcItemCode('brand-new-sku', { bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]) });
+    expect(r.ok).toBe(true);
+  });
+});
+
+/* Regression: 2026-08-13. Making the binding reachable for collapsed sofa lines
+   (#2093) exposed that the bindings themselves were wrong. Production held a
+   row for every one of the four ambiguous sofa models and not one named a real
+   AutoCount item — the MAIN supplier's row for 9028-1S carried the ERP's own
+   code, the rest carried '<real code> 1S'. Those codes had been refusing all
+   along because the binding could not be found; finding it without this guard
+   would have opened phantom items in a licensed account book. */
+describe('a binding that is meant to break a tie must name one of the tied items', () => {
+  const AMBIGUOUS = '9028-1S';
+  const REAL = 'AMN-SF9028 SOFA';
+
+  test('the map really does hold two items for it, or this test proves nothing', () => {
+    const r = resolveAcItemCode(AMBIGUOUS, {});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.candidates).toEqual(['AMN-SF9028 SOFA', 'DSL-9028 SOFA']);
+  });
+
+  test('naming one of the candidates resolves', () => {
+    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, REAL]]) });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe(REAL); expect(r.via).toBe('binding'); }
+  });
+
+  test('naming the ERP code itself is REFUSED, not sent as an item', () => {
+    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, '9028-1S']]) });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.detail).toContain('is not an AutoCount item');
+      /* The remedy has to carry the strings to type in, not just a complaint. */
+      expect(r.detail).toContain('AMN-SF9028 SOFA');
+      expect(r.detail).toContain('DSL-9028 SOFA');
+    }
+  });
+
+  test("a near-miss like '<real code> 1S' is REFUSED too", () => {
+    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'AMN-SF9028 SOFA 1S']]) });
+    expect(r.ok).toBe(false);
+  });
+
+  test('an item the book holds under ANOTHER ERP code is accepted — it is real', () => {
+    const r = resolveAcItemCode(AMBIGUOUS, { bindings: new Map([[AMBIGUOUS, 'DSL-9058 SOFA']]) });
+    expect(r.ok).toBe(true);
+  });
+
+  test('the override still wins where the map gives at most one answer', () => {
+    /* The rename case, unchanged: one candidate means the binding is an
+       override, not a tie-breaker, and a renamed book is a real possibility. */
+    const r = resolveAcItemCode('Y04-(K)', { bindings: new Map([['Y04-(K)', 'AERO-Y04-RENAMED']]) });
+    expect(r.ok).toBe(true);
+    const post = resolveAcItemCode('BRAND-NEW-SKU', { bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]) });
+    expect(post.ok).toBe(true);
   });
 });

@@ -41,7 +41,7 @@
 //     /r:System.Web.Extensions.dll /r:System.Data.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
-// Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
+// Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
 //   /create-so       -> { docNo, lines[] }  payload = header + Details[]
@@ -94,8 +94,8 @@ class AcSyncService {
      server, and a service that cannot be moved without a recompile is a
      service that fights the machine it runs on. Default 8900. */
   static string Url =
-    "http://localhost:" + (File.Exists(@"C:\Tempc-svc-port.txt")
-      ? File.ReadAllText(@"C:\Tempc-svc-port.txt").Trim() : "8900") + "/";
+    "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
+      ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
   const string USER = "ADMIN";
 
   static string ApiKey =
@@ -500,7 +500,13 @@ class AcSyncService {
         e.ItemCode = code;
         e.Description = Or(Str(it, "Description"), code);
         Set(() => e.Desc2 = Str(it, "Desc2"));
-        Set(() => e.ItemGroup = Str(it, "ItemGroup"));
+        /* ItemGroup is a FOREIGN KEY (FK_Item_ItemGroup), not a label. An item
+           opened without one is refused by the live book, which is what a new
+           SKU coming from the ERP hits on its very first document. OTHER exists
+           in AED_HOUZS for exactly this - a group that classifies nothing and
+           blocks nothing. Proved 2026-08-12: the same call fails with
+           FK_Item_ItemGroup and then succeeds with the group supplied. */
+        Set(() => e.ItemGroup = Or(Str(it, "ItemGroup"), "OTHER"));
         Set(() => e.StockControl = true);
         Set(() => e.IsSalesItem = true);
         Set(() => e.IsPurchaseItem = true);
@@ -533,6 +539,35 @@ class AcSyncService {
         Log("  ensure-masters CREATED agent " + code);
       } catch (Exception ex) {
         failed.Add(new Dictionary<string, object> { { "master", "agent:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A PURCHASE agent is a DIFFERENT master from a sales agent - a different
+       table (dbo.PurchaseAgent) behind a different foreign key
+       (FK_PO_PurchaseAgent) reached through a different command. Opening
+       'OTHERS' as a sales agent does nothing for a purchase order that names
+       it, and the PO is refused with the whole document. Found 2026-08-12 by
+       /create-po failing on the live book after /ensure-masters had reported
+       agent:OTHERS as already existing - the third foreign key in this chain,
+       after FK_SO_SalesAgent and FK_SO_SalesLocation, each one only visible
+       once the previous was satisfied. */
+    foreach (var o in List(p, "PurchaseAgents")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Or(Str(it, "PurchaseAgent"), Str(it, "Agent"));
+      if (code.Length == 0) continue;
+      try {
+        var cmd = AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand.Create(s, s.DBSetting);
+        if (PurchaseAgentExists(cmd, code)) { existed.Add("purchase-agent:" + code); continue; }
+        var e = cmd.NewPurchaseAgent();
+        e.PurchaseAgent = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        Set(() => e.IsActive = true);
+        cmd.SavePurchaseAgent(e);
+        created.Add("purchase-agent:" + code);
+        Log("  ensure-masters CREATED purchase agent " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "purchase-agent:" + code }, { "error", ex.Message } });
       }
     }
 
@@ -582,6 +617,86 @@ class AcSyncService {
       }
     }
 
+    /* A STOCK LOCATION. The live book answered FK_SODTL_Location to a line
+       whose Location was empty, so a warehouse the book does not have fails the
+       document the same way a missing item does. Opening one has real
+       consequences - it is a place stock can sit - so it is created EMPTY:
+       a code and a description, nothing else. Everything a warehouse actually
+       needs (addresses, payment accounts, defaults) stays for a human. */
+    foreach (var o in List(p, "Locations")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "Location");
+      if (code.Length == 0) continue;
+      try {
+        var lm = AutoCount.Stock.Location.LocationMaintenance.CreateLocationMaint(s, s.DBSetting);
+        if (LocationExists(lm, code)) { existed.Add("location:" + code); continue; }
+        var e = lm.NewLocation();
+        e.Location = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        lm.SaveLocation(e);
+        created.Add("location:" + code);
+        Log("  ensure-masters CREATED location " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "location:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A UDF DROPDOWN OPTION (BRANDING, VENUE).
+       READ, APPEND, WRITE BACK THE WHOLE SET - never Add() with just the new
+       one. AutoCount.UDF.List exposes GetItems() and SetItems(), so the current
+       options can be read first and the new value appended to them. Calling
+       Add(name, new[]{ value }) and hoping it appends would, if it replaces,
+       delete every other option in a live book - roughly 95 of them on VENUE.
+       The read-modify-write shape makes that impossible rather than unlikely.
+
+       A list that does not exist at all is NOT created: an unknown list NAME is
+       a spelling mistake on our side, not a missing option, and inventing one
+       would hide it. */
+    var udfWanted = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var o in List(p, "UdfOptions")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var listName = Str(it, "List");
+      var val = Str(it, "Value");
+      if (listName.Length == 0 || val.Length == 0) continue;
+      if (!udfWanted.ContainsKey(listName)) udfWanted[listName] = new List<string>();
+      if (!udfWanted[listName].Contains(val)) udfWanted[listName].Add(val);
+    }
+    if (udfWanted.Count > 0) {
+      try {
+        var udfl = new AutoCount.UDF.UDFList(s.DBSetting);
+        var names = new List<string>(udfl.GetNames());
+        var dirty = false;
+        foreach (var kv in udfWanted) {
+          var listName = names.Find(n => string.Equals(n, kv.Key, StringComparison.OrdinalIgnoreCase));
+          if (listName == null) {
+            failed.Add(new Dictionary<string, object> {
+              { "master", "udf-list:" + kv.Key },
+              { "error", "no such user-defined list in this book - check the name, do not invent the list" },
+            });
+            continue;
+          }
+          var list = udfl[listName];
+          var items = new List<string>(list.GetItems() ?? new string[0]);
+          foreach (var v in kv.Value) {
+            if (items.Exists(x => string.Equals(x, v, StringComparison.OrdinalIgnoreCase))) {
+              existed.Add("udf:" + listName + "=" + v);
+              continue;
+            }
+            items.Add(v);
+            created.Add("udf:" + listName + "=" + v);
+            dirty = true;
+            Log("  ensure-masters ADDED udf option " + listName + " = " + v);
+          }
+          list.SetItems(items.ToArray());
+        }
+        if (dirty) udfl.Save();
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "udf-options" }, { "error", ex.Message } });
+      }
+    }
+
     var res = new Dictionary<string, object> {
       { "ok", failed.Count == 0 },
       { "created", created },
@@ -600,6 +715,10 @@ class AcSyncService {
     try { return da.LoadItem(code, AutoCount.Stock.Item.ItemEntryAction.Edit) != null; }
     catch { return false; }
   }
+  static bool PurchaseAgentExists(AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand cmd, string code) {
+    try { return cmd.GetPurchaseAgent(code) != null; } catch { return false; }
+  }
+
   static bool AgentExists(AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand cmd, string code) {
     try { return cmd.GetSalesAgent(code) != null; } catch { return false; }
   }
@@ -608,6 +727,9 @@ class AcSyncService {
   }
   static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
     try { return da.GetCreditor(acc) != null; } catch { return false; }
+  }
+  static bool LocationExists(AutoCount.Stock.Location.LocationMaintenance lm, string code) {
+    try { return lm.GetLocation(code) != null; } catch { return false; }
   }
 
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────

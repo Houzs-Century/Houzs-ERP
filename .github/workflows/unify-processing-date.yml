@@ -1,0 +1,78 @@
+name: unify-processing-date
+
+# Move the Processing Date into the ONE column the ERP reads.
+#
+# Owner, 2026-08-13: "只要有 Processing Date，就代表他 Proceed 了" and
+# "没有 processing date 就代表没有 proceed". Proceed is a STATE, not an action
+# with its own timestamp — so proceeded_at is not a second fact, it is the same
+# fact recorded in the wrong shape.
+#
+# Prod company 1 on 2026-08-13: internal_expected_dd set on 0 of 2723 orders,
+# proceeded_at set on 519. Every rule keyed on the Processing Date — the edit
+# lock, the proceed gate, MRP — is therefore dead.
+#
+# This moves only the values that ARE processing dates (the AutoCount import's,
+# identified by linked_ac_docno AND a midnight timestamp, cross-checked). A bare
+# click timestamp is NOT converted into a date: no Processing Date means not
+# proceeded, and those orders are reported for a human.
+#
+# It does not touch or drop proceeded_at. Retiring a column is stop-writing,
+# stop-reading, then drop — separate changes, in that order.
+#
+# DRY-RUN by default and the transaction is rolled back. See
+# backend/scripts/unify-processing-date.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run (rolls back) or apply"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: unify-processing-date
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Unify the Processing Date (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows a crash and a half-finished run reports success
+        run: |
+          set -o pipefail
+          node scripts/unify-processing-date.mjs | tee unify-processing-date.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unify-processing-date-${{ inputs.mode }}
+          path: backend/unify-processing-date.txt
+          retention-days: 90

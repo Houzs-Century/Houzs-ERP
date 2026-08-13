@@ -340,6 +340,62 @@ Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
 approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
 
+#### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
+
+> Owner, verbatim intent: *"Company 1 (Houzs Century) 开单必须有 State。Company 2
+> (2990) 不需要。其他公司也不必填。以后要加新公司我会再讲。"*
+
+The AutoCount write-back refused both of the owner's first two test orders —
+`HC-SO-2608-002` came back `refused, nothing sent (MissingLocationError)`,
+because AutoCount's `FK_SODTL_Location` rejects a line whose `Location` is not
+a row in `dbo.Location` and an absent key reaches it as `""`. Neither order had
+a delivery address, so neither had a State, so `deriveSalesLocationFromState`
+returned null and the header saved with `sales_location` NULL. The ERP was
+accepting a class of order it already knew the account book would refuse, and
+only saying so afterwards in an outbox row.
+
+**The rule** (`backend/src/scm/lib/so-location-gate.ts`):
+
+| | |
+|---|---|
+| gated on | the **DERIVED warehouse** (`sales_location`), never on the bare presence of a State — a State with no `state_warehouse_mappings` row derives nothing either, so "a State was picked" does not answer AutoCount's question |
+| `so_state_required` | no State picked. The salesperson fixes it, on this screen |
+| `so_state_unmapped` | this State has no warehouse mapped. An **admin** task — naming it separately stops the salesperson being told to pick a State they already picked |
+| companies | `LOCATION_REQUIRED_COMPANY_CODES = ['HOUZS']`. Add a company by putting its `companies.code` in that array (and its twin in `so-form-validate.ts`); nothing else changes. Identified by CODE, not id — the bigint ids differ between staging and prod |
+| unknown company | **not gated**, same reasoning as `processingDateThresholdFor`'s looser fallback: over-gating stops the shop floor with no signal |
+| shape | one `SaveProblem` in the shared `validation_failed` + `problems[]` 422, so every SO surface renders it through the existing `humanApiError` / `SaveProblemsList` path |
+
+**Where it runs — the invariant is "wherever we enqueue an AutoCount create, a
+location exists".** There are exactly two such places, and both are gated:
+
+1. **Create** (`createSalesOrderCore`), on `asDraft !== true`, immediately after
+   `derivedSalesLocation` is resolved and before the header insert. A refusal
+   calls `rollbackPwpClaims()` first, so a rejected order burns no voucher.
+2. **`DRAFT -> live`** (`PATCH /:docNo/status`), on `fromNorm === 'DRAFT' &&
+   toStatus !== 'CANCELLED'` — the exact condition of the `enqueueSoCreate`
+   below it. Not gated on a cancel: discarding a junk scan draft queues no
+   create and must not be stranded.
+
+**Drafts are exempt**, same as the confirm gate and for the same reason: a
+draft is the scan job's guess awaiting an operator's verdict, is never written
+to AutoCount, and blocking it would break the scan flow. `backend/tests/soLocationGateWiring.test.ts`
+fails if a THIRD `enqueueSoCreate` callsite ever appears un-gated.
+
+**Frontend twins (change together).** The rule is `soStockLocationError` in the
+shared `frontend/src/vendor/scm/lib/so-form-validate.ts`, called by all four
+create surfaces — `SalesOrderNew`, `MobileNewSO` (create only; an EDIT enqueues
+an AutoCount *edit*, which leaves the book's own Location alone),
+`SalesOrderNewGuided` (inert — that flow always lands a DRAFT, wired so it is
+gated automatically if that ever changes) and `SalesOrderNewFromProducts`.
+
+> **`SalesOrderNewFromProducts` cannot raise a company-1 order.** That flow
+> collects no address by design ("address is added on the SO detail after
+> save") and lands CONFIRMED, so under company 1 it has no way to resolve a
+> warehouse. The page now says so up front and points at *Switch to Full form*,
+> rather than letting the operator build a cart and meet a 422. The backend
+> would refuse it either way — this is the UI telling the truth earlier, not a
+> second rule.
+
 **Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
 Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
 **Repair 2990 doc references**) stamps `warehouse_id` on the lines the read

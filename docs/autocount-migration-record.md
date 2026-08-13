@@ -618,7 +618,7 @@ written out in full because on Friday somebody has to walk up to that machine.
 | `C:\Temp\AcSyncService.prev.exe` | The rollback. Stop, restore, start |
 | `C:\Temp\ac-svc-key.txt` | The `X-API-KEY` the service requires. Must match the `AC_SYNC_KEY` Worker secret |
 | `C:\Temp\ac-sync-service.log` | Where the service writes. A `CreatedLines(...) failed:` line here is what a missing `lines` array in a create response means |
-| `C:\Tempc-svc-port.txt` | The port, as a FILE not a constant — 8899 turned out to be pinned inside `http.sys` by an orphaned listener registration from the cutover file server. Default 8900 |
+| `C:\Temp\ac-svc-port.txt` | The port, as a FILE not a constant — 8899 turned out to be pinned inside `http.sys` by an orphaned listener registration from the cutover file server. Default 8900 |
 | `C:\InistateConnector\setup.json` | Where the SQL credentials are read from at build time (`dbUsername` / `dbPassword`). Never copied into source |
 | `C:\Program Files\AutoCount\Accounting 2.2\` | The licensed assemblies. `csc.exe` references five of them |
 | LINQPad, **"Query 2"** | Intact, and it is the build button. Reassembles the bridge parts, substitutes, compiles, swaps the exe, posts the log back at `seq = -3` |
@@ -800,15 +800,49 @@ DELETE is deliberately absent: per 不可以删只可以 cancel, delete is not a
 
 | Doc | CREATE | CONVERT (in) | EDIT | CANCEL |
 |---|---|---|---|---|
-| **SO** | BUILT | n/a (no parent) | BUILT — **2,316 of 2,723** documents editable | BUILT |
-| **PO** | BUILT | n/a (no parent) | BUILT — **127 of 449** documents editable | BUILT |
-| **DO** | n/a by design | BUILT (SO to DO) | **NOTHING** | BUILT |
+| **SO** | **PROVEN** | n/a (no parent) | **PROVEN** (4.2-4.5) — **2,316 of 2,723** documents editable | **PROVEN** |
+| **PO** | **REFUSED** — `FK_PO_PurchaseAgent` | n/a (no parent) | BUILT — **127 of 449** documents editable | BUILT |
+| **DO** | n/a by design | **PROVEN** (SO to DO) | **NOTHING** | **PROVEN** |
 | **GR** | n/a by design | BUILT (PO to GR) | **NOTHING** | BUILT |
 | **SI** | n/a by design | BUILT (DO to IV) | **NOTHING** | **NOTHING** |
 | **PI** | n/a by design | BUILT (GR to PI) | **NOTHING** | **NOTHING** |
 
-**No cell anywhere is PROVEN.** The only live-book evidence is a manual SO create by a program that
-is no longer the one being shipped.
+**Five cells are PROVEN as of 2026-08-12**, all against the live `AED_HOUZS` book through the
+rebuilt service, all over the tunnel or its loopback:
+
+```
+/health      -> {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+/create-so   -> ZZERP-SO-20260812-012957, DtlKey 895100                     (4.1)
+/edit  x4    -> keyless REFUSED / by-key / IsNewLine / Retire               (4.2-4.5, ZZERP-0001)
+/so-to-do    -> DO-011260, 1 line   <- a REAL DO number was consumed
+/cancel      -> DO then SO, both cancelled and NOT deleted
+```
+
+**`/create-po` is REFUSED on the live book** — `FK_PO_PurchaseAgent`, read out of
+`C:\Temp\ac-sync-service.log`, not out of the 500. A purchase order's agent lives in
+`dbo.PurchaseAgent`, a different master from the sales agent `ensure-masters` was opening. Fixed on
+both sides; **the fix is not yet deployed to the host**, so PO create and `po-to-gr` remain
+unproven. The full foreign-key chain and the values known to exist are in
+`docs/modules/autocount-writeback.md` section 7m.
+
+**CORRECTION, 2026-08-12.** An earlier revision of this section said AutoCount does NOT refuse to
+cancel a document already transferred downstream. **That was wrong**, and it was written from a
+test result rather than from the book. The service log says the opposite in as many words:
+
+```
+ERROR /cancel: AutoCount.Invoicing.TransferedDocNotAllowToCancelException:
+  The document was transfered to other document, so it is not allow to cancel.
+```
+
+**AutoCount DOES refuse.** Cancel the child before the parent — which is what the teardown in
+`qa-convert.ps1` already does, and why it succeeds.
+
+The false reading came from the harness, not the book: `qa-convert.ps1`'s `Call` helper returns
+`status = 0` when a `WebException` carries no `Response` object, and step 6 asserts `status >= 400`.
+A genuine refusal therefore scored as a failure. The same defect made `/create-po`'s foreign-key
+error read as `status=0` instead of 500. **A test whose failure path cannot tell "refused" from
+"could not ask" will eventually report the world backwards** — and it did, into this document,
+which is why the correction is written here rather than quietly edited out.
 
 **The asymmetry is entirely on the ERP side.** The AutoCount service already serves more than the
 ERP asks of it:
