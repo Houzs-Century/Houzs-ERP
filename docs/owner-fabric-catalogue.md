@@ -169,10 +169,21 @@ owner 自己的 249 行(Converter 78、销售库 171)报成
 推导脚本都要 import;seed 新加的系列必须在清单里(否则下次 normalize 会把它推翻);
 除了 seed 和这份 lib,没有第三个档案列满 12 个。
 
-### jsonb 的写法是 `jsonb_set(..., to_jsonb($1::text))`
+### jsonb 写法有两条,不是一条
+
+**写单一个 key(scalar):`jsonb_set(..., to_jsonb($1::text))`。** 这是这批脚本在用的。
+
+**写一整个 object:`$n::text::jsonb`,那个 `::text` 是关键。** 只写 `$n::jsonb`
+没有用 —— postgres.js 已经把参数标成 jsonb 了,再 cast 一次等于没 cast,结果存进去
+的是一个 jsonb **字符串**,不是 object。2026-08-13 就是这样把 7 笔 prod 资料写坏的,
+而且写坏它的正是当初为了修这个 bug 才写的那支脚本。
 
 把已经序列化好的字符串绑到 jsonb 参数上,是 2026-08-10 一天之内毁掉 variants 栏三次的
-那个写法。见 `docs/jsonb-double-encoding-coe.md`。
+那个写法。两次的完整经过见 `docs/jsonb-double-encoding-coe.md`(第二次在
+*IT RECURRED* 那一节)。
+
+> 2026-08-14 补:这一节本来只写了 scalar 那半条,并且把它当成「jsonb 的写法」。
+> 少掉的那半条正是让同一个 bug 再犯一次的原因。
 
 ---
 

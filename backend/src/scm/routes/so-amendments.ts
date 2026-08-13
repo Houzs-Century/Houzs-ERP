@@ -29,7 +29,7 @@ import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
-import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
+import { canonicaliseSoHeaderChanges, soDatePairRefusal } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -562,7 +562,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      Re-validate against the SO's CURRENT other date at the moment of
      approval: the last write that can still say no. Fail-open on a missing SO
      row — the apply path right below owns that refusal. */
-  const headerChanges = amendment.header_changes ?? null;
+  /* CANONICALISE FIRST. `canonicaliseSoHeaderChanges` was imported into this
+     file and never called: every `'processingDate' in headerChanges` test below
+     read the RAW stored jsonb, so a Processing-Date amendment submitted under
+     the pre-rename key (`internalExpectedDd`) walked past this whole block —
+     the date-order re-check, the pair re-check and the deposit / completeness
+     gate — and was applied by so-revision.ts, which DOES canonicalise. The gate
+     and the write must read the same shape or the gate is decoration. */
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
       .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
@@ -576,6 +583,31 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     const nextDeliv = 'customerDeliveryDate' in headerChanges
       ? ymd(headerChanges['customerDeliveryDate'])
       : ymd(cur.customer_delivery_date);
+    /* THE PAIR RE-CHECK, which this path did not have. The submit-time XOR
+       (mfg-sales-orders.ts, amendment_dates_xor) validates the COMBINED request,
+       and the two-lane split then turns a both-dates reschedule into two
+       one-signature documents — so by the time this half is approved the SO's
+       other date may have been cleared, or the sibling lane rejected, and
+       applying this one alone leaves the order holding exactly one date. Nothing
+       downstream re-checks it: applySoAmendment writes what it is given. Same
+       predicate as every other write path; the CURRENT stored pair is the
+       original, so approving an amendment that changes neither date on a legacy
+       unpaired order is still allowed. */
+    const stalePair = soDatePairRefusal({
+      nextProc, nextDeliv,
+      origProc: ymd(cur.processing_date),
+      origDeliv: ymd(cur.customer_delivery_date),
+    });
+    if (stalePair) {
+      return c.json({
+        error: 'amendment_dates_pair_stale',
+        reason:
+          `Approving this would leave the order with only one of the two dates ` +
+          `(Processing ${nextProc || '—'}, Delivery ${nextDeliv || '—'}). ` +
+          'The other half of the paired reschedule was rejected, or the order\'s dates have moved since this ' +
+          'was requested — reject this amendment and re-request both dates together.',
+      }, 409);
+    }
     if (nextProc !== '' && nextDeliv !== '' && nextProc > nextDeliv) {
       return c.json({
         error: 'amendment_dates_order_stale',
