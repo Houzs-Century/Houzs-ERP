@@ -28,6 +28,8 @@
 // live add-on, so it can never remove something staff are still choosing.
 //
 // plan (default) writes nothing. apply needs CONFIRM='I HAVE REVIEWED THE DRY-RUN'.
+//
+// RE-RUN: inert. A purged row is gone; the remaining ones are re-tested for being unused on every run.
 
 import postgres from "postgres";
 

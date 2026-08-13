@@ -31,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { computeVariantKey } from "../src/scm/shared/variant-key.ts";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -59,7 +60,7 @@ function claimedGroups(remark) {
    script's lens is NARROWER (it also drops CANCELLED/CLOSED/DELIVERED/SHIPPED/
    INVOICED but keeps DRAFT); competing claims must be counted with the
    ALLOCATOR's lens, because those are the lines that really take the stock. */
-const ALLOC_EXCLUDED = ["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"];
+const ALLOC_EXCLUDED = SO_TERMINAL_STATES;
 const WH_NONE = "NOWH";
 const FAR_FUTURE = "9999-12-31";
 const dateKey = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? ""));

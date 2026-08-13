@@ -89,3 +89,35 @@ export const canonLabel = (p) => {
   return p.name ? `${id} ${p.name}` : id;
 };
 
+/* A supersede / merge stamp is bookkeeping, never part of a colour name.
+   "BO315-2-FEATHER [MERGED into BO315-02 on 2026-08-11 - superseded, not
+   deleted]" must read as "BO315-2-FEATHER" wherever a name is being looked
+   for, or the stamp itself becomes the name on the next pass. */
+export const stripNote = (s) => String(s ?? "").replace(/\[.*$/s, "").trim();
+
+/* THE COLOUR NAME DOES NOT ONLY LIVE IN THE CODE, and after this family has
+   run once it lives ONLY in the label.
+
+   Before 2026-08-11 the name was carried by the code itself - "J9226-1 SAND".
+   The first pass moved it where the owner wanted it: code "J9226-01", label
+   "J9226-01 SAND". Parsing that now-clean code yields NO name, so a second
+   pass that re-derives the label from the code alone rewrites "J9226-01 SAND"
+   to a bare "J9226-01" and DELETES the colour name. The production PLAN of
+   2026-08-13 proposed exactly that for 200 colours, every one of them with the
+   code unchanged - the whole diff was a name being erased. Caught before
+   apply.
+
+   So the label is a name SOURCE, not only an output. Only a label that AGREES
+   with the code may donate one: it is parsed with this same rule and its
+   series+number must canonicalise to the same id, so a stale, mismatched or
+   hand-typed label can never move a name onto a different colour. */
+export function nameFromLabel(colourId, label) {
+  const lab = stripNote(label);
+  if (!lab) return null;
+  const lp = parse(lab);
+  if (!lp || !lp.name) return null;
+  const cp = parse(colourId);
+  if (!cp || canonId(cp) !== canonId(lp)) return null;
+  return lp.name;
+}
+

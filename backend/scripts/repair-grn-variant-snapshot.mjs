@@ -34,7 +34,9 @@
    failure in docs/jsonb-double-encoding-coe.md. Values are bound with
    tx.json(), never JSON.stringify, since postgres.js serialises jsonb itself
    and a pre-serialised string lands as a jsonb string scalar. Rows are counted
-   from RETURNING, never the command tag, and re-read on a FRESH CONNECTION. */
+   from RETURNING, never the command tag, and re-read on a FRESH CONNECTION.
+
+   RE-RUN: inert. A patched value is no longer one that 'could not have been a measurement', so it drops out of scope. */
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

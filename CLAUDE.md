@@ -47,6 +47,45 @@ than no fact: this file is auto-loaded, so every session believes it. It
 described the database as "D1 SQLite" for over a month after the Postgres
 cutover, and pointed at a migration directory that production does not read.
 
+## ⚠️ A number in a comment is a fact with an expiry date — MANDATORY (owner rule)
+
+If you write a measurement into a comment, a doc, or a commit message — a file
+count, a duration, a row count, a "we chose N because" sizing argument — you own
+keeping it true, or you make it self-checking. A stale number is worse than no
+number: the next person does arithmetic on it and inherits your error without
+ever knowing they trusted anything.
+
+This rule was bought at full price. `ci.yml` explains its 4-way test shard with
+a worked calculation over "112 files" and a "334s" suite. By 2026-08-13 the
+suite was **277 files** and one shard alone ran **~380s**. Every later decision
+that reasoned from that comment — including the first plan written to fix the CI
+slowdown — was wrong in the same direction. See `docs/ci-capacity-coe.md`.
+
+So: prefer a generated artifact with an `audit:` gate over a hand-written
+number (`npm run audit:test-schema`, `audit:map`, `audit:routes` are the shape
+to copy). If it must be prose, date it inline — "as of 2026-08-13, 277 files" —
+so the reader can see how much to trust it.
+
+## ⚠️ Measure before you optimise, and put the stopwatch in the PR — MANDATORY (owner rule)
+
+Never ship a performance change justified by arithmetic alone. Run the probe,
+paste the before/after, and name the tool that produced it — same evidential bar
+`BUG-HISTORY.md` sets for root causes, and the COE section above sets for
+incidents.
+
+The cost of skipping it, from the same incident: `tests/setup.ts` replayed 147
+migrations per test file, ~283,000 database round-trips per suite run. It is an
+overwhelming-looking number and it was the wrong target — timed inside the pool,
+those 1020 statements took **391ms**. The real cost was per-file workerd startup,
+which no amount of SQL work would have touched.
+
+Performance work also carries the owner's standing rule that it must not
+destabilise: change only what you can show is behaviour-preserving. When a
+rebuild or fixture is involved, that means proving equivalence against the real
+runtime — see `backend/tests/schemaSnapshotParity.test.ts`, which is what caught
+a `PRAGMA foreign_keys` difference that was silently putting 90 impossible rows
+into every test database.
+
 ## `main` IS protected now — since 2026-07-31
 
 The owner created the `main-protection` **ruleset**. Verify it rather than
@@ -161,6 +200,23 @@ Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
 
+**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
+use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+repo level or in any of its three environments. If your script needs a
+PostgREST-shaped client — because it imports a real service function out of
+`src/` rather than re-implementing it, which is the right instinct — it needs
+the SHAPE, not PostgREST credentials: `backend/scripts/lib/pgrest-shim.mjs`
+gives you `sb.from(...)` over the pg connection. Copy
+`recompute-so-allocation.mjs`, which does exactly this.
+
+**Do NOT copy `recompute-2990-so-allocation.yml`.** It is three characters away
+from that one by name and it is wired to `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY`, which do not exist here — so it has never run and
+cannot. On 2026-08-13 a new workflow was written by copying it and failed on its
+first dispatch with both secrets empty. `SOURCE_SUPABASE_URL` /
+`SOURCE_SERVICE_ROLE_KEY` DO exist and are a third thing again: they point at
+the 2990 SOURCE system, not at Houzs.
+
 Rules for anything in this shape:
 
 - **Read-only means read-only.** One statement, no DDL, no writes, no
@@ -229,6 +285,22 @@ Not generic narrative.
 ## Coding conventions specific to this repo
 
 - **No emoji.** Anywhere. Empty states, status copy, comments, commits.
+- **A parameter that DECIDES something is required, never optional.** If its
+  absence changes an answer — a gate, an exemption, a scope, a threshold, a
+  default that is not neutral — write it as `x: T | null` and let the compiler
+  enumerate the call sites. `x?: T` means every caller that says nothing keeps
+  the OLD behaviour, with no compile error, no failing test and no runtime
+  signal, so the rule ends up applying only where someone remembered it. This
+  cost four days on `itemCode` (DIVAN ONLY lines kept demanding a mattress Gap
+  after PR #1763 said "every desktop + mobile call site"), and the same hole
+  shipped `onMultiPo` on the drop-ship batch resolver, where the silent default
+  was the permissive one. Where "no value" is legitimate, pass an explicit
+  `null` — it reads as a decision — and assert what `null` means. An optional
+  parameter is acceptable only when its absence is the STRICTER direction, and
+  then the comment has to say so (precedents: `assertNotMirrored`'s missing
+  context leaves the guard active; `scopeToCompanyId` in
+  `scm/lib/companyScope.ts` states this rule in full). See **BUG CLASS
+  optional-param-noop** at the top of `BUG-HISTORY.md`.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw
@@ -273,6 +345,27 @@ Not generic narrative.
   wiki's *Polling Strategy* note for cadence and rationale.
 - **URL is state.** Filters/tabs/modes go in `useSearchParams`.
   localStorage is fallback for personal prefs only.
+- **Company scope: the predicate is the only isolation — on WRITES too.**
+  The SCM/Houzs supabase client is the **service role**, so it **bypasses
+  RLS** and no policy is ever evaluated on an app request. The
+  `company_id` predicate a statement carries is the entire tenant
+  boundary. Three rules follow:
+  (a) put it on the write itself, not only on the read that preceded it —
+  nothing re-checks between two PostgREST round trips, which is how a
+  scoped-read-then-open-update shipped across the whole system;
+  (b) a parent-ownership predicate (`so_doc_no`, `purchase_invoice_id`,
+  `trip_id`) proves the row is on that document, NOT that the document is
+  in your books — you need both;
+  (c) a cross-company module still takes a predicate, just a wider one
+  (`scopeToAllowedCompanies` = the caller's granted companies); "shared
+  queue" never means "no predicate". Use `scopeToCompany` /
+  `scopeToCompanyId` from `scm/lib/companyScope.ts` (that file's header is
+  the reference), and `maybeSingle` not `single` on any by-id statement
+  carrying one — the predicate can legitimately match zero rows and
+  `single()` reports that honest 404 as a 500. If a route is
+  deliberately cross-company or deliberately shared, say so in a comment
+  naming why, so the next sweep does not "fix" it. Background:
+  `docs/MULTICOMPANY-MODULE-MAP.md`.
 - **Permissions are flat strings**, e.g. `projects.read`. Catalogue
   lives in `backend/src/services/permissions.ts`. New verbs since
   mig 047: `projects.chat`, `projects.checklist.tick` — use

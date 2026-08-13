@@ -421,7 +421,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning?region=<ALL|code>&state=<delivery_state|ALL>
    The board. Source = live (status NOT DRAFT/CANCELLED) mfg_sales_orders that
-   need delivery (have a customer_delivery_date or internal_expected_dd) +
+   need delivery (have a customer_delivery_date or processing_date) +
    their DOs. delivery_state derived LIVE per SO. Region classified from the
    customer's STATE (stateToRegionsFromConfig).
    ─────────────────────────────────────────────────────────────────────────*/
@@ -459,7 +459,7 @@ deliveryPlanning.get('/', async (c) => {
   }
 
   /* 2. Live SO headers needing delivery — NOT DRAFT / CANCELLED, and carrying a
-        delivery date signal (customer_delivery_date or internal_expected_dd).
+        delivery date signal (customer_delivery_date or processing_date).
         Paginated so the 1000-row PostgREST cap never silently truncates. */
   type SoHeaderRow = {
     doc_no: string | null; debtor_code: string | null; debtor_name: string | null;
@@ -467,7 +467,7 @@ deliveryPlanning.get('/', async (c) => {
     company_id: number | null;
     phone: string | null; branding: string | null; status: string | null; delivery_state: string | null;
     customer_state: string | null; customer_country: string | null;
-    customer_delivery_date: string | null; internal_expected_dd: string | null;
+    customer_delivery_date: string | null; processing_date: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
     local_total_centi: number | null; balance_centi: number | null;
@@ -490,7 +490,7 @@ deliveryPlanning.get('/', async (c) => {
          query ("column mfg_sales_orders.id does not exist") → soErr → the board 500s
          with load_failed. The SO's identity on this board is its doc_no; every join
          below keys on doc_no / so_doc_no, never an id. */
-      .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, internal_expected_dd, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
+      .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
@@ -498,10 +498,10 @@ deliveryPlanning.get('/', async (c) => {
   );
   if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
   /* Only SOs that actually need delivering — they carry a date signal
-     (customer_delivery_date OR internal_expected_dd). Filtered
+     (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
   const soRows = (soRowsRaw ?? []).filter(
-    (r) => r.customer_delivery_date != null || r.internal_expected_dd != null,
+    (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
 
@@ -885,7 +885,7 @@ deliveryPlanning.get('/', async (c) => {
     const remaining = remainingByDoc.get(docNo) ?? 0;
     const status = String(r.status ?? '').toUpperCase();
     const customerDD = r.customer_delivery_date ?? null;
-    const internalDD = r.internal_expected_dd ?? null;
+    const procDate = r.processing_date ?? null;
     /* Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
        the amended date (when set) is what we now commit to. EFFECTIVE date =
        amended_delivery_date ?? customer_delivery_date — it drives days_left AND
@@ -983,8 +983,8 @@ deliveryPlanning.get('/', async (c) => {
       amend_reason: r.amendReason ?? r.amend_reason ?? null,
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
-      internal_expected_dd: internalDD,
-      /* Feeds procLockActive in the drawer alongside internal_expected_dd. */
+      processing_date: procDate,
+      /* Feeds procLockActive in the drawer alongside processing_date. */
       po_locked: poLockedDocs.has(docNo),
       days_left: daysBetween(today, effectiveDD),
       // address (HC delivery-sheet columns)
@@ -1166,7 +1166,7 @@ deliveryPlanning.get('/', async (c) => {
           amended_delivery_date: leg.date,
           amend_reason: null,
           effective_delivery_date: leg.date,
-          internal_expected_dd: leg.date,
+          processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
@@ -1330,7 +1330,7 @@ deliveryPlanning.get('/', async (c) => {
         amended_delivery_date: date,
         amend_reason: null,
         effective_delivery_date: date,
-        internal_expected_dd: date,
+        processing_date: date,
         /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
            number, and it carries no replacement_disposal for the drawer to lock. */
         po_locked: false,
@@ -1467,7 +1467,7 @@ deliveryPlanning.get('/', async (c) => {
           amended_delivery_date: leg.date,
           amend_reason: null,
           effective_delivery_date: leg.date,
-          internal_expected_dd: leg.date,
+          processing_date: leg.date,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
@@ -2072,7 +2072,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
      fields here (possession/house type/referral/DP amend dates) stay FREE. */
   if (soUpdates['replacement_disposal'] !== undefined && soDocNo) {
     const { data: lockRow } = await sb.from('mfg_sales_orders')
-      .select('internal_expected_dd, proceeded_at, status')
+      .select('processing_date, proceeded_at, status')
       .eq('doc_no', soDocNo).maybeSingle();
     const before = await sb.from('mfg_sales_orders')
       .select('replacement_disposal').eq('doc_no', soDocNo).maybeSingle();
@@ -2088,7 +2088,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
        sentence — a second code here would need its own entry to avoid surfacing
        raw. */
     const dpLocked = genuineChange && (
-      soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)
+      soProcessingLocked(lockRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)
       || await soPoLocked(sb, soDocNo)
     );
     if (dpLocked) {
@@ -2147,7 +2147,11 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (Object.keys(doUpdates).length > 0) {
     if (doId) {
       doUpdates.updated_at = new Date().toISOString();
-      const { error } = await sb.from('delivery_orders').update(doUpdates).eq('id', doId);
+      /* The board is a CROSS-COMPANY view, so the predicate WIDENS to the
+         caller's granted companies rather than pinning the active one — but it
+         is still a predicate. Without it, this service-role write reaches a DO
+         in a company the caller holds no grant for; nothing else re-checks. */
+      const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
         if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
         return c.json({ error: 'update_failed', reason: error.message }, 500);

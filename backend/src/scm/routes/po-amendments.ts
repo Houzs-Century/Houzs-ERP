@@ -433,6 +433,9 @@ poAmendments.patch('/:id/approve', (c) => {
    the amendment simply closes REJECTED (freeing uq_po_amendment_open). The reason
    is REQUIRED and persisted so the requester can see WHY (mirror so-amendments). */
 poAmendments.patch('/:id/reject', async (c) => {
+  // WRITE: the company must RESOLVE (companyScope.ts strict rule).
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.po_amendment.approve')) {
@@ -466,6 +469,10 @@ poAmendments.patch('/:id/reject', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite scoped the LOAD; the predicate is repeated on the
+       WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, po_id, po_number, amendment_no, status, resolution, rejection_reason, version')
@@ -569,6 +576,9 @@ poAmendments.patch('/:id/reject', async (c) => {
    which releases uq_po_amendment_open so a corrected request can be raised.
    REQUESTED only — the state machine enforces it. */
 poAmendments.patch('/:id/withdraw', async (c) => {
+  // WRITE: the company must RESOLVE (companyScope.ts strict rule).
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
@@ -609,6 +619,10 @@ poAmendments.patch('/:id/withdraw', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite scoped the LOAD; the predicate is repeated on the
+       WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, po_id, po_number, amendment_no, status, resolution, rejection_reason, version')

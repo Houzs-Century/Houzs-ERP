@@ -28,6 +28,7 @@
 // the answer IS the output. Non-zero only when the database is unreachable.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -67,7 +68,9 @@ async function hasTable(table) {
   return !!r;
 }
 
-const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+/* The read-side "stock has already gone out" set — one declaration, in
+   lib/do-shipped-states.mjs. */
+const SHIPPED = DO_STOCK_OUT_STATES;
 
 try {
   /* ── 1. THE INDEXES THAT ARE NOT IN ANY FILE ───────────────────────────────
@@ -335,7 +338,7 @@ try {
   for (const [t, c] of [
     ["mfg_sales_orders", "linked_ac_docno"],
     ["mfg_sales_orders", "migrated_no_stock"],
-    ["mfg_sales_orders", "internal_expected_dd"],
+    ["mfg_sales_orders", "processing_date"],
     ["purchase_orders", "linked_ac_docno"],
     ["purchase_orders", "migrated_no_stock"],
   ]) {
@@ -345,11 +348,11 @@ try {
   if (await hasCol("mfg_sales_orders", "linked_ac_docno")) {
     const [m] = await pg`
       SELECT COUNT(*)::int AS migrated,
-             COUNT(*) FILTER (WHERE internal_expected_dd IS NOT NULL)::int AS with_dd
+             COUNT(*) FILTER (WHERE processing_date IS NOT NULL)::int AS with_dd
         FROM scm.mfg_sales_orders
        WHERE linked_ac_docno IS NOT NULL`;
     console.log("");
-    notice(`6a. ${m.migrated} migrated SO(s) (linked_ac_docno set). ${m.with_dd} of them already carry internal_expected_dd — those are the ones that can reach the amendment path TODAY.`);
+    notice(`6a. ${m.migrated} migrated SO(s) (linked_ac_docno set). ${m.with_dd} of them already carry processing_date — those are the ones that can reach the amendment path TODAY.`);
 
     const lineTable = (await hasTable("mfg_sales_order_items")) ? "mfg_sales_order_items" : null;
     if (lineTable && (await hasCol(lineTable, "unit_price_centi"))) {

@@ -94,7 +94,7 @@ type SoHeader = {
   sales_location?: string | null;
   customer_po?: string | null;
   customer_delivery_date?: string | null;
-  internal_expected_dd?: string | null;
+  processing_date?: string | null;
   ship_to_address?: string | null;
   email?: string | null;
   city?: string | null;
@@ -365,10 +365,9 @@ export async function renderSalesOrderInto(
   });
 
   // ── Resolve processing + delivery dates (folded into ORDER DETAILS below).
-  /* Owner 2026-06-12 — Processing Date lives in internal_expected_dd (PR #140
-     renamed only the LABEL; the legacy processing_date column was dropped in
-     mig 0189). */
-  const processingDate = header.internal_expected_dd ?? null;
+  /* Owner 2026-06-12 — Processing Date lives in processing_date: one column
+     (0189), one name (0284). */
+  const processingDate = header.processing_date ?? null;
   const deliveryDate = header.customer_delivery_date ?? null;
 
   // ── BILL TO + ORDER DETAILS (unified Hookka-tidy info block) ──────

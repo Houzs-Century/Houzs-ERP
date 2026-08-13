@@ -32,6 +32,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: convergent. Writes AutoCount's own qty/received_qty/delivery_date, which do not move between runs.
  */
 import fs from "node:fs";
 import zlib from "node:zlib";

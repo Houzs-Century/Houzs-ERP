@@ -10,6 +10,8 @@
 // sku_mint inserts {MODEL}-{COMP} named "SOFA {model name} {COMP}", and any
 // compartment code new to the maintenance pool is appended as a NEW
 // maintenance_config_history row (append-only).
+//
+// RE-RUN: convergent, but APPENDS a maintenance_config_history row on every run; the SKU inserts and the allowed_options write test the current state first.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

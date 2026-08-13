@@ -22,7 +22,7 @@ import {
 
 /* A pristine locked SO header, as `before` would look inside the handler. */
 const BEFORE: Record<string, unknown> = {
-  internal_expected_dd: '2026-07-10',
+  processing_date: '2026-07-10',
   customer_delivery_date: '2026-08-01',
   customer_state: 'Selangor',
   sales_location: 'SELANGOR',
@@ -124,7 +124,7 @@ describe('lockedColumnsChanged — FREE fields pass straight through', () => {
 describe('lockedColumnsChanged — the Remove-Processing-Date escape hatch', () => {
   it('lets a super-admin CLEAR the processing + delivery dates', () => {
     expect(lockedColumnsChanged(
-      { internal_expected_dd: '', customer_delivery_date: '' },
+      { processing_date: '', customer_delivery_date: '' },
       BEFORE,
       { superAdminClearsProcessingDate: true },
     )).toEqual([]);
@@ -134,10 +134,10 @@ describe('lockedColumnsChanged — the Remove-Processing-Date escape hatch', () 
     // To reschedule a locked SO: remove the date first (unlocks), then set the
     // new pair. Moving it directly stays a 409 even for a super-admin.
     expect(lockedColumnsChanged(
-      { internal_expected_dd: '2026-07-25' },
+      { processing_date: '2026-07-25' },
       BEFORE,
       { superAdminClearsProcessingDate: true },
-    )).toEqual(['internal_expected_dd']);
+    )).toEqual(['processing_date']);
   });
 
   it('does not let the escape hatch leak onto State / Postcode / City', () => {
