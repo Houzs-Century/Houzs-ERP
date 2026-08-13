@@ -38,10 +38,17 @@ Two independently deployed apps in one repo, plus two small side services.
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |
 
 `deploy.yml` splits by changed path, so a frontend-only push does not redeploy the
-Worker. The backend job runs `audit:routes`, `typecheck`, `test`, then
-`pg-migrate.mjs` against production, then deploys, then smoke-checks. **Migrations
-run before the Worker goes live and on every deploy** — which is why a single broken
-migration file blocks all deploys, not just its own.
+Worker. The backend job runs `audit:routes`, `audit:job-types`,
+`audit:work-order-states`, `typecheck`, then `pg-migrate.mjs` against production,
+then deploys, then smoke-checks. **Migrations run before the Worker goes live and
+on every deploy** — which is why a single broken migration file blocks all
+deploys, not just its own.
+
+`npm test` is NOT in that list any more — it moved out to the separate
+`backend-tests` matrix job, and `deploy.yml` says so in its own comment beside
+the gap. This sentence still named `test` between `typecheck` and `pg-migrate`
+until 2026-08-14; the assertion at the top of the backend job is what keeps the
+suite a gate now, not its presence in this sequence.
 
 ## 2. Backend — what each area is for
 
@@ -106,8 +113,8 @@ migration file blocks all deploys, not just its own.
 **Two migration trees; only one reaches production.** `migrations-pg/` is applied to
 prod by `deploy.yml` on every deploy. `migrations/` is the D1/SQLite tree — it is
 NOT dead and must not be deleted, but nothing applies it to production: it exists so
-backend vitest can build an in-process D1 with the same shape (`vitest.config.ts`
-reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
+backend vitest can build an in-process D1 with the same shape
+(`vitest.config.mts` reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
 that must hold in prod goes in `migrations-pg/`; a mirror in `migrations/` only
 buys test parity. The generated facts file states which is which, derived from the
 workflow and the runner scripts rather than from anyone's memory.
@@ -155,7 +162,15 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-- **`frontend/src/pages/Projects.tsx` (~12,400 lines)** — the entire events ERP in
+> Sizes were typed inline here as `(~N lines)` until 2026-08-14, against this
+> file's own rule three screens up (*"a number typed here is a number that will
+> be wrong"*). They were: four of the six had drifted 12–20% low. They are now
+> removed rather than refreshed — refreshing them would just restart the clock.
+> `docs/generated/codebase-map-facts.md` §3 ranks the top 20 by line count.
+> Note it also lists `backend/src/services/autocount-sofa-corpus.ts`, now among
+> the largest files in the tree and absent from the list below.
+
+- **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
   helpers, `Projects()` (the shell), `ProjectsListView`, `ProjectsFinancesView`,
   `ProjectsAnalyticsView`, `ProjectsCalendarView` (with its popovers and day modal),
@@ -163,7 +178,7 @@ facts file; the point here is the shape of each file so you can jump.
   strip, stage stepper, tasklist sections, documents, checklist rows, stock
   transfers, and the logistics crew/schedule editors at the very bottom. Grep the
   component name, then read around it.
-- **`backend/src/scm/routes/mfg-sales-orders.ts` (~10,400 lines)** — the Sales Order
+- **`backend/src/scm/routes/mfg-sales-orders.ts`** — the Sales Order
   module, and the pricing-critical one. Top third: the guards and gate helpers
   (`soHasDownstream`, `soProcessingLocked`, `soStatusTransitionError`,
   `gateSoFinance`) and the validation helpers. Middle: `createSalesOrderCore` and the
@@ -171,19 +186,19 @@ facts file; the point here is the shape of each file so you can jump.
   calls, so never reimplement a create beside it. Then header PATCH and delivery-fee
   re-derivation, then item CRUD with `recomputeTotals`, then per-line photos, then
   payments (`recordSoPaymentRow`), then the debtor lookup at the end.
-- **`frontend/src/pages/ServiceCases.tsx` (~8,000 lines)** — ASSR. `ServiceCases()`
+- **`frontend/src/pages/ServiceCases.tsx`** — ASSR. `ServiceCases()`
   and the list/board/calendar views first, then `CreatePanel`, then `DetailContent`
   and the exported `ServiceCaseDetail`, then the detail's parts: stage rows,
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
-- **`frontend/src/pages/scm-v2/Products.tsx` (~5,500 lines)** — tabbed: `SkuMasterTab`
+- **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
   (with its virtualised row list and inline price editors) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
-- **`frontend/src/pages/Team.tsx` (~5,200 lines)** — user management. `Team()` shell,
+- **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
   `MembersTab`, `MemberDetail` / `MemberCard` / `EditMemberPanel`, brands panel, then
   `OrgChartTab` and its drag-and-drop machinery at the bottom.
-- **`backend/src/scm/routes/scan-so.ts` (~4,800 lines)** — see §6. Anthropic plumbing
+- **`backend/src/scm/routes/scan-so.ts`** — see §6. Anthropic plumbing
   and catalog loading first, then prompt construction and cache warming, then slip
   normalisation and validation, then the sample/rule distillation layer, then the
   route handlers.
@@ -363,9 +378,13 @@ re-check the cited file rather than trusting the line.
   Off means the code path is not taken: with the var off, neither the fallback
   lookup nor the liveness recording runs at all (pinned by
   `backend/tests/sessionFallback.test.ts`).
-- **`HOUZS_OWNS_2990`** is the cutover flip. While false, Houzs holds a read-only
+- **`HOUZS_OWNS_2990` = `"true"`** in BOTH prod and staging (`backend/wrangler.toml`
+  `:82` and `:315`, checked 2026-08-14). The cutover has flipped. This bullet used
+  to describe only the `false` branch — *"while false, Houzs holds a read-only
   mirror of the `2990-` document namespace and the mirror guards refuse Houzs-side
-  creates/edits of those documents.
+  creates/edits"* — and never stated the live value, so a reader landed on the half
+  that no longer applies. Every sibling bullet in this section states its value;
+  this one now does too.
 - **Staging is not a copy of prod**: its own Supabase project, its own queues and KV,
   no Analytics Engine binding, and `crons = []`. Bindings do not inherit into named
   wrangler envs — adding one to prod does not add it to staging.

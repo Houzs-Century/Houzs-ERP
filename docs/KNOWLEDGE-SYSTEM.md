@@ -144,9 +144,15 @@ None of this is invented here. The industry names, so you can search them:
 
 ## 6. Keeping this true
 
-- `npm --prefix backend run audit:map` regenerates `docs/generated/`. Run it when
-  you add routes, migrations or mobile screens. It is deliberately **not** a CI
-  merge gate — a stale navigation doc must never block a deploy.
+- **`audit:map` CHECKS; it does not regenerate.** It is
+  `gen-codebase-map.mjs --check`, which exits 1 on drift and writes nothing. To
+  actually rewrite the artifact run the generator bare:
+  `node backend/scripts/gen-codebase-map.mjs` (and
+  `node backend/scripts/gen-route-locator.mjs` for the locator). There is no
+  `gen:map` script. Run them when you add routes, migrations or mobile screens.
+  Neither `--check` is a CI merge gate — a stale navigation doc must never block
+  a deploy — which is exactly why both artifacts were found STALE on `main` on
+  2026-08-14.
 - The hand-written layers have no automation. They stay true only because the rule
   in §2 keeps them small enough to be worth re-reading. **If a hand-written doc
   starts filling up with numbers, that is the signal to teach the generator

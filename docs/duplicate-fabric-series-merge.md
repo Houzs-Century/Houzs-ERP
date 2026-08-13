@@ -74,20 +74,40 @@ implementation, would delete nine named colours from the picker in favour of a
 series whose only colour is labelled literally `FABRIC`. The tool reports the
 before and after colour by colour and stops rather than guessing.
 
-## Four document arms, not two
+## FIFTEEN document arms — read `ARMS`, never a count in prose
 
 The reference **count** that picks the winner comes from SO and PO lines. The
-**repoint** has to reach every table whose `variants` can name a series —
-`mfg_sales_order_items`, `purchase_order_items`, `grn_items`,
-`delivery_order_items` — or a merge leaves an arm pointing at a superseded row.
-That is the same unswept-arm shape #1964 found in the GRN snapshot. All four are
-measured and written.
+**repoint** has to reach every table whose `variants` can name a series, or a
+merge leaves an arm pointing at a superseded row — the same unswept-arm shape
+#1964 found in the GRN snapshot.
+
+**That list is `ARMS` in `backend/scripts/lib/fabric-write.mjs`, and nothing
+else.** `merge-duplicate-fabric-series.mjs` imports it and iterates all of it;
+it prints `all <N> arms` at run time rather than a number anyone typed.
+
+> **This heading said "Four document arms, not two" until 2026-08-14, and it
+> named four tables** — `mfg_sales_order_items`, `purchase_order_items`,
+> `grn_items`, `delivery_order_items` — as though four were the whole system.
+> Four was true on 2026-08-11 and became fifteen on 2026-08-13. The correction
+> already existed three paragraphs below, in the jsonb section, which is no use
+> to a reader who greps for "arms" and stops at the first normative heading.
+> The merge script's own header calls this document out by name for exactly
+> that. A count in a heading is the worst place to put one.
 
 ## The jsonb write
 
-`jsonb_set(..., to_jsonb($1::text))` over plain text binds. Nothing
-pre-serialized is ever handed to a jsonb parameter, and there is no `||` merge
-whose operand could be a non-object — the two failure modes that destroyed the
+`jsonb_set(..., to_jsonb($1::text))` over plain text binds. That is the rule for
+writing a scalar string into ONE jsonb key, which is all this tool does.
+
+**It is only half the rule.** Writing a whole OBJECT to a jsonb column from
+`sql.unsafe` needs **`$n::text::jsonb`**, where the `::text` is load-bearing:
+`$n::jsonb` alone is a no-op once postgres.js has typed the bind as jsonb, and
+stores a jsonb STRING instead of parsing an object. That is not hypothetical —
+it damaged seven production rows on 2026-08-13. See
+`docs/jsonb-double-encoding-coe.md`, *IT RECURRED*.
+
+Beyond that: nothing pre-serialized is ever handed to a jsonb parameter here,
+and there is no `||` merge whose operand could be a non-object — the two failure modes that destroyed the
 `variants` column three times on 2026-08-10
 (`docs/jsonb-double-encoding-coe.md`). The post-apply read counts array-shaped
 `variants` blocks on **every arm `backend/scripts/lib/fabric-write.mjs` declares

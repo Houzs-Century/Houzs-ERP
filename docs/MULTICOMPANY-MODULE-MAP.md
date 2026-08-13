@@ -47,6 +47,17 @@ The unscoped-write sweep closed the directly-reachable ones and left the rest
 listed in its PR; re-measure with the same method rather than trusting this
 number after the next change.
 
+> **"The same method" was never written down, so this cannot be re-run
+> (noted 2026-08-14).** The count depends on a list of *"tables that carry
+> `company_id`"* that appears nowhere in the repo, so a second person gets a
+> different number and cannot tell whether the code changed or their filter did.
+> For scale: the unfiltered count over the same two directories is now ~826
+> write calls across ~2,219 `.from(` calls, well above the 634 baseline — which
+> tells you the filter was doing a lot of work and nothing about whether 294 has
+> moved. If this number is ever needed again, ship the counter as a script under
+> `backend/scripts/` and cite the run, the way `audit:*` does. The instinct in
+> the sentence above is right; only the method is missing.
+
 ## SEPARATE (per company — scoped by company_id)
 - **SO / DO / PO / GRN / Sales Invoices / Delivery Returns / Consignment** (all docs).
 - **Procurement — Products & Maintenance**: Products, SKU Master, MRP · Stock Status,

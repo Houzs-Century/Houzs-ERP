@@ -49,6 +49,13 @@ Measured over 24h: **173 CI runs across 35 open PRs**. One branch,
 `e2e-contract`. With several PRs pushing together the demand is 60–90
 concurrent jobs against a **20-job free-plan ceiling**.
 
+> **That fan-out is the INCIDENT-DAY shape and both fixes in this document
+> changed it.** On `origin/main` today `backend-tests` is `shard: [1, 2]` (two,
+> per #2131) and `frontend` is four jobs (`frontend-checks`, `frontend-build`,
+> `frontend-perf` and the `frontend` roll-up, per #2142) — eleven slots, not
+> ten, arranged differently. Read this paragraph as the measurement that
+> motivated the work, not as a description of CI now.
+
 At the moment of measurement: **24 jobs unfinished, 5 sitting in `queued`**.
 Worst observed waits: 132s at job level, **850s (14 minutes)** at run level.
 
@@ -226,7 +233,7 @@ per-shard the same job cost before:
 | --- | --- | --- |
 | `backend-tests (1)` | ~380s | **141s** |
 | `backend-tests (2)` | ~380s | **127s** |
-| `backend-typecheck` | ~55s | 92s (it now also runs the 234-file light suite) |
+| `backend-typecheck` | ~55s | 92s (it now also runs the light suite — 234 files at the time of this run; 236 as of 2026-08-14, and the split is generated into `backend/tests/generated/test-projects.json`, so read that rather than this cell) |
 | `scale-postgres-contract` | ~80s | 70s |
 | `backend-postgres` | ~60s | 38s |
 | `e2e-contract` | ~18s | 17s |
@@ -289,6 +296,11 @@ pull requests that turned `DIRTY` after an unrelated merge landed:
 | #1914 | `BUG-HISTORY.md` |
 | #1867 | `BUG-HISTORY.md` |
 | #2037 | `docs/modules/autocount-writeback.md` |
+
+> The table lists FOUR of the five, so the ratio below cannot be re-derived from
+> it. The fifth PR — the one whose conflict was in code, and therefore the whole
+> point of the comparison — was never written down. Noted 2026-08-14 rather than
+> invented: the claim is plausible and unverifiable as published.
 
 **Four out of five, and not one line of code.** `BUG-HISTORY.md` is
 append-at-the-top and mandatory, so with N branches open, every one of them
