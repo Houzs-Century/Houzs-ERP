@@ -521,6 +521,15 @@ processing-date LOCK was verified to ignore DRAFTs on both ends
 and every backend caller passes `status`), so a stamped draft misleads — it
 does not lock.
 
+> **Do not confuse this date with the two the scanner reads.** The OCR payload
+> once used the word `processingDate` for three unrelated facts. Since
+> 2026-08-13 the slip's own written date is `slipDate` and a card receipt's
+> printed transaction date is `receiptTxnDate`; only the SO's factory-start date
+> (`internal_expected_dd`) is still called a Processing Date. See
+> [`scan-to-so.md` §2b](./scan-to-so.md) — including the still-open mismatch
+> that mobile seeds this field from the slip's date while desktop derives it
+> from Delivery − 6 weeks.
+
 **Existing damage** (pre-guard rows): Actions → **SO non-catalog lines check
 (read-only)** (`backend/scripts/check-so-noncatalog-lines.mjs`) lists every
 non-catalog line, confirmed order without salesperson / venue, confirmed
