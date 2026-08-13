@@ -20,7 +20,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
-import { findSkuUsage } from '../lib/sku-usage';
+import { findSkuUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { productToBindingPatch, type ProductSeatCost } from '../lib/cost-anchor-sync';
 import { moduleCodeFromSku, normalizeSofaTier, parseDefaultFreeGifts } from '../shared';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
@@ -431,10 +431,14 @@ export const deleteMfgProductHandler = async (c: any) => {
   // force. Deleting it would orphan live order lines / wipe stock history.
   // Unused SKUs (setup-phase typos) stay deletable.
   const used = await findSkuUsage(supabase, code);
-  if (used) {
+  /* A probe that could not run is NOT "unused". Refusing here costs a retry;
+     proceeding costs the stock-movement history this guard exists to protect
+     (and on ?force=true, the movements and supplier bindings are deleted too). */
+  if (!used.ok) return c.json(usageCheckFailedBody('SKU', used.reason), 409);
+  if (used.usage) {
     return c.json({
       error: 'sku_in_use',
-      reason: `“${code}” is used in ${used.where}${used.doc ? ` (${used.doc})` : ''} and can’t be deleted.`,
+      reason: `“${code}” is used in ${used.usage.where}${used.usage.doc ? ` (${used.usage.doc})` : ''} and can’t be deleted.`,
     }, 409);
   }
 
@@ -538,7 +542,10 @@ mfgProducts.get('/:id', async (c) => {
 // ── PATCH /:id ─────────────────────────────────────────────────────────
 // Updates base/price1/cost prices. Each numeric change emits a row to
 // `master_price_history` for the audit drawer.
-mfgProducts.patch('/:id', async (c) => {
+/* Exported so the swallowed-read guard below (the duplicate-code probe that
+   gates the cascade rename) can be driven by a test — same reason
+   deleteMfgProductHandler is exported. */
+export const patchMfgProductHandler = async (c: any) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   const id = c.req.param('id');
@@ -752,10 +759,28 @@ mfgProducts.patch('/:id', async (c) => {
     const oldCode = current.code as string;
     const newCode = typeof updates.code === 'string' ? (updates.code as string) : null;
     if (newCode && newCode !== oldCode) {
-      const { data: dup } = await scopeToCompanyId(
+      const { data: dup, error: dupErr } = await scopeToCompanyId(
         supabase.from('mfg_products').select('id').eq('code', newCode).neq('id', id),
         co.companyId,
       ).limit(1);
+      /* The duplicate probe is the ONLY thing standing between this request and
+         a cascade that rewrites the code on stock lots, movements, supplier
+         bindings and every document-line snapshot below. It used to drop the
+         error, so an unreadable probe read as "no duplicate" and the cascade
+         ran: the referencing tables are renamed FIRST (see the ordering note
+         above), so the UNIQUE(company_id, code) constraint on mfg_products —
+         the only backstop — fires LAST, after two SKUs' stock and bindings have
+         already been merged under one code, and the retry the comment promises
+         cannot separate them again. A failed read must never read as an absence
+         when the absence is what authorises the write. */
+      if (dupErr) {
+        return c.json({
+          error: 'duplicate_check_failed',
+          reason:
+            'Could not check whether another SKU already uses that code, so the rename is refused '
+            + `rather than cascaded onto stock and documents unchecked — try again (${dupErr.message}).`,
+        }, 409);
+      }
       if (dup && dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
@@ -884,7 +909,8 @@ mfgProducts.patch('/:id', async (c) => {
     // Rename cascade — rows re-pointed per table.column (absent on non-rename patches).
     ...(Object.keys(cascadeCounts).length > 0 ? { renamed: cascadeCounts } : {}),
   });
-});
+};
+mfgProducts.patch('/:id', patchMfgProductHandler);
 
 // ── POST /:id/activate-one-shot ───────────────────────────────────────────────
 // Re-activate a one-shot SKU (minted from a remark + extra charge) so it is

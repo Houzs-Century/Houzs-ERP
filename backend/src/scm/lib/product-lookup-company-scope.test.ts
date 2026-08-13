@@ -88,7 +88,7 @@ describe('loadProductsByCodes — the batched pricing read', () => {
 
   it('UNSCOPED silently drops one of the two rows — the defect, and it warns', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const m = await loadProductsByCodes(sb(), ['CODY-(SS)']);
+    const m = await loadProductsByCodes(sb(), ['CODY-(SS)'], undefined);
     // Two rows in, one entry out: the Map keys by code, so a whole product is
     // discarded and WHICH one survives is the database's choice, not ours.
     expect(m.size).toBe(1);
@@ -109,7 +109,7 @@ describe('loadProductByCode — the single-row pricing read', () => {
 
   it('UNSCOPED returns NULL on a duplicated code — "unknown item code" for a SKU that exists twice', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await loadProductByCode(sb(), 'CODY-(SS)')).toBeNull();
+    expect(await loadProductByCode(sb(), 'CODY-(SS)', undefined)).toBeNull();
     // The PGRST116 used to vanish. It must reach the log now.
     expect(err).toHaveBeenCalledWith(expect.stringContaining('loadProductByCode'), expect.anything());
   });
@@ -166,7 +166,7 @@ describe('sofa module loaders — base_model is not unique either', () => {
   });
 
   it('UNSCOPED merges both companies — 3 rows for a 2-module Model', async () => {
-    const both = await loadModelSofaModuleCostRows(sofaSb(), 'lotti');
+    const both = await loadModelSofaModuleCostRows(sofaSb(), 'lotti', undefined);
     expect(both).toHaveLength(3);
     // Two rows now claim the same module. Whichever the map builder reads last
     // wins, and nothing says which — that is the bug, stated as a test.
@@ -224,7 +224,7 @@ describe('allowed-options loaders — a miss here means the gate stops checking'
      line" apart from "we could not ask the catalog", and only the first of
      those is allowed to end in a saved line. */
   it('UNSCOPED reports the PGRST116 instead of passing the gate as product=null', async () => {
-    const { product, model, lookupError } = await loadProductAndModel(sb(), 'CODY-(SS)');
+    const { product, model, lookupError } = await loadProductAndModel(sb(), 'CODY-(SS)', undefined);
     expect(product).toBeNull();
     expect(model).toBeNull();
     expect(lookupError).toContain('multiple');

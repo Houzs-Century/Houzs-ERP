@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import {
@@ -2185,13 +2186,12 @@ purchaseInvoices.post('/:id/items', async (c) => {
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
-    const { data: gi } = await sb.from('grn_items')
-      .select('qty_accepted, invoiced_qty, returned_qty').eq('id', grnItemId).maybeSingle();
-    if (gi) {
-      const g = gi as { qty_accepted: number; invoiced_qty: number; returned_qty: number };
-      const remaining = (g.qty_accepted ?? 0) - (g.invoiced_qty ?? 0) - (g.returned_qty ?? 0);
-      if (qty > remaining) return c.json({ error: 'qty_exceeds_remaining', requested: qty, remaining }, 409);
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'grn_items', id: grnItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
+      requested: qty, what: 'GRN line',
+    });
+    if (capLock) return c.json(capLock, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -2380,16 +2380,13 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   // new qty). delta = qty - prevQty.
   const delta = qty - prevQty;
   if (grnItemId && delta !== 0) {
-    const { data: gi } = await sb.from('grn_items')
-      .select('qty_accepted, invoiced_qty, returned_qty').eq('id', grnItemId).maybeSingle();
-    if (gi) {
-      const accepted = (gi as { qty_accepted: number }).qty_accepted ?? 0;
-      const invoiced = (gi as { invoiced_qty: number }).invoiced_qty ?? 0;
-      const returned = (gi as { returned_qty: number }).returned_qty ?? 0;
-      // remaining headroom for THIS line = accepted - returned - (invoiced - prevQty).
-      const headroom = accepted - returned - (invoiced - prevQty);
-      if (qty > headroom) return c.json({ error: 'qty_exceeds_remaining', requested: qty, remaining: headroom }, 409);
-    }
+    // remaining headroom for THIS line = accepted - returned - (invoiced - prevQty).
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'grn_items', id: grnItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],
+      requested: qty, ownPriorDraw: prevQty, what: 'GRN line',
+    });
+    if (capLock) return c.json(capLock, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);

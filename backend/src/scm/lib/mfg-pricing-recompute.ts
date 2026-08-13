@@ -712,7 +712,7 @@ export function recomputeFromSnapshot(
    `.maybeSingle()` below single by construction rather than by luck. */
 
 /** Load a single product row from mfg_products by code, within one company. */
-export async function loadProductByCode(sb: any, code: string, companyId?: number | null): Promise<ProductRowLite | null> {
+export async function loadProductByCode(sb: any, code: string, companyId: number | null | undefined): Promise<ProductRowLite | null> {
   if (!code) return null;
   let q = sb
     .from('mfg_products')
@@ -734,7 +734,7 @@ export async function loadProductByCode(sb: any, code: string, companyId?: numbe
  *  2026-06-06): the SO create path used to issue one product lookup per line and
  *  a 6-item order blew the CF Workers per-request subrequest cap; every per-line
  *  read on that path must stay O(1) in queries. */
-export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>, companyId?: number | null): Promise<Map<string, ProductRowLite>> {
+export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>, companyId: number | null | undefined): Promise<Map<string, ProductRowLite>> {
   const uniq = Array.from(new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
   let q = sb
@@ -792,7 +792,7 @@ export async function loadModelSofaModulePrices(
   sb: any,
   baseModel: string | null | undefined,
   depth: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
   let q = sb
@@ -825,7 +825,7 @@ export async function loadModelSofaModulePrices(
 export async function loadModelSofaModuleCosts(
   sb: any,
   baseModel: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
   let q = sb
@@ -854,7 +854,7 @@ export async function loadModelSofaModuleCosts(
 export async function loadModelSofaModuleCostRows(
   sb: any,
   baseModel: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModuleCostRowLite[] | null> {
   if (!baseModel) return null;
   let q = sb
@@ -953,7 +953,7 @@ export async function loadFabricSellingTiersByIds(
 }
 
 /** Load the singleton fabric-tier add-on Δ config (whole MYR). Missing → all 0. */
-export async function loadFabricTierAddonConfig(sb: any, companyId?: number | null): Promise<FabricTierAddonConfig> {
+export async function loadFabricTierAddonConfig(sb: any, companyId: number | null | undefined): Promise<FabricTierAddonConfig> {
   // Key by company_id (each company has one row; 2990's is id=100001, not 1).
   // When companyId is unresolved (single-company fallback) read the sole row.
   let q = sb
@@ -1067,8 +1067,13 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 export async function recomputeOneLine(
   sb: any,
   item: MfgItemForRecompute,
-  cachedConfig?: MaintenanceConfig | null,
-  companyId?: number | null,
+  /* Key required, value still nullable — TypeScript forbids a required
+     parameter after an optional one, and `companyId` below is the one that must
+     not be omissible. Passing `null`/`undefined` here keeps the old behaviour
+     (load the config on demand); what is no longer possible is dropping BOTH
+     and silently re-pricing against every company's catalogue. */
+  cachedConfig: MaintenanceConfig | null | undefined,
+  companyId: number | null | undefined,
   opts?: { trustOperatorSelling?: TrustSelling },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);

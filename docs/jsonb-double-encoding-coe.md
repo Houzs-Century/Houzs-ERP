@@ -336,3 +336,38 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
    broken, and the trap caught a third script the same afternoon. When a defect
    class is identified, fix every instance of the class in that PR, or the
    comment becomes a monument to it.
+
+## Lesson 2 now has an executable form
+
+**`npm --prefix backend run audit:jsonb-binds`** — `backend/scripts/check-jsonb-binds.mjs`,
+wired into `.github/workflows/ci.yml` (`backend-typecheck`), proved by
+`backend/tests/jsonbBindScan.node.mjs`.
+
+It fails on any `JSON.stringify` bound as a query parameter anywhere in
+`backend/src` or `backend/scripts`, in both shapes this repo writes: interpolated
+into a SQL tagged template, or placed in the params array of `.unsafe(text, [...])`.
+The single legal escape is `$n::text::jsonb`, matched per placeholder.
+
+This section exists because Lesson 4 was right about this COE too. The document
+was written on 2026-08-11, read, and the class fired again on 2026-08-13 in the
+repair script written to undo the damage — seven production rows went from
+array-shaped to string-shaped. When the check was added on 2026-08-13, **two
+violations were still live on `main`**:
+
+- `backend/scripts/split-collapsed-sofa-lines.mjs` — `$2::jsonb` with a
+  stringified bind, ten lines below a correct `tx.json()` in the same file.
+- `backend/scripts/backfill-2990-delivered-dos.mjs` — a stringified array into
+  `scm.mfg_so_audit_log.field_changes` (`jsonb NOT NULL`) with **no cast at all**.
+
+That second one is why Lesson 2's last clause needs amending. It says *"the
+`::jsonb` cast in your SQL is what triggers the double encoding"* — and the sweeps
+that grepped for the cast therefore missed this site. The cast is not the trigger;
+the **server-resolved parameter type** is, and the column being jsonb is enough on
+its own. Look at the parameter, not the cast. The check does.
+
+One reviewed exception is allowlisted in the checker, with its reason:
+`seed-user-management.mjs` writes `roles.permissions`, which is a `text` column
+holding JSON as text (`0000_baseline.sql:471`), so the string is the intended value.
+
+See `docs/bug-classes.md`, class A. **A COE is not closed until it names the file
+path of the check that now fails on its shape.**
