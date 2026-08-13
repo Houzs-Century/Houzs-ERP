@@ -72,6 +72,14 @@ export interface SalesEntry {
   deposit_payment_type: PaymentType | null;
   currency: string;
   occurred_at: string;
+  /* NOT the Sales Order's Processing Date. This is a plain date on a
+     `sales_entries` row — the legacy native Sales module's own document, which
+     has no SO row and none of the SCM Processing-Date rules (no deposit gate, no
+     elapsed-date lock, no remove-permission, no stock allocation). The SCM SO's
+     Processing Date has exactly ONE storage, scm.mfg_sales_orders.internal_expected_dd;
+     never coalesce or unify the two. The name is kept only because renaming it
+     would silently drop the field from already-queued sales change requests —
+     the full reasoning is on SO_FORM_TEXT_FIELDS in backend/src/routes/sales.ts. */
   processing_date: string | null;
   delivery_date: string | null;
   status_2: string | null;
