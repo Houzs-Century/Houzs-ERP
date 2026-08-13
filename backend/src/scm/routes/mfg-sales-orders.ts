@@ -10955,13 +10955,17 @@ export function paymentVersionGuard(
 }
 
 mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
+  // WRITE: the company must RESOLVE (companyScope.ts strict rule) - a payment
+  // edit is a books change, so an unknown company refuses rather than widens.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
   const user = c.get('user');
   // Same self-scope gate as POST / DELETE payments.
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   // Load the row (need every method-scoped column + created_at for the lock).
-  const { data: row } = await sb.from('mfg_sales_order_payments').select('*').eq('id', id).maybeSingle();
+  const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);
   const before = row as {
     so_doc_no: string; created_at: string; paid_at: string;
@@ -11123,6 +11127,12 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     .eq('id', id)
     .eq('so_doc_no', docNo)
     .eq('version', expectedPaymentVersion)
+    /* so_doc_no proves the payment is on THIS order; company_id proves the order
+       is in THIS company's books. Today the router-level mirrored-SO guard also
+       refuses any `2990-` path, but that guard LIFTS on the HOUZS_OWNS_2990
+       cutover flip - after which this predicate is the only isolation left, the
+       SCM client being service-role. */
+    .eq('company_id', co.companyId)
     .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
     .maybeSingle();
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
@@ -11163,7 +11173,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
 
   // Guard: only delete if the row belongs to this docNo. Prevents a
   // mis-routed call from nuking another SO's payment.
-  const { data: row } = await sb.from('mfg_sales_order_payments').select('*').eq('id', id).maybeSingle();
+  const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);
   const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_centi: number; approval_code: string | null; version: number };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
@@ -11225,10 +11235,10 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  const { data: deleted, error } = await sb.from('mfg_sales_order_payments').delete()
+  const { data: deleted, error } = await scopeToCompany(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)
-    .eq('version', expectedVersion)
+    .eq('version', expectedVersion), c)
     .select('id')
     .maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -11312,6 +11322,10 @@ const paymentSlipAttachSchema = z.object({
 });
 
 mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
+  // WRITE: the company must RESOLVE (companyScope.ts strict rule) - a payment
+  // edit is a books change, so an unknown company refuses rather than widens.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
   const user = c.get('user');
   // Same self-scope gate as POST / PATCH / DELETE payments.
@@ -11359,6 +11373,7 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
     .eq('id', id)
     .eq('so_doc_no', docNo)
     .eq('version', expectedVersion)
+    .eq('company_id', co.companyId) // see the note on the payment PATCH
     .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
     .maybeSingle();
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
