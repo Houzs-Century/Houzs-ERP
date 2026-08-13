@@ -98,10 +98,10 @@ export function priorityColor(priority: string): string {
 
 const RESOLUTION_LABEL: Record<string, string> = {
   replace_unit: "Replace Unit",
-  supplier_repair: "Supplier Repair (Workshop)",
-  field_service_own: "Field Service (Our Team)",
-  field_service_supplier: "Field Service (Supplier)",
-  return_visit: "Return Visit",
+  supplier_repair: "Supplier Service",
+  field_service_own: "On Site Service (Own Team)",
+  field_service_supplier: "On Site Service (Supplier)",
+  return_visit: "2nd Services",
 };
 
 export function resolutionLabel(method: string | null): string {

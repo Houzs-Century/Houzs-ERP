@@ -5,6 +5,13 @@ This is the evidence-based answer, built from the scope audit
 (`backend/scripts/audit-multicompany-scope.mjs`, run vs prod in PR #1131) which
 classified all 157 `scm.*` tables.
 
+> **Before anything below: the isolation rule.** The service-role client bypasses
+> RLS, so the `company_id` predicate on each individual statement is the ONLY
+> tenant boundary — on WRITES as much as on reads, and a scoped read does not
+> protect the write that follows it. See the "THE PREDICATE IS THE ONLY
+> ISOLATION" section at the top of `MULTICOMPANY-MODULE-MAP.md`. Adding company 3
+> multiplies the cost of every statement that is still missing one.
+
 ## The short version
 
 Adding a company is mostly **configuration, not migration** — *except* for one

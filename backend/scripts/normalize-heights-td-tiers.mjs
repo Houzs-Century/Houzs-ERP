@@ -11,6 +11,8 @@
 //    to PRICE_2. (TD grids/matrices were shifted correctly; combos only.)
 //
 // DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: inert. Every write is gated on `changed` against the row as read, and a normalised row produces no change.
 import postgres from "postgres";
 
 const APPLY = process.env.APPLY === "1";

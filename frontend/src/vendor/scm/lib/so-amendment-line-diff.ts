@@ -29,8 +29,9 @@
 // not. Comparing raw JSON would call a canonicalised-but-identical POS line a
 // change — exactly the lie this closes. The rule is simply: if what the
 // approver reads on the left equals what they read on the right, it is not a
-// change. No real request can be hidden by it — these four fields are the ONLY
-// things an amendment line carries.
+// change. No real request can be hidden by it — these five fields are the ONLY
+// things an amendment line carries (the fifth, REMARK, arrived with mig 0280;
+// before it, a remark-only request could not be recorded at all).
 // ----------------------------------------------------------------------------
 
 import { buildVariantSummary } from '@2990s/shared';
@@ -52,6 +53,12 @@ export type AmendmentOldSnapshot = {
      `item_group` is accepted too: so-revision's ADD path already reads that key. */
   itemGroup?: string | null;
   item_group?: string | null;
+  /* The line's REMARK before the request (mig 0280), stamped server-side from
+     mfg_sales_order_items.remark for the same reason the group is: the "was"
+     side is the approver's evidence and must come from the record, not from the
+     browser asking to change it. Absent on rows raised before 0280 and on ADD
+     lines (which have no before). */
+  remark?: string | null;
 };
 
 /** The subset of an amendment line this module reads. Structural, so the
@@ -62,22 +69,26 @@ export type DiffableAmendmentLine = {
   new_variants?: unknown;
   new_qty?: number | null;
   new_unit_price_sen?: number | null;
+  /* mig 0280 — the requested line REMARK. null/absent = the request does not
+     touch it (true of every row raised before 0280); '' = clear it. */
+  new_remark?: string | null;
   old_snapshot?: unknown;
 };
 
 export const amendmentOldSnapshot = (l: DiffableAmendmentLine): AmendmentOldSnapshot =>
   (l.old_snapshot as AmendmentOldSnapshot | null) ?? {};
 
-/** Which of the line's four carryable fields this request actually moves. */
+/** Which of the line's five carryable fields this request actually moves. */
 export type AmendmentLineChangedFields = {
   itemCode: boolean;
   qty: boolean;
   unitPrice: boolean;
   variants: boolean;
+  remark: boolean;
 };
 
 const EVERYTHING: AmendmentLineChangedFields = {
-  itemCode: true, qty: true, unitPrice: true, variants: true,
+  itemCode: true, qty: true, unitPrice: true, variants: true, remark: true,
 };
 
 /* ── item group: the branch selector buildVariantSummary reads ──────────────
@@ -244,13 +255,19 @@ export function amendmentLineChangedFields(
     unitPrice: l.new_unit_price_sen != null
       && l.new_unit_price_sen !== (old.unitPriceSen ?? null),
     variants: variantsChanged(l),
+    /* mig 0280. Same shape as the price test: a null new_remark is NOT a
+       requested remark (it is every pre-0280 row, and every line whose remark
+       did not move), so it can never render as a change. '' against a non-empty
+       before IS one — clearing an instruction is a real request. */
+    remark: l.new_remark != null
+      && l.new_remark.trim() !== (old.remark ?? '').trim(),
   };
 }
 
 /** True when the line requests at least one field change. */
 export const amendmentLineIsChange = (l: DiffableAmendmentLine): boolean => {
   const f = amendmentLineChangedFields(l);
-  return f.itemCode || f.qty || f.unitPrice || f.variants;
+  return f.itemCode || f.qty || f.unitPrice || f.variants || f.remark;
 };
 
 /** The field ATOMS an SO amendment line moves — the input to amendment-routing's
@@ -266,6 +283,10 @@ export const amendmentLineFieldKinds = (l: DiffableAmendmentLine): AmendmentFiel
   if (f.variants) kinds.push('VARIANT');
   if (f.qty) kinds.push('QTY');
   if (f.unitPrice) kinds.push('PRICE');
+  /* A free-text remark is not routable on its own — it is an instruction to
+     whoever executes the line, so it routes LINE (Production / Design), exactly
+     as amendment-routing's LABEL_TO_KIND already maps a 'notes' field. */
+  if (f.remark) kinds.push('LINE');
   return kinds;
 };
 

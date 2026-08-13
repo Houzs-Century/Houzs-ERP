@@ -37,6 +37,11 @@ on:
         required: false
         default: "0"
         type: string
+      declare:
+        description: "owner-asserted same-fabric pairs the detector cannot see, e.g. FG66151:PC151 (a run with this set does ONLY these pairs)"
+        required: false
+        default: ""
+        type: string
       pairs:
         description: "comma-separated LOSING series ids to restrict to (blank = all)"
         required: false
@@ -67,6 +72,7 @@ jobs:
           COMPANY: ${{ inputs.company }}
           MODE: ${{ inputs.mode }}
           MOVE_COLOURS: ${{ inputs.move_colours }}
+          DECLARE: ${{ inputs.declare }}
           PAIRS: ${{ inputs.pairs }}
         run: |
           set -o pipefail

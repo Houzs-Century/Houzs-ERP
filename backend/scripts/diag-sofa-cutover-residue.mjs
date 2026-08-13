@@ -117,7 +117,10 @@ async function main() {
 
   /* Same two populations as check-sofa-bedframe-completeness.mjs, so section A
      is comparable to its numbers line for line: EVERY sofa/bedframe PO line,
-     and sofa/bedframe SO lines on orders that have been PROCEEDED. */
+     and sofa/bedframe SO lines on orders that have been PROCEEDED.
+     PROCEEDED is read off internal_expected_dd, in step with that script — the
+     Processing Date the UI writes, not the IN_PRODUCTION-only proceeded_at
+     stamp. The two must move together or "line for line" stops being true. */
   const poRows = (await sql`
     SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS po_hdr_id, p.linked_ac_docno AS ac,
            UPPER(COALESCE(p.status::text, '')) AS po_status, COALESCE(p.notes, '') AS po_notes,
@@ -135,7 +138,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe', 'sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.internal_expected_dd IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   /* Sections B/C/D need EVERY sofa/bedframe SO line, proceeded or not, because

@@ -164,10 +164,10 @@ fabricTierAddonConfig.delete('/special/:modelId', async (c) => {
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const modelId = c.req.param('modelId');
-  const { error } = await gate.supabase
+  const { error } = await scopeToCompany(gate.supabase
     .from('model_fabric_tier_overrides')
     .delete()
-    .eq('model_id', modelId);
+    .eq('model_id', modelId), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });
@@ -238,10 +238,10 @@ fabricTierAddonConfig.delete('/compartment-special/:compartmentId', async (c) =>
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const compartmentId = c.req.param('compartmentId');
-  const { data: deleted, error } = await gate.supabase
+  const { data: deleted, error } = await scopeToCompany(gate.supabase
     .from('compartment_fabric_tier_overrides')
     .delete()
-    .eq('compartment_id', compartmentId)
+    .eq('compartment_id', compartmentId), c)
     .select('compartment_id');
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!deleted || deleted.length === 0) return c.json({ error: 'not_found' }, 404);

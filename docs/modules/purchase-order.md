@@ -140,7 +140,8 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK). seq auto-assigned dense. |
 | PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
-| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ signedUrl, thumbUrl, expiresAt }`). READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
 | POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
@@ -455,6 +456,31 @@ R2 objects — one photo, two documents, no duplicated bytes and no R2 round-tri
 inside the convert. Consequence, deliberate: deleting a photo from the SO line
 removes the object, so it also leaves any PO raised from that line.
 
+**Reading a photo: signed first, proxy fallback (2026-08-10).** There are two
+read routes and the difference is not cosmetic.
+
+| Route | Mints | Needs | Usable as `<img src>`? |
+|---|---|---|---|
+| `/photos/:photoKey/signed` | presigned S3 URL | `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` + `R2_ENDPOINT` (wrangler SECRETS) | YES — signature travels in the query string |
+| `/photos/:photoKey` (proxy) | the bytes | the `SO_ITEM_PHOTOS` binding only | **NO** — see below |
+
+Those three secrets have never been provisioned in production, so
+`soItemPhotoBindings()` throws and `/signed` used to answer
+`500 {"error":"signing_failed"}` for every photo. It now falls back to the proxy
+and returns `200 { mode: 'proxy', proxyPath, thumbProxyPath, expiresAt: null,
+reason }`. Signing is still attempted first and still used when it works —
+signed URLs exist so a grid of thumbnails does not pay a Worker invocation per
+tile, and the fallback must not become the default read path.
+
+**The proxy path is NOT an `<img src>`.** It sits behind the global auth gate,
+which reads the bearer token from the `Authorization` HEADER only; there is no
+cookie session in this app. A browser attaches no header to an `<img>`, so
+pointing one at the proxy 401s. The client must fetch it with the authed client,
+read the response as a Blob, and hand `URL.createObjectURL(blob)` to the `<img>`
+(revoking it on unmount). This is why the fallback returns `proxyPath` and
+deliberately leaves `signedUrl` undefined — populating it would swap a visible
+500 for an invisible 401. See `backend/src/scm/lib/photoProxyFallback.ts`.
+
 **Per line, never deduplicated across a PO.** One sofa build is several
 compartment lines that legitimately share one build photo; folding them would
 blank every compartment but the first. Lines stay 1:1 with their SO line, so each
@@ -578,15 +604,24 @@ A rule change to the PO touches both surfaces. The pairs:
 | Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — there is no mobile PO detail surface at all (only PO amendments) |
 
 **Line photos are backend-only today, deliberately.** The keys are on the detail
-row and the signed-URL route serves them, but no surface renders them yet. The
-SO's `PhotoThumb` is ~110 lines defined INSIDE
-`vendor/scm/components/SoLineCard.tsx`, hard-wired to
-`fetchSoItemPhotoSignedUrl(docNo, itemId, key)` plus two module-level caches
-(`signedUrlCache`, `thumbMissingKeys`) and its own CSS-module classes. Reusing it
-for the PO means extracting it with an injectable fetcher, adding a PO signed-URL
-query, threading `photoUrls` through the PO detail type into `PoLineCard.tsx`, and
-building the phone surface that does not exist. That is a UI project, not a field
-add — do it as its own PR, extracting the thumb rather than copying it.
+row and both the signed-URL route and the proxy route serve them, but no PO
+surface renders them yet.
+
+The extraction this section used to ask for HAS HAPPENED on the SO side: the
+resolver is no longer buried in `SoLineCard.tsx`. It lives in
+`frontend/src/vendor/scm/lib/so-line-photo.ts` as `useSoLinePhoto`, and both SO
+surfaces (the edit card's `PhotoThumb`, the V2 read-only
+`components/scm-v2/SoLinePhotoStrip.tsx`) are thin chrome over it. Read that
+file's header before touching it — three production regressions have lived in
+that state machine.
+
+What is still missing for the PO is the FETCHER SEAM, not the state machine:
+`useSoLinePhoto` calls `fetchSoItemPhotoSignedUrl` / `fetchSoItemPhotoBlob`
+directly, and the PO's routes are `/mfg-purchase-orders/:id/items/:itemId/…`.
+So the remaining work is: make the two fetchers injectable (or add a PO-shaped
+sibling that passes the PO pair), thread `photoUrls` through the PO detail type
+into `PoLineCard.tsx`, and build the phone surface that does not exist. Still
+its own PR — but a seam plus wiring now, not a rewrite. Do NOT copy the hook.
 
 Shared, so a change lands on both at once: the backend route, and the
 `suppliers-queries.ts` hooks (mobile's convert wizard and POD screens call

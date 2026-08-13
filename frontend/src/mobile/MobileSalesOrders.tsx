@@ -28,7 +28,7 @@ type SoRow = {
      mixed / bedframe-only SOs. Already in the list payload (backend
      mfg-sales-orders.ts select); drives the card brand pill (desktop parity). */
   branding: string | null; first_item_branding: string | null;
-  customer_delivery_date: string | null; internal_expected_dd: string | null;
+  customer_delivery_date: string | null; processing_date: string | null;
   so_date: string | null; created_at: string | null;
   local_total_centi: number | null; total_revenue_centi: number | null; paid_total_centi: number | null;
   balance_centi: number | null; balance_centi_live: number | null;
@@ -599,7 +599,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                   {/* Line 3 — Processing -> Delivery */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 11, color: "var(--ink2)" }}>
                     <span style={{ color: "var(--mut2)", fontWeight: 600 }}>Processing</span>
-                    <span className="money" style={{ fontWeight: 600 }}>{dm(r.internal_expected_dd)}</span>
+                    <span className="money" style={{ fontWeight: 600 }}>{dm(r.processing_date)}</span>
                     <span style={{ color: "#c2c6bd" }}>&rarr;</span>
                     <span style={{ color: "var(--mut2)", fontWeight: 600 }}>Delivery</span>
                     <span className="money" style={{ fontWeight: 600 }}>{dm(r.customer_delivery_date)}</span>

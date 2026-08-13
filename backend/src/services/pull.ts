@@ -114,12 +114,22 @@ export async function runPull(
   }
 }
 
+/* Upsert one AutoCount SO into the local `sales_orders` MIRROR. Read-only
+   against AutoCount — this only ever writes ERP tables.
+
+   `ac_udf_pdate` (renamed from `processing_date` in mig 0285) is AutoCount's own
+   user-defined field SO.UDF_PDate, copied verbatim for AutoCount's document. It
+   is NOT the ERP's Processing Date and must never be read as one: the ERP has
+   exactly ONE Processing Date, scm.mfg_sales_orders.internal_expected_dd, on a
+   different table for a different document, and nothing joins the two. The old
+   name made this column look like the ERP's field to every reader who met it,
+   which is the confusion the owner has now called out more than three times. */
 export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST" | "EAST" | "SG"): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO sales_orders (
        doc_no, region, transfer_to, doc_date, ref, branding, debtor_name, phone,
        sales_location, sales_agent, local_total, balance, remark2, remark3, remark4,
-       processing_date, expiry_date, note, po_doc_no, inv_addr1, inv_addr2, inv_addr3,
+       ac_udf_pdate, expiry_date, note, po_doc_no, inv_addr1, inv_addr2, inv_addr3,
        inv_addr4, venue, attention, sync_status, sync_error, last_modified, updated_at
      ) VALUES (
        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -140,7 +150,7 @@ export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST"
        remark2 = excluded.remark2,
        remark3 = excluded.remark3,
        remark4 = excluded.remark4,
-       processing_date = excluded.processing_date,
+       ac_udf_pdate = excluded.ac_udf_pdate,
        expiry_date = excluded.expiry_date,
        note = excluded.note,
        po_doc_no = excluded.po_doc_no,

@@ -1,0 +1,64 @@
+name: Backfill AutoCount line keys (SOFA)
+
+# Manual. The SOFA half of the line-key backfill.
+#
+# The ordinary backfill matches (AutoCount DocNo + ERP item code) and a sofa
+# never matches: the cutover SPLIT each sofa into compartment rows, so the ERP
+# holds `9028-1A(LHF)` where the mapping expects `9028-1S`. Every migrated sofa
+# line therefore kept a NULL key, and /edit refuses a sofa order because the
+# collapsed build has no identity to address.
+#
+# This groups the compartment rows back into builds, matches the build, and
+# gives EVERY row of it the same DtlKey. Where the counts do not agree it
+# assigns nothing and says so - a wrong key silently edits a different line in a
+# live account book, a missing one is refused loudly.
+#
+# DRY-RUN by default; apply=1 writes. Read the per-group numbers first.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: backfill-ac-sofa-line-keys-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-ac-sofa-line-keys.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-ac-sofa-line-keys.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

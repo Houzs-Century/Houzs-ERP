@@ -77,7 +77,7 @@ export function MobileSoDetail({ order, onBack, onIssueDo, onCancelOrder, onSave
         {/* Order info */}
         <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
           <div style={{ display: 'flex', gap: 9 }}><div style={{ flex: 1 }}><Field label="Building type" value={order.building_type} /></div><div style={{ flex: 1 }}><Field label="Venue" value={order.venue_name} /></div></div>
-          <div style={{ display: 'flex', gap: 9 }}><div style={{ flex: 1 }}><Field label="Processing date" value={order.internal_expected_dd} /></div><div style={{ flex: 1 }}><Field label="Delivery date" value={order.customer_delivery_date} /></div></div>
+          <div style={{ display: 'flex', gap: 9 }}><div style={{ flex: 1 }}><Field label="Processing date" value={order.processing_date} /></div><div style={{ flex: 1 }}><Field label="Delivery date" value={order.customer_delivery_date} /></div></div>
           <Field label="Sales location" value={order.sales_location} />
           <Field label="Note" value={order.note} />
         </div></div>

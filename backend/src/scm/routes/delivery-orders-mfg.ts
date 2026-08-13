@@ -13,13 +13,37 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import {
+  DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES,
+  DO_STATUSES as SHARED_DO_STATUSES,
+} from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { doHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
+   queueAcSoEdit. Every DO mutation route funnels through it, so exactly one
+   snapshot of the SAVED delivery order is queued per successful save — header
+   PATCH and line add / edit / delete alike.
+
+   AcSyncService has handled `case "DO"` in Edit() since it was written
+   (AcSyncService.cs:442); what was missing was any way for the ERP to ASK, and
+   a column to remember the line identity by (mig 0280). Never throws: a write
+   to AutoCount must not fail a user's save. */
+async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'DO',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
 import { loadIncomingLines, pickIncomingForBucket, pickIncomingForSofaSet, incomingBucketKey } from '../lib/do-live-allocator';
@@ -366,9 +390,17 @@ const crewSnapshotCols =
 
 /* DO statuses that count as "shipped" — goods have left our hands, so stock
    has been deducted. The FIRST transition into ANY of these fires the
-   inventory OUT. Kept here as one list so deduction is robust no matter how
-   the status is advanced (DISPATCHED step-by-step, or a jump to SIGNED). */
-const SHIPPED_STATES = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED'];
+   inventory OUT. Robust no matter how the status is advanced (DISPATCHED
+   step-by-step, or a jump to SIGNED).
+
+   The list itself lives in shared/do-shipped-states.ts, with the read-side
+   superset beside it: consignment-notes.ts, lib/reconcile-ledger.ts and six
+   audit scripts each held their own hand-typed copy of one or the other, and
+   the two spellings had already drifted into answering the same question
+   differently. Widened to `string[]` here because the shared list is `as const`
+   and its `.includes()` would then only accept the literal union, while every
+   call site below passes a raw status off a row. */
+const SHIPPED_STATES: string[] = [...DO_SHIPPED_STATES];
 
 /* ── DO status vocabulary + legal-transition guard (audit gap #4) ──────────────
    The full set of raw delivery_orders.status values (union of DO_STATUS_BUCKETS +
@@ -377,17 +409,15 @@ const SHIPPED_STATES = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVO
    could post an unknown value, or fall a shipped DO back to a pre-ship status —
    e.g. DELIVERED→DRAFT — which leaves the stock OUT movement standing (a plain
    status write never reverses it) while the DO reads un-shipped. */
-const DO_STATUSES = new Set([
-  'DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED',
-  'COMPLETED', 'CANCELLED',
-]);
+const DO_STATUSES = new Set<string>(SHARED_DO_STATUSES);
 /* Pre-ship statuses — no stock has left our hands yet. */
-const DO_PRESHIP_STATUSES = new Set(['DRAFT', 'LOADED']);
+const DO_PRESHIP_STATUSES = new Set<string>(DO_PRESHIP_STATES);
 /* Statuses in which the inventory OUT has already been written. Once a DO is in
    any of these, its stock is deducted, so it must NOT drop back to a pre-ship
    status (the OUT would be orphaned). COMPLETED sits past INVOICED, so goods
-   have certainly shipped — include it alongside SHIPPED_STATES. */
-const DO_STOCK_OUT_STATUSES = new Set([...SHIPPED_STATES, 'COMPLETED']);
+   have certainly shipped — see shared/do-shipped-states.ts for why this is a
+   different set from SHIPPED_STATES and must stay one. */
+const DO_STOCK_OUT_STATUSES = new Set<string>(DO_STOCK_OUT_STATES);
 
 const nextNum = async (sb: any, c: any, prefixOverride?: string): Promise<string> => {
   const d = new Date();
@@ -839,11 +869,11 @@ async function resolveDoSofaBatchMap(
         .map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group ?? null, soItemId: it.so_item_id ?? null }));
       const sofaSoIds = await detectSofaSoItemIds(sb, sofaRows, companyId);
       if (sofaSoIds.size > 0) {
-        /* 'latest' (default) — movement paths must stay deterministic even in
-           the rare multi-PO window so a resync delta lands in the SAME bucket
-           the original OUT was stamped with. New drop-ship APPROVALS block on
+        /* 'latest' — movement paths must stay deterministic even in the rare
+           multi-PO window so a resync delta lands in the SAME bucket the
+           original OUT was stamped with. New drop-ship APPROVALS block on
            multi-PO separately (buildDropshipOffenders, audit H3). */
-        const expected = await resolveExpectedBatchBySoItem(sb, [...sofaSoIds]);
+        const expected = await resolveExpectedBatchBySoItem(sb, [...sofaSoIds], { onMultiPo: 'latest' });
         for (const [sid, eb] of expected) if (eb.poNumber) batchBySoItem.set(sid, eb.poNumber);
       }
     }
@@ -2812,9 +2842,9 @@ deliveryOrdersMfg.get('/', async (c) => {
   }
   const sortedNos = (set: Set<string> | undefined): string[] =>
     set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
-  /* Linked-SO Processing date (mfg_sales_orders.internal_expected_dd — the one
-     true user date since the legacy processing_date column was dropped, mig
-     0189). The DO quick-view drawer shows it next to the DO's own delivery
+  /* Linked-SO Processing date (mfg_sales_orders.processing_date — the one true
+     user date, one column since 0189 and one name since 0284).
+     The DO quick-view drawer shows it next to the DO's own delivery
      date; one batched read keyed by so_doc_no, same pattern as the DR/SI child
      reads above. */
   const soProcByDoc = new Map<string, string | null>();
@@ -2822,9 +2852,9 @@ deliveryOrdersMfg.get('/', async (c) => {
     const soDocNos = [...new Set(rows.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
     if (soDocNos.length > 0) {
       const { data: soRows } = await sb.from('mfg_sales_orders')
-        .select('doc_no, internal_expected_dd').in('doc_no', soDocNos);
-      for (const s of ((soRows ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null }>)) {
-        if (s.doc_no) soProcByDoc.set(s.doc_no, s.internal_expected_dd ?? null);
+        .select('doc_no, processing_date').in('doc_no', soDocNos);
+      for (const s of ((soRows ?? []) as Array<{ doc_no: string | null; processing_date: string | null }>)) {
+        if (s.doc_no) soProcByDoc.set(s.doc_no, s.processing_date ?? null);
       }
     }
   }
@@ -2856,7 +2886,7 @@ deliveryOrdersMfg.get('/', async (c) => {
       ...r,
       has_children: childIds.has(r.id),
       lifecycle_state: lifecycleByDo.get(r.id) ?? 'shipped',
-      so_internal_expected_dd: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
+      so_processing_date: soProcByDoc.get((r.so_doc_no as string | null) ?? '') ?? null,
       source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
       source_sos: sourceSosByDo.get(r.id) ?? [],
       source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,
@@ -3075,8 +3105,12 @@ deliveryOrdersMfg.get('/:id', async (c) => {
     })
     .map((it) => (it.so_item_id as string | null) ?? null)
     .filter((x): x is string => Boolean(x));
+  /* 'latest' — a READ-ONLY drill-down naming the PO a line most likely came
+     from. It stamps nothing, so the ambiguous case is better answered with the
+     most recent live PO than left blank; the write paths that DO stamp block
+     on it (audit H3). */
   const boundPoBySoItem = unresolvedSoIds.length > 0
-    ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds)
+    ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' })
     : new Map<string, { poNumber: string }>();
   /* Per-line Assigned SO (owner 2026-07-31): a DO is HARD-linked to its Sales
      Order — never an MRP guess — so the drill-down shows each line's intrinsic SO
@@ -3499,6 +3533,21 @@ deliveryOrdersMfg.post('/', async (c) => {
       docType: 'DO',
       docNo: h.do_number,
       docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    /* THE ELSE BRANCH IS THE POINT. A source-less DO used to fall out of this
+       `if` writing nothing at all — no outbox row, no reason, nothing to find it
+       by — so a shipment that exists in the ERP and can never exist in the
+       account book left no trace of the fact. It is a permanent shape mismatch,
+       not a bug, and permanent divergences are exactly the ones that have to be
+       written down. */
+    await recordParentlessCreate(sb, {
+      companyId: activeCompanyId(c),
+      docType: 'DO',
+      docNo: h.do_number,
+      docId: h.id,
+      missing: 'no source Sales Order',
       createdBy: c.get('houzsUser')?.id ?? null,
     });
   }
@@ -4318,10 +4367,20 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   const headerLock = await doHasDownstream(sb, id);
   if (headerLock) return c.json(headerLock, 409);
 
+  /* The header PATCH had no company gate of any kind: `id` comes straight from
+     the path and the SCM client is service-role, so a known id edited another
+     company's delivery order - address, dates, driver, the lot - and mirrored
+     the amend onto that company's SO. Strict flavour, because a DO header edit
+     is a books change: refuse an unresolved company rather than degrade to
+     "every company". */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* The BEFORE half of every from->to pair recorded after the DO write below.
      Read after the guards so a rejected PATCH costs nothing. */
-  const { data: beforeRow } = await sb.from('delivery_orders')
-    .select(DO_AUDIT_SELECT).eq('id', id).maybeSingle();
+  const { data: beforeRow } = await scopeToCompanyId(sb.from('delivery_orders')
+    .select(DO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* DUAL-WRITE NOTE: Supabase REST has no client-side transaction primitive —
@@ -4336,9 +4395,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   let mirrorSoDocNo: string | null = null;
 
   if (Object.keys(updates).length > 1) {
-    const { data, error } = await sb.from('delivery_orders').update(updates).eq('id', id).select('id, so_doc_no').maybeSingle();
+    const { data, error } = await scopeToCompanyId(sb.from('delivery_orders').update(updates).eq('id', id), co.companyId).select('id, so_doc_no').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    if (!data) return c.json({ error: 'not_found' }, 404);
+    if (!data) return c.json(NOT_THIS_COMPANY, 404);
     mirrorSoDocNo = (data as { soDocNo?: string | null; so_doc_no?: string | null }).soDocNo
       ?? (data as { so_doc_no?: string | null }).so_doc_no ?? null;
 
@@ -4396,6 +4455,7 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
     }
   }
 
+  await queueAcDoEdit(c, id);
   return c.json({
     ok: true,
     id,
@@ -4608,6 +4668,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     });
   }
 
+  await queueAcDoEdit(c, id);
   return c.json({ item: data }, 201);
 });
 
@@ -4622,14 +4683,20 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* A DO line edit moves stock and revenue, so it takes the strict company gate
+     rather than the degrading one: an unresolved company refuses instead of
+     reaching every company's lines. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* Tier 2 downstream-lock — line-edit is blocked once a DR / SI exists. */
   const childLock = await doHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
 
-  const { data: prev } = await sb.from('delivery_order_items')
+  const { data: prev } = await scopeToCompanyId(sb.from('delivery_order_items')
     .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_centi, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
-    .eq('id', itemId).maybeSingle();
-  if (!prev) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId), co.companyId).maybeSingle();
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
   /* Mig 0230 — a qty INCREASE can bind, just like the three create paths. Filled
@@ -4828,7 +4895,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('delivery_order_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('delivery_order_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty
@@ -4871,6 +4938,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user?.id);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-line-edit failed:', e); }
+  await queueAcDoEdit(c, id);
   return c.json({ ok: true });
 });
 
@@ -4896,6 +4964,10 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
 deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
 
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // Per-line downstream guard (PR #24) — block delete only if THIS line's qty
   // has been invoiced or returned. Tier 2's doc-level doHasDownstream is too
   // coarse here (would block deleting any line if any OTHER line had children);
@@ -4914,12 +4986,18 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was on the delivery order, and there is nothing
      left to join back to. */
-  const { data: doomedRow } = await sb.from('delivery_order_items')
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('delivery_order_items')
     .select('item_code, description, qty, unit_price_centi, discount_centi, line_total_centi')
-    .eq('id', itemId).maybeSingle();
+    .eq('id', itemId), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = (doomedRow ?? {}) as Record<string, unknown>;
 
-  const { error } = await sb.from('delivery_order_items').delete().eq('id', itemId);
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'delivery_order_items', itemId);
+
+  const { error } = await scopeToCompanyId(sb.from('delivery_order_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the DELIVERY ORDER and it still exists.
@@ -4959,6 +5037,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user?.id);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-line-delete failed:', e); }
+  await queueAcDoEdit(c, id, retire);
   return c.json({ ok: true });
 });
 
@@ -4994,8 +5073,12 @@ deliveryOrdersMfg.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),

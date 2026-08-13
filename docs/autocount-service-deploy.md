@@ -1,10 +1,22 @@
 # AcSyncService — build and deploy on the AutoCount host
 
-`backend/scripts/autocount-service/AcSyncService.cs` is the only piece of this
-repository that does **not** build in CI. It references the licensed AutoCount
-2.2 assemblies, which exist only on the AutoCount host, so CI cannot compile it
-and no automated test covers it. It is reviewed as source here and built by hand
-there.
+`backend/scripts/autocount-service/AcSyncService.cs` does not build in CI: it
+references the licensed AutoCount 2.2 assemblies, which no GitHub runner has.
+
+**But "only the office host can compile it" was FALSE, and believing it cost us
+a defect.** The assemblies ship with the ordinary AutoCount 2.2 desktop install
+and `csc.exe` ships with the .NET Framework, so any workstation with AutoCount
+installed compiles this file - the owner's desktop included. Verified
+2026-08-11: a clean build, byte-size identical to the `AcSyncService.prev.exe`
+already on the host.
+
+**Run `backend/scripts/autocount-service/build-local.ps1` before you push a C#
+change.** It substitutes a dummy connection line, compiles, prints the size and
+throws the binary away - it answers the one question CI cannot, which is DOES IT
+COMPILE. The migration record's defect 4 (an over-transfer handler that could
+never compile, sitting on `main`) is exactly what that check would have caught,
+and the reason recorded for missing it - "a file that compiles on exactly one
+machine in the building gets no CI" - was a premise nobody tested.
 
 This page is the whole procedure. It is written to be followed in one sitting by
 someone who did not write the change.
@@ -96,6 +108,24 @@ printed document, marked. Hiding it would be deletion wearing a different hat.
 
 ## 2. Build
 
+**Prefer `deploy-on-host.ps1`. The manual procedure below is what it automates,
+kept because you need it when the script itself is what you are debugging.**
+
+```
+powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -DryRun   # does it compile
+powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1           # compile, swap, verify
+```
+
+It does every step in 2.1 to 3 in order, and adds the two things a written
+ritual cannot: it **refuses to swap an exe that did not compile**, and it
+**rolls back by itself** if the new exe does not answer `/health` with the
+expected book. It deletes `AcSyncService.build.cs` in a `finally`, so the
+password does not survive a failed run either. To ask only "does the source
+compile", with no credentials involved at all, use `build-local.ps1` — that runs
+on any workstation with AutoCount 2.2 installed.
+
+The rest of this section is the manual equivalent.
+
 On the AutoCount host, in a directory containing `AcSyncService.cs`.
 
 ### 2.1 Substitute the DB connection line — EVERY occurrence
@@ -104,9 +134,18 @@ On the AutoCount host, in a directory containing `AcSyncService.cs`.
 `AutoCount.Data.DBSetting db = ...` line before compiling, so the DB password
 never lives in source control.
 
-> **It now appears in THREE methods** — `Session()`, `DtlKeys()` and the new
-> `CreatedLines()`. It used to appear in two. **A substitution that replaces only
-> the first occurrence will not compile.** Use a global replace.
+> **It appears in THREE methods** — `Session()`, `DtlKeys()` and `CreatedLines()`
+> — plus once more in the file header comment, so a global replace reports
+> **four**. It used to appear in two. **A substitution that replaces only the
+> first occurrence will not compile.** Use a global replace.
+
+> **The connection line goes inside ORDINARY C# string literals, not verbatim
+> ones, so every backslash in it is an escape sequence.** A named SQL instance is
+> spelled `HOST\INSTANCE`, and pasting that raw fails to compile with **CS1009,
+> three times** — one per substitution site. Write `HOST\\INSTANCE` in
+> `dbline.txt`. `deploy-on-host.ps1` escapes this for you when it assembles the
+> line from `setup.json`; it cannot when you hand it a `dbline.txt`, because at
+> that point the file is already C# source and correcting it would be guessing.
 
 ```bat
 powershell -Command ^
@@ -131,13 +170,18 @@ csc.exe /platform:x64 ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Purchase.dll" ^
   /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Accounting.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Stock.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.ARAP.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.GeneralMaint.dll" ^
+  /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.StockMaint.dll" ^
   /r:System.Web.Extensions.dll /r:System.Data.dll ^
   /out:AcSyncService.exe AcSyncService.build.cs
 ```
 
-No new assembly references are needed. `CreatedLines()` uses
-`System.Data.SqlClient`, already referenced via `System.Data.dll`, and the same
-`db.ConnectionString` that `DtlKeys()` has always used.
+**THREE new assembly references** since `/ensure-masters` landed - `Stock`,
+`ARAP` and `GeneralMaint` carry `ItemDataAccess`, `DebtorDataAccess` and
+`SalesAgentCommand`. A build without them fails with CS0234 on the master-data
+namespaces. `CreatedLines()` still needs nothing beyond `System.Data.dll`.
 
 ### 2.3 Delete the substituted source
 
@@ -224,6 +268,22 @@ POST /edit   { DocType:"SO", DocNo:"<same>",
 `[ERP-CANCELLED]`. Then confirm the line no longer appears as outstanding —
 `SELECT Qty - ISNULL(TransferedQty,0) FROM SODTL WHERE DtlKey = <key>` must
 return 0 or less.
+
+### 4.6a The three cells 4.1-4.5 never touch
+
+4.1 to 4.5 exercise create-SO and edit. **`/create-po`, `/so-to-do` and
+`/po-to-gr` have never run end to end** — `qa-convert.ps1` is those three, in
+order, over the public tunnel from any machine:
+
+```
+powershell -ExecutionPolicy Bypass -File qa-convert.ps1 -KeyFile <path> -IReallyMeanIt
+```
+
+It proves the convert actually LINKED the documents without needing a database:
+step 6 cancels the parent SO **while its DO still exists and requires that to
+fail**, because AutoCount refuses to cancel a transferred document. Then it
+tears down child-before-parent. Read its header before running — the converts
+consume real DO and GR running numbers, and the GR posts a real stock IN.
 
 ### 4.6 Only then, the live book
 

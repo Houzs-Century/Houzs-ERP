@@ -1,0 +1,62 @@
+name: Normalize fabric codes
+
+# Manual. MODE=plan (the default) writes NOTHING - it prints every code, label
+# and series it would rewrite. MODE=apply needs the CONFIRM sentence.
+#
+# RE-RUN: safe and inert. A colour already in the canonical shape plans no
+# change, because the colour NAME is read back out of the LABEL as well as out
+# of the code. Until 2026-08-13 it was not: the plan on a second pass proposed
+# 200 label rewrites down to a bare code, deleting the colour name from every
+# one of them with the code unchanged. Read the plan's CODE / LABEL section -
+# a line whose "->" side has LOST a word is that bug coming back.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default, writes nothing) | apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      series:
+        description: "comma-separated series to limit to (blank = the whole library)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply only: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: normalize-fabric-codes-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/normalize-fabric-codes.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          SERIES: ${{ inputs.series }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}

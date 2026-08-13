@@ -36,6 +36,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -55,7 +56,19 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
+   (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
+async function queueAcSiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -652,9 +665,9 @@ function siTransitionReject(prev: string, next: string): string {
 
 // ── List ────────────────────────────────────────────────────────────────
 /* Stamp the linked SO's dates onto SI list rows for the quick-view drawer:
-   so_internal_expected_dd (the "Processing date" — mfg_sales_orders.
-   internal_expected_dd, the one true user date since the legacy
-   processing_date column was dropped, mig 0189) and so_customer_delivery_date
+   so_processing_date (the "Processing date" — mfg_sales_orders.processing_date,
+   the one true user date, and since mig 0284 under the one name the UI, the API
+   and every human already use) and so_customer_delivery_date
    (fallback for pre-snapshot SIs whose own customer_delivery_date is null).
    One batched read keyed by so_doc_no; mutates rows in place, same style as
    gateSiFinance. Called on BOTH list paths (legacy + paginated). */
@@ -662,17 +675,17 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const soDocNos = [...new Set(list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
-  const byDoc = new Map<string, { internal_expected_dd: string | null; customer_delivery_date: string | null }>();
+  const byDoc = new Map<string, { processing_date: string | null; customer_delivery_date: string | null }>();
   if (soDocNos.length > 0) {
     const { data } = await sb.from('mfg_sales_orders')
-      .select('doc_no, internal_expected_dd, customer_delivery_date').in('doc_no', soDocNos);
-    for (const s of ((data ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null; customer_delivery_date: string | null }>)) {
-      if (s.doc_no) byDoc.set(s.doc_no, { internal_expected_dd: s.internal_expected_dd ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
+      .select('doc_no, processing_date, customer_delivery_date').in('doc_no', soDocNos);
+    for (const s of ((data ?? []) as Array<{ doc_no: string | null; processing_date: string | null; customer_delivery_date: string | null }>)) {
+      if (s.doc_no) byDoc.set(s.doc_no, { processing_date: s.processing_date ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
     }
   }
   for (const r of list) {
     const so = byDoc.get((r.so_doc_no as string | null) ?? '');
-    r.so_internal_expected_dd = so?.internal_expected_dd ?? null;
+    r.so_processing_date = so?.processing_date ?? null;
     r.so_customer_delivery_date = so?.customer_delivery_date ?? null;
   }
 }
@@ -1074,6 +1087,23 @@ salesInvoices.post('/', async (c) => {
      header, so from here every exit is a success and this CREATE row is true.
      Written before the DRAFT early-return so both statuses record exactly one. */
   await recordSiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
+
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. A standalone invoice
+     with no delivery order behind it has nothing for AutoCount to transfer
+     from, and there is no /create-iv route on AcSyncService to reach for.
+     Recorded rather than dropped, because this invoice will never appear in the
+     account book and the owner's outstanding rule ("not converted to DO and NOT
+     TO IV") reads exactly this document class. Placed BEFORE the DRAFT early
+     return so a draft and a posted invoice each record exactly one row, in step
+     with recordSiCreate directly above. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docNo: h.invoice_number,
+    docId: h.id,
+    missing: 'no source Delivery Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 
   /* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post AR/GL revenue nor auto-apply
      customer credit. Both happen on confirm (PATCH /:id/status DRAFT→SENT). */
@@ -1500,6 +1530,17 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
   if ((si as { status: string }).status !== 'DRAFT') {
     await postSiRevenue(sb, (si as { invoice_number: string }).invoice_number);
   }
+  /* ERP -> AutoCount edit. This is AutoCount's PARTIAL TRANSFER — a second (or
+     third) delivery order folded into an invoice that already exists — and it
+     was the one conversion path that queued nothing at all, not even a skipped
+     row, so the invoice in the account book kept the lines of only the first DO.
+
+     It is queued as an EDIT rather than a second convert on purpose: a convert
+     would make AcSyncService AddNew a whole new Invoice document, which is a
+     different document from the one the ERP just appended to. Where the added
+     lines have no DtlKey the edit is refused with a visible row — see the same
+     note on the PO's convert-from-so. */
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, added: rows.length }, 201);
 });
 
@@ -1607,6 +1648,7 @@ salesInvoices.patch('/:id', async (c) => {
     fieldChanges: diffFields(before, auditPatch, SI_AUDIT_FIELDS),
   });
 
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, id });
 });
 
@@ -1697,6 +1739,7 @@ salesInvoices.post('/:id/items', async (c) => {
   try {
     await resyncSiRevenue(sb, (header as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
 });
 
@@ -1705,8 +1748,17 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Re-pricing an invoice line moves revenue and margin, so the company gate is
+     strict: refuse an unresolved company rather than fall through to "every
+     company", and pin the status gate, the line read and the UPDATE itself. The
+     `sales_invoice_id` predicate proves the line is on THIS invoice, not that
+     the invoice is in THIS company's books. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
     }
@@ -1726,10 +1778,10 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `do_item_id` are business-logic only and deliberately not in
      SI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('sales_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
     .select(SI_LINE_AUDIT_SELECT + ', variants, do_item_id')
-    .eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern (see SI_AUDIT_SELECT
@@ -1779,7 +1831,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('sales_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -1814,13 +1866,18 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-edit resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true });
 });
 
 salesInvoices.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before deleting lines.' }, 409);
     }
@@ -1833,12 +1890,17 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was invoiced, and there is nothing left to join
      back to. */
-  const { data: doomedRow } = await sb.from('sales_invoice_items')
-    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!doomedRow) return c.json({ error: 'not_found' }, 404);
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
+    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = doomedRow as unknown as Record<string, unknown>;
 
-  const { error } = await sb.from('sales_invoice_items').delete().eq('id', itemId);
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'sales_invoice_items', itemId);
+
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the INVOICE and it still exists. DELETE on
@@ -1866,6 +1928,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-delete resync failed:', e); }
+  await queueAcSiEdit(c, id, retire);
   return c.json({ ok: true });
 });
 
@@ -1901,7 +1964,7 @@ salesInvoices.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -2039,14 +2102,20 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */
-  const { data: row } = await sb.from('sales_invoice_payments')
-    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
+  /* Taking money back off an invoice is a books change, so the company gate is
+     strict — an unresolved company refuses rather than reaching every company's
+     receipts. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: row } = await scopeToCompanyId(sb.from('sales_invoice_payments')
+    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
+  if (!row) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
-  const { data: inv } = await sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id), co.companyId).maybeSingle();
+  if (!inv) return c.json(NOT_THIS_COMPANY, 404);
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
-  const { error } = await sb.from('sales_invoice_payments').delete().eq('id', paymentId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
   try { await reconcileSiOverpay(sb, id); }
@@ -2320,6 +2389,27 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
         console.error(`[customer-credit] credit-from-cancel failed for ${d.invoice_number}:`, e);
       }
     }
+
+    /* ERP -> AutoCount cancel. THE OWNER'S OUTSTANDING RULE IS WHY THIS EXISTS,
+       not tidiness: his rule is "not converted to DO and NOT TO IV, cancelled
+       excluded". An invoice cancelled here but left live in the account book
+       keeps consuming its Sales Order on the AutoCount side, so the two systems
+       disagree about which orders are still outstanding by exactly the set of
+       invoices the ERP has cancelled. AcSyncService has handled `case "IV"`
+       since it was written (AcSyncService.cs:423); the ERP simply never asked.
+
+       Placed inside the atomic `.neq('status','CANCELLED')` branch, so a losing
+       concurrent cancel returned above and exactly one cancel is ever queued.
+       Never throws — enqueueCancel swallows, and a write-back must not fail a
+       save that has already committed. */
+    await enqueueCancel(sb, {
+      companyId: co.companyId ?? activeCompanyId(c),
+      docType: 'IV',
+      docNo: d.invoice_number ?? id,
+      docId: id,
+      self: { table: 'sales_invoices', keyCol: 'id', key: id },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   if (isReopen) {

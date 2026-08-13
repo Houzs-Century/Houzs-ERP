@@ -23,7 +23,19 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
-import { enqueueConvert, recordConvertSkipped } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
+   See queueAcDoEdit for the shape. */
+async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'PI',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
@@ -462,8 +474,16 @@ async function verifyGrnLinesNotOverInvoiced(
    CANCELLED is read-only. Returns the blocking JSON response, or null if the PI
    is editable. */
 async function piLocked(sb: any, piId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('purchase_invoices')
+  const { data, error } = await sb.from('purchase_invoices')
     .select('paid_centi, status').eq('id', piId).maybeSingle();
+  /* The error is READ, not dropped. A dropped error made `data` null, `!data`
+     read as "no such invoice", and the guard answered "not locked" — so a PAID
+     or CANCELLED invoice became editable on a transient read failure. A failed
+     read must never read as an absence when the absence is what authorises the
+     write. Distinguish it from the genuine not-found below. */
+  if (error) {
+    return { error: 'pi_lock_check_failed', message: `Could not check whether this invoice is locked, so it is treated as locked — try again (${error.message}).` };
+  }
   if (!data) return null; // not found — let the handler's own load surface 404
   const row = data as { paid_centi: number | null; status: string };
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };
@@ -1097,6 +1117,21 @@ purchaseInvoices.post('/', async (c) => {
      record exactly one. */
   await recordPiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, itemRows.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. The purchase-side mirror
+     of the standalone Sales Invoice: AcSyncService has no /create-pi, because
+     AutoCount builds a Purchase Invoice only by transferring a GRN's lines. The
+     two real conversion routes are POST /from-grn and /from-grn-items; anything
+     that arrives here is an invoice the account book will never hold, and it is
+     recorded so it can be found. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'PI',
+    docNo: h.invoice_number,
+    docId: h.id,
+    missing: 'no source Goods Received Note to transfer from',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   /* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing: it must NOT consume the GRN
      line (recomputeGrnInvoiced) nor re-cost (recostForPi). Both move to the
      confirm transition (PATCH /:id/post). GL/AP posting (postPiAccounting) is ALSO
@@ -1427,6 +1462,24 @@ purchaseInvoices.patch('/:id/cancel', async (c) => {
   // Costing B — a cancelled PI is no longer the authoritative price; re-cost the
   // GRN so its buckets fall back to the GR price (or Pending), and DOs/SIs follow.
   await recostForPi(sb, id);
+
+  /* ERP -> AutoCount cancel. The purchase-side mirror of the Sales Invoice
+     cancel: a PI cancelled in the ERP but left live in the account book keeps
+     consuming its GRN there, so the two sides' outstanding sets diverge by
+     exactly that document. AcSyncService.cs:426 is `case "PI"` and has always
+     been reachable — nothing ever called it.
+
+     Placed after the ATOMIC ACTIVE->CANCELLED flip won its race (the losing
+     concurrent call returned above), so exactly one cancel is queued per
+     invoice, the same guarantee the accounting reversal relies on. */
+  await enqueueCancel(sb, {
+    companyId: auditCompanyId ?? activeCompanyId(c),
+    docType: 'PI',
+    docNo: cancelled.invoice_number ?? id,
+    docId: id,
+    self: { table: 'purchase_invoices', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
   return c.json({ purchaseInvoice: { id: cancelled.id, status: cancelled.status } });
 });
 
@@ -1970,6 +2023,7 @@ purchaseInvoices.patch('/:id', async (c) => {
     await reallocatePiCharges(sb, id, undefined, activeCompanyId(c));
     try { await recostForPi(sb, id); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-patch] recost failed:', id, e); }
   }
+  await queueAcPiEdit(c, id);
   return c.json({ purchaseInvoice: data });
 });
 
@@ -2099,6 +2153,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   await reallocatePiCharges(sb, piId, undefined, activeCompanyId(c));
   // Costing B — a newly added PI line bills a GRN line: re-cost its lots / DO / SI.
   await recostForPi(sb, piId);
+  await queueAcPiEdit(c, piId);
   return c.json({ item: data }, 201);
 });
 
@@ -2108,6 +2163,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
+
+  /* ...and scope it to THIS COMPANY. "Belongs to this PI" is not the same fact
+     as "belongs to my books": the PI id itself arrives from the client, and the
+     SCM client is service-role, so a known id from the other company would
+     otherwise edit that company's invoice line, recompute its totals and resync
+     its GL. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
 
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
@@ -2121,10 +2184,10 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `grn_item_id` are business-logic only and deliberately not in
      PI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('purchase_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('purchase_invoice_items')
     .select(PI_LINE_AUDIT_SELECT + ', variants, grn_item_id')
-    .eq('id', itemId).eq('purchase_invoice_id', piId).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('purchase_invoice_id', piId), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern in these routes. */
@@ -2184,7 +2247,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     }
   }
 
-  const { error } = await sb.from('purchase_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -2229,6 +2292,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('purchase_invoices').select('invoice_number').eq('id', piId).maybeSingle();
     if (h) await resyncPiAccounting(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-accounting] post-line-edit resync failed:', e); }
+  await queueAcPiEdit(c, piId);
   return c.json({ ok: true });
 });
 
@@ -2236,6 +2300,9 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
+  // Same company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
@@ -2245,13 +2312,18 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   // not delete another PI's line while the recompute / GL resync run here.
   /* The audited columns too — after the delete the audit row is the only
      remaining evidence of what the supplier billed on this line. */
-  const { data: lineRow } = await sb.from('purchase_invoice_items')
-    .select(PI_LINE_AUDIT_SELECT + ', grn_item_id').eq('id', itemId).eq('purchase_invoice_id', piId).maybeSingle();
-  if (!lineRow) return c.json({ error: 'not_found' }, 404);
+  const { data: lineRow } = await scopeToCompanyId(sb.from('purchase_invoice_items')
+    .select(PI_LINE_AUDIT_SELECT + ', grn_item_id').eq('id', itemId).eq('purchase_invoice_id', piId), co.companyId).maybeSingle();
+  if (!lineRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const line = lineRow as unknown as Record<string, unknown>;
 
-  const { error } = await sb.from('purchase_invoice_items').delete().eq('id', itemId);
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_invoice_items', itemId);
+
+  const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the PURCHASE INVOICE and it still exists.
@@ -2302,5 +2374,6 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('purchase_invoices').select('invoice_number').eq('id', piId).maybeSingle();
     if (h) await resyncPiAccounting(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pi-accounting] post-line-delete resync failed:', e); }
+  await queueAcPiEdit(c, piId, retire);
   return c.body(null, 204);
 });

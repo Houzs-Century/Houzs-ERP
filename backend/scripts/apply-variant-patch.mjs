@@ -12,6 +12,8 @@
 // Only whitelisted header columns are writable; item variants MERGE into the
 // existing JSON (never replace wholesale); numeric axes use COALESCE so a
 // missing field never nulls an existing value. DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent. A hand-written patch list, re-applied verbatim; the rows land on the same values. Not keyed on anything, so it also overwrites a human edit made since - check the list before a second run.
 import zlib from "node:zlib";
 import postgres from "postgres";
 

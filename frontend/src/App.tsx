@@ -1,9 +1,9 @@
 import { lazy, Suspense } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./auth/AuthContext";
 import { canUseAssistant } from "./auth/assistantAccess";
-import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canViewFairReport, hasAnyScmPageAccess } from "./auth/salesAccess";
+import { isSalesStaff, isDirectorUser, isSalesDirectorUser, isSalesNonDirector, canViewFairReport, hasAnyScmPageAccess } from "./auth/salesAccess";
 import { capability, capabilitiesUnresolved } from "./auth/capabilities";
 import { PageGuard } from "./auth/PageGuard";
 import { ROUTE_ALIASES } from "./lib/routeAliases";
@@ -201,6 +201,26 @@ function AssistantGuard({ children }: { children: React.ReactElement }) {
   const { user } = useAuth();
   if (!canUseAssistant(user)) return <Navigate to="/" replace />;
   return children;
+}
+
+/* /assr/:id — the EDITABLE board case detail (stage change, field edits, add
+   item, archive, close). A non-director Sales rep is redirected to the
+   read-only /my-cases/:id view instead: they may raise cases but not edit
+   existing ones (owner 2026-07-23). The whole edit surface lives on this detail
+   page, so redirecting it is the complete block — the board LIST stays reachable
+   (that's their create path) but carries no inline edit. Ops + Sales Directors
+   fall through to the editable detail unchanged. */
+function SalesRepCaseDetailRoute() {
+  const { user } = useAuth();
+  const { id } = useParams();
+  if (isSalesNonDirector(user) && id) {
+    return <Navigate to={`/my-cases/${id}`} replace />;
+  }
+  return (
+    <PageGuard page="service_cases" allowSales>
+      <ServiceCaseDetail />
+    </PageGuard>
+  );
 }
 
 function Guard({
@@ -408,10 +428,15 @@ export default function App() {
                canAccessServiceCases → isSalesUser, with the rows still scoped to
                self+downline by assrVisibleUserIds. Without this word a Sales rep
                could open the case LIST, click a row, and hit <Forbidden> on a
-               case the backend would have served them. */
-            <PageGuard page="service_cases" allowSales>
-              <ServiceCaseDetail />
-            </PageGuard>
+               case the backend would have served them.
+
+               A NON-director Sales rep, though, gets bounced to the READ-ONLY
+               My Cases detail (below) BEFORE this editable board detail renders
+               — owner 2026-07-23: "sales agent 不应该有 edit case 功能". Reps can
+               still raise cases (the create panel + FAB stay open to them), but
+               every existing case opens read-only. Ops + Sales Directors keep the
+               editable board. */
+            <SalesRepCaseDetailRoute />
           }
         />
         <Route
