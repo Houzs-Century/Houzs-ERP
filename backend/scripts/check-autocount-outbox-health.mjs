@@ -49,9 +49,21 @@ const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
 /* The reason strings the ERP writes when it declines to send. Each is produced
-   by a named code path, so a bucket that grows tells you WHICH path. */
+   by a named code path, so a bucket that grows tells you WHICH path.
+
+   MATCH ON THE ERROR CLASS NAME, NOT ON "refused, nothing sent". noteReadFailure
+   (autocount-outbox.ts) writes `refused, nothing sent (${e.name}): ${message}`
+   for FOUR different classes, and each has a different remedy — backfill a
+   DtlKey, fix a sofa build, map an item code, set a stock location. Matching the
+   shared prefix labelled all four "line identity missing", which sends an
+   operator to backfill DtlKeys for an item-map problem. Every class sets
+   this.name in its constructor, so the parenthesised name is reliable. */
 const SKIP_KINDS = [
-  ["refused, nothing sent", "line identity missing — backfill linked_ac_dtlkey, then save again"],
+  ["refused, nothing sent (KeylessLineError)", "line identity missing — backfill linked_ac_dtlkey, then save again"],
+  ["refused, nothing sent (SofaCollapseError)", "sofa build cannot be folded into AutoCount's one line without inventing Desc2 text"],
+  ["refused, nothing sent (ItemCodeError)", "an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)"],
+  ["refused, nothing sent (MissingLocationError)", "a line carries no stock location — set the warehouse on the line, or the sales location on the document"],
+  ["compose failed, nothing sent", "the ERP could not read its own document while composing — a read fault, not a refusal"],
   ["masters not opened", "an item or salesperson could not be opened in AutoCount"],
   ["no source document to transfer from", "raised with no parent — cannot exist in AutoCount at all"],
   ["AutoCount has no shape", "merged conversion (N sources -> 1 document) — must be worked by hand"],
@@ -115,10 +127,17 @@ try {
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
+    /* What empty MEANS depends on the switch read above, so say which. The old
+       text always claimed empty was "correct while the flag is off" — true only
+       while it was off, and actively misleading the moment it was turned on. */
     notice(
       "That is not 'drained'. The table is append-only by design, so an empty " +
-        "table means NOTHING HAS EVER BEEN ENQUEUED — which is the correct " +
-        "state while scm.autocount_writeback is off.",
+        "table means NOTHING HAS EVER BEEN ENQUEUED — " +
+        (on
+          ? "and the switch is ON, so this means no document has been saved yet. " +
+            "Save one and re-run; if it is still empty afterwards, the enqueue " +
+            "itself is not being reached."
+          : "which is the expected state while scm.autocount_writeback is off."),
     );
   } else {
     notice(
@@ -159,7 +178,16 @@ try {
     for (const [needle, meaning] of SKIP_KINDS) {
       const hits = skipped.filter((r) => r.last_error.includes(needle));
       hits.forEach((r) => seen.add(r.doc_no + r.op));
-      if (hits.length) notice(`  skipped ${hits.length}: ${meaning}`);
+      if (!hits.length) continue;
+      notice(`  skipped ${hits.length}: ${meaning}`);
+      /* NAME THE DOCUMENTS AND QUOTE THE REASON. A bare count tells an operator
+         that something was refused but not what to open, and the message body
+         carries the specifics the class name cannot — which line, which item
+         code, what the resolver actually found. Without this the only way to
+         act on a skip was to go query the table by hand. */
+      for (const r of hits) {
+        notice(`    - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 400)}`);
+      }
     }
     const rest = skipped.filter((r) => !seen.has(r.doc_no + r.op));
     for (const r of rest) {
