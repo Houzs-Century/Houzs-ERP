@@ -98,16 +98,29 @@ gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
 
 It currently returns FOUR rules: `deletion`, `non_fast_forward`,
 `required_status_checks` with contexts `backend-typecheck` + `frontend` and
-**`strict_required_status_checks_policy: true`**, and `pull_request`. That
-strict flag is *Require branches to be up to date before merging*, and it is
-the one that matters; the `pull_request` rule is why a direct push to `main`
-is refused at all, and it carries `required_approving_review_count: 0`, so a
-PR is required but an approval is not.
+**`strict_required_status_checks_policy: true`**, and `pull_request`.
 
-**There is NO bypass list.** `gh api repos/hello-houzs/Houzs-ERP/rulesets/20119902`
-returns `bypass_actors: null` with `enforcement: active` — not even repository
-admin can push past it. Do not plan an emergency around an escape hatch that
-does not exist; the escape is to edit the ruleset, which is the owner's click.
+That strict flag is *Require branches to be up to date before merging*, and it
+is the one that will cost you TIME rather than correctness: on a busy day `main`
+moves faster than a large PR can finish CI, so the branch has to be re-merged
+and re-run, repeatedly. GitHub auto-merge helps — it fires the moment checks are
+green AND the branch is current — but it does **not** resolve conflicts, so a
+merge that goes DIRTY still needs a person. Measured 2026-08-13 on a 70-commit
+PR: five rounds.
+
+The `pull_request` rule is why a direct push to `main` is refused at all, and it
+carries `required_approving_review_count: 0` — a PR is required, an approval is
+not.
+
+**There is NO emergency escape hatch.** This paragraph used to end "Repository
+admin is on the bypass list as an emergency escape hatch". Two independent
+sweeps landed on the same correction on 2026-08-13:
+`gh api repos/hello-houzs/Houzs-ERP/rulesets/20119902` returns
+`bypass_actors: null` with `enforcement: active` and `current_user_can_bypass:
+"never"`. Nobody can force a merge, including the owner. That is fine while
+merges are one-at-a-time, and it is the thing to fix FIRST if a merge queue is
+ever switched on — a queue that jams with no bypass blocks `main` for everyone
+until someone edits the ruleset itself.
 
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
