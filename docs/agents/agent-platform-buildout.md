@@ -54,7 +54,7 @@ Two `public`-schema tables, **0091 house style** (text PK = `crypto.randomUUID()
 - `assistant_messages(id text pk, conversation_id text, user_id text, role text 'user'|'assistant', content text, agents text JSON, degraded int 0/1, created_at text)` — idx `(conversation_id, created_at)` + `(user_id, created_at)`.
 - NEW `backend/src/services/assistant-history.ts`: `resolveOrCreateConversation`, `appendExchange` (2 inserts + bump), `listConversations`, `getConversationMessages` (null→404), `softDeleteConversation`. **Write from the ROUTE, keep `services/assistant.ts` read-only** (mirror the teach write).
 - `backend/src/routes/assistant.ts`: `GET /conversations`, `GET /conversations/:id/messages`, `DELETE /conversations/:id` (soft), and modify `POST /chat` to take optional `conversationId` + append both turns (best-effort try/catch) + return `{...res, conversationId}`. Gate every route with `canUseAssistant`; scope by `user_id`; **404 not 403** on others'/deleted. Scope is per-USER (not per-company). Answers are already money-redacted at gather (`assistant.ts:251`), so stored history carries nothing the user couldn't see.
-- Retention: sweep script + `workflow_dispatch` (keep newest ~100 conv/user, ~180-day box). NEW `docs/modules/assistant.md` (no guide exists yet).
+- Retention: sweep script + `workflow_dispatch` (keep newest ~100 conv/user, ~180-day box). NEW `docs/modules/assistant.md` [planned] (no guide exists yet).
 
 ### #30 — File upload (image + PDF; video rejected)
 The app ALREADY has an image/PDF→Claude vision path in the scan-OCR routes; the assistant's `askAgentBrain` is **text-only** — that's the only gap. Model `claude-sonnet-4-6`, raw fetch, **no SDK, no new R2 bucket, no beta header**.

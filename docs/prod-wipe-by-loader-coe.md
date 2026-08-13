@@ -132,7 +132,7 @@ incident.
 
 - `backend/scripts/load-d1-dump-to-pg.mjs:15-22` (the guard) and `:130-134` (the DROP it guards).
 - `7fef9f65` — the guard plus the isolated staging environment; `git show 7fef9f65` for the one-line target resolution it replaced.
-- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.test.mjs` — the allow-list guard pattern this file should adopt.
+- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.node.mjs` — the allow-list guard pattern this file should adopt.
 - `backend/scripts/copy-pg-to-pg.mjs:43` — the unguarded `TRUNCATE` on the next step of the same runbook.
 - `.github/workflows/restore-owner-data.yml` and PR **#24** — the backup-before-write pattern that already existed here.
 - `docs/DB-REPOINT-RUNBOOK.md:20-24, 28-31` — the procedure that puts a live URL in `.dev.vars` and then runs both scripts.

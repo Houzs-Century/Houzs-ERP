@@ -71,7 +71,7 @@ from a Hyperdrive connection throttle) and the Resend key for the email test.
 - Sales invite also surfaced in System/Sales Portal.
 
 ### Test accounts (create one per position, simplest password)
-Seed via a one-shot `backend/scripts/seed-test-accounts.mjs` (NOT a numbered
+Seed via a one-shot `backend/scripts/seed-test-accounts.mjs` [planned] (NOT a numbered
 migration — per CLAUDE.md, demo data is a script). One account per Operation
 position + the Sales positions, password e.g. `Test1234!`. Print the list.
 

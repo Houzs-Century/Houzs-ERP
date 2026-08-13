@@ -108,7 +108,7 @@ codes; it is not read when pricing an existing build.
 
 ## 6. The anchor mirror (R8) — code without a table
 
-**Absorbed from the standalone `docs/sofa-combo-anchor.md`, which this file
+**Absorbed from the standalone `docs/sofa-combo-anchor.md` [gone], which this file
 replaces.** A per-investigation doc at the top of `docs/` was the wrong home for
 it; this module had no guide at all, which is the gap the repo rule says to
 close.

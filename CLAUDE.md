@@ -57,11 +57,18 @@ because that endpoint only reports CLASSIC protection and this is a ruleset:
 gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
 ```
 
-It currently returns `deletion`, `non_fast_forward`, and `required_status_checks`
-with contexts `backend-typecheck` + `frontend` and
-**`strict_required_status_checks_policy: true`** — that last flag is *Require
-branches to be up to date before merging*, and it is the one that matters.
-Repository admin is on the bypass list as an emergency escape hatch.
+It currently returns FOUR rules: `deletion`, `non_fast_forward`,
+`required_status_checks` with contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`**, and `pull_request`. That
+strict flag is *Require branches to be up to date before merging*, and it is
+the one that matters; the `pull_request` rule is why a direct push to `main`
+is refused at all, and it carries `required_approving_review_count: 0`, so a
+PR is required but an approval is not.
+
+**There is NO bypass list.** `gh api repos/hello-houzs/Houzs-ERP/rulesets/20119902`
+returns `bypass_actors: null` with `enforcement: active` — not even repository
+admin can push past it. Do not plan an emergency around an escape hatch that
+does not exist; the escape is to edit the ruleset, which is the owner's click.
 
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
@@ -83,10 +90,16 @@ ran against a tree containing the other branch. Now it has to.
    up-to-date makes a collision *fail loudly* instead of merging, but you still
    have to pick a free number — one branch was renumbered four times in a day
    (`0159 → 0165 → 0167 → 0171`).
-2. **Before renaming an applied migration, check whether it has run.**
-   `pg-migrate` tracks by FULL FILENAME, so renaming an applied file makes it a
-   new file and its SQL runs a SECOND time against a schema it already changed.
-   The deploy log's `APPLIED <file>` line is the record.
+2. **Renaming an applied migration no longer double-applies it — but it can
+   still fail the deploy closed.** Since #914 (2026-07-22) `pg-migrate` tracks
+   filename **and checksum**. A rename whose SQL is byte-identical is detected
+   as a rename, the tracker row is REPOINTED to the new name, and the SQL is
+   explicitly not re-run (`RENAMED <from> -> <to>` in the deploy log,
+   `pg-migrate.mjs:167` and the repoint at `:209`). A rename whose CONTENT also
+   changed cannot be proven to be the same migration: it is reported as
+   `DRIFT ... probable_renumber` and the runner exits 1, blocking the deploy
+   until the tracker row is repointed by hand. So renumber freely; edit an
+   applied file's body never.
 3. **After merging, confirm the backend job said `success`, not `skipped`.**
    Required status checks gate the MERGE; nothing gates the deploy that follows.
    On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
@@ -116,11 +129,34 @@ That is the third dead-or-too-loose pattern found in these checkers in one day.
 Treat their output as evidence, and this sentence as a pointer to where the
 evidence lives.
 
+Each script prints its own corpus size on the first line, so no count is typed
+here — an earlier version said "632 SCM handlers" and the checker now reports
+1019, which is exactly the drift this file keeps producing.
+
 ```
-node backend/scripts/check-company-scope.mjs     # 632 SCM handlers: rows touched by id with no company predicate
-node frontend/scripts/check-silent-mutations.mjs # 297 mutations: a server refusal that reaches nobody
-node backend/scripts/check-shared-mirrors.mjs    # 41 rule pairs: frontend copy vs backend original
+node backend/scripts/check-company-scope.mjs     # SCM handlers: rows touched by id with no company predicate
+node frontend/scripts/check-silent-mutations.mjs # useMutation sites: a server refusal that reaches nobody
+node backend/scripts/check-shared-mirrors.mjs    # rule modules: frontend copy vs backend original
+node backend/scripts/check-docs-drift.mjs        # docs: paths, migration numbers, permission keys, npm scripts
 ```
+
+**The fourth one exists because THIS FILE lied for a month.** `check-docs-drift`
+resolves every mechanically checkable claim the documentation makes — a path, a
+`mig NNNN`, a permission key, an `npm run` — against the tree, and `--strict`
+gates a PR on the CERTAIN half. It does NOT check behaviour: no script settles
+"the confirm gate requires a venue", and that half still needs a reader.
+
+Three markers keep an honest doc green, and each tells the READER the same thing
+it tells the checker:
+
+| marker | meaning |
+| --- | --- |
+| `` `path` [gone] `` | the doc is RECORDING a deletion — most of `BUG-HISTORY.md` is this by construction |
+| `` `path` [planned] `` | proposed, not written yet |
+| `` `path` [external] `` | lives in the 2990 source repo this SCM tree was vendored from, not here |
+
+Do not add a silent exemption list instead. A suppression the reader cannot see
+is a suppression nobody re-checks — which is the whole failure mode here.
 
 ## ⚠️ `tsc --noEmit -p tsconfig.json` CHECKS NOTHING on the frontend
 
@@ -176,7 +212,15 @@ in the route.
   files are too big to open whole. Read this INSTEAD of exploring from
   scratch; it is the hand-written judgement layer.
 - **`docs/generated/`** — the mechanical inventory (routes, migrations,
-  largest files), regenerated from the tree so it cannot drift.
+  largest files). It is COMPUTED from the tree, which is not the same as
+  being current: only `route-capability-matrix` is a CI gate (`audit:routes`,
+  in `ci.yml` + both deploy workflows). `route-locator.md` and
+  `codebase-map-facts.md` are regenerated ON DEMAND and nothing in CI runs
+  their `--check`; `gen-codebase-map.mjs` says so in its own output. As of
+  2026-08-13 `codebase-map-facts.md` IS drifted at HEAD — it records
+  `consignment-returns.ts` at 957 lines against an actual 1118. Run
+  `npm --prefix backend run audit:map` / `audit:route-locator` before trusting
+  a number from either.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -195,9 +239,11 @@ layer that will be forced to update it when it changes.* A number that shifts
 every merge must be GENERATED, never typed — that is exactly how this file
 came to claim the database was D1 SQLite for a month after the cutover.
 
-Do not open a 5,000+ line file whole. Several pages and route modules run
-past 8,000 lines and one past 12,000. Locate with grep, then read the line
-range. The map lists the offenders and roughly what lives where in each.
+Do not open a 5,000+ line file whole. Three run past 8,000 lines and TWO past
+12,000 — `frontend/src/pages/Projects.tsx` is the largest at ~14,900, ahead of
+`backend/src/scm/routes/mfg-sales-orders.ts` at ~12,000. Locate with grep, then
+read the line range. The map lists the offenders and roughly what lives where
+in each.
 
 ## What this repo is
 
@@ -312,10 +358,13 @@ Not generic narrative.
   and immutable after deploy. Drizzle-kit is for type generation /
   schema diffing only, never as the migration runner.
 - **Demo / test seed data does NOT belong in numbered migrations.**
-  Numbered migrations run in prod. Mig 067 + 069 seeded ~40 fake
+  Numbered migrations run in prod. Migs 067 + 069 seeded 39 fake
   `sales_reps` with `@example.my` emails; mig 079 then had to delete
-  them — every new environment now pays a seed-then-cleanup cost
-  forever. Put demo data in a one-shot `backend/scripts/seed-*.mjs`
+  them. All three live in `src/db/migrations/`, the D1 tree production
+  no longer reads, so the seed-then-cleanup cost is now paid only by a
+  fresh D1 test DB — not by prod. Do not read that as the rule being
+  spent: it is the same mistake in `migrations-pg/` that would be
+  permanent. Put demo data in a one-shot `backend/scripts/seed-*.mjs`
   script you run manually against the local D1 (precedent: existing
   `backend/scripts/backfill-project-codes.mjs`). Numbered migrations
   are for schema changes + production-required data only — lookup
@@ -333,10 +382,15 @@ Not generic narrative.
   Unhandled Rejection), so it looks like two broken files. Linux
   externalizes the same module and node strips the shebang itself, so
   **CI stays green and only local Windows breaks** (#2062 — BUG-HISTORY
-  has the trace). Every test-imported `.mjs` already lives in
-  `scripts/lib/` and none carry a shebang: if a runnable script needs to
-  expose a function to a test, put the pure part in `scripts/lib/` and
-  import it from the script.
+  has the trace). No test-imported `.mjs` carries a shebang today, which
+  is the property that matters — but three of them do NOT live in
+  `scripts/lib/`: `scale-pg-real-schema.mjs`, `scale-target-guard.mjs`
+  and `repair-so-fee-line-integrity.mjs` sit directly in
+  `backend/scripts/`, imported by `tests/scale*.node.mjs` and
+  `tests/soFeeLineRepairRow.test.ts`. Adding a `#!` to any of those three
+  breaks local Windows and CI will not tell you. If a runnable script
+  needs to expose a function to a test, put the pure part in
+  `scripts/lib/` and import it from the script.
 - **Keep schema and data in separate migrations when both are large.**
   An `ALTER TABLE` + 100-line `INSERT` block in the same file makes
   rollback awkward and the diff hard to read. Numbered migrations are
@@ -355,9 +409,14 @@ Not generic narrative.
   `backend/src/services/projectAcl.ts` — returns
   `{ pic_ids, brands }`. The SQL fragment
   `COALESCE(p.pic_id, p.created_by) IN (...) AND p.brand IN (...)`
-  is still hand-written across 3 callsites (project list / calendar /
-  notifications); centralising into `projectScopeWhere(user)` is on
-  the Roadmap.
+  is still hand-written at FIVE statements across four callsites —
+  project list (`services/projects.ts:1889`), calendar
+  (`routes/projects.ts:4916` + `:4924`, two arms of one handler),
+  notifications (`routes/notifications.ts:96`, written in Drizzle
+  template form so a raw-string grep MISSES it), and the two finance
+  endpoints `GET /finance/by-project` (`:2752`) and `GET /finance/lines`
+  (`:2961`). `projectScopeWhere(user)` does not exist yet; centralising
+  into it is on the Roadmap.
 - **Section + attachment data on tasks** (mig 050). Project tasklist
   groups by `project_checklist_sections`; per-task attachments live
   in `project_checklist_attachments`. The project-level

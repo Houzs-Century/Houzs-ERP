@@ -28,10 +28,10 @@ are its labels, not disjoint sets.
 |---|---|---|
 | cross-company scope | 56 (27 high) | **CLOSED** — reopened once when the scanner turned out too loose (§I), then finished: every WRITE finding either fixed or opened and annotated. Four of the last eleven were false positives for four DIFFERENT reasons, one of which would have become a bug if "fixed" |
 | permission / access gate | 11 (4 high) | **CLOSED** (§C) — 6 gated, 1 left open by owner decision |
-| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5 **DONE**; **B4 open** (needs a data check); B6 is an owner costing decision, documented at the line |
+| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. **B4 is the only one left**, and it is now a workflow click rather than an open question |
 | silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
 | old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
-| dead code | 12 claimed — **184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2272`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
+| dead code | 12 claimed — **at least 184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2291`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
 
 ---
 
@@ -83,8 +83,8 @@ cancel/mutation twin. That asymmetry, not the swallow itself, is the pattern.
 | E1 | 35 mutations where a server refusal reached nobody. The owner's "Deactivate does nothing". | **DONE** — `writeFailed` wired; checker at 0 |
 | E2 | `variantsRequired = true` default made 9 forms demand a field their own server never asked for. | **DONE** — default removed, prop now required |
 | E3 | `isCorePaymentMethodRow` — UI locked a payment method the API would have let you delete; the two comments said FOUR and THREE. | **DONE** |
-| E4 | Desktop `SalesOrderNew` has no address rule; mobile and backend both do. | **OWNER** — adding a required field is a business call |
-| E5 | `SalesOrderNew`'s confirm gate requires variants "date or no date" (owner 2026-08-08) while the line card shows nothing required without a date. Marker and gate disagree. | **OWNER** |
+| E4 | Desktop `SalesOrderNew` has no address rule; mobile and backend both do — and mobile's is a THIRD rule again. | **DONE** — owner: "只要是 proceed 的单，它都必须填…就是 processing date。电话、电脑都一样的". All three now gate on the Processing Date alone. Desktop was the worse half: its "Fill in address later" toggle blanks the address out of the payload and gated nothing, so the server's refusal arrived as a bare `validation_failed`. Mobile required `procDate AND delivDate`, so a procDate with no delivDate showed no marks and was then refused |
+| E5 | `SalesOrderNew`'s confirm gate requires variants "date or no date" (owner 2026-08-08) while the line card shows nothing required without a date. | **NOT A DEFECT — this row was stale.** Re-read on 2026-08-13: the gate is already `if (processingDate)` and the card is fed `variantsRequired={!!processingDate}`. They agree, and they agree with what the owner confirmed ("以行卡为准:没日期就不必填"). An earlier pass in this same session had already fixed it and the row was never updated — the exact failure mode this ledger exists to prevent |
 
 ## F. Schema / keys
 
@@ -168,20 +168,32 @@ and the three checkers print their own buckets.
 | COEs | 8 corrected — several described code that no longer exists |
 | module guides | all 27 now say their line numbers are indicative and point at the generated locator; one UNDECLARED permission key found and declared |
 | rule mirrors | 0 DIVERGED |
+| dead code (§K) | **listed at last** — at least 184 sites, not the 12 that were claimed and never enumerated. 28 files annotated, 4 orphans deleted, the rest LEFT with a stated reason; 2 of those were already on record as deliberate keeps, so a naive sweep would have reversed two written decisions |
 
-**Still owner decisions — four, and none of them is a bug waiting on a fix.**
+**Still owner decisions — ONE, and it is not a bug waiting on a fix.**
 Each is a question about how the business should work, which is not this
 audit's to answer:
 
 | # | question | what it costs to get wrong |
 |---|---|---|
 | B4 | Should a sofa module ever be priced in cents? | Run **Actions → Sofa price rounding check (read-only)**. Zero part-ringgit rows ⇒ add a guard at data entry; non-zero ⇒ the pricing engine has to carry sen and past documents need an impact pass |
-| E4 | Should desktop `SalesOrderNew` require a delivery address the way mobile and the backend already do? | Adding a required field changes what every salesperson must type |
-| E5 | `SalesOrderNew`'s confirm gate demands variants "date or no date"; the line card marks nothing required without a date. Which is the rule? | One of the two surfaces is lying to the operator today |
-| F2 | `model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` are single-column-PK'd, so one company's upsert overwrites the other's — same defect as the POS cart. | The migration is mechanical (0284 is the template); whether the two companies should have SEPARATE tier overrides at all is the business question |
 
-The consignment LOADED-reopen question is **resolved**: §J caps returns at the
-sibling documents' rule, which is what the owner chose.
+**That is the only one left, and it is a button, not a paragraph.** The other
+four closed on 2026-08-13:
+
+- **E4 / E5** — the owner's answer turned out to be ONE rule, not two: a
+  Processing Date is the proceed signal, and proceed is what makes a field
+  required. Both the address and the variant list now hang off it, on desktop,
+  on mobile, and on the server. E5 needed no change at all; that row was stale.
+- **F2** — split into a real half and a refuted half by opening the PARENT
+  table. `compartment_fabric_tier_overrides` re-keyed by mig 0287;
+  `model_fabric_tier_overrides` cannot collide and the comment claiming it could
+  is corrected in place.
+- **The consignment LOADED-reopen question** — resolved by §J, which caps
+  returns at the sibling documents' rule.
+
+**Owner-only, unchanged:** a new Staging `CLOUDFLARE_API_TOKEN`, entered
+directly into GitHub → Settings → Environments → Staging. Never through chat.
 
 ---
 
@@ -190,14 +202,22 @@ sibling documents' rule, which is what the owner chose.
 **Why this section exists.** §A said `dead code | 12` and the twelve were never
 written down anywhere. A count with no list cannot be acted on and cannot be
 checked — it is the same failure this ledger exists to stop. The sweep below
-replaces it. **The real number is not 12: it is 184 sites.** Nobody had counted;
-"12" was an impression.
+replaces it. **The real number is not 12: it is at least 184 sites.** Nobody had
+counted; "12" was an impression.
+
+**"At least", said precisely.** 184 is what this sweep can *name*, and it is a
+floor for one structural reason: the scan counts a symbol only when its own file
+mentions it exactly once, so a helper that is called by its dead neighbour inside
+an unreachable module is not counted. K5.1's `createDbPinRateLimiter` and K5.2's
+`transferLoaner`/`reverseLoaner` are each dead — their whole module has no
+importer — yet none of the three is in the 108. Quote 184 as a floor, or better,
+re-derive it.
 
 | bucket | count | disposition |
 |---|---|---|
 | dead `42501 -> 403` branches | **74** across 28 files | ANNOTATED (28 file-level notes) |
 | dead duplicate route handler | **1** | ANNOTATED + owner decision (K2) |
-| exported symbols, zero references repo-wide | **108** (30 native, 78 vendored) | 4 DELETED, rest LEFT with reasons |
+| exported symbols, zero references repo-wide | **108** (29 native, 79 vendored) | 4 DELETED, rest LEFT with reasons |
 | whole page file with no importer and no mounted route | **1** | LEFT (already documented in the map) |
 
 **How the 108 was derived, so it can be re-derived.** Every
@@ -210,15 +230,50 @@ the declaration itself, so nothing anywhere calls them. The regex self-tests
 against an 8-form fixture and exits non-zero rather than reporting from a dead
 pattern (CLAUDE.md: *a verdict computed over nothing must never read as a pass*).
 
-**The checker was wrong once, and hand-verification caught it** — the same
-lesson as §I. It reported `DefinitionList`
-(`frontend/src/components/DetailLayout.tsx:326`) as dead. It is **not**:
-`frontend/package.json` is named `autocount-sync-frontend` and
-`frontend/.design-sync/config.json` sets `"srcDir": "src/components"`, so the
-five preview files under `frontend/.design-sync/previews/` that
-`import { DefinitionList } from "autocount-sync-frontend"` resolve to that exact
-file. The tree list simply did not include `.design-sync`. Reported 109, true
-108. **Any future run of this check must include `frontend/.design-sync`.**
+### The two traps that make an import-graph verdict wrong HERE
+
+Both bit during this sweep. Anyone repeating it will hit them again.
+
+**Trap 1 — `frontend/src/components/**` is re-exported wholesale, so it can
+never be judged dead by imports alone.** `frontend/package.json` is named
+`autocount-sync-frontend`; `frontend/.design-sync/config.json` sets
+`"srcDir": "src/components"` and names each component's file; and
+`frontend/.design-sync/entry.tsx` carries a literal
+`export * from '../src/components/<Name>'` per component, with a matching
+preview under `.design-sync/previews/` that imports it back from the package
+name. Three separate leads were refuted by this one mechanism:
+
+| lead | verdict | proof |
+|---|---|---|
+| `components/DetailLayout.tsx:326` `DefinitionList` | **NOT DEAD** | 5 preview files import it; `config.json:71`-style entry maps it |
+| `components/Breadcrumbs.tsx` `Breadcrumbs`, `BreadcrumbItem` | **NOT DEAD** | `entry.tsx:33` `export * from '../src/components/Breadcrumbs'`; `config.json` maps `"Breadcrumbs": "src/components/Breadcrumbs.tsx"`; `previews/Breadcrumbs.tsx` exists |
+| `components/Gate.tsx:25` `Gate` | **NOT DEAD** | `entry.tsx:45` `export * from '../src/components/Gate'`; `config.json` maps `"Gate": "src/components/Gate.tsx"`; `previews/Gate.tsx` exists |
+
+My scan reported 109 and `DefinitionList` was the one false positive, so the true
+figure is **108**. The other two were reported by a second, independent sweep and
+refuted here. **Any dead-code check on this repo must include
+`frontend/.design-sync`, or it will propose deleting live design-system exports.**
+
+**Trap 2 — `grep`/`ripgrep` silently skip six files in this tree.** Six source
+files contain NUL bytes and are treated as binary, so they are excluded from
+ordinary grep output with no warning: `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx`,
+`backend/src/scm/lib/size-variant-description.ts`,
+`frontend/src/vendor/scm/lib/propose-days.ts`, and three `backend/scripts/*.mjs`.
+That is enough to manufacture a false "zero references" — the second sweep
+initially called `vendor/scm/components/Toast.tsx` dead purely because its only
+importer (`SalesOrderMaintenance.tsx`) was skipped. **Use `grep -a`, or read the
+files in Node as the scan here does.** Every deletion in K3 was re-verified with
+a Node reader over 2,036 files (6 of them NUL-bearing) and came back at exactly
+zero references.
+
+**Depth of verification, stated plainly.** All **29 native** orphans were
+re-checked by hand with a repo-wide word-bounded search including
+`frontend/.design-sync`, and each was read in source before being deleted or
+left; the four actually deleted were re-verified a second time with the
+NUL-safe Node reader (Trap 2). The **79 vendored** ones were NOT individually
+re-read: they are
+left untouched as a class for the reason in K4.14, so nothing turns on any one of
+them. If that class is ever pruned, re-verify each first — do not trust this row.
 
 ### K1 — the 74 dead `42501 -> 403` branches
 
@@ -289,21 +344,21 @@ the same information.
 
 | # | site | what it is | evidence | disposition |
 |---|---|---|---|---|
-| K2 | `backend/src/routes/users.ts:2272` | `POST /:id/impersonate` registered a **second** time | One `new Hono` in the file (`:377`), one `export default app` (`:2306`). The same method+path is already registered at `:2031`. Hono composes both chains in registration order and the `:2031` handler returns on every branch — there is **no `next(` anywhere in the file** — so `:2272` is never entered. | **ANNOTATED, left in place — OWNER** |
+| K2 | `backend/src/routes/users.ts:2291` | `POST /:id/impersonate` registered a **second** time | One `new Hono` in the file (`:377`), one `export default app`. The same method+path is already registered at `:2031`. Hono composes both chains in registration order and the `:2031` handler returns on every branch — **no handler in this file ever continues the chain** — so the second registration is never entered. | **ANNOTATED, left in place — OWNER** |
 
 **This one is worth the owner's attention, because the dead half is the newer
 design.** What runs (`:2031`) is wildcard-`*`-only with a 1-hour session. What is
-dead (`:2272`) is the two-door design the comment block above it describes:
+dead (`:2291`) is the two-door design the comment block above it describes:
 staging flag OR wildcard. Consequences today:
 
 - `wrangler.toml:329` sets `IMPERSONATION_ENABLED = "true"` for
   `[env.staging.vars]`, and that flag now changes **nothing** about who may mint.
-- `GET /impersonation-enabled` (`:2266`) is *not* shadowed (it is the only
+- `GET /impersonation-enabled` (`:2285`) is *not* shadowed (it is the only
   1-segment GET besides `/`), so on staging it answers `enabled: true` to any
   `users.manage` admin — whose mint call then 403s `"Owner only"`. **The probe
   and the mint disagree.**
 
-Left as is on purpose: deleting `:2272` hides the intent, and deleting `:2031`
+Left as is on purpose: deleting `:2291` hides the intent, and deleting `:2031`
 would silently grant every `users.manage` admin a 7-day impersonation session on
 staging. Which door is correct is a security decision, not a cleanup.
 
@@ -342,10 +397,131 @@ it.
 | K4.11 | `frontend/src/pwa.ts:138` `onUpdateAvailable` | "a newer build is live" subscription | Part of the `onOnline`/`onUpdateAvailable` subscribe pair; `onOnline` is live. Its comment claims "the banner reads this" and no banner does — noted as another comment that lies, but the API pair is coherent |
 | K4.12 | `frontend/src/lib/utils.ts:14/214`, `lib/scm.ts:60`, `lib/csv.ts:123`, `lib/holidays.ts:101`, `components/StatusDot.tsx:39`, `mobile/source-chips.tsx:176` | `formatNumber`, `isExpiringSoon`, `scmStatusClasses`, `parseCSVFile`, `isHoliday`, `statusVariantForAssr`, `DeliveredRowMobile` | Small shared-utility surface in live modules. Each is genuinely unreferenced, but they are the kind of helper a page adds back next week, and `StatusDot.tsx` sits under `src/components` where `.design-sync` resolves — the exact trap that produced this section's one false positive |
 | K4.13 | `frontend/src/pages/ServiceLogistics.tsx:60`, `frontend/src/pages/MailCenter/Compose.tsx:647` | whole page components | No importer **and** no lazy import by path (`grep` for the path strings returns nothing). Genuinely unreachable, but a page is a feature; retiring one is a product call. Same class as the already-documented `pages/scm-v2/Drivers.tsx` |
-| K4.14 | 78 exported symbols under `frontend/src/vendor/**`, `frontend/src/pages/scm-v2/**`, `backend/src/scm/**` | mostly unused `use*` React-Query hooks in `vendor/scm/lib/*-queries.ts` | **VENDORED.** `docs/CODEBASE-MAP.md:121-125`: copied from 2990 to stay diffable, "do not casually rename, reformat or modernise them, and do not fold their helpers into the native tree". Pruning the unused half of a vendored API surface destroys exactly the property the vendoring exists for |
+| K4.14 | 79 exported symbols under `frontend/src/vendor/**`, `frontend/src/pages/scm-v2/**`, `backend/src/scm/**` | mostly unused `use*` React-Query hooks in `vendor/scm/lib/*-queries.ts` | **VENDORED.** `docs/CODEBASE-MAP.md:121-125`: copied from 2990 to stay diffable, "do not casually rename, reformat or modernise them, and do not fold their helpers into the native tree". Pruning the unused half of a vendored API surface destroys exactly the property the vendoring exists for |
 | K4.15 | `backend/scripts/lib/sqlite-default-to-pg.mjs:281` `__internals`, `e2e/lib/helpers.ts:111` `reloadAndSettle` | test/tooling seams | `__internals` is the conventional test-seam export; both are tooling, not product code |
+
+### K5 — superseded implementations still on disk (all VENDORED, all LEFT)
+
+These are the "old/new competing implementations" half of the sweep. Each is a
+whole module with zero importers whose job is now done by something else. All sit
+under `backend/src/scm/**`, so K4.14's vendoring rule governs them — but unlike a
+merely-unused hook, each one has a NAMED successor, which is what makes it worth
+recording rather than just counting.
+
+| # | dead module | superseded by | evidence |
+|---|---|---|---|
+| K5.1 | `backend/src/scm/lib/pin-rate-limit.ts` (`pinRateLimiter`, `createPinRateLimiter`, `createDbPinRateLimiter`) | `backend/src/routes/pos.ts:53,75,97` | `pos.ts` calls the same three RPCs directly (`scm.pin_attempt_check` etc.) and never imports the lib. The only other hits for the module name are two SQL *comments* (`migrations-pg/0099_pos_auth.sql:17`, `scripts/scm-schema/port-missing-functions-triggers.sql:414`) |
+| K5.2 | `backend/src/scm/lib/consignment-loaner.ts` (`consignmentWarehouseId`, `transferLoaner`, `reverseLoaner`) | a local reimplementation — `resyncNoteInventory` defined at `backend/src/scm/routes/consignment-notes.ts:273`, called at `:755` and `:848` | `consignment-notes.ts` imports `writeMovements` from `../lib/inventory-movements` (`:31`) and never imports `consignment-loaner` |
+| K5.3 | `backend/src/scm/lib/po.ts` (`validatePoLineItemsShape`, `renderPoPrintHtml`) | nothing — the print path moved | Zero importers. Its header claims "this file is for pure logic + tests", but there is **no `po.test.ts`** in `backend/src/scm/lib/` (only `po-allocations.test.ts` and the `po-revision.*` suites). The stated justification for the file no longer holds |
+| K5.4 | `backend/src/scm/lib/staff-code.ts` (`nextStaffCode`, `extractInitials`) | nothing | Zero importers; the only other mention is the file's own line-2 header |
+
+**Why K4.3/K4.4 (`printTracker.ts`, `printQr.ts`) are dead has a named cause.**
+`backend/src/routes/assr_print.ts:337` states that the tracker, QR panel and
+notice layout were removed from print. Both modules are the leftovers of that
+removal — which is also why `printTracker.ts:18` says "Nothing imports this
+module at present" and, unusually for this repo, that comment is **accurate**.
+
+### K6 — read this before the next sweep: things that LOOK dead and are not
+
+Recorded because each would be a damaging delete, and a future pass will meet
+them again.
+
+| what | why it looks dead | why it is NOT |
+|---|---|---|
+| `frontend/src/pages/scm-v2/{SalesOrderDetail,PurchaseOrderDetail,PurchaseInvoiceDetail,GoodsReceivedDetail}.tsx` | each is headed "Legacy inline editor" and no page imports them by name | each is `lazy(() => import(...))`-ed by its own `*V2` successor (`SalesOrderDetailV2.tsx:496`, `PurchaseOrderDetailV2.tsx:365`, `PurchaseInvoiceDetailV2.tsx:335`, `GoodsReceivedDetailV2.tsx:263`) behind `params.get("edit") === "1"`. The V2 pages are read-only by design, so **these "legacy" files are the only editable path in the app** — deleting them breaks every Edit button |
+| `applyCustomerCreditToSiLegacy` (`scm/lib/customer-credits.ts:149`), `settlePiPaidCentiLegacy` (`scm/lib/pi-settlement.ts:145`) | named `*Legacy` | runtime fallbacks when the atomic RPC is absent (`customer-credits.ts:141`, `pi-settlement.ts:137`), and both are exercised by `customer-credits.test.ts:159/:382` |
+| `frontend/src/vendor/scm/components/SpecialAddonsTab.tsx` | nothing imports it and nothing renders it | `frontend/src/auth/permissionDivergence.test.ts:35` pins the path and asserts on its **source text** via `readFileSync`. A test consumer means not dead — but note the dependency is a source scan, not an import, so the component may be unrendered in production while the test still passes. Worth a look, separately |
+| `vendor/scm/lib/react-virtual-shim.ts`, `frontend/src/main.tsx`, `frontend/src/test-setup.ts` | no import edges | reached via config: a Vite alias (`vite.config.ts:127` + `tsconfig.app.json:30`), `index.html:57`, and `vitest.config.ts:19` |
+| `frontend/src/pages/scm-v2/Drivers.tsx` | no importer, no route | deliberate and documented at `frontend/src/App.tsx:683-689`: "/scm/drivers is RETIRED... The file is KEPT on disk (vendored 2990 tree shape)... Do not re-add this route" |
+| `filterable?: boolean` (`components/DataTable.tsx:107`) | marked `@deprecated` | dozens of live call sites; the note itself says it is kept so they compile |
 
 **Not dead, do not report it again:** `backend/src/db/migrations/` is the D1 test
 tree. `vitest.config.ts` builds an in-process D1 from it with `readD1Migrations`
 (`docs/CODEBASE-MAP.md:106-113`). It is unreachable from production and reachable
 from the tests, which is the definition of *used*.
+
+---
+
+## L. Docs vs source — the theme that had no section (added 2026-08-13)
+
+**The owner asked why this was missing, and he was right to.** It existed only
+as four words inside §G's running list — "docs-vs-code (incl. every COE's fixes
+shipped table)" — with no count, no evidence and no check. Work HAD been done
+(8 COEs corrected, 27 module guides re-pointed at the generated locator), but
+"we fixed some docs" is exactly the unfalsifiable claim this ledger exists to
+replace. A theme with no number is not a theme.
+
+**Why it is the highest-leverage one.** `CLAUDE.md` is AUTO-LOADED into every
+session. When it said the database was D1 SQLite for a month after the Postgres
+cutover, every session believed it. A wrong doc does not fail a test — it
+recruits the next reader into repeating the mistake.
+
+### L1. The mechanical half is now a gate
+
+`backend/scripts/check-docs-drift.mjs`, wired `--strict` into `ci.yml`. It
+resolves every claim a script can settle across 138 markdown files:
+
+| checked | result |
+|---|---|
+| 2,925 mechanically checkable claims | **0 CERTAIN** findings |
+| file + directory paths | resolved from repo root, `backend/`, or `frontend/` |
+| `mig NNNN` / `migration NNNN` | resolved against BOTH migration trees |
+| permission + area keys | resolved against `permissions.ts` AND `scm-areas.ts` |
+| `npm run X` | resolved against all three `package.json` files |
+
+**22 real broken references were found and fixed** — the backend vitest config
+cited with a `.ts` extension when it is `.mts` (CI's own comment named it
+wrongly), `BUG-HISTORY.md` cited under a `docs/` prefix when it lives at the
+repo ROOT, from five separate places, a vitest config cited as `.conf`, three
+files that had MOVED (`slip.ts` into `scm/lib`, `PhoneInput.tsx` into
+`vendor/scm/components`, `scaleTargetGuard` from a `.test.mjs` to a `.node.mjs`
+suffix),
+
+*(Those two are described in prose rather than written out, deliberately: this
+section was the checker's LAST finding, because quoting a broken path as an
+example puts a copyable trap back in the tree. The right fix was clearer
+writing, not a fourth marker.)*
+
+and eleven historical or planned references that now carry a marker.
+
+**The checker was wrong four times before it was right**, and the count moved
+in both directions each time — recorded here because the pattern is the point:
+
+| what it did | count | the lesson |
+|---|---|---|
+| knew only `permissions.ts` | 426 false | there are TWO key namespaces; area keys live in `scm-areas.ts` |
+| resolved paths only from the repo root | +11 false | docs write `scripts/pg-migrate.mjs`, which is under `backend/` |
+| `\.[a-z]{2,4}` for extensions | +1 false | matched `costing-enabled.is` out of "costing-enabled.ts is" |
+| `(?:ts\|tsx)` in that order | **+72 false** | alternation is first-match-wins, so `App.tsx` matched as `App.ts` and 72 PRESENT files were reported missing |
+
+Every one of those would have produced a confident report telling a reader to
+"fix" documentation that was already correct. **A checker's first run is a draft.**
+
+### L2. The half a script cannot settle
+
+Whether a documented BEHAVIOUR matches the code needs a reader, and that sweep
+is running separately over `CLAUDE.md`, `CODEBASE-MAP.md`, every COE's
+fixes-shipped table, all 27 module guides and the most recent `BUG-HISTORY.md`
+entries. Prioritised by blast radius: auto-loaded first.
+
+Already corrected by hand in this pass, as samples of the class:
+
+- `fabric-tier-addon.ts` asserted a cross-company overwrite on
+  `model_fabric_tier_overrides` that **provably cannot happen** — the parent
+  `product_models` is per-company. The comment is replaced by the refutation,
+  not deleted, because the claim was plausible enough to be believed twice.
+- `companyScope.ts` described its unresolved-context fallback as BARE numbering;
+  it has been `HC-` since 2026-08-07 and its own test asserts that. The
+  conclusion survived; the stated mechanism did not.
+- `ci.yml` said company-scope was report-only "until that reaches 0". It had
+  reached 0. It is `--strict` now.
+- `grn-queries.ts` builds an argument on a caller file, `GoodsReceived.tsx`,
+  that does not exist. **Left alone deliberately** — whether that hook is dead
+  or unfinished is the owner's call, not a doc fix.
+
+### L3. What is NOT claimed
+
+The mechanical checker cannot see a reference that is well-formed but wrong for
+its purpose: a doc naming a real file for the wrong reason passes. And §L1's
+"0 CERTAIN" means every *checkable* claim resolves — it does not mean the docs
+are true. Those are different sentences and this file will not merge them.

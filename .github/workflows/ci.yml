@@ -81,22 +81,30 @@ jobs:
       #
       # No `npm ci` needed for the frontend one: all three are dependency-free
       # (node:fs / node:path only) so they run before any install.
-      # NOT --strict yet: the checker was corrected on 2026-08-13 (it counted a
-      # helper NAME anywhere in a handler as scoping) and the honest count went
-      # 0 -> 20 unscoped writes. Gating now would fail every PR on a backlog
-      # this branch has not finished judging. Report-only until that reaches 0;
-      # docs/audit-2026-08-13-ledger.md tracks the remainder.
-      - run: node scripts/check-company-scope.mjs
+      # company-scope IS --strict now. It was report-only from 2026-08-13, when
+      # correcting the checker (it had counted a helper NAME appearing anywhere
+      # in a handler as scoping) took the honest count from 0 to 20 unscoped
+      # writes and gating would have failed every PR on a backlog nobody had
+      # judged yet. That backlog is judged: 0 WRITE findings over 1019 handlers,
+      # every one either fixed or read and annotated. Gating it now is what
+      # stops the twentieth from coming back.
+      - run: node scripts/check-company-scope.mjs --strict
       - run: node scripts/check-shared-mirrors.mjs --strict
       - run: node ../frontend/scripts/check-silent-mutations.mjs --strict
+      # docs-drift is the fourth: the docs make CHECKABLE claims (file paths,
+      # migration numbers, permission keys, npm scripts) and this repo has a
+      # documented history of those rotting unnoticed for months. --strict gates
+      # on its CERTAIN half only; the advisory half (line numbers, key-shaped
+      # prose) is printed and never fails a PR.
+      - run: node scripts/check-docs-drift.mjs --strict
       - run: npm run typecheck
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
-  # workerd worker (`singleWorker: true` in backend/vitest.config.ts). That is
+  # workerd worker (`singleWorker: true` in backend/vitest.config.mts). That is
   # deliberate and load-bearing: at full concurrency this pool collapses with
   # 50-65 of 66 files "failing", ZERO AssertionErrors, and 100+ `[vitest-worker]:
   # Timeout calling "onTaskUpdate"` — the worker cannot reach the main thread.
-  # See the long comment in vitest.config.ts. Do NOT speed this up by raising
+  # See the long comment in vitest.config.mts. Do NOT speed this up by raising
   # in-process parallelism; that is the exact thing that breaks it.
   #
   # So we shard across SEPARATE RUNNERS instead. `--shard=i/n` slices the
