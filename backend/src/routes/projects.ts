@@ -2698,8 +2698,12 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 
   const db = getDb(c.env);
 
-  // Date filter applied INSIDE the SUM aggregations so a project with
-  // older lines still surfaces (it just shows zero for the window).
+  // Date filter applies INSIDE the SUM aggregations (each SUM only counts
+  // lines in the window) AND as a row filter: when a range is set, projects
+  // with no lines in it are dropped entirely (owner decision 2026-08-13 —
+  // a date filter should mean "don't show me anything outside it", not
+  // rows of zeros). With no range set, every project still surfaces, so
+  // upcoming events with no lines yet remain visible in the default view.
   const dateConds: any[] = [];
   if (dateFrom) {
     dateConds.push(sql`COALESCE(l.occurred_at, l.created_at) >= ${dateFrom}`);
@@ -2766,9 +2770,8 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   };
   const orderByClause = sql`ORDER BY ${sql.raw(`${sortMap[sortBy] ?? sortMap.net} ${sortDir}`)}, id DESC`;
 
-  // The aggregate row per project. Date filter only applies inside
-  // each SUM; the project row itself is selected by the project-level
-  // WHERE (so projects with zero matching lines still show with 0s).
+  // The aggregate row per project; row visibility under a date range is
+  // enforced by the `visible` wrapper below (line_count > 0).
   // Per-category breakdown built with one CASE-SUM per dedicated column;
   // the residue lands in `others_cost`.
   const baseSelect = sql`
@@ -2836,12 +2839,21 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       FROM (${baseSelect}) sub
   `;
 
+  // Row filter for date ranges: a project only appears when it has at least
+  // one non-archived line inside the window. line_count (not the amounts)
+  // is the predicate, so a window containing only zero-amount lines still
+  // shows — there IS data in range, it just nets to zero.
+  const visible =
+    dateFrom || dateTo
+      ? sql`SELECT * FROM (${wrapped}) vis WHERE line_count > 0`
+      : wrapped;
+
   const totalRow = await db.get<{ count: number }>(
-    sql`SELECT COUNT(*) AS count FROM (${wrapped}) outerSub`
+    sql`SELECT COUNT(*) AS count FROM (${visible}) outerSub`
   );
 
   const rows = await db.execute<any>(
-    sql`${wrapped} ${orderByClause} LIMIT ${perPage} OFFSET ${offset}`
+    sql`${visible} ${orderByClause} LIMIT ${perPage} OFFSET ${offset}`
   );
 
   // Filtered grand totals so the header cards recompute server-side.
@@ -2858,7 +2870,7 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       COALESCE(SUM(cost),    0) AS total_cost,
       COALESCE(SUM(cogs),    0) AS total_cogs,
       COALESCE(SUM(rental),  0) AS total_rental
-    FROM (${wrapped}) tot
+    FROM (${visible}) tot
   `);
 
   return c.json({
