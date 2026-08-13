@@ -136,3 +136,79 @@ export function soSliplessPaymentError(rows: SoPaymentGuardRow[]): SoFormError |
       `${n === 1 ? "it" : "them"} (the "Slip *" button) and try again.`,
   };
 }
+
+/**
+ * The companies whose orders must resolve a stock location before they can be
+ * created. MIRRORS `LOCATION_REQUIRED_COMPANY_CODES` in
+ * `backend/src/scm/lib/so-location-gate.ts` — the backend is the authoritative
+ * gate; this list only decides whether the operator is told before or after the
+ * round-trip. Add a company's `companies.code` to BOTH.
+ */
+export const LOCATION_REQUIRED_COMPANY_CODES: readonly string[] = ["HOUZS"];
+
+export interface SoLocationGuardInput {
+  /** Active company code from `useBranding().companyCode` ('HOUZS' | '2990'). */
+  companyCode: string | null | undefined;
+  /**
+   * The read-only "Sales Location" the form resolved from the picked State
+   * (state_warehouse_mappings). '' when nothing resolved — which is the ONLY
+   * thing AutoCount actually cares about, and it covers both causes at once.
+   */
+  salesLocation: string;
+  /** The picked State ('' when none) — used only to name the right cause. */
+  state: string;
+  /**
+   * False while `useStateWarehouseMappings()` has not answered yet, on a
+   * surface that resolves the location from it. An unloaded mapping table makes
+   * every State look unmapped, and refusing a legitimate order because a query
+   * is in flight is worse than letting the server (which reads the mappings
+   * directly) have the last word. Defaults TRUE for surfaces that resolve no
+   * location at all and must still be gated.
+   */
+  mappingsLoaded?: boolean;
+  /** True for Save-as-draft. A draft is never written to AutoCount. */
+  asDraft?: boolean;
+  /**
+   * True on an EDIT of an existing order. An edit enqueues an AutoCount EDIT,
+   * which leaves the account book's own Location alone — only a CREATE has a
+   * foreign key to satisfy.
+   */
+  isEdit?: boolean;
+}
+
+/**
+ * A Sales Order this company writes to AutoCount must ship from a warehouse.
+ *
+ * Owner 2026-08-13, after both write-back test orders were refused: "Company 1
+ * (Houzs Century) 开单必须有 State。Company 2 (2990) 不需要。其他公司也不必填。"
+ * The order's warehouse is derived from the customer's State through
+ * state_warehouse_mappings, and AutoCount rejects a document line whose
+ * Location is not in `dbo.Location` — so a State-less order is refused by the
+ * account book AFTER the salesperson has been told it saved.
+ *
+ * Gates on the RESOLVED Sales Location, not on the State being picked: a State
+ * with no warehouse mapping resolves nothing either, and that second case is an
+ * administrator's job, so it gets its own sentence rather than telling the
+ * salesperson to pick a State they already picked.
+ */
+export function soStockLocationError(i: SoLocationGuardInput): SoFormError | null {
+  if (i.asDraft || i.isEdit) return null;
+  if (i.mappingsLoaded === false) return null;
+  const code = (i.companyCode ?? "").trim().toUpperCase();
+  if (!code || !LOCATION_REQUIRED_COMPANY_CODES.includes(code)) return null;
+  if (i.salesLocation.trim() !== "") return null;
+
+  const state = i.state.trim();
+  if (!state) {
+    return {
+      title: "Pick the delivery State before creating this order.",
+      body:
+        "The State decides which warehouse the order ships from, and an order with no " +
+        "warehouse cannot be created. Fill in the delivery address, then try again.",
+    };
+  }
+  return {
+    title: `${state} has no warehouse mapped, so this order has no stock location.`,
+    body: "Ask an administrator to map that State to a warehouse, then try again.",
+  };
+}

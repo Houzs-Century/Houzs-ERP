@@ -67,6 +67,58 @@ afterEach(() => {
   if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight);
 });
 
+describe("DataTable onFilteredRowsChange", () => {
+  /* Owner 2026-08-12 — the per-column funnels are client-side AND persisted, so
+     a page that summarises its rows had no way to know what the operator can
+     actually see. A stuck DATE funnel on Purchase Orders left 5 rows worth
+     RM 9,112.50 under a "Sum on this page" card reading RM 164,349.70, and two
+     POs were reported missing when they were simply filtered out. */
+  it("reports every row when no column filter is set", () => {
+    setViewport(1280);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-unfiltered"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    expect(seen.at(-1)).toHaveLength(rows.length);
+  });
+
+  it("reports only the rows a persisted column filter leaves visible", () => {
+    setViewport(1280);
+    // A restored funnel, exactly as a reload rehydrates it.
+    localStorage.setItem("dt:filters:orders-filtered", JSON.stringify({ status: ["Open"] }));
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-filtered"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    const last = seen.at(-1)!;
+    expect(last).toHaveLength(rows.filter((r) => r.status === "Open").length);
+    expect(last.every((r) => r.status === "Open")).toBe(true);
+    // The caller compares against rows.length to decide "is a funnel active" —
+    // so a filtered set MUST NOT be the full length.
+    expect(last.length).not.toBe(rows.length);
+  });
+
+  it("is optional — omitting it renders exactly as before", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="orders-no-cb" rows={rows} columns={columns} getRowKey={(row) => row.id} />,
+    );
+    expect(container.querySelectorAll("tr[data-vrow]").length).toBeGreaterThan(0);
+  });
+});
+
 describe("DataTable responsive rendering", () => {
   it("does not build the hidden mobile-card tree on desktop", () => {
     setViewport(1280);

@@ -66,6 +66,12 @@ export const DeliveryFieldsDrawer = ({
   const procLocked = procLockActive({
     internal_expected_dd: order.internal_expected_dd,
     status: order.status,
+    /* Owner 2026-08-12 — the board row carries the PO half of the lock (the
+       drawer cannot derive it: the payload has no PO linkage). Omitting it here
+       would send a disposal change on a PO-locked 2990 SO down the direct-write
+       path, straight into the backend guard's 409, with no way to raise the
+       amendment the message asks for. */
+    po_locked: order.po_locked,
   });
 
   const [form, setForm] = useState({

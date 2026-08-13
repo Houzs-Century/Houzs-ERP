@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, User, Package, MessageSquare } from "lucide-react";
+import { Send, User, Package, MessageSquare, Search, X } from "lucide-react";
 import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
 import { useQuery } from "../hooks/useQuery";
@@ -31,6 +31,7 @@ type MyCase = {
   status: string;
   priority: string;
   doc_no: string | null;
+  ref_no: string | null;
   customer_name: string | null;
   phone: string | null;
   complained_date: string | null;
@@ -83,6 +84,42 @@ export function MyCases() {
   const cases = listQ.data?.cases ?? [];
   const userName = listQ.data?.user_name ?? null;
 
+  // Search + filter run CLIENT-SIDE: /api/assr/my-cases returns the rep's whole
+  // set in one shot (≤200 rows, no pagination), so there's nothing to page
+  // through — filtering the loaded array is exact and instant.
+  const [q, setQ] = useState("");
+  const [stageFilter, setStageFilter] = useState("all");
+
+  // Count per stage + the stages actually present, in canonical pipeline order
+  // (STAGE_LABEL is already ordered) so the filter row only offers stages the
+  // rep has cases in.
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const c of cases) m[c.stage] = (m[c.stage] ?? 0) + 1;
+    return m;
+  }, [cases]);
+  const stagesPresent = useMemo(
+    () => Object.keys(STAGE_LABEL).filter((s) => counts[s]),
+    [counts],
+  );
+
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return cases.filter((c) => {
+      if (stageFilter !== "all" && c.stage !== stageFilter) return false;
+      if (!term) return true;
+      // Covers the same fields the card surfaces: case no / SO / Ref /
+      // customer / issue text / item code / the matched sales-agent name.
+      // Ref No included 2026-08-12 (Nico): reps identify a case by its
+      // ref (HC…/ZNT…/PG…) more often than by anything else.
+      return [c.assr_no, c.doc_no, c.ref_no, c.customer_name, c.complaint_issue, c.item_code, c.sales_agent]
+        .some((f) => f && f.toLowerCase().includes(term));
+    });
+  }, [cases, q, stageFilter]);
+
+  const hasActiveFilter = q.trim() !== "" || stageFilter !== "all";
+  const clearFilters = () => { setQ(""); setStageFilter("all"); };
+
   return (
     <div className="w-full py-6 sm:py-8">
       <PageHeader
@@ -112,36 +149,138 @@ export function MyCases() {
           on the sales order.
         </div>
       ) : (
-        <div className="mt-6 space-y-3">
-          {cases.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => nav(`/my-cases/${c.id}`)}
-              className="block w-full rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:border-accent/40 hover:bg-accent-soft/10"
-            >
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="font-mono text-[13px] font-bold">{c.assr_no}</span>
-                <StagePill stage={c.stage} />
-                {c.doc_no && (
-                  <span className="font-mono text-[11px] text-ink-muted">SO {c.doc_no}</span>
-                )}
-              </div>
-              {c.customer_name && (
-                <div className="mt-1 text-[13px] text-ink-secondary">{c.customer_name}</div>
+        <>
+          {/* Search + stage filter (client-side over the loaded set). */}
+          <div className="mt-6 space-y-3">
+            <div className="relative">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
+              />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search case · SO · customer · issue · item"
+                aria-label="Search my cases"
+                className="w-full rounded-lg border border-border bg-surface py-2.5 pl-9 pr-9 text-[13px] outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              />
+              {q && (
+                <button
+                  onClick={() => setQ("")}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-ink-muted hover:bg-bg hover:text-ink"
+                >
+                  <X size={14} />
+                </button>
               )}
-              {c.complaint_issue && (
-                <div className="mt-1 line-clamp-2 text-[12px] text-ink-muted">
-                  {c.complaint_issue}
-                </div>
-              )}
-              <div className="mt-1 text-[11px] text-ink-muted">
-                Reported {formatDate(c.complained_date)}
-              </div>
-            </button>
-          ))}
-        </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                label="All"
+                count={cases.length}
+                active={stageFilter === "all"}
+                onClick={() => setStageFilter("all")}
+              />
+              {stagesPresent.map((s) => (
+                <FilterChip
+                  key={s}
+                  label={STAGE_LABEL[s] ?? s}
+                  count={counts[s]}
+                  active={stageFilter === s}
+                  onClick={() => setStageFilter(s)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between px-0.5 text-[11px] text-ink-muted">
+            <span>
+              {filtered.length} of {cases.length} case{cases.length === 1 ? "" : "s"}
+            </span>
+            {hasActiveFilter && (
+              <button onClick={clearFilters} className="font-medium text-accent hover:underline">
+                Clear
+              </button>
+            )}
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="mt-3 rounded-lg border border-dashed border-border bg-bg/40 p-8 text-center text-[13px] text-ink-muted">
+              No cases match your search or filter.
+              <button onClick={clearFilters} className="ml-1 font-medium text-accent hover:underline">
+                Clear
+              </button>
+            </div>
+          ) : (
+            <div className="mt-3 space-y-3">
+              {filtered.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => nav(`/my-cases/${c.id}`)}
+                  className="block w-full rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:border-accent/40 hover:bg-accent-soft/10"
+                >
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-mono text-[13px] font-bold">{c.assr_no}</span>
+                    <StagePill stage={c.stage} />
+                    {c.doc_no && (
+                      <span className="font-mono text-[11px] text-ink-muted">SO {c.doc_no}</span>
+                    )}
+                    {c.ref_no && (
+                      <span className="font-mono text-[11px] text-ink-muted">Ref {c.ref_no}</span>
+                    )}
+                  </div>
+                  {c.customer_name && (
+                    <div className="mt-1 text-[13px] text-ink-secondary">{c.customer_name}</div>
+                  )}
+                  {c.complaint_issue && (
+                    <div className="mt-1 line-clamp-2 text-[12px] text-ink-muted">
+                      {c.complaint_issue}
+                    </div>
+                  )}
+                  <div className="mt-1 text-[11px] text-ink-muted">
+                    Reported {formatDate(c.complained_date)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+function FilterChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
+        active
+          ? "border-accent bg-accent text-white"
+          : "border-border bg-surface text-ink-secondary hover:border-accent/50",
+      )}
+    >
+      {label}
+      <span
+        className={cn(
+          "rounded-full px-1.5 text-[10px] font-semibold",
+          active ? "bg-white/20 text-white" : "bg-bg text-ink-muted",
+        )}
+      >
+        {count}
+      </span>
+    </button>
   );
 }
 

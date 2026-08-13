@@ -312,10 +312,27 @@ screen.
 Each verified against the tree; if you are reading this long after 2026-07-21,
 re-check the cited file rather than trusting the line.
 
-- **AutoCount writes are hard-off in code**: `AUTOCOUNT_WRITES_DISABLED = true` in
-  `backend/src/services/autocount.ts`. Flipping it is a code edit, not a config
-  change. Inbound pulls, by contrast, are env-gated (`AUTOCOUNT_SYNC_DISABLED` in
-  `wrangler.toml`) and are currently ON.
+- **SCM writes are FROZEN for Houzs right now.** `scm.app_config` key
+  `scm.write_freeze` holds `'1'`, and `scm/lib/write-freeze.ts` (mounted ahead of
+  every SCM sub-router) refuses every non-GET on `/api/scm/*` for company 1.
+  Company 2 (2990) is unaffected — the value is a company id list, not a boolean.
+  If an SCM write "mysteriously" 503s with `error: write_frozen`, this is why,
+  and it is deliberate. The value also takes a per-module exception clause
+  (`'1 - scm.sales.orders'`) for the staged go-live lift. Read the current state
+  with the **SCM write freeze — status (read-only)** workflow or
+  `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
+  rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
+  test something — it gates a live business.
+- **AutoCount has TWO channels and this bullet used to describe only one.** The
+  LEGACY relay's writes are hard-off in code — `AUTOCOUNT_WRITES_DISABLED = true`
+  in `backend/src/services/autocount.ts`, a code edit to flip — while its inbound
+  pulls are env-gated (`AUTOCOUNT_SYNC_DISABLED` in `wrangler.toml`) and are ON.
+  That constant does **not** gate the ERP -> AutoCount WRITE-BACK, which is a
+  different service (`AcSyncService` on the AutoCount host) reached through
+  `AC_SYNC_URL` — set since PR #2030 — and gated instead by the DB toggle
+  `scm.app_config` -> `scm.autocount_writeback`, still `'off'`. Reading the
+  constant alone and concluding "nothing can reach AutoCount" is the mistake this
+  wording invited; `docs/autocount-integration-map.md` is the map.
 - **Cost/margin display** is env-gated by `COSTING_DISPLAY_ENABLED`, parsed by
   `scm/lib/costing-enabled.ts`. Set false and every sales document strips cost from
   the wire, not just from the UI.
@@ -365,10 +382,27 @@ re-check the cited file rather than trusting the line.
   artifact — see the script header).
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**
+  There is not one connection, there are **four channels** with different directions,
+  different credentials and different jobs, and treating them as one is how sessions
+  conclude the wrong thing. It carries: which hostname writes and why the ZeroTier IP
+  is refused by design; which of the six document types are CREATED versus CONVERTED
+  and why DO/GR/IV/PI can never be created standalone; how a SKU crosses (translation,
+  sofa decomposition, and `Desc2` as the only place a specification lives); what the
+  5-minute drain does automatically and the four cases that will **never** be automatic;
+  and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
+  the public internet with **no key** on two routes, one of them ~52 MB of purchase
+  history. OPEN, needs an owner action. Do not build on that relay.
 - `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
   go-live pushed into company 1: how to tell a migrated row from a real one (the exact
-  SQL predicates), what each import wave wrote with its run id, and — the one that bites —
-  which imported documents carry `received_qty` but deliberately no GRN, because posting
-  one would count the same stock twice.
+  SQL predicates), what each import wave wrote with its run id, and — the ones that bite —
+  which imported documents carry `received_qty` but deliberately no GRN, and which
+  migrated GRNs and DOs carry `migrated_no_stock = true` and deliberately no inventory
+  movement at all. Posting either would count the same stock twice. Its section 9 records
+  the owner's own cutover decisions in his words — historical documents are NOT imported,
+  whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
+  its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
+  gap between AutoCount and the ERP**: most of those gaps are decisions.
 - `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
   with what caveats.

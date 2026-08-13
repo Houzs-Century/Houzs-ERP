@@ -1,0 +1,42 @@
+name: Edit-path money check (read-only)
+
+# The two EDIT-PATH money defects, measured against production instead of
+# argued about from migration files:
+#
+#   1. Editing a SHIPPED delivery order never reaches the stock ledger, because
+#      production carries PARTIAL UNIQUE indexes on
+#      (source_doc_type, source_doc_id, product_code, variant_key) that exist in
+#      no file in this repo. Prints every index verbatim, whether the resync path
+#      has ever landed a row, and COUNTS the delivery orders whose stock ledger
+#      disagrees with their document.
+#   2. The amendment path reprices a MIGRATED order to catalogue. Counts the
+#      migrated orders that can reach that path and their 0-priced lines.
+#
+# Manual trigger only — it is a question, not a gate. Strictly SELECTs.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: edit-path-money-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-edit-path-money.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

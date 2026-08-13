@@ -1,0 +1,98 @@
+name: Specials + fabric realign (owner rulings 2026-08-12)
+
+# Two one-shot data corrections, each with its own plan/apply and its own guard.
+# Both default to plan, which writes nothing and pins the session read-only.
+#
+#   move-specials  Take a special add-on out of a category it was mis-tagged
+#                  with. REFUSES per code if any SO line of that category ever
+#                  carried it - the owner's rule ("有 order 用过那就没办法")
+#                  enforced in code, not in a comment.
+#
+#   align-fabric   Make the Fabric Converter's description match the selling
+#                  library for codes where the two disagree. Owner ruling
+#                  2026-08-12: "跟着POS的".
+#
+# Neither touches a CODE. Nothing a document points at changes identity.
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Which correction to run"
+        required: true
+        default: "move-specials"
+        type: choice
+        options:
+          - move-specials
+          - align-fabric
+          - purge-unused-retired
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+      mode:
+        description: "plan writes nothing; apply writes"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      codes:
+        description: "Override the code list (blank = the script's default)"
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "For apply only — type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: specials-fabric-realign
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'staging' && 'Staging' || '' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: move-specials
+        if: ${{ inputs.script == 'move-specials' }}
+        run: node scripts/move-specials-to-owning-category.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: "1"
+          CODES: ${{ inputs.codes }}
+      - name: align-fabric
+        if: ${{ inputs.script == 'align-fabric' }}
+        run: node scripts/align-converter-to-library.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: "1"
+          CODES: ${{ inputs.codes }}
+      - name: purge-unused-retired
+        if: ${{ inputs.script == 'purge-unused-retired' }}
+        run: node scripts/purge-unused-retired-specials.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: "1"
+          CODES: ${{ inputs.codes }}
