@@ -55,7 +55,8 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
@@ -183,6 +184,9 @@ export function SalesOrderNewFromProducts() {
   };
   const clearCart = () => setCartQty({});
 
+  /* Active company — feeds the shared stock-location guard in onCreate. */
+  const branding = useBranding();
+
   // Customer state
   const [customer, setCustomer] = useState<Customer>({
     name: "",
@@ -259,6 +263,28 @@ export function SalesOrderNewFromProducts() {
       soSliplessPaymentError([]);
     if (preErr) {
       setPostError(soErrorText(preErr));
+      return;
+    }
+
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — SHARED with the
+       Full form and mobile via soStockLocationError, and the backend refuses
+       the same create with 422 validation_failed either way.
+
+       This flow collects NO address at all ("address is added on the SO detail
+       after save") and lands CONFIRMED, so under a company that requires a
+       stock location it cannot raise an order — AutoCount would refuse the
+       document. Say so here, with the way out, rather than letting the
+       operator build a cart and meet a server error: the Full form is the
+       surface that has a State field. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation: "",
+      state: "",
+    });
+    if (locationErr) {
+      setPostError(
+        `${soErrorText(locationErr)} This page has no address fields — use "Switch to Full form" to enter it.`,
+      );
       return;
     }
 
