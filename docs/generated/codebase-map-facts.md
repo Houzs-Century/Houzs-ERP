@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1210 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4485 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12094 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12106 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 100 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1419 |
@@ -170,13 +170,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1275 files, 531191 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1282 files, 533078 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 14867 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12094 |
+| `frontend/src/pages/Projects.tsx` | 14875 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12106 |
 | `frontend/src/pages/ServiceCases.tsx` | 8855 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
@@ -187,8 +187,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4485 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4183 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3732 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `backend/src/scm/routes/grns.ts` | 3477 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
@@ -381,7 +381,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleDetail.tsx` | 1932 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3732 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 518 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
