@@ -147,3 +147,25 @@ one day: a lost `\s`/`\b` made one scan the wrong function bodies; a missing
 set; and this one accepted a mention as a predicate. Each looked like a clean
 run. **A checker's failure mode is silence, so the only trustworthy number is
 one you re-derive after reading its logic.**
+
+---
+
+## J. Status at 2026-08-13 end of sweep
+
+Re-derive these; do not quote them. 32,
+and the three checkers print their own buckets.
+
+| area | state |
+|---|---|
+| cross-company WRITE findings | **0** — all 25 fixed or read-and-annotated; the 11 that remained at the end were each opened and are false positives for four different reasons, one of which would have become a bug if fixed |
+| silent failure, backend (§D) | **closed**, all nine |
+| silent failure, frontend | **0 SILENT**; 41 UNRESOLVED reported as unresolved, not as a pass |
+| permission gates (§C) | **closed** — GL, inventory cost, AR reconciliation gated; quotes left open by owner decision |
+| money (§B) | B1/B2/B3/B5 fixed; **B4 open** (sofa price quantised to whole ringgit); B6 documented at the line as an owner costing decision |
+| COEs | 8 corrected — several described code that no longer exists |
+| module guides | all 27 now say their line numbers are indicative and point at the generated locator; one UNDECLARED permission key found and declared |
+| rule mirrors | 0 DIVERGED |
+
+**Still owner decisions:** B4 (needs a data check first), the fabric-tier
+single-column PKs, the desktop SO address rule, the SO confirm marker-vs-gate
+mismatch, and whether a shipped consignment note may be reopened to LOADED.
