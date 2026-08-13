@@ -154,7 +154,7 @@ here as such so nobody later cites it as established.
 | --- | --- | --- |
 | **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
 | **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
-| Enable the merge queue | The `merge_group` trigger and the `scale-postgres-contract` gate are now both ready (this PR). What remains is the decision and the flaky-test exposure — a queue is serial, so one flaky failure re-runs everything behind it | owner |
+| ~~Enable the merge queue~~ — **NOT POSSIBLE on this repo, see below** | `hello-houzs` is a **User** account, and GitHub's merge queue is organization-only. The ruleset page simply does not offer the option | — |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
 | 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
@@ -241,6 +241,33 @@ the merge base** for the bundle baseline, `check:sw`, `test:smoke-script`,
 The merge-base rebuild and the browser download are the two obvious candidates
 and neither has been measured — measure before touching, per `CLAUDE.md`.
 
+## The merge queue is not available here, and what to do instead
+
+Cause 1 — 35 open PRs against `strict_required_status_checks_policy`, giving
+~4.7 CI runs per PR — has an obvious textbook fix, and `ci.yml` has carried the
+`merge_group` trigger for it since before this work started. It cannot be used:
+
+```
+gh api users/hello-houzs --jq '.type'   ->  "User"
+```
+
+**GitHub's merge queue is organization-only.** `hello-houzs` is a personal
+account, so the "Require merge queue" checkbox never appears on the ruleset
+page no matter what else is configured. This was found the slow way — by
+recommending it, watching the owner look for a checkbox that does not exist,
+and only then checking the account type. Check `owner.type` before proposing
+anything org-scoped.
+
+The `merge_group` work already merged is not wasted: the trigger and the
+`scale-postgres-contract` gate are correct, and they become live the moment the
+repo moves under an organization. Until then:
+
+| option | effect | cost |
+| --- | --- | --- |
+| **Reduce the open-PR count** (chosen) | 35 → ~10 cuts the re-run storm ~3.5x | none; it is triage, not infrastructure |
+| Transfer the repo to an organization | unlocks the queue, plus org secrets and teams | a real migration; collaborators and integrations need re-setting |
+| Turn OFF `strict_required_status_checks_policy` | removes the O(n²) entirely | removes the guard added after three migration-collision incidents. Would need the duplicate-migration check moved to a pre-deploy gate first |
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
@@ -273,7 +300,21 @@ and neither has been measured — measure before touching, per `CLAUDE.md`.
    job table after a win; the number that matters is the max, not the one that
    moved.
 
-6. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
+6. **Check the platform can do the thing before recommending it.** The merge
+   queue was proposed, prepared for, and written into this document twice
+   before anyone ran `gh api users/hello-houzs --jq '.type'` and got `"User"`.
+   One call, available from the first minute, would have replaced a whole
+   strand of the plan. Capability questions are cheap to answer and expensive
+   to assume.
+
+7. **"No output" is not "no difference".** While triaging PRs for closure,
+   `git diff origin/main origin/<branch>` printed nothing and was read as "this
+   branch is already merged". The ref had simply never been fetched. #2029 was
+   one step from being closed while still holding an unlanded 45 KB change.
+   Verify the input exists before believing the empty result — the repo's
+   standing rule that exit code 0 is not success, in a new costume.
+
+8. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
    the shard count against "112 files" and a "334s" suite. Both are long stale
    (277 files; a single shard now runs ~380s), and every later decision that
    trusted those numbers inherited the error. Sizing comments must be
