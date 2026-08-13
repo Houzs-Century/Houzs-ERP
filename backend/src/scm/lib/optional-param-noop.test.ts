@@ -62,13 +62,13 @@ describe('findServiceLineCodes — the company is what decides, so it cannot be 
 
   it('company 1 sees a SERVICE line and refuses the return', async () => {
     const seen: { companyId?: unknown } = {};
-    expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 1)).toEqual(['LIFT-CHARGE']);
+    expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 1)).toEqual({ ok: true, codes: ['LIFT-CHARGE'] });
     expect(seen.companyId).toBe(1);
   });
 
   it('company 2 sees returnable goods and allows it — the SAME payload, the other answer', async () => {
     const seen: { companyId?: unknown } = {};
-    expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 2)).toEqual([]);
+    expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 2)).toEqual({ ok: true, codes: [] });
     expect(seen.companyId).toBe(2);
   });
 

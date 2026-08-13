@@ -17,6 +17,44 @@ structure applies to PO / DO / SI / GRN (they are near-identical clones).
 | Mobile list | `frontend/src/mobile/MobileSalesOrders.tsx` | Card list (bottom "Orders" tab). |
 | Mobile new/edit | `frontend/src/mobile/MobileNewSO.tsx` | 2600-line screen, **lazy-loaded** (PR #426). |
 
+#### The `?edit=1` fork, and why leaving edit must leave the URL
+
+`/scm/sales-orders/:docNo` is ONE route (`App.tsx`). `SalesOrderDetailV2` is a
+thin router on top of it: with `?edit=1` it lazy-mounts the legacy
+`SalesOrderDetail.tsx` editor, without it it renders
+`SalesOrderDetailV2ReadOnly`. Two visibly different pages, one address.
+
+So edit mode is a URL, not just component state, and every exit has to clear the
+param. `setIsEditing(false)` alone left the operator on the legacy ledger — a
+different-looking page at the address they were already on, with no route back
+to the V2 detail they pressed Edit on (owner 2026-08-10: "按 Cancel 出來不一樣的
+頁面"). `cancelEdit` and a completed whole-order `saveEdit` both call
+`returnToDetail()`, which navigates to the bare docNo with `replace` (V2's
+`goEdit` PUSHED `?edit=1`, so replacing collapses the pair instead of making
+Back walk through two detail entries).
+
+**The amendment path deliberately does not.** `submitAmendment` ends the edit
+session and STAYS, because the raised-amendment notice it needs to show lives on
+the legacy component.
+
+#### Line photos on the read-only detail
+
+The V2 detail has a **Photos** column: `photo_urls` has ridden on
+`GET /mfg-sales-orders/:docNo` (ITEM_COLS) since PR-F and was simply never
+rendered, so until 2026-08-13 the only way to SEE an imported AutoCount
+reference shot was to enter edit mode. Tiles are
+`components/scm-v2/SoLinePhotoStrip.tsx`; clicking one opens the shared
+`MediaLightbox` (prev/next, Escape, Download) against the FULL object.
+
+Both SO photo surfaces resolve through ONE state machine,
+`vendor/scm/lib/so-line-photo.ts` → `useSoLinePhoto`. Do not write a second
+loader: in production `/photos/:key/signed` **cannot sign** (the R2 S3-API
+credentials have never been provisioned) and answers its `mode: 'proxy'` arm
+with no `signedUrl` at all, so a hand-rolled loader that reads `signedUrl`
+renders a permanent loading placeholder — indistinguishable from "still
+loading", which is exactly how it ships. See §"Why photos need the proxy" in
+`backend/src/scm/lib/photoProxyFallback.ts`.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/sales-order-queries.ts`
 
