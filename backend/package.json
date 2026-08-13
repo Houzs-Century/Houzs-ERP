@@ -16,6 +16,8 @@
     "audit:routes": "node scripts/generate-route-capability-matrix.mjs --check",
     "audit:job-types": "node scripts/check-job-type-parity.mjs",
     "audit:work-order-states": "node scripts/check-work-order-states.mjs",
+    "audit:release-discipline": "node scripts/check-release-discipline.mjs",
+    "test:release-discipline": "node --test tests/releaseDiscipline.node.mjs",
     "audit:map": "node scripts/gen-codebase-map.mjs --check",
     "gen:ac-item-map": "node scripts/gen-autocount-item-map.mjs",
     "audit:ac-item-map": "node scripts/gen-autocount-item-map.mjs --check",
