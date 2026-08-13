@@ -1,7 +1,8 @@
 # COE — CI capacity: the queue that ate the working day
 
 **Date** 2026-08-13 · **Severity** P2 (no production impact; sustained loss of
-delivery throughput) · **Status** partially fixed, see Deferred
+delivery throughput) · **Status** fixed; the remaining items in Deferred are
+decisions, not defects
 
 ---
 
@@ -110,10 +111,14 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
-| `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | this PR |
-| `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | this PR |
-| `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | this PR |
-| `tests/schemaSnapshotParity.test.ts` | Proves snapshot ≡ replay inside the real D1: DDL, seeded rows, and the Phase-1 soak row | this PR |
+| `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
+| `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
+| `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
+| `tests/schemaSnapshotParity.test.ts` | Proves snapshot ≡ replay inside the real D1: DDL, seeded rows, and the Phase-1 soak row | #2131 |
+| 221 of 265 backend test files moved off the Workers pool onto a plain node runner | Suite 565s → 106s; slowest CI shard 380s → 141s; `backend-tests` 4 shards → 2 | #2131 |
+| `frontend` split into `frontend-checks` / `frontend-build` / `frontend-perf` with a roll-up, plus a Playwright browser cache | The gate 285s → **150s**; whole CI critical path now ~150s | #2142 |
+| `BUG-HISTORY.md merge=union` in `.gitattributes` | The append-at-top ledger stops being a merge conflict — **for local merges only**, see the caveat above | #2133 |
+| `test:scale-contract` invoked by name in `backend-typecheck`, and its two stale assertions corrected | Restores 100 checks that #2131 silently stopped running; a new assertion fails if CI is ever rerouted around it again | #2146 |
 
 ### The near-miss the parity test caught
 
@@ -303,6 +308,70 @@ Resolving one of these by hand also demonstrated the treadmill: the fix was
 pushed, and `main` had moved again before GitHub finished recomputing. Manual
 resolution does not converge while the base branch is live.
 
+### The half of this that does NOT work — read before relying on it
+
+**GitHub's server side does not honour `.gitattributes merge=union`.** Tested
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`:
+
+```
+$ git merge origin/main          # local, in a worktree
+   0 unresolved files            # union applied, clean
+
+$ gh pr update-branch 1905
+   X Cannot update PR branch due to conflicts
+```
+
+Same two commits, opposite answers. The attribute is applied by the git that
+performs the merge, and the "Update branch" button is GitHub's git, which reads
+its own configuration and not the repository's.
+
+So the fix is real but its reach is narrower than it looks:
+
+| how the branch is updated | union applies |
+| --- | --- |
+| `git merge origin/main` locally, then push | **yes** |
+| GitHub's *Update branch* button / `gh pr update-branch` | **no** |
+
+**The practical consequence:** when a PR is behind and its only conflict is
+`BUG-HISTORY.md`, do not press *Update branch* — it will refuse. Merge `main`
+into the branch locally and push. The union driver resolves the ledger on the
+way through and the push lands a branch GitHub then sees as clean.
+
+This was initially reported here as working server-side, on the strength of a
+local `git merge-tree` returning no conflict. That was local git applying the
+attribute, being mistaken for GitHub's behaviour — the same shape of error as
+the `391ms` and merge-queue mistakes recorded above: a local observation read as
+a platform guarantee.
+
+## The fix that switched off its own alarm
+
+The worst thing found all day was caused by the work itself, and it was found by
+accident.
+
+`test:scale-contract` — 100 checks across 7 files — is wired as `pretest` in
+`backend/package.json`. **npm fires `pretest` for `npm test` and nothing else.**
+#2131 split the backend suite and pointed CI at `test:light` and `test:workers`.
+Neither is `npm test`, so the whole guard suite stopped running in backend CI —
+silently, because a suite that does not run reports nothing and every check
+stays green.
+
+Two of its checks had been failing the entire time, against changes made in the
+same PR that silenced them:
+
+| check | why it broke | was the invariant actually broken? |
+| --- | --- | --- |
+| `scale-postgres-contract` runs on `pull_request` | the condition became a folded multi-line `if: >-` (it now also fires on `merge_group`), so the single-line regex stopped matching | **no** — the gate got stronger; the assertion pinned YAML layout instead of the rule |
+| the backend test script stays a single command | `test` became a two-command chain and sharding moved to `test:workers` | **no** — npm appends `--shard` to the LAST command, and `test:workers` is `vitest run`, still single |
+
+Neither was a real weakening. That is not the point: **nobody could have known
+either way, because the thing that would have asked was the thing that stopped
+running.** It surfaced only because an unrelated `package.json` conflict on
+#1907 was resolved by hand and the script happened to be run manually.
+
+Fixed in #2146: the suite is invoked by name in `backend-typecheck`, the two
+assertions now match the invariant rather than the formatting, and a **new**
+assertion fails if the workflow ever stops calling this suite by name.
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
@@ -349,7 +418,20 @@ resolution does not converge while the base branch is live.
    Verify the input exists before believing the empty result — the repo's
    standing rule that exit code 0 is not success, in a new costume.
 
-8. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
+8. **A check that stops running is worse than a check that fails.** Rerouting
+   CI away from `npm test` took 100 assertions offline without a single red
+   mark, and two of them were already failing. Any suite reached only through a
+   lifecycle hook (`pretest`, `prepare`, `pre-commit`) is one refactor away from
+   silence — invoke it by name, and assert that the workflow does.
+
+9. **Every mistake here had the same shape.** Four times in one session, "how it
+   has always worked" was used as "how it works now": the migration replay was
+   assumed to be the bottleneck (391ms), the merge queue was assumed available
+   (organization-only), `merge=union` was assumed to apply server-side (it does
+   not), and `pretest` was assumed to still fire (it does not). Every one cost
+   less than a minute to check and none of them were checked first.
+
+10. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
    the shard count against "112 files" and a "334s" suite. Both are long stale
    (277 files; a single shard now runs ~380s), and every later decision that
    trusted those numbers inherited the error. Sizing comments must be

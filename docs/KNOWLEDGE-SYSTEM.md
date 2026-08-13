@@ -24,6 +24,15 @@ Read this once. Then you will know where to look, and where to write.
 | Incident post-mortem | `docs/*-coe.md` | A serious outage: what broke, why, what changed. | No — append-only |
 | Human knowledge base | Obsidian vault (`Houzs ERP/`) | Architecture and business reasoning **for people**. | Outside this repo |
 
+Three of these layers stopped depending on goodwill on 2026-08-13:
+`.github/workflows/working-agreement.yml` fails a PR that reads as a fix and
+adds no `BUG-HISTORY.md` entry, one that moves a module SURFACE without touching
+the guide that quotes the file, and one that changes `migrations-pg` without
+saying in the body how the migration is reversed and what it was verified
+against. The escapes are the labels `no-bug-history-needed` and
+`no-guide-change`, and the check prints what each one waived. The COE layer is
+still prose-only — an incident is a judgement call, not a diff shape.
+
 ### Current state, honestly
 
 Every layer above is in use. The module-guide layer, which this file once called

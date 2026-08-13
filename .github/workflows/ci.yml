@@ -74,8 +74,14 @@ jobs:
       # meaningless. Cheap (~2s) and it belongs here, in the job that fails
       # fastest.
       - run: npm run audit:test-schema
-      # Keeps a new test file from quietly landing in the expensive project.
-      - run: npm run audit:test-projects
+      # RUN EXPLICITLY, do not rely on `pretest`. This suite is wired as
+      # `pretest` in package.json, which npm fires for `npm test` and for
+      # nothing else — and since the light/workers split this job runs
+      # `test:light` and backend-tests runs `test:workers`, so `npm test` is
+      # never invoked in backend CI at all. For one afternoon these 100 checks
+      # silently stopped running, and two of them were already failing against
+      # changes made in the same PR that stopped them. ~0.4s.
+      - run: npm run test:scale-contract
       - run: npm run typecheck
       # The 221-file pure-logic suite. It lives here, in the job that already
       # finishes in about a minute, because it takes ~7 SECONDS — it used to be
@@ -407,6 +413,36 @@ jobs:
       - run: npx playwright install-deps chromium
         if: steps.playwright-cache.outputs.cache-hit == 'true'
       - run: npm run test:perf-local
+
+  # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
+  # dependencies — so adding it costs the queue a few seconds, not a runner
+  # slot's worth of install. See scripts/lib/file-size-ratchet.mjs for the rules.
+  #
+  # This does NOT try to split the 39 files already over 2,000 lines. It records
+  # what each one already is and refuses to let it grow, so the problem stops
+  # getting worse while the refactors happen (or do not) on their own schedule.
+  file-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The "ceilings may only fall" check reads the manifest as it exists on
+          # the MERGE BASE. Without history there is no merge base, the check
+          # cannot run, and --require-base below turns that into a visible
+          # failure instead of a quiet downgrade.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # actions/checkout leaves no remote-tracking ref for main on a PR run, and
+      # the gate resolves its base as `origin/main`. Create it explicitly rather
+      # than relying on a default that has changed between checkout majors.
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - run: node --test scripts/check-file-size-ratchet.mjs
+      # --require-base: if the merge base cannot be resolved the gate FAILS
+      # rather than passing with the ratchet half-disabled.
+      - run: node scripts/check-file-size.mjs --require-base
 
   # Roll-up so the required status check keeps the name `frontend`. Branch
   # protection lists `frontend` by name; without this the split would make the

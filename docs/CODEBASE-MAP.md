@@ -142,9 +142,11 @@ inside `/scm/fleet`). A file existing is not evidence a feature is live; check
 `App.tsx` for the route. The house rule is "off, not hidden": a gated feature has no
 nav entry, no mounted route and no query firing.
 
-**Docs that are historical.** `MIGRATION-D1-TO-SUPABASE.md` and
-`HANDOFF-supabase-cutover.md` describe the abandoned Supabase project and a bound
-D1. They are records of a past cutover, not descriptions of today.
+**Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
+`docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
+and a bound D1. They are records of a past cutover, not descriptions of today —
+which is why they now live under `docs/archive/`. See `docs/README.md` for what is
+authoritative for what.
 
 ## 5. Files that are too big to read whole
 
@@ -153,7 +155,19 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-- **`frontend/src/pages/Projects.tsx` (~12,400 lines)** — the entire events ERP in
+> Sizes were typed inline here until 2026-08-13 and had rotted exactly as this
+> file's header warns: `Projects.tsx` was labelled "~12,400 lines" against a real
+> 14,867, and `mfg-sales-orders.ts` "~10,400" against 12,094. They are gone rather
+> than refreshed — a number typed here is a number that will be wrong again.
+
+**These files may no longer grow.** `scripts/file-size-ceilings.json` records what
+each one already is, and `npm run check:file-size` fails CI if any exceeds its
+recorded ceiling — see [`docs/repo-hygiene.md`](./repo-hygiene.md). Nothing forces
+them to be SPLIT; the ratchet only stops the problem getting worse, and a ceiling
+may only fall. If you are adding to one of these, put the new code in its own
+module: that is now the path of least resistance, by design.
+
+- **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
   helpers, `Projects()` (the shell), `ProjectsListView`, `ProjectsFinancesView`,
   `ProjectsAnalyticsView`, `ProjectsCalendarView` (with its popovers and day modal),
@@ -161,7 +175,7 @@ facts file; the point here is the shape of each file so you can jump.
   strip, stage stepper, tasklist sections, documents, checklist rows, stock
   transfers, and the logistics crew/schedule editors at the very bottom. Grep the
   component name, then read around it.
-- **`backend/src/scm/routes/mfg-sales-orders.ts` (~10,400 lines)** — the Sales Order
+- **`backend/src/scm/routes/mfg-sales-orders.ts`** — the Sales Order
   module, and the pricing-critical one. Top third: the guards and gate helpers
   (`soHasDownstream`, `soProcessingLocked`, `soStatusTransitionError`,
   `gateSoFinance`) and the validation helpers. Middle: `createSalesOrderCore` and the
@@ -169,19 +183,19 @@ facts file; the point here is the shape of each file so you can jump.
   calls, so never reimplement a create beside it. Then header PATCH and delivery-fee
   re-derivation, then item CRUD with `recomputeTotals`, then per-line photos, then
   payments (`recordSoPaymentRow`), then the debtor lookup at the end.
-- **`frontend/src/pages/ServiceCases.tsx` (~8,000 lines)** — ASSR. `ServiceCases()`
+- **`frontend/src/pages/ServiceCases.tsx`** — ASSR. `ServiceCases()`
   and the list/board/calendar views first, then `CreatePanel`, then `DetailContent`
   and the exported `ServiceCaseDetail`, then the detail's parts: stage rows,
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
-- **`frontend/src/pages/scm-v2/Products.tsx` (~5,500 lines)** — tabbed: `SkuMasterTab`
+- **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
   (with its virtualised row list and inline price editors) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
-- **`frontend/src/pages/Team.tsx` (~5,200 lines)** — user management. `Team()` shell,
+- **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
   `MembersTab`, `MemberDetail` / `MemberCard` / `EditMemberPanel`, brands panel, then
   `OrgChartTab` and its drag-and-drop machinery at the bottom.
-- **`backend/src/scm/routes/scan-so.ts` (~4,800 lines)** — see §6. Anthropic plumbing
+- **`backend/src/scm/routes/scan-so.ts`** — see §6. Anthropic plumbing
   and catalog loading first, then prompt construction and cache warming, then slip
   normalisation and validation, then the sample/rule distillation layer, then the
   route handlers.
@@ -391,6 +405,12 @@ re-check the cited file rather than trusting the line.
   sofa decomposition, and `Desc2` as the only place a specification lives); what the
   5-minute drain does automatically and the four cases that will **never** be automatic;
   and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
+  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
+  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
+  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
+  location, the salesperson). Also records what was ruled out, including two theories
+  that were stated and then refuted.
 - `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
   the public internet with **no key** on two routes, one of them ~52 MB of purchase
   history. OPEN, needs an owner action. Do not build on that relay.
@@ -404,5 +424,7 @@ re-check the cited file rather than trusting the line.
   whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
   its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
   gap between AutoCount and the ERP**: most of those gaps are decisions.
-- `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
-  with what caveats.
+- `docs/archive/scm-v2-vendoring-progress.md` for what was vendored, when, and with
+  what caveats. Archived — the vendoring finished, so read it as history: it still
+  describes temporary `/scm/<x>-v2` routes and an intact native `pages/scm/` tree,
+  and neither exists any more.
