@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Both halves exist: the staging bench (`[env.staging]` in `backend/wrangler.toml`) and the `main-protection` ruleset (**2026-07-31**). Superseded by `docs/STAGING-RELEASES.md` and `CLAUDE.md`. Kept for history; do not follow it as a current instruction.
+
 # Safety-net setup — the staging bench + branch protection
 
 This is the "rehearsal stage" that lets changes be tested somewhere safe before

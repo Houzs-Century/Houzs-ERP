@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Rework closed — the file records RECONCILE COMPLETE on **2026-07-27**. The one item still open is tracked in `tasks/FAIR-PNL-RENTAL-OPEN.md`. Kept for history; do not follow it as a current instruction.
+
 # FAIR PNL seed — rework handoff (2026-07-26)
 
 Historical roadshow P&L backfill into the PMS from the owner's Excel (`~/Downloads/FAIR PNL Y'2024/2025/2026 (1).xlsx`). The first seed shipped, then several bugs surfaced (owner-caught). This doc is the single source of truth to finish it cleanly. Scripts live in `backend/scripts/fair-pnl/`; every DB touch runs via an owner-triggered GitHub Actions workflow (dry-run default, `secrets.DATABASE_URL`). **A new workflow must be merged to `main` before it can be dispatched.**

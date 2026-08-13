@@ -102,7 +102,7 @@ A cold start is a few seconds of slowness. What makes it a COE subject is that "
 | **Measure the window before tuning anything else.** | Owner | Retry counts are now sized against a single observation. `[slow-query]` already logs (`d1-compat.ts:442`); a periodic first-query timing would turn "typical cold window ~10s" from an assumption into a number. |
 | **Every new client fetch path inherits the retry, or the fix misses.** | whoever adds one | #268 exists solely because #267 fixed `api/client.ts` and mobile SCM uses `vendor/scm/lib/authed-fetch.ts`. Two paths today; a third would silently be unprotected. |
 | **`statement_timeout` remains unset.** | Owner | Tracked as H4 in `system-foundation-coe.md:62`, unresolved: a stuck pooler can hang the Worker, but any cap touches the frozen config and the 2026-06-04 incident warns exactly against that. A generous server-side value (≫ real query times) was recommended and deliberately not applied unilaterally. |
-| **Do not burst-deploy.** | everyone | Each deploy resets the pool (`docs/DEPLOY-USER-MGMT.md:8-10`). Burst deploys multiply the cold windows — and, separately, churn the SW cache (`api-fetch-hardening-coe.md`) and can discard the build entirely (`deploy-collision-coe.md`). Three unrelated hazards, one habit. |
+| **Do not burst-deploy.** | everyone | Each deploy resets the pool (`docs/archive/DEPLOY-USER-MGMT.md:8-10`, archived 2026-08-13). Burst deploys multiply the cold windows — and, separately, churn the SW cache (`api-fetch-hardening-coe.md`) and can discard the build entirely (`deploy-collision-coe.md`). Three unrelated hazards, one habit. |
 
 ---
 

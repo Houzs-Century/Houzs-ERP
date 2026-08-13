@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Built and deployed **2026-06-13**. Superseded by `docs/USER-MANAGEMENT.md` (the module guide) and `docs/PERMISSION-MATRIX.md` (the grid the seed script transcribes). Kept for history; do not follow it as a current instruction.
+
 # User Management — uplift spec (departments, positions, org chart, invites)
 
 Written 2026-06-13 from the owner's detailed requirements. Goal: one unified

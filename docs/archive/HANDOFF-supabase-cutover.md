@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The production deploy this hands off was done; prod has run on Supabase Postgres via Hyperdrive since **2026-06-13**. Superseded by `docs/CODEBASE-MAP.md` §4. Kept for history; do not follow it as a current instruction.
+
 # HANDOFF — Houzs ERP: finish the D1 → Supabase cutover
 
 **One-line status:** the database migration AND all the app code changes are
