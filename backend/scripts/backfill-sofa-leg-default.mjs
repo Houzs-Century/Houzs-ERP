@@ -29,6 +29,8 @@
 // and 2). Both scm.mfg_sales_order_items and scm.purchase_order_items.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. classify() puts a line that already carries legHeight in the already-set bucket and only the fill bucket is written.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

@@ -2,7 +2,10 @@
 /* Move the Processing Date into the ONE column the ERP actually reads.
 
    THE OWNER'S RULE, stated more than three times and finally pinned on
-   2026-08-13:
+   2026-08-13. Quoted VERBATIM — `internal_expected_dd` below is the owner's own
+   words about the state of the system that day, not a live column name. The
+   column was renamed to processing_date by mig 0284, which is the last of the
+   three names being collapsed into one; do not "fix" the quote.
 
      "我不要又 proceeded_at 又 processing_date 又 internal_expected_dd。我要统一,
       就是因为这样太多 bugs 了。全部跟着 processing date 就是 UI 看到的那个。"
@@ -17,9 +20,9 @@
    and two answers.
 
    WHAT PROD LOOKS LIKE (company 1, read 2026-08-13):
-     2723 orders, 0 carry internal_expected_dd, 519 carry proceeded_at.
-   internal_expected_dd is the only column soProcessingLocked reads
-   (mfg-sales-orders.ts:443 `const proc = header.internal_expected_dd ?? null;
+     2723 orders, 0 carry processing_date, 519 carry proceeded_at.
+   processing_date is the only column soProcessingLocked reads
+   (mfg-sales-orders.ts:443 `const proc = header.processing_date ?? null;
    if (!proc) return false;`) and the only one MRP reads (mrp.ts:1002). So
    today the edit lock never fires, the amendment flow is unreachable, and MRP
    sees no processing date anywhere.
@@ -55,7 +58,7 @@
    NULL is a reachable POST-migration state: a Super Admin can Remove the
    Processing Date, which is the sanctioned way to pull an order back out of
    Proceed (mfg-sales-orders.ts, the remove_processing_date permission). A
-   second run keyed only on `internal_expected_dd IS NULL` would silently undo
+   second run keyed only on `processing_date IS NULL` would silently undo
    that decision. So any document whose audit trail shows the Processing Date
    was ever changed is REFUSED — a deliberate human act outranks this script.
 
@@ -154,13 +157,13 @@ async function main() {
   const census = await sql`
     SELECT company_id,
            count(*)::int AS total,
-           count(*) FILTER (WHERE internal_expected_dd IS NOT NULL)::int AS has_ied,
+           count(*) FILTER (WHERE processing_date IS NOT NULL)::int AS has_date,
            count(*) FILTER (WHERE proceeded_at IS NOT NULL)::int AS has_proc,
-           count(*) FILTER (WHERE proceeded_at IS NOT NULL AND internal_expected_dd IS NULL)::int AS split
+           count(*) FILTER (WHERE proceeded_at IS NOT NULL AND processing_date IS NULL)::int AS split
       FROM scm.mfg_sales_orders GROUP BY company_id ORDER BY company_id`;
   note(`\n=== CENSUS (every company — the readers are NOT company-scoped) ===`);
   for (const r of census) {
-    note(`  company ${r.company_id}: ${String(r.total).padStart(5)} orders | Processing Date ${String(r.has_ied).padStart(5)} | proceeded_at ${String(r.has_proc).padStart(5)} | split ${String(r.split).padStart(5)}`);
+    note(`  company ${r.company_id}: ${String(r.total).padStart(5)} orders | Processing Date ${String(r.has_date).padStart(5)} | proceeded_at ${String(r.has_proc).padStart(5)} | split ${String(r.split).padStart(5)}`);
   }
 
   const rows = await sql`
@@ -169,7 +172,7 @@ async function main() {
            to_char(customer_delivery_date, 'YYYY-MM-DD') AS deliv,
            debtor_name, address1, postcode, paid_centi, local_total_centi
       FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO} AND proceeded_at IS NOT NULL AND internal_expected_dd IS NULL
+     WHERE company_id = ${CO} AND proceeded_at IS NOT NULL AND processing_date IS NULL
      ORDER BY doc_no`;
 
   /* A deliberate human decision outranks this script. Any document whose audit
@@ -181,8 +184,8 @@ async function main() {
   const touchedRows = docs.length
     ? await sql`SELECT DISTINCT so_doc_no FROM scm.mfg_so_audit_log
                  WHERE so_doc_no = ANY(${docs})
-                   AND (field_changes::text ILIKE '%internal_expected_dd%'
-                     OR field_changes::text ILIKE '%internalExpectedDd%'
+                   AND (field_changes::text ILIKE '%processing_date%'
+                     OR field_changes::text ILIKE '%processingDate%'
                      OR field_changes::text ILIKE '%Processing Date%')`
     : [];
   const touched = new Set(touchedRows.map((r) => r.so_doc_no));
@@ -291,14 +294,14 @@ async function main() {
         const back = r.delivFix
           ? await tx`
               UPDATE scm.mfg_sales_orders
-                 SET internal_expected_dd = ${r.value}::date,
+                 SET processing_date = ${r.value}::date,
                      customer_delivery_date = ${r.delivFix}::date
                WHERE company_id = ${CO} AND doc_no = ${r.doc_no}
-                 AND internal_expected_dd IS NULL AND customer_delivery_date IS NULL
+                 AND processing_date IS NULL AND customer_delivery_date IS NULL
               RETURNING doc_no`
           : await tx`
-              UPDATE scm.mfg_sales_orders SET internal_expected_dd = ${r.value}::date
-               WHERE company_id = ${CO} AND doc_no = ${r.doc_no} AND internal_expected_dd IS NULL
+              UPDATE scm.mfg_sales_orders SET processing_date = ${r.value}::date
+               WHERE company_id = ${CO} AND doc_no = ${r.doc_no} AND processing_date IS NULL
               RETURNING doc_no`;
         wrote += back.length;
       }
@@ -320,16 +323,16 @@ async function main() {
   try {
     const after = await check`
       SELECT company_id,
-             count(*) FILTER (WHERE internal_expected_dd IS NOT NULL)::int AS has_ied,
-             count(*) FILTER (WHERE proceeded_at IS NOT NULL AND internal_expected_dd IS NULL)::int AS split
+             count(*) FILTER (WHERE processing_date IS NOT NULL)::int AS has_date,
+             count(*) FILTER (WHERE proceeded_at IS NOT NULL AND processing_date IS NULL)::int AS split
         FROM scm.mfg_sales_orders GROUP BY company_id ORDER BY company_id`;
     note(`\n=== VERIFIED ON A FRESH CONNECTION ===`);
-    for (const r of after) note(`  company ${r.company_id}: Processing Date ${String(r.has_ied).padStart(5)} | still split ${String(r.split).padStart(5)}`);
+    for (const r of after) note(`  company ${r.company_id}: Processing Date ${String(r.has_date).padStart(5)} | still split ${String(r.split).padStart(5)}`);
 
     const wrong = await check`
       SELECT doc_no FROM scm.mfg_sales_orders
        WHERE company_id = ${CO} AND doc_no = ANY(${migrate.map((r) => r.doc_no)})
-         AND internal_expected_dd <> (proceeded_at AT TIME ZONE 'UTC')::date
+         AND processing_date <> (proceeded_at AT TIME ZONE 'UTC')::date
        LIMIT 10`;
     if (wrong.length) bad(`${wrong.length}+ migrated row(s) whose date differs from proceeded_at: ${wrong.map((r) => r.doc_no).join(', ')}`);
     else note(`  every migrated date equals AutoCount's, and equals proceeded_at's day`);

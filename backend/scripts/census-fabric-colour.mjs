@@ -2,11 +2,17 @@
 /* Count a fabric colour code in EVERY carrier that can hold it. Read-only.
 
    THE POINT. The fabric catalogue has been cleaned several times and has never
-   come out clean, because each pass swept four document arms while 43 carriers
-   exist and NOT ONE foreign key protects any of them (there is no FK to
+   come out clean, because each pass swept a handful of document arms while far
+   more carriers exist and NOT ONE foreign key protects any of them (there is no FK to
    scm.fabric_colours anywhere — every reference is a bare TEXT string inside
    jsonb or inside a pipe-joined stock key). Reasoning that a merge is complete
    is exactly what has failed before. This counts instead.
+
+   NO COUNT IS WRITTEN DOWN HERE. lib/colour-carriers.mjs IS the list, and it
+   now derives its line and variant_key arms from lib/fabric-write.mjs, so the
+   census and the repair cannot know different tables. The run prints its own
+   carrier count on every invocation — that number, not this comment, is the
+   one to quote. (It read 58 carriers, 51 of them live, on 2026-08-13.)
 
    HOW TO USE IT. Run it on a colour BEFORE retiring that colour, to size the
    work. Run it AGAIN after, and require every LIVE carrier to report 0. The

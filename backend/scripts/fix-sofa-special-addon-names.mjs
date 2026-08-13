@@ -13,6 +13,8 @@
 // rename would orphan whatever points at the old code.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. A rename target that already exists is nothing to rename, and a deleted row is not found again.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

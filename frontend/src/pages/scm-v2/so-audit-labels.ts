@@ -21,7 +21,7 @@ const FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   phone: 'Phone', email: 'Email', soDate: 'SO date', status: 'Status',
   paymentMethod: 'Payment method', depositCenti: 'Deposit',
-  internalExpectedDd: 'Processing date', customerSoNo: 'Customer SO ref',
+  processingDate: 'Processing date', customerSoNo: 'Customer SO ref',
   customerPo: 'Customer PO', customerState: 'State',
   customerDeliveryDate: 'Delivery date', city: 'City', postcode: 'Postcode',
   buildingType: 'Building type', address1: 'Address 1', address2: 'Address 2',

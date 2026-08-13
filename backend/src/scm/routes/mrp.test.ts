@@ -72,7 +72,7 @@ const demandRed = (qty: number): Row => ({
   item_group: 'bedframe', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', internal_expected_dd: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
 });
 
 // A PO supply line for BF-100 → W1. `variant` null builds the legacy '' key.
@@ -262,7 +262,7 @@ const sofaDemand = (id: string, docNo: string, qty: number, delivery: string | n
   item_group: 'sofa', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: delivery, line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, internal_expected_dd: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: null, customer_state: null },
 });
 
 // A sofa PO supply line for SF-100 → W1. `variant` null builds the legacy '' key.
@@ -343,7 +343,7 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
   const undated: Row = {
     ...demandRed(5), id: 'si-undated', doc_no: 'SO-2',
     line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, internal_expected_dd: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
   };
   const tables = () => ({
     ...BASE_TABLES,
@@ -391,7 +391,7 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   test('a SHIPPED-status SO line is done, matching so-stock-allocation / reservations', async () => {
     const shipped: Row = {
       ...demandRed(5),
-      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', internal_expected_dd: null, customer_state: null },
+      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
     };
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [shipped] });
     const res = await computeMrp(sb as any, opts);

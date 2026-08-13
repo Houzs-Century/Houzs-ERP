@@ -12,6 +12,8 @@
 // linked_ac_docno, plus the same ERP material/item code. Only fills BLANKS —
 // never overwrites a value that is already there.
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: convergent. Re-derives the same fill from the same paired document, so a second run rewrites identical values.
 import fs from "node:fs";
 import postgres from "postgres";
 
