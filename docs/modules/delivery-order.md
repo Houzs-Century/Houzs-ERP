@@ -27,7 +27,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
-| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status` (`:167`). |
+| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status`. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
 | Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). |
 | Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | |
 
@@ -134,7 +134,9 @@ still need `edit` on `scm.sales.delivery`.
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
    **This is a DERIVED response field, and both ends read it as a string** —
-   mobile via `pick(r, "soInternalExpectedDd", "so_internal_expected_dd")`. If
+   mobile via `pick(r, "soProcessingDate", "so_processing_date")`
+   (`MobileModuleList.tsx:1147,1198`; corrected 2026-08-14 — this line named
+   `soInternalExpectedDd` / `so_internal_expected_dd`, retired by mig 0286). If
    the SO column is ever renamed, rename this response key on BOTH ends or
    neither: a backend-only rename blanks the "Processing" column with no error
    anywhere. See docs/modules/sales-order.md, "surfaces that read this date by

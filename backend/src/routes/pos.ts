@@ -24,10 +24,14 @@ import {
   verifyPassword,
   hashPassword,
   SESSION_ORIGIN_POS,
+  type SessionOrigin,
 } from "../services/auth";
 import { setPosPinForUser } from "../services/posPin";
 
-type Vars = { user?: { id: number }; companyId?: number };
+/* sessionOrigin is set by `auth` (middleware/auth.ts) from the session row; it
+   is declared here because /exchange-web-session has to READ it — an exchanged
+   session must carry the origin of the session it was exchanged from. */
+type Vars = { user?: { id: number }; companyId?: number; sessionOrigin?: SessionOrigin };
 const pos = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 const MAX_FAILURES = 5;
@@ -300,15 +304,27 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 //   https://erp.houzscentury.com/#sso=<token>&next=<path>
 // in a new tab. The Houzs frontend bootstrap (src/main.tsx) reads the fragment,
 // stores the token in sessionStorage, strips the fragment, navigates to `next`.
-// Mint deliberately drops the `origin='pos'` marker so the drift gate treats
-// this like an ordinary desktop session (SO edits from Houzs UI aren't
-// drift-checked against POS tablet rules). The original POS session is
-// unaffected — this is an additive mint, not a swap.
+// The mint CARRIES the caller's origin. It used to drop it, and the comment here
+// called that deliberate — "so the drift gate treats this like an ordinary
+// desktop session". That is an SSO convenience that hands out authority the
+// caller does not have: `origin='pos'` is the hinge `isPosTabletCaller` reads
+// (scm/routes/mfg-sales-orders.ts:836) to refuse a POS-side edit that drops the
+// bill below the sales order's own total, and to withhold `trustOperatorSelling`
+// (:4232) and `posTablet` (:4299). A POS tablet that wants past those four
+// refusals only had to call this endpoint and reuse the token it got back —
+// nothing else about the caller changed, so the gate was never protecting
+// anything a tablet could not shed in one request.
+//
+// An exchange must never widen the session it is exchanged FROM. Handing the
+// origin through keeps the actual purpose intact (the salesperson still gets a
+// full desktop session token, still opens Houzs pages without a second
+// password); an office session, which is where the "ordinary desktop session"
+// case really lives, has no origin to carry and is unaffected.
 pos.post("/exchange-web-session", auth, async (c) => {
   const uid = c.get("user")?.id;
   if (uid == null) return c.json({ error: "not_authenticated" }, 401);
-  // origin=undefined → desktop session (no drift-gate on office edits).
-  const token = await createSession(c.env, Number(uid));
+  const origin = c.get("sessionOrigin") as SessionOrigin | undefined;
+  const token = await createSession(c.env, Number(uid), origin);
   return c.json({ token, userId: Number(uid) });
 });
 

@@ -122,6 +122,11 @@ import { getBranding } from "./services/branding";
 // ASSR SO lookup, which had been frozen since the 2026-06-13 pause.
 import { runPull } from "./services/pull";
 import { runDoMirrorSync } from "./services/doMirror";
+// AutoCount PO pulls (restored — frozen since 2026-06-12) and the unfiltered
+// ac_snapshot_* staging load that gives the migration reconciliation a
+// denominator. Both daily; see the 02:00 slot.
+import { runPOPull, runPODocsPull } from "./services/po";
+import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -649,6 +654,30 @@ export default {
           runDoMirrorSync(env, "SCHEDULED")
             .then((r) => console.log(`[cron do-mirror] ${r.message}`))
             .catch((e) => console.error("[cron do-mirror]", e))
+        );
+        // AutoCount PO pulls — frozen since 2026-06-12 because the 2026-07-14
+        // restore brought back the SO pull only. Both tables are read on main:
+        // `purchase_orders` by the ASSR supplier-PO lookup, `purchase_order_docs`
+        // by Finance/P&L. Daily, not 5-min: each is a full wipe-and-reload of a
+        // few thousand rows. Sequential so the two reloads never interleave, and
+        // best-effort like every other job in this slot.
+        ctx.waitUntil(
+          runPODocsPull(env, "SCHEDULED")
+            .then((r) => console.log(`[cron po-docs-pull] ${r.message}`))
+            .then(() => runPOPull(env, "SCHEDULED"))
+            .then((r) => console.log(`[cron po-pull] ${r.message}`))
+            .catch((e) => console.error("[cron po-pull]", e))
+        );
+        // Full AutoCount snapshots into the ac_snapshot_* staging tables
+        // (mig 0282) — the unfiltered denominator the migration reconciliation
+        // needs. Writes only its own tables, so a failure here cannot touch the
+        // mirrors above.
+        ctx.waitUntil(
+          runSOSnapshot(env, "SCHEDULED")
+            .then((r) => console.log(`[cron ac-snapshot-so] ${r.message}`))
+            .then(() => runPOSnapshot(env, "SCHEDULED"))
+            .then((r) => console.log(`[cron ac-snapshot-po] ${r.message}`))
+            .catch((e) => console.error("[cron ac-snapshot]", e))
         );
       }
       ctx.waitUntil(

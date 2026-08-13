@@ -389,11 +389,27 @@ pwpCodes.delete('/reserve', async (c) => {
   // inserts with — is the only thing keeping one company's cart from destroying
   // the other's RESERVED codes. Freeing stays idempotent (a cart cleared twice,
   // a key from the other company): nothing matches, still ok.
+  //
+  // owner_staff_id is the SECOND half of that boundary and it was missing. The
+  // company filter stops the other TENANT; it does nothing about the rep at the
+  // next terminal. Every other writer in this file — the reserve insert (:324),
+  // the surplus trim (:341), the stray trim (:361) and all three reads (:151,
+  // :299, :374) — pairs company with owner, so this DELETE was the one verb that
+  // took `cart_line_key` alone as authority. A key observed or guessed from
+  // another rep's cart freed vouchers they had already earned for a customer,
+  // and the free is silent: it returns `{ok:true}` whether it matched their row
+  // or nothing at all.
+  //
+  // An unlinked staff account (userId null) can hold no RESERVED code of its
+  // own, so it must free nothing rather than fall through to "every owner".
+  const userId = await resolveOwnerStaffId(supabase, c.get('houzsUser')?.id, c.get('user')?.id);
+  if (!userId) return c.json({ ok: true, freed: 0 });
   const { error } = await scopeToCompany(
     supabase
       .from('pwp_codes')
       .delete()
-      .eq('cart_line_key', cartLineKey),
+      .eq('cart_line_key', cartLineKey)
+      .eq('owner_staff_id', userId),
     c,
   ).eq('status', 'RESERVED');
   if (error) return c.json({ error: 'free_failed', reason: error.message }, 500);

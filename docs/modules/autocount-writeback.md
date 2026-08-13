@@ -224,7 +224,7 @@ cancel it is not a no-op to the people using that book.
 
 | Payload field | ERP source |
 |---|---|
-| SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent`, `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
+| SO header | `scm.mfg_sales_orders` — `debtor_name`, `agent` + `salesperson_id` (§7n), `sales_location`, `ref`, `phone`, `address1-4`, and `branding` / `venue` / `po_doc_no` into UDF |
 | SO lines | `scm.mfg_sales_order_items`, including `linked_ac_dtlkey` (migration 0273) — the AutoCount line an edit addresses |
 | PO header | `scm.purchase_orders` — `po_number`, `po_date`, `notes`. **The creditor is a JOIN**: the table is supplier-keyed, so `CreditorCode` / `CreditorName` come from `scm.suppliers.code` / `.name` through `supplier_id`. It has no `agent` and no `ref` at all, so a create sends null for both and an edit omits `Ref` entirely rather than blanking AutoCount's |
 | PO lines | `scm.purchase_order_items`, same `linked_ac_dtlkey` |
@@ -713,7 +713,7 @@ This was the ERP declining to speak.
 
 | field | source | shape |
 |---|---|---|
-| `Agent` | `mfg_sales_orders.agent` through `AGENT_MAP` | header |
+| `Agent` | the salesperson, resolved by §7n | header |
 | `SalesLocation` | `sales_location` through `LOCATION_MAP` | header |
 | `DocDate` | `so_date` | header |
 | `BRANDING` / `VENUE` / `ToPONo` | `branding` / `venue` / `po_doc_no` | **nested `UDF` object** |
@@ -856,6 +856,87 @@ compartment row of a build the same DtlKey** — which is exactly the shape
 key is worse than a missing one: missing is refused loudly, wrong silently edits
 a different line in a live book.
 
+## 7n. The salesperson — two ERP columns, one Agent
+
+**This is what the go-live failed on.** 2026-08-13, two re-queued sales orders,
+four attempts each, and the live book answered:
+
+```
+Foreign Key Error (Constraint Name=FK_SO_SalesAgent)
+```
+
+`composeCreateSo` read `mfg_sales_orders.agent` and nothing else. `agent` is a
+legacy free-text column filled only from `body.agent`, **which no SO form
+sends** — so it was empty on every order created since the cutover. An empty
+Agent reaches the service as `""` (`Set(() => so.Agent = Str(p, "Agent"))`, and
+`Str` turns an absent key into the empty string), and `""` is not a row in
+`dbo.SalesAgent`. `/ensure-masters` could not save it either: `mastersOf` only
+emits an `Agents` entry when the payload names one, so an empty agent opened
+nothing and the create died on the foreign key. Nothing was written — the FK
+rejects the document before it lands — so there was no residue to clean up.
+
+The ERP's REAL identity is `mfg_sales_orders.salesperson_id` -> `scm.staff`,
+stamped at create. The SO detail page had been hiding the gap for months:
+`salespersonNameOf(salesOrder.agent, salesOrder.salesperson_id)` falls back to
+the id, so a name appeared on screen while the column behind it was empty.
+
+**Both halves were fixed, and they are not redundant.**
+
+| half | where | what it does |
+|---|---|---|
+| stamp at the source | `scm/lib/so-agent.ts`, used by `createSalesOrderCore` and the header PATCH | `agent` is written from the stamped salesperson's `scm.staff.name` whenever the caller does not supply one — header, goods lines and SERVICE lines alike |
+| fall back at compose | `resolveAcAgent` in `services/autocount-writeback.ts` | an order that ALREADY exists with an empty `agent` still resolves, through `salesperson_id`. `SO_HEADER_COLS` carries the column and `readSalespersonName` turns the id into the name, the same division `withLocations` draws for the line-level warehouse |
+
+### The order of preference, and what is deliberately NOT trusted
+
+1. `agent` through `AGENT_MAP` — the book's own spelling of a rep it already has
+2. the salesperson's name through the same map
+3. the salesperson's name **as itself**, opened by `/ensure-masters`
+4. nothing -> `MissingAgentError`
+
+Step 3 is D10's rule applied to people: an unmapped item code stopped refusing a
+document on 2026-08-13 and is opened instead, and `AGENT_MAP` is a snapshot of
+the book's spellings rather than an allow-list — every rep hired since it was
+built would otherwise be unwritable.
+
+**The raw `agent` text never passes through unmapped.** That column has no
+writer keeping it honest: production rows hold bare `scm.staff` UUIDs
+(`useStaffLookup` carries a `UUID_RE` for exactly that) and placeholder text
+like "Unassigned" (HC-SO-2607-008, the order that produced the confirm gate's
+salesperson rule). `/ensure-masters` opens an agent under EXACTLY the string it
+is given, so passing either through would write permanent garbage master data
+into a licensed book. `scm.staff.name` is a real person by construction, which
+is why only it is trusted unmapped.
+
+### Both empty: the CREATE is refused, the EDIT is not
+
+A create with no resolvable salesperson raises `MissingAgentError` and lands a
+`skipped` row through `noteReadFailure` — the same shape as
+`MissingLocationError`, one level up. Sending `""` instead is what produced the
+incident, and the document cannot land either way, so the refusal loses no
+successful write: it converts four silent 500s in `C:\Temp\ac-sync-service.log`
+into one row an operator can read and the §9 re-queue tool can retry.
+
+An **edit** is never refused for this. The account book already holds a value
+and `/edit` applies only the keys it is GIVEN, so omitting `Agent` leaves it
+alone — the same asymmetry the stock Location runs under.
+
+**No create-time gate was added** (unlike the stock location's
+`so-location-gate.ts`). The confirm gate already demands `salesperson_id` OR
+`agent` before an order may be CONFIRMED, and only non-draft orders are
+enqueued, so the both-empty shape is unreachable from the UI. The composer's
+refusal is the backstop for the paths that are not that gate — imports, the 2990
+mirror, an API caller passing `{salespersonId: null}` explicitly.
+
+### Still open: a PURCHASE order has no agent at all
+
+`readPoHeader` hardcodes `agent: null`, because `scm.purchase_orders` has no
+such column and the ERP has no purchase-agent concept. So every `/create-po`
+sends `Agent: ""` into the same shape of foreign key
+(`FK_PO_PurchaseAgent`, §7m row 4). Nothing in this fix touches it: the ERP has
+no value to send, and inventing one — `OTHERS`, say — is an owner decision about
+what the account book's purchase reports will show.
+
 ## 7l. Where this module sits
 
 This guide covers **how to call the write service**. For the shape of the whole
@@ -873,7 +954,7 @@ against `AED_HOUZS`, each with the evidence beside it.
 
 | # | Constraint | Named by | Opened by | Found |
 |---|---|---|---|---|
-| 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` | 2026-08-11 |
+| 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` — but only when the payload NAMES one, which is the 2026-08-13 go-live failure (§7n) | 2026-08-11 |
 | 2 | `FK_SODTL_Location` | SO **line** `Location` | `ensure-masters` → `Locations` | 2026-08-11 |
 | 3 | `FK_Item_ItemGroup` | a NEW item being opened | `ensure-masters` → `Items[].ItemGroup` | 2026-08-12 |
 | 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`** | 2026-08-12 |
@@ -984,15 +1065,34 @@ TTL). Queued rows stay `pending` and drain when it is turned back on.
 **AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
 the queue by status, the FAILED rows in full (each one is a document that is in
 the ERP and not in the account book), the age of the oldest pending row, and the
-`skipped` backlog split by REASON — a refusal needs a line-key backfill, a
-merged conversion needs a human, a parentless document can never exist in
-AutoCount at all. An unrecognised reason is printed rather than counted away,
-and a skip that has already been re-queued (below) is reported separately rather
-than counted as backlog.
+`skipped` backlog split by REASON. **The script prints the reason AND its
+remedy — read `backend/scripts/check-autocount-outbox-health.mjs:61-70`
+(`SKIP_KINDS`) for the current set, do not learn the taxonomy from here.** An
+unrecognised reason is printed rather than counted away, and a skip that has
+already been re-queued (below) is reported separately rather than counted as
+backlog.
 
 An empty queue is reported as EMPTY, not as healthy: the table is append-only,
-so zero rows means nothing was ever enqueued, which is the correct state while
-the toggle is off.
+so zero rows means nothing was ever enqueued. **What that MEANS depends on the
+switch**, and the script says which — it reads
+`scm.app_config -> scm.autocount_writeback` and branches on it.
+
+> **CORRECTED 2026-08-14.** Two claims here were stale. (1) This paragraph ended
+> *"…which is the correct state while the toggle is off"* unconditionally. PR
+> #2094 (`2b1cf249`) made the note depend on the flag the script had already
+> read: *"It said empty was 'the correct state while scm.autocount_writeback is
+> off' no matter what the flag said — correct until the flag was turned on,
+> misleading after."* See `check-autocount-outbox-health.mjs:143-152`.
+> (2) The `skipped`-reason list above named three remedies. `SKIP_KINDS` carries
+> **eight** entries covering four distinct refusal classes —
+> `KeylessLineError`, `SofaCollapseError`, `ItemCodeError`, `MissingLocationError`
+> — plus compose-failure, masters-not-opened, no-source-document and
+> no-AutoCount-shape. Before #2094 the check matched on the shared prefix
+> `refused, nothing sent`, so three of the four classes were reported as a
+> DtlKey problem; an operator holding a `MissingLocationError` was sent to
+> backfill line keys. The script's own header comment at `:56` still says "FOUR
+> different classes" where `SKIP_KINDS` now has eight entries; that is a source
+> comment and is left alone here (docs-only diff).
 
 The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
 a row reaches `failed` — a failed row means a document
@@ -1110,12 +1210,14 @@ never be mistaken for a cancel divergence.
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
 | `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
-| `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
+| `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |
+| `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |
 | `src/services/autocount-item-code.test.ts` | **D10**, driven by the real 1561-row cutover map. No corpus line resolves to the WRONG item; a collapsed code refuses without a supplier and resolves with one; an unmapped line throws rather than falling back to `material_code`; one bad line refuses the whole document |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
+| `tests/soAgentStampWiring.test.ts` | That no SO write puts `body.agent` into the column raw — every stamp site is the resolved value, and a reassigned salesperson carries the agent with it |
 | `tests/autocountWritebackCells.test.ts` | That the ERP can reach EVERY document type `AcSyncService` handles — the expected set is read out of the C# `switch` rather than hand-listed — plus the DO/GRN/SI/PI edit hooks, the SO/PO paths the anchor test missed (price override, both amendment applies, `bulk-supplier-date`, `convert-from-so`, the SI partial transfer), the SO->PO create hole, the four parentless-create records, and that no route expresses an edit as cancel-then-create |
 
 The corpus fixture carries **input only** — no expected pieces, no expected
@@ -1126,6 +1228,9 @@ so the fixture cannot encode a bug as an expectation.
 
 ## See also
 
+- `docs/autocount-field-alignment-audit.md` — every field, traced ERP column ->
+  composer -> master opened? -> C# assignment, with the BROKEN and AT RISK list
+  and the numbers behind each. Read it before adding a field to a payload
 - `docs/autocount-cutover-ledger.md` — the one-time import that came the other way
 - `backend/scripts/autocount-service/AcSyncService.cs` — the AutoCount half
 - `backend/scripts/autocount-service/sdk-api-reference.txt` — the reflected SDK surface

@@ -516,8 +516,6 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
-   (`customer_delivery_date` or the Processing Date `internal_expected_dd`),
-   paginated so the
    (`customer_delivery_date` or `processing_date`), paginated so the
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
@@ -541,14 +539,28 @@ materialised; there is no board table.
 Each of the last three unions is wrapped defensively: a failure logs and leaves
 the SO rows untouched (`:1341-1343`).
 
-**`internal_expected_dd` is the SALES ORDER's Processing Date and nothing else.**
+**`processing_date` is the SALES ORDER's Processing Date and nothing else.**
 The last three sources are jobs, not orders: a service leg, a manual DP job and
 a PMS project window have no deposit gate, no supplier PO and no edit lock, so
-they have no processing date at all. They send `internal_expected_dd: null` and
-carry their own leg date as **`job_date`** (2026-08-13). Before that they put
-the leg date in `internal_expected_dd`, which made the name mean a third thing
-on rows that cannot have one — the same confusion the Processing-Date
-unification exists to end. Nothing on the board reads it for those rows: the
+they have no processing date at all.
+
+> **CORRECTED 2026-08-14 — the intended fix is NOT on main.** This paragraph said
+> those rows *"send `internal_expected_dd: null` and carry their own leg date as
+> `job_date` (2026-08-13)"*. `job_date` does not exist on `origin/main`
+> `0c2a4e88`: `grep -rn 'job_date' backend/src` returns one comment
+> (`scm/shared/so-processing-date.ts:28`) and no field. Commit `9fa8e0ff` added
+> it to `delivery-planning.ts`; the batch's conflict resolution `e1263558`
+> (squashed into `d33ac743`, #2121) **deleted every one of those lines** — the
+> `git show e1263558 -- backend/src/scm/routes/delivery-planning.ts` diff removes
+> `job_date: null`, `job_date: leg.date` (×2) and `job_date: date`. What ships
+> today is the OLD behaviour this paragraph describes as historical: synthetic
+> rows carry their leg date in `processing_date` (`delivery-planning.ts:1169`
+> ASSR, `:1333` DP, `:1470` project), so the name still means a third thing on
+> rows that cannot have one. `frontend/src/mobile/MobileDeliveryPlanning.tsx:177`
+> also still describes `job_date` as live; that is a source comment and is left
+> alone here on purpose (docs-only diff).
+
+Nothing on the board reads it for those rows: the
 "Internal Est." column was removed in the owner's 2026-08-04 column pass, the HC
 fields drawer (whose `procLockActive` reads it) is offered on `so` rows only,
 and the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first,
@@ -701,6 +713,27 @@ schedule for an SO with **no DO** writes no `trip_stops` row at all (no uuid),
 so such an order cannot read as Time arranged — it stays Pending Time even
 though a trip row exists. Honest by construction: with no stop, no lorry's run
 sheet carries the job. Cut the DO first and the stop — and the stage — follow.
+
+The mechanism, for anyone tempted to "fix" the insert: it is guarded
+`if (!already && (doId || soId))`, and on the SO-direct path BOTH operands are
+always null — `doId` because there is no DO, `soId` because it is set to `null`
+a few lines above, since `scm.mfg_sales_orders` has a TEXT `doc_no` primary key
+and no uuid while `trip_stops.so_id` is a uuid. The insert is unreachable, not
+flaky.
+
+**Since 2026-08-13 the RETURN SHAPE says so** (PR #2086). `TripWiring`'s `WIRED`
+arm gained `stopCreated?: boolean` and, when false, `stopSkippedReason` — a plain
+sentence saying the date is saved but the job will not appear on a driver sheet
+until the DO exists. Additive: every existing field is untouched, so no caller
+breaks. **No caller reads them yet either** — `git grep stopCreated` at
+`origin/main` returns hits only inside `delivery-planning.ts`, so the dispatcher
+still sees a plain success and the operator is still not told. Wiring a surface
+to `stopSkippedReason` is the open half. The stop is deliberately NOT invented:
+there is genuinely no key to file it under, and guessing one would put a job on a
+route that cannot be traced back to its order. The orphan-TRIP half — a trip is
+still found-or-created with no stop for it, and `/lorry-capacity` counts it in
+`total_trips` and in utilisation regardless — remains open and is recorded in
+BUG-HISTORY under the stale-stop sweep entry.
 
 ### Region is derived from the customer STATE — verified
 

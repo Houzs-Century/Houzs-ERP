@@ -33,8 +33,11 @@ lists the disagreements already found.
 ## 2. Generated — never hand-edit, never copy the numbers out
 
 `generated/` is computed from the tree by `backend/scripts/gen-codebase-map.mjs`.
-Regenerate with `npm --prefix backend run audit:map`. It is deliberately not a CI
-gate — a stale navigation doc must never block a deploy.
+**Regenerate with the generator itself — `node backend/scripts/gen-codebase-map.mjs`.**
+`npm --prefix backend run audit:map` is `--check`: it reports drift and exits 1,
+it does NOT rewrite the file. (This line said "Regenerate with … audit:map"
+until 2026-08-14.) The check is deliberately not a CI gate — a stale navigation
+doc must never block a deploy.
 
 | File | Authoritative for |
 |---|---|
@@ -96,6 +99,7 @@ because the read relay and the write-back run opposite ways.
 |---|---|
 | [`autocount-integration-map.md`](autocount-integration-map.md) | The map of every channel between the two systems: direction, purpose, and what each is allowed to do. |
 | [`modules/autocount-writeback.md`](modules/autocount-writeback.md) | The ERP → AutoCount write-back: how to call it, the FK chain, payload shapes. |
+| [`autocount-field-alignment-audit.md`](autocount-field-alignment-audit.md) | Per FIELD: which ERP column the composer reads, whether that is where the ERP keeps the value, whether anything opens the master, and what AutoCount does when it is missing. The BROKEN / AT RISK list, with the numbers. Read it before adding a field to a payload. |
 | [`autocount-sync-coverage.md`](autocount-sync-coverage.md) | Coverage and gaps of the write-back. Carries its own SUPERSEDED-conclusions box — read that box before quoting anything from it. |
 | [`autocount-migration-record.md`](autocount-migration-record.md) | The one-time AutoCount → ERP migration: how it was done, what broke, and the numbered runbook to resume it. |
 | [`autocount-cutover-ledger.md`](autocount-cutover-ledger.md) | Which rows came from AutoCount vs were made in the ERP, with an evidence chain to a workflow run id. The answer to "where did this row come from" a year from now. |

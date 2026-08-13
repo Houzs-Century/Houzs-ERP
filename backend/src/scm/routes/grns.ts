@@ -6,6 +6,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
@@ -30,6 +31,7 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
+import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -350,6 +352,45 @@ async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number |
   await computeAndStoreGrnAllocation(sb, (items ?? []) as AllocItemRow[], grnRate, method, companyId);
 }
 
+/* ── Zero-cost receipt gate, adapted to this file's row shape ───────────────
+   Resolves each line to the MYR cost the movement would actually carry, then
+   asks the guard whether any of them would open a zero-cost stock layer.
+
+   The cost fed in is the BASE landed figure — toMyrSen(unit_price_centi, rate)
+   — not the freight-allocated one, because the allocation is computed and
+   PERSISTED further down inside postGrnAndRollup and running it before a
+   possible refusal would leave a write behind a rejected receipt. That only
+   matters when a GRN carries a service (freight) line whose pool could lift a
+   zero-priced goods line off zero, so a GRN with a non-zero charge pool is
+   skipped rather than risk refusing a receipt that was in fact costed. */
+export type ZeroCostRefusal = NonNullable<Awaited<ReturnType<typeof checkReceiptCosts>>>;
+type GrnCostGateRow = {
+  id: string; qty_accepted: number; material_code: string;
+  unit_price_centi: number | null; line_total_centi?: number | null;
+  item_group?: string | null; zero_cost_ack?: boolean | null;
+};
+async function checkGrnZeroCost(
+  sb: any,
+  items: GrnCostGateRow[],
+  grnHeader: { company_id?: number | null; exchange_rate?: string | number | null } | null,
+): Promise<ZeroCostRefusal | null> {
+  if (items.length === 0) return null;
+  const rate = grnHeader?.exchange_rate ?? 1;
+  const chargePool = items
+    .filter((it) => isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+    .reduce((sum, it) => sum + Math.abs(Number(it.line_total_centi ?? 0)), 0);
+  if (chargePool > 0) return null;
+  const lines: ReceiptCostLine[] = items.map((it) => ({
+    id: it.id,
+    materialCode: it.material_code,
+    qtyAccepted: Number(it.qty_accepted ?? 0),
+    unitCostSen: toMyrSen(Number(it.unit_price_centi ?? 0), rate),
+    itemGroup: it.item_group ?? null,
+    zeroCostAck: it.zero_cost_ack ?? false,
+  }));
+  return checkReceiptCosts(sb, lines, grnHeader?.company_id ?? null);
+}
+
 /* ── Shared helper: post a GRN, roll up to PO items, write inventory IN ──
    Pulled out of the PATCH /:id/post handler so both single-doc post and
    the multi-PO `/from-po-items` route can reuse the same logic.
@@ -358,13 +399,26 @@ async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number |
    the single chokepoint that writes inventory IN and rolls PO received_qty, so
    an omitted scope here would let one company's confirm commit stock against
    another's GRN. Callers get it from requireActiveCompanyId and refuse first. */
-async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number }> {
+async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyId: number): Promise<{ ok: true; movementErrors?: string[]; recountError?: string } | { ok: false; reason: string; status?: number; zeroCost?: ZeroCostRefusal }> {
   const { data: grnHeader } = await scopeToCompanyId(sb.from('grns')
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
     .eq('id', grnId), companyId).maybeSingle();
   const { data: items } = await sb.from('grn_items')
-    .select('id, purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_centi, line_total_centi, item_group, variants')
+    .select('id, purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_centi, line_total_centi, item_group, variants, zero_cost_ack')
     .eq('grn_id', grnId);
+
+  /* ZERO-COST GATE — the last honest moment. Runs BEFORE the CAS flip so a
+     refusal writes nothing at all: the GRN stays exactly as it was and the
+     caller gets a 409. A zero unit price is legitimate on a Houzs PO (suppliers
+     price the goods-received document, not the order), but a zero that reaches
+     the FIFO trigger's IN branch becomes a zero-cost lot, then RM0 COGS, then a
+     100% margin — and by then the unit has shipped and the COGS must never be
+     rewritten. See zero-cost-receipt-guard.ts for why the discriminator is the
+     SKU's own purchase history rather than a flag. */
+  const zeroCost = await checkGrnZeroCost(sb, (items ?? []) as GrnCostGateRow[], grnHeader);
+  if (zeroCost) {
+    return { ok: false, reason: ZERO_COST_RECEIPT_ERROR, status: 409, zeroCost };
+  }
 
   // Flip to POSTED FIRST, THEN recount. recomputePoReceived excludes DRAFT lines
   // from a PO line's received_qty, so the confirm transition (which calls this
@@ -657,7 +711,11 @@ const ITEM =
   /* Migration 0082 — landed freight allocated to this goods line (MYR sen) */
   'allocated_charge_centi, ' +
   /* Migration 0151 — physical rack placement */
-  'rack_id';
+  'rack_id, ' +
+  /* migration 0280 — the zero-cost acknowledgement, read back so the receipt
+     screen can show WHICH line was waived and by whom, rather than the waiver
+     being invisible everywhere except the gate that honours it. */
+  'zero_cost_ack, zero_cost_reason, zero_cost_ack_by, zero_cost_ack_at';
 
 const nextNumber = async (sb: ReturnType<Variables['supabase']['valueOf']> extends never ? never : any, prefix: string, table: string, col: string, c: any): Promise<string> => {
   const d = new Date();
@@ -1730,6 +1788,11 @@ grns.post('/', async (c) => {
       description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
       /* Migration 0151 — physical rack this received line is placed onto. */
       rack_id: (it.rackId as string | undefined) || null,
+      /* migration 0280 — the zero-cost gate's escape hatch. It is in the
+         EXPLICIT whitelist because this insert is explicit: a field absent
+         here is silently dropped, and a tick the operator set but the server
+         dropped would refuse the receipt they just acknowledged. */
+      ...zeroCostAckColumns(it, user.id),
     };
   });
   const { error: iErr } = await sb.from('grn_items').insert(stampCompany(rows, c));
@@ -1756,6 +1819,15 @@ grns.post('/', async (c) => {
      Skip it for a draft; the confirm transition (PATCH /:id/post) runs it. */
   let postRes: Awaited<ReturnType<typeof postGrnAndRollup>> | undefined;
   if (!asDraft) postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  /* ZERO-COST refusal on a create-as-POSTED path. This route inserts the row
+     with status POSTED and then calls the chokepoint, so a refusal would
+     otherwise leave a POSTED GRN carrying no stock — the worst of both. Undo
+     the document exactly like the over-receipt rollback above and 409. */
+  if (postRes && !postRes.ok && postRes.zeroCost) {
+    await sb.from('grn_items').delete().eq('grn_id', h.id);
+    await sb.from('grns').delete().eq('id', h.id);
+    return c.json(postRes.zeroCost, 409);
+  }
   // Migration 0101 — populate header money rollups from the inserted lines.
   // (Money only — no stock — so it's safe to run for a draft too.)
   await recomputeGrnTotals(sb, h.id);
@@ -1982,6 +2054,13 @@ grns.post('/from-pos', async (c) => {
 
   /* PR-DRAFT-removal — auto-rollup + inventory IN after items insert. */
   const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+  /* ZERO-COST refusal — same rollback as POST /: this path also inserts POSTED
+     before calling the chokepoint, so the document must not survive a refusal. */
+  if (!postRes.ok && postRes.zeroCost) {
+    await sb.from('grn_items').delete().eq('grn_id', h.id);
+    await sb.from('grns').delete().eq('id', h.id);
+    return c.json(postRes.zeroCost, 409);
+  }
   // Migration 0101 — populate header money rollups from the inserted lines.
   await recomputeGrnTotals(sb, h.id);
 
@@ -2080,6 +2159,11 @@ export const postGrnHandler = async (c: any) => {
      not a server fault; it used to surface as a 500 because res.status was
      discarded here. */
   if (!res.ok) {
+    /* ZERO-COST refusal answers with the offending LINES, not a bare reason —
+       the operator has to know which ones need a price off the supplier's
+       goods-received document. Nothing was written, so the GRN is still DRAFT
+       and re-confirmable once the prices are in. */
+    if (res.zeroCost) return c.json(res.zeroCost, 409);
     if (res.status === 409) {
       const { data: now } = await scopeToCompanyId(sb.from('grns')
         .select('id, status, posted_at, total_centi').eq('id', id), co.companyId).maybeSingle();
@@ -2230,6 +2314,7 @@ grns.post('/from-po-items', async (c) => {
   // Track any bucket rolled back by the post-insert over-receipt verification so
   // we can surface a 409 with the same error shape the add-line path uses.
   let overReceipt: { poItemId: string; requested: number; remaining: number } | null = null;
+  let zeroCostRefusal: ZeroCostRefusal | null = null;
 
   /* R2 money-path guard — validate EVERY bucket's currency up front, before any
      GRN is inserted, so an un-rated foreign PO can't leave a partially-committed
@@ -2337,6 +2422,16 @@ grns.post('/from-po-items', async (c) => {
     }
     // Immediately post — rolls up received_qty, flips PO status, writes inventory.
     const postRes = await postGrnAndRollup(sb, h.id, user.id, h.company_id);
+    /* ZERO-COST refusal — this path also inserts POSTED before posting, so roll
+       the bucket's document back exactly like the over-receipt branch above and
+       carry the refusal out of the loop. Buckets that received cleanly keep
+       their documents; only the uncosted one is undone. */
+    if (!postRes.ok && postRes.zeroCost) {
+      await sb.from('grn_items').delete().eq('grn_id', h.id);
+      await sb.from('grns').delete().eq('id', h.id);
+      zeroCostRefusal = postRes.zeroCost;
+      continue;
+    }
     // Migration 0101 — populate header money rollups from the inserted lines.
     await recomputeGrnTotals(sb, h.id);
     if (!postRes.ok) {
@@ -2390,6 +2485,13 @@ grns.post('/from-po-items', async (c) => {
       ...(bucketMovementErrors?.length ? { movementErrors: bucketMovementErrors } : {}),
       ...(bucketRecountError ? { recountError: bucketRecountError } : {}),
     });
+  }
+
+  // A bucket refused for zero cost surfaces the offending lines, same shape the
+  // single-doc paths return. Reported before the over-receipt 409 only because
+  // a missing cost is the one the operator can fix from the paperwork in hand.
+  if (zeroCostRefusal) {
+    return c.json({ ...zeroCostRefusal, created }, 409);
   }
 
   // If any bucket over-received (race), surface a 409 with the add-line error
@@ -2870,15 +2972,12 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
-    const { data: poItem } = await sb.from('purchase_order_items')
-      .select('qty, received_qty').eq('id', addLinePoItemId).maybeSingle();
-    if (poItem) {
-      const p = poItem as { qty: number; received_qty: number };
-      const remaining = (p.qty ?? 0) - (p.received_qty ?? 0);
-      if (qtyReceived > remaining) {
-        return c.json({ error: 'qty_exceeds_remaining', poItemId: addLinePoItemId, requested: qtyReceived, remaining }, 409);
-      }
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_order_items', id: addLinePoItemId,
+      capColumn: 'qty', drawnColumns: ['received_qty'],
+      requested: qtyReceived, what: 'PO line',
+    });
+    if (capLock) return c.json({ ...capLock, poItemId: addLinePoItemId }, 409);
   }
 
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
@@ -2915,6 +3014,8 @@ grns.post('/:id/items', async (c) => {
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
     delivery_date: (it.deliveryDate as string) ?? null,
+    /* migration 0280 — see the create path: this insert is a whitelist too. */
+    ...zeroCostAckColumns(it, user.id),
   };
   const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -3108,15 +3209,12 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const poItemId = (prev as { purchase_order_item_id: string | null }).purchase_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
     if (poItemId && qtyReceived > prevQty) {
-      const { data: poItem } = await sb.from('purchase_order_items')
-        .select('qty, received_qty').eq('id', poItemId).maybeSingle();
-      if (poItem) {
-        const p = poItem as { qty: number; received_qty: number };
-        const headroom = (p.qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
-        if (qtyReceived > headroom) {
-          return c.json({ error: 'qty_exceeds_remaining', poItemId, requested: qtyReceived, remaining: headroom }, 409);
-        }
-      }
+      const capLock = await qtyCapRefusal(sb, {
+        table: 'purchase_order_items', id: poItemId,
+        capColumn: 'qty', drawnColumns: ['received_qty'],
+        requested: qtyReceived, ownPriorDraw: prevQty, what: 'PO line',
+      });
+      if (capLock) return c.json({ ...capLock, poItemId }, 409);
     }
   }
 
@@ -3145,6 +3243,12 @@ grns.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  /* migration 0280 — the zero-cost gate's escape hatch, and the ONLY route by
+     which an operator clears the 409 without inventing a price. Deliberately
+     NOT in the from->to loop above: the tick also stamps who and when, and the
+     three columns must move together or the audit trail lies. */
+  Object.assign(updates, zeroCostAckColumns(it, user.id));
+
   /* description2 is server-owned: recompute from effective itemGroup + variants. */
   {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
