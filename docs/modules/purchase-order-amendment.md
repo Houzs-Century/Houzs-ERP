@@ -125,7 +125,14 @@ received REMOVE, header change, audit row).
 
 ---
 
-## 5. Database — mig `0192_scm_po_amendment_workflow.sql`
+## 5. Database — mig `0194_scm_po_amendment_workflow.sql`
+
+> **Corrected 2026-08-14.** This heading said `0192`. That number belongs to
+> `0192_scm_stock_transfer_atomic.sql`; the amendment migration is
+> `backend/src/db/migrations-pg/0194_scm_po_amendment_workflow.sql`. The branch
+> was renumbered to dodge a collision before merge and the doc kept the
+> pre-rename number — the same renumber drift that produced the 0284 collision
+> on 2026-08-13, showing up in the layer no test looks at.
 
 New: enum `scm.po_amendment_status ('REQUESTED','APPROVED','REJECTED')`, tables
 `scm.po_amendments` + `scm.po_amendment_lines`. Reused (both from mig 0080):
