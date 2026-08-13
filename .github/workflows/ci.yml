@@ -306,7 +306,41 @@ jobs:
       - run: npm ci
       - run: npm run test:pg
 
-  frontend:
+  # The frontend gate, split three ways.
+  #
+  # It used to be ONE job doing everything in series, and once backend-tests
+  # dropped from ~380s to ~141s it became the slowest job in the run — which
+  # means it became the number that decides how long a PR waits. Measured
+  # 2026-08-13 on run 31711430092: build 86s, typecheck 68s, test 66s,
+  # playwright install 27s, perf-local 14s, merge-base rebuild 8s, everything
+  # else under 5s. ~285s of wall clock, all of it serial, none of it dependent
+  # on the step before it except through `tsc`.
+  #
+  # Split, the critical path is the LONGEST of the three rather than their sum.
+  # `frontend` stays as a roll-up so the required status check keeps its name —
+  # same pattern as `backend` above, and for the same reason.
+  frontend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:test-focus
+      - run: npm run typecheck
+      - run: npm test
+      # Zero-dependency node:test checks for the two gate scripts' own logic.
+      # Not part of `npm test` (vitest only collects src/**), so they are run
+      # explicitly here — a checker nobody runs is not a checker.
+      - run: node --test scripts/check-bundle-verdict.mjs
+
+  frontend-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -325,32 +359,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run check:test-focus
-      - run: npm run typecheck
-      - run: npm test
-      # Zero-dependency node:test checks for the two gate scripts' own logic.
-      # Not part of `npm test` (vitest only collects src/**), so they are run
-      # explicitly here — a checker nobody runs is not a checker.
-      - run: node --test scripts/check-bundle-verdict.mjs
-      - run: npm run build
-
-      # Build the MERGE BASE and measure it, so the budget gate can report this
-      # change's own growth instead of an absolute total that main can exhaust
-      # on an unrelated PR's behalf.
-      #
-      # On a `pull_request` event GitHub builds the MERGE with main, so the PR
-      # inherits whatever main's bundle currently is. Without this baseline the
-      # gate fails whichever PR happens to run after main spends the budget —
-      # on 2026-07-21 that was a DOCS-ONLY PR (#873, `docs/mockups/pdf/*`, zero
-      # source files) failing by 0.1 KB. See frontend/scripts/lib/bundle-verdict.mjs.
-      #
-      # `merge-base HEAD origin/main` is right for both triggers: on the PR
-      # merge ref it resolves to main's tip (the thing the merge added to), and
-      # on a branch push it resolves to where the branch left main.
-      #
-      # continue-on-error: a baseline is an improvement to the report, never a
-      # new way to fail. If this step cannot produce numbers the gate falls back
-      # to absolute ceilings and SAYS SO in its output.
+      # `npx vite build`, NOT `npm run build`. That script is `tsc -b && vite
+      # build`, and `tsc -b` is exactly what frontend-checks already ran — in
+      # one job the second call was free because the build info was cached, but
+      # on a separate runner it is a full 68s re-typecheck for no extra gate.
+      # A type error still fails the run, it just fails in frontend-checks.
+      - run: npx vite build
       - name: Measure the merge base (bundle baseline)
         id: bundle-baseline
         continue-on-error: true
@@ -384,18 +398,68 @@ jobs:
       # Fail the build if THIS CHANGE made the bundle materially heavier (see
       # the script for the rules + rationale). Cheap, and the thing that
       # actually keeps first paint fast.
+      # Fail the build if THIS CHANGE made the bundle materially heavier (see
+      # the script for the rules + rationale). Cheap, and the thing that
+      # actually keeps first paint fast.
       - run: node scripts/check-bundle-size.mjs --baseline /tmp/bundle-baseline.json
       # Exercise the emitted service worker, including stale-chunk and offline
       # shell behavior. This catches deploy-cache regressions without relying on
       # flaky wall-clock or an external environment.
       - run: npm run check:sw
       - run: npm run test:smoke-script
+
+  frontend-perf:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
       # Non-skippable local Chromium proof for 10k list geometry/search state.
       # This suite starts its own Vite lab and never depends on staging data,
       # credentials, network timing, or optional environment variables.
       - run: npm run typecheck:perf-local
+      # The browser is ~27s of download on every run and changes only when the
+      # Playwright dependency does, so it is keyed on the lockfile.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # `--with-deps` installs OS packages too, and those are NOT in the cached
+      # directory, so a cache hit still needs the system half.
+      - run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
       - run: npm run test:perf-local
+
+  # Roll-up so the required status check keeps the name `frontend`. Branch
+  # protection lists `frontend` by name; without this the split would make the
+  # required check disappear and NO pull request could ever merge again.
+  #
+  # `if: always()` plus explicit result assertions, for the reason spelled out
+  # on the `backend` roll-up: a skipped check is not a failed check.
+  frontend:
+    needs: [frontend-checks, frontend-build, frontend-perf]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert all frontend jobs succeeded
+        run: |
+          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
+          echo "frontend-build:  ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:   ${{ needs.frontend-perf.result }}"
+          [ "${{ needs.frontend-checks.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-build.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-perf.result }}" = "success" ] || exit 1
 
   e2e-contract:
     runs-on: ubuntu-latest
