@@ -231,6 +231,33 @@ type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
   sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
 
+/* UNIFIED FLEET — why nothing in this module scopes a row read to the company.
+   Referenced by the `// company-scope:` annotations on the by-id writers below.
+
+   scm.lorries has NO company_id: "one shared lorry fleet across ALL companies"
+   (lorries.ts). Every table this module owns is a CHILD of that master, and each
+   one says so in its own DDL — mig 0202 (compliance vault), 0203 (plans,
+   mileage), 0204 (breakdowns, work orders, parts, components), 0238
+   (attachments). Their shared wording:
+
+     "COMPANY SCOPE - ... NOT a hard scope. The fleet is UNIFIED across companies
+      (scm.lorries has no company_id). company_id is STAMPED on insert for
+      provenance but NOT used to scope reads."
+
+   So the column EXISTING is not evidence of scoping here — reading the column
+   list gives the wrong answer, and the DDL's own header gives the right one.
+   The read side matches: GET /dashboard pulls every vault doc, plan, breakdown,
+   work order and part with no company predicate. Adding one to the WRITERS
+   alone would be worse than either choice made consistently: the dashboard
+   would still list the row while PATCH/DELETE on it 404'd.
+
+   The gate that IS real here is `requireHouzsPerm("fleet.write")` on the flat
+   fleet.write permission, which is what the module was mounted top-level to get.
+
+   The exception, and the reason this note names it: scm.workshops IS per-company
+   (UNIQUE (company_id, code) — mig 0241), and its handlers DO filter on
+   activeCompanyId. Do not read this note as "the whole file is exempt". */
+
 type Lorry = {
   id: string;
   plate: string;
@@ -1195,6 +1222,7 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
 
 // DELETE /compliance-attachments/:attId - drops the row AND the R2 object.
 fleetMaintenance.delete("/compliance-attachments/:attId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const attId = c.req.param("attId");
   const sb = c.get("supabase");
 
@@ -1290,6 +1318,7 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
 
 // ── PATCH /plans/:planId — edit an existing plan (partial) ────────────────────
 fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const planId = c.req.param("planId");
   const sb = c.get("supabase");
 
@@ -1544,6 +1573,7 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
 
 // ── PATCH /breakdowns/:id — update / resolve a breakdown case ─────────────────
 fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const caseId = c.req.param("caseId");
   const sb = c.get("supabase");
 
@@ -1662,6 +1692,7 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
 
 // ── PATCH /work-orders/:id — edit fields (NOT status — use /transition) ───────
 fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
   const sb = c.get("supabase");
 
@@ -1719,6 +1750,7 @@ fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), as
 // against WORK_ORDER_TRANSITIONS so an illegal jump (e.g. Reported → Verified)
 // is a 409, never a silent write.
 fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
   const sb = c.get("supabase");
 
@@ -1815,6 +1847,7 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
 
 // ── DELETE /work-orders/:id/parts/:partId — remove a part line ────────────────
 fleetMaintenance.delete("/work-orders/:woId/parts/:partId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
   const { data: deleted, error } = await sb
     .from("lorry_work_order_parts")
@@ -1886,6 +1919,7 @@ fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"
 
 // ── PATCH /components/:id — update / remove a component ───────────────────────
 fleetMaintenance.patch("/components/:componentId", requireHouzsPerm("fleet.write"), async (c) => {
+  // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const componentId = c.req.param("componentId");
   const sb = c.get("supabase");
 
