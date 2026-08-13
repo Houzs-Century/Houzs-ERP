@@ -597,11 +597,12 @@ export const MIRRORED_SO_CREATE_BLOCKED: { error: string; message: string } = {
  *
  * WHERE THIS FUNCTION IS STILL RIGHT, and it is not a leftover: the BARE-CREATE
  * paths — `POST /` on delivery-returns, grns, purchase-consignment-receives,
- * purchase-consignment-returns, purchase-invoices, sales-invoices. There the
- * source document is an OPTIONAL body field on a route that also serves manual,
- * source-less documents, and the ids arrive from two places at once (a header
- * field and each line's link). There is no single source read to scope, so the
- * comparison is the mechanism. Those callers are the reason this stays.
+ * purchase-consignment-returns, purchase-invoices, purchase-returns,
+ * sales-invoices. There the source document is an OPTIONAL body field on a route
+ * that also serves manual, source-less documents, and the ids arrive from two
+ * places at once (a header field and each line's link). There is no single
+ * source read to scope, so the comparison is the mechanism. Those callers are
+ * the reason this stays.
  *
  * THE THIRD RULE IS REAL AND IT SURVIVED — read this before "fixing" the route
  * it names, because two people have now broken it in one day.
@@ -694,19 +695,23 @@ export function crossCompanyConversionBlocked(
  * is in the active company (or the company is unresolved, which degrades to
  * allowed exactly like every other helper in this file).
  *
- * WHO STILL CALLS IT. The BARE-CREATE paths, and one converter pair. A
- * declared converter (`/from-x`, `/convert-from-x`) scopes its source read
- * instead — see the note on isCrossCompanySource above — so a refusal on one of
- * those can never fire and is dead code that looks like protection. If you are
- * adding this call to a `/from-x` route, scope the read instead.
+ * WHO STILL CALLS IT. The BARE-CREATE paths, and nothing else. A declared
+ * converter (`/from-x`, `/convert-from-x`) scopes its source read instead — see
+ * the note on isCrossCompanySource above — so a refusal on one of those can
+ * never fire and is dead code that looks like protection. If you are adding this
+ * call to a `/from-x` route, scope the read instead.
  *
  *   · `POST /` on delivery-returns, grns, purchase-consignment-receives,
- *     purchase-consignment-returns, purchase-invoices, sales-invoices — the
- *     source is an optional body field on a route that also serves manual,
- *     source-less documents, so there is no single source read to scope.
- *   · purchase-returns.ts `/from-grns` + `/from-grn` — NOT YET CONVERTED; the
- *     file was held by concurrent work on 2026-08-13. The registry in
- *     check-conversion-guards.mjs names them and says so.
+ *     purchase-consignment-returns, purchase-invoices, purchase-returns,
+ *     sales-invoices — the source is an optional body field on a route that also
+ *     serves manual, source-less documents, and the ids arrive from two places
+ *     at once (a header field and each line's link), so there is no single
+ *     source read to scope.
+ *
+ * purchase-returns.ts `/from-grns` + `/from-grn` were the last pair left on the
+ * refusal, the file having been held by concurrent work during the 2026-08-13
+ * sweep. Both were converted the same day; check-conversion-guards.mjs now
+ * carries no legacyRefusal entry at all.
  *
  * WHY IT EXISTS AS A SHARED PRIMITIVE. Before 2026-08-13 this exact rule was
  * written THREE different ways: inline in some handlers, as a file-local

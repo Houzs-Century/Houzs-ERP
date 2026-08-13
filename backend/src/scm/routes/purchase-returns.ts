@@ -13,7 +13,7 @@
 //   PATCH  /purchase-returns/:id/cancel     — → CANCELLED (if not completed)
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
@@ -831,31 +831,37 @@ purchaseReturns.post('/', async (c) => {
 
 // Batch-convert multiple POSTED GRNs into ONE Purchase Return. Aggregates
 // all qty_rejected lines across the selected GRNs (must share a supplier).
-purchaseReturns.post('/from-grns', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and createPcReturnFromPcReceivesHandler
+   are exported; the route registration below is unchanged. */
+export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's GRN
+     is not visible here at all; the by-id write is this handler's own rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnIds?: string[]; reason?: string; notes?: string; confirmShortStock?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnIds = body.grnIds ?? [];
   if (grnIds.length === 0) return c.json({ error: 'grn_ids_required' }, 400);
 
-  // Load GRNs to verify same supplier + POSTED state.
-  const { data: grns, error: grnErr } = await sb.from('grns')
+  /* SOURCE LOAD, SCOPED — the grnIds arrive in the request body, so this is the
+     read that decides which receipts this conversion can see. Scoped, so another
+     company's GRN id resolves to NO ROW and falls out at `grns_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire: grnList, and the GRN-item read further down (keyed on the
+     same grnIds), now contain only this company's rows.
+
+     THE COST: a hand-crafted request naming the other company's receipt gets
+     `grns_not_found` instead of "that receipt belongs to 2990, switch company" —
+     the same trade the PO's /:id/convert-from-so records, and taken for the same
+     reason: naming the other company would require an UNSCOPED read of a
+     document this handler otherwise never touches. */
+  const { data: grns, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
-    .in('id', grnIds);
+    .in('id', grnIds), c);
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   const grnList = (grns ?? []) as Array<{ id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null }>;
   if (grnList.length === 0) return c.json({ error: 'grns_not_found' }, 404);
-
-  /* CROSS-COMPANY CONVERSION (lib/companyScope) — the GRNs are read by id with
-     no company predicate and the Purchase Return below is stamped
-     `activeCompanyId(c)`, so the other company's receipt would become THIS
-     company's return: this company's doc number and refund, an inventory OUT
-     drawn from that company's warehouse, and returned_qty consumed on its GRN
-     lines. REFUSE, because the destination stamps the ACTIVE company. */
-  {
-    const foreign = grnList.find((g) => isCrossCompanySource(g.company_id, c));
-    if (foreign) return c.json(crossCompanyConversionBlocked(foreign.grn_number, foreign.company_id, c), 409);
-  }
 
   const notPosted = grnList.filter((g) => g.status !== 'POSTED');
   if (notPosted.length > 0) {
@@ -867,11 +873,14 @@ purchaseReturns.post('/from-grns', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  // Load rejected items across all GRNs.
-  const { data: items } = await sb.from('grn_items')
+  /* Load rejected items across all GRNs. LINE-level half of the same source
+     document — same predicate as the header read above, because
+     `.in('grn_id', grnIds)` is itself an id-keyed read and that is the shape
+     this sweep exists for. */
+  const { data: items } = await scopeToCompany(sb.from('grn_items')
     .select('id, grn_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .in('grn_id', grnIds)
-    .gt('qty_rejected', 0);
+    .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty, 0106) —
   // a GRN line can be returned across multiple PRs. Drop lines already fully
   // returned. We return min(qty_rejected, remaining).
@@ -975,7 +984,8 @@ purchaseReturns.post('/from-grns', async (c) => {
   const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, primaryGrnId, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, grnCount: grnList.length, lineCount: rejectedItems.length, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+purchaseReturns.post('/from-grns', createPurchaseReturnFromGrnsHandler);
 
 /* ── POST /from-grn ─────────────────────────────────────────────────────
    Single-GRN convert (GRN list right-click "Convert to PR"). Unlike
@@ -984,33 +994,44 @@ purchaseReturns.post('/from-grns', async (c) => {
    then trim qty in the PR draft. Returns the created PR's { id } to navigate to.
 
    Body: { grnId, reason?, notes? }  →  201 { id, returnNumber }. */
-purchaseReturns.post('/from-grn', async (c) => {
-  /* company-scope: the source GRN is refused when it belongs to another company
-     (isCrossCompanySource, below); the remaining by-id statements read that same
-     verified GRN's lines and roll back this handler's own header. Verified
-     2026-08-13. */
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and createPcReturnFromPcReceiveHandler
+   are exported; the route registration below is unchanged. */
+export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's GRN
+     is not visible here at all; the remaining by-id statements read that same
+     GRN's own lines and roll back this handler's own header. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnId?: string; reason?: string; notes?: string; confirmShortStock?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnId = body.grnId;
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
 
-  const { data: grn, error: grnErr } = await sb.from('grns')
+  /* SOURCE LOAD, SCOPED — grnId arrives in the request body, so this is the read
+     that decides what this conversion can see. Scoped, so another company's GRN
+     resolves to NO ROW and falls out at `grn_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receipt gets
+     `grn_not_found` instead of "that receipt belongs to 2990, switch company" —
+     same trade, same reason, as the PO's /:id/convert-from-so: naming the other
+     company would require an UNSCOPED read of a document this handler otherwise
+     never touches. */
+  const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
-    .eq('id', grnId).maybeSingle();
+    .eq('id', grnId), c).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
   const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null };
-  // CROSS-COMPANY CONVERSION — same rule and reason as the /from-grns twin above.
-  if (isCrossCompanySource(g.company_id, c)) {
-    return c.json(crossCompanyConversionBlocked(g.grn_number, g.company_id, c), 409);
-  }
   if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
 
-  const { data: items } = await sb.from('grn_items')
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: items } = await scopeToCompany(sb.from('grn_items')
     .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .eq('grn_id', grnId)
-    .gt('qty_accepted', 0);
+    .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
@@ -1097,7 +1118,8 @@ purchaseReturns.post('/from-grn', async (c) => {
   await recomputePrTotals(sb, h.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+purchaseReturns.post('/from-grn', createPurchaseReturnFromGrnHandler);
 
 purchaseReturns.patch('/:id/post', async (c) => {
   /* PR-DRAFT-removal — kept for backward compat; idempotent. POST handler

@@ -154,17 +154,10 @@ const SOURCES = {
   "backend/src/scm/routes/purchase-returns.ts::POST /from-grns": {
     doc: "GRN -> Purchase Return (batch)",
     source: ["grns", "grn_items"],
-    legacyRefusal:
-      "NOT CONVERTED. purchase-returns.ts was held by concurrent work during the " +
-      "2026-08-13 sweep, so it was left on mechanism A rather than edited under " +
-      "someone else. Convert it the same way its siblings were: scope the grns " +
-      "and grn_items reads, delete the refusal, record the message trade-off.",
   },
   "backend/src/scm/routes/purchase-returns.ts::POST /from-grn": {
     doc: "GRN -> Purchase Return (single)",
     source: ["grns", "grn_items"],
-    legacyRefusal:
-      "NOT CONVERTED — same reason as its /from-grns twin above.",
   },
   "backend/src/scm/routes/sales-invoices.ts::POST /from-dos": {
     doc: "DO -> SI (picked lines)",

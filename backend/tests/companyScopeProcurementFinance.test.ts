@@ -25,6 +25,10 @@ import {
   createPcReturnFromPcReceivesHandler,
   createPcReturnFromPcReceiveHandler,
 } from '../src/scm/routes/purchase-consignment-returns';
+import {
+  createPurchaseReturnFromGrnsHandler,
+  createPurchaseReturnFromGrnHandler,
+} from '../src/scm/routes/purchase-returns';
 import { convertSosToPosCore } from '../src/scm/routes/mfg-purchase-orders';
 
 const CO_A = 1; // HOUZS
@@ -111,6 +115,8 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   app.post('/purchase-consignment-receives/from-pcos', createPcReceiveFromPcosHandler as never);
   app.post('/purchase-consignment-returns/from-pc-receives', createPcReturnFromPcReceivesHandler as never);
   app.post('/purchase-consignment-returns/from-pc-receive', createPcReturnFromPcReceiveHandler as never);
+  app.post('/purchase-returns/from-grns', createPurchaseReturnFromGrnsHandler as never);
+  app.post('/purchase-returns/from-grn', createPurchaseReturnFromGrnHandler as never);
   return { app, log };
 }
 
@@ -340,6 +346,88 @@ describe('GRN -> purchase invoice, picked lines', () => {
     const h = harness(t, CO_A);
     await jsonPost(h.app, '/purchase-invoices/from-grn-items', { picks: [{ grnItemId: 'gi-a', qty: 0 }] });
     expect(h.log).toContain('grn_items.select:eq:company_id');
+  });
+});
+
+/* ── GRN -> Purchase Return ───────────────────────────────────────────────────
+   Returning the other company's receipt mints THIS company's PRT number and
+   refund, pulls the inventory OUT of the warehouse behind that company's GRN,
+   and consumes returned_qty on its GRN lines — which in turn moves the PI
+   over-bill headroom and the PO re-open gate on a document this company does not
+   own. The last pair to leave the refusal mechanism: purchase-returns.ts was
+   held by concurrent work during the 2026-08-13 sweep. */
+describe('GRN -> purchase return (draws stock back out and consumes the GRN line)', () => {
+  const grns = (): Row[] => [
+    { id: 'grn-a', grn_number: 'HC-GRN-2608-020', company_id: CO_A, status: 'POSTED', supplier_id: 's1', purchase_order_id: null },
+    { id: 'grn-b', grn_number: '2990-GRN-2608-020', company_id: CO_B, status: 'POSTED', supplier_id: 's9', purchase_order_id: null },
+  ];
+  /* Nothing left to return on either receipt (qty_rejected 0, and qty_accepted
+     already fully returned), so BOTH converters stop on their own "nothing left
+     to return" rule the moment the source becomes visible. That stop is the
+     marker the source WAS found — the half a scope sweep breaks silently. */
+  const grnItems = (): Row[] => [
+    { id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+  ];
+  const tables = (): Record<string, Row[]> => ({
+    grns: grns(),
+    grn_items: grnItems(),
+    purchase_returns: [],
+    purchase_return_items: [],
+  });
+
+  test("batch: B's receipt is not visible to A — no return is created", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-returns/from-grns', { grnIds: ['grn-b'] });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('grns_not_found');
+    expect(t.purchase_returns).toHaveLength(0);
+    expect(t.purchase_return_items).toHaveLength(0);
+  });
+
+  test("batch: A's own receipt is still convertible", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-returns/from-grns', { grnIds: ['grn-a'] });
+    // Past the source read and past the POSTED / same-supplier gates.
+    expect((await res.json() as Row).error).toBe('no_rejected_qty');
+  });
+
+  test("single: B's receipt is not visible to A — no return is created", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-returns/from-grn', { grnId: 'grn-b' });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('grn_not_found');
+    expect(t.purchase_returns).toHaveLength(0);
+    expect(t.purchase_return_items).toHaveLength(0);
+  });
+
+  test("single: A's own receipt is still convertible", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-returns/from-grn', { grnId: 'grn-a' });
+    expect((await res.json() as Row).error).toBe('nothing_to_return');
+  });
+
+  test('BOTH source reads carry the company predicate, on both converters', async () => {
+    /* The line table is an entry point in its own right: it is keyed on the same
+       caller-supplied grn ids, and adjustGrnReturnedQty writes returned_qty on
+       whatever it returns. Header-only scoping would pass the two tests above
+       and still consume the other company's GRN lines. */
+    const cases: Array<[string, Row]> = [
+      ['/purchase-returns/from-grns', { grnIds: ['grn-a'] }],
+      ['/purchase-returns/from-grn', { grnId: 'grn-a' }],
+    ];
+    for (const [url, body] of cases) {
+      const h = harness(tables(), CO_A);
+      await jsonPost(h.app, url, body);
+      expect(h.log).toContain('grns.select:eq:company_id');
+      expect(h.log).toContain('grn_items.select:eq:company_id');
+    }
+  });
+
+  test('an unresolved company degrades to allowed, as the three-state contract requires', async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, undefined).app, '/purchase-returns/from-grns', { grnIds: ['grn-b'] });
+    expect((await res.json() as Row).error).not.toBe('grns_not_found');
   });
 });
 
