@@ -2112,8 +2112,7 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
      transactional, and it leaves an auditable pair. A compensating MANUAL_ADJUST
      from here would invent a second, untransactional path to the same state -
      and this file's own house rule for money invariants is reject, not
-     normalise. The operator reaches for delete because the UI labelled this row
-     "Merchant"; that mislabel is fixed alongside this. */
+     normalise. */
   if (String(doomed.method ?? '').toLowerCase() === 'credit') {
     return c.json({
       error: 'credit_payment_not_deletable',

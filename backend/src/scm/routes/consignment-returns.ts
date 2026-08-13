@@ -534,9 +534,18 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit): sibling GET / was scoped, this
   // picker was not — it listed every company's consignment notes.
+  /* STATUS-FILTERED (owner 2026-08-13). This claimed to "mirror the DO→DR
+     /returnable-do-lines endpoint" and did not: that one skips CANCELLED and
+     DRAFT (lib/do-line-remaining.ts:106) and this one took every note. A
+     cancelled consignment note has ALREADY had its stock driven back to zero
+     (consignment-notes.ts:269), yet its lines still showed remaining > 0 — so
+     the same units could be booked IN a second time. A DRAFT note has shipped
+     nothing at all. */
   const { data: notes, error: nErr } = await paginateAll<{ id: string; do_number: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_orders')
-    .select('id, do_number, debtor_code, debtor_name'), c)
+    .select('id, do_number, debtor_code, debtor_name')
+    .neq('status', 'CANCELLED')
+    .neq('status', 'DRAFT'), c)
     .order('do_number', { ascending: false })
     .range(from, to));
   if (nErr) return c.json({ error: 'load_failed', reason: nErr.message }, 500);
@@ -684,6 +693,87 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
 // loaner is transferred back to the shipping warehouse immediately (idempotent).
 // "no DO, no return" is RELAXED — lines may reference a Consignment Note line
 // (consignmentDoItemId) OR be free-entry.
+/* OVER-RETURN GUARD — owner decision 2026-08-13, asked directly: "加上限,和兄弟
+   单据一致".
+
+   This module shipped WITHOUT one and said so: the comments below read "DROPPED
+   vs DR: ... the over-return remaining guard". Every sibling has it —
+   delivery-returns.ts:653 checkDrOverRemaining, purchase-returns.ts:587,
+   purchase-consignment-returns.ts:451 — so a consignment note was the one
+   document you could return more units from than were ever delivered, as many
+   times as you liked, each one booking stock back IN.
+
+   The arithmetic is the picker's own (/returnable-note-lines): delivered minus
+   the sum of qty_returned across NON-CANCELLED returns. Reusing that definition
+   is the point — a guard that computes "remaining" differently from the list the
+   operator picked from is a guard that rejects legitimate work.
+
+   Returns a 409 body naming every offending line, or null to allow. A load
+   failure returns null rather than blocking: the insert will surface real
+   errors, and a guard that fails closed on a transient read turns a hiccup into
+   an outage. */
+async function checkCrOverRemaining(
+  sb: any,
+  items: Array<Record<string, unknown>>,
+  excludeReturnItemId?: string,
+): Promise<{ error: string; message: string; lines: Array<{ noteItemId: string; requested: number; remaining: number }> } | null> {
+  const wanted = new Map<string, number>();
+  for (const it of items) {
+    const noteItemId = ((it.noteItemId ?? it.consignmentDoItemId) as string | undefined) ?? null;
+    if (!noteItemId) continue; // free-entry line, nothing to bound it against
+    wanted.set(noteItemId, (wanted.get(noteItemId) ?? 0) + Number(it.qtyReturned ?? it.qty ?? 0));
+  }
+  if (wanted.size === 0) return null;
+  const ids = [...wanted.keys()];
+
+  const { data: srcRows, error: srcErr } = await sb
+    .from('consignment_delivery_order_items')
+    .select('id, qty')
+    .in('id', ids);
+  if (srcErr) return null;
+  const deliveredById = new Map(
+    ((srcRows ?? []) as Array<{ id: string; qty: number }>).map((r) => [r.id, Number(r.qty ?? 0)]),
+  );
+
+  /* Already-returned, counting NON-CANCELLED returns only — the same filter the
+     picker uses, so the two never disagree. */
+  const { data: liveRows } = await sb
+    .from('consignment_delivery_returns')
+    .select('id, status')
+    .neq('status', 'CANCELLED');
+  const liveIds = new Set(((liveRows ?? []) as Array<{ id: string }>).map((r) => r.id));
+
+  const { data: retRows } = await sb
+    .from('consignment_delivery_return_items')
+    .select('id, consignment_delivery_return_id, consignment_do_item_id, qty_returned')
+    .in('consignment_do_item_id', ids);
+  const returnedById = new Map<string, number>();
+  for (const r of ((retRows ?? []) as Array<{
+    id: string; consignment_delivery_return_id: string; consignment_do_item_id: string | null; qty_returned: number;
+  }>)) {
+    if (!r.consignment_do_item_id) continue;
+    if (!liveIds.has(r.consignment_delivery_return_id)) continue;
+    // An EDIT must not count its own current quantity against itself.
+    if (excludeReturnItemId && r.id === excludeReturnItemId) continue;
+    returnedById.set(
+      r.consignment_do_item_id,
+      (returnedById.get(r.consignment_do_item_id) ?? 0) + Number(r.qty_returned ?? 0),
+    );
+  }
+
+  const offenders: Array<{ noteItemId: string; requested: number; remaining: number }> = [];
+  for (const [noteItemId, requested] of wanted) {
+    const remaining = (deliveredById.get(noteItemId) ?? 0) - (returnedById.get(noteItemId) ?? 0);
+    if (requested > remaining) offenders.push({ noteItemId, requested, remaining: Math.max(0, remaining) });
+  }
+  if (offenders.length === 0) return null;
+  return {
+    error: 'over_remaining',
+    message: 'One or more lines return more than the remaining (delivered − already returned) quantity on the consignment note.',
+    lines: offenders,
+  };
+}
+
 consignmentReturns.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -700,8 +790,14 @@ consignmentReturns.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* DROPPED vs DR: the "no DO, no Return" hard requirement and the over-return
-     remaining guard. A consignment return may be free-entry or note-linked. */
+  /* The "no DO, no Return" hard requirement is still DROPPED vs DR — a
+     consignment return may be free-entry. The over-return guard is NOT: it now
+     bounds every NOTE-LINKED line (owner 2026-08-13). Free-entry lines carry no
+     source to bound them against and pass through, exactly as before. */
+  {
+    const over = await checkCrOverRemaining(sb, items);
+    if (over) return c.json(over, 409);
+  }
 
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -793,7 +889,11 @@ consignmentReturns.post('/:id/items', async (c) => {
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   { const lock = await returnLineLock(sb, id); if (lock) return c.json(lock, 409); }
 
-  /* DROPPED vs DR: the "no DO, no Return" single-line guard. */
+  /* "no DO, no Return" stays dropped; the over-return bound does not. */
+  {
+    const over = await checkCrOverRemaining(sb, [it]);
+    if (over) return c.json(over, 409);
+  }
 
   /* itemCode catalog guard. */
   {
@@ -833,11 +933,24 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_delivery_return_items')
-    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition')
+    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition, consignment_do_item_id')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = (it.qtyReturned ?? it.qty) !== undefined ? Number(it.qtyReturned ?? it.qty) : Number(prev.qty_returned);
+
+  /* Bound the EDIT too — raising a line's qty is the same over-return by another
+     door. `excludeReturnItemId` keeps this row's own current quantity out of the
+     already-returned tally, or every edit would measure the line against itself
+     and refuse to stay put. The source link comes from the STORED row: a client
+     cannot re-point a line at a different note line to widen its own ceiling. */
+  {
+    const noteItemId = (prev as { consignment_do_item_id?: string | null }).consignment_do_item_id ?? null;
+    if (noteItemId) {
+      const over = await checkCrOverRemaining(sb, [{ noteItemId, qtyReturned: qty }], itemId);
+      if (over) return c.json(over, 409);
+    }
+  }
   const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
