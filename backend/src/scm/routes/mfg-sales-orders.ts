@@ -26,6 +26,9 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
    recompute sites (create + cross-category re-detect). */
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
+/* Status-transition table + the discard guards — lifted out of this file, which
+   may only shrink. See lib/so-lifecycle-guards.ts. */
+import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
@@ -473,69 +476,6 @@ async function soEditLocked(
   header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
 ): Promise<boolean> {
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
-}
-
-/* ── SO status legal-transition guard (FIX 1, 2026-07-16) ───────────────────
-   The manual PATCH /:docNo/status endpoint used to write body.status VERBATIM:
-   a garbage string (e.g. the V2 list "Confirm" button posts lowercase
-   "confirmed") persisted, and an already-advanced SO could be moved backward
-   with no check. Mirror the purchasing side's dedicated-status guards with an
-   explicit legal-transition table. The AUTO state-machine (so-stock-allocation,
-   so-delivery-sync, delivery-returns) writes the status column DIRECTLY and does
-   NOT come through this route, so this table only governs MANUAL status changes.
-
-   Status set grepped from the codebase (list/detail pills, so-stock-allocation,
-   so-delivery-sync, delivery-returns, inventory SO_DONE, the amend-terminal set):
-     DRAFT → CONFIRMED → IN_PRODUCTION → READY_TO_SHIP → SHIPPED → DELIVERED
-       → INVOICED → CLOSED, plus the side states CANCELLED and ON_HOLD.
-   Conservative by owner rule: reject ONLY an UNKNOWN target and a clearly-illegal
-   BACKWARD jump; every forward move, idempotent no-op, ON_HOLD pause/resume and
-   known regression is allowed. */
-const SO_STATUSES = new Set([
-  'DRAFT', 'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED',
-  'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'ON_HOLD',
-]);
-const SO_STATUS_RANK: Record<string, number> = {
-  DRAFT: 0, CONFIRMED: 1, IN_PRODUCTION: 2, READY_TO_SHIP: 3,
-  SHIPPED: 4, DELIVERED: 5, INVOICED: 6, CLOSED: 7,
-};
-/* Backward edges the system legitimately performs — stock regress (all-lines
-   not-ready) + delivery-return re-open. Everything else backward is rejected.
-   Keyed `${from}>${to}`. */
-const SO_LEGAL_REGRESSIONS = new Set([
-  'IN_PRODUCTION>CONFIRMED',
-  'READY_TO_SHIP>CONFIRMED', 'READY_TO_SHIP>IN_PRODUCTION',
-  'SHIPPED>CONFIRMED', 'SHIPPED>IN_PRODUCTION', 'SHIPPED>READY_TO_SHIP',
-  'DELIVERED>CONFIRMED', 'DELIVERED>IN_PRODUCTION',
-  'DELIVERED>READY_TO_SHIP', 'DELIVERED>SHIPPED',
-]);
-
-/* null = allowed. `to` MUST already be normalised to UPPERCASE. The CANCELLED
-   target/source is validated by the caller's cancel-final + downstream guards, so
-   it short-circuits here. `from` unknown/blank (legacy row, brand-new SO) →
-   allowed (can't judge — never OVER-block). */
-function soStatusTransitionError(
-  fromRaw: string | null,
-  to: string,
-): { error: string; reason: string; code: 400 | 409 } | null {
-  if (!SO_STATUSES.has(to)) {
-    return { error: 'invalid_status', reason: `"${to}" is not a valid Sales Order status.`, code: 400 };
-  }
-  const from = String(fromRaw ?? '').toUpperCase();
-  if (!from || !SO_STATUSES.has(from)) return null;              // status-blind → allow
-  if (from === to) return null;                                  // idempotent no-op
-  if (to === 'CANCELLED' || from === 'CANCELLED') return null;   // cancel guards own this
-  if (to === 'ON_HOLD' || from === 'ON_HOLD') return null;       // pause / resume
-  const fromRank = SO_STATUS_RANK[from];
-  const toRank = SO_STATUS_RANK[to];
-  if (fromRank === undefined || toRank === undefined) return null;
-  if (toRank >= fromRank) return null;                           // forward or same rank
-  if (SO_LEGAL_REGRESSIONS.has(`${from}>${to}`)) return null;    // known regression
-  return {
-    error: 'illegal_status_transition',
-    reason: `A Sales Order cannot move from ${from} back to ${to}.`,
-    code: 409,
-  };
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
@@ -6085,6 +6025,13 @@ mfgSalesOrders.delete('/:docNo', async (c) => {
       reason: 'Only a draft can be discarded. A confirmed order must be cancelled, not deleted.',
     }, 409);
   }
+
+  /* DRAFT is a claim about the STATUS COLUMN, not about the document chain.
+     soDiscardBlocked asks the two questions the column cannot answer — see
+     lib/so-lifecycle-guards.ts for what the cascade actually destroys. */
+  const discardBlock = await soDiscardBlocked(sb, docNo, soHasDownstream);
+  if (discardBlock) return c.json(discardBlock.body as any, discardBlock.code);
+
   const currentVersion = Number((soRow as { version?: number | string }).version ?? 1);
   const expectedVersionRaw = Number(c.req.query('version'));
   const deleteGrace = !Number.isInteger(expectedVersionRaw) || expectedVersionRaw < 1;
