@@ -161,6 +161,23 @@ Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
 
+**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
+use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+repo level or in any of its three environments. If your script needs a
+PostgREST-shaped client — because it imports a real service function out of
+`src/` rather than re-implementing it, which is the right instinct — it needs
+the SHAPE, not PostgREST credentials: `backend/scripts/lib/pgrest-shim.mjs`
+gives you `sb.from(...)` over the pg connection. Copy
+`recompute-so-allocation.mjs`, which does exactly this.
+
+**Do NOT copy `recompute-2990-so-allocation.yml`.** It is three characters away
+from that one by name and it is wired to `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY`, which do not exist here — so it has never run and
+cannot. On 2026-08-13 a new workflow was written by copying it and failed on its
+first dispatch with both secrets empty. `SOURCE_SUPABASE_URL` /
+`SOURCE_SERVICE_ROLE_KEY` DO exist and are a third thing again: they point at
+the 2990 SOURCE system, not at Houzs.
+
 Rules for anything in this shape:
 
 - **Read-only means read-only.** One statement, no DDL, no writes, no
