@@ -107,3 +107,22 @@ test('generated headers are recognised only in the first few lines', () => {
   assert.equal(isGeneratedHeader(['a', 'b', 'c', 'd', 'e', '// GENERATED FILE']), false);
   assert.equal(isGeneratedHeader(['import x from "y";']), false);
 });
+
+test('a violation in a file the change does not touch is reported, not charged', () => {
+  /* 2026-08-14: grns.ts went 109 lines over on main — file-size is not one of
+     the ruleset's required checks, so the PR that grew it merged red. Every
+     open branch then inherited the failure, including a production fix that
+     never opened the file. Whoever grows a file owns its ceiling. */
+  const measured = [
+    { path: 'a/untouched.ts', lines: 3591 },
+    { path: 'a/mine.ts', lines: 2200 },
+  ];
+  const ceilings = { 'a/untouched.ts': 3482, 'a/mine.ts': 2100 };
+  const v = verdict(measured, ceilings, 2000);
+  const touched = new Set(['a/mine.ts']);
+  const mine = v.violations.filter((x) => touched.has(x.path));
+  const inherited = v.violations.filter((x) => !touched.has(x.path));
+  assert.deepEqual(mine.map((x) => x.path), ['a/mine.ts']);
+  assert.deepEqual(inherited.map((x) => x.path), ['a/untouched.ts']);
+  assert.equal(inherited[0].over, 109, 'the inherited violation still carries its numbers — silence would let the tree drift');
+});
