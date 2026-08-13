@@ -34,7 +34,18 @@
    time, and verifies on a fresh connection that no array-shaped block remains
    on any arm. */
 import postgres from 'postgres';
-import { ARMS, arrayShapeCheck, skippedArms } from './lib/fabric-write.mjs';
+import { ARMS, skippedArms } from './lib/fabric-write.mjs';
+
+/* arrayShapeCheck asks only about ARRAYS. A jsonb STRING is the other half of
+   the same damage — and after the first version of this script wrote seven of
+   them, it is a state that exists in prod. Both are "variants is not an
+   object", which is the only thing any reader cares about. */
+const badShapeCheck = (client, co) => Promise.all(ARMS.map(async (arm) => {
+  const r = await client.unsafe(
+    `SELECT COUNT(*)::int AS n FROM ${arm.t} i
+      WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) IN ('array', 'string')`, [co]);
+  return { arm: arm.name, n: r[0].n };
+}));
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -66,7 +77,17 @@ const asObject = (el) => {
 };
 
 function unwrap(arr) {
-  if (!Array.isArray(arr)) return { ok: false, why: 'not an array' };
+  /* A jsonb STRING holding an object's JSON. That is what the first version of
+     this script wrote into seven prod rows by binding a serialized string to a
+     parameter the driver had already typed jsonb — the same double-encoding
+     the script exists to undo, one layer further in. Parsing it once returns
+     the object it was always meant to be. */
+  if (typeof arr === 'string') {
+    const inner = asObject(arr);
+    if (inner) return { ok: true, obj: inner, how: 'jsonb STRING holding the object — double-encoded, one parse recovers it' };
+    return { ok: false, why: 'variants is a jsonb string that does not parse to an object' };
+  }
+  if (!Array.isArray(arr)) return { ok: false, why: `variants is a ${typeof arr}, not an array or a string` };
   if (!arr.length) return { ok: false, why: 'empty array — nothing survived' };
 
   const head = asObject(arr[0]);
@@ -108,8 +129,8 @@ function unwrap(arr) {
 async function main() {
   note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO}`);
 
-  note(`\n=== ARRAY-SHAPED variants, per arm ===`);
-  const before = await arrayShapeCheck(sql, CO);
+  note(`\n=== MIS-SHAPED variants (array OR string), per arm ===`);
+  const before = await badShapeCheck(sql, CO);
   for (const a of before) if (a.n) note(`  ${a.arm}: ${a.n}`);
   const total = before.reduce((s, a) => s + a.n, 0);
   note(`  total: ${total}`);
@@ -138,7 +159,7 @@ async function main() {
     const r = await sql.unsafe(
       `SELECT i.id::text AS id, ${idCol ? `i.${idCol}` : 'NULL'} AS item_code, i.variants::text AS raw
          FROM ${arm.t} i
-        WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'array'`, [CO]);
+        WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) IN ('array', 'string')`, [CO]);
     for (const x of r) rows.push({ arm: arm.name, t: arm.t, ...x });
   }
 
@@ -172,14 +193,25 @@ async function main() {
   note(`\n=== REPAIRING ${fix.length} ROW(S) ===`);
   let wrote = 0;
   for (const r of fix) {
-    /* to_jsonb($1::text)::jsonb would re-encode. The object is passed as TEXT
-       and cast ONCE with ::jsonb, which is the same discipline the repoints
-       use and the opposite of what caused this: no serializer runs over a
-       value that is already a bound text parameter. The guard on
-       jsonb_typeof keeps a concurrent fix from being overwritten. */
+    /* $2::text::jsonb, and the ::text is the whole point.
+ 
+       The first version wrote `$2::jsonb` and produced a jsonb STRING — the
+       exact damage docs/jsonb-double-encoding-coe.md is about, reproduced by
+       the script written to repair it. postgres.js infers the bind type, sends
+       the parameter as jsonb, and `::jsonb` on something already typed jsonb
+       is a no-op: the serialized text is stored as a jsonb scalar string
+       instead of being parsed into an object. Seven prod rows went from
+       array-shaped to string-shaped, and the verification caught it because it
+       asserts jsonb_typeof and re-reads fabricCode rather than trusting the
+       row count.
+ 
+       ::text forces the parameter to arrive as TEXT, so the following ::jsonb
+       is a real PARSE. This is why the COE's rule is "never let a serializer
+       near a jsonb parameter" — and why a repair must verify the SHAPE it
+       produced, not the number of rows it touched. */
     const back = await sql.unsafe(
-      `UPDATE ${r.t} SET variants = $2::jsonb
-        WHERE id = $1 AND jsonb_typeof(variants) = 'array'
+      `UPDATE ${r.t} SET variants = $2::text::jsonb
+        WHERE id = $1 AND jsonb_typeof(variants) IN ('array', 'string')
        RETURNING id::text AS id`, [r.id, JSON.stringify(r.obj)]);
     wrote += back.length;
     note(`  ${back.length ? 'OK ' : 'SKIP'} ${r.arm} ${r.id} ${r.item_code ?? '-'}`);
@@ -190,10 +222,10 @@ async function main() {
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
   try {
     note(`\n=== VERIFIED ON A FRESH CONNECTION ===`);
-    const after = await arrayShapeCheck(check, CO);
+    const after = await badShapeCheck(check, CO);
     const left = after.reduce((s, a) => s + a.n, 0);
-    for (const a of after) if (a.n) bad(`  ${a.arm}: ${a.n} still array-shaped`);
-    note(`  array-shaped blocks remaining: ${left} (was ${total}); ${refuse.length} of those are the refused rows`);
+    for (const a of after) if (a.n) bad(`  ${a.arm}: ${a.n} still mis-shaped (array or string)`);
+    note(`  mis-shaped blocks remaining: ${left} (was ${total}); ${refuse.length} of those are the refused rows`);
     /* Prove the recovered rows read as objects again — an object that no
        consumer can query is the same as no object. */
     for (const r of fix.slice(0, 10)) {
