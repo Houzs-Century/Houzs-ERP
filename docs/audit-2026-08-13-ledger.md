@@ -526,3 +526,102 @@ The mechanical checker cannot see a reference that is well-formed but wrong for
 its purpose: a doc naming a real file for the wrong reason passes. And §L1's
 "0 CERTAIN" means every *checkable* claim resolves — it does not mean the docs
 are true. Those are different sentences and this file will not merge them.
+
+---
+
+## M. The module sweeps — what four parallel audits found that the checkers could not
+
+**Why this section exists.** §A tracked the artifact's six CLUSTERS and §I recorded
+the checker's own failures. Neither covers the thing that actually produced the
+biggest yield: reading whole modules, by hand, against the five defect classes
+this audit had already PROVEN real. The checkers found none of what follows.
+
+### M1. The score
+
+| slice | confirmed | refuted | judgement calls raised |
+|---|---|---|---|
+| sales + inventory | 7 | 2 | 2 |
+| procurement + finance + consignment | 11 | 5 | 3 |
+| native tree + fleet + ASSR | 5 | 13 fleet + 8 native | 4 |
+
+**Twenty-three confirmed defects. Twenty-eight refutations.** More than half of
+every lead was wrong, which is the number that justifies the rule: *a finding is
+a LEAD, not a verdict.*
+
+### M2. The pattern that made the yield — CONVERTERS
+
+`companyScope.ts` names FOUR conversions that each refuse a cross-company source
+(SO→DO, SO→SI, DO→SI, PO→GRN). The sweeps found **seven more that refused
+nothing**:
+
+| conversion | what it did |
+|---|---|
+| DO→SI, the PARTIAL form (`/:id/items/from-do/:doId`) | folded a 2990 delivery into a Houzs invoice; `postSiRevenue` then posted 2990's revenue to Houzs' books |
+| DO→DR (`/from-do`, `/from-dos`) | returned a 2990 delivery as a HOUZS return, Houzs doc number, writing the stock back in against the wrong ledger |
+| SO→PO (`convertSosToPosCore`) | minted a HOUZS purchase order + supplier commitment from a 2990 SO line, and advanced that line's `po_qty_picked` |
+| GRN→PI | re-companied a receipt into this company's AP and re-cost |
+| GRN→PR | drew stock OUT of the other company's warehouse under this company's refund |
+| PCO→PC-receive | received the other company's consignment order |
+| PC-receive→PC-return | returned the other company's consigned goods |
+
+**Four guarded, seven unguarded, and nothing in the code said which was which.**
+A converter reads a source document BY ID; if it does not compare that
+document's company, the conversion silently re-parents money.
+
+### M3. A STAMP IS NOT A PREDICATE — the shape that hid the most
+
+```ts
+.from('sales_invoices').select(...).eq('id', id)               // unscoped LOAD
+.from('sales_invoice_payments').insert({ company_id: activeCompanyId(c) })
+                                                               // a STAMP
+```
+
+Stamping the ACTIVE company onto a row you WRITE says nothing about whose row
+you LOADED — and when the two disagree, **the stamp is what makes the damage
+silent**, because the row looks correctly attributed while sitting on the wrong
+parent. `sales-invoices.ts:2068` carried a comment reading *"multi-company: match
+the SI's company"* directly above a line that never compared anything.
+
+It also fooled `check-company-scope.mjs`, which counted the statement as scoped
+because it contains a real `.from(` query and the helper's name. **That was the
+FIFTH blind spot in that script in one day**, and like the other four it made the
+number too small: 0 WRITE findings while seven money writes existed. Fixed by
+stripping insert payloads before the scoped-ness test; the honest count went
+0 WRITE → 11 WRITE → 0 WRITE again once the sweeps closed them.
+
+### M4. The refutations worth keeping
+
+A refutation is a result. These are the ones that would otherwise be re-chased:
+
+- **13 of 13 fleet leads.** The unified fleet is deliberate — migs
+  0202/0203/0204/0238 each say `company_id` is stamped for PROVENANCE and NOT
+  used to scope reads. The two the checker newly surfaced stamp a company onto a
+  child of a lorry that carries its own, so the stamps genuinely CAN disagree —
+  but nothing reads either: all seven read sites of each table key on `lorry_id`
+  and none selects, filters or groups on `company_id`. Scoping them would HIDE a
+  HOUZS lorry's road tax from the 2990 dispatcher driving it.
+- **`delivery_order_crew`'s `onConflict: 'do_id'`** looked like the
+  single-column-key defect. `delivery_orders` carries `company_id`, so a `do_id`
+  already implies one company — and the row inherits the DO's company
+  deliberately, because TMS is a cross-company queue.
+- **`postPiAccounting`'s unscoped `source_doc_no` lookups.** `companyDocPrefix`
+  gives each company a distinct document-number namespace, so a doc_no names one
+  company by construction.
+- **ASSR `PATCH /:id` and friends** — flagged by a sweep, which then found them
+  covered by `enforceCaseScope` mounted at the ROUTER on `/:id{[0-9]+}`,
+  invisible to a per-handler read. It **reverted its own four edits** rather than
+  leave a partial duplicate of a rule the guard owns, and pinned the fact its
+  remaining fix depends on: `/bulk/*` is genuinely NOT matched by those patterns.
+
+### M5. Two tests that could not have failed
+
+- `tests/assrCaseScopeGuard.node.mjs` was written and **would never have run**:
+  `.node.mjs` files match neither vitest config and execute only through
+  `test:scale-contract`, which lists its files explicitly. Added there.
+- `tests/autocountWritebackCells.test.ts` broke on a RENAME, not a regression:
+  extracting a handler to a named export moved its route registration BELOW the
+  body, and the test anchored on the registration, so `between()` returned -1.
+  Re-anchored on the declaration, which is where the body is.
+
+Both are the same class as a checker whose regex cannot match: **a verdict
+computed over nothing must never read as a pass.**
