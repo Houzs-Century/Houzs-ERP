@@ -266,7 +266,7 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
       const persisted = regionCodesByState.get(state) ?? [];
       // Order-independent set compare — persisted matches our optimistic pick.
       const same = persisted.length === optimistic.length
-        && [...persisted].sort().join(' ') === [...optimistic].sort().join(' ');
+        && [...persisted].sort().join('\0') === [...optimistic].sort().join('\0');
       if (same) { next.delete(state); changed = true; }
     }
     if (changed) setPendingRegionsByState(next);

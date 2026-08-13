@@ -254,8 +254,8 @@ async function main() {
   if (missSeries.length) log(`  MISSING series: ${missSeries.join(", ")}`);
   // membership checked in JS against the library already read in section C -
   // a tuple IN list is the one place a driver quirk could fake a clean answer
-  const have = new Set(fcRows.map((r) => `${r.fabric_id} ${r.colour_id}`));
-  const missCol = MADE_COLOURS.filter(([f, c]) => !have.has(`${f} ${c}`));
+  const have = new Set(fcRows.map((r) => `${r.fabric_id}\0${r.colour_id}`));
+  const missCol = MADE_COLOURS.filter(([f, c]) => !have.has(`${f}\0${c}`));
   log(`  fabric_colours: ${18 - missCol.length}/18 present`);
   if (missCol.length) log(`  MISSING colours: ${missCol.map(([f, c]) => `${f}/${c}`).join(", ")}`);
 
