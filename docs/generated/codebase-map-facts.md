@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-135 route modules (41 in `backend/src/routes`, 94 in `backend/src/scm/routes`), 1038 endpoint registrations.
+135 route modules (41 in `backend/src/routes`, 94 in `backend/src/scm/routes`), 1041 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -54,7 +54,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/stockItems.ts` | 1 | 28 |
 | `backend/src/routes/supplierPortal.ts` | 9 | 417 |
 | `backend/src/routes/survey.ts` | 2 | 146 |
-| `backend/src/routes/systemHealth.ts` | 3 | 323 |
+| `backend/src/routes/systemHealth.ts` | 6 | 420 |
 | `backend/src/routes/tableLayouts.ts` | 11 | 553 |
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
@@ -66,7 +66,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 146 |
 | `backend/src/scm/routes/categories.ts` | 10 | 488 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1101 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2405 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2388 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 957 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1184 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4485 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12106 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12072 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 100 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1419 |
@@ -133,9 +133,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4895 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendments.ts` | 9 | 1183 |
+| `backend/src/scm/routes/so-amendments.ts` | 9 | 1215 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 302 |
-| `backend/src/scm/routes/so-mirror.ts` | 1 | 119 |
+| `backend/src/scm/routes/so-mirror.ts` | 1 | 139 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 775 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
@@ -163,20 +163,20 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 147 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 285 | `0287_scm_grn_zero_cost_ack.sql` (0287) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 286 | `0288_ac_snapshot_tables.sql` (0288) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1281 files, 533012 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1285 files, 534464 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 14875 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12106 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12072 |
 | `frontend/src/pages/ServiceCases.tsx` | 8855 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
