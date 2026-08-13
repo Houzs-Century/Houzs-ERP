@@ -1,6 +1,14 @@
 // ----------------------------------------------------------------------------
 // SO amendment apply-revision helpers — port of 2990 apps/api/src/lib/so-revision.ts.
 //
+// company-scope-file: every write in this file addresses rows by `doc_no`, which IS
+// mfg_sales_orders' PRIMARY KEY (2990s-full-schema.sql:638) and whose numbering
+// is prefix-partitioned per company (companyDocPrefix: HOUZS 'HC-', others
+// '<CODE>-'). One doc_no therefore names exactly one company's order, and the
+// mfg_sales_order_items rows are reached through that same doc_no. A company
+// predicate would be redundant here, not safer. Read 2026-08-13 when the
+// library pass of check-company-scope.mjs first surfaced these five statements.
+//
 // `applySoAmendment` is the Approve-SO gate's engine: it freezes the current SO
 // as an immutable `so_revisions` snapshot, applies the amendment's line diffs
 // (SPEC / QTY / ADD / REMOVE) to `mfg_sales_order_items`, then RE-RUNS the

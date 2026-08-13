@@ -7782,7 +7782,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      `addLinePwpClaimed` for rollback on a subsequent insert failure. */
   let addLinePwpBaseSen: number | null = null;
   let addLinePwpSofaComboIds: string[] | null = null;
-  let addLinePwpClaimed: { code: string; prevStatus: string } | null = null;
+  let addLinePwpClaimed: { code: string; companyId: number; prevStatus: string } | null = null;
   const addLinePwpCode = String((variantsObj as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim();
   if (addLinePwpCode) {
     /* PWP reward qty lock (Loo 2026-06-12) — a reward line must be exactly 1
@@ -7804,8 +7804,22 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        AVAILABLE voucher redeemable. */
     const addLineOwnerStaffId =
       (await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id)) ?? '';
+    /* The voucher lookup and its claiming UPDATE were addressed by code alone.
+       That was safe while `code` was the PRIMARY KEY; mig 0188 re-keyed
+       pwp_codes (company_id, code) so each company owns its own code space, and
+       from then on `.eq('code', ...)` meant "whichever company's row comes back
+       first" on the path that BURNS the voucher. Same activeCompanyId every
+       other load in this handler already uses. */
+    const pwpCompanyId = activeCompanyId(c);
+    if (pwpCompanyId == null) {
+      return c.json({
+        error: 'company_unresolved',
+        message: 'Cannot tell which company this order belongs to right now. Reload and try again.',
+      }, 409);
+    }
     const pwpClaimResult = await claimPwpForSingleLine(sb, {
       code: addLinePwpCode,
+      companyId: pwpCompanyId,
       docNo,
       itemCode: productLite?.code ?? itemCodeStr,  // resolved catalog SKU — matches create audit
       product: {

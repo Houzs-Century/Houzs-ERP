@@ -469,8 +469,16 @@ export function docPrefixForCode(code: string): string {
  *    headless scan job (createDraftSalesOrder) reaches createSalesOrderCore
  *    through a reconstructed context that carries companyId but NOT
  *    companyCode, so it stamps the 2990 company_id while companyDocPrefix
- *    above correctly falls back to BARE numbering. That SO is Houzs-native and
- *    Houzs MUST stay able to write it.
+ *    above falls back to the BASE company's `HC-` prefix. That SO is
+ *    Houzs-native and Houzs MUST stay able to write it.
+ *
+ *    This clause used to say the fallback was "BARE numbering". That was true
+ *    until 2026-08-07, when HOUZS stopped minting bare numbers and took `HC-`;
+ *    companyDocPrefix now returns docPrefixForCode(BASE_COMPANY_CODE), and
+ *    companyScope.test.ts asserts exactly that for an unresolved code. The
+ *    CONCLUSION is unchanged — `HC-` is not `2990-`, so isMirroredDocNo stays
+ *    false and the guard still lets Houzs write its own SO — but the stated
+ *    mechanism was describing a shape the code no longer mints.
  *
  *  • the prefix needs no companies-master lookup, so a guard built on it works
  *    in a reconstructed context and in a library called without a Context —

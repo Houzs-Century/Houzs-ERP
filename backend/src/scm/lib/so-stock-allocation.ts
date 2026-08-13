@@ -1,4 +1,11 @@
 // ----------------------------------------------------------------------------
+// company-scope-file: the `lock_key` writes in this file target
+// scm.stock_allocation_recompute_lock, which carries NO company_id — mig 0083
+// stamped 116 tables and left this one alone, deliberately. It is global
+// infrastructure: ONE recompute runs at a time across the whole system, which is
+// the entire point of the lock. There is no company to scope to, and adding one
+// would let two companies recompute concurrently over shared inventory.
+//
 // so-stock-allocation — auto-allocate live inventory to PENDING SO lines
 // (Commander 2026-05-30, B2C READY-when-stock-on-hand model).
 //

@@ -122,6 +122,22 @@ node frontend/scripts/check-silent-mutations.mjs # 297 mutations: a server refus
 node backend/scripts/check-shared-mirrors.mjs    # 41 rule pairs: frontend copy vs backend original
 ```
 
+## ⚠️ `tsc --noEmit -p tsconfig.json` CHECKS NOTHING on the frontend
+
+`frontend/tsconfig.json` is a **solution file** — `{"files": [], "references": [...]}`.
+Pointing `tsc` at it compiles **zero files** and exits **0**. A whole session's
+worth of "frontend typecheck green" can mean nothing was ever compiled.
+
+```bash
+npm --prefix frontend run typecheck    # tsc -b  — the real gate
+```
+
+Add `--force` when you want it to ignore `.tsbuildinfo` and recheck everything.
+`backend/tsconfig.json` is a normal config with `include`, so `-p` is fine THERE —
+which is exactly why the frontend one slips past: the same command is correct one
+directory over. If a typecheck finishes suspiciously fast and silent, verify it
+with a deliberate type error and confirm it FAILS before trusting a pass.
+
 **Three traps this repo produced repeatedly. Each is now a rule.**
 
 1. **A default is a decision nobody reviews.** `SoLineCard`'s

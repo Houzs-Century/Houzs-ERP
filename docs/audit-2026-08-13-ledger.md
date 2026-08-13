@@ -31,7 +31,7 @@ are its labels, not disjoint sets.
 | money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5 **DONE**; **B4 open** (needs a data check); B6 is an owner costing decision, documented at the line |
 | silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
 | old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
-| dead code | 12 | Reported, none removed. Deleting code is cheap to get wrong and nothing here is causing harm — left for a deliberate pass |
+| dead code | 12 claimed — **184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2272`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
 
 ---
 
@@ -91,7 +91,10 @@ cancel/mutation twin. That asymmetry, not the swallow itself, is the pattern.
 | # | finding | status |
 |---|---|---|
 | F1 | `scm.pos_carts` keyed `staff_id` alone — switching company destroyed the other company's cart, silently. | **DONE** — mig 0284 re-keys `(staff_id, company_id)`; 9 pg tests **written but NOT RUN** (no Docker, no `TEST_DATABASE_URL` here — CI is the gate) |
-| F2 | `model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` have the same single-column-PK defect; one company's upsert overwrites the other's. | **OWNER** — migration + a business question |
+| F2 | `model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` have the same single-column-PK defect; one company's upsert overwrites the other's. | **SPLIT — one real, one refuted.** `compartment_fabric_tier_overrides` is REAL and fixed by mig 0287: `compartment_library` carries no `company_id`, so the catalogue is SHARED and both companies reference the same ids; the PUT's `onConflict: 'compartment_id'` landed on the other company's row and, because a tier delta is a PRICE (`mfg-pricing-recompute.ts:997`), silently repriced their sofa builds. `model_fabric_tier_overrides` is REFUTED: `product_models` rows are created with `company_id` (`product-models.ts:445`) and listed via `scopeToCompany` (:181), so two companies can never contend for one `model_id`. **Same DDL shape, opposite verdict — the only way to tell them apart is to open the PARENT table.** Not an owner decision after all: the same file's GET already filtered by company while its PK permitted one row globally, so the two halves contradicted each other and the key was simply the leftover |
+| F3 | `model_default_free_gifts` and `model_special_delivery_fees`, both `model_id PRIMARY KEY` + `company_id` (mig 0083:267/273) — the F2 shape again. | **REFUTED, both — same parent test as F2's refuted half.** `product_models` carries `company_id NOT NULL` (0083:216), rows are created with `company_id: activeCompanyId(c)` and listed through `scopeToCompany`, its `id` is per-row `gen_random_uuid()`, and mig 0188:36-38 swapped its natural unique to `(company_id, model_code, category)` **precisely so each company keeps its own model rows**. A `model_id` therefore belongs to exactly one company and `(model_id)` already implies one. `model_special_delivery_fees` is refuted a second way: it has **no live read or write path at all** — superseded by `special_delivery_fee_rules` (mig 0024, which copied its rows), so nothing in `backend/src` or `frontend/src` references it. Refutation recorded in `model-free-gifts.ts` at the `onConflict: 'model_id'` upsert so the next reader does not re-chase it |
+| F4 | `product_dept_configs` (`PK(product_code)`) and `pwp_codes` (`PK(code)`) — single natural-key PK + `company_id`, and two companies genuinely CAN hold one product code (mig 0233 found **17** codes live under both, 12 disagreeing on `pwp_price_sen`). | **REAL — but ALREADY CLOSED, by mig `0188_percompany_natural_key_masters.sql` (PR #1165, merged).** 0188:43-60 recomposes both PKs to `(company_id, product_code)` / `(company_id, code)`. **The trap here is the DDL source:** `scripts/scm-schema/2990s-full-schema.sql` is the 2990 IMPORT SNAPSHOT and still shows the single-column PKs — reading it alone re-opens a defect that was fixed 99 migrations ago. Neither table has a live `onConflict` to correct: `product_dept_configs` has exactly ONE backend reference, an already-scoped read (`mfg-products.ts:521-524`) plus the rename cascade (:770, `scopeToCompanyId`), and `pwp_codes` is written by `insert` + regenerate-on-collision (`pwp-codes.ts:312`), never `upsert`, so no overwrite path exists. **Still open (pre-existing, recorded in `MULTICOMPANY-SCALING.md:73`):** `pwp_codes` claim/redeem addresses rows by `.eq('code', ...)` with no company predicate (`pwp-claim-single.ts:246/338/389`, ~20 more in `mfg-sales-orders.ts`). Harmless while codes stay globally unique — all pre-0188 rows are, and `genCode()` draws from ~4.6e9 — but 0188 removed the constraint that GUARANTEED it. Left for an owner-scoped pass, not swept into this PR |
+| F5 | `mfg_sales_orders` is `doc_no text PRIMARY KEY` with `company_id` (mig 0083:42) — can two companies mint the same SO number? | **REFUTED.** `doc_no` is never client-supplied (no `docNo` in the create schema); the only two writers are `mfg-sales-orders.ts:5104` (mint via `nextDocNo` -> `companyDocPrefix`) and `so-mirror.ts:77` (upsert by `doc_no`, `prefixDoc` stamps `2990-` unconditionally, `mirror-map.ts:39`). `companyDocPrefix` partitions the namespace — HOUZS `HC-`, everyone else `<CODE>-` — so the two companies mint into disjoint sets. It is safe TWICE over: `fetchMonthlyDocNos` (`doc-no.ts:65`) runs `.like('<prefix>SO-YYMM-%')` with **no** company predicate, so even a shared prefix would make max+1 interleave the two sequences rather than collide, and `insertWithDocNoRetry` re-mints 8× on 23505 for the concurrent-create race. Residual, noted not fixed: a future company whose `code` is literally `HC` would map to HOUZS's prefix (`docPrefixForCode`) and SHARE its monthly sequence — a provenance oddity, not data loss. Fixed in passing: `companyScope.ts` claimed the unresolved-context fallback was "BARE numbering"; it has been `HC-` since 2026-08-07 and `companyScope.test.ts:33` asserts so — the conclusion survives, the stated mechanism did not |
 
 ## G. Running
 
@@ -179,3 +182,170 @@ audit's to answer:
 
 The consignment LOADED-reopen question is **resolved**: §J caps returns at the
 sibling documents' rule, which is what the owner chose.
+
+---
+
+## K. Dead code — the list the count never had (swept 2026-08-13)
+
+**Why this section exists.** §A said `dead code | 12` and the twelve were never
+written down anywhere. A count with no list cannot be acted on and cannot be
+checked — it is the same failure this ledger exists to stop. The sweep below
+replaces it. **The real number is not 12: it is 184 sites.** Nobody had counted;
+"12" was an impression.
+
+| bucket | count | disposition |
+|---|---|---|
+| dead `42501 -> 403` branches | **74** across 28 files | ANNOTATED (28 file-level notes) |
+| dead duplicate route handler | **1** | ANNOTATED + owner decision (K2) |
+| exported symbols, zero references repo-wide | **108** (30 native, 78 vendored) | 4 DELETED, rest LEFT with reasons |
+| whole page file with no importer and no mounted route | **1** | LEFT (already documented in the map) |
+
+**How the 108 was derived, so it can be re-derived.** Every
+`export (function|const|let|var|class|type|interface|enum) NAME` across
+`backend/src`, `frontend/src`, `backend/scripts`, `backend/tests`,
+`backend/tests-pg`, `frontend/scripts`, `e2e`, `scripts`, `mail-sync`, `native`
+(5,399 symbols), then a word-bounded search for each NAME in every *other* file.
+Kept only value declarations whose own file mentions them exactly once — i.e.
+the declaration itself, so nothing anywhere calls them. The regex self-tests
+against an 8-form fixture and exits non-zero rather than reporting from a dead
+pattern (CLAUDE.md: *a verdict computed over nothing must never read as a pass*).
+
+**The checker was wrong once, and hand-verification caught it** — the same
+lesson as §I. It reported `DefinitionList`
+(`frontend/src/components/DetailLayout.tsx:326`) as dead. It is **not**:
+`frontend/package.json` is named `autocount-sync-frontend` and
+`frontend/.design-sync/config.json` sets `"srcDir": "src/components"`, so the
+five preview files under `frontend/.design-sync/previews/` that
+`import { DefinitionList } from "autocount-sync-frontend"` resolve to that exact
+file. The tree list simply did not include `.design-sync`. Reported 109, true
+108. **Any future run of this check must include `frontend/.design-sync`.**
+
+### K1 — the 74 dead `42501 -> 403` branches
+
+**Evidence they cannot fire**, all read in source rather than inferred:
+
+1. `backend/src/db/migrations-pg/0061_enable_rls_scm.sql` enables RLS on every
+   `scm.*` table and creates **no policies** — and says so in its own header.
+2. `grep -rn "CREATE POLICY" backend/src/db/migrations-pg/` returns **nothing**,
+   so no policy has been added since.
+3. Every one of the 74 sits in `backend/src/scm/routes/*.ts`, and that subtree's
+   client is set once — `scm/middleware/auth.ts:93` calls
+   `getSupabaseService(c.env)`, which `db/supabase.ts:68` builds with
+   `SUPABASE_SERVICE_ROLE_KEY`. service_role bypasses RLS. The handful of routes
+   that build their own client (`categories.ts:145`, `mfg-products.ts:896`,
+   `product-models.ts:61/116/574`, `mfg-sales-orders.ts:2158/5445`,
+   `sofa-compartment-photos.ts:108`) all pass the **same service-role key**.
+4. 42501 could also arrive from a `RAISE ... USING ERRCODE`. Searched every
+   `.sql` under `backend/` and `scripts/`: the live tree's only ERRCODE is
+   `22023`, and **no** function raises `forbidden`/`permission denied`/`denied`
+   as a message either — so the `|| /permission denied/i.test(error.message)`
+   half that 20 of them carry is equally dead.
+
+The only residual way to reach one is a missing table GRANT, which is a
+deployment fault mislabelled as `403 forbidden` instead of a 500 — not
+authorization, and not scoping.
+
+**Not deleted, deliberately.** The tree's own established idiom is to KEEP the
+branch and annotate it: `trips.ts:538` and `maintenance-config.ts:327` both
+already did exactly that, and both left the `if` in place. `backend/src/scm` is
+also VENDORED (`docs/CODEBASE-MAP.md:121`) — "fix bugs in place, narrowly", the
+value being that a 2990 file and its Houzs copy still look alike. So each of the
+28 files got ONE note above its first 42501 site, worded to cover every site in
+that file. A per-branch comment would have been 74 edits into vendored code for
+the same information.
+
+| file (`backend/src/scm/routes/`) | 42501 lines | annotated at |
+|---|---|---|
+| `delivery-orders-mfg.ts` | 4335 | 4327 |
+| `delivery-planning-regions.ts` | 127, 167, 200, 342, 350 | 119 |
+| `delivery-planning.ts` | 2183, 2405 | 2175 |
+| `delivery-rate-cards.ts` | 269, 312, 327, 380, 415, 433 | 261 |
+| `delivery-residence-rules.ts` | 151, 201, 222 | 143 |
+| `delivery-zones.ts` | 165, 218, 236, 765, 782 | 157 |
+| `driver-leave.ts` | 134, 149 | 126 |
+| `drivers.ts` | 116 | 108 |
+| `fabric-library.ts` | 92 | 84 |
+| `fabric-tracking.ts` | 144, 234, 272, 336, 368, 405, 462, 520 | 136 |
+| `helpers.ts` | 101 | 93 |
+| `lorries.ts` | 215 | 207 |
+| `lorry-capacity.ts` | 391, 458 | 383 |
+| `maintenance-config.ts` | 288, 358, 401 | 280 (prose note already at 327) |
+| `mfg-products.ts` | 284, 462, 473, 813, 1120 | 276 |
+| `mfg-purchase-orders.ts` | 1336 | 1328 |
+| `personal-quick-picks.ts` | 168, 193 | 160 |
+| `pos-cart.ts` | 138 | 130 |
+| `products.ts` | 79 | 71 |
+| `purchase-consignment-orders.ts` | 394 | 386 |
+| `sofa-combos.ts` | 463, 471, 620, 777 | 455 |
+| `sofa-quick-picks.ts` | 165, 194 | 157 |
+| `special-addons.ts` | 388 | 380 |
+| `stock-takes.ts` | 420 | 412 |
+| `stock-transfers.ts` | 313 | 305 |
+| `suppliers.ts` | 444, 511, 596, 675, 751, 809 | 436 |
+| `threepl-companies.ts` | 240, 291, 312 | 232 |
+| `trips.ts` | 485, 559, 707, 1124 | 477 (prose note already at 538) |
+
+### K2 — a dead route handler, and it is not only dead
+
+| # | site | what it is | evidence | disposition |
+|---|---|---|---|---|
+| K2 | `backend/src/routes/users.ts:2272` | `POST /:id/impersonate` registered a **second** time | One `new Hono` in the file (`:377`), one `export default app` (`:2306`). The same method+path is already registered at `:2031`. Hono composes both chains in registration order and the `:2031` handler returns on every branch — there is **no `next(` anywhere in the file** — so `:2272` is never entered. | **ANNOTATED, left in place — OWNER** |
+
+**This one is worth the owner's attention, because the dead half is the newer
+design.** What runs (`:2031`) is wildcard-`*`-only with a 1-hour session. What is
+dead (`:2272`) is the two-door design the comment block above it describes:
+staging flag OR wildcard. Consequences today:
+
+- `wrangler.toml:329` sets `IMPERSONATION_ENABLED = "true"` for
+  `[env.staging.vars]`, and that flag now changes **nothing** about who may mint.
+- `GET /impersonation-enabled` (`:2266`) is *not* shadowed (it is the only
+  1-segment GET besides `/`), so on staging it answers `enabled: true` to any
+  `users.manage` admin — whose mint call then 403s `"Owner only"`. **The probe
+  and the mint disagree.**
+
+Left as is on purpose: deleting `:2272` hides the intent, and deleting `:2031`
+would silently grant every `users.manage` admin a 7-day impersonation session on
+staging. Which door is correct is a security decision, not a cleanup.
+
+### K3 — orphaned exports: what was DELETED
+
+Four, each proved by a repo-wide word-bounded grep returning exactly one hit
+(the declaration). Each is an alias or a shim whose live successor is heavily
+used, so removing it removes duplication, not capability. Backend and frontend
+`tsc --noEmit` both clean afterwards; `backend` vitest re-run.
+
+| # | site (pre-delete) | what it was | evidence it was dead | why safe |
+|---|---|---|---|---|
+| K3.1 | `backend/src/services/projectAcl.ts:70` | `getProjectPicScope` — "back-compat shim" for callers that only want the PIC dimension | 1 hit repo-wide. Its successor `getProjectScope` has 16. | Pure delegation to `getProjectScope(user).pic_ids`; the shim had no caller to be back-compatible *with* |
+| K3.2 | `backend/src/services/agent-brain.ts:114` | `ANTHROPIC_MESSAGES_URL` | 1 hit. It was `= ANTHROPIC_URL`, which has 12. | Exported alias of a live constant, nothing imported it |
+| K3.3 | `backend/src/services/pageAccess.ts:679` | `getChildrenOf(parentKey)` | 1 hit. Sibling `getPageDef` has 2. | One-line `PAGES.filter(p => p.parent === parentKey)`; no permission logic |
+| K3.4 | `frontend/src/auth/capabilities.ts:131` | `useCapabilitiesUnresolved` | 1 hit. Non-hook twin `capabilitiesUnresolved` has 13. | Hook wrapper only. Its doc comment claimed "the one or two places that render the message" — there were **zero**; the comment was already lying |
+
+### K4 — orphaned exports LEFT ALONE, and why
+
+Deleting code is cheap to get wrong. Every row below is genuinely unreferenced;
+none is deleted, and the reason is stated so the next sweep does not re-litigate
+it.
+
+| # | site | what it is | why LEFT |
+|---|---|---|---|
+| K4.1 | `backend/src/services/salesTeam.ts:29` `wouldCreateUplineCycle` | upline loop guard | **The source already says so:** ":29 — its POST/PATCH sales-team admin routes are stranded on `ux/tier3-polish` and the module is slated to return (owner call, 2026-07-29). Kept deliberately — don't sweep as dead code." |
+| K4.2 | `backend/src/services/salesTeam.ts:228` `autoBackfillSalesReps` | self-heal for missing `sales_reps` rows | `BUG-HISTORY.md:7948` already records it as never called. The open question is whether to **wire** it, not whether to delete it — deleting removes the recovery tool the bug entry points at. Owner call |
+| K4.3 | `backend/src/services/printTracker.ts` (whole file, 189 lines; `renderStageTrackerHtml`, `STAGE_TRACKER_CSS`) | print stage tracker | **A deliberate keep is already on record.** `BUG-HISTORY.md:6337`: "Deliberately NOT done ... it has no importer at this commit ... rewriting a print artifact's stage derivation is a behaviour change that does not belong in a delete-dead-code commit." Also labelled in `docs/modules/service-case.md:101`. Deleting it would silently reverse a written decision |
+| K4.4 | `backend/src/services/printQr.ts` (whole file; `qrSvg`, `getOrIssueCustomerPortalToken`, `customerPortalUrlFor`) | QR helpers for the ASSR print routes | Zero importers, but the same ASSR-print family as K4.3 and covered by the same reasoning. It also owns the only use of the `qrcode-generator` dependency, so deleting it drags a package removal into a dead-code pass |
+| K4.5 | `backend/src/services/agents/decision-outcomes.ts:34` `recordOutcome` | writes `agent_decision_outcomes` | Half-built agent platform: the reader side (`PromotionEvidence` and friends) is present. This is a reporting channel nothing feeds yet — deleting the writer entrenches that. Roadmap item, not litter |
+| K4.6 | `backend/src/services/autocount.ts:275` `isAutoCountWritesDisabled` | kill-switch accessor | Deliberate public surface ("exposed so other modules ... can detect the kill switch state without poking at the private constant"). Its twin `isAutoCountSyncDisabled` is live. The two AutoCount directions have separate switches and must not be conflated |
+| K4.7 | `backend/src/services/pageAccess.ts:35/37` `ACCESS_LEVELS`, `POSITION_ACCESS_LEVELS` | the writable level sets for the ROLE (3-level) and POSITION (4-level) editors | The only place the two vocabularies are written down, next to the `AccessLevel` union they explain. Removing them deletes documentation, not code |
+| K4.8 | `backend/src/services/fleet-status.ts:524` `BREAKDOWN_STATUS_LABELS` | label map | Sits in a coherent vocabulary block whose siblings `BREAKDOWN_SEVERITIES` / `BREAKDOWN_STATUSES` are live. Splitting the block for one unused member is churn |
+| K4.9 | `backend/src/services/agents/of-agent.ts:26`, `si-agent.ts:27` | `OF_AGENT_SETTING_KEY`, `SI_AGENT_SETTING_KEY` | Canonical names for settings rows that may already exist in the database. Cheap to keep, and a name is the wrong thing to delete on a grep |
+| K4.10 | `frontend/src/lib/nativeSession.ts:109` `biometricAvailable` | "in the app, flag on, plugin present, biometric enrolled" | **Possible gap, not just litter.** Its narrower sibling `nativeBiometricSupported` (:97) is live and deliberately IGNORES the opt-in flag. Nothing performs the full check. Whether that is a missing gate is a question for the owner, so the function stays until it is answered |
+| K4.11 | `frontend/src/pwa.ts:138` `onUpdateAvailable` | "a newer build is live" subscription | Part of the `onOnline`/`onUpdateAvailable` subscribe pair; `onOnline` is live. Its comment claims "the banner reads this" and no banner does — noted as another comment that lies, but the API pair is coherent |
+| K4.12 | `frontend/src/lib/utils.ts:14/214`, `lib/scm.ts:60`, `lib/csv.ts:123`, `lib/holidays.ts:101`, `components/StatusDot.tsx:39`, `mobile/source-chips.tsx:176` | `formatNumber`, `isExpiringSoon`, `scmStatusClasses`, `parseCSVFile`, `isHoliday`, `statusVariantForAssr`, `DeliveredRowMobile` | Small shared-utility surface in live modules. Each is genuinely unreferenced, but they are the kind of helper a page adds back next week, and `StatusDot.tsx` sits under `src/components` where `.design-sync` resolves — the exact trap that produced this section's one false positive |
+| K4.13 | `frontend/src/pages/ServiceLogistics.tsx:60`, `frontend/src/pages/MailCenter/Compose.tsx:647` | whole page components | No importer **and** no lazy import by path (`grep` for the path strings returns nothing). Genuinely unreachable, but a page is a feature; retiring one is a product call. Same class as the already-documented `pages/scm-v2/Drivers.tsx` |
+| K4.14 | 78 exported symbols under `frontend/src/vendor/**`, `frontend/src/pages/scm-v2/**`, `backend/src/scm/**` | mostly unused `use*` React-Query hooks in `vendor/scm/lib/*-queries.ts` | **VENDORED.** `docs/CODEBASE-MAP.md:121-125`: copied from 2990 to stay diffable, "do not casually rename, reformat or modernise them, and do not fold their helpers into the native tree". Pruning the unused half of a vendored API surface destroys exactly the property the vendoring exists for |
+| K4.15 | `backend/scripts/lib/sqlite-default-to-pg.mjs:281` `__internals`, `e2e/lib/helpers.ts:111` `reloadAndSettle` | test/tooling seams | `__internals` is the conventional test-seam export; both are tooling, not product code |
+
+**Not dead, do not report it again:** `backend/src/db/migrations/` is the D1 test
+tree. `vitest.config.ts` builds an in-process D1 from it with `readD1Migrations`
+(`docs/CODEBASE-MAP.md:106-113`). It is unreachable from production and reachable
+from the tests, which is the definition of *used*.

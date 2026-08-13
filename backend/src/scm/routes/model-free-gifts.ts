@@ -81,6 +81,28 @@ modelFreeGifts.put('/', async (c) => {
   }
 
   const gifts = parseDefaultFreeGifts(parsed.data.gifts);
+  /* `onConflict: 'model_id'` matches the PK, and the PK is RIGHT — checked
+     2026-08-13, recorded because the shape invites the opposite conclusion.
+
+     The tempting reading: scm.model_default_free_gifts is keyed `model_id uuid
+     PRIMARY KEY` (2990s-full-schema.sql:764) and mig 0083:267 added company_id
+     without touching that key, so this upsert should overwrite the other
+     company's row — the pos_carts (0284) / compartment_fabric_tier_overrides
+     (0287) defect exactly.
+
+     It does not, because the PARENT is per-company. product_models carries
+     company_id NOT NULL (mig 0083:216), rows are CREATED with `company_id:
+     activeCompanyId(c)` (routes/product-models.ts POST) and listed through
+     scopeToCompany, its uuids come from gen_random_uuid() per row, and mig
+     0188:36-38 swapped its natural unique to (company_id, model_code, category)
+     precisely so each company keeps its OWN model rows. So a model_id belongs
+     to exactly one company and (model_id) already implies one — two companies
+     can never contend for this key.
+
+     0287 was the opposite case: compartment_library carries NO company_id, the
+     catalogue is shared, both companies reference the same ids. Same DDL shape,
+     opposite verdict. Only the PARENT table tells them apart — counting
+     company_id columns on the child answers nothing. */
   const { data: updated, error } = await gate.supabase
     .from('model_default_free_gifts')
     .upsert({ company_id: activeCompanyId(c), model_id: parsed.data.modelId, gifts, updated_at: new Date().toISOString(), updated_by: gate.userId }, { onConflict: 'model_id' }) // multi-company: stamp the active company
