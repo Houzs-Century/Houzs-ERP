@@ -49,10 +49,13 @@ protecting anything.** Measured against the live book's own vocabularies
 | `VENUE_MAP` | 7 | 7 of 7 yes | 93 venue names, **84 of them already options in the book's own VENUE list**, carrying 9,111 SOs |
 | `BRANDING_MAP` | 7 | 7 of 7 yes | `CARRESS`, `DUNLOP` (7 SOs) |
 
-Reproduce: `npx tsx backend/scripts/check-autocount-field-alignment.mjs`
-(the numbers above come from `backend/scripts/data/ac-fidelity-so-headers.json.gz`,
-13,015 live-book SO headers exported 2026-08-11, cross-checked against
-`autocount-venue-options.txt` and `autocount-so-writeback-mappings.json`).
+**Every number in that table is REGENERATED, not typed.** It is the first section
+of `backend/scripts/check-autocount-field-alignment.mjs`, which runs the real
+`mapOrPassthrough` over `backend/scripts/data/ac-fidelity-so-headers.json.gz`
+(13,015 live-book SO headers, exported 2026-08-11) and cross-checks the survivors
+against `autocount-venue-options.txt` and `autocount-so-writeback-mappings.json`.
+Dispatch the workflow, or run `npx tsx backend/scripts/check-autocount-field-alignment.mjs`;
+that section reads the committed export, not the database.
 
 ---
 
