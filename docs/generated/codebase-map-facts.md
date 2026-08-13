@@ -90,7 +90,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-tracking.ts` | 9 | 589 |
 | `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2117 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 114 |
-| `backend/src/scm/routes/grns.ts` | 13 | 3482 |
+| `backend/src/scm/routes/grns.ts` | 13 | 3591 |
 | `backend/src/scm/routes/helpers.ts` | 3 | 171 |
 | `backend/src/scm/routes/hr.ts` | 19 | 1536 |
 | `backend/src/scm/routes/inventory-adjustments.ts` | 1 | 222 |
@@ -164,13 +164,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 147 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 284 | `0286_scm_processing_date_one_name.sql` (0286) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 285 | `0287_scm_grn_zero_cost_ack.sql` (0287) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1279 files, 532358 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1281 files, 533012 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -189,8 +189,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3748 |
+| `backend/src/scm/routes/grns.ts` | 3591 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
-| `backend/src/scm/routes/grns.ts` | 3482 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3366 |
 | `backend/src/services/projects.ts` | 3173 |
@@ -369,7 +369,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileApp.tsx` | 1016 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1029 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1033 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2449 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 735 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |

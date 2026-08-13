@@ -495,7 +495,7 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 | Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`) |
 | Colour KIV | `fabric_colour_kiv` | **no line may still be colour-KIV** (series committed via `fabricId`/`fabricLabel`, no `fabricCode` — `isColourKiv` in `variant-summary.ts`). Owner rule 2026-07-24 after SO-2607-016: a Processing Date means every line is a fully-confirmed maintained selection. Fires only when the date is genuinely SET or CHANGED — unrelated edits to an old KIV order, and clearing the date, never block. Also enforced on line-ADD / line-EDIT against an already-dated SO (409). |
 | Deposit, PER COMPANY | `processing_date_unpaid` | **Houzs 30%, 2990 50%** of the order total collected (`processingDateThresholdFor` in `order-rules`). Until 2026-07-31 the split existed only in a comment and both constants applied to everyone, so a 2990 order was refused at the Houzs 30%. An unknown/absent company code falls back to the LOOSER 30% on purpose — over-gating stops the shop floor with no signal. |
-| Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. Measured free: of 63 live dated SOs, zero lacked any of these four; 12 lacked only the email that was dropped. |
+| Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. (A 2026-07-31 impact measurement over the then-live dated SOs found none blocked by the four kept fields. The figures are not restated here: nothing in the repo re-measures them, and they predate the 0286 rename, so they are a record of that day rather than a current claim.) |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
 
 Related short-circuit gates: remove-date is super-admin only
@@ -617,8 +617,13 @@ processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2
 519 company-1 orders out of `proceeded_at` into the SO's own Processing-Date
 column; both companies reported zero split **when measured on 2026-08-13**. Mig
 `0286` then renamed that column `internal_expected_dd` → `processing_date` on
-`scm.mfg_sales_orders` and on the consignment twin. `proceeded_at` is now
-stop-writing / stop-reading ahead of a drop, not a second fact.
+`scm.mfg_sales_orders` and on the consignment twin. **`proceeded_at` is NOT being retired**, and this paragraph said it was
+("stop-writing / stop-reading ahead of a drop, not a second fact") — which
+also contradicted the registry row below. It is a live, separate column on
+`scm.mfg_sales_orders`: `lib/so-stock-allocation.ts` selects and GATES on it,
+`routes/mfg-sales-orders.ts` maps `proceededAt → proceeded_at`, and
+`routes/delivery-planning.ts` selects it. Only the CONSIGNMENT twin was
+dropped (mig 0284), because that one had zero readers and zero writers.
 
 #### The surfaces that read this date by NAME, not by binding
 
@@ -638,7 +643,7 @@ it, and the removal condition for each legacy alias is written there.
 | `scm.so_amendments.header_changes` (jsonb) | The heaviest one. Written at REQUEST time, read at APPROVE time — days later, across deploys. `applySoAmendment` `continue`s on a key the allow-list lacks, and `routes/so-amendments.ts` gates on the same literal. A pending amendment would approve cleanly, audit cleanly, skip the deposit gate, and write nothing. | `canonicaliseSoHeaderChanges` on both read sites |
 | `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.node.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_centi, balance_centi_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
 | `frontend/src/vendor/scm/lib/so-field-policy.test.ts` | Parses the backend policy table out of the file by regex on **quoted literals**. Loud (row-for-row equality), but it constrains HOW a rename may be written: the policy rows must keep string literals, so do not replace them with a constant. | n/a — a constraint, not a fix |
-| `so_processing_date` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts:688` and `routes/delivery-orders-mfg.ts:2889`, then read as a string by four frontends (`SalesInvoicesListV2:99`, `MfgDeliveryOrdersListV2:88`, and `MobileModuleList:1147,1198`'s `pick(r, "soProcessingDate", "so_processing_date")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13. **Corrected 2026-08-14:** this row said `so_internal_expected_dd` / `soInternalExpectedDd` until today; both ends moved to `so_processing_date` with the rename and the register did not. |
+| `so_processing_date` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts:688` and `routes/delivery-orders-mfg.ts:2889`, then read as a string by three frontends (`SalesInvoicesListV2:99`, `MfgDeliveryOrdersListV2:88`, and `MobileModuleList:1147,1198`'s `pick(r, "soProcessingDate", "so_processing_date")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13. **Corrected 2026-08-14:** this row said `so_internal_expected_dd` / `soInternalExpectedDd` until today; both ends moved to `so_processing_date` with the rename and the register did not. |
 | `SalesOrderDetailListing.tsx:433` `opt(r, 'processing_date')` | An untyped string accessor over the flattened header; a miss renders `—`. The grid `key` is `processing_date` and is a SAVED LAYOUT key — do not rename that, users' stored layouts reference it. | not bound. **Corrected 2026-08-14:** this row said the accessor read `internal_expected_dd`; on `origin/main` `0c2a4e88` all three reads at `:433-435` are `processing_date`. |
 
 ### Column registry — every date in this DB that looks like a Processing Date
@@ -672,8 +677,8 @@ table is the whole answer.
 | `scm.mfg_sales_orders.proceeded_at` | **A different fact:** the TIMESTAMP the system stamps when the order is Proceeded — not a date a user picks. `recomputeSoStockAllocation` gates on it (NULL ⇒ every line forced PENDING). | Live. Stays a separate column ON PURPOSE. What was unified with the Processing Date is the RULE (`meetsProceedGate`), never the storage. |
 | `scm.mfg_sales_orders.processing_date` **(the OLD one, 2025–2026-08)** | Dead legacy snapshot that squatted on this name. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). | **DROPPED — mig 0189.** The name was then free, which is why 0286 could take it. Do not confuse this dead column with the live one in row 1. |
 | `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284** (`0284_retire_consignment_proceeded_at.sql`). |
-| `scm.consignment_sales_orders.processing_date` **(the OLD one)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it is NULL on every row. It was still being SELECTed into the CO list/detail payload, which is exactly the bait that produced the mfg blank-date bug. | Select removed. **DROP is a follow-up migration** — `pg-migrate` runs BEFORE `wrangler deploy`, so dropping a column in the same release that stops selecting it 500s the still-live old Worker (that is what blocked prod in #1191/0189). Exact SQL is at the CO `HEADER` note in `scm/routes/consignment-orders.ts`. |
-| `public.sales_orders.processing_date` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
+| `scm.consignment_sales_orders.processing_date` **(the OLD one, mig 0153)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it was NULL on every row. | **DROPPED — mig 0286, step 1.** No longer a follow-up: 0286 had to clear this dead name before it could rename the live column onto it, and its guard drops it only while BOTH names are present, so a re-run cannot take the users' dates. |
+| `public.sales_orders.ac_udf_pdate` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
 | `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's own date (`/sales`, `Sales.tsx`, mig 070). A `sales_entry` is a **different document**: no SO row, no doc flow, and none of the SO machinery — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation. | **KEPT under this name, deliberately.** A rename is UNSAFE: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys, and the change-request approval path replays a JSON payload stored days earlier — after a rename those stored keys match nothing and the field is **silently dropped on approve**, with no error. Documented at both ends instead (`routes/sales.ts`, `Sales.tsx`). **Do not coalesce or merge it with the SO's date.** |
 
 Two rules follow from the table. **Never add a ninth name** — if you need the
@@ -811,9 +816,14 @@ must not strand).
 
 **Frontend twins (change together).** Desktop `SoLineCard` marks unmatched
 typed text with a red ring + "Not in the catalog" note (the text stays for
-correction; the parent save guards refuse the line). `SalesOrderNew` +
-`MobileNewSO` pre-check variants (confirm rule, KIV-exempt) / venue /
-salesperson on Create — Save-as-draft skips all three. The mobile headless
+correction; the parent save guards refuse the line). `SalesOrderNew` + `MobileNewSO` pre-check venue / salesperson on Create, and
+Save-as-draft skips both. **Neither pre-checks variants at CONFIRM** — that
+sentence used to read "pre-check variants (confirm rule, KIV-exempt)" and was
+wrong three ways: `SalesOrderNew.tsx` has no variant pre-check at all, and
+`MobileNewSO.tsx:1778` calls `missingVariantAxes` — the PROCEED rule, which is
+KIV-*blocking*, not KIV-exempt — behind `if (!asDraft && procDate)`, i.e. gated
+on the Processing Date, not on Create-confirm. Both call sites pass
+`l.itemCode` as the required third argument. The mobile headless
 scan-draft path (`createDraftFromPrefill` → `buildItemBody`) sends an
 UNPICKED line's description as '' (the desktop clean-placeholder rule,
 2026-07-13) — it used to send the raw slip text, which is exactly how the
@@ -1199,6 +1209,19 @@ Note the reachability gate: a migrated SO is only `amendment_eligible` once it i
 processing-locked, and the importer does not set `processing_date`, so today
 most migrated orders cannot reach this path at all. The exemption exists so that
 giving one a Processing Date does not silently destroy its price later.
+
+**What the importer sets INSTEAD, and why that is worth knowing.**
+`import-ac-outstanding-so.mjs` reads AutoCount's `UDF_PDate` (`:304`) and writes
+it into **`proceeded_at`** — its header column list at `:390` ends
+`…,payment_date,proceeded_at)` and contains no `processing_date`. So a migrated
+order carries a proceed TIMESTAMP with no Processing Date, which under the
+pinned owner rule (*"没有 processing date 就代表没有 proceed"*) is a state that
+is not supposed to exist. It is inert for the amendment path described here —
+that gate keys on the Processing Date, which is absent — but it means
+`proceeded_at` and the Processing Date genuinely disagree on migrated rows, and
+the stock allocator gates on `proceeded_at`. Do not "fix" one side without
+reading `docs/cutover-tally-method.md` and `docs/stock-reconciliation.md` §6.1,
+which describe the same split from the cutover end.
 
 ### A priced special add-on is CHARGED, not only costed (owner 2026-08-11)
 
