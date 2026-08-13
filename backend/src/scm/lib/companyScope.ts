@@ -22,11 +22,16 @@ import type { CompanyRow } from "../../middleware/companyContext";
  *    from whichever company you're currently in; it can still reference the
  *    other company's DOs).
  *
- *  • HOUZS-ONLY module (Service Cases / ASSR): a Houzs-exclusive concept (2990
- *    has 0% service overlap). Its raw-SQL reads pin to HOUZS via
- *    `houzsCompanySql(c)` / `houzsCompanyIds(c)` — NOT the caller's allowed set —
- *    so a both-company user never sees 2990 orders/customers/cases under Service
- *    Cases. See routes/assr.ts.
+ *  • Service Cases / ASSR was a THIRD pattern — a HOUZS-ONLY pin — until
+ *    2026-07-20. It is not one any more: the owner put 2990's service cases on
+ *    the merged platform, and ASSR now follows the caller's GRANTED companies
+ *    like every other module (`assrCompanySql` in routes/assr.ts is
+ *    `allowedCompaniesSql`; the dated decision trail is at routes/assr.ts:113).
+ *    This paragraph used to describe the pin as current, and that is not a
+ *    harmless staleness: routes/search.ts kept its own copy of the removed pin
+ *    and answered the same rep differently from /api/assr until it was found.
+ *    `houzsCompanySql` / `houzsCompanyIds` below served that pin and now have NO
+ *    caller anywhere in backend/src, frontend/src or the tests.
  *
  * All helpers NO-OP when the active/allowed company is unresolved (companies
  * master absent pre-migration, or a DB cold-start) — so single-company Houzs
@@ -205,16 +210,23 @@ export function activeCompanySql(c: CompanyScopeCtx, col = "company_id"): string
 }
 
 /**
- * HOUZS-ONLY PIN (Service Cases / ASSR). ASSR is a Houzs-exclusive module —
- * 2990 has zero service-case overlap (owner: "Service pricing CANNOT merge,
- * 0% overlap"). So ASSR queries pin to the base company HOUZS rather than the
- * caller's full allowed set: a both-company user (the owner) must NOT see 2990
- * orders/customers/cases under Service Cases. HOUZS is identified by
- * `companies.code === 'HOUZS'` from the companies master already on context —
- * no hardcoded id.
+ * THE BASE COMPANY, resolved from `companies.code === 'HOUZS'` on context — no
+ * hardcoded id (the bigint differs across staging/prod).
  *
- * houzsCompanyId returns the resolved id, or undefined when the companies
- * master is unresolved (pre-migration / cold-start).
+ * This used to be documented as the "HOUZS-ONLY PIN (Service Cases / ASSR)".
+ * THAT PIN NO LONGER EXISTS — the owner moved 2990's service cases onto the
+ * merged platform on 2026-07-20 and ASSR now scopes to the caller's granted
+ * companies (routes/assr.ts:113 carries the dated trail). Do not reintroduce it
+ * from this comment; that is exactly how routes/search.ts came to answer a rep
+ * differently from /api/assr.
+ *
+ * What still uses it: `assrCreateCompanyId` (routes/assr.ts:157) as the FALLBACK
+ * when no active company resolves, routes/assr.ts:1300, and scm/routes/staff.ts
+ * for attributing the unlinked mirror rows. All three want "the base company",
+ * not a pin.
+ *
+ * Returns the resolved id, or undefined when the companies master is unresolved
+ * (pre-migration / cold-start).
  */
 export function houzsCompanyId(c: CompanyScopeCtx): number | undefined {
   const rows = (c.get("companies") as CompanyRow[] | undefined) ?? [];
@@ -237,13 +249,16 @@ export function mirrorCompanyId(c: CompanyScopeCtx): number | undefined {
   return m?.id != null ? Number(m.id) : undefined;
 }
 
-/** houzsCompanyIds — the array flavour for callers that take an id list
- *  (e.g. the ASSR list/export `allowed_company_ids` param). `[houzsId]` when
- *  resolved, else `undefined` — NOT `[]` — so the callee degrades to
- *  single-company (no predicate), matching the pre-migration / cold-start
- *  behaviour. This feeds the SAME sinks as allowedCompanyIds, where `[]` now
- *  means "restricted to nothing / match nothing"; returning `[]` for unresolved
- *  here would blank ASSR for every sales user on a cold start. */
+/** houzsCompanyIds — the array flavour, for a callee that takes an id list.
+ *  `[houzsId]` when resolved, else `undefined` — NOT `[]` — so the callee
+ *  degrades to single-company (no predicate). It feeds the SAME sinks as
+ *  allowedCompanyIds, where `[]` means "restricted to nothing / match nothing".
+ *
+ *  NO CALLER as of 2026-08-13. Its one consumer was the ASSR list/export
+ *  `allowed_company_ids` param under the HOUZS-only pin removed on 2026-07-20;
+ *  routes/assr.ts now passes `allowedCompanyIds`. Kept, not deleted, because the
+ *  companion `houzsCompanyId` is live and the pair reads as one idea — but do
+ *  not wire this back in on the strength of its name. */
 export function houzsCompanyIds(c: CompanyScopeCtx): number[] | undefined {
   const id = houzsCompanyId(c);
   return id != null ? [id] : undefined;
@@ -253,7 +268,14 @@ export function houzsCompanyIds(c: CompanyScopeCtx): number[] | undefined {
  *  or "" when HOUZS is unresolved (pre-migration / cold-start) so legacy
  *  single-company SQL runs unchanged. Same inline-not-bind safety as
  *  allowedCompaniesSql — the id comes from OUR companies master, re-validated
- *  as a positive integer here. */
+ *  as a positive integer here.
+ *
+ *  NO CALLER as of 2026-08-13, and reaching for it is almost certainly a
+ *  mistake: its only consumers were the ASSR readers, and the HOUZS-only pin
+ *  they implemented was REVERSED by the owner on 2026-07-20 (routes/assr.ts:113).
+ *  A module that pins to one company rather than scoping to the caller's granted
+ *  set shows a rep the wrong company's book — which is the bug this repo already
+ *  paid for once in routes/search.ts. */
 export function houzsCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   const id = Number(houzsCompanyId(c));
   if (!Number.isInteger(id) || id <= 0) return "";

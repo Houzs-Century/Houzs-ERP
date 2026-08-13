@@ -1103,6 +1103,23 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
 // Also SYNCS the denormalized flat expiry column on scm.lorries from the latest
 // vault row of that type, so the existing Fleet compliance strip keeps working.
 fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"), async (c) => {
+  /* company-scope: unified fleet — see the UNIFIED FLEET note above inHouseLorries.
+     Verified 2026-08-13 against the narrower question a WRITE deserves: can this
+     row's company stamp DISAGREE with the parent lorry's, and does that
+     disagreement corrupt anything? It CAN differ (`activeCompanyId(c)` here vs
+     scm.lorries.company_id from mig 0083), and it does not matter, because
+     NOTHING READS EITHER STAMP. mig 0202's own header: "company_id here is
+     STAMPED on insert but NOT used to scope reads — a lorry's compliance must be
+     visible wherever the lorry is. Nullable + no FK". Confirmed mechanically:
+     across all 7 read sites of lorry_compliance_documents (one in
+     scm/lib/fleet-availability.ts, six in this file — grep
+     `from("lorry_compliance_documents")`) not one selects, filters or groups on
+     company_id; every one keys on lorry_id. `cost_centi` is likewise
+     never rolled up per company, so no money is attributed by the stamp. The two
+     stamps answer two different questions (who registered the lorry / who filed
+     this renewal); making them agree would be inventing a rule the DDL declines
+     to have. Do NOT add a predicate here — it would hide a HOUZS-registered
+     lorry's road tax from the 2990 dispatcher driving it. */
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
 

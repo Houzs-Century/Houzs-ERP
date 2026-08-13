@@ -463,8 +463,15 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
     return c.json({ error: "Logo must be under 1 MB" }, 413);
   }
 
+  /* Scoped on BOTH halves, exactly like deleteBrandLogoHandler below and every
+     other /brands/:id route (PATCH /brands/:id, DELETE /brands/:id, PUT
+     /brands/reorder, GET /brands/:id/logo). This handler was the one that had
+     neither, so a 2990-context upload against a HOUZS brand id replaced that
+     brand's logo AND deleted its previous R2 object, where every sibling would
+     have answered 404. */
+  const brandCoSql = activeCompanySql(c);
   const brand = await c.env.DB.prepare(
-    `SELECT id, name, logo_r2_key FROM project_brands WHERE id = ?`
+    `SELECT id, name, logo_r2_key FROM project_brands WHERE id = ?${brandCoSql}`
   )
     .bind(id)
     .first<{ id: number; name: string; logo_r2_key: string | null }>();
@@ -477,7 +484,7 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
   // previous one (orphans are cheap; a failed delete never fails the upload).
   const prevKey = brandLogoKeyOf(brand);
   await c.env.DB.prepare(
-    `UPDATE project_brands SET logo_r2_key = ? WHERE id = ?`
+    `UPDATE project_brands SET logo_r2_key = ? WHERE id = ?${brandCoSql}`
   )
     .bind(key, id)
     .run();
@@ -3203,6 +3210,18 @@ app.post("/:id/phase-photos", async (c) => {
     }
   }
 
+  /* project_phase_photos carries no company_id, so the boundary is the parent
+     project — the rule GET /:id/phase-photos states below and applies, and this
+     write did not: a projects.write holder in one company could attach a photo
+     to the other company's project, where it is then invisible to everyone
+     (the GET filters it out). Same scoped-projects lookup PATCH /:id uses. */
+  const owner = await c.env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!owner) return c.json({ error: "Not found" }, 404);
+
   const r = await c.env.DB.prepare(
     `INSERT INTO project_phase_photos
        (project_id, phase, r2_key, content_type, caption, uploaded_by)
@@ -3249,8 +3268,15 @@ app.delete("/phase-photos/:photoId", async (c) => {
   const photoId = parseInt(c.req.param("photoId"), 10);
   if (isNaN(photoId)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
+  /* Scoped to the parent project's company — the same boundary the GET states
+     and the same EXISTS form it uses. Without it a photoId from the other
+     company resolved here and the DELETE below removed both the row and its R2
+     object, while the GET that would have shown it 404s. */
+  const photoCoSql = activeCompanySql(c, "p.company_id");
   const row = await c.env.DB.prepare(
-    `SELECT project_id, phase, uploaded_by, r2_key FROM project_phase_photos WHERE id = ?`
+    `SELECT project_id, phase, uploaded_by, r2_key FROM project_phase_photos WHERE id = ?${
+      photoCoSql ? ` AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_id${photoCoSql})` : ""
+    }`
   )
     .bind(photoId)
     .first<{ project_id: number; phase: "setup" | "dismantle" | "service" | "schedule"; uploaded_by: number | null; r2_key: string }>();

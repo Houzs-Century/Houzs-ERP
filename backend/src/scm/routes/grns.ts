@@ -2920,6 +2920,25 @@ grns.post('/:id/items', async (c) => {
 
   const sb = c.get('supabase');
   const user = c.get('user');
+  /* company-scope: PROVE THE PARENT GRN FIRST — the same gate PATCH /:id (:2700)
+     opens with, and this handler had none. A STAMP IS NOT A PREDICATE: the
+     insert below stamped company_id = activeCompanyId(c), which says who was
+     typing, not whose GRN was loaded. Every read here keys on `grnId` alone and
+     the client is service-role (RLS bypassed, mig 0061), so a GRN id from the
+     other company was accepted: the line landed on THEIR goods receipt stamped
+     with OUR company, recomputeGrnTotals re-totalled their header to include it,
+     and (once the GRN is confirmed) it writes their inventory IN and rolls their
+     PO's received_qty. That is a money-path write across a company boundary,
+     and it also produced a GRN whose lines disagree with its own header.
+     Refused BEFORE the child-lock and status probes so an out-of-company id
+     cannot even be used to ask whether that GRN exists or has downstream docs. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: grnOwn } = await scopeToCompanyId(
+    sb.from('grns').select('id').eq('id', grnId), co.companyId,
+  ).maybeSingle();
+  if (!grnOwn) return c.json(NOT_THIS_COMPANY, 404);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
@@ -3022,7 +3041,10 @@ grns.post('/:id/items', async (c) => {
     uom: (it.uom as string) ?? 'UNIT',
     delivery_date: (it.deliveryDate as string) ?? null,
   };
-  const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  /* co.companyId, not activeCompanyId(c): the parent GRN was proved to be this
+     company's at the top, so the line's stamp is now the company that owns the
+     header rather than whatever the switcher happened to say. */
+  const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-receipt verification. The pre-check above is a

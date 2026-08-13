@@ -380,6 +380,14 @@ lorryCapacity.patch('/lorries/:id/in-house', async (c) => {
     .select('id, plate, is_internal')
     .single();
   if (error) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
@@ -402,6 +410,20 @@ const repairSchema = z.object({
 });
 
 lorryCapacity.put('/lorries/:id/repair-days', async (c) => {
+  /* company-scope: UNIFIED FLEET — same verdict as PATCH /lorries/:id/in-house
+     above, re-derived 2026-08-13 for the WRITE-specific question: the
+     lorry_maintenance row is stamped `activeCompanyId(c)` while its parent
+     scm.lorries row carries its own company_id (mig 0083), so the two CAN
+     disagree. They are allowed to: mig 0121's DDL says company_id on these
+     lorry-child tables is stamped on insert but "NOT used to scope reads",
+     because a lorry's history must be visible wherever the lorry is. Checked
+     every reader of lorry_maintenance — one in scm/lib/fleet-availability.ts,
+     two in fleet-maintenance.ts, two in dp-orders.ts, two in this file (grep
+     `from('lorry_maintenance')`) — and none selects, filters or groups on
+     company_id; they all key on lorry_id and the date window. Grounding a lorry
+     must ground it for BOTH companies' dispatchers, so scoping the DELETE of the
+     prior managed window just below would be the actual bug: one company could
+     not clear a repair window the other had opened. */
   const id = c.req.param('id');
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
