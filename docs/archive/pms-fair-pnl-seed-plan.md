@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The seed ran and the follow-up reconcile completed **2026-07-27**. The one item still open is tracked in `tasks/FAIR-PNL-RENTAL-OPEN.md`. Kept for history; do not follow it as a current instruction.
+
 # PMS historical seed — FAIR PNL 2025 + 2026 (build-ready plan)
 
 _Owner request 2026-07-26: backfill historical roadshow projects from the two FAIR PNL Excel files into the PMS so the Finance Snapshot + analytics show real history without re-typing from Excel. Branch `feat/pms-fair-pnl-seed`. **Release HELD** — the prod write runs only on the owner's explicit go-ahead, via a DRY-RUN first._
