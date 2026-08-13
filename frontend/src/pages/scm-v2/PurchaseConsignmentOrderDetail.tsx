@@ -28,7 +28,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Pencil, Plus, Printer, Trash2, Save, Ban, ChevronDown,
+  ArrowLeft, Pencil, Plus, Printer, Save, Ban, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -40,7 +40,6 @@ import {
   useUpdatePurchaseConsignmentOrderItem,
   useDeletePurchaseConsignmentOrderItem,
   useCancelPurchaseConsignmentOrder,
-  useDeletePurchaseConsignmentOrder,
 } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import {
   useSuppliers,
@@ -130,7 +129,6 @@ export const PurchaseConsignmentOrderDetail = () => {
   const detail = usePurchaseConsignmentOrderDetail(id ?? null);
   const updateHeader = useUpdatePurchaseConsignmentOrderHeader();
   const cancel = useCancelPurchaseConsignmentOrder();
-  const deletePo = useDeletePurchaseConsignmentOrder();
   const addItem = useAddPurchaseConsignmentOrderItem();
   const updateItem = useUpdatePurchaseConsignmentOrderItem();
   const deleteItem = useDeletePurchaseConsignmentOrderItem();
@@ -522,25 +520,9 @@ export const PurchaseConsignmentOrderDetail = () => {
                 <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
               </Button>
             )}
-            {po.status === 'CANCELLED' && (
-              <Button variant="ghost" size="md"
-                onClick={async () => {
-                  if (!(await askConfirm({
-                    title: `Permanently delete ${pcNo}?`,
-                    body: 'This removes the header + all line items and cannot be undone.',
-                    confirmLabel: 'Delete',
-                    danger: true,
-                  }))) return;
-                  deletePo.mutate(po.id, {
-                    onSuccess: () => navigate('/scm/purchase-consignment-orders'),
-                    onError:   (err) => notify({ title: 'Delete failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-                  });
-                }}
-                disabled={deletePo.isPending}>
-                <Trash2 {...ICON} />
-                <span>{deletePo.isPending ? 'Deleting…' : 'Delete'}</span>
-              </Button>
-            )}
+            {/* A "Permanently delete" button used to sit here on CANCELLED.
+                It and its endpoint are gone (owner rule 2026-08-11: 不可以删
+                只可以 cancel) — CANCELLED is terminal and the record stays. */}
             {/* Receive Goods → /scm/purchase-consignment-receives/new?fromPcOrder=X */}
             {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
               <Button variant="primary" size="md"

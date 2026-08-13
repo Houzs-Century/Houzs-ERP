@@ -90,8 +90,14 @@ const OPERATOR_REASON = 'operator-confirmed';
    location /     validateSlip may clear the venue, and the create core's
    locationMatch  venue-by-active-project autofill then RESOLVES it from the
                   rep's exhibition project — a venue the slip never named.
-   processingDate the forward rule PINS it to today (owner 2026-07-04,
-                  scan-so.ts:3795-3806); it is never the slip's date.
+   slipDate       the slip's OWN written date. The SO has no column for it: the
+                  forward mapper writes NEITHER date onto a scan draft (owner
+                  2026-08-08, 2990-SO-2608-007 — a DRAFT never carries a
+                  Processing Date, superseding the 2026-07-04 pin-to-today
+                  rule). The SO's Processing Date (internal_expected_dd) is a
+                  DIFFERENT fact the operator keys at review, so reading it back
+                  into slipDate would teach the model to read the factory start
+                  date off the slip's date line.
    priceRmGuess   the create core REPRICES every goods line through the
                   pricing engine, so unit_price_centi is the catalog's figure,
                   not the operator's correction of the handwritten one.
@@ -110,7 +116,7 @@ const OPERATOR_REASON = 'operator-confirmed';
    notes, the     SO line, and the inch hints are collapsed into snapped
    inch hints     Maintenance-pool variant strings. Not recoverable; carried. */
 export const CARRIED_NOT_INVERTED = Object.freeze([
-  'remarks', 'location', 'locationMatch', 'processingDate', 'priceRmGuess',
+  'remarks', 'location', 'locationMatch', 'slipDate', 'priceRmGuess',
   'installmentPlanMatch', 'onlineTypeMatch', 'totalRm', 'salesRep',
   'paymentMethod', 'images', 'payments',
 ]);

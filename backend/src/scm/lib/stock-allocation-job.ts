@@ -8,13 +8,22 @@
    write, and a Worker crash between the two is impossible.
 
    The other THIRTY-FOUR allocation triggers in this codebase still call
-   `recomputeSoStockAllocation` inline and best-effort (GRN post/cancel, DO
-   ship/cancel, delivery + purchase returns, stock takes, transfers, inventory
-   adjustments, consignment, and eight paths in mfg-sales-orders itself). For
-   those, a crash between the source write and the recompute leaves READY /
-   PENDING and the SO header status stale until some later mutation happens to
-   sweep. ALLOCATION IS NOT DURABLE IN GENERAL. Do not read the word "durable"
-   in this file as covering the whole surface — it covers four entry points.
+   `recomputeSoStockAllocation` best-effort (GRN post/cancel, DO ship/cancel,
+   delivery + purchase returns, stock takes, transfers, inventory adjustments,
+   consignment, and eight paths in mfg-sales-orders itself). For those, a crash
+   between the source write and the recompute leaves READY / PENDING and the SO
+   header status stale until some later mutation happens to sweep. ALLOCATION IS
+   NOT DURABLE IN GENERAL. Do not read the word "durable" in this file as
+   covering the whole surface — it covers four entry points.
+
+   THIRTY-THREE of those thirty-four are `await`ed inline, so the operator's
+   request pays for the whole global sweep. ONE — the SO header PATCH — is
+   DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
+   upgrade: same call, same crash window, just moved off the response path. If
+   anything it is harder to reason about, because the operator has already been
+   told the save succeeded when the sweep dies. It buys latency and nothing
+   else; the honest fix for that call site is still to move it onto
+   `runScmPgCommand` so it can join the durable four.
 
    The exact inventory is pinned by tests/stockAllocationDurabilityScope.test.ts,
    which fails if any count moves. Converting the rest requires first moving
@@ -230,6 +239,44 @@ export async function drainStockAllocationRecomputeWithClient(
 
 export async function drainStockAllocationRecompute(env: Env): Promise<AllocationDrainResult> {
   return drainStockAllocationRecomputeWithClient(getSupabaseService(env));
+}
+
+/**
+ * Fire the global recompute WITHOUT making the caller's response wait for it.
+ *
+ * WHY THIS EXISTS (owner 2026-08-10, measured). Saving an SO header took 10.6s
+ * on production. The write itself (apply_so_header_cas) is milliseconds; the
+ * rest was this recompute, which is global by design — it walks 2,784 active
+ * SOs and their 14,076 lines through PostgREST's 1000-row pages, ~25-30
+ * sequential round trips at roughly 300ms each. That cost does not shrink with
+ * `scopeToDocNo`, which narrows the WRITES only.
+ *
+ * WHAT YOU GIVE UP. The response returns before the projection settles, so a
+ * client that refetches immediately can render READY / PENDING badges one sweep
+ * behind for a few seconds. They self-correct on the next read. Nothing the
+ * operator just typed is affected: the header row is already committed.
+ *
+ * WHAT YOU DO NOT GIVE UP. Durability is unchanged, because there was none to
+ * lose here — see the SCOPE header. Read that before reaching for this in a new
+ * call site; if the route can join a PG command transaction, use
+ * `scheduleStockAllocationAfterCommand` instead and get a real guarantee.
+ *
+ * Failures are logged and swallowed, exactly as the inline callers do — the
+ * promise is `.catch`ed BEFORE it is handed to waitUntil so a recompute error
+ * can never surface as an unhandled rejection that fails the whole invocation.
+ */
+export function deferAllocationRecompute(c: any, sb: any, where: string): void {
+  const sweep = recomputeSoStockAllocation(sb).then(
+    () => undefined,
+    (error: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error(`[so-allocation] ${where} failed:`, error);
+    },
+  );
+  /* c.executionCtx throws outside Workers (vitest). There the floating promise
+     just runs — already `.catch`ed, so it cannot break the test run. */
+  try { c.executionCtx.waitUntil(sweep); }
+  catch { /* non-Workers runtime — let the floating promise run */ }
 }
 
 /** Queue transactionally, then make one after-commit attempt for low latency. */

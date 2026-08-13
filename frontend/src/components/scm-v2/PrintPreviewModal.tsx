@@ -109,8 +109,10 @@ export function PrintPreviewModal({
   onClose,
   docTitle,
   docNo,
+  companyName,
   rows,
   onViewPdf,
+  viewLabel = "View full PDF",
   onPrint,
   onDownload,
 }: {
@@ -120,9 +122,19 @@ export function PrintPreviewModal({
   docTitle: string;
   /** Document number in the band's right column. */
   docNo: string;
+  /* Override the band's company. Needed where the document does NOT print on
+     the active workspace's letterhead: a service case can be raised under one
+     entity and handed to the customer on the other's paper, and the band has to
+     name the one that will actually be printed — otherwise the picker says 2990
+     while the card says Houzs (owner 2026-08-11: "我选了2990但是Preview还是
+     Houzs"). Omit and the band follows the active company, which is right for
+     every document that cannot be re-headed. */
+  companyName?: string;
   rows: PrintPreviewRow[];
   /** Render the real PDF in a new tab. Omit to hide the button. */
   onViewPdf?: PrintAction;
+  /** Label for that button — HTML surfaces open a page, not a PDF. */
+  viewLabel?: string;
   onPrint: PrintAction;
   /** Omit on surfaces with no PDF to download — the HTML-printed pages (fleet
    *  run sheet, portal case, listing shell, org chart) print the page itself,
@@ -162,7 +174,7 @@ export function PrintPreviewModal({
               disabled={pending !== null}
               onClick={run("view", onViewPdf)}
             >
-              {pending === "view" ? "Preparing…" : "View full PDF"}
+              {pending === "view" ? "Preparing…" : viewLabel}
             </Button>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -193,7 +205,7 @@ export function PrintPreviewModal({
         <div className="flex items-start justify-between gap-3 bg-sidebar px-5 py-4 text-sidebar-ink">
           <div>
             <div className="font-display text-[14px] font-bold uppercase tracking-wider text-white">
-              {shortCompanyName(branding.companyName)}
+              {shortCompanyName(companyName ?? branding.companyName)}
             </div>
             <div className="mt-0.5 text-[10.5px] uppercase tracking-brand text-sidebar-ink-muted">
               {docTitle}

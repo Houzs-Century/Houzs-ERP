@@ -1361,6 +1361,28 @@ function ProjectsListView() {
         all.push(...batch);
         if (batch.length === 0 || all.length >= (res.total ?? all.length)) break;
       }
+      // Owner 2026-08-12: cluster same-event rows (same venue + start date)
+      // together so an event's different-brand projects sit side by side in the
+      // export instead of being scattered by the brand/date sort. Overall order
+      // is preserved — each event stays where its FIRST row appeared, and its
+      // other brands are pulled up next to it (stable within the event).
+      {
+        const eventKey = (r: ProjectRow) =>
+          `${(r.venue ?? "").trim().toUpperCase()}||${r.start_date ?? ""}`;
+        const origIdx = new Map<ProjectRow, number>();
+        all.forEach((r, i) => origIdx.set(r, i));
+        const firstSeen = new Map<string, number>();
+        for (const r of all) {
+          const k = eventKey(r);
+          if (!firstSeen.has(k)) firstSeen.set(k, origIdx.get(r)!);
+        }
+        all.sort((a, b) => {
+          const fa = firstSeen.get(eventKey(a))!;
+          const fb = firstSeen.get(eventKey(b))!;
+          if (fa !== fb) return fa - fb;
+          return origIdx.get(a)! - origIdx.get(b)!;
+        });
+      }
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
@@ -3263,9 +3285,12 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
-  // An event that has not started only carries booked rental, so counting it
-  // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "completed";
+  // Owner decision 2026-08-11: default to the full picture. "completed" was
+  // the original default (an unstarted event carries only booked rental, which
+  // reads as a loss that has not happened), but half the year's sales sat on
+  // events staff never marked completed, so the completed-only view kept
+  // understating revenue by ~50% and reading as "the numbers are wrong".
+  const scope = params.get("af_scope") ?? "all";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -6044,15 +6069,22 @@ function ProjectDetailContent({
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
       // Two-stage defect triage (owner 2026-08-07):
-      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
-      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canReview  = the defect reviewer for THIS project's state (owner
+      //    2026-08-11 two-warehouse split): Nancy (Ops Exec role) for the region
+      //    states, Shukor (Storekeeper Supervisor) for every other state; admin
+      //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
       canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
@@ -8692,6 +8724,39 @@ function DocRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const reviewable = REVIEWABLE_TITLES.has(item.title);
   const latest = attachments[0];
+  // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
+  // VERSION to the approve/reject decision made while it was the newest file, so
+  // the FILES list shows "Approved/Rejected · who · when" per version and greys a
+  // rejected one — instead of only the item-level trail. No schema change:
+  // uploaded_at and comment.created_at are both ISO-Z, so a plain lexical compare
+  // is correct. A decision in [thisUpload, nextUpload) belongs to this version;
+  // the current newest file with no later decision stays unlabelled (still
+  // pending). Batch uploads take the last decision inside their window. Merged
+  // crew photos (id < 0) are excluded — they're not review versions.
+  const versionStatus = useMemo(() => {
+    const decisions = comments
+      .filter((c) => c.kind === "approve" || c.kind === "reject")
+      .slice()
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    const asc = attachments
+      .filter((a) => a.id > 0)
+      .sort((a, b) => ((a.uploaded_at || "") < (b.uploaded_at || "") ? -1 : 1));
+    const m = new Map<number, { kind: "approve" | "reject"; who: string; at: string }>();
+    asc.forEach((att, i) => {
+      const ta = att.uploaded_at || "";
+      const tnext = i + 1 < asc.length ? asc[i + 1].uploaded_at || "" : "￿";
+      const d = decisions
+        .filter((dec) => dec.created_at >= ta && dec.created_at < tnext)
+        .pop();
+      if (d)
+        m.set(att.id, {
+          kind: d.kind as "approve" | "reject",
+          who: d.user_name || "—",
+          at: d.created_at,
+        });
+    });
+    return m;
+  }, [comments, attachments]);
   const rs = item.review_status;
   const awaiting = rs === "pending_review" || rs === "amended";
   const naActive = item.status === "na";
@@ -8908,22 +8973,24 @@ function DocRow({
                 disabled={uploading}
                 title="Attach file"
                 aria-label="Attach file"
-                className="rounded-md border border-border bg-surface inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"
+                className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               >
-                {uploading ? "…" : <Paperclip size={13} />}
+                <Paperclip size={12} />
+                {uploading ? "…" : "Attach"}
               </button>
             )}
             {canManage && (
               <button
                 onClick={() => setRemarkOpen((x) => !x)}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   remarkNotes.length > 0
                     ? "border-accent/40 bg-accent/5 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
                 title="Add a remark"
               >
+                <MessageSquare size={12} />
                 {remarkNotes.length > 0 ? `Remark (${remarkNotes.length})` : "Remark"}
               </button>
             )}
@@ -8931,12 +8998,14 @@ function DocRow({
               <button
                 onClick={() => onStatus(item, naActive ? "pending" : "na")}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   naActive
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
+                title={naActive ? "Mark applicable" : "Mark N/A"}
               >
+                <Ban size={12} />
                 N/A
               </button>
             )}
@@ -9025,18 +9094,36 @@ function DocRow({
         <tr>
           <td colSpan={6} className="px-3 pb-2">
             <div className="overflow-hidden rounded-md border border-border-subtle">
-              {attachments.map((a) => (
-                <TaskAttachmentRow
-                  key={a.id}
-                  attachment={a}
-                  /* id < 0 = merged crew phase photo — view/download only. */
-                  canManage={canManage && a.id > 0}
-                  showRemark={remarkOpen}
-                  itemTitle={item.title}
-                  onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
-                  toast={toast}
-                />
-              ))}
+              {attachments.map((a) => {
+                // Part 2 (owner 2026-08-10): a rejected version stays in the list,
+                // greyed, tagged with who rejected it and when; an approved one is
+                // tagged in green. Undecided current file: no tag.
+                const vs = versionStatus.get(a.id);
+                return (
+                  <div key={a.id} className={vs?.kind === "reject" ? "opacity-60" : undefined}>
+                    <TaskAttachmentRow
+                      attachment={a}
+                      /* id < 0 = merged crew phase photo — view/download only. */
+                      canManage={canManage && a.id > 0}
+                      showRemark={remarkOpen}
+                      itemTitle={item.title}
+                      onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
+                      toast={toast}
+                    />
+                    {vs && (
+                      <div
+                        className={cn(
+                          "px-2 pb-1.5 text-[9px] font-semibold",
+                          vs.kind === "approve" ? "text-synced" : "text-err",
+                        )}
+                      >
+                        {vs.kind === "approve" ? "Approved" : "Rejected"} · {vs.who} ·{" "}
+                        {formatDateTime(vs.at)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </td>
         </tr>
@@ -9337,6 +9424,27 @@ function ChecklistRow({
     fileInputRef.current?.click();
   }
 
+  // Remove a file from a card-section task (owner 2026-08-11: "add remove button
+  // for whoever can edit"). Gated in the UI on the SAME attach capability
+  // (canManage) as the Attach button, so anyone who can add a file can remove it;
+  // the backend DELETE already allows projects.write / tick-for-own-role.
+  async function removeAttachment(att: TaskAttachment) {
+    if (
+      !(await dialog.confirm({
+        message: `Remove "${att.file_name}"?`,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/checklist/attachments/${att.id}`);
+      onAttachmentsChanged?.();
+    } catch (e: any) {
+      toast?.error(e?.message || "Something went wrong. Please try again.");
+    }
+  }
+
   /** Open one attachment in a new tab (auth-protected R2 goes through
    *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
    *  Used by the per-file chips on pill rows (Rental Payment / Security
@@ -9521,18 +9629,32 @@ function ChecklistRow({
         {attachments && attachments.length > 0 && (
           <div className="mt-1.5 flex flex-col gap-0.5">
             {attachments.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
-                title={`Open ${a.file_name}`}
-                className="flex items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
-              >
-                <Paperclip size={11} className="shrink-0" />
-                <span className="truncate underline decoration-dotted underline-offset-2">
-                  {a.file_name}
-                </span>
-              </button>
+              <div key={a.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
+                  title={`Open ${a.file_name}`}
+                  className="flex min-w-0 items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
+                >
+                  <Paperclip size={11} className="shrink-0" />
+                  <span className="truncate underline decoration-dotted underline-offset-2">
+                    {a.file_name}
+                  </span>
+                </button>
+                {/* Remove file — shown to whoever can attach here (owner
+                    2026-08-11). id < 0 = merged crew photo, never removable. */}
+                {canManage && !readOnlyAttach && a.id > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
+                    title="Remove file"
+                    aria-label={`Remove ${a.file_name}`}
+                    className="shrink-0 text-ink-muted hover:text-err"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -9689,44 +9811,50 @@ function ChecklistRow({
               if (f) uploadAttachment(f, cap);
             }}
           />
+          {/* Attach / Remark / N/A — BOXED style (owner 2026-08-11):
+              "one consistent button style for this action group across the
+              entire desktop PMS". These were an icon-stack (icon over label, no
+              border) while the table sections (Contract, Booth Layout & Setup)
+              used a bordered box, so the same three actions looked like two
+              different controls depending on the section. Now every section
+              uses the DocRow treatment: icon + label inside one bordered pill,
+              accent-filled when active. */}
           {canManage && !readOnlyAttach && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
-              className="inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 text-ink-muted hover:text-accent disabled:opacity-50"
+              className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               title="Attach file"
             >
-              <Paperclip size={13} />
-              <span className="text-[9px] font-semibold tracking-wide leading-none">
-                {uploading ? "…" : "Attach"}
-              </span>
+              <Paperclip size={12} />
+              {uploading ? "…" : "Attach"}
             </button>
           )}
           <button
             onClick={() => setExpanded((x) => !x)}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:text-accent",
-              expanded ? "text-accent" : "text-ink-muted"
+              ACTION_BTN_BASE,
+              expanded
+                ? "border-accent/40 bg-accent/5 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title="Remark"
           >
-            <MessageSquare size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">
-              Remark
-            </span>
+            <MessageSquare size={12} />
+            Remark
           </button>
           <button
             onClick={() => onStatus(item.status === "na" ? "pending" : "na")}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:bg-surface-dim",
+              ACTION_BTN_BASE,
               item.status === "na"
-                ? "text-accent"
-                : "text-ink-muted hover:text-accent"
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title={item.status === "na" ? "Mark applicable" : "Mark N/A"}
           >
-            <Ban size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">N/A</span>
+            <Ban size={12} />
+            N/A
           </button>
         </div>
       </div>
@@ -10360,6 +10488,16 @@ function AddStockTransferForm({
 function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
+
+/** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
+ *  2026-08-11: "one consistent button style for this action group across the
+ *  entire desktop PMS"). Boxed = icon + label inside a bordered pill, the style
+ *  the Contract / Booth Layout tables already used; the checklist-card sections
+ *  (Operation, Setup & Dismantle Documents, Expo Map) were an unbordered
+ *  icon-stack. Callers append only the colour/state classes, so the geometry can
+ *  never drift between sections again. */
+const ACTION_BTN_BASE =
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[9px] font-semibold leading-none min-w-[46px]";
 
 function roleChipClass(role: string | null | undefined): string {
   switch ((role || "").toUpperCase()) {
@@ -11551,11 +11689,36 @@ function ScheduleRef({
     }
   };
   return (
-    <div className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3">
+    <div
+      // PASTE-TO-UPLOAD (owner 2026-08-11): a schedule screenshot is normally
+      // on the clipboard (Snipping Tool / PrtSc), not saved as a file, so
+      // click-to-browse alone forced a pointless save-then-pick detour. Click
+      // the box (tabIndex makes it focusable) then Ctrl+V / Cmd+V and the
+      // clipboard image uploads straight away. Both routes stay available.
+      tabIndex={readOnly ? -1 : 0}
+      onPaste={(e) => {
+        if (readOnly || busy) return;
+        const items = Array.from(e.clipboardData?.items ?? []);
+        const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+        if (!img) return; // let a normal text paste through untouched
+        const blob = img.getAsFile();
+        if (!blob) return;
+        e.preventDefault();
+        const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        // Clipboard blobs are nameless — stamp one so the row reads sensibly.
+        void upload(new File([blob], `schedule-${Date.now()}.${ext}`, { type: blob.type }));
+      }}
+      className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
+    >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
           Schedule reference
         </span>
+        {!readOnly && (
+          <span className="text-[9.5px] text-ink-muted">
+            click here, then Ctrl+V to paste a screenshot
+          </span>
+        )}
       </div>
       {items.length > 0 ? (
         <PhotoGroup label="Schedule" photos={items} onChange={() => photos.reload()} />

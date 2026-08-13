@@ -195,8 +195,20 @@ describe('validateItemCodes — must move in lock-step with the pricing read', (
     expect(await validateItemCodes(sb(), ['CODYS-(K)'], 1)).toEqual({ ok: true });
   });
 
-  it('UNSCOPED admits it — which the now-scoped pricing read would then price at 0', async () => {
-    expect(await validateItemCodes(sb(), ['CODYS-(K)'])).toEqual({ ok: true });
+  it('EXPLICITLY unscoped admits it — which the now-scoped pricing read would then price at 0', async () => {
+    // `null` still degrades to no predicate; what changed (optional-param-noop
+    // sweep, 2026-08-13) is that it can no longer happen by SAYING NOTHING.
+    expect(await validateItemCodes(sb(), ['CODYS-(K)'], null)).toEqual({ ok: true });
+  });
+
+  it('omitting the company is a COMPILE error, not a silent unscoped gate', () => {
+    // companyId is a required positional argument, and this is the assertion
+    // that fails without it. Never invoked: the point is that the call does not
+    // compile. Make the parameter optional again and the directive below goes
+    // unused, which `npm run typecheck` reports as TS2578.
+    // @ts-expect-error
+    const omitted = () => validateItemCodes(sb(), ['CODYS-(K)']);
+    expect(omitted).toBeInstanceOf(Function);
   });
 });
 
@@ -206,14 +218,24 @@ describe('allowed-options loaders — a miss here means the gate stops checking'
     expect((await loadProductAndModel(sb(), 'CODY-(SS)', 1)).model?.id).toBe('mdl-houzs-cody');
   });
 
-  it('UNSCOPED yields product=null on a duplicated code — the variant gate silently passes', async () => {
-    const { product, model } = await loadProductAndModel(sb(), 'CODY-(SS)');
+  /* UNSCOPED still yields product=null on a duplicated code — but the PGRST116
+     now comes out as `lookupError` instead of being discarded. That is the
+     whole difference: the caller can tell "the catalog says nothing about this
+     line" apart from "we could not ask the catalog", and only the first of
+     those is allowed to end in a saved line. */
+  it('UNSCOPED reports the PGRST116 instead of passing the gate as product=null', async () => {
+    const { product, model, lookupError } = await loadProductAndModel(sb(), 'CODY-(SS)');
     expect(product).toBeNull();
     expect(model).toBeNull();
+    expect(lookupError).toContain('multiple');
+  });
+
+  it('a scoped hit carries no lookupError, so the gate runs normally', async () => {
+    expect((await loadProductAndModel(sb(), 'CODY-(SS)', 2)).lookupError).toBeNull();
   });
 
   it('the batched form keys by code, so it too needs the company', async () => {
-    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 2)).get('CODY-(SS)')?.model?.id).toBe('mdl-2990-cody');
-    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 1)).get('CODY-(SS)')?.model?.id).toBe('mdl-houzs-cody');
+    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 2)).byCode.get('CODY-(SS)')?.model?.id).toBe('mdl-2990-cody');
+    expect((await loadProductsAndModels(sb(), ['CODY-(SS)'], 1)).byCode.get('CODY-(SS)')?.model?.id).toBe('mdl-houzs-cody');
   });
 });

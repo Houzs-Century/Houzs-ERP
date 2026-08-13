@@ -1,0 +1,50 @@
+name: Parentless DO / GR / SI / PI census (read-only)
+
+# How many downstream documents in production were raised with no parent, and
+# therefore can NEVER exist in AutoCount?
+#
+# AutoCount's 2.2 SDK builds a DO, GRN, Sales Invoice or Purchase Invoice only
+# by transferring a source document's lines (AddPartialTransferDetail is its one
+# construction primitive), so there is no create route to add and none could be
+# added. A parentless downstream document is a permanent shape mismatch.
+#
+# The count decides whether the owner wants a "must come from a parent" guard in
+# the ERP or accepts the gap. Every FUTURE one already writes a visible 'skipped'
+# outbox row (recordParentlessCreate); this measures the ones that predate that.
+#
+# Strictly read-only — SELECT only, no writes, no DDL, no transaction. See
+# backend/scripts/check-parentless-downstream.mjs.
+#
+# Manual trigger only: this is a question, not a gate, and a production DB read
+# must never become scheduled CI noise.
+on:
+  workflow_dispatch:
+
+# Own group, never the deploy's: it touches nothing and must not queue behind or
+# displace a release.
+concurrency:
+  group: parentless-downstream-census
+  cancel-in-progress: true
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-parentless-downstream.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; mirror the deploy jobs and
+          # the sibling read-only checks so an IPv4-only pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first

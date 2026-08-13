@@ -49,8 +49,8 @@ import { useFabricLibrary } from '../lib/queries';
 import {
   useUploadSoItemPhoto,
   useDeleteSoItemPhoto,
-  fetchSoItemPhotoSignedUrl,
 } from '../lib/sales-order-queries';
+import { cacheSoLinePhotoSignedUrl, useSoLinePhoto } from '../lib/so-line-photo';
 import { useDebouncedValue } from '../lib/hooks';
 import { useAuth, isAdminLevel, isHatchSales } from '../lib/auth';
 import { CATEGORY_BADGE } from '../lib/category-badges';
@@ -1154,8 +1154,13 @@ const SoLineCardInner = ({
                             // doesn't do a redundant /signed round-trip
                             // on first render of the just-uploaded photo.
                             // WO-7 — carry the thumbUrl the same way.
+                            // The startsWith('http') filter is load-bearing:
+                            // the upload route's OWN signing fallback returns
+                            // photoUrl as a RELATIVE proxy path, which an
+                            // <img src> cannot use. Filtered here, the cache
+                            // holds only <img>-loadable URLs by construction.
                             if (res.expiresAt && res.photoUrl?.startsWith('http')) {
-                              signedUrlCache.set(res.photoKey, {
+                              cacheSoLinePhotoSignedUrl(res.photoKey, {
                                 signedUrl: res.photoUrl,
                                 thumbUrl: res.thumbUrl,
                                 expiresAt: new Date(res.expiresAt).getTime(),
@@ -1422,43 +1427,31 @@ const FabricColourCombobox = ({
 export function missingRequiredVariants(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  itemCode?: string | null,
+  /* REQUIRED, like the rule it wraps. A wrapper that keeps the parameter
+     optional re-opens the hole one layer up: the DIVAN ONLY / adjustable-bed
+     exemptions key off this code, and a caller that omits it silently gets the
+     un-exempted answer with no compile error. Pass null where there is
+     genuinely no code — nothing is exempted then. */
+  itemCode: string | null,
 ): string[] {
   return missingVariantAxes(itemGroup, variants, itemCode).map((a) => a.label);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
-   PhotoThumb — Task #92 signed-URL flow
+   PhotoThumb — one tile of the edit card's photo strip
    ──────────────────────────────────────────────────────────────────────
-   Previously this fetched bytes through an authed Worker proxy on every
-   thumbnail render (N photos × N renders = N² Worker invocations). Now
-   each photoKey has a short-lived signed R2 GET URL we use directly as
-   <img src>. Cache layout:
-     - Module-level Map<photoKey, { signedUrl, expiresAt }> — survives
-       component unmounts (e.g. drawer open/close) within a single page
-       load, so reopening a SO doesn't re-sign every thumb.
-     - SKEW_BUFFER_MS — treat URLs within 30s of expiry as already
-       expired. Avoids the race where a URL passes our check, then 401s
-       at the browser because the clock drifted or R2's check fires
-       slightly later.
-     - On <img onError>, retry once with a fresh URL. The signed URL
-       MIGHT have expired between cache check and HTTP fetch, or the
-       cached entry pre-dated some R2 token-rotation event. One retry
-       is enough; a second failure means the photo is genuinely gone.
+   PRESENTATION ONLY. Everything about HOW a photo resolves — the signed-URL
+   cache and its expiry skew, the thumb tier, the authed-proxy fallback that is
+   the only reason photos display in production at all, the per-effect-run
+   attempt that survives StrictMode's double-invoke, and the blob caches —
+   lives in ../lib/so-line-photo.useSoLinePhoto, shared with the V2 read-only
+   strip. Read that file's header before changing any of it; three separate
+   production regressions have lived in there.
+
+   Exported as a test seam: SoLinePhotoFallback.test.tsx drives the real state
+   machine through this tile, which is the mount configuration production uses.
    ────────────────────────────────────────────────────────────────────── */
-
-const SIGNED_URL_SKEW_BUFFER_MS = 30_000;
-const signedUrlCache = new Map<string, { signedUrl: string; thumbUrl?: string; expiresAt: number }>();
-
-/* WO-7 — photoKeys whose `.thumb` sibling 404'd (every photo uploaded before
-   thumbnails shipped). Remembered at module level so reopening the SO doesn't
-   re-attempt a thumb we already know is missing. */
-const thumbMissingKeys = new Set<string>();
-
-const isCachedUrlFresh = (entry: { expiresAt: number } | undefined): boolean =>
-  !!entry && entry.expiresAt - SIGNED_URL_SKEW_BUFFER_MS > Date.now();
-
-const PhotoThumb = ({
+export const PhotoThumb = ({
   photoKey, docNo, itemId, canDelete, onDelete,
 }: {
   photoKey:  string;
@@ -1467,87 +1460,12 @@ const PhotoThumb = ({
   canDelete: boolean;
   onDelete:  () => void;
 }) => {
-  const [urls, setUrls]   = useState<{ signedUrl: string; thumbUrl?: string } | null>(() => {
-    const cached = signedUrlCache.get(photoKey);
-    return isCachedUrlFresh(cached) ? cached! : null;
-  });
-  const [error, setError] = useState<string | null>(null);
-  /* WO-7 — start on the thumb unless this key is already known thumbless.
-     A failed thumb load flips to the full signedUrl (the required fallback
-     for pre-thumb photos); a failed FULL load keeps the original
-     refetch-once behaviour below. */
-  const [useFull, setUseFull] = useState<boolean>(() => thumbMissingKeys.has(photoKey));
-  // Tracks whether we've already retried after a 403/error. Prevents
-  // a permanently-broken key from looping forever.
-  const retriedRef = useRef(false);
-
-  const loadSignedUrl = async (cancelled: () => boolean) => {
-    if (!docNo || !itemId) return;
-    try {
-      const { signedUrl, thumbUrl, expiresAt } = await fetchSoItemPhotoSignedUrl(docNo, itemId, photoKey);
-      if (cancelled()) return;
-      signedUrlCache.set(photoKey, {
-        signedUrl,
-        thumbUrl,
-        expiresAt: new Date(expiresAt).getTime(),
-      });
-      setUrls({ signedUrl, thumbUrl });
-      setError(null);
-    } catch (e) {
-      if (!cancelled()) setError(e instanceof Error ? e.message : 'Something went wrong.');
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const cached = signedUrlCache.get(photoKey);
-    if (isCachedUrlFresh(cached)) {
-      setUrls(cached!);
-      return;
-    }
-    // Cache miss or stale entry — fetch a fresh signed URL.
-    loadSignedUrl(() => cancelled);
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docNo, itemId, photoKey]);
-
-  const showingThumb = !useFull && !!urls?.thumbUrl;
-
-  const handleImgError = () => {
-    /* Thumb tier failed — almost always a pre-thumb photo whose `.thumb`
-       object does not exist (signed URL 404s). Fall back to the full image
-       WITHOUT burning the retry: the full URL is already in hand. */
-    if (showingThumb) {
-      thumbMissingKeys.add(photoKey);
-      setUseFull(true);
-      return;
-    }
-    // The signed URL we handed to <img src> didn't load. Most likely
-    // it expired (cache survived a tab being suspended for >1 hour);
-    // could also be an R2 transient. Drop the cache entry and refetch
-    // once. retriedRef prevents an infinite onError → setState loop
-    // if the new URL also fails.
-    if (retriedRef.current) {
-      setError('image_load_failed');
-      return;
-    }
-    retriedRef.current = true;
-    signedUrlCache.delete(photoKey);
-    setUrls(null);
-    const cancelled = false;
-    loadSignedUrl(() => cancelled);
-    // No cleanup return — this isn't an effect; the cancelled flag
-    // is only meaningful if the component unmounts mid-fetch, which
-    // would also blow away the setState calls harmlessly.
-    void cancelled;
-  };
-
-  const src = urls ? (showingThumb ? urls.thumbUrl! : urls.signedUrl) : null;
+  const { src, error, onImgError } = useSoLinePhoto(photoKey, docNo, itemId);
 
   return (
     <div className={styles.photoTile}>
       {src ? (
-        <img src={src} alt="Line photo" onError={handleImgError} />
+        <img src={src} alt="Line photo" onError={onImgError} />
       ) : error ? (
         <span className={styles.photoError} title={error}>err</span>
       ) : (

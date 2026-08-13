@@ -18,7 +18,19 @@
 //     dialog-service serviceNotify.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authedFetch } from './authed-fetch';
+import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+// The photo PROXY fallback streams raw bytes, which authedFetch would try to
+// JSON-parse — so it uses the shared correlated transport + token accessor
+// directly, exactly as slip.ts does for the same reason.
+import { readAuthToken } from '../../../lib/authToken';
+import {
+  consumeCorrelated,
+  correlateError,
+  correlatedFetch,
+  requestIdFromError,
+  requestIdFromResponse,
+} from '../../../lib/requestCorrelation';
+import { companyHeader } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -601,21 +613,151 @@ export const useDeleteSalesOrderPayment = () => {
   });
 };
 
-/* ── Photo signed-URL helper (plain async fn, not a hook) ─────────────────── */
+/* ── Photo URL helper (plain async fn, not a hook) ─────────────────────────
+   THE WIRE SHAPE IS A UNION, AND THE PROXY ARM IS THE PRODUCTION ARM.
 
-export type SignedPhotoUrlResponse = {
+   `GET /photos/:photoKey/signed` mints a presigned R2 URL, which needs the R2
+   S3-API credentials (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT).
+   Those are wrangler SECRETS and have never been provisioned in production, so
+   signing throws for EVERY photo and the route answers its `mode: 'proxy'` arm
+   — always, for every tile, today. The `mode: 'signed'` arm is the one nothing
+   currently takes. Mirror of backend/src/scm/lib/photoProxyFallback.ts; keep
+   the two in step.
+
+   The proxy arm deliberately carries NO `signedUrl`. Its `proxyPath` is behind
+   the bearer-auth gate, and a browser sends no Authorization header on an
+   <img src> — piping it into one trades a visible 500 for an invisible 401.
+   Fetch it with the authed client and hand <img> a blob: object URL instead
+   (fetchSoItemPhotoBlob below does exactly that).
+
+   TYPED AS A UNION ON PURPOSE. This used to be declared
+   `{ signedUrl: string; thumbUrl?: string; expiresAt: string }` — flatly untrue
+   of the payload production actually returns — so `res.signedUrl` type-checked
+   everywhere while being `undefined` at runtime on every request, and a new
+   photo surface could be written straight onto the outage with no compile
+   error. Narrow on `mode` and the compiler now refuses that. */
+
+export type SignedPhotoPayload = {
+  /** Absent on responses minted before the union landed; treat as 'signed'. */
+  mode?: 'signed';
   signedUrl: string;
   /** WO-7 — signed `.thumb` sibling URL (absent from pre-thumb backends). */
   thumbUrl?: string;
   expiresAt: string;
 };
 
+export type ProxyPhotoPayload = {
+  mode: 'proxy';
+  /** API-client-relative path; fetch with the authed client, read as a Blob. */
+  proxyPath: string;
+  /** Same, for the `.thumb` sibling. 404s when no thumb was ever generated. */
+  thumbProxyPath: string;
+  expiresAt: null;
+  /** Why signing failed, e.g. "R2_ACCESS_KEY_ID not configured". */
+  reason: string;
+};
+
+export type PhotoUrlPayload = SignedPhotoPayload | ProxyPhotoPayload;
+
+/** True when the payload cannot supply an `<img src>` and the caller must
+ *  stream the bytes through the authed proxy instead. Covers both the explicit
+ *  `mode: 'proxy'` arm and a signed arm whose URL is not directly loadable. */
+export const isProxyPhotoPayload = (p: PhotoUrlPayload): p is ProxyPhotoPayload =>
+  p.mode === 'proxy';
+
 export async function fetchSoItemPhotoSignedUrl(
   docNo: string,
   itemId: string,
   photoKey: string,
-): Promise<SignedPhotoUrlResponse> {
-  return authedFetch<SignedPhotoUrlResponse>(
+): Promise<PhotoUrlPayload> {
+  return authedFetch<PhotoUrlPayload>(
     `/mfg-sales-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}/signed`,
   );
+}
+
+/** A signed URL is only usable as <img src> if it is an ABSOLUTE http(s) URL —
+ *  the signature travels in the query string, so no header is needed.
+ *
+ *  Belt to `isProxyPhotoPayload`'s braces, and a cheap invariant check rather
+ *  than a live failure path: the signed arm of `/photos/:photoKey/signed` can
+ *  only emit an absolute R2 URL, and the one relative `photoUrl` the API ever
+ *  produces (the POST upload route's own signing fallback) is filtered by
+ *  `startsWith('http')` before it can reach the URL cache. The guard is kept
+ *  because it costs one regex and it is what makes "anything in the cache is
+ *  <img>-loadable" true by construction rather than by trusting the callers to
+ *  agree — but do not read it as documentation of a 404 anyone has seen. */
+export const isDirectlyLoadableUrl = (url: string | undefined | null): boolean =>
+  !!url && /^https?:\/\//i.test(url);
+
+/** Carries the HTTP status so the caller can tell a genuinely-missing photo
+ *  (404) or a refused one (401/403) from a transient server fault. */
+export class PhotoProxyError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'PhotoProxyError';
+    this.status = status;
+  }
+}
+
+/* A photo tile is a background nicety, not a blocking flow, so its deadline is
+   tighter than slip.ts's 60s interactive GETs. What it must NOT be is absent:
+   without a signal, a stalled Worker cold-start leaves the tile on "…" forever
+   with its one proxy attempt already spent, which is precisely the failure
+   slip.ts added slipFetch to stop ("a stalled cold-start / slow upload hangs
+   the upload UI forever", slip.ts:66-88). */
+const PHOTO_PROXY_TIMEOUT_MS = 30_000;
+
+/* Bytes, not JSON — authedFetch unconditionally res.json()s its response, so
+   this reuses the exported API_URL + the shared correlated transport directly.
+
+   PARITY WITH slip.ts, STATED ACCURATELY: same transport (correlatedFetch),
+   same bearer-token + company headers, and now the same deadline discipline —
+   slip.ts routes every such call through slipFetch(..., timeout), and an
+   earlier revision of this helper claimed parity while having no deadline at
+   all. It differs deliberately in ONE respect: slip.ts returns an object URL
+   its view-then-navigate callers never revoke, whereas a photo GRID mounts and
+   unmounts on every drawer open. So this returns the raw Blob and lets the
+   component own URL.createObjectURL / revokeObjectURL — that is what makes the
+   bytes cacheable across mounts while each mount's object URL is still revoked
+   exactly once. */
+export async function fetchSoItemPhotoBlob(
+  docNo: string,
+  itemId: string,
+  photoKey: string,
+): Promise<Blob> {
+  const token = readAuthToken();
+  if (!token) throw new PhotoProxyError(401, 'Your session has expired — please sign in again.');
+
+  let signal: AbortSignal | undefined;
+  try { signal = AbortSignal.timeout(PHOTO_PROXY_TIMEOUT_MS); } catch { signal = undefined; }
+
+  let res: Response;
+  try {
+    res = await correlatedFetch(
+      `${API_URL}/mfg-sales-orders/${encodeURIComponent(docNo)}/items/${encodeURIComponent(itemId)}`
+        + `/photos/${encodeURIComponent(photoKey)}`,
+      { headers: { authorization: `Bearer ${token}`, ...companyHeader() }, signal },
+    );
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      /* 408 so the tile can tell a stall from a genuine 404 — a stall must not
+         be remembered as "this photo has no thumb". */
+      throw correlateError(
+        new PhotoProxyError(408, 'The photo took too long to load — please try again.'),
+        requestIdFromError(e),
+      );
+    }
+    throw e;
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<no body>');
+    throw correlateError(
+      new PhotoProxyError(res.status, humanApiError(res.status, text)),
+      requestIdFromResponse(res),
+    );
+  }
+
+  return consumeCorrelated(res, () => res.blob());
 }

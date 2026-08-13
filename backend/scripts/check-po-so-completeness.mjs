@@ -75,8 +75,18 @@ function sofaCompartmentIssues(build, reclOK, codeSet) {
   const model = modelOf(f.code);
   const have = build.map((r) => compartmentOf(r.code));
   const out = { issues: [], needPhoto: false };
-  if (build.some((r) => /SOFA UNPARSED/.test(r.remark || ""))) {
-    out.issues.push("COMPARTMENT: placeholder, never decoded (SOFA UNPARSED)");
+  /* The SOFA UNPARSED remark marks the LINE the decoder could not read, not the
+     build. Flagging the whole build on any one line's remark over-reported by
+     11 of 30 in production: HC-PO-009018 is correctly decomposed to
+     1A(LHF)+1NA+1A(RHF) and was failed only because it also carries a STOOL,
+     whose own Desc2 is "BO315-21/32\" X 49\"" - a dimension, with no structure
+     to parse and none needed, since STOOL IS its compartment.
+
+     A line is only undecoded when it fell back to the bare `1S` placeholder. A
+     line carrying a real named piece decoded fine whatever the remark says. */
+  const undecoded = build.filter((r) => /SOFA UNPARSED/.test(r.remark || "") && /^1S$/i.test(compartmentOf(r.code)));
+  if (undecoded.length) {
+    out.issues.push(`COMPARTMENT: the build collapsed to a bare 1S placeholder, never decoded (${undecoded.length} line${undecoded.length > 1 ? "s" : ""})`);
     out.needPhoto = true;
     return out;
   }
@@ -137,14 +147,19 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
      ORDER BY p.po_number`).map((r) => ({ ...r }));
 
+  /* "已经 proceed 了" is the STATE "this order carries a Processing Date", and
+     that date is internal_expected_dd — the column the UI writes and the only
+     one soProcessingLocked and MRP read. proceeded_at is stamped only at the
+     IN_PRODUCTION transition, so it excluded proceeded orders the owner can see
+     on screen and this audit was quietly holding them to no bar at all. */
   const soRows = (await sql`
     SELECT i.id, h.doc_no AS doc, h.linked_ac_docno AS ac, i.item_code AS code,
            i.item_group AS grp, i.description2 AS d2, i.variants, i.remark,
-           i.qty, i.photo_urls, h.proceeded_at
+           i.qty, i.photo_urls, h.internal_expected_dd
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.internal_expected_dd IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   for (const [rows, label] of [[poRows, "A. PURCHASE ORDERS — every bedframe + sofa line"],

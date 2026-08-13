@@ -63,6 +63,7 @@ import {
   readPaymentRetryHandoff, readPaymentRetryNavigationState,
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -104,9 +105,9 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
-  // The processing-date column the lock reads (PR #140 renamed only the label;
-  // the legacy processing_date snapshot column was dropped in mig 0189).
-  internal_expected_dd?: string | null;
+  // The processing-date column the lock reads. Label, API field and column are
+  // finally the same word (mig 0284 renamed it from internal_expected_dd).
+  processing_date?: string | null;
   proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
@@ -152,12 +153,25 @@ type SoItem = {
   cancelled: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* The operator's free-text instruction for whoever executes this line — the
+     "Type remarks…" box on the line card, served by GET /:docNo all along and
+     rendered nowhere. Owner 2026-08-11 (2990-SO-2608-016): a SVC-ADDON line
+     added purely to say "Please take back Cody Bedframe (King Size) 2 units"
+     showed as an RM0 line reading only its SKU code. */
+  remark?: string | null;
   /* Per-line stock + source-PO trace (owner 2026-08-01: a READY/SHIPPED/
      DELIVERED line must name the PO its goods came from). All stamped by
      GET /mfg-sales-orders/:docNo — this page previously dropped them on the
      floor, which is why the detail showed no Stock / Incoming PO at all. */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /* R2 object keys for this line's reference photos — the AutoCount
+     Further-Description shots the cutover imported, plus anything uploaded on
+     the edit card. Served by GET /:docNo all along (ITEM_COLS carries
+     photo_urls); this page never rendered them, so the only way to SEE a
+     line's photo was to enter edit mode (owner 2026-08-10: "我在外面的 UI 看
+     不到照片了吗?不能点开照片来看吗?"). */
+  photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -734,6 +748,7 @@ function SalesOrderDetailV2ReadOnly() {
             buildVariantSummary(l.item_group ?? "", l.variants ?? null) ||
             (l.description2 ?? ""),
         });
+        const remark = (l.remark ?? "").trim();
         return (
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-ink">
@@ -742,6 +757,20 @@ function SalesOrderDetailV2ReadOnly() {
             {secondary && (
               <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-ink-muted">
                 <span className="truncate text-ink-secondary">{secondary}</span>
+              </div>
+            )}
+            {/* The line's REMARK — the operator's instruction for whoever
+                executes this line. Owner 2026-08-11: a SVC-ADDON line whose whole
+                purpose was "Please take back Cody Bedframe (King Size) 2 units"
+                rendered as an RM0 row showing only its SKU code, so the job was
+                invisible to everyone downstream. It is NOT a duplicate of the
+                identity above (line-identity's rule governs the code / description
+                / variant trio; this is free text that appears nowhere else on the
+                row), and it WRAPS rather than truncating — a half-shown
+                instruction is worse than none. */}
+            {remark && (
+              <div className="mt-1 whitespace-pre-wrap break-words text-[11.5px] italic leading-snug text-ink-secondary">
+                {remark}
               </div>
             )}
           </div>
@@ -807,6 +836,44 @@ function SalesOrderDetailV2ReadOnly() {
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtMoney(l.total_centi, salesOrder?.currency)}
         </span>
+      ),
+    },
+    /* Remark as its OWN column — hidden by default because the text already
+       renders under the item above, where it is read. This column exists so the
+       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
+       has no getValue, so without it the instruction is invisible to every one
+       of those (the same reason the Stock / Incoming PO pair below carry one). */
+    {
+      key: "remark",
+      label: "Remark",
+      width: "220px",
+      defaultHidden: true,
+      getValue: (l) => (l.remark ?? "").trim(),
+      render: (l) => {
+        const remark = (l.remark ?? "").trim();
+        return remark ? (
+          <span className="whitespace-pre-wrap break-words text-[12px] text-ink-secondary">{remark}</span>
+        ) : (
+          <span className="text-ink-muted">—</span>
+        );
+      },
+    },
+    /* Photos (owner 2026-08-10) — the line's reference shots, openable. Same
+       resolver as the edit card's tiles (vendor/scm/lib/so-line-photo), so the
+       read page cannot drift into a second, differently-broken loading path.
+       getValue is the COUNT so the column sorts/filters/exports as a number;
+       a `render` with no getValue is invisible to all three. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <SoLinePhotoStrip
+          docNo={docNo ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
       ),
     },
     /* Stock + Incoming PO (owner 2026-08-01) — the SAME per-line readiness +
@@ -1133,8 +1200,8 @@ function SalesOrderDetailV2ReadOnly() {
                 />
                 <Field
                   label="Processing date"
-                  value={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  value={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <Field
                   label="Delivery date"
@@ -1304,8 +1371,8 @@ function SalesOrderDetailV2ReadOnly() {
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />
                 <KeyDateRow
                   k="Processing"
-                  v={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  v={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <KeyDateRow
                   k="Delivery"

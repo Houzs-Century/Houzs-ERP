@@ -20,8 +20,10 @@
 // doc type with counts. Covered doc types + the "posted/shipped, not cancelled"
 // status predicate for each, read from the routes that write their movements:
 //   GRN            grns                status = POSTED               (DRAFT excluded)
-//   DO             delivery_orders     DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED/INVOICED/COMPLETED
+//   DO             delivery_orders     DO_STOCK_OUT_STATES (lib/do-shipped-states.mjs)
 //                                      (DRAFT + LOADED are pre-ship, no OUT yet)
+//                                      The run PRINTS the set it used, per doc type;
+//                                      read that line, not this comment.
 //   DR             delivery_returns    RECEIVED/INSPECTED/REFUNDED    (created RECEIVED)
 //   STOCK_TRANSFER stock_transfers     POSTED                        (DRAFT removed mig 0078)
 //   STOCK_TAKE     stock_takes         POSTED                        (OPEN excluded)
@@ -47,6 +49,7 @@
 // .github/workflows/posted-doc-movements-check.yml.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 // Same resolution order as pg-migrate.mjs / check-costless-stock.mjs: env wins so
 // CI needs no .dev.vars.
@@ -126,7 +129,7 @@ const DOC_TYPES = [
     type: "DO",
     table: "delivery_orders",
     noCandidates: ["do_number", "do_no", "doc_no"],
-    posted: ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"],
+    posted: DO_STOCK_OUT_STATES,
     note: "A DO writes its OUT on ship (deductInventoryForDo); DRAFT/LOADED are pre-ship (no OUT yet). A service-only DO (SVC-* lines, FIFO-exempt) legitimately writes none.",
   },
   {

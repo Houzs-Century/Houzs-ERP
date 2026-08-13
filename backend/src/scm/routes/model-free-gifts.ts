@@ -94,7 +94,7 @@ modelFreeGifts.put('/', async (c) => {
 modelFreeGifts.delete('/:modelId', async (c) => {
   const gate = await requireGiftEditor(c);
   if ('error' in gate) return gate.error;
-  const { error } = await gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId'));
+  const { error } = await scopeToCompany(gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId')), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });

@@ -380,6 +380,16 @@ async function main() {
     for (const h of hydraulic.lines.slice(0, 25))
       log(`   ${h.which.toUpperCase()} ${String(h.doc ?? "").padEnd(14)} ${String(h.code ?? "").padEnd(24)} ` +
           `divanHeight=${JSON.stringify(h.divanHeight)} specials=${h.specialsNow}  d2="${h.d2}"`);
+    /* The no-height tail in FULL, never truncated. The owner asked which lines
+       carry no divanHeight, and the 25-line slice above answers that only by
+       luck. These are the lines where the tick is the ONLY thing the ERP will
+       know about the bed, so a human has to read the slip — nobody may infer a
+       height for them, here or anywhere else. */
+    const noHeight = hydraulic.lines.filter((h) =>
+      h.divanHeight === null || h.divanHeight === undefined || String(h.divanHeight).trim() === "");
+    log(`   --- hydraulic lines with NO divanHeight: ${noHeight.length} (listed in full) ---`);
+    for (const h of noHeight)
+      log(`   NO-HEIGHT ${h.which.toUpperCase()} ${String(h.doc ?? "").padEnd(14)} ${String(h.code ?? "").padEnd(24)} d2="${h.d2}"`);
     const hyAddon = addons.filter((r) => /HYDRAUL/i.test(String(r.code || "") + " " + String(r.label || "")));
     log(`   scm.special_addons rows matching HYDRAUL: ${hyAddon.length}` +
         (hyAddon.length ? ` -> ${hyAddon.map((r) => `[${r.code}]`).join(" ")}` : " (none — no picker code exists)"));

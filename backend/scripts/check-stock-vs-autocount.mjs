@@ -125,6 +125,24 @@ async function main() {
   csv.shift();
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
+  /* Sofa FURNITURE, by the binding CSV's category column — byte-identical to
+     import-ac-stock-balance.mjs:64, and that identity is the point. The
+     exclusion here must be the SAME predicate as the importer's, because the
+     question this check asks is "did the ERP receive what AutoCount holds": an
+     item the importer brought in MUST be compared, or its ERP stock shows up as
+     a hole that AutoCount supposedly does not have.
+     Excluding on the AutoCount ItemGroup instead — which is what this script
+     did until 2026-08-11 — swept out 19 codes / 85 units of pillows, bolsters
+     and stools that AutoCount happens to file under ItemGroup SOFA but the
+     binding CSV correctly calls ACCESSORY. The importer imported them, so the
+     ERP holds them, so they were reported as 85 units of phantom ERP-only
+     stock across 12 cells. 77 of those units were real and present on both
+     sides; only +8 was a genuine delta. Same failure as D7 in
+     docs/stock-reconciliation.md, one layer up: never categorise stock by a
+     field that is not the one the importer used. */
+  const sofaFurniture = new Set(
+    csv.map(parseCsvLine).filter((f) => (f[3] || "").trim().toUpperCase() === "SOFA").map((f) => norm(f[0])),
+  );
   const item = new Map(gz("ac-live-item-master.json.gz").map((r) => [norm(r.ItemCode), r]));
   const groupOf = (ac) => (item.get(norm(ac))?.ItemGroup ?? "").toUpperCase();
 
@@ -142,14 +160,18 @@ async function main() {
 
   const bal = gz("ac-live-stock-balance.json.gz");
   const acCell = new Map();   // "CODE|whId" -> qty
-  const excluded = { sofa: 0, service: 0, unmappedItem: 0, unmappedWh: 0 };
+  const excluded = { sofa: 0, service: 0, unmappedItem: 0, unmappedWh: 0, sofaGroupButCompared: 0 };
   const unmappedWhLoc = new Map();
   const acItemTotal = new Map();
   for (const r of bal) {
     if (!r.BalQty) continue;
     const g = groupOf(r.ItemCode);
     if (SERVICE_GROUPS.has(g)) { excluded.service += r.BalQty; continue; }
-    if (g === "SOFA") { excluded.sofa += r.BalQty; continue; }
+    if (sofaFurniture.has(norm(r.ItemCode))) { excluded.sofa += r.BalQty; continue; }
+    /* Deliberately NO `g === "SOFA"` test here. An item AutoCount files under
+       ItemGroup SOFA that the binding CSV calls ACCESSORY is a pillow, a
+       bolster or a stool; the importer brought it in and it must be compared. */
+    if (g === "SOFA") excluded.sofaGroupButCompared += r.BalQty;
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { excluded.unmappedItem += r.BalQty; continue; }
     const wh = resolveWh(r.Location);
@@ -164,7 +186,8 @@ async function main() {
     acItemTotal.set(norm(erp), (acItemTotal.get(norm(erp)) ?? 0) + Number(r.BalQty));
   }
   log(`AutoCount comparable cells: ${acCell.size}`);
-  log(`  excluded — sofa furniture (compartment model): ${excluded.sofa} units; service pseudo-items: ${excluded.service} units; unmapped item: ${excluded.unmappedItem}; unmapped warehouse: ${excluded.unmappedWh}`);
+  log(`  excluded — sofa furniture (compartment model, binding-CSV category): ${excluded.sofa} units; service pseudo-items: ${excluded.service} units; unmapped item: ${excluded.unmappedItem}; unmapped warehouse: ${excluded.unmappedWh}`);
+  log(`  COMPARED although AutoCount files them under ItemGroup SOFA (pillows / bolsters / stools the binding CSV calls ACCESSORY, and the balance importer imported): ${excluded.sofaGroupButCompared} units`);
   for (const [l, q] of unmappedWhLoc) log(`  UNMAPPED LOCATION ${l}: ${q} units have no ERP warehouse`);
 
   const erpBal = await sql`SELECT product_code, warehouse_id, SUM(qty)::int qty

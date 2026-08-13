@@ -17,6 +17,10 @@
 import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { C2990, createMirrorMapper, mirrorAuthed, prefixDoc, upsert } from '../lib/mirror-map';
+import {
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_LEGACY_COLUMNS,
+} from '../shared/so-processing-date';
 
 export const soMirror = new Hono<{ Bindings: Env }>();
 
@@ -39,6 +43,28 @@ function normalizeStatus(v: unknown): unknown {
 // DOCNO_COL + PREFIX_REF_COLS + NULL_COLS. so-mirror only handles the SO trio.
 // The transform primitives themselves live in lib/mirror-map.ts (shared with the
 // amendment receiver); see that file for the verbatim-id and text[] rationale.
+/* THE PROCESSING DATE'S OLD NAMES, kept reachable.
+ *
+ * 2990 lives in a SEPARATE REPOSITORY and deploys on its own schedule, so on
+ * the day Houzs renames the Processing Date column, 2990's pg_cron drainer
+ * keeps POSTing the old one — including rows already queued in its outbox
+ * before either deploy. applyMap filters an inbound row against the DEST
+ * table's information_schema columns and drops anything it does not recognise
+ * (rule d): no error, this route returns 200, and the Processing Date silently
+ * stops arriving on every company-2 SO. The board, the edit lock, MRP and the
+ * AutoCount PDate push all read that column, so the loss is invisible until an
+ * operator notices a blank date.
+ *
+ * Guarded on both sides — see mirror-map's aliasInbound — so today, with old
+ * and new spelling identical, this is a no-op the tests assert.
+ *
+ * REMOVE WHEN: the 2990 repo has deployed the new name AND one full re-delivery
+ * has landed. Verify by reading a mirrored company-2 SO's Processing Date, not
+ * by reading 2990's source. See shared/so-processing-date.ts. */
+const SO_HEADER_ALIASES: Record<string, string> = Object.fromEntries(
+  SO_PROCESSING_DATE_LEGACY_COLUMNS.map((legacy) => [legacy, SO_PROCESSING_DATE_COLUMN]),
+);
+
 const { tableMap, applyMap } = createMirrorMapper({
   mfg_sales_orders: {
     // header doc_no (PK) + the cross-category source doc ref
@@ -47,6 +73,7 @@ const { tableMap, applyMap } = createMirrorMapper({
     // references a master row that isn't reconciled across companies).
     forceCols: { venue_id: null },
     normalize: { status: normalizeStatus },
+    aliasCols: SO_HEADER_ALIASES,
   },
   mfg_sales_order_items: { prefixCols: ['doc_no'] },
   mfg_sales_order_payments: { prefixCols: ['so_doc_no'] },

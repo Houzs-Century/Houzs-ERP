@@ -1353,6 +1353,24 @@ export const GrnNew = () => {
           body={dialog.body}
           primaryLabel={dialog.goTo ? 'Open GRN' : undefined}
           onPrimary={dialog.goTo ? () => { const g = dialog.goTo!; setDialog(null); navigate(g); } : undefined}
+          /* Owner 2026-08-13 ("need create the new GRN for like this also") — the
+             receiving loop keys one GRN per delivery back-to-back, so success
+             offers a one-click start on the next one, mirroring the Purchase
+             Invoice dialog's "New Purchase Invoice".
+
+             IT MUST GO TO THE PICKER, NOT BACK TO /scm/grns/new. This page mints
+             ONE idempotency key per mount and deliberately survives success (see
+             the idemKey block above): navigating to the route we are already on
+             is a no-op for the router, so the page would NOT remount, the key
+             would NOT rotate, and an operator keying a genuinely DIFFERENT
+             receipt would silently get the first GRN replayed instead of a
+             second document. The from-PO picker remounts this page with a fresh
+             key — which that same block already names as the sanctioned route
+             for a genuinely different receipt. A button that looked right and
+             quietly replayed a stock-in is precisely the bug that comment was
+             written to prevent. */
+          secondaryLabel={dialog.goTo ? 'New GRN' : undefined}
+          onSecondary={dialog.goTo ? () => { setDialog(null); navigate('/scm/grns/from-po'); } : undefined}
           onClose={() => setDialog(null)}
         />
       )}
