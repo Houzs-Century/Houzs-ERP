@@ -459,19 +459,39 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 Related short-circuit gates: Processing + Delivery all-or-nothing
 (`processing_delivery_must_pair`), remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
-elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
-writes `internal_expected_dd`.
+elapses (`so-field-policy`).
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
-`meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
-setting `internal_expected_dd`, the create-time auto-stamp of `proceeded_at`, and
-both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
-/:docNo` `proceededAt`). `proceeded_at` stays a separate COLUMN because it is a
-timestamp the system writes, not a date a user picks — what was unified is the
-RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
-(email), the processing-date path TIGHTENED by four (name / address / postcode /
-delivery date), and the threshold became per-company.
+`meetsProceedGate` in `order-rules` is the single rule behind ALL of it: setting
+`internal_expected_dd`, the create's auto-proceed, and both manual proceed paths
+(`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`). Net
+effect of the unification: the proceed paths LOOSENED by one condition (email),
+the processing-date path TIGHTENED by four (name / address / postcode / delivery
+date), and the threshold became per-company. The money half is one predicate,
+`meetsDepositGate` — the Proceed gate and the aggregated report above both read
+it, so they cannot come to different verdicts about the same deposit.
+
+**PROCEED IS THE DATE (owner, pinned 2026-08-13).** *"只要有 Processing Date，就
+代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
+date 就代表没有 proceed。"* Proceeding therefore WRITES `internal_expected_dd`; it
+does not stamp a click time. Until 2026-08-13 every proceed path wrote only
+`proceeded_at`, so an order could sit IN_PRODUCTION with no start date — and
+production queues by that date.
+
+| Path | Where the date comes from |
+|------|---------------------------|
+| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `internal_expected_dd`, else `internalExpectedDd` on the request body (which the route now accepts); a date written here clears the FULL gate table above, read live off the row |
+| `PATCH /:docNo` `proceededAt` | this patch's `internalExpectedDd`, else the stored one |
+| CREATE auto-proceed | `internalExpectedDd` on the create — no date means the order is created UN-proceeded, never refused |
+
+No path guesses a date: a proceed with none returns 422
+`proceed_needs_processing_date` (`PROCEED_NEEDS_DATE` in `order-rules`), because
+a guessed start date is a real order sitting in the factory queue on the wrong
+day with nothing to show it was guessed. A date already on the order is never
+MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
+lock and the gate table. `proceeded_at` is still written and still read (the
+stock allocator sorts by it), but it is no longer what makes an order proceeded.
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 

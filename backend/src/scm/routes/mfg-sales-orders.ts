@@ -31,10 +31,11 @@ import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
 /* POS auto-Proceed (Loo 2026-06-09) — when a handover arrives already complete
-   (customer + address + delivery date + ≥50% paid) we stamp proceeded_at at
-   create so the order lands in Proceed without a manual click. Same gate the
-   POS "Move to Proceed" button uses, so the two never drift. */
-import { meetsProceedGate } from '../shared/order-rules';
+   (customer + address + delivery date + the company's deposit) AND carries a
+   Processing Date, the order lands in Proceed without a manual click. Same gate
+   the POS "Move to Proceed" button uses, so the two never drift; and the same
+   date, because having one is what being proceeded MEANS (owner 2026-08-13). */
+import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
    and the amendment allow-list below are DERIVED from it so the three lists
@@ -164,7 +165,7 @@ import {
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
-import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -570,12 +571,31 @@ function soStatusTransitionError(
    proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
    shared gate on both manual paths so create + manual + client can't drift.
    `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
-   the SO's local_total_centi — no new threshold invented (the 50% is
-   PROCEED_PAID_THRESHOLD inside meetsProceedGate). */
+   the SO's local_total_centi — no new threshold invented (the per-company
+   fraction is processingDateThresholdFor, inside meetsProceedGate). */
 const SO_PROCEED_GATE_RESPONSE = {
   error: 'proceed_gate_unmet',
   reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
 } as const;
+
+/* Σ collected vs the header total, both centi — the deposit facts every
+   Processing-Date gate weighs. One reader because there is one rule: the Proceed
+   gate and the aggregated save report must not be able to disagree about how
+   much has been paid, only about how to report it. */
+async function soDepositFacts(
+  sb: any,
+  docNo: string,
+): Promise<{ paidCenti: number; totalCenti: number }> {
+  const [{ data: totRow }, { data: pays }] = await Promise.all([
+    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
+    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
+  ]);
+  return {
+    totalCenti: Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0),
+    paidCenti: ((pays ?? []) as Array<{ amount_centi?: number | null }>)
+      .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0),
+  };
+}
 
 async function soProceedGateBlocked(
   sb: any,
@@ -591,13 +611,7 @@ async function soProceedGateBlocked(
      looser 30% — see processingDateThresholdFor for why never the stricter. */
   companyCode?: string | null,
 ): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
-  const [{ data: totRow }, { data: pays }] = await Promise.all([
-    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
-  ]);
-  const totalCenti = Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0);
-  const paidCenti = ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-    .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
+  const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
   const ok = meetsProceedGate({
     hasCustomerName: !!eff.customerName?.trim(),
     hasAddress: !!eff.address1?.trim(),
@@ -608,6 +622,54 @@ async function soProceedGateBlocked(
     companyCode,
   });
   return ok ? null : SO_PROCEED_GATE_RESPONSE;
+}
+
+/* Every reason a Processing Date may NOT be set on THIS order, read live off the
+   row instead of off a patch body — the same aggregated list the header PATCH
+   builds (collectProcessingGateProblems), from the same facts.
+
+   It exists because proceeding now WRITES the date (owner: a Processing Date is
+   what "proceeded" means). That write has to clear exactly what a date set on the
+   header clears — variants, colour-KIV, deposit, completeness, the date rules —
+   or the proceed route becomes the way around the gate that guards the shop
+   floor. */
+async function soProcessingDateProblemsForDoc(
+  sb: any,
+  docNo: string,
+  procDate: string,
+  header: {
+    customerName?: string | null;
+    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
+  },
+  companyCode?: string | null,
+): Promise<SaveProblem[]> {
+  const [{ data: liveItems }, deposit] = await Promise.all([
+    sb.from('mfg_sales_order_items')
+      .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo),
+    soDepositFacts(sb, docNo),
+  ]);
+  const lines = ((liveItems ?? []) as Array<{
+    id: string; item_code: string; item_group: string;
+    variants: Record<string, unknown> | null; cancelled: boolean;
+  }>)
+    .filter((it) => !it.cancelled)
+    .map((it) => ({ id: it.id, itemCode: it.item_code, group: it.item_group, variants: it.variants }));
+  return collectProcessingGateProblems({
+    companyCode,
+    procDate,
+    delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
+    todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
+    /* No orig* dates: this helper only runs when the order has NO stored
+       Processing Date, so the date is new and nothing can be grandfathered. */
+    variantOffenders: findIncompleteVariantLines(lines),
+    kivOffenders: findColourKivLines(lines),
+    completeness: {
+      hasCustomerName: !!header.customerName?.trim(),
+      hasAddress: !!header.address1?.trim(),
+      hasPostcode: !!header.postcode?.trim(),
+    },
+    deposit,
+  });
 }
 
 /* Owner 2026-05-31 — Identity + value columns a downstream DO / SI snapshots.
@@ -4975,14 +5037,22 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   }
 
   /* POS auto-Proceed (Loo 2026-06-09) — if this handover already satisfies the
-     same gate as the POS "Move to Proceed" button (customer name + email, a
-     delivery address line 1 + postcode, a delivery date, and ≥50% collected),
-     stamp proceeded_at now so the order skips Order Placed and lands directly in
-     Proceed. A "Fill in later" handover (blank address) fails the gate and stays
-     in Order Placed for the salesperson to complete + proceed manually. */
+     same gate as the POS "Move to Proceed" button (customer name, a delivery
+     address line 1 + postcode, a delivery date, and the company's deposit), the
+     order skips Order Placed and lands directly in Proceed. A "Fill in later"
+     handover (blank address) fails the gate and stays in Order Placed for the
+     salesperson to complete + proceed manually.
+
+     A HANDOVER WITH NO PROCESSING DATE IS NOT PROCEEDED, however complete it is
+     (owner, pinned 2026-08-13: *"没有 processing date 就代表没有 proceed"*). This
+     used to stamp proceeded_at anyway, minting exactly the order the rule says
+     cannot exist: proceeded, in production, with no day the factory starts. The
+     create refuses nothing extra for it — the order is simply created un-
+     proceeded, and gets its date (and its Proceed) when someone picks one. */
+  const procDateOnCreate = (body.internalExpectedDd as string | null | undefined) || null;
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
-  const autoProceed = meetsProceedGate({
+  const autoProceed = !!procDateOnCreate && meetsProceedGate({
     hasCustomerName: !!customerName?.trim(),
     hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
     hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
@@ -4994,15 +5064,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 
   /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
      production's "ready to build" signal: once set, the backend orders materials
-     / starts the build when the date arrives. So it must NOT be set until ≥30% of
-     the order total is collected (PROCESSING_DATE_PAID_THRESHOLD, owner 2026-07-14
-     — NOT the 50% Proceed threshold). Money-only: customer-info / address completeness
-     is deliberately NOT required here (those resolve later in Proceed). Mirrors
-     the deposit half of the Proceed gate via the shared rule so the two can't
-     drift. depositTotalCenti = the POS deposit on this create; grandTotal = order
-     total — both already in scope from the autoProceed block above. */
+     / starts the build when the date arrives. So it must NOT be set until the
+     company's deposit is collected (processingDateThresholdFor — Houzs 30%,
+     2990 50%). The SAME deposit rule autoProceed weighs above, because they are
+     the same act. depositTotalCenti = the POS deposit on this create;
+     grandTotal = order total — both in scope from the autoProceed block. */
   {
-    const procDateOnCreate = (body.internalExpectedDd as string | null | undefined) || null;
     /* Emits the SAME aggregated `validation_failed` shape as the early gate block
        (owner 2026-07-18) so the client renders every Processing-Date failure the
        same way — this gate simply can't live up there because the order total
@@ -5711,7 +5778,9 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // roll back the status change).
 mfgSalesOrders.patch('/:docNo/status', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
-  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string };
+  /* `internalExpectedDd` — the Processing Date a move to IN_PRODUCTION proceeds
+     WITH, for a caller proceeding an order that does not carry one yet. */
+  let body: { status?: string; notes?: string; version?: number; expectedStatus?: string; internalExpectedDd?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
@@ -5842,22 +5911,59 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   };
   if (toStatus === 'IN_PRODUCTION') {
     const { data: cur } = await sb.from('mfg_sales_orders')
-      .select('proceeded_at, debtor_name, email, address1, postcode, customer_delivery_date')
+      .select('proceeded_at, internal_expected_dd, debtor_name, email, address1, postcode, customer_delivery_date')
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; debtor_name?: string | null; email?: string | null;
+      proceeded_at?: string | null; internal_expected_dd?: string | null;
+      debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
-    if (!curRow?.proceeded_at) {
-      /* FIX 2 (2026-07-16) — gate the FIRST proceed (the stamping moment) on the
-         same ≥50%-paid + full-address rule as CREATE auto-proceed. An already-
-         proceeded SO re-entering IN_PRODUCTION is a no-op and is NOT re-gated. */
-      const gate = await soProceedGateBlocked(sb, docNo, {
+    /* PROCEED IS THE DATE (owner, pinned 2026-08-13: *"只要有 Processing Date,
+       就代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。"*).
+       This route used to stamp proceeded_at with the click time and write NO
+       date, so an order could sit IN_PRODUCTION with no start date — production
+       queues by that date, so those orders were in the factory queue nowhere.
+       The date the proceed proceeds WITH is either already on the order or comes
+       in on this request; there is no third source, and today is a guess. */
+    const resolved = resolveProceedProcessingDate({
+      supplied: typeof body.internalExpectedDd === 'string' ? body.internalExpectedDd : null,
+      stored: curRow?.internal_expected_dd ?? null,
+    });
+    if (!resolved.ok) return c.json(resolved.refusal, 422);
+    if (resolved.write) {
+      /* An SO whose supplier PO is already out cannot take a schedule change
+         through the header PATCH, so it must not take one through here either.
+         (The processing-date half of that lock cannot be on: this branch runs
+         only when the order has no date.) */
+      const lock = await soProcessingLockBlocked(sb, docNo);
+      if (lock) return c.json(lock, 409);
+      /* Setting the date here must clear what setting it on the header clears —
+         variants, colour-KIV, deposit, completeness, the date rules — or this
+         route is the way around them. Supersedes soProceedGateBlocked below on
+         this branch: the aggregated list already carries both its conditions. */
+      const problems = await soProcessingDateProblemsForDoc(sb, docNo, resolved.date, {
         customerName: curRow?.debtor_name,
         address1: curRow?.address1, postcode: curRow?.postcode,
         deliveryDate: curRow?.customer_delivery_date,
       }, c.get('companyCode') ?? null);
-      if (gate) return c.json(gate, 422);
+      if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
+      patch.internal_expected_dd = resolved.date;
+    }
+    if (!curRow?.proceeded_at) {
+      /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
+         address rule as CREATE auto-proceed. An already-stamped SO re-entering
+         IN_PRODUCTION is a no-op and is NOT re-gated. */
+      if (!resolved.write) {
+        const gate = await soProceedGateBlocked(sb, docNo, {
+          customerName: curRow?.debtor_name,
+          address1: curRow?.address1, postcode: curRow?.postcode,
+          deliveryDate: curRow?.customer_delivery_date,
+        }, c.get('companyCode') ?? null);
+        if (gate) return c.json(gate, 422);
+      }
+      /* Kept, not replaced by the date (task scope + the stock allocator reads
+         it): the date says WHEN the factory starts, this says when a human said
+         go. Stamp-once, so re-entering IN_PRODUCTION never rewrites it. */
       patch.proceeded_at = new Date().toISOString();
     }
   }
@@ -7046,7 +7152,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   /* FIX 2 (2026-07-16) — gate a genuine forward Proceed on the header PATCH path
      too (mobile / API set proceededAt directly here). After the stamp-once drop
      above, a still-present non-null proceeded_at means the SO had NONE before →
-     this is the first Proceed, so it must pass the SAME ≥50%-paid + full-address
+     this is the first Proceed, so it must pass the SAME paid + full-address
      gate the /status → IN_PRODUCTION path and CREATE auto-proceed use. An explicit
      null (un-proceed) and an already-proceeded re-save (dropped above) are
      unaffected. Effective header values = the patch value when this request sets
@@ -7064,6 +7170,13 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       deliveryDate: effOf('customer_delivery_date'),
     }, c.get('companyCode') ?? null);
     if (gate) return c.json(gate, 422);
+    /* And it must land ON a Processing Date — proceeding IS setting that date
+       (owner, pinned 2026-08-13). This PATCH is the one proceed path that can
+       set both in the same request, so the date may come from this patch or
+       already be on the row; what it may not do is mark an order proceeded with
+       no day the factory starts. A date arriving in THIS patch is gated by the
+       aggregated Processing-Date block below, which runs before any write. */
+    if (!effOf('internal_expected_dd')?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
   }
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
