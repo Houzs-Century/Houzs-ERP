@@ -515,11 +515,52 @@ shared `SaveProblemsList`/`humanApiError` on desktop + mobile):
 
 | Gate | Code | Rule |
 |------|------|------|
-| Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`) |
+| Variants complete | `variants_incomplete` | every non-cancelled line's category-mandatory axes filled (`so-variant-rule`), **minus the by-SKU exemptions below** |
 | Colour KIV | `fabric_colour_kiv` | **no line may still be colour-KIV** (series committed via `fabricId`/`fabricLabel`, no `fabricCode` — `isColourKiv` in `variant-summary.ts`). Owner rule 2026-07-24 after SO-2607-016: a Processing Date means every line is a fully-confirmed maintained selection. Fires only when the date is genuinely SET or CHANGED — unrelated edits to an old KIV order, and clearing the date, never block. Also enforced on line-ADD / line-EDIT against an already-dated SO (409). |
 | Deposit, PER COMPANY | `processing_date_unpaid` | **Houzs 30%, 2990 50%** of the order total collected (`processingDateThresholdFor` in `order-rules`). Until 2026-07-31 the split existed only in a comment and both constants applied to everyone, so a 2990 order was refused at the Houzs 30%. An unknown/absent company code falls back to the LOOSER 30% on purpose — over-gating stops the shop floor with no signal. |
 | Customer + delivery complete | `processing_date_incomplete` | customer name, delivery address line 1, postcode, delivery date. **No email** (owner 2026-07-31: "不需要email"). Added 2026-07-31 when the Processing Date and Proceed gates were unified — this half used to apply only to Proceed. (A 2026-07-31 impact measurement over the then-live dated SOs found none blocked by the four kept fields. The figures are not restated here: nothing in the repo re-measures them, and they predate the 0286 rename, so they are a record of that day rather than a current claim.) |
 | Date sanity | `processing_date_past` / `delivery_date_past` / `processing_after_delivery` | no fresh past dates (unchanged past dates grandfathered); processing ≤ delivery |
+
+### The by-SKU variant exemptions
+
+Some SKUs physically cannot carry an axis, and demanding it reports a defect no
+source can fix. Three exemptions, all keyed on the ITEM CODE, all in
+`backend/src/scm/shared/so-variant-rule.ts`:
+
+| Exemption | Matches | Drops | Owner |
+|---|---|---|---|
+| `isDivanOnly` | `\bDIVAN\s*ONLY\b` anywhere in the code | `gap` | 2026-08-09, *"divan only 不需要 gap"* — a divan sold without a mattress has no mattress gap |
+| `isDivanlessFrame` | `ADJUSTABLE`, `(S+S)` / `(SS+S)`, `DOUBLE DECKER` / `DACKER`, `DDB` | `divanHeight`, `legHeight`, `gap` | 2026-08-10, *"电动床/抽拉床…像 DIVAN ONLY 一样豁免 — 要"* — no divan base at all |
+| `isSeatlessPiece` | `^(CONSOLE\|CT)\b` on the **compartment** (after the first hyphen) | `seatHeight` | 2026-08-11, *"有些 sku 是没有的"*; AutoCount PO-009553 leaves the console box blank while both seat boxes carry a figure |
+
+**`itemCode` is a REQUIRED parameter of `missingVariantAxes` /
+`missingConfirmVariantAxes` and must stay required.** It is what decides these
+exemptions; optional means every caller that says nothing keeps the old
+behaviour with no compile error, which is how the DIVAN ONLY carve-out came to
+apply on one of three confirm-path call sites after a PR claiming "every desktop
++ mobile call site". Pass an explicit `null` where a caller genuinely has no code
+— nothing is exempted then. See **BUG CLASS optional-param-noop** in
+`BUG-HISTORY.md`.
+
+**There are FOUR implementations and only one of them is authoritative.** The
+TypeScript rule; its byte-for-byte vendored twin
+`frontend/src/vendor/shared/so-variant-rule.ts`; and the plain-JS mirror
+`backend/scripts/lib/variant-axes.mjs`, which exists because a `.mjs` audit
+script cannot import TypeScript. `backend/tests/variantAxesMirror.test.ts` pins
+the mirror against the source — **and a mirror test is only as wide as its
+corpus**: `isSeatlessPiece` lived in the mirror and not in the rule for three
+days while that test passed, because its code list had no CONSOLE or CT case. It
+now carries them, plus near-misses (`CONSOLE-1A`, `CT-2A`, `8030-CTRL`,
+`8030-CONSOLIDATED`) that must NOT be exempt.
+
+**No audit script may re-type any of this.** Import from
+`scripts/lib/variant-axes.mjs`. `backend/tests/variantExemptionCallSites.test.ts`
+fails a script that types an exemption pattern, one that judges completeness
+without importing the mirror, or a call that passes only two arguments — the
+shape that silently applies no exemption at all. Five scripts are covered:
+`check-so-noncatalog-lines`, `cross-fill-so-po-variants`,
+`check-cutover-metrics`, `check-po-so-completeness`,
+`check-sofa-bedframe-completeness`.
 
 Related short-circuit gates: remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
@@ -760,15 +801,15 @@ same contract as the Processing-Date gates), all reasons at once:
 > is what blocked salespeople from booking real orders with real deposits for
 > five days.
 >
-> `missingConfirmVariantAxes` itself now has **zero production callers**:
-> `grep -rn 'missingConfirmVariantAxes' backend/src frontend/src` on
-> `0c2a4e88` returns its two definitions
-> (`backend/src/scm/shared/so-variant-rule.ts:127`,
-> `frontend/src/vendor/shared/so-variant-rule.ts:161`) and four test files,
-> nothing else. `frontend/src/vendor/shared/so-variant-rule.test.ts:8` still
-> claims desktop New SO and the backend confirm gate read it; both statements are
-> false and that comment is **left uncorrected here on purpose** — this is a
-> docs-only diff and it lives in a source file.
+> `missingConfirmVariantAxes` had **zero production callers** when that was
+> written — its two definitions and four test files, nothing else. **Resolved
+> 2026-08-14:** the two false source comments it left behind (its own docblock
+> claiming "desktop, mobile and the backend confirm gate all read THIS", and
+> `frontend/src/vendor/shared/so-variant-rule.test.ts`'s header saying the same)
+> are corrected, and it has ONE consumer again — the audit mirror
+> `backend/scripts/lib/variant-axes.mjs`, so
+> `check-so-noncatalog-lines.mjs`'s "confirmable?" section judges by the rule
+> instead of by a hand-typed fifth copy of it.
 
 **Who may write which key of the `variants` jsonb.** The column has several
 writers and no schema, so ownership is by convention and the convention is
@@ -878,6 +919,30 @@ non-catalog line, confirmed order without salesperson / venue, confirmed
 line with incomplete variants, and DRAFT carrying a Processing Date — with a
 TEST? hint for the "Jalan Test" batch. Deliberately NO auto-repair: each row
 needs a human to pick the right SKU / salesperson / venue / dates.
+
+### The salesperson is stamped TWICE — `salesperson_id` and `agent`
+
+`salesperson_id` (a `scm.staff` uuid) is the ERP's real attribution: scope,
+commission, the Fair Report and the SO PDF all read it. `agent` is the legacy
+free-text NAME beside it, and it is the ONLY field the AutoCount write-back
+sends as the Sales Agent.
+
+**They are now written together.** `soAgentToStamp` (`scm/lib/so-agent.ts`)
+fills `agent` from the stamped salesperson's `scm.staff.name` whenever the
+caller does not supply one, at all three create sites — the header, the goods
+lines and the SERVICE lines — and the header PATCH moves it when the
+salesperson is reassigned. An explicitly supplied `body.agent` still wins
+everywhere; a blank one is not a supplied one.
+
+Until 2026-08-13 nothing wrote `agent` except `body.agent`, which **no SO form
+sends**, so it was empty on every order created since the cutover — and the live
+AutoCount book refused each one with `FK_SO_SalesAgent` on go-live day. The SO
+detail page hid it: `salespersonNameOf(agent, salesperson_id)` falls back to the
+id, so a name appeared on screen with nothing behind it.
+
+`docs/modules/autocount-writeback.md` §7n has the write-back half — how the two
+columns resolve to one Agent, and why a create with neither is refused rather
+than sent.
 
 ### Selling-price authoring — who may set the line price
 

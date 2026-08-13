@@ -125,6 +125,17 @@ exist. `backend/tests/migrationNumbers.test.ts` freezes those and fails on any N
 duplicate — including against a `.TEMPLATE` file, which owns its number from the day
 it lands. Pick the number at merge time, not at branch time.
 
+**A migration and a run repair script are the two things a revert cannot undo,
+and both are gated.** `npm --prefix backend run audit:release-discipline` (a step
+of the required `backend-typecheck` check) fails a migration at or above the
+recorded floor with no `-- REVERSAL:` note, and a `backend/scripts` script that
+opens a database and writes without a plan-default MODE gate, a CONFIRM phrase, a
+fresh-connection re-read that asserts the SHAPE, and a `RE-RUN:` header line. The
+existing tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`; that list may only
+shrink, and the gate prints its size on every run. Rules and rationale live in
+`CLAUDE.md`; the counts live in the gate's own output, never here.
+
 **`frontend/src/vendor/scm`, `frontend/src/vendor/shared`,
 `frontend/src/pages/scm-v2` and `backend/src/scm` are VENDORED.** They were copied
 from 2990 to stay diffable against their source. Do not casually rename, reformat or

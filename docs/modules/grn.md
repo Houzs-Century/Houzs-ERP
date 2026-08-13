@@ -97,8 +97,20 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | POST | `/from-po-items` | `:1775` | Line-level multi-select convert; one GRN per source PO, each created DRAFT then posted via the shared helper. |
 | PATCH | `/:id/post` | `:1764` (handler `:1682`) | **The stock chokepoint**: DRAFT → POSTED. |
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
-| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). |
+| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
+
+**`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
+(PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at
+`:1173` had been scoped by the 2026-08-10 audit and this write had not, so a GRN
+id belonging to the other company could be loaded and edited here — and this
+handler moves stock. The service-role client bypasses RLS, so the app-level
+predicate is the only isolation there is; a scoped read does not gate the
+unscoped write that follows it. Both statements now carry
+`scopeToCompanyId(…, co.companyId)` behind `requireActiveCompanyId`, and the
+update uses `maybeSingle()` rather than `single()` **on purpose**: the company
+predicate can legitimately match zero rows, and `single()` renders that honest
+404 as a 500. Out-of-company answers `NOT_THIS_COMPANY` / 404.
 
 The `asDraft` flag is the only way to create a draft: `POST /` with
 `status: 'DRAFT'` in the body is rejected outright with
