@@ -364,6 +364,36 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:perf-local
 
+  # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
+  # dependencies — so adding it costs the queue a few seconds, not a runner
+  # slot's worth of install. See scripts/lib/file-size-ratchet.mjs for the rules.
+  #
+  # This does NOT try to split the 39 files already over 2,000 lines. It records
+  # what each one already is and refuses to let it grow, so the problem stops
+  # getting worse while the refactors happen (or do not) on their own schedule.
+  file-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The "ceilings may only fall" check reads the manifest as it exists on
+          # the MERGE BASE. Without history there is no merge base, the check
+          # cannot run, and --require-base below turns that into a visible
+          # failure instead of a quiet downgrade.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # actions/checkout leaves no remote-tracking ref for main on a PR run, and
+      # the gate resolves its base as `origin/main`. Create it explicitly rather
+      # than relying on a default that has changed between checkout majors.
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - run: node --test scripts/check-file-size-ratchet.mjs
+      # --require-base: if the merge base cannot be resolved the gate FAILS
+      # rather than passing with the ratchet half-disabled.
+      - run: node scripts/check-file-size.mjs --require-base
+
   e2e-contract:
     runs-on: ubuntu-latest
     defaults:

@@ -153,7 +153,19 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-- **`frontend/src/pages/Projects.tsx` (~12,400 lines)** — the entire events ERP in
+> Sizes were typed inline here until 2026-08-13 and had rotted exactly as this
+> file's header warns: `Projects.tsx` was labelled "~12,400 lines" against a real
+> 14,867, and `mfg-sales-orders.ts` "~10,400" against 12,094. They are gone rather
+> than refreshed — a number typed here is a number that will be wrong again.
+
+**These files may no longer grow.** `scripts/file-size-ceilings.json` records what
+each one already is, and `npm run check:file-size` fails CI if any exceeds its
+recorded ceiling — see [`docs/repo-hygiene.md`](./repo-hygiene.md). Nothing forces
+them to be SPLIT; the ratchet only stops the problem getting worse, and a ceiling
+may only fall. If you are adding to one of these, put the new code in its own
+module: that is now the path of least resistance, by design.
+
+- **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
   helpers, `Projects()` (the shell), `ProjectsListView`, `ProjectsFinancesView`,
   `ProjectsAnalyticsView`, `ProjectsCalendarView` (with its popovers and day modal),
@@ -161,7 +173,7 @@ facts file; the point here is the shape of each file so you can jump.
   strip, stage stepper, tasklist sections, documents, checklist rows, stock
   transfers, and the logistics crew/schedule editors at the very bottom. Grep the
   component name, then read around it.
-- **`backend/src/scm/routes/mfg-sales-orders.ts` (~10,400 lines)** — the Sales Order
+- **`backend/src/scm/routes/mfg-sales-orders.ts`** — the Sales Order
   module, and the pricing-critical one. Top third: the guards and gate helpers
   (`soHasDownstream`, `soProcessingLocked`, `soStatusTransitionError`,
   `gateSoFinance`) and the validation helpers. Middle: `createSalesOrderCore` and the
@@ -169,19 +181,19 @@ facts file; the point here is the shape of each file so you can jump.
   calls, so never reimplement a create beside it. Then header PATCH and delivery-fee
   re-derivation, then item CRUD with `recomputeTotals`, then per-line photos, then
   payments (`recordSoPaymentRow`), then the debtor lookup at the end.
-- **`frontend/src/pages/ServiceCases.tsx` (~8,000 lines)** — ASSR. `ServiceCases()`
+- **`frontend/src/pages/ServiceCases.tsx`** — ASSR. `ServiceCases()`
   and the list/board/calendar views first, then `CreatePanel`, then `DetailContent`
   and the exported `ServiceCaseDetail`, then the detail's parts: stage rows,
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
-- **`frontend/src/pages/scm-v2/Products.tsx` (~5,500 lines)** — tabbed: `SkuMasterTab`
+- **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
   (with its virtualised row list and inline price editors) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
-- **`frontend/src/pages/Team.tsx` (~5,200 lines)** — user management. `Team()` shell,
+- **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
   `MembersTab`, `MemberDetail` / `MemberCard` / `EditMemberPanel`, brands panel, then
   `OrgChartTab` and its drag-and-drop machinery at the bottom.
-- **`backend/src/scm/routes/scan-so.ts` (~4,800 lines)** — see §6. Anthropic plumbing
+- **`backend/src/scm/routes/scan-so.ts`** — see §6. Anthropic plumbing
   and catalog loading first, then prompt construction and cache warming, then slip
   normalisation and validation, then the sample/rule distillation layer, then the
   route handlers.
