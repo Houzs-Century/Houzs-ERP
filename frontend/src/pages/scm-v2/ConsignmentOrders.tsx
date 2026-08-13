@@ -119,7 +119,12 @@ type SoRow = {
   customer_country: string | null;
   city: string | null;
   postcode: string | null;
-  processing_date: string | null;
+  /* No `processing_date`. The CO's Processing Date is `internal_expected_dd`
+     below — one field, one name. The raw scm.consignment_sales_orders.processing_date
+     column has never had a writer, the API no longer selects it, and it is being
+     dropped; declaring it here only invited a future accessor to bind to a
+     permanently-null value. See the note on the CO HEADER select in
+     backend/src/scm/routes/consignment-orders.ts. */
   customer_delivery_date: string | null;
   /* PR-E — Internal expected delivery date (commander's privately tracked
      ETA, distinct from the customer-facing customer_delivery_date). Hidden
@@ -293,7 +298,10 @@ const STATUS_CLASS: Record<string, string> = {
    used in commander's vocabulary. Underlying enum values stay (no schema
    migration) — only the display label maps. Mapping:
      CONFIRMED      → Confirmed   (订单已经 Confirm)
-     IN_PRODUCTION  → Proceed     (已经 Proceed — processing_date set)
+     IN_PRODUCTION  → Proceed     (已经 Proceed — Processing Date set, i.e.
+                                   internal_expected_dd, the one storage this
+                                   concept has; NOT the retired processing_date
+                                   column)
      READY_TO_SHIP  → Stock Ready (stock 已经 ready)
      SHIPPED        → Arranged    (已经安排送货)
      DELIVERED      → Delivered   (已经 deliver)
@@ -1480,13 +1488,21 @@ const buildAllColumns = (
     searchValue: (r) => r.postcode ?? '',
   },
   {
-    /* "Processing Date" is the UI label for the internal_expected_dd column.
-       PR #121/#140 renamed it app-wide — SO New / SO Detail / OrderInfoCard
-       all read+write internal_expected_dd under this label. The raw
-       processing_date column is dead (nothing in the API ever writes it), so
-       this column must read internal_expected_dd or it shows permanently
-       blank. Key kept as 'processing_date' to preserve saved column layouts.
-       Duplicate "Internal DD" column removed. Commander 2026-05-28. */
+    /* "Processing Date" is the UI label for the internal_expected_dd column —
+       the ONE storage this concept has. PR #121/#140 renamed it app-wide: SO
+       New / SO Detail / OrderInfoCard all read+write internal_expected_dd under
+       this label, and every accessor below does the same.
+
+       `key` IS NOT A DATABASE COLUMN. It is the persisted identifier for this
+       column in each user's saved table layout, and it is deliberately left as
+       the string 'processing_date' so those saved layouts keep resolving —
+       renaming it would silently drop the column from every layout that already
+       names it. Nothing reads a `processing_date` FIELD off the row: the raw
+       scm.consignment_sales_orders.processing_date column never had a writer, is
+       no longer selected by the API, and is being dropped (see the CO HEADER
+       note in backend/src/scm/routes/consignment-orders.ts). Do not "fix" this
+       key into an accessor. Duplicate "Internal DD" column removed. Commander
+       2026-05-28. */
     key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
     defaultHidden: true,
     accessor: (r) => compactDate(r.internal_expected_dd),

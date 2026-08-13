@@ -183,6 +183,7 @@ import {
   findFreeTextSoLines, freeTextSoLineResponse,
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
+import { soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
@@ -4874,6 +4875,31 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       c,
     ));
 
+  /* ── Stock-location gate (owner 2026-08-13, company 1 only) ───────────────
+     An order this company writes to AutoCount must resolve a warehouse, or the
+     account book refuses the whole document (FK_SODTL_Location) AFTER the
+     salesperson has been told it saved — which is exactly how HC-SO-2608-002
+     died. Gated on the DERIVED location above, not on the bare presence of a
+     State, because an unmapped State derives nothing either; see
+     lib/so-location-gate.ts for the two causes and who fixes each.
+
+     DRAFTS ARE EXEMPT, same rule as the confirm gate and for the same reason:
+     a draft is the scan job's guess awaiting an operator's verdict and is
+     never written to AutoCount. The DRAFT -> live transition (the only OTHER
+     place this router enqueues an AutoCount create) carries the same gate, so
+     the invariant holds wherever a create is enqueued. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    const locationProblem = soLocationProblem({
+      companyCode: c.get('companyCode') ?? null,
+      salesLocation: derivedSalesLocation,
+      customerState: (body.customerState as string | null | undefined) ?? null,
+    });
+    if (locationProblem) {
+      await rollbackPwpClaims();
+      return c.json(validationFailedBody([locationProblem]), 422);
+    }
+  }
+
   /* Delivery-date requires an address (owner 2026-07-22 — "有 delivery date
      就必须有地址，不然我们怎么知道送去哪里"). Owner-sighting: POS test SO
      2990-SO-2607-019 had customerDeliveryDate set but no address1 / postcode
@@ -5851,6 +5877,20 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
+  }
+  /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
+     company 1 only) — the SAME invariant the create path enforces. This is the
+     moment the draft becomes a real order and gets enqueued for AutoCount (see
+     the enqueueSoCreate below), so it is the second and last place a create is
+     queued, and a draft that never got a State has to be resolved HERE rather
+     than refused by the account book afterwards.
+
+     Condition mirrors that enqueue exactly: out of DRAFT, and not a cancel (a
+     cancelled draft queues no create, so gating it would only strand junk scan
+     drafts that the operator is trying to throw away). */
+  if (fromNorm === 'DRAFT' && toStatus !== 'CANCELLED') {
+    const locationProblem = await soLocationProblemForDoc(sb, docNo, c.get('companyCode') ?? null);
+    if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
   const patch: Record<string, unknown> = {
     status: toStatus,

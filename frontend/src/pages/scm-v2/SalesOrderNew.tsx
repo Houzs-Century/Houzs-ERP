@@ -90,7 +90,8 @@ import {
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { formatPhone } from '@2990s/shared/phone';
-import { soDateGuardError, soSliplessPaymentError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneyCenti } from '@2990s/shared';
 
@@ -260,6 +261,10 @@ export const SalesOrderNew = () => {
      state so the cascade effect can overwrite it whenever State changes
      while still allowing future manual override. */
   const [salesLocation, setSalesLocation] = useState('');
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   // ── Emergency contact ──────────────────────────────────────────────
   const [emergencyName,  setEmergencyName]   = useState('');
@@ -1514,6 +1519,23 @@ export const SalesOrderNew = () => {
         body: 'A draft can be saved without one.',
         tone: 'error',
       });
+      return;
+    }
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with mobile via soStockLocationError; the backend is the authoritative
+       gate (422 validation_failed) and this only saves the operator a
+       round-trip with a form full of typing. Reads the SAME salesLocation the
+       create body sends, so the two can never disagree. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+    });
+    if (locationErr) {
+      notify({ ...locationErr, tone: 'error' });
       return;
     }
 

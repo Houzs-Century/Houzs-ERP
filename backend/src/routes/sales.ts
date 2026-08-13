@@ -37,6 +37,37 @@ const PAYMENT_TYPES = new Set(["cash", "card_cc", "card_db", "epp", "cheque", "o
 // pass through to the row. Keeps validation focused on the few that
 // have constraints (amounts / dates / payment-method enum) and lets
 // the rest flow as TEXT.
+//
+// ─── `processing_date` HERE IS NOT THE SALES ORDER'S PROCESSING DATE ───
+// WHAT IT IS: a date on a `sales_entries` row — the LEGACY NATIVE Sales module
+// (the /sales page, Sales.tsx). A sales entry is its OWN document: it has no
+// SO row, no doc-flow parent, no DO/SI downstream, and none of the SCM
+// Processing-Date machinery touches it — no deposit gate
+// (`processing_date_unpaid`), no variant/KIV completeness gate, no elapsed-date
+// lock (`so_locked_processing`), no `scm.so.remove_processing_date` permission,
+// no stock allocation. It is a plain user-typed TEXT date that this module
+// stores and renders. Nothing joins it to any SCM table.
+//
+// WHAT IT IS NOT: the SCM Sales Order's Processing Date. That concept has
+// exactly ONE storage, `scm.mfg_sales_orders.internal_expected_dd` (owner,
+// stated more than three times: internal expected date / processing date /
+// process date are one thing and must carry one name). Do NOT coalesce these
+// two, migrate one into the other, or "unify" them — they are different dates on
+// different documents that merely share a word.
+//
+// WHY IT STILL CARRIES THE CONFUSING NAME (a rename was considered and rejected
+// as UNSAFE, deliberately, not overlooked). `applyEntryPatch` below builds its
+// UPDATE as `SET ${k} = ?` for each `k` of FIELDS that is `in body` — and one of
+// its two callers is the change-request APPROVAL path, which JSON.parses `body`
+// out of `sales_entry_change_requests.payload`, a row written at REQUEST time
+// and applied possibly days later. Those stored payloads are keyed by the
+// column names as they were when the request was queued. Rename the column (and
+// therefore this allowlist) and every already-queued payload carrying
+// "processing_date" stops matching any FIELDS entry — so on approval the loop
+// simply never emits a SET for it. The request approves, reports ok, and
+// SILENTLY DROPS the field. Stale SPA clients still posting the old key fail the
+// same silent way. A silent wrong-value-on-approve is strictly worse than an
+// awkward name, and there is no error path to catch it.
 const SO_FORM_TEXT_FIELDS = [
   "doc_no",
   "processing_date",

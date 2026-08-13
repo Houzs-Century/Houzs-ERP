@@ -183,13 +183,38 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
   }));
 }
 
+/* NOTE — there is no `processing_date` here, on purpose, and it must not come
+   back. The CO's Processing Date is `internal_expected_dd` (below), the SAME one
+   name the rest of the system uses; the CO create/PATCH paths already read and
+   write only that, and ConsignmentOrderDetail/New bind their "Processing date"
+   input to it. scm.consignment_sales_orders.processing_date (mig 0153) exists
+   only because this module was cloned from mfg_sales_orders wholesale — it has
+   NEVER had a writer (the create INSERT omits it; the header PATCH builds its
+   update from the closed `map` below, which does not contain it; the status
+   PATCH writes only status+updated_at; recomputeTotals writes only money), so
+   every row's value is NULL and selecting it only tempted the next reader to
+   bind a UI field to a permanently-blank column. That already happened once on
+   the mfg twin — see BUG-HISTORY "SO read views showed a blank Processing date".
+
+   THE COLUMN IS STILL IN THE DATABASE. Dropping it is a SEPARATE, LATER deploy,
+   not this one: deploy.yml runs pg-migrate BEFORE `wrangler deploy`, so a column
+   dropped in the same release that stops selecting it leaves the still-live old
+   Worker doing a PostgREST select on a missing column — which 500s the whole
+   Consignment Orders list AND detail for the length of the deploy. (That class
+   of mistake is what blocked prod for hours in #1191/0189.) Once THIS commit is
+   live, nothing reads the column and the follow-up migration is a one-liner:
+
+     ALTER TABLE scm.consignment_sales_orders DROP COLUMN IF EXISTS processing_date;
+
+   Its sibling scm.consignment_sales_orders.proceeded_at needed no such wait —
+   nothing read it even before this commit — and was dropped in mig 0284. */
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
-  'currency, status, remark2, remark3, remark4, note, processing_date, sales_exemption_expiry, ' +
+  'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   'customer_state, customer_country, customer_delivery_date, internal_expected_dd, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +

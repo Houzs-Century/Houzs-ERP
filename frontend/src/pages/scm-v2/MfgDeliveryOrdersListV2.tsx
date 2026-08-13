@@ -44,6 +44,7 @@ import {
 } from "../../components/DocumentLinesExpansion";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -880,14 +881,36 @@ export function MfgDeliveryOrdersListV2() {
     cancelled: 0,
   };
 
-  // Revenue is summed over the CURRENT page's rows only (the paginated contract
-  // returns counts but not full-set money sums), so its card is labelled "on
-  // this page". The In-transit / Delivered cards read the FULL-set statusCounts.
+  /* The rows the TABLE is showing — the server page minus whatever the
+     per-column funnels hide (owner 2026-08-13, following the Purchase Orders
+     fix). See hooks/useVisibleRows for why summarising the server page put two
+     contradictory numbers on one screen. */
+  const visible = useVisibleRows(rows);
+
+  // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
+  // not full-set money sums), so the card and the table can never disagree.
   const revenueCenti = useMemo(() => {
     let sum = 0;
-    for (const r of rows) sum += r.local_total_centi ?? 0;
+    for (const r of visible.rows) sum += r.local_total_centi ?? 0;
     return sum;
-  }, [rows]);
+  }, [visible.rows]);
+
+  /* In-transit / Delivered normally read the server's FULL-set statusCounts —
+     right, and deliberately unaffected by paging. But under an active column
+     funnel they would state a whole-dataset count beside a table showing a
+     handful of rows, which is the exact contradiction this change exists to
+     remove. So while a funnel is narrowing the page, they describe the visible
+     set instead; with no funnel they are byte-identical to before. */
+  const visibleBucketCounts = useMemo(() => {
+    let inTransit = 0;
+    let delivered = 0;
+    for (const r of visible.rows) {
+      const b = statusFor(r.status).bucket;
+      if (b === "in_transit") inTransit += 1;
+      if (b === "delivered") delivered += 1;
+    }
+    return { inTransit, delivered };
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -1711,11 +1734,16 @@ export function MfgDeliveryOrdersListV2() {
           />
 
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {/* Every tile describes the rows ON SCREEN and says so while a
+                column funnel narrows them (owner 2026-08-13). The count tiles
+                switch SOURCE, not just wording: the server's counts are right
+                until a client-side funnel hides part of the page, at which
+                point they contradict the table beneath them. */}
             <StatCard
               pending={statsPending}
               label="Total DOs"
-              value={total.toLocaleString("en-MY")}
-              subtitle="All matching orders"
+              value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+              subtitle={visible.filtered ? "Filtered · shown below" : "All matching orders"}
               rail="bg-primary"
               active
             />
@@ -1723,22 +1751,30 @@ export function MfgDeliveryOrdersListV2() {
               pending={statsPending}
               label="Revenue"
               value={fmtRm(revenueCenti)}
-              subtitle="Sum on this page"
+              subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="In transit"
-              value={counts.in_transit.toLocaleString("en-MY")}
-              subtitle="Dispatched · en route"
+              value={(visible.filtered
+                ? visibleBucketCounts.inTransit
+                : counts.in_transit
+              ).toLocaleString("en-MY")}
+              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
             <StatCard
               pending={statsPending}
               label="Delivered"
-              value={counts.delivered.toLocaleString("en-MY")}
-              subtitle="Signed / delivered / invoiced"
+              value={(visible.filtered
+                ? visibleBucketCounts.delivered
+                : counts.delivered
+              ).toLocaleString("en-MY")}
+              subtitle={
+                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+              }
               tone="success"
               rail="bg-synced"
             />
@@ -1843,6 +1879,8 @@ export function MfgDeliveryOrdersListV2() {
             <DataTable<DoRow>
               tableId="delivery-orders-v2"
               rows={rows}
+              /* Feeds the stat strip so the tiles describe what is on screen. */
+              onFilteredRowsChange={visible.onFilteredRowsChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}

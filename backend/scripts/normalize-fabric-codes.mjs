@@ -53,6 +53,7 @@ import {
      3 inventory_movements and 3 inventory_lots rows stayed in the other —
      found by the census on 2026-08-13, after the 2026-08-11 pass. */
   repointDescription2, repointVariantKey, repointAllowedOptions, skippedArms,
+  countColoursBulk,
 } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -83,10 +84,21 @@ async function main() {
                            FROM scm.fabric_colours WHERE company_id = ${CO}`;
   note(`library: ${libs.length} series / ${cols.length} colours`);
 
-  const refCache = new Map();
+  /* ONE PASS FOR EVERY COLOUR, not one round trip each. This asks for a
+     reference count per code, and the library holds hundreds of them; when the
+     shared arm list went from 4 tables to 15 that became twelve thousand
+     queries and a plan run that used to take a minute was still going after
+     fifteen. countColoursBulk answers all of them with one query per arm.
+
+     Warmed for every colour up front, and countColour is kept as the fallback
+     for a code the warm-up did not see (a canonical target that no row carries
+     yet), so no path silently reports zero. */
+  const refCache = await countColoursBulk(sql, CO, cols.map((r) => r.colour_id));
+  note(`reference counts warmed for ${refCache.size} colour(s) in one pass per arm`);
   const refs = async (code) => {
-    if (!refCache.has(code)) refCache.set(code, sum(await countColour(sql, CO, code)));
-    return refCache.get(code);
+    const k = String(code).toUpperCase();
+    if (!refCache.has(k)) refCache.set(k, sum(await countColour(sql, CO, code)));
+    return refCache.get(k);
   };
 
   /* Group every ACTIVE colour by the canonical code it should carry. A group
@@ -122,9 +134,32 @@ async function main() {
     const [win, ...lose] = scored;
 
     /* The winner's NAME is the best one in the group: its own if it has one,
-       otherwise any sibling's. A merge must not lose the only colour name. */
-    let best = win.p.name;
-    if (!best) for (const s of scored) if (s.p.name) { best = s.p.name; break; }
+       otherwise any sibling's. A merge must not lose the only colour name.
+
+       AND THE LABEL COUNTS AS A SOURCE. `parse` reads a name out of the CODE,
+       which is where names lived BEFORE the 2026-08-11 normalisation moved
+       them: "J9226-1 SAND" parsed to J9226-01 + SAND, and the label
+       "J9226-01 SAND" was written from it. Run the script again now and the
+       code is clean, so parse returns NO name — and the label was rebuilt as
+       bare "J9226-01", silently deleting SAND.
+
+       A 2026-08-13 prod PLAN caught it before any of it was applied: 200
+       rewrites, every one of the form
+           "J9226-01" / "J9226-01 SAND"  ->  "J9226-01" / "J9226-01"
+       with the CODE UNCHANGED. The script was not idempotent — its second run
+       destroyed the colour names its first run created.
+
+       So the existing LABEL is now the third source. A supersede tombstone is
+       not a name: its text is a record of what absorbed the row. */
+    const nameFromLabel = (r) => {
+      const lbl = String(r.label ?? "").trim();
+      if (!lbl || /\[(MERGED into|superseded by) /i.test(lbl)) return "";
+      const code = String(r.colour_id ?? "").trim();
+      const rest = lbl.toUpperCase().startsWith(code.toUpperCase()) ? lbl.slice(code.length) : "";
+      return normColour(rest).replace(/^[\s\-#]+/, "").trim();
+    };
+    let best = win.p.name || nameFromLabel(win.r);
+    if (!best) for (const s of scored) { best = s.p.name || nameFromLabel(s.r); if (best) break; }
     const target = { ...win.p, name: best };
     const newId = canonId(target), newLabel = canonLabel(target);
 
