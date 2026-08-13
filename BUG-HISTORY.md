@@ -580,6 +580,65 @@ when the truth moved. Import it, or pin it with a test - a citation is not a
 mechanism.
 
 **Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
+## BUG CLASS - unverified-completeness-claim: "every call site", unchecked [high]
+
+**The shape** - a PR asserts it covered a whole POPULATION — "every desktop +
+mobile call site", "all four arms", "system-wide", "everywhere" — and it did
+not. The claim is prose, so nothing reads it: `tsc` cannot see it, vitest
+cannot see it, and a reviewer who could check it would have to re-derive the
+population by hand, which is the work the sentence was written to save them.
+The claim is believed exactly because it is confident, and the half of the
+population nobody enumerated keeps the old behaviour.
+
+This is the FIRST-ORDER version of `optional-param-noop` below. That class is
+about the compiler being unable to enumerate call sites; this one is about the
+AUTHOR not enumerating them either, and saying otherwise.
+
+**Worked example** - PR #1763, as traced in the entry below: thirteen call
+sites, five untouched, the sentence "every desktop + mobile call site", and four
+days of DIVAN ONLY lines demanding a mattress Gap. Note that the false claim
+lived in the PR BODY, not the title — the title says only "DIVAN ONLY lines do
+not require a mattress Gap". Any check that reads titles alone misses it.
+
+**How common** - the detector in `scripts/lib/completeness-claim.mjs`, run over
+all 3,231 commits reachable from `origin/main` on 2026-08-13, fires on 30 titles
+(0.9%) and 438 title-or-body messages (13.6%). Roughly one merged PR in seven
+makes a claim of this shape. Before this gate, none of them was checkable.
+
+**The remedy** - `.github/workflows/completeness-claim.yml`. When a PR title or
+body claims completeness, the body must carry a fenced block tagged
+`enumeration` holding the command that ENUMERATES the population and that
+command's output:
+
+````
+```enumeration
+$ git grep -n "missingVariantAxes(" -- backend/src frontend/src
+backend/src/scm/lib/so-variant-check.ts:56:    const missing = ...
+...
+```
+````
+
+CI **re-runs the command against the PR head and diffs the output**. That last
+part is the whole design: a pasted list can be stale or invented, so the check
+reproduces it rather than trusting it. The author's own sentence becomes a test,
+and the diff names the members of the population the PR did not cover.
+
+The command is never handed to a shell — a PR body is untrusted input written by
+anyone who can open a PR. It is tokenised in-process and restricted to
+`grep` / `rg` / `git grep` / `git ls-files` / `node -e` one-liners over this
+checkout, with a per-program flag allowlist (`rg --pre`, `rg -z`, `rg -L`, and
+any option before a git subcommand are refused by name), a scrubbed environment
+so no secret is reachable, `--permission --allow-fs-read=<repo>` for node, and a
+60s timeout. See the header of `scripts/check-completeness-claim.mjs`.
+
+**The escape, and why it is loud** - a PR may carry the label
+`completeness-not-claimed`. The check then passes, prints the offending phrases
+back with their line numbers, and asks for the wording to be changed. It waives
+the PROOF, not the problem: the sentence is still in the PR and a reader six
+months from now will still read it as a promise.
+
+**Ref** - `completeness-gate`, 2026-08-13
+
 ## BUG CLASS - optional-param-noop: an optional argument that decides something [high]
 
 **The shape** - a parameter is OPTIONAL, and its ABSENCE changes an answer: a
@@ -593,8 +652,19 @@ and applies only where somebody remembered to reach it.
 (`backend/src/scm/shared/so-variant-rule.ts`). PR #1763 (2026-08-09) added the
 DIVAN ONLY gap exemption keyed on it and declared "itemCode threaded through the
 backend gate and every desktop + mobile call site". It was not: the parameter
-arrived as `itemCode?: string | null`, two sites did not pass it, and those lines
-went on demanding a mattress Gap for a product that has none for FOUR DAYS. The
+arrived as `itemCode?: string | null`, and FIVE of the thirteen call sites that
+existed at that commit did not pass it —
+`git grep -n "missingVariantAxes(\|missingConfirmVariantAxes(" 4f30a063 -- backend/src frontend/src`
+lists all thirteen, and these five carry only two arguments:
+`scm/lib/so-confirm-gate.ts:116`, `scm/shared/inventory-adjustment.ts:38`,
+`pages/scm-v2/SalesOrderNew.tsx:1419`,
+`pages/scm-v2/SalesOrderNewFromProducts.tsx:273`, and
+`vendor/shared/inventory-adjustment.ts:42`. (This entry said "two" until
+2026-08-13; the count was never enumerated, which is the same failure as the
+claim it describes.) The backend confirm gate — the one that blocks a Processing
+Date — was among them and was not closed until #2072 on 2026-08-13, so those
+lines went on demanding a mattress Gap for a product that has none for FOUR
+DAYS. The
 2026-08-10 exemption for adjustable beds / trundle combos / double-decker bunks
 was half-applied through the same hole. `git blame` shows the two halves of one
 ternary, one updated and one not, four lines apart. The full trace is in the

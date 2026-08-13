@@ -5,6 +5,28 @@
 
 Backend approval (required when applicable): N/A
 
+### Completeness
+
+<!--
+Claiming a whole population anywhere in this PR? Paste the command that ENUMERATES
+it, plus that command's exact output, in a fenced block tagged `enumeration`. CI
+re-runs the command against this PR head and fails on any difference, so the list
+proves itself instead of asking to be believed. One command per block; add another
+block for another population. Allowed: grep, rg, git grep, git ls-files, node -e.
+
+Copy the block below OUT of this comment and fill it in:
+
+```enumeration
+$ git grep -n "missingVariantAxes(" -- backend/src frontend/src
+<the exact output, pasted>
+```
+
+Not claiming a population, but the wording tripped the check? Reword it to what you
+actually covered, or add the `completeness-not-claimed` label.
+Leave this section empty if it does not apply.
+-->
+
+
 ## Regression proof
 
 - Bug / hardening ID:
