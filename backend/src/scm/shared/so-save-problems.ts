@@ -18,6 +18,7 @@
 // ----------------------------------------------------------------------------
 import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from './so-variant-rule';
 import { meetsDepositGate, processingDateThresholdFor } from './order-rules';
+import { soDatePairRefusal } from './so-processing-date';
 import { fmtRM } from './format';
 
 /** One machine- + human-readable reason a save was rejected.
@@ -216,21 +217,30 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       field: 'Delivery Date',
     });
   }
-  /* The other half of "both dates or neither" (owner, restated 2026-08-13).
-     1c asks for a delivery date once a Processing Date is set, but ONLY on a
-     path that supplies completeness facts, and nothing here ever asked the
-     reverse — so a Delivery Date could be written alone by anything that skips
-     the form (the CO header PATCH runs no pair check of its own; the SO create
-     and PATCH paths short-circuit before they reach this helper). Grandfathered
-     the same way the past-date rules above are: a stored unpaired date this save
-     leaves exactly as it found it is a record, not a fresh entry — 19 live
-     orders are honestly unpaired (AutoCount has no delivery date for them
-     either), and an edit that touches neither date must still save. */
-  if (delivDate && !procDate && (delivDate !== origDeliv || procDate !== origProc)) {
+  /* "Both dates or neither" (owner, restated 2026-08-13), BOTH directions, from
+     the one shared predicate in shared/so-processing-date rather than a local
+     compare. This block used to ask only the delivery→processing direction; the
+     reverse lived in 1c above and is gated on `facts.completeness`, which the
+     consignment paths do not supply — so on those paths a Processing Date with
+     no Delivery Date raised nothing at all. Grandfathering (a stored unpaired
+     pair this save leaves exactly as it found it) is inside the predicate: 19
+     live orders are honestly unpaired, and an edit that touches neither date
+     must still save.
+
+     Suppressed when 1c already named the missing delivery date — the same fact
+     told twice reads as two things to fix. */
+  const pairAlreadyReported = out.some(
+    (p) => p.code === 'processing_date_incomplete' && p.field === 'Delivery date',
+  );
+  if (!pairAlreadyReported && soDatePairRefusal({
+    nextProc: procDate, nextDeliv: delivDate, origProc, origDeliv,
+  })) {
     out.push({
       code: 'processing_delivery_must_pair',
-      message: 'A Processing Date is required when a Delivery Date is set — set both, or leave both empty.',
-      field: 'Processing Date',
+      message: procDate
+        ? 'A Delivery Date is required when a Processing Date is set — set both, or leave both empty.'
+        : 'A Processing Date is required when a Delivery Date is set — set both, or leave both empty.',
+      field: procDate ? 'Delivery Date' : 'Processing Date',
     });
   }
   // Factory start can't fall after the promised delivery. Both plain ISO

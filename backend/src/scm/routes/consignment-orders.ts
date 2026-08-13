@@ -58,6 +58,7 @@ import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
    2026-07-18) — mirrors the SO path. Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+import { soDatePairCascadeColumns, soDatePairRefusal } from '../shared/so-processing-date';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -139,45 +140,14 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
   }));
 }
 
-/* NOTE — there is no `processing_date` here, on purpose, and it must not come
-   back. The CO's Processing Date is `internal_expected_dd` (below), the SAME one
-   name the rest of the system uses; the CO create/PATCH paths already read and
-   write only that, and ConsignmentOrderDetail/New bind their "Processing date"
-   input to it. scm.consignment_sales_orders.processing_date (mig 0153) exists
-   only because this module was cloned from mfg_sales_orders wholesale — it has
-   NEVER had a writer (the create INSERT omits it; the header PATCH builds its
-   update from the closed `map` below, which does not contain it; the status
-   PATCH writes only status+updated_at; recomputeTotals writes only money), so
-   every row's value is NULL and selecting it only tempted the next reader to
-   bind a UI field to a permanently-blank column. That already happened once on
-   the mfg twin — see BUG-HISTORY "SO read views showed a blank Processing date".
-
-   THE COLUMN IS STILL IN THE DATABASE. Dropping it is a SEPARATE, LATER deploy,
-   not this one: deploy.yml runs pg-migrate BEFORE `wrangler deploy`, so a column
-   dropped in the same release that stops selecting it leaves the still-live old
-   Worker doing a PostgREST select on a missing column — which 500s the whole
-   Consignment Orders list AND detail for the length of the deploy. (That class
-   of mistake is what blocked prod for hours in #1191/0189.) Once THIS commit is
-   live, nothing reads the column and the follow-up migration is a one-liner:
-
-     ALTER TABLE scm.consignment_sales_orders DROP COLUMN IF EXISTS processing_date;
-
-   Its sibling scm.consignment_sales_orders.proceeded_at needed no such wait —
-   nothing read it even before this commit — and was dropped in mig 0284. */
+/* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
-  /* No `processing_date` in this line any more, and it is NOT an omission: the
-     consignment header carried TWO columns, a dead legacy `processing_date`
-     that nothing has ever written and the live date under the old name
-     `internal_expected_dd`. Mig 0284 dropped the dead one and renamed the live
-     one onto the freed name — it is selected two lines down, next to
-     customer_delivery_date, where the date it partners with lives. Selecting a
-     dropped column is a hard PostgREST error (the 0189 lesson), so this had to
-     go in the same commit as the migration. */
+  /* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
@@ -704,20 +674,17 @@ consignmentOrders.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* CO composition rules (mirror the SO create path):
-       1. Processing Date + Delivery Date are all-or-nothing.
-       2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
-       3. All MATTRESS lines must share ONE brand. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
   {
     const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
-    /* must-pair stays a short-circuit (structurally-incomplete date pair). */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+    /* must-pair stays a short-circuit (structurally-incomplete date pair), and
+       the predicate is shared/so-processing-date's so the CO paths cannot drift
+       from the SO paths. Every date on a create is new — no originals. */
+    const coCreatePairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (coCreatePairRefusal) return c.json(coCreatePairRefusal, 400);
     /* Aggregate the rest (variants / past-date / processing-≤-delivery) into ONE
        response — mirrors the SO create path. No deposit gate on the consignment
        mirror, so `deposit` is omitted. All dates are new on create. */
@@ -1325,10 +1292,10 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const beforeCols = map.map(([, snake]) => snake).concat(['status']).join(', ');
   const { data: before } = await scopeToCompanyId(sb.from('consignment_sales_orders').select(beforeCols).eq('doc_no', docNo), co.companyId).maybeSingle();
 
-  /* Processing & Delivery Date may only be today or a future date, BUT an
-     already-past value the edit does NOT change is grandfathered through. The
-     helper re-derives past-date + processing-≤-delivery from the effective +
-     original dates and folds in the variant offenders collected above. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
+  /* Set when clearing the Processing Date also clears a Delivery Date the
+     request never named — read by the line-level cascade after the write. */
+  let coCascadedDeliveryClear = false;
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1338,9 +1305,22 @@ consignmentOrders.patch('/:docNo', async (c) => {
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts. */
+    const coCascadeCols = soDatePairCascadeColumns({
+      procCleared: typeof proc === 'string' && (proc || null) === null && !!origProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of coCascadeCols) updates[col] = null;
+    coCascadedDeliveryClear = coCascadeCols.length > 0;
+    const effDelivAfterCascade = coCascadedDeliveryClear ? null : effDeliv;
+    const coPairRefusal = soDatePairRefusal({
+      nextProc: effProc, nextDeliv: effDelivAfterCascade, origProc, origDeliv,
+    });
+    if (coPairRefusal) return c.json(coPairRefusal, 400);
     const coProblems = collectProcessingGateProblems({
       procDate: effProc,
-      delivDate: effDeliv,
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -1375,8 +1355,11 @@ consignmentOrders.patch('/:docNo', async (c) => {
 
   /* Master-follower cascade. When the header's customer_delivery_date changes,
      every non-overridden line picks up the new date. Best-effort. */
-  if (body['customerDeliveryDate'] !== undefined) {
-    const newDate = body['customerDeliveryDate'] as string | null;
+  if (body['customerDeliveryDate'] !== undefined || coCascadedDeliveryClear) {
+    /* A cascaded clear has no body value to read — the header column was set to
+       null above, so the lines must follow it, or MRP keeps ordering by a line
+       date the header no longer holds. */
+    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)
