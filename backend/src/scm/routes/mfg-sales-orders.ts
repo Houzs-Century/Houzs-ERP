@@ -187,7 +187,7 @@ import {
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
 import { soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
-import { soAgentToStamp, readStaffAgentName, type StaffAgentSb } from '../lib/so-agent';
+import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
 import {
   claimedSlipSessionIds,
   planCreatePaymentSlips,
@@ -3577,24 +3577,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const salespersonIdToStamp = canAttributeOther
     ? ((body.salespersonId as string) ?? callerStaffId ?? null)
     : callerStaffId;
-
-  /* `agent` FOLLOWS THE STAMPED SALESPERSON (owner 2026-08-13, fix it at the
-     source). It is the legacy free-text salesperson name, and it is the ONLY
-     field the AutoCount write-back reads for the Sales Agent — but no SO form
-     has ever sent `body.agent`, so every order created since the cutover
-     carried an empty one and the live book refused them with
-     FK_SO_SalesAgent. Deriving it here means the ERP's own record and the
-     account book's name the same human. An explicitly supplied agent still
-     wins; the rule itself is in scm/lib/so-agent.ts. */
-  const agentToStamp = soAgentToStamp(
-    body.agent,
-    /* Cast for the same reason loadVenueBindingInputs takes one below:
-       SupabaseClient's generics are deep enough that structurally matching them
-       here trips TS2589. The reader only ever calls
-       .from().select().eq().maybeSingle(), which StaffAgentSb pins. */
-    await readStaffAgentName(sb as unknown as StaffAgentSb, salespersonIdToStamp),
-  );
-
+  /* ONE read of the selected salesperson, feeding both the `agent` stamp and the
+     venue chain below — scm/lib/so-agent.ts has the rule and the FK it closes. */
+  const stampStaff = await readStaffForStamp(sb as never, salespersonIdToStamp);
+  const agentToStamp = soAgentToStamp(body.agent, stampStaff?.name ?? null);
   /* Migration 0086 + Loo 2026-06-06 — venue follows the SELECTED salesperson:
      an admin/coordinator entering an SO on behalf of a PJ salesperson stamps
      PJ automatically (before, only the CALLER's venue counted, so any
@@ -3606,16 +3592,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      NULL — admins oversee every venue by design. */
   let venueIdToStamp: string | null = (body.venueId as string | null | undefined) ?? null;
   if (!venueIdToStamp && salespersonIdToStamp) {
-    if (salespersonIdToStamp === callerStaffId) {
-      venueIdToStamp = (callerStaff?.venue_id as string | null) ?? null;
-    } else {
-      const { data: spStaff } = await sb
-        .from('staff')
-        .select('venue_id')
-        .eq('id', salespersonIdToStamp)
-        .maybeSingle();
-      venueIdToStamp = (spStaff as { venue_id?: string | null } | null)?.venue_id ?? null;
-    }
+    venueIdToStamp = salespersonIdToStamp === callerStaffId
+      ? ((callerStaff?.venue_id as string | null) ?? null)
+      : (stampStaff?.venueId ?? null);
   }
   if (!venueIdToStamp) {
     if (callerStaff && callerStaff.venue_id &&
@@ -3736,10 +3715,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   if ((body as { asDraft?: unknown }).asDraft !== true) {
     const confirmProblems = collectSoConfirmProblems({
       salespersonId: salespersonIdToStamp,
-      /* What will be STORED, not what arrived — the gate's own rule is that
-         either identifier satisfies it, and the resolved value is derived from
-         exactly those two, so the verdict is unchanged and the message can no
-         longer describe a field the row will not carry. */
       agent: agentToStamp,
       venue: resolvedVenueName,
       venueId: venueIdToStamp,
@@ -6839,31 +6814,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['customer_state'] = canonicalizeMyState(updates['customer_state'] as string | null);
   }
 
-  /* `agent` FOLLOWS A REASSIGNED SALESPERSON, for the same reason the create
-     stamps it: `agent` is what the AutoCount write-back sends as the Sales
-     Agent, and it is what the SO list and the Detail Listing print. Moving the
-     salesperson without it would leave the account book naming the previous
-     rep — a divergence the create-time stamp is what makes REACHABLE, since
-     until now the column was empty on every new order and the write-back fell
-     back to salesperson_id every time.
-
-     Same precedence as the create: a PATCH that names `agent` itself wins.
-     Runs BEFORE the change-detection read below, so an agent that already
-     matches storage drops out as the no-op it is; `body` is updated alongside
-     `updates` because diffFields() audits from `body` through the same map, and
-     a column written with no entry there would change the order with nothing in
-     its history to say so. A salesperson CLEARED to null leaves `agent` alone:
-     it is the last record of who sold the order, and the write-back reads it
-     exactly when salesperson_id is empty. */
-  if (typeof updates['salesperson_id'] === 'string' && updates['agent'] === undefined) {
-    const followed = await readStaffAgentName(
-      sb as unknown as StaffAgentSb, updates['salesperson_id'] as string);
-    if (followed) {
-      updates['agent'] = followed;
-      body['agent'] = followed;
-    }
-  }
-
+  /* `agent` follows a reassigned salesperson; a PATCH naming `agent` still wins.
+     scm/lib/so-agent.ts says why this must precede the read below. */
+  await followSalespersonToAgent(sb as never, updates, body);
   /* A PATCH is a real mutation only when at least one recognised, normalised
      field differs from storage. Compare before validation or derivation so an
      unchanged phone/dropdown/date cannot demand a version, bump it, or fire a

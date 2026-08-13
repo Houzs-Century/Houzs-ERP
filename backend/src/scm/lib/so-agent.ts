@@ -89,13 +89,72 @@ export async function readStaffAgentName(
   sb: StaffAgentSb,
   staffId: string | null | undefined,
 ): Promise<string | null> {
+  return (await readStaffForStamp(sb, staffId))?.name ?? null;
+}
+
+/**
+ * The two things a create stamps off the SELECTED salesperson's `scm.staff` row.
+ *
+ * One read, because there were about to be two: the venue chain already fetched
+ * this row for `venue_id` and the agent needs `name` off the same row, one
+ * `salespersonIdToStamp` apart. The route file may only shrink
+ * (`scripts/file-size-ceilings.json`), which is the mechanical reason this is
+ * here — and the right shape anyway.
+ *
+ * `venueId` is returned verbatim; the caller still applies its own priority
+ * (explicit body.venueId, then the salesperson's, then the caller's own when
+ * they are a POS-side role) and its own uuid guard. This function decides
+ * nothing about venue, it only carries the column.
+ */
+export async function readStaffForStamp(
+  sb: StaffAgentSb,
+  staffId: string | null | undefined,
+): Promise<{ name: string | null; venueId: string | null } | null> {
   const id = typeof staffId === 'string' ? staffId.trim() : '';
+  /* `.eq('id', null)` is not "no salesperson", it is a malformed filter. */
   if (!id) return null;
   try {
-    const { data } = await sb.from('staff').select('name').eq('id', id).maybeSingle();
-    const name = ((data as { name?: string | null } | null)?.name ?? '').trim();
-    return name || null;
+    const { data } = await sb.from('staff').select('name, venue_id').eq('id', id).maybeSingle();
+    const row = data as { name?: string | null; venue_id?: string | null } | null;
+    if (!row) return null;
+    return {
+      name: (row.name ?? '').trim() || null,
+      venueId: (row.venue_id as string | null) ?? null,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * `agent` FOLLOWS A REASSIGNED SALESPERSON on the header PATCH.
+ *
+ * The create-time stamp is what makes staleness REACHABLE: until it landed the
+ * column was empty on every new order and the write-back fell back to
+ * `salesperson_id` every time. Now `agent` holds a name, and moving the
+ * salesperson without it would leave the account book — and the SO list, and the
+ * Detail Listing — naming the previous rep.
+ *
+ * Same precedence as the create: a PATCH that names `agent` itself wins.
+ *
+ * `body` is updated alongside `updates` because `diffFields()` audits from
+ * `body` through the same field map, and a column written with no entry there
+ * changes the order with nothing in its history to say so. Call it BEFORE the
+ * change-detection read, so an agent that already matches storage drops out as
+ * the no-op it is.
+ *
+ * A salesperson CLEARED to null leaves `agent` alone: it is the last record of
+ * who sold the order, and the write-back reads it exactly when `salesperson_id`
+ * is empty. So is a name that cannot be read — a stale agent beats none.
+ */
+export async function followSalespersonToAgent(
+  sb: StaffAgentSb,
+  updates: Record<string, unknown>,
+  body: Record<string, unknown>,
+): Promise<void> {
+  if (typeof updates.salesperson_id !== 'string' || updates.agent !== undefined) return;
+  const followed = await readStaffAgentName(sb, updates.salesperson_id);
+  if (!followed) return;
+  updates.agent = followed;
+  body.agent = followed;
 }

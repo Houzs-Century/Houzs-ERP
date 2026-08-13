@@ -52,6 +52,11 @@ the FK on `/create-so`, not that — so the agent was never in the payload at al
    `/ensure-masters` — D10's 2026-08-13 rule applied to people, since the map is
    a snapshot of the book's spellings and not an allow-list.
 
+The create's `scm.staff` read is the venue chain's read: `readStaffForStamp`
+returns `{name, venueId}` off one row, where the router was two statements away
+from fetching the same row twice. That also pays for the new lines under
+`scripts/file-size-ceilings.json`, which lets `mfg-sales-orders.ts` only shrink.
+
 **With BOTH empty the create is REFUSED** (`MissingAgentError`, a visible
 `skipped` row through `noteReadFailure`) rather than sent to fail on the foreign
 key. The document cannot land either way, so the refusal loses no successful
