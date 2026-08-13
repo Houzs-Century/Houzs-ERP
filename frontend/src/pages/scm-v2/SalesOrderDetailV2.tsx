@@ -63,6 +63,7 @@ import {
   readPaymentRetryHandoff, readPaymentRetryNavigationState,
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -164,6 +165,13 @@ type SoItem = {
      floor, which is why the detail showed no Stock / Incoming PO at all. */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /* R2 object keys for this line's reference photos — the AutoCount
+     Further-Description shots the cutover imported, plus anything uploaded on
+     the edit card. Served by GET /:docNo all along (ITEM_COLS carries
+     photo_urls); this page never rendered them, so the only way to SEE a
+     line's photo was to enter edit mode (owner 2026-08-10: "我在外面的 UI 看
+     不到照片了吗?不能点开照片来看吗?"). */
+  photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -849,6 +857,24 @@ function SalesOrderDetailV2ReadOnly() {
           <span className="text-ink-muted">—</span>
         );
       },
+    },
+    /* Photos (owner 2026-08-10) — the line's reference shots, openable. Same
+       resolver as the edit card's tiles (vendor/scm/lib/so-line-photo), so the
+       read page cannot drift into a second, differently-broken loading path.
+       getValue is the COUNT so the column sorts/filters/exports as a number;
+       a `render` with no getValue is invisible to all three. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <SoLinePhotoStrip
+          docNo={docNo ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
+      ),
     },
     /* Stock + Incoming PO (owner 2026-08-01) — the SAME per-line readiness +
        source-PO trace the SO list drill-down shows, through the ONE shared
