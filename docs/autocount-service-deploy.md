@@ -108,6 +108,24 @@ printed document, marked. Hiding it would be deletion wearing a different hat.
 
 ## 2. Build
 
+**Prefer `deploy-on-host.ps1`. The manual procedure below is what it automates,
+kept because you need it when the script itself is what you are debugging.**
+
+```
+powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -DryRun   # does it compile
+powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1           # compile, swap, verify
+```
+
+It does every step in 2.1 to 3 in order, and adds the two things a written
+ritual cannot: it **refuses to swap an exe that did not compile**, and it
+**rolls back by itself** if the new exe does not answer `/health` with the
+expected book. It deletes `AcSyncService.build.cs` in a `finally`, so the
+password does not survive a failed run either. To ask only "does the source
+compile", with no credentials involved at all, use `build-local.ps1` — that runs
+on any workstation with AutoCount 2.2 installed.
+
+The rest of this section is the manual equivalent.
+
 On the AutoCount host, in a directory containing `AcSyncService.cs`.
 
 ### 2.1 Substitute the DB connection line — EVERY occurrence
@@ -116,9 +134,18 @@ On the AutoCount host, in a directory containing `AcSyncService.cs`.
 `AutoCount.Data.DBSetting db = ...` line before compiling, so the DB password
 never lives in source control.
 
-> **It now appears in THREE methods** — `Session()`, `DtlKeys()` and the new
-> `CreatedLines()`. It used to appear in two. **A substitution that replaces only
-> the first occurrence will not compile.** Use a global replace.
+> **It appears in THREE methods** — `Session()`, `DtlKeys()` and `CreatedLines()`
+> — plus once more in the file header comment, so a global replace reports
+> **four**. It used to appear in two. **A substitution that replaces only the
+> first occurrence will not compile.** Use a global replace.
+
+> **The connection line goes inside ORDINARY C# string literals, not verbatim
+> ones, so every backslash in it is an escape sequence.** A named SQL instance is
+> spelled `HOST\INSTANCE`, and pasting that raw fails to compile with **CS1009,
+> three times** — one per substitution site. Write `HOST\\INSTANCE` in
+> `dbline.txt`. `deploy-on-host.ps1` escapes this for you when it assembles the
+> line from `setup.json`; it cannot when you hand it a `dbline.txt`, because at
+> that point the file is already C# source and correcting it would be guessing.
 
 ```bat
 powershell -Command ^
@@ -241,6 +268,22 @@ POST /edit   { DocType:"SO", DocNo:"<same>",
 `[ERP-CANCELLED]`. Then confirm the line no longer appears as outstanding —
 `SELECT Qty - ISNULL(TransferedQty,0) FROM SODTL WHERE DtlKey = <key>` must
 return 0 or less.
+
+### 4.6a The three cells 4.1-4.5 never touch
+
+4.1 to 4.5 exercise create-SO and edit. **`/create-po`, `/so-to-do` and
+`/po-to-gr` have never run end to end** — `qa-convert.ps1` is those three, in
+order, over the public tunnel from any machine:
+
+```
+powershell -ExecutionPolicy Bypass -File qa-convert.ps1 -KeyFile <path> -IReallyMeanIt
+```
+
+It proves the convert actually LINKED the documents without needing a database:
+step 6 cancels the parent SO **while its DO still exists and requires that to
+fail**, because AutoCount refuses to cancel a transferred document. Then it
+tears down child-before-parent. Read its header before running — the converts
+consume real DO and GR running numbers, and the GR posts a real stock IN.
 
 ### 4.6 Only then, the live book
 

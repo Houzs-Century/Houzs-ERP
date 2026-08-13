@@ -6,6 +6,8 @@
 // in the Edit dropdown. Rule order: exact alias dict → strip trailing " SOLO"
 // then exact master match → report anything left.
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. A venue that already reads its canonical name is skipped, and only missing venues are created.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

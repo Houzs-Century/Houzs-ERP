@@ -45,7 +45,7 @@ async function main() {
     SELECT so.doc_no,
            UPPER(COALESCE(c.code::text, '?')) AS company,
            UPPER(COALESCE(so.status::text, '')) AS status,
-           so.internal_expected_dd,
+           so.processing_date,
            NULLIF(BTRIM(so.debtor_name), '')            AS nm,
            NULLIF(BTRIM(COALESCE(so.email, '')), '')     AS email,
            NULLIF(BTRIM(COALESCE(so.address1, '')), '')  AS addr,
@@ -61,7 +61,7 @@ async function main() {
                       WHERE p.so_doc_no = so.doc_no), 0) AS paid_centi
       FROM scm.mfg_sales_orders so
       LEFT JOIN public.companies c ON c.id = so.company_id
-     WHERE so.internal_expected_dd IS NOT NULL
+     WHERE so.processing_date IS NOT NULL
        AND UPPER(COALESCE(so.status::text, '')) <> 'CANCELLED'`;
 
   notice(`  live SOs carrying a Processing Date : ${rows.length}`);
@@ -139,7 +139,7 @@ async function main() {
   if (!shown) notice("    none — the unified gate would refuse nothing that exists today.");
 
   /* (C) The path that had NO gate at all. Approving an SO amendment can set
-     internal_expected_dd through header_changes, and until 2026-07-31 the only
+     processing_date through header_changes, and until 2026-07-31 the only
      check there was proc <= delivery. This counts the OPEN amendments a new gate
      on that path would refuse, so the fix ships on a number rather than a hope. */
   notice("================ (C) PENDING AMENDMENTS that set a Processing Date ================");
@@ -150,7 +150,7 @@ async function main() {
        AND UPPER(COALESCE(a.status::text,'')) NOT IN ('APPLIED','REJECTED','CANCELLED')`;
   const setsProc = amds.filter((a) => {
     const h = a.header_changes ?? {};
-    const v = h.internalExpectedDd;
+    const v = h.processingDate;
     return v !== undefined && v !== null && String(v).trim() !== '';
   });
   notice(`  open amendments with header changes       : ${amds.length}`);

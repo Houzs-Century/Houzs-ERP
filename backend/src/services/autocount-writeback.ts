@@ -33,6 +33,7 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -111,6 +112,14 @@ export interface ErpSoHeader {
   phone: string | null;
   ref: string | null;
   po_doc_no: string | null;
+  /** The SO's "Processing date" — the field with that label in the UI, and the
+   *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
+   *  such field: 0189 dropped a dead second column carrying this label, and 0284
+   *  renamed the surviving one (internal_expected_dd) onto the name everybody
+   *  says, because two names for one field kept producing blank dates just as
+   *  reliably as two columns did. Do not reintroduce a second source, or a
+   *  second name, for it. Goes out as the `PDate` UDF. */
+  processing_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -484,6 +493,28 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
   return out;
 }
 
+/**
+ * A date on its way into an AutoCount UDF, normalised to `YYYY-MM-DD`.
+ *
+ * The ERP stores these as text and they arrive in more than one shape — a bare
+ * date from a date input, a full ISO timestamp from anything that went through
+ * a Date. AutoCount's own reader hands the same field back as
+ * `SOUDF_PDate: "2026-08-12T00:00:00"`, which the inbound pull already trims
+ * with `dateOnly()`; this is that trim on the way out, so a round trip does not
+ * change the value.
+ *
+ * Anything that is not a date is dropped rather than passed through. Every UDF
+ * write inside AcSyncService is wrapped in its exception-swallowing `Set()`
+ * helper, so a value AutoCount rejects fails INVISIBLY — no error, no failed
+ * outbox row, just a field that never updates. Sending only what is
+ * unambiguously a date is the half of that we control from here.
+ */
+export function acUdfDate(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/.exec(String(v).trim());
+  return m ? m[1] : null;
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
@@ -507,6 +538,7 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
+      PDate: acUdfDate(header.processing_date),
     }),
     Details: composeDetails(live(lines), {
       ...opts,
@@ -636,7 +668,26 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
+    if (dtlKey == null) return d;
+    /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
+     * Location runs under, applied to the item itself. Owner 2026-08-13: an
+     * edit to an order that came in through the API changes its Description 2,
+     * never its SKU.
+     *
+     * The ERP's answer for these codes is a POLICY, not a reading of the book.
+     * A sales order does not know the brand, so four sofa models resolve to one
+     * canonical item — right for a new order, wrong for the 194 real lines the
+     * book already holds under the two brand items the cutover collapsed. An
+     * edit that sent the canonical code would move every one of them, silently,
+     * in a licensed ledger.
+     *
+     * Swapping the product on a line still propagates, because that is a DELETE
+     * plus an ADD: the removed row arrives in `retired` and is zeroed, and the
+     * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
+     * an in-place item change on a line the book owns is dropped, and the ERP
+     * has no such operation. */
+    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a

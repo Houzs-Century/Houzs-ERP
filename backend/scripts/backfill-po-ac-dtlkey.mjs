@@ -29,6 +29,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: inert. The UPDATE itself re-asserts linked_ac_dtlkey IS NULL, so a stamped line is never restamped.
  */
 import fs from "node:fs";
 import zlib from "node:zlib";

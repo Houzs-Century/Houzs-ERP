@@ -25,11 +25,28 @@
 // A row whose parent is not resolved yet is left pending WITHOUT burning an
 // attempt. Sweeps drain oldest-first, so the parent's create is ahead of it in
 // the same batch and usually resolves on the very same sweep.
+//
+// A QUEUED PAYLOAD SPEAKS AUTOCOUNT, NOT ERP — checked 2026-08-13, because it
+// decides whether renaming an ERP column strands rows already in the queue.
+// `payload.body` is the composed AcSyncService document (DebtorName, DocDate,
+// UDF.{BRANDING,VENUE,ToPONo,PDate}, Details[]); the only ERP identifiers that
+// survive into it are `writeback` / `lineWriteback` / `fromDoc` / `selfDoc`,
+// which name a TABLE and `doc_no` or `id`. No ERP column name for a business
+// field is frozen in there, so an ERP column rename cannot strand a queued row
+// and no payload migration is needed. `mastersOf` reads the payload's UDF block
+// for BRANDING and VENUE only — PDate is a date, not a dropdown master.
+//
+// What a rename CAN break here is the compose side, and silently: SO_HEADER_COLS
+// is a string select list, `soEditHeader` reads its header out of a bare
+// Record, and `composeCreateSo` is handed `header as never`. All three are keyed
+// on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { splitSofaCode } from '../../services/autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
   callAcService,
   AGENT_MAP,
@@ -42,6 +59,7 @@ import {
   composeDescription2,
   composeDetails,
   composeEdit,
+  acUdfDate,
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
@@ -196,8 +214,12 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
+/* processing_date is the SO's "Processing date" — the ONE storage behind that
+   UI label, under the ONE name since mig 0284 (0189 had already dropped the
+   dead legacy column of this name; 0284 then renamed the live
+   internal_expected_dd onto it). It leaves as the PDate UDF. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -1419,6 +1441,13 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
   const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
   if (venue) udf.VENUE = venue;
   if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
+     in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
+     this function — a cleared date sends nothing rather than blanking the
+     account book's value, which is the conservative half of the pair and the
+     one that cannot destroy data. */
+  const pdate = acUdfDate(h.processing_date as string | null | undefined);
+  if (pdate) udf.PDate = pdate;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
@@ -1442,6 +1471,17 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
  * `is_main_supplier` first, so a code bound to several suppliers resolves to the
  * one the business actually buys from. A PO narrows further: it knows its own
  * creditor, and that supplier's binding wins over the main one.
+ *
+ * THE CODES ASKED FOR MUST BE THE CODES THE RESOLVER LOOKS UP, and for a sofa
+ * those are not the codes on the ERP lines. Callers pass raw line codes, but D9
+ * collapses a sofa's compartments into ONE line carrying a SYNTHESISED
+ * `<model>-1S` (autocount-sofa-collapse.ts:356), and that is the string
+ * resolveAcItemCode checks the binding map for. Querying only the raw codes
+ * fetched bindings for '9028-1A(LHF)' and friends while the resolver asked for
+ * '9028-1S' — so the override could never fire for ANY sofa, and the four sofa
+ * models whose ERP code maps to two AutoCount items were unresolvable by any
+ * amount of data entry. Expanding the query with each line's sofa base code
+ * costs nothing for a non-sofa line (splitSofaCode returns null).
  */
 async function bindingsFor(
   sb: Sb,
@@ -1450,7 +1490,12 @@ async function bindingsFor(
   supplierId?: string | null,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const wanted = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
+  const raw = codes.map((c) => (c ?? '').trim()).filter(Boolean);
+  const sofaBases = raw
+    .map((c) => splitSofaCode(c))
+    .filter((s): s is { model: string; compartment: string } => s != null)
+    .map((s) => `${s.model}-1S`);
+  const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
   let q = sb.from('supplier_material_bindings')
     .select('material_code, supplier_id, supplier_sku, is_main_supplier')
@@ -1507,9 +1552,22 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     }
   }
 
+  /* A PURCHASE agent is a different master from a sales one: different table
+     (dbo.PurchaseAgent), different foreign key (FK_PO_PurchaseAgent), different
+     SDK command. Opening 'OTHERS' as a sales agent does nothing for a purchase
+     order that names it — /create-po is refused and the whole document is lost.
+     Proved on the live book 2026-08-12, after ensure-masters had already
+     reported agent:OTHERS as existing.
+     CreditorCode is the discriminator because it is the one field only a
+     purchase document carries; CreatePo applies it unconditionally. */
+  const isPurchase = typeof body.CreditorCode === 'string' && body.CreditorCode.trim().length > 0;
   const agents: Array<{ Agent: string }> = [];
+  const purchaseAgents: Array<{ PurchaseAgent: string }> = [];
   const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
-  if (agent) agents.push({ Agent: agent });
+  if (agent) {
+    if (isPurchase) purchaseAgents.push({ PurchaseAgent: agent });
+    else agents.push({ Agent: agent });
+  }
 
   /* A PURCHASE ORDER NAMES A CREDITOR, and CreatePo applies CreditorCode
      unconditionally — so a supplier the account book does not have fails the
@@ -1547,11 +1605,12 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     if (v) udfOptions.push({ List: listName, Value: v });
   }
 
-  if (!items.size && !agents.length && !creditors.length
+  if (!items.size && !agents.length && !purchaseAgents.length && !creditors.length
       && !locations.size && !udfOptions.length) return null;
   return {
     Items: [...items.values()],
     Agents: agents,
+    PurchaseAgents: purchaseAgents,
     Creditors: creditors,
     Locations: [...locations.values()],
     UdfOptions: udfOptions,

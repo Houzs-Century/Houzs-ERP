@@ -13,6 +13,8 @@
 //      received_at from it, so consumption order matches physical reality)
 // Guard: refuses any cell whose flat lot has been partially consumed.
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. A cell is only relayered while its flat zero-cost lot is unconsumed; step 1 consumes it, so a second run skips the cell.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

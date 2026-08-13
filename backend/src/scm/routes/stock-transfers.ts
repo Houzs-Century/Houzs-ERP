@@ -404,9 +404,9 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   /* The BEFORE half of the audit pair. Read before the flip because afterwards
      the prior status is unrecoverable, and it is exactly what a reader wants:
      "this was POSTED and someone cancelled it". */
-  const { data: beforeRow } = await sb.from('stock_transfers')
+  const { data: beforeRow } = await scopeToCompany(sb.from('stock_transfers')
     .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
-    .eq('id', id).maybeSingle();
+    .eq('id', id), c).maybeSingle();
   const beforeTransfer = beforeRow as {
     transfer_no: string; status: string;
     from_warehouse_id: string | null; to_warehouse_id: string | null; company_id: number | null;
@@ -415,10 +415,15 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TRANSFER', entityId: id, action: 'CANCEL', companyId: beforeTransfer?.company_id ?? null });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { data, error } = await sb.from('stock_transfers')
+  /* The company predicate goes on the FLIP, not only on the read above — this
+     is the statement that reverses stock, and the SCM client is service-role so
+     nothing re-checks between the two round trips. maybeSingle, not single: the
+     predicate can legitimately match zero rows (another company's transfer, or
+     a second cancel), and single() would report that as a 500. */
+  const { data, error } = await scopeToCompany(sb.from('stock_transfers')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
-    .eq('id', id).neq('status', 'CANCELLED')
-    .select('id, status, cancelled_at').single();
+    .eq('id', id).neq('status', 'CANCELLED'), c)
+    .select('id, status, cancelled_at').maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data)  return c.json({ error: 'already_cancelled' }, 409);
 

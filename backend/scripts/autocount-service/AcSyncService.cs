@@ -41,7 +41,7 @@
 //     /r:System.Web.Extensions.dll /r:System.Data.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
-// Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
+// Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
 //   /create-so       -> { docNo, lines[] }  payload = header + Details[]
@@ -94,8 +94,8 @@ class AcSyncService {
      server, and a service that cannot be moved without a recompile is a
      service that fights the machine it runs on. Default 8900. */
   static string Url =
-    "http://localhost:" + (File.Exists(@"C:\Tempc-svc-port.txt")
-      ? File.ReadAllText(@"C:\Tempc-svc-port.txt").Trim() : "8900") + "/";
+    "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
+      ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
   const string USER = "ADMIN";
 
   static string ApiKey =
@@ -358,7 +358,13 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // transferMaster MUST be true on the purchase side. That flag copies the
+        // source PO's header master (supplier/currency/terms) onto the target; with
+        // false the GRN is built with no supplier, the purchase detail ctor looks
+        // that row up in the master table, IndexOf returns -1, and Save() dies with
+        // "there is no row at position -1". The sales classes tolerate false (DO and
+        // IV are PROVEN with it, DO-011260 / DO-011262) so they are left alone.
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
@@ -367,7 +373,8 @@ class AcSyncService {
       case "PI": {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // see the GR case above — purchase side needs transferMaster = true
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
         doc.Save();
@@ -500,7 +507,13 @@ class AcSyncService {
         e.ItemCode = code;
         e.Description = Or(Str(it, "Description"), code);
         Set(() => e.Desc2 = Str(it, "Desc2"));
-        Set(() => e.ItemGroup = Str(it, "ItemGroup"));
+        /* ItemGroup is a FOREIGN KEY (FK_Item_ItemGroup), not a label. An item
+           opened without one is refused by the live book, which is what a new
+           SKU coming from the ERP hits on its very first document. OTHER exists
+           in AED_HOUZS for exactly this - a group that classifies nothing and
+           blocks nothing. Proved 2026-08-12: the same call fails with
+           FK_Item_ItemGroup and then succeeds with the group supplied. */
+        Set(() => e.ItemGroup = Or(Str(it, "ItemGroup"), "OTHER"));
         Set(() => e.StockControl = true);
         Set(() => e.IsSalesItem = true);
         Set(() => e.IsPurchaseItem = true);
@@ -533,6 +546,35 @@ class AcSyncService {
         Log("  ensure-masters CREATED agent " + code);
       } catch (Exception ex) {
         failed.Add(new Dictionary<string, object> { { "master", "agent:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A PURCHASE agent is a DIFFERENT master from a sales agent - a different
+       table (dbo.PurchaseAgent) behind a different foreign key
+       (FK_PO_PurchaseAgent) reached through a different command. Opening
+       'OTHERS' as a sales agent does nothing for a purchase order that names
+       it, and the PO is refused with the whole document. Found 2026-08-12 by
+       /create-po failing on the live book after /ensure-masters had reported
+       agent:OTHERS as already existing - the third foreign key in this chain,
+       after FK_SO_SalesAgent and FK_SO_SalesLocation, each one only visible
+       once the previous was satisfied. */
+    foreach (var o in List(p, "PurchaseAgents")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Or(Str(it, "PurchaseAgent"), Str(it, "Agent"));
+      if (code.Length == 0) continue;
+      try {
+        var cmd = AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand.Create(s, s.DBSetting);
+        if (PurchaseAgentExists(cmd, code)) { existed.Add("purchase-agent:" + code); continue; }
+        var e = cmd.NewPurchaseAgent();
+        e.PurchaseAgent = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        Set(() => e.IsActive = true);
+        cmd.SavePurchaseAgent(e);
+        created.Add("purchase-agent:" + code);
+        Log("  ensure-masters CREATED purchase agent " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "purchase-agent:" + code }, { "error", ex.Message } });
       }
     }
 
@@ -680,6 +722,10 @@ class AcSyncService {
     try { return da.LoadItem(code, AutoCount.Stock.Item.ItemEntryAction.Edit) != null; }
     catch { return false; }
   }
+  static bool PurchaseAgentExists(AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand cmd, string code) {
+    try { return cmd.GetPurchaseAgent(code) != null; } catch { return false; }
+  }
+
   static bool AgentExists(AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand cmd, string code) {
     try { return cmd.GetSalesAgent(code) != null; } catch { return false; }
   }

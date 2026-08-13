@@ -258,6 +258,12 @@ SELECT doc_type, doc_no, op, last_error, created_at
  ORDER BY created_at DESC;
 ```
 
+**A skipped row is TERMINAL — fixing its cause does not bring the document back.**
+That is what §9's re-queue tool exists for. `enqueueSoCreate` is reachable from
+exactly two places (SO create, and `DRAFT -> live`), and `enqueueEdit` bails on
+`if (!composed.linkedAcDocNo) return false;` — so a document that never reached
+AutoCount cannot be edited back into the queue, and re-saving it does nothing.
+
 **A compose that FAILED is written down the same way.** If a read the payload is
 built from errors — a column that is not there, a dead REST edge — the enqueue
 logs `[autocount-outbox] <op> compose read failed` and writes a `skipped` row
@@ -417,7 +423,51 @@ holds the per-gap evidence and the order to do it in.
 
 Between the ERP's line list and AutoCount's, two things do not line up. Both are
 handled in `composeDetails` (`src/services/autocount-writeback.ts`), in this
-order, and **both refuse the WHOLE document rather than send part of it.**
+order.
+
+> **CHANGED 2026-08-13, owner decision. Read this before the two sections below —
+> they describe the mechanisms, and these are the rules those mechanisms now run
+> under.**
+>
+> **D9 no longer folds a NEW order.** One ERP line goes to AutoCount as one
+> line: `9028-1A(LHF)` and `9028-2A(RHF)` each arrive as themselves. Folding is
+> reserved for a build the account book ALREADY holds as a single line, and the
+> DtlKeys say which is which, per build — compartments sharing one key fold,
+> distinct keys are left alone, no keys at all is a create. Mixed (some keyed,
+> some not) still folds, so the keyless-line refusal in 7a stops the document
+> and asks for a backfill. The rule lives in `collapseSofaLines`'s `flush()`.
+>
+> **D10 no longer refuses an unknown code.** It resolves to the ERP's own code
+> and `/ensure-masters` opens the item (7e). The old rule was right while
+> sending an unmapped code meant referencing an item the licensed book does not
+> hold; it does not any more, and its cost was total — whole product ranges are
+> in no cutover row, so every order containing one was blocked outright. A BLANK
+> code is still refused, and a MAPPED code is still never sent as itself.
+>
+> **The full order of preference when nothing else decides**, for a document
+> with no creditor (which every sales order is, since the PO does not exist yet
+> when the order is written back):
+>
+> 1. one candidate — take it
+> 2. the document's creditor, when it has one (purchase orders only)
+> 3. a candidate NAMED like the ERP code
+> 4. `HOK`, then `NB` — the owner's supplier preference; settles 103 of the 117
+>    ambiguous codes, almost all BEDFRAME
+> 5. the ERP's own code, opened on first use
+>
+> **Because the shape is settled first, the resolver does no sofa reasoning.**
+> A folded line reaches it as `<model>-1S`, an unfolded one as its own
+> compartment code, and each resolves to what it is. A compartment is never
+> redirected to its model — that used to happen and it gave one sofa two
+> different AutoCount items depending on which side of the collapse the caller
+> sat. See BUG-HISTORY, 2026-08-13.
+>
+> **An EDIT never sends `ItemCode` for a line AutoCount already owns.** Same
+> rule `Location` runs under: the book's own value is the truth on a line it
+> holds. Swapping a product still propagates, because a swap is a delete plus an
+> add — the removed row is retired and the added row has no DtlKey, so it keeps
+> its code. 194 real lines sit under the two brand items the cutover collapsed
+> and an edit must not move them.
 
 ### D10 — `material_code` is not `ItemCode`
 
@@ -569,6 +619,18 @@ account book already holds one and a blank would erase it. The same asymmetry
 is why `create` is composed LAZILY in `composeSoState` / `composePoState` — an
 edit builds the same state object, and eagerly composing a create it will never
 send would refuse the edit for the create's reasons.
+
+**The SO side now refuses at CREATE TIME instead** (owner 2026-08-13, after
+`HC-SO-2608-002`). A `MissingLocationError` is correct but lands in the wrong
+place: hours later, in an outbox row, about an order the salesperson was told
+had saved. So company 1's sales orders are gated where the human is —
+`backend/src/scm/lib/so-location-gate.ts`, run at the two places the SO router
+enqueues a create (create, and `DRAFT -> live`). The composer's refusal stays
+exactly as it is: it is the backstop for every path that is not that gate
+(imports, the 2990 mirror, a future company not yet on the list), and it is
+what proves the gate is not merely advisory. Full rule + company list:
+`docs/modules/sales-order.md`, "Company 1 cannot create an order with no stock
+location".
 
 Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
 `npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
@@ -794,6 +856,67 @@ compartment row of a build the same DtlKey** — which is exactly the shape
 key is worse than a missing one: missing is refused loudly, wrong silently edits
 a different line in a live book.
 
+## 7l. Where this module sits
+
+This guide covers **how to call the write service**. For the shape of the whole
+relationship — the four channels, which documents are created versus converted,
+how a SKU crosses, what is automatic and what never will be — read
+**`docs/autocount-integration-map.md`** first. It is the map; this is one road on it.
+
+## 7m. The master-data foreign key chain — read this before debugging a refused document
+
+**A document is refused as a WHOLE when any master it names is missing.** The
+live book enforces foreign keys the old evaluation book did not, and they are
+discovered **one at a time**: satisfying one only reveals the next, so "I fixed
+the error and retried" buys exactly one attempt. Four have been hit so far, each
+against `AED_HOUZS`, each with the evidence beside it.
+
+| # | Constraint | Named by | Opened by | Found |
+|---|---|---|---|---|
+| 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` | 2026-08-11 |
+| 2 | `FK_SODTL_Location` | SO **line** `Location` | `ensure-masters` → `Locations` | 2026-08-11 |
+| 3 | `FK_Item_ItemGroup` | a NEW item being opened | `ensure-masters` → `Items[].ItemGroup` | 2026-08-12 |
+| 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`** | 2026-08-12 |
+
+**#3 — an item cannot be opened without a group.** `ItemGroup` is a foreign key,
+not a label, so a brand-new SKU arriving from the ERP is refused on its very
+first document. The service now defaults to `OTHER`, which exists precisely for
+this. The groups the live book holds, by item count:
+
+```
+BEDFRAME 645   MATTRESS 517   SOFA 114   ACC 99   BEDLINES 85
+DINING 55      DIFFUSER 39    OTHER 4    CARPET 2  TRANS 1
+```
+
+Everything lands in `OTHER` until somebody maps the ERP's own `item_group`
+vocabulary onto these. **That mapping is an owner decision, not a guess** — it
+decides where a new product shows up in AutoCount's own reports.
+
+**#4 — a PURCHASE agent is not a sales agent.** Different table
+(`dbo.PurchaseAgent`), different foreign key, different SDK command
+(`AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand`, whose shape mirrors
+`SalesAgentCommand` exactly). Opening `OTHERS` as a sales agent does **nothing**
+for a purchase order naming it. This one is worth remembering because
+`ensure-masters` cheerfully reported `agent:OTHERS` as *already existing* while
+`/create-po` was failing on it — the report was true and irrelevant.
+`mastersOf` now routes the agent by whether the payload carries a
+`CreditorCode`, which is the one field only a purchase document has.
+
+**Values known to exist in `AED_HOUZS`**, for a throwaway test document:
+
+| Field | Use |
+|---|---|
+| `DebtorCode` | `300-C002` |
+| `CreditorCode` | `400-N002` (NICOLLO SDN BHD, 3,326 POs) |
+| `Agent` / `PurchaseAgent` | `OTHERS`, `KINGSLEY`, `MK`, `WW`, `ALEX`, `SIANG` |
+| `Location` / `SalesLocation` | `KL`, `HQ`, `KELANA.J`, `C&C DISP`, `C&C K.J`, `EM DISP` |
+| `ItemGroup` | `OTHER` for anything unclassified |
+
+**How to read a refusal.** The HTTP response carries only a 500; the constraint
+name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
+status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
+completely different problems.
+
 ## 7z. HOW TO CALL THE SERVICE — read this before concluding you cannot
 
 Three facts, because a session that did not have them concluded from this
@@ -863,7 +986,9 @@ the queue by status, the FAILED rows in full (each one is a document that is in
 the ERP and not in the account book), the age of the oldest pending row, and the
 `skipped` backlog split by REASON — a refusal needs a line-key backfill, a
 merged conversion needs a human, a parentless document can never exist in
-AutoCount at all. An unrecognised reason is printed rather than counted away.
+AutoCount at all. An unrecognised reason is printed rather than counted away,
+and a skip that has already been re-queued (below) is reported separately rather
+than counted as backlog.
 
 An empty queue is reported as EMPTY, not as healthy: the table is append-only,
 so zero rows means nothing was ever enqueued, which is the correct state while
@@ -886,6 +1011,66 @@ handed to a human. Actions -> **Cancel parity check (read-only)** answers the
 question that matters — is the outstanding set the same on both sides, and did
 the ERP ever ask for the cancels it made — and prints the outbox breakdown as
 its section 5.
+
+### Re-queueing a document the write-back refused
+
+`backend/src/scm/lib/autocount-requeue.ts` +
+`backend/scripts/requeue-autocount-skipped.mjs` + Actions -> **AutoCount
+write-back — re-queue a refused document (DRY-RUN gated)**.
+
+Every refusal above names a remedy — set the stock location, add the binding
+that disambiguates the item code, backfill the line keys. Applying the remedy
+used to change nothing, because a `skipped` row is terminal and no route path
+re-attempts a create (§7). This is the "ask again".
+
+| input | |
+|---|---|
+| `doc_no` | one ERP document (`HC-SO-2608-002`) |
+| `doc_type` | `ALL` / `SO` / `PO` when no `doc_no` is given |
+| `apply` | `1` writes. Anything else is a DRY RUN |
+
+**It re-composes; it never resurrects.** The stored payload of a refusal is `{}`
+and, even when it is not, it is the PRE-FIX document — the whole point is that
+the document changed. The tool calls the same `enqueueSoCreate` /
+`enqueuePoCreate` the route calls. It runs under `tsx` and imports them from
+`src/`, which is this repo's existing answer to "the logic is TypeScript and the
+script is `.mjs`" (`recompute-2990-so-allocation.mjs` and three others do the
+same, for the same stated reason). A second composer written in `.mjs` is the
+one thing that could put a document into the live book that the real composer
+would have refused.
+
+**The DRY RUN is not a prediction.** `captureWrites` hands the real enqueue the
+real client for reads and a recorder for writes, so the dry run executes the
+identical code path and simply does not let the row land. An insert of a
+`pending` row means it would queue; an insert of a `skipped` row means
+`noteReadFailure` refused it again and carries the reason AS IT STANDS NOW —
+which is the useful part, because clearing one cause usually reveals the next
+(§7m). APPLY probes first and only then writes, so a still-refused document
+never grows the backlog by a duplicate `skipped` row.
+
+**Only the two CREATES are re-queueable, and the rest are reported, not hidden:**
+
+| op | why |
+|---|---|
+| `create_so` / `create_po` | recoverable here and nowhere else |
+| `edit` | the document IS in AutoCount, so the documented remedy (fix, then save again) really does re-queue it. Re-composing it here would also silently drop any line `retire` entries the original save carried (§7a), which a `{}` payload cannot recall |
+| conversions | a parentless DO/GR/IV/PI can never exist in AutoCount (§7d), a merged conversion has no shape (§7), and re-expressing a DtlKey-subset refusal would mean copying `enqueueConvert`'s call-site into a script |
+
+**Idempotent, by three independent things.** A `skipped` row is written with
+`dedupe_key: null` (`enqueueAcOp`) and 0277's unique index covers only
+`status = 'pending' AND dedupe_key IS NOT NULL`, so a fresh enqueue never
+collides with the skip it is replacing; the tool refuses to touch a document
+that already has a non-skipped outbox row; and a re-queued skip is annotated, so
+a second run recognises its own work. A document carrying `linked_ac_docno` is
+never re-queued — `enqueueSoCreate` guards that itself, and the tool checks it
+too so the report can say WHICH silent refusal an operator is looking at.
+
+**The audit trail.** The old row keeps `status = 'skipped'` — 0277's CHECK
+admits four statuses and each would be a lie here (it was never sent, never
+failed, and `pending` would hand the drain a row with an empty body) — and its
+`last_error` is prefixed `[re-queued <ISO> -> outbox <new row id>]` with the
+original reason kept whole behind it. The health check reads that prefix and
+reports those rows under RE-QUEUED instead of counting them as backlog.
 
 ### The cancel-parity check — the owner's rule 3, made testable
 
@@ -926,6 +1111,7 @@ never be mistaken for a cancel divergence.
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
+| `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, and the client's retryable/not-retryable read of a response |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |
 | `src/services/autocount-item-code.test.ts` | **D10**, driven by the real 1561-row cutover map. No corpus line resolves to the WRONG item; a collapsed code refuses without a supplier and resolves with one; an unmapped line throws rather than falling back to `material_code`; one bad line refuses the whole document |

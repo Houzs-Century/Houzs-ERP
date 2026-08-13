@@ -25,6 +25,8 @@
 // rename orphans whatever points at the old spelling.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. Renames test the current spelling, deletes are gone, and the creates are ON CONFLICT DO NOTHING.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

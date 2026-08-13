@@ -138,7 +138,10 @@ export type ScanPrefill = {
   customerSoRef:  string;
   note:           string;        // genuine order remark only (+ unresolved venue / non-date delivery)
   deliveryDate:   string | null; // only when a clean YYYY-MM-DD
-  processingDate: string | null;
+  /* The SLIP'S OWN written date (ExtractedSlip.slipDate), only when a clean
+     YYYY-MM-DD. NOT the SO's Processing Date — desktop DERIVES that from
+     Delivery − 6 weeks and never reads this field. */
+  slipDate:       string | null;
   customerType:   string;        // customer_type value matched to SO Maintenance ('' = none)
   buildingType:   string;        // building_type value matched to SO Maintenance ('' = none)
   /* VENUE UNIFY — a REAL venue id from the SAME useVenues() master the New SO
@@ -201,7 +204,12 @@ export type ExtractedSlip = {
   phones: string[];
   location: string | null;
   deliveryDate: string | null;
-  processingDate: string | null;
+  /* THE SLIP'S OWN DATE — the date the rep wrote on the handwritten slip.
+     It is NOT the Sales Order's Processing Date (internal_expected_dd, the
+     factory-start date), and NOT a card receipt's printed transaction date.
+     All three were once called "processingDate"; the SO's is still called that,
+     these two are not. */
+  slipDate: string | null;
   salesRep: string | null;
   /* The customer's own order reference (top-right of the slip, e.g. "HC14032")
      → seeds the form's Customer SO Ref field. */

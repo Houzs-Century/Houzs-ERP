@@ -6,10 +6,18 @@ Owner's call, 2026-08-11: *"不行了，让他们继续用 autocount 先，我�
 
 The ERP is **not** the system of record and nobody has been moved onto it. Company 1
 is frozen (`scm.write_freeze = '1'`, every area, 0 areas lifted), the write-back is
-off (`scm.autocount_writeback = 'off'`), `AC_SYNC_URL` is unset, and
-`scm.autocount_outbox` holds **0 rows** — not zero pending, zero rows, so no ERP
-document has ever been offered to AutoCount. That is the intended state. 2990
-(company 2) is unaffected and trades normally.
+off (`scm.autocount_writeback = 'off'`), and `scm.autocount_outbox` holds **0 rows**
+— not zero pending, zero rows, so no ERP document has ever been offered to
+AutoCount. That is the intended state. 2990 (company 2) is unaffected and trades
+normally.
+
+**`AC_SYNC_URL` IS set** — corrected 2026-08-12. This banner said "unset", which
+contradicted this file's own §"Two gates verified shut" and step 4 below. PR #2030
+set it at `backend/wrangler.toml:42` (`https://autocount.houzscentury.com`).
+Re-verified the same day: an unauthenticated `POST /health` answers
+`401 {"ok":false,"error":"bad key"}` — the tunnel is up and the service is running.
+**The DB toggle is now the only gate holding**, which is why the zero-row outbox
+above is the number that matters.
 
 **Do not lift anything without the owner.** His standing instruction:
 *"解冻我跟你说你才做."*
@@ -35,6 +43,36 @@ stands against the owner's own acceptance criteria, what landed, and what is
 still owed. Every number here came from a production read, not from a script's
 own log line — see *The three things that were wrong about what we believed*
 below for why that distinction is load-bearing.
+
+## Where this actually stands, 2026-08-12 01:45
+
+The service on the office host was **rebuilt from current `main` and swapped**,
+and five coverage cells went from never-run to PROVEN against the live
+`AED_HOUZS` book. What is left is small, named, and no longer needs anybody
+standing at that machine except to run one command.
+
+| | |
+|---|---|
+| Running exe | rebuilt 2026-08-12, 46,592 bytes, `/health` names `AED_HOUZS`, **database reachable** (`/ensure-masters` 200, and it read `agent:OTHERS` + `location:KL` back out of the book) |
+| Rollback | `C:\Temp\AcSyncService.prev.exe` |
+| PROVEN | `create-so`, all four `/edit` guards, `so-to-do` (**DO-011260**, cancelled), `cancel` SO + DO |
+| BLOCKED | `create-po` and therefore `po-to-gr` — `FK_PO_PurchaseAgent`. **Fixed in code, NOT yet on the host** |
+| Write-back toggle | still `off`; `scm.autocount_outbox` still holds **zero rows of any status** |
+| Freeze | still on, every area — **and it does not need lifting.** The bypass works (`write-freeze.ts:244`, `BYPASS_PERMS = ['*','scm.admin']`); the owner's position is Super Admin, which `auth.ts:383` grants `*`. He and Nico write through a fully frozen system |
+
+**The remaining sequence, in order.** Only step 1 touches the office machine.
+
+1. Redeploy the service with the master-data fix:
+   `powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -Server ".\A2006"`
+   The `-Server` matters: `setup.json` says `192.168.1.198\A2006`, which this host
+   does not resolve, and it names database **`AED_DEMO`** — neither value can be
+   trusted, and the script now warns about the second.
+2. Re-run `qa-convert.ps1` to close `create-po` and `po-to-gr`.
+3. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
+   `companies=1`. **Before anyone creates a document, not after**: the flag is
+   checked at enqueue, so anything saved while it is off is never sent and cannot
+   be backfilled.
+4. One real order, watched into the outbox.
 
 ## The owner's acceptance criteria
 
@@ -84,12 +122,16 @@ the part that mattered most.
 | The tunnel | **DONE 2026-08-11 and PROVEN.** `autocount.houzscentury.com` fronts `localhost:8900`; `/health` answers `{"ok":true,"book":"AED_HOUZS"}` from an ordinary workstation, and runbook 4.1-4.5 plus cancel all passed over it on `ZZERP-0001` (left cancelled in the book — do not delete). `AC_SYNC_URL` and the `AC_SYNC_KEY` secret are set. **Any Claude session that reports "this machine cannot reach the service" is reading the pre-repoint state of this file** — see the migration record, Step 3 |
 | Still needed | The C# service REBUILT on the host: the running exe predates `/ensure-masters` and the fail-closed auth. Nothing has been driven from an ERP save — the toggle is still `off` and the outbox still holds zero rows |
 
-**Three gates verified shut**, before and after merge, read back from `main`:
-`AC_SYNC_URL` commented at `backend/wrangler.toml:34` (0 uncommented
-occurrences); migration 0277 seeds `scm.autocount_writeback = 'off'`; and
+**Two gates verified shut, and the third is now OPEN — re-read 2026-08-11.**
+`AC_SYNC_URL` is **set and uncommented** at `backend/wrangler.toml:42`
+(`https://autocount.houzscentury.com`), so the sentence this paragraph used to
+carry — "commented at line 34" — is no longer true and must not be quoted.
+What still holds: migration 0277 seeds `scm.autocount_writeback = 'off'`, and
 `callAcService` has one non-test caller, reachable only from
-`drainAutoCountOutbox`, which returns `ac_service_not_configured` *before* it
-reads the outbox.
+`drainAutoCountOutbox`. **The toggle is now the only thing holding**, and the
+live proof is that `scm.autocount_outbox` holds **zero rows of any status** —
+not zero pending, zero rows, so nothing has ever been enqueued
+(`autocount-outbox-health`, run 31501435043).
 
 **What was nearly shipped.** `create` returned only the document number, never
 the line DtlKeys, and `edit` appends when it cannot find a key. So creating a
@@ -230,8 +272,10 @@ Follow that. This is the summary.**
 3. Rebuild the clean service on the office host from the SQL bridge, and run
    runbook 4.1-4.5 against the live book on a throwaway document — cancelled, never
    deleted. Neither has happened yet.
-4. Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY` — **needs IT physically
-   at the office machine**; nothing else blocks it, and everything after it does.
+4. ~~Stand up the tunnel and set `AC_SYNC_URL`~~ — **DONE** (PR #2030; tunnel
+   verified answering 2026-08-12). What remains of this step is `AC_SYNC_KEY`, the
+   Worker secret, which cannot be confirmed from outside the account — check it with
+   `wrangler secret list` before step 5, not by assuming.
 5. Turn on `scm.autocount_writeback` for company 1.
 6. Lift the freeze for `scm.sales.orders`, company 1 only, one pilot cohort,
    and watch a document reach AutoCount.

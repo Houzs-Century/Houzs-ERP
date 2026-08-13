@@ -4,6 +4,8 @@
 // unsided 1B (created 2026-08-10, zero SO references), mints the pair
 // (skip_exists if the sided convention already exists), fixes
 // allowed_options and appends the sided codes to the pool. Gated as usual.
+//
+// RE-RUN: inert. The SKU deletes/creates and the allowed_options rewrite all test the current state first; a second run finds the target shape already in place.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

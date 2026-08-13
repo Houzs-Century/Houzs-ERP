@@ -11,9 +11,12 @@
 // Endpoints:
 //   GET   /fabric-tracking?category=B.M-FABR&search=avani
 //   POST  /fabric-tracking                — create one (PR #43)
+//         400 non_fabric_code when fabricCode opens with a product word.
 //   POST  /fabric-tracking/bulk-upsert    — Commander 2026-05-26 Export/Import:
 //         body: { rows: Array<{fabricCode, ... any column}> }
 //         Per-column partial upsert by id (derived from fabricCode if missing).
+//         A product-code row is rejected into `errors` and skipped; the rest
+//         of the import still lands. See NON_FABRIC_HEAD below for why.
 //   DELETE /fabric-tracking/:id           — delete one (PR #43)
 //   PATCH /fabric-tracking/:id/tier
 //         body: { field: 'sofaPriceTier' | 'bedframePriceTier', tier: 'PRICE_1'|'PRICE_2'|'PRICE_3' }
@@ -35,6 +38,43 @@ fabricTracking.use('*', supabaseAuth);
 const VALID_CATEGORIES = new Set(['B.M-FABR', 'S-FABR', 'S.M-FABR', 'LINING', 'WEBBING']);
 const VALID_TIER_FIELDS = new Set(['sofaPriceTier', 'bedframePriceTier']);
 const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
+
+/* WHY A FABRIC WRITE PATH REFUSES A CODE AT ALL.
+
+   A prod probe on 2026-08-13 found two rows in scm.fabric_trackings that are
+   not fabrics — "SOFA 5535" described as "5535 (3+L)", and "SQUARE PILLOW"
+   described as 'SQUARE PILLOW (16" X 16")'. Owner: 「为什么sofa 和square pillow
+   在fabric convert里面？」.
+
+   They were not typed here. Both are verbatim rows of backend/_hk.json, the
+   153-row dump of the HOOKKA fabric master committed 2026-06-23 — same codes,
+   same descriptions, same derived ids (SOFA_5535 / SQUARE_PILLOW, which is this
+   file's own minting rule). Two AutoCount product items had been opened as
+   "fabrics" in the source system, and the wholesale copy carried them across
+   because nothing on this side looks at what a fabric code IS. Deleting the two
+   rows does not close that: the same file, or any spreadsheet whose product
+   column lands under `fabric_code`, puts them straight back.
+
+   THE RULE IS THE CODE ONLY, AND ONLY AT ITS HEAD. Nine of those 153 genuine
+   fabrics describe themselves as "SOFA FABRIC KOONA VELVET PEARL" — testing the
+   DESCRIPTION would refuse every one of them, which is a far worse trade than
+   two stray rows. The word list is the one in
+   backend/scripts/probe-fabric-leftovers.mjs:43: it is what produced the
+   owner's two rows off the live table, and it matches nothing else in the
+   seeded catalogue (CG-/EZ-/BF-), the HOOKKA master, or the catalogue the owner
+   dictated on 2026-08-11.
+
+   REFUSING IS NOT DELETING. PATCH /:id/active and DELETE /:id are untouched, so
+   the two rows already in the table stay fixable by the people who own them. */
+const NON_FABRIC_HEAD =
+  /^(SOFA|SQUARE\s*PILLOW|LONG\s*PILLOW|BOLSTER|STOOL|CONSOLE|MATTRESS|BEDFRAME|DIVAN|DELIVERY|TRANSPORT|SERVICE|SVC)\b/i;
+
+/** The product word a fabric code opens with, or null when it reads as a
+ *  fabric. Exported for the guard's test. */
+export function nonFabricCodeWord(code: string): string | null {
+  const m = NON_FABRIC_HEAD.exec((code ?? '').trim());
+  return m?.[1] ? m[1].toUpperCase().replace(/\s+/g, ' ') : null;
+}
 
 // Map JS camelCase tier field → Postgres snake_case column.
 const TIER_FIELD_TO_COL: Record<string, string> = {
@@ -106,6 +146,14 @@ fabricTracking.post('/', async (c) => {
 
   const fabricCode = String(body.fabricCode ?? '').trim();
   if (!fabricCode) return c.json({ error: 'fabric_code_required' }, 400);
+
+  const productWord = nonFabricCodeWord(fabricCode);
+  if (productWord) {
+    return c.json({
+      error: 'non_fabric_code',
+      reason: `“${fabricCode}” reads as a product, not a fabric — a fabric code cannot start with “${productWord}”. Open it in SKU Master instead.`,
+    }, 400);
+  }
 
   const cat = body.fabricCategory as string | undefined;
   if (cat && !VALID_CATEGORIES.has(cat)) return c.json({ error: 'invalid_category' }, 400);
@@ -192,6 +240,10 @@ fabricTracking.post('/bulk-upsert', async (c) => {
     const r = raw as Record<string, unknown>;
     const code = typeof r.fabricCode === 'string' ? r.fabricCode.trim() : '';
     if (!code) { errors.push({ index: i, reason: 'missing_fabric_code' }); return; }
+    /* Per-row, like every other rejection here: an import that carries one
+       product line still lands its real fabrics, and the count comes back so
+       the operator can see something was refused. */
+    if (nonFabricCodeWord(code)) { errors.push({ index: i, reason: 'non_fabric_code' }); return; }
     const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : code.toUpperCase().replace(/\s+/g, '_');
 
     const row: Record<string, unknown> = { id, fabric_code: code };
@@ -406,7 +458,28 @@ fabricTracking.patch('/:id/supplier-code', async (c) => {
   return c.json({ ok: true, supplierCode: next });
 });
 
-/* PR #38 — Make fabric description editable from the Fabric Converter table. */
+/* PR #38 — Make fabric description editable from the Fabric Converter table.
+
+   AND MAKE THE EDIT REACH THE PICKER (owner 2026-08-13: "Description 好像是直接
+   可以更改。如果可以更改的话，到时候可以 save 得到吗？").
+
+   It saved, and it did nothing. The description is the ONLY place a colour's
+   NAME is written — colourLabelOf takes everything after the code — and the
+   name a salesperson actually sees when picking fabric on an SO comes from the
+   MIRRORED row in scm.fabric_colours, not from here. That mirror was written
+   once, at create (:143) and at CSV import, and never again: the description
+   PATCH did not touch it, and both mirror upserts carry
+   `ignoreDuplicates: true`, so even re-running the sync would skip a colour
+   that already exists.
+
+   So the Converter showed the new text, every fabric picker kept the old one,
+   and nothing reported a problem. That is the whole bug: an edit that appears
+   to work and reaches nobody.
+
+   The label is updated in place, scoped to the company and to the colour_id
+   that IS this fabric's code. Best-effort and reported, never fatal: the cost
+   ledger — the thing the operator was editing — has already been written, and
+   a library hiccup must not turn a saved edit into an error. */
 fabricTracking.patch('/:id/description', async (c) => {
   const id = c.req.param('id');
   let body: { description?: string | null };
@@ -419,18 +492,35 @@ fabricTracking.patch('/:id/description', async (c) => {
   const trimmed = typeof body.description === 'string' ? body.description.trim() : null;
   const next = trimmed === '' ? null : trimmed;
 
+  /* fabric_code comes back so the mirror can be aimed at the right colour
+     without a second read — the row was just proven to be this company's. The
+     .select().maybeSingle() stays OUTSIDE scopeToCompanyId, the shape every
+     other handler in this file uses. */
   const { data, error } = await scopeToCompanyId(supabase
     .from('fabric_trackings')
     .update({ fabric_description: next })
     .eq('id', id), co.companyId)
-    .select('id').maybeSingle();
+    .select('id, fabric_code').maybeSingle();
 
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ ok: true, description: next });
+
+  const row = data as { id: string; fabric_code: string | null };
+  const code = (row.fabric_code ?? '').trim();
+  let pickerWarning: string | null = null;
+  if (code) {
+    const { error: mirrorErr } = await scopeToCompanyId(supabase
+      .from('fabric_colours')
+      .update({ label: colourLabelOf(code, next) })
+      .eq('fabric_id', seriesOf(code))
+      .eq('colour_id', code), co.companyId);
+    if (mirrorErr) pickerWarning = `fabric_colours: ${mirrorErr.message}`;
+  }
+
+  return c.json({ ok: true, description: next, pickerLabel: code ? colourLabelOf(code, next) : null, ...(pickerWarning ? { pickerWarning } : {}) });
 });
 
 fabricTracking.patch('/:id/tier', async (c) => {

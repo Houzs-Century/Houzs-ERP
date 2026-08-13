@@ -1114,15 +1114,23 @@ function MultiSelectFilter({
             <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
               {placeholder}
             </span>
-            {selected.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onChange([])}
-                className="text-[10.5px] font-semibold text-ink-secondary hover:text-err"
-              >
-                Clear ({selected.length})
-              </button>
-            )}
+            {/* Untick-all is ALWAYS shown (owner 2026-08-11) so the affordance is
+                visible even before anything is ticked — it just greys out and is
+                disabled while the list is empty, then activates (with a count)
+                once you tick something. */}
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              disabled={selected.length === 0}
+              className={cn(
+                "text-[10.5px] font-semibold",
+                selected.length === 0
+                  ? "cursor-default text-ink-muted/50"
+                  : "text-ink-secondary hover:text-err",
+              )}
+            >
+              {selected.length > 0 ? `Untick all (${selected.length})` : "Untick all"}
+            </button>
           </div>
           {groups.map((g, gi) => (
             <div key={g.name ?? `g${gi}`} className="mb-1.5">
@@ -1360,6 +1368,28 @@ function ProjectsListView() {
         const batch = res.data ?? [];
         all.push(...batch);
         if (batch.length === 0 || all.length >= (res.total ?? all.length)) break;
+      }
+      // Owner 2026-08-12: cluster same-event rows (same venue + start date)
+      // together so an event's different-brand projects sit side by side in the
+      // export instead of being scattered by the brand/date sort. Overall order
+      // is preserved — each event stays where its FIRST row appeared, and its
+      // other brands are pulled up next to it (stable within the event).
+      {
+        const eventKey = (r: ProjectRow) =>
+          `${(r.venue ?? "").trim().toUpperCase()}||${r.start_date ?? ""}`;
+        const origIdx = new Map<ProjectRow, number>();
+        all.forEach((r, i) => origIdx.set(r, i));
+        const firstSeen = new Map<string, number>();
+        for (const r of all) {
+          const k = eventKey(r);
+          if (!firstSeen.has(k)) firstSeen.set(k, origIdx.get(r)!);
+        }
+        all.sort((a, b) => {
+          const fa = firstSeen.get(eventKey(a))!;
+          const fb = firstSeen.get(eventKey(b))!;
+          if (fa !== fb) return fa - fb;
+          return origIdx.get(a)! - origIdx.get(b)!;
+        });
       }
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
@@ -3263,9 +3293,12 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
-  // An event that has not started only carries booked rental, so counting it
-  // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "completed";
+  // Owner decision 2026-08-11: default to the full picture. "completed" was
+  // the original default (an unstarted event carries only booked rental, which
+  // reads as a loss that has not happened), but half the year's sales sat on
+  // events staff never marked completed, so the completed-only view kept
+  // understating revenue by ~50% and reading as "the numbers are wrong".
+  const scope = params.get("af_scope") ?? "all";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -6044,15 +6077,22 @@ function ProjectDetailContent({
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
       // Two-stage defect triage (owner 2026-08-07):
-      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
-      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canReview  = the defect reviewer for THIS project's state (owner
+      //    2026-08-11 two-warehouse split): Nancy (Ops Exec role) for the region
+      //    states, Shukor (Storekeeper Supervisor) for every other state; admin
+      //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
       canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||

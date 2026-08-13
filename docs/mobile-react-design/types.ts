@@ -29,7 +29,7 @@ export interface SalesOrder {
   customer_so_no: string;     // customer's own ref
   building_type: string;
   venue_name: string;         // derived from salesperson venue_id
-  internal_expected_dd: string;   // Processing date, DDMMYYYY
+  processing_date: string;   // Processing date, DDMMYYYY
   customer_delivery_date: string; // Delivery date, DDMMYYYY
   sales_location: string;     // derived warehouse code
   note: string;
