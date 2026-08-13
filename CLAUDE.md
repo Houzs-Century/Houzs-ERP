@@ -40,6 +40,31 @@ money corruption was suspected from reading a migration file, then refuted again
 the live database. The lesson recorded there ("verify schema claims against the live
 DB, not migration files") is worth more than the fix was.
 
+## ⚠️ The bug ledger, the module guide and migrations are CHECKED on every PR
+
+`.github/workflows/working-agreement.yml` runs
+`scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
+directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
+the migration discipline described under *Migrations* below. Before it existed
+they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
+as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
+said a word. (The COE rule is not checked: an incident is a judgement call, not
+a diff shape.)
+
+| It fails when | It wants |
+|---|---|
+| the title, the branch name, or a body HEADING reads as a fix, code changed, and `BUG-HISTORY.md` gained no new `## ` entry | the entry, in this PR |
+| a changed file under `backend/src` / `frontend/src` adds a route, a permission string, a status value, a required-field flip or a lock, and the module guide that quotes that file is untouched | the guide update, in this PR |
+| `backend/src/db/migrations-pg/` changed and the body does not carry a `Reversal:` line and a `Verified against:` line | both lines, filled in |
+
+The escapes are LABELS — `no-bug-history-needed`, `no-guide-change` — and they
+are not silence: the check prints the violation it waived, so the exception
+lands in the log. Rule 3 has no label; two lines in the body is the whole cost.
+
+Where NO guide covers a file whose surface moved, the check WARNS and names the
+guide that should exist. It does not fail you for a gap you did not open — but
+that gap is the one CLAUDE.md asks you to close.
+
 **This file stays THIN on purpose.** It carries rules and traps, not an
 inventory. Facts that change with every merge — route counts, file sizes,
 module lists — belong in the map below, because a stale fact HERE is worse
@@ -112,16 +137,45 @@ until someone edits the ruleset itself.
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
 you update the branch, which re-runs CI against the real merge base. That closes
-the mechanism behind every incident this section used to list:
+the STALE-BRANCH mechanism behind the incidents below:
 
 | incident | how it happened |
 |---|---|
 | 2026-07-22: `main` red ~20 min | #918 and #925 were each green against a `main` lacking the other |
 | 2026-07-22: backend could not deploy | #1039 merged a `0171` colliding with #912's; its CI predated #912 |
 | 2026-07-31: backend could not deploy for 2h | #1439 merged a `0230` colliding with #1435's, for exactly the same reason |
+| **2026-08-13: backend could not deploy for ~30 min** | **#2121 merged a `0284` colliding with #2106's — and the branch was NOT stale. It had merged `main`. The test RAN and FAILED, and the merge happened anyway.** |
 
-The duplicate-migration test would have caught both collisions — it just never
-ran against a tree containing the other branch. Now it has to.
+> **CORRECTED 2026-08-14.** This paragraph used to end: *"The duplicate-migration
+> test would have caught both collisions — it just never ran against a tree
+> containing the other branch. Now it has to."* That is now false, and the
+> counter-example is the row added above.
+>
+> On 2026-08-13 `backend/tests/migrationNumbers.test.ts` did run against the
+> right tree and did catch the collision —
+> `AssertionError: src/db/migrations-pg: 0284 is taken twice — rename your file
+> to 0286_*.sql` — and #2121 merged four minutes into that run anyway. **Branch
+> protection does not gate on it.** The required contexts are `backend-typecheck`
+> + `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`);
+> `migrationNumbers.test.ts` runs in `backend-tests (2)`, which the section below
+> forbids making required, for good reasons that remain good. So this class is
+> **structurally ungated**, and `gh pr merge --auto` — armed on 12 PRs in 27
+> seconds that morning — merges the moment the two required checks go green,
+> which is exactly what happened.
+>
+> The deploy stayed broken from 13:06Z (#2121 merged) until #2124 landed:
+> `Deploy` runs 31703284503 and 31704506807 both concluded `failure` with the
+> `backend` job **`skipped`**, so nothing merged in that window reached
+> production. Recovered by `0c2a4e88` — renumber to `0286`, plus the return-shape
+> fix the same batch missed.
+>
+> **Two remedies, neither of which is "be careful":**
+> 1. Move the duplicate-number assertion into `backend-typecheck` — the job that
+>    IS a required context — so a collision blocks the merge instead of only the
+>    deploy. **Not done. This is the open item.**
+> 2. Never arm `gh pr merge --auto` on a PR carrying a migration or an
+>    integration batch. Auto-merge structurally cannot wait for a check that is
+>    not required.
 
 **Still yours, because no ruleset checks it:**
 
@@ -134,14 +188,36 @@ ran against a tree containing the other branch. Now it has to.
    new file and its SQL runs a SECOND time against a schema it already changed.
    The deploy log's `APPLIED <file>` line is the record.
 3. **After merging, confirm the backend job said `success`, not `skipped`.**
-   Required status checks gate the MERGE; nothing gates the deploy that follows.
-   On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
-   green, because the deploy failed at a step CI does not run.
+   `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`. Required status
+   checks gate the MERGE; nothing gates the deploy that follows. On 2026-07-31
+   the backend sat un-deployed for over two hours while `main` was green, and it
+   happened again on 2026-08-13 — two `Deploy` runs, both `failure` with
+   `backend: skipped`. **Treat `skipped` on `backend` as a failed deploy.**
+4. **`frontend` is `npm run typecheck` (`tsc -b`), never `npx tsc --noEmit`.**
+   *Added 2026-08-14.* `frontend/tsconfig.json` is `{"files": [], "references":
+   [...]}` — a solution-style config with no inputs of its own. In `frontend/`,
+   `tsc --noEmit --listFiles` emits **0 files** and exits 0; `tsc -p
+   tsconfig.app.json --listFiles` emits 1084. CI was never fooled
+   (`.github/workflows/ci.yml:70` runs `npm run typecheck`), but three merged PRs
+   on `main` — #2106, #2112, #2117 — carry "`tsc --noEmit` clean" as their
+   frontend evidence, and #2122 repeated the claim after the no-op was known.
+   The same trap is already in `BUG-HISTORY.md:5562` from 2026-07-31; it produced
+   prose instead of a check, so it recurred. **A BUG-HISTORY entry with no test
+   attached is unfixed.**
+5. **A `workflow_dispatch` workflow is not shipped until it has been dispatched
+   once and reported success.** *Added 2026-08-14.* #2120's new AutoCount requeue
+   workflow failed on its first dispatch (run 31704539182) reaching for
+   `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, which exist nowhere in this repo
+   — it copied `recompute-2990-so-allocation.yml`, a workflow that has never run,
+   instead of `recompute-so-allocation.yml`, which works. Precedent was taken by
+   name similarity rather than by evidence the precedent runs.
 
 **Do NOT add `backend-tests (N)` or `backend` as required contexts.** The shard
 name carries an index that changes with the shard count, and `backend` is a
 roll-up that is legitimately `skipped` on frontend-only PRs — a skipped required
-check leaves the PR pending forever.
+check leaves the PR pending forever. This rule stands — but note what it costs:
+every assertion living only in a shard is advisory at merge time. If an assertion
+must BLOCK a merge, it belongs in `backend-typecheck`, not in a shard.
 
 ## Read the map before exploring
 

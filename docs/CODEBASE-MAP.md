@@ -142,9 +142,11 @@ inside `/scm/fleet`). A file existing is not evidence a feature is live; check
 `App.tsx` for the route. The house rule is "off, not hidden": a gated feature has no
 nav entry, no mounted route and no query firing.
 
-**Docs that are historical.** `MIGRATION-D1-TO-SUPABASE.md` and
-`HANDOFF-supabase-cutover.md` describe the abandoned Supabase project and a bound
-D1. They are records of a past cutover, not descriptions of today.
+**Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
+`docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
+and a bound D1. They are records of a past cutover, not descriptions of today —
+which is why they now live under `docs/archive/`. See `docs/README.md` for what is
+authoritative for what.
 
 ## 5. Files that are too big to read whole
 
@@ -403,6 +405,12 @@ re-check the cited file rather than trusting the line.
   sofa decomposition, and `Desc2` as the only place a specification lives); what the
   5-minute drain does automatically and the four cases that will **never** be automatic;
   and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
+  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
+  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
+  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
+  location, the salesperson). Also records what was ruled out, including two theories
+  that were stated and then refuted.
 - `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
   the public internet with **no key** on two routes, one of them ~52 MB of purchase
   history. OPEN, needs an owner action. Do not build on that relay.
@@ -416,5 +424,7 @@ re-check the cited file rather than trusting the line.
   whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
   its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
   gap between AutoCount and the ERP**: most of those gaps are decisions.
-- `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
-  with what caveats.
+- `docs/archive/scm-v2-vendoring-progress.md` for what was vendored, when, and with
+  what caveats. Archived — the vendoring finished, so read it as history: it still
+  describes temporary `/scm/<x>-v2` routes and an intact native `pages/scm/` tree,
+  and neither exists any more.

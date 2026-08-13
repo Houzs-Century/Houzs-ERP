@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The strip was carried out — `MobileLineEditor.tsx`, `MobileStockOps.tsx` and `MobileSupplierBindings.tsx` are all deleted from the tree. Current mobile surface: `docs/CODEBASE-MAP.md` §7. Kept for history; do not follow it as a current instruction.
+
 # Mobile strip-to-design (2026-07-02)
 
 Owner decision: mobile scope = the phone prototype (docs/mobile-prototype.html), NOT desktop.

@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Both Cloudflare asks were completed at the **2026-06-13** cutover — Hyperdrive config `f0f9bd0d` is live in `backend/wrangler.toml`. Superseded by `docs/CODEBASE-MAP.md` §4. Kept for history; do not follow it as a current instruction.
+
 # Houzs ERP — D1 -> Supabase migration: what I need from you (IT)
 
 We're moving the Houzs backend database from Cloudflare **D1 (SQLite)** to

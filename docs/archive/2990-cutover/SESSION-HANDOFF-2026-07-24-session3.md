@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Session baton from **2026-07-24**, closed. **Its HARD RULE 1 is now false** — `main` has been protected by the `main-protection` ruleset since **2026-07-31**; see `CLAUDE.md`. Do not follow this file's merge-gate instructions. Kept for history; do not follow it as a current instruction.
+
 # Session-3 handoff — Houzs ERP owner-feedback sprint (2026-07-24)
 
 Written because the owner's monthly usage limit was hit mid-sprint. This is the

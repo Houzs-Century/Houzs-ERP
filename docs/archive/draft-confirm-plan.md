@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** Its "PLAN ONLY, nothing implemented" banner is no longer true: the Draft/Confirmed lifecycle shipped for DO, SI, PO, GRN and PI (`backend/src/scm/routes/`). Per-module behaviour now lives in `docs/modules/`. Kept for history; do not follow it as a current instruction.
+
 # Draft / Confirmed two-state model for five SCM documents
 
 Plan to give **DO, SI, PO, GRN, PI** the same Draft → Confirmed lifecycle the

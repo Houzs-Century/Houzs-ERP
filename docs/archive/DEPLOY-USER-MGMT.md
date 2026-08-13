@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** One-shot runbook for deploying the `migrate/d1-to-supabase` branch, which merged **2026-06-13**; that branch no longer exists. Current release path: `docs/STAGING-RELEASES.md` and `.github/workflows/deploy.yml`. Kept for history; do not follow it as a current instruction.
+
 # Deploy runbook — User Management (positions + access matrix)
 
 Everything is merged into **`migrate/d1-to-supabase`** (the live integration branch),

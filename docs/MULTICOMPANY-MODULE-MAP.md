@@ -47,6 +47,47 @@ The unscoped-write sweep closed the directly-reachable ones and left the rest
 listed in its PR; re-measure with the same method rather than trusting this
 number after the next change.
 
+> **THE RE-MEASURE INSTRUCTION IS UNENFORCED — noted 2026-08-14.** There is no
+> committed script that performs the measurement above, so "re-measure with the
+> same method" cannot actually be followed; each attempt re-implements the
+> heuristic and gets a slightly different denominator. That is not a nit — an
+> independent replication on 2026-08-13 reproduced this denominator to within one
+> statement (633 vs 634) and then applied the same unchanged script to five
+> `git archive` snapshots. The **trend** it found is the part worth keeping:
+>
+> | tree date | unscoped / total |
+> |---|---|
+> | 2026-07-15 | 382 / 533 (72%) |
+> | 2026-08-01 | 345 / 619 (56%) |
+> | 2026-08-10 | 360 / 634 (57%) |
+> | 2026-08-12 | 359 / 631 (57%) |
+> | 2026-08-13 | 327 / 633 (52%) |
+>
+> Unscoped writes **ROSE** 345 → 359 between 08-01 and 08-12 while two dedicated
+> leak PRs (#1802, #1804 "7 more cross-company read leaks") were shipping. The
+> absolute counts over-count — `.insert(stampCompany(rows, c))` is scoped via a
+> helper, and compensating deletes on a just-minted id are safe — so trust the
+> direction, not the number.
+>
+> **Why this class does not converge: every remedy so far has been a sweep, and a
+> sweep is a snapshot.** Seventeen of them in eight weeks, visible in the PR
+> numbers alone: #625 → #632 ("third #600/#625 leak") → #637 → #639 → #640 →
+> #644 → #648 → #652 → #666 ("close the costing leak #649 missed") → #826 → #851
+> ("audit #826 items 3–9") → #878/#881 ("leaks beyond #851") → #1015 ("13
+> remaining audit endpoints") → #1802 → #1804 → #2086 ("the writes the earlier
+> audit left"). The next PR adds the 295th unscoped write with nothing objecting.
+> The SCM supabase client is the **service role**, so RLS is bypassed and the
+> predicate is the only tenant boundary.
+>
+> **The mechanical remedy, not yet built:** a lint rule (ESLint
+> `no-restricted-syntax` or a custom AST check in CI) failing any `.from(<table
+> carrying company_id>)` chained to `.update` / `.delete` / `.upsert` without
+> `company_id` / `scopeToCompany` / `stampCompany` in the same statement, with an
+> explicit allowlist for the deliberately shared masters (`currencies`,
+> `lorries`, `lorry_maintenance`, `lorry_service_records`). Until that exists,
+> treat the number above as a historical measurement and this section as a
+> description of a hazard, not of a control.
+
 ## SEPARATE (per company — scoped by company_id)
 - **SO / DO / PO / GRN / Sales Invoices / Delivery Returns / Consignment** (all docs).
 - **Procurement — Products & Maintenance**: Products, SKU Master, MRP · Stock Status,

@@ -5,7 +5,8 @@ any table fast: Ctrl+F a table name, a module name, or a keyword (e.g.
 "commission", "lorry", "checklist").
 
 - **Engine:** migrating D1 (SQLite) -> Supabase Postgres (Singapore). See
-  `MIGRATION-D1-TO-SUPABASE.md` for status. Migration coverage is marked per
+  `docs/archive/MIGRATION-D1-TO-SUPABASE.md` for status (archived — that
+  migration completed 2026-06-13). Migration coverage is marked per
   module below.
 - **Total:** ~107 tables across 12 modules.
 - **Naming:** snake_case, module-prefixed (`assr_*`, `project_*`, `sales_*`,
@@ -252,7 +253,7 @@ tables.
 - 57 tables already in Supabase (the Drizzle-reflected set in `schema.pg.ts`).
 - ~50 tables still D1-only (raw-SQL tables, mostly `assr_*`, portal, fleet,
   lookups). They need their DDL ported before cutover — tracked in
-  `MIGRATION-D1-TO-SUPABASE.md`.
+  `docs/archive/MIGRATION-D1-TO-SUPABASE.md`.
 - Data not yet copied: requires a `wrangler d1 export autocount-sync` from the
   Cloudflare account that owns the D1 database.
 
