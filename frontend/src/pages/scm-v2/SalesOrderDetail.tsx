@@ -114,6 +114,10 @@ import {
   citiesInState,
   postcodesInCity,
   countryForState,
+  resolvePostcode,
+  resolveCityState,
+  allCities,
+  allPostcodes,
 } from '../../vendor/scm/lib/localities-queries';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -2896,6 +2900,46 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
     [localityRows, form.state, form.city],
   );
+  /* START ANYWHERE — the same reverse resolution SalesOrderNew and MobileNewSO
+     have had. With no State picked, City and Postcode offer the full
+     cross-state pool so the operator can choose one FIRST and let the State
+     (and through it the Sales Location) resolve back from it. With a State
+     picked these fall through to the state-scoped lists above, so the forward
+     cascade is unchanged.
+
+     This page never had it: City stayed disabled until State and Postcode until
+     City, which on an EDIT means re-deriving an address the operator can already
+     read off the order. The resolvers and their tests already existed — the test
+     file even documents the SO forms as the caller — only this surface was never
+     wired, which is the desktop/mobile split CLAUDE.md warns about. */
+  const cityChoices = useMemo(
+    () => (form.state ? cities : allCities(localityRows)),
+    [form.state, cities, localityRows],
+  );
+  const postcodeChoices = useMemo(
+    () => ((form.state && form.city) ? postcodes : allPostcodes(localityRows)),
+    [form.state, form.city, postcodes, localityRows],
+  );
+  /* Set State from a resolved City, and State + City from a resolved Postcode.
+     Written in ONE setForm each so the value the operator just picked survives —
+     going through the State picker's own handler would clear it, because that
+     handler exists to reset the cascade. Only an UNAMBIGUOUS city resolves;
+     resolvePostcode returns null rather than guessing. */
+  const applyCityReverse = (nextCity: string) => {
+    const st = nextCity ? resolveCityState(localityRows, nextCity) : null;
+    setForm((s) => ({
+      ...s, city: nextCity, postcode: '',
+      state: st && st !== s.state ? st : s.state,
+    }));
+  };
+  const applyPostcodeReverse = (nextPostcode: string) => {
+    const res = nextPostcode ? resolvePostcode(localityRows, nextPostcode) : null;
+    setForm((s) => ({
+      ...s, postcode: nextPostcode,
+      state: res?.state && res.state !== s.state ? res.state : s.state,
+      city: res?.city && res.city !== s.city ? res.city : s.city,
+    }));
+  };
   /* Task #121 — Country auto-derives from the picked state. Read-only on
      the form; the API re-derives + snapshots it on PATCH. Prefer the
      header's stored customer_country (so historic SOs whose locality
@@ -3391,8 +3435,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Address Line 1</span>
+              {/* KEEP CHROME'S ADDRESS AUTOFILL OFF THIS BLOCK.
+                  Chrome classifies a form by its FIELDS, not one at a time, so
+                  a bare address input here makes it treat the whole group as an
+                  address form and offer its saved-address popup — which renders
+                  above the State list and makes State unpickable, and with it
+                  City and Postcode. StatePicker already sets autoComplete="off"
+                  and it was not enough: Chrome overrides `off` once the form
+                  looks like an address. An UNRECOGNISED token is what actually
+                  stops the heuristic, because it is neither a known field type
+                  nor the `off` it argues with. */}
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
@@ -3400,6 +3455,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Address Line 2</span>
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
@@ -3428,11 +3484,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.city}
-                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
-                  disabled={inputsDisabled || stateLocked || !form.state}
+                  onChange={applyCityReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
-                  placeholder={form.state ? 'Pick city' : '— pick state first'}
-                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                  placeholder={form.state ? 'Pick city' : 'Pick city — State fills in'}
+                  options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
@@ -3443,11 +3499,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.postcode}
-                  onChange={(v) => set('postcode', v)}
-                  disabled={inputsDisabled || stateLocked || !form.city}
+                  onChange={applyPostcodeReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
-                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
-                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                  placeholder={form.city ? 'Pick postcode' : 'Pick postcode — State and City fill in'}
+                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
