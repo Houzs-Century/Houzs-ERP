@@ -99,10 +99,17 @@ modelFreeGifts.put('/', async (c) => {
      to exactly one company and (model_id) already implies one — two companies
      can never contend for this key.
 
-     0287 was the opposite case: compartment_library carries NO company_id, the
-     catalogue is shared, both companies reference the same ids. Same DDL shape,
-     opposite verdict. Only the PARENT table tells them apart — counting
-     company_id columns on the child answers nothing. */
+     0287 was the opposite case, though NOT for the reason first written here.
+     This comment said "compartment_library carries NO company_id, the catalogue
+     is shared" — mig 0089:74 adds one, NOT NULL. Corrected the same day; the
+     verdict held, the argument did not. The real reason is that
+     `compartment_fabric_tier_overrides.compartment_id` is an UNVALIDATED free
+     string from the request body, never joined to any catalogue, carrying
+     normalized sofa module codes that both companies produce independently.
+
+     Same DDL shape, opposite verdicts, and the lesson is narrower than first
+     stated: counting company_id columns answers nothing, and neither does one
+     glance at a parent — find who actually WRITES the key. */
   const { data: updated, error } = await gate.supabase
     .from('model_default_free_gifts')
     .upsert({ company_id: activeCompanyId(c), model_id: parsed.data.modelId, gifts, updated_at: new Date().toISOString(), updated_by: gate.userId }, { onConflict: 'model_id' }) // multi-company: stamp the active company

@@ -6,13 +6,32 @@
 -- pass stamped — and left the KEY alone. A column was added; the key was not.
 --
 -- WHY THIS ONE CAN ACTUALLY COLLIDE, and its model-level twin cannot.
--- scm.compartment_library carries NO company_id: the compartment catalogue is
--- SHARED, so both companies genuinely reference the same compartment ids, and a
--- key of (compartment_id) is a key of "one row for both companies". The twin
--- table model_fabric_tier_overrides is keyed on model_id, and product_models DOES
--- carry company_id — each company has its own model rows with their own uuids, so
--- two companies can never contend for one key there. Same shape, different fact;
--- the audit that flagged both had to open the parent tables to tell them apart.
+--
+-- CORRECTED 2026-08-13, same day, by a doc-vs-source sweep. This header first
+-- said "scm.compartment_library carries NO company_id, the catalogue is SHARED".
+-- That is FALSE: mig 0089:74 adds company_id to it, NOT NULL, with an FK and an
+-- index. The conclusion survives; the stated reason did not, and a migration
+-- header that argues from a false premise is exactly the kind of lie this
+-- repository keeps having to dig out of its own docs.
+--
+-- THE REAL REASON, traced rather than assumed: `compartment_id` here is an
+-- UNVALIDATED FREE STRING. The route takes it straight from the request body
+-- (routes/fabric-tier-addon.ts, compartmentSpecialSchema) and never joins it to
+-- the catalogue — indeed NOTHING in backend/src reads scm.compartment_library at
+-- all; it survives only in seed migrations. The values that actually arrive are
+-- normalized sofa MODULE CODES (`normalizeCompartmentCode(moduleCodeFromSku(...))`,
+-- shared/sofa-build.ts), and both companies independently produce codes from
+-- their own SKUs, so the same string reaches this table from both.
+--
+-- So the contradiction is INSIDE THE ROUTE, not in a parent table: the GET filters
+-- by company (its author believed these rows are per-company) while the PK
+-- permitted exactly one row globally. That is provable from one file and needs no
+-- assumption about the catalogue.
+--
+-- The twin table model_fabric_tier_overrides is keyed on model_id, and
+-- product_models DOES carry company_id — each company owns its own model rows
+-- with their own uuids, so two companies can never contend for one key there.
+-- Same DDL shape, opposite verdict.
 --
 -- WHAT IT DOES TODAY. routes/fabric-tier-addon.ts:
 --
@@ -73,4 +92,4 @@ DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.r
 --    so a re-run (or a DB where this already landed) is a clean no-op.
 DO $$ DECLARE pk_name text; pk_cols int; BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='scm' AND c.relname='compartment_fabric_tier_overrides' AND c.relkind IN ('r','p')) THEN SELECT con.conname, array_length(con.conkey, 1) INTO pk_name, pk_cols FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'scm' AND c.relname = 'compartment_fabric_tier_overrides' AND con.contype = 'p'; IF pk_name IS NOT NULL AND pk_cols = 1 THEN EXECUTE format('ALTER TABLE scm.compartment_fabric_tier_overrides DROP CONSTRAINT %I', pk_name); END IF; IF NOT EXISTS (SELECT 1 FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'scm' AND c.relname = 'compartment_fabric_tier_overrides' AND con.contype = 'p') THEN ALTER TABLE scm.compartment_fabric_tier_overrides ADD CONSTRAINT compartment_fabric_tier_overrides_pkey PRIMARY KEY (compartment_id, company_id); END IF; END IF; END $$;
 
-COMMENT ON TABLE scm.compartment_fabric_tier_overrides IS 'Per-compartment PRICE-2/PRICE-3 fabric-tier deltas, ONE ROW PER (compartment, company). Keyed (compartment_id, company_id) since mig 0287 - mig 0025 keyed it on compartment_id alone and mig 0083 added company_id without touching the key, so one company upserting a delta OVERWROTE the other company row (compartment_library is shared, so both companies reference the same ids) and the loss was silent AND repriced sofa builds via mfg-pricing-recompute. Read with scopeToCompany, written with onConflict compartment_id,company_id.';
+COMMENT ON TABLE scm.compartment_fabric_tier_overrides IS 'Per-compartment PRICE-2/PRICE-3 fabric-tier deltas, ONE ROW PER (compartment, company). Keyed (compartment_id, company_id) since mig 0287 - mig 0025 keyed it on compartment_id alone and mig 0083 added company_id without touching the key, so one company upserting a delta OVERWROTE the other company row and the loss was silent AND repriced sofa builds via mfg-pricing-recompute. compartment_id is an UNVALIDATED free string taken from the request body and never joined to scm.compartment_library (nothing in backend/src reads that table); the values are normalized sofa module codes, which both companies independently produce from their own SKUs. Read with scopeToCompany, written with onConflict compartment_id,company_id.';

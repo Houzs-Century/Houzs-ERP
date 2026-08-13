@@ -234,10 +234,20 @@ const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => a
 /* UNIFIED FLEET — why nothing in this module scopes a row read to the company.
    Referenced by the `// company-scope:` annotations on the by-id writers below.
 
-   scm.lorries has NO company_id: "one shared lorry fleet across ALL companies"
-   (lorries.ts). Every table this module owns is a CHILD of that master, and each
-   one says so in its own DDL — mig 0202 (compliance vault), 0203 (plans,
-   mileage), 0204 (breakdowns, work orders, parts, components), 0238
+   CORRECTED 2026-08-13. This paragraph said "scm.lorries has NO company_id".
+   That is FALSE — mig 0083 stamps it, and lorries.ts:182 writes it on insert.
+   The CONCLUSION is unchanged and the fleet really is unified; the premise was
+   simply wrong, and a wrong premise is how the opposite mistake gets made next
+   time. (Counting company_id columns has now produced the wrong answer on these
+   very tables in BOTH directions.)
+
+   The real reason is what the DDL SAYS, not which columns it has: migs 0202
+   (compliance vault), 0203 (plans, mileage), 0204 (breakdowns, work orders,
+   parts, components) and 0238 each state that company_id is STAMPED ON INSERT
+   FOR PROVENANCE BUT NOT USED TO SCOPE READS — "one shared lorry fleet across
+   ALL companies" (lorries.ts). Every table this module owns is a CHILD of that
+   master. Mig 0202 (compliance vault), 0203 (plans, mileage), 0204 (breakdowns,
+   work orders, parts, components), 0238
    (attachments). Their shared wording:
 
      "COMPANY SCOPE - ... NOT a hard scope. The fleet is UNIFIED across companies

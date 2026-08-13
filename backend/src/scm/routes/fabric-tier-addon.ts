@@ -183,13 +183,22 @@ fabricTierAddonConfig.delete('/special/:modelId', async (c) => {
      own uuids. Two companies can never contend for one model_id, and a key of
      (model_id) already implies a company.
 
-     Its compartment-level twin below is the opposite case and IS real:
-     compartment_library carries NO company_id, the catalogue is shared, so both
-     companies reference the same ids. That one was re-keyed by mig 0287.
+     Its compartment-level twin below IS real, but NOT for the reason this
+     comment first gave. It said "compartment_library carries no company_id, the
+     catalogue is shared" — mig 0089:74 adds one, NOT NULL. Corrected the same
+     day by a doc-vs-source sweep; the verdict held, the argument did not.
 
-     Same DDL shape, opposite verdict, and the only way to tell them apart is to
-     open the PARENT table — counting company_id columns on the child answers
-     nothing. */
+     The real reason is one file away: `compartment_id` there is an UNVALIDATED
+     free string from the request body, never joined to the catalogue (nothing in
+     backend/src reads scm.compartment_library at all), and the values are
+     normalized sofa module codes that both companies produce from their own
+     SKUs. So its GET filtered by company while its PK permitted one row
+     globally — a contradiction provable inside that one handler. Re-keyed by
+     mig 0287.
+
+     Same DDL shape, opposite verdicts. The lesson stands but is narrower than
+     first written: counting company_id columns answers nothing, and neither does
+     one glance at a parent — you have to find who actually WRITES the key. */
   const { error } = await scopeToCompany(gate.supabase
     .from('model_fabric_tier_overrides')
     .delete()
@@ -244,9 +253,12 @@ fabricTierAddonConfig.put('/compartment-special', async (c) => {
   }
 
   /* The key is (compartment_id, company_id) since mig 0287, and BOTH halves have
-     to be present or the upsert cannot address a row. compartment_library carries
-     no company_id — the catalogue is shared — so before 0287 this upsert landed
-     on the OTHER company's row: deltas replaced, company_id flipped, their next
+     to be present or the upsert cannot address a row. `compartmentId` arrives
+     from the request body and is NEVER validated against a catalogue — nothing
+     in backend/src reads scm.compartment_library — and the values are normalized
+     sofa module codes, which both companies produce from their own SKUs. So
+     before 0287 this upsert landed on the OTHER company's row: deltas replaced,
+     company_id flipped, their next
      scoped GET showing the compartment as un-tagged. A fabric-tier delta is a
      PRICE (mfg-pricing-recompute.ts:997 reads this table), so that silently
      repriced their sofa builds.
