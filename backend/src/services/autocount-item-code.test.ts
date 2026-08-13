@@ -266,6 +266,7 @@ describe('an unknown code is OPENED under its own name, not refused', () => {
     const p = composeCreateSo(
       { doc_no: 'SO-9999', customer_name: 'X' } as never,
       [good, line({ item_code: 'NOPE' })],
+      'KINGSLEY',
     );
     expect(p.Details.map((d) => d.ItemCode)).toEqual(['Miscellaneous', 'NOPE']);
   });
@@ -344,7 +345,7 @@ describe('a sofa CREATE sends one line per compartment', () => {
     const so = composeCreateSo({ doc_no: 'SO-1', customer_name: 'X' } as never, [
       line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000 }),
       line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0 }),
-    ]);
+    ], 'KINGSLEY');
     expect(so.Details).toHaveLength(2);
     expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
     /* Both carry the same Desc2 and the price sits on the first, which is how
