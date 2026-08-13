@@ -40,6 +40,31 @@ money corruption was suspected from reading a migration file, then refuted again
 the live database. The lesson recorded there ("verify schema claims against the live
 DB, not migration files") is worth more than the fix was.
 
+## ⚠️ The bug ledger, the module guide and migrations are CHECKED on every PR
+
+`.github/workflows/working-agreement.yml` runs
+`scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
+directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
+the migration discipline described under *Migrations* below. Before it existed
+they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
+as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
+said a word. (The COE rule is not checked: an incident is a judgement call, not
+a diff shape.)
+
+| It fails when | It wants |
+|---|---|
+| the title, the branch name, or a body HEADING reads as a fix, code changed, and `BUG-HISTORY.md` gained no new `## ` entry | the entry, in this PR |
+| a changed file under `backend/src` / `frontend/src` adds a route, a permission string, a status value, a required-field flip or a lock, and the module guide that quotes that file is untouched | the guide update, in this PR |
+| `backend/src/db/migrations-pg/` changed and the body does not carry a `Reversal:` line and a `Verified against:` line | both lines, filled in |
+
+The escapes are LABELS — `no-bug-history-needed`, `no-guide-change` — and they
+are not silence: the check prints the violation it waived, so the exception
+lands in the log. Rule 3 has no label; two lines in the body is the whole cost.
+
+Where NO guide covers a file whose surface moved, the check WARNS and names the
+guide that should exist. It does not fail you for a gap you did not open — but
+that gap is the one CLAUDE.md asks you to close.
+
 **This file stays THIN on purpose.** It carries rules and traps, not an
 inventory. Facts that change with every merge — route counts, file sizes,
 module lists — belong in the map below, because a stale fact HERE is worse

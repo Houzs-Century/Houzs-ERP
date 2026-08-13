@@ -1,3 +1,26 @@
+## Working agreement (CLAUDE.md — MANDATORY, checked by CI)
+
+`Working agreement` in Actions checks these three. Meeting them here is cheaper
+than being told afterwards.
+
+- [ ] **Bug logged.** This PR is not a fix, or it adds a `BUG-HISTORY.md` entry
+      (Symptom → Root cause → Fix → Ref, newest first, with a severity tag).
+      Exception → label `no-bug-history-needed`; the log will print what it waived.
+- [ ] **Module guide read, and updated if the SURFACE moved** — a new route, a
+      new permission string, a new status value, a field that starts or stops
+      being required, a new lock. Exception → label `no-guide-change`.
+      No guide for the module yet? Write it, following `docs/modules/sales-order.md`.
+- [ ] **Serious incident?** An outage, data at risk, a fault that recurred, or
+      anything that made the system feel unreliable to staff gets a
+      `docs/<subject>-coe.md`, not just a `BUG-HISTORY.md` line.
+
+### Migration (required when `backend/src/db/migrations-pg/` changes)
+
+Both lines are parsed. Leave them out and the check fails; there is no label for this.
+
+- Reversal:
+- Verified against:
+
 ## Scope
 
 - [ ] This PR has one bounded purpose and names the affected modules.
