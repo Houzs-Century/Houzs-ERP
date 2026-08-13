@@ -116,7 +116,9 @@ Repeatedly, and it is worth listing because the pattern is the finding:
 
 ## 3. Fixes shipped
 
-Branch `fix/company-scope-sweep`, nine commits, **not merged**.
+Branch `fix/company-scope-sweep`, **not merged**. (The commit count that stood
+here went stale within hours of being written — a number typed into prose about
+a branch that is still moving. Run `git rev-list --count origin/main..HEAD`.)
 
 | Commit | What | Effect |
 |---|---|---|

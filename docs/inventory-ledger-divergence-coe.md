@@ -2,7 +2,13 @@
 
 **Date:** 2026-07-25
 **Trigger:** Owner opened the Stock Breakdown drawer for SKU `MAKOTO RC(S)-FVI BRONZE` (2990 SOFA MAKOTO RELAX CHAIR), KL warehouse, and found the movement ledger and the FIFO ledger disagreeing on the same SKU: the MOVEMENTS list ends at running balance **3** (5 IN − 2 OUT), but the FIFO lots sum to **4** and COGS shows only **ONE** consumption. Two OUT movements were recorded on the SAME delivery order (`2990-DO-2607-018`, 23/07 11:47 and 12:22, 35 min apart) but only one lot-consumption exists.
-**Status:** Root cause TRACED against the code (static trace of `origin/main`; no prod query needed to prove the mechanism). A READ-ONLY DETECTOR sized the exposure across all SKUs (PR below). **Go-forward engine fix now built as a DRAFT** (migration 0195 — the OUT-branch batch→plain-FIFO fallback) together with a **historical data-repair backfill** (`backfill-fifo-divergence.mjs`, DRY-RUN by default, staging-first, owner-run) — both DRAFT, STAGING-FIRST, NOT auto-merged; the historical repair is a separate, explicitly owner-triggered step. The specific MAKOTO symptom is also logged in `BUG-HISTORY.md` (HIGH).
+**Status:** Root cause TRACED against the code (static trace of `origin/main`; no prod query needed to prove the mechanism). A READ-ONLY DETECTOR sized the exposure across all SKUs (PR below).
+
+**Go-forward engine fix SHIPPED** — `migrations-pg/0195_scm_fifo_out_short_batch_fallback.sql` (the OUT-branch batch→plain-FIFO fallback) merged 2026-07-25 as `75efc060`, PR #1261: *"stop FIFO OUT discarding its shortfall — sofa batch-key drift no longer diverges the ledgers"*. `deploy.yml` runs `pg-migrate.mjs` on every push to `main`, so it is **applied in production**. This line read "now built as a DRAFT … NOT auto-merged" until 2026-08-13, on a money-path migration that had been live since the day the COE was written — the worst kind of stale, because a reader plans around a fix they think is still pending.
+
+The **historical data-repair backfill** (`backfill-fifo-divergence.mjs`) is the part that remains DRY-RUN by default, staging-first and explicitly owner-triggered.
+
+The specific MAKOTO symptom is also logged in `BUG-HISTORY.md` (HIGH).
 
 ---
 

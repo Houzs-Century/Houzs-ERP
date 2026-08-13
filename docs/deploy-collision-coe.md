@@ -68,12 +68,21 @@ Five days after this COE was written, the same mechanism stranded **10 commits**
 
 ---
 
-## 5. Deferred — the real fix is not shipped
+## 5. Deferred — what remains now that the pipeline fixes have landed
+
+> **This section's heading read "the real fix is not shipped" until 2026-08-13.
+> It had shipped.** Verified against `.github/workflows/deploy.yml:246-253`: the
+> `frontend` job is unconditional today (`if: github.ref == 'refs/heads/main'`,
+> no path condition), with a comment giving exactly the reasoning row 1 below
+> describes — *"a per-push path diff can therefore miss frontend files that
+> existed only in an earlier cancelled run … also makes workflow_dispatch a
+> reliable one-click recovery path."* Rows 3 and 4 already record the backend
+> half as FIXED, so rows 1 and 2 were the only stale ones.
 
 | Item | Owner | Status |
 |------|-------|--------|
-| **`workflow_dispatch` + a `force` input on `deploy.yml`.** Named as the real fix in both `e90e1017` and `sw.js:326-327`. It needs *both*: `paths-filter` has no `github.event.before` on a dispatch, so a dispatch without a force input would compute an empty diff and skip both jobs — the same bug by another route. | Owner / whoever next touches `deploy.yml` | **WRITTEN, NOT MERGED — PR #992.** It solves the "no force input" trap by removing the condition instead of adding a flag: the `frontend` job becomes unconditional, so a dispatch always republishes. Both jobs are guarded on `refs/heads/main`. |
-| **A filter diff window that spans everything since the last successful deploy**, rather than one push's range. | Owner | Not attempted. PR #992 sidesteps it for the **frontend** by dropping the condition entirely; the **backend** job keeps the broken window. See the row below — that asymmetry is new and needs its own decision. |
+| **`workflow_dispatch` + a `force` input on `deploy.yml`.** Named as the real fix in both `e90e1017` and `sw.js:326-327`. It needs *both*: `paths-filter` has no `github.event.before` on a dispatch, so a dispatch without a force input would compute an empty diff and skip both jobs — the same bug by another route. | — | **SHIPPED.** It solved the "no force input" trap by removing the condition instead of adding a flag: the `frontend` job is unconditional (`deploy.yml:246-253`), so a dispatch always republishes. Both jobs stay guarded on `refs/heads/main`. |
+| **A filter diff window that spans everything since the last successful deploy**, rather than one push's range. | — | **RESOLVED, differently on each side.** The frontend dropped the condition entirely; the backend got a window that spans everything since the last run whose backend job actually succeeded — see the row below, which was already marked FIXED while this row still described the asymmetry as open. |
 | **The backend keeps a diff window that #992 proves untrustworthy.** #992's premise is that a per-push path diff cannot prove what is live; its remedy was applied only to the frontend. | — | **FIXED.** The `changes` job now resolves the SHA of the last run whose **backend job** concluded success (a run can be green with backend skipped — that is precisely how the 2026-07-22 window stayed invisible) and passes it to `dorny/paths-filter` as `base`. The filter now asks "is anything unreleased?" rather than "did this one push touch backend?". Fails OPEN: unresolvable base -> the backend job runs anyway. |
 | **Refuse to publish an ancestor of what is already live.** | — | **FIXED.** The backend job compares `GITHUB_SHA` against the last released backend SHA with `git merge-base --is-ancestor` before anything is built, and fails with a sentence explaining itself. Equal SHAs are allowed (a rerun of the live commit is how the 2026-07-22 window was recovered); an unknown base skips the check, same fail-open rule. |
 | **Interim rule, in force now:** *after any burst merge, check that the last deploy's `frontend` job says **success**, not **skipped**.* Recorded at `sw.js:328-329`. | Everyone merging to main | Manual. It is a human check standing in for a pipeline guarantee, and it will be forgotten. |

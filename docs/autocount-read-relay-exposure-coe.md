@@ -54,10 +54,23 @@ that is itself part of the finding. What is established:
 
 ## Why this is the second time
 
-`docs/autocount-writeback-exposure-coe.md` records the API key for the write
-service being downloadable over a file server on **the same host**. That was
-closed. This is the same class on the same machine: *something stood up for
-internal convenience, published to the internet, and remembered by nobody.*
+The API key for the write service was previously downloadable over a file server
+on **the same host**. That was closed.
+
+> **`docs/autocount-writeback-exposure-coe.md` DOES NOT EXIST** — corrected
+> 2026-08-13. It is not in `docs/`, not anywhere in the tree, and no other
+> document or `BUG-HISTORY.md` entry records that exposure; searching for the
+> key, "downloadable", "file server" and every `autocount-*` doc turns up only
+> `docs/autocount-migration-record.md:621` ("an orphaned listener registration
+> from the cutover file server").
+>
+> **The missing COE is itself the finding.** This section is titled "why this is
+> the second time" and its whole argument rests on a document nobody wrote — so
+> the first incident is remembered only as a sentence inside the second one's
+> write-up, which is exactly the failure both incidents are about.
+
+This is the same class on the same machine: *something stood up for internal
+convenience, published to the internet, and remembered by nobody.*
 
 **The pattern to take from both: a host that fronts anything publicly needs its
 whole surface enumerated, not just the part being worked on.** Both were found
