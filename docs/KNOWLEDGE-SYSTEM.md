@@ -126,9 +126,28 @@ None of this is invented here. The industry names, so you can search them:
 
 ## 6. Keeping this true
 
-- `npm --prefix backend run audit:map` regenerates `docs/generated/`. Run it when
-  you add routes, migrations or mobile screens. It is deliberately **not** a CI
-  merge gate — a stale navigation doc must never block a deploy.
+- **`audit:*` CHECKS. `gen-*` WRITES.** Corrected 2026-08-13: this line said
+  `audit:map` "regenerates `docs/generated/`", and it does neither of those
+  things — `backend/package.json:19` is
+  `node scripts/gen-codebase-map.mjs --check`, which writes nothing and covers
+  one file. `docs/CODEBASE-MAP.md:21-22` had it right, so the two documents
+  contradicted each other about the same command.
+
+  Each artifact has a generate/check pair:
+
+  ```bash
+  node backend/scripts/gen-codebase-map.mjs          # writes codebase-map-facts.md
+  npm --prefix backend run audit:map                 # checks it for drift
+  npm --prefix backend run gen:route-locator         # writes route-locator.md
+  npm --prefix backend run audit:route-locator       # checks it
+  node backend/scripts/generate-route-capability-matrix.mjs
+  npm --prefix backend run audit:routes              # checks it
+  ```
+
+  Run the `gen:*` half when you add routes, migrations or mobile screens. The
+  checks are deliberately **not** CI merge gates — a stale navigation doc must
+  never block a deploy, and `audit:routes` as a deploy gate jammed production
+  twice.
 - The hand-written layers have no automation. They stay true only because the rule
   in §2 keeps them small enough to be worth re-reading. **If a hand-written doc
   starts filling up with numbers, that is the signal to teach the generator
