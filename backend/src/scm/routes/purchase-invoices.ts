@@ -1281,6 +1281,15 @@ purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 // status: paid_centi == total → PAID, paid_centi > 0 && < total → PARTIALLY_PAID.
 purchaseInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
+  /* company-scope: this records MONEY PAID against a supplier invoice. The
+     optimistic-concurrency loop below guards against two payments racing on the
+     same PI; nothing guarded against the PI belonging to the other company. */
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('purchase_invoices').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let body: { amountCenti?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const amount = Number(body.amountCenti ?? 0);
@@ -1951,6 +1960,13 @@ purchaseInvoices.post('/from-grn', async (c) => {
 /* ── PATCH /:id — header update (mirror GRN's PATCH /:id) ── */
 purchaseInvoices.patch('/:id', async (c) => {
   const id = c.req.param('id');
+  // company-scope: the header write below keys on the caller's uuid alone.
+  {
+    const { data: own } = await scopeToCompany(
+      c.get('supabase').from('purchase_invoices').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -2177,6 +2193,16 @@ purchaseInvoices.post('/:id/items', async (c) => {
 /* ── PATCH /:id/items/:itemId — partial line update. ── */
 purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
+  /* company-scope: prove the PARENT invoice first. The M10 note below scopes the
+     LINE to this PI — which proves the pair belongs together, never whose it is,
+     since both ids come from the caller. Editing a PI line re-costs lots and
+     re-syncs the GL. */
+  {
+    const { data: own } = await scopeToCompany(
+      c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -2309,6 +2335,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
+  // company-scope: prove the parent PI — same reasoning as the line PATCH.
+  // Deleting a line rolls the source GRN's invoiced_qty back and re-costs lots.
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('purchase_invoices').select('id').eq('id', piId), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);

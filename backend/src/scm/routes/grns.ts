@@ -2672,6 +2672,16 @@ grns.patch('/:id/cancel', async (c) => {
 /* ── PATCH /:id — header update (mirror PO's PATCH /:id) ── */
 grns.patch('/:id', async (c) => {
   const id = c.req.param('id');
+  /* company-scope: prove the GRN is ours BEFORE anything below touches it. Every
+     write here keys on the caller-supplied uuid, so the status and downstream
+     guards were real but company-blind. A GRN header write can relocate its
+     warehouse, which moves inventory. */
+  {
+    const { data: own } = await scopeToCompany(
+      c.get('supabase').from('grns').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -3120,6 +3130,15 @@ grns.post('/:id/items', async (c) => {
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_received. ── */
 grns.patch('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
+  // company-scope: prove the parent GRN. Editing a line re-costs it and rolls
+  // the PO's received_qty back up — both are writes on the other company's data
+  // if the parent is not ours.
+  {
+    const { data: own } = await scopeToCompany(
+      c.get('supabase').from('grns').select('id').eq('id', grnId), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -3397,6 +3416,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
 grns.delete('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase'); const user = c.get('user');
+  // company-scope: prove the parent GRN — same reasoning as the line PATCH.
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('grns').select('id').eq('id', grnId), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
 
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);

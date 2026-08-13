@@ -1748,7 +1748,16 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    /* company-scope: the header read is the gate for this whole handler — every
+       line write below keys on (itemId, sales_invoice_id), so proving the
+       INVOICE is ours proves the chain. It was unscoped, so the status gate
+       right below it was real but company-blind: company A holding B's invoice
+       uuid could edit B's lines, and the ISSUED / CANCELLED checks would happily
+       consult B's status to decide. */
+    const { data: hd } = await scopeToCompany(
+      sb.from('sales_invoices').select('status').eq('id', id), c,
+    ).maybeSingle();
+    if (!hd) return c.json({ error: 'not_found' }, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
     }
@@ -1863,7 +1872,16 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
 salesInvoices.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    /* company-scope: the header read is the gate for this whole handler — every
+       line write below keys on (itemId, sales_invoice_id), so proving the
+       INVOICE is ours proves the chain. It was unscoped, so the status gate
+       right below it was real but company-blind: company A holding B's invoice
+       uuid could edit B's lines, and the ISSUED / CANCELLED checks would happily
+       consult B's status to decide. */
+    const { data: hd } = await scopeToCompany(
+      sb.from('sales_invoices').select('status').eq('id', id), c,
+    ).maybeSingle();
+    if (!hd) return c.json({ error: 'not_found' }, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before deleting lines.' }, 409);
     }

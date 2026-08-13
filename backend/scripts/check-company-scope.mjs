@@ -137,8 +137,15 @@ const RAW_SQL_TABLES =
 const NAMED_HANDLER =
   /\.\s*(?:get|post|put|patch|delete)\s*\(\s*['"`][^'"`]*['"`]\s*,\s*([A-Za-z_$][\w$]*)\s*\)/;
 
-/** Handler opener: router.get('/...', ... — captures method and path. */
-const HANDLER = /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]*)['"`]/;
+/* Handler opener: router.get('/...', ... — captures method and path.
+
+   THE LEADING SLASH IS LOAD-BEARING. Without it `c.get('supabase')` at the start
+   of a line matches, and the scan treats a context accessor as a route
+   registration — which both mis-slices the real handler around it and prints
+   nonsense like "GET supabase" in the report. gen-route-locator.mjs has required
+   the slash since it was written; this checker did not, and it showed the moment
+   a fix put `c.get('supabase')` on its own line. */
+const HANDLER = /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`](\/[^'"`]*)['"`]/;
 
 /** `export const fooHandler = async (c) => {` / `async function fooHandler(` */
 const declRegex = (fn) =>

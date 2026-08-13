@@ -4392,8 +4392,15 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
 
   /* The BEFORE half of every from->to pair recorded after the DO write below.
      Read after the guards so a rejected PATCH costs nothing. */
-  const { data: beforeRow } = await sb.from('delivery_orders')
-    .select(DO_AUDIT_SELECT).eq('id', id).maybeSingle();
+  /* company-scope: the gate for this handler. It read the header by uuid alone,
+     so company A holding B's DO uuid could rewrite B's customer, address, dates
+     and amend fields — and the `activeCompanyId(c)` twenty lines below is NOT a
+     guard, it is a fallback for the audit row's companyId field, which is
+     precisely how the checker was fooled into passing this handler. */
+  const { data: beforeRow } = await scopeToCompany(
+    sb.from('delivery_orders').select(DO_AUDIT_SELECT).eq('id', id), c,
+  ).maybeSingle();
+  if (!beforeRow) return c.json({ error: 'not_found' }, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* DUAL-WRITE NOTE: Supabase REST has no client-side transaction primitive —
@@ -4687,6 +4694,16 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
 
 deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
+  /* company-scope: prove the PARENT DO first. Every write below keys on
+     (itemId, delivery_order_id) and both come from the caller, so without this
+     the pair only proved they belong together — never whose they are. Editing a
+     line re-prices it, re-binds its batch and re-syncs inventory. */
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('delivery_orders').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -4970,6 +4987,14 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
    releases the qty and the delete then succeeds. */
 deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
+  // company-scope: prove the parent DO — same reasoning as the line PATCH above.
+  // Deleting a shipped line reverses inventory, so this is a stock write too.
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('delivery_orders').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
 
   // Per-line downstream guard (PR #24) — block delete only if THIS line's qty
   // has been invoiced or returned. Tier 2's doc-level doHasDownstream is too
