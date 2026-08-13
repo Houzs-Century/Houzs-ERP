@@ -1,3 +1,72 @@
+# Bug history
+
+Newest first. Each entry is one defect: what was seen, what caused it, what was
+changed, and what class it belongs to. Entries are `##` (recent) or `###` under a
+`## YYYY-MM-DD` date heading (older); nothing else in this file uses those levels.
+
+**Before adding an entry, read [`docs/bug-classes.md`](docs/bug-classes.md).** It
+holds the causes that have recurred here — with a count, the worst thing each one
+cost, and **the name of the check that now fails on it**. If the bug you are about
+to write up is an instance of a class listed there, the check should have caught
+it: say why it did not, and widen the check in the same PR. If it is a new class,
+add it there once it has recurred, with a check — or under *Classes with no check
+yet*, saying what blocks one.
+
+That file exists because this one was not enough on its own. On 2026-08-10 a
+stringified value bound to a jsonb parameter corrupted 146 sofa lines three times
+in an afternoon; it was written up here and given a COE; on 2026-08-13 the repair
+script written to undo the damage reproduced it, turning seven production rows
+string-shaped. The write-up was read. Nothing mechanical enforced it.
+
+
+## Five causes recurred after being written up, because a write-up is not a check [high]
+
+**Symptom** — the same five faults kept coming back, each one already described
+in this file and in a COE, some of them more than once:
+
+1. **A pre-serialized value bound to a json/jsonb parameter.** Six occurrences
+   in 15 days, one COE (docs/jsonb-double-encoding-coe.md), 22 hand-written
+   warnings scattered through `backend/` — and TWO live violations still on
+   main when this gate was written, one of them inside the repair script for
+   the damage the class had already done.
+2. **A read whose failure is discarded** (`const { data }` with no `error`,
+   `.catch(() => {})`). Counted 785 four weeks before this; 954 when counted
+   again. The class GREW by 169 sites after fifteen were fixed by hand and the
+   fix was declared complete. Nothing had ever counted them.
+3. **A parameter that decides, declared optional** — `companyId`, `itemCode`,
+   `soItemId`, the idempotency key. Seven recorded occurrences. `?:` spells
+   "omitted" and "nothing to say" identically, so a by-SKU exemption can be
+   half-applied and typecheck stays green.
+4. **A generator whose output is committed but is never re-run.** The codebase
+   map generator crashed silently for three weeks; the map rotted while every
+   dashboard stayed green.
+5. **Searched columns without a trigram index.** Its checker existed — and
+   until 2026-08-13 BOTH of its exit paths were `exit 0` and it was wired into
+   no workflow at all. It could not fail, and nobody ran it.
+
+**Root cause** — every one of these was already documented. The write-up was
+read; the rule lived in prose; prose does not fail a build. The fifth is the
+purest form: a check whose every exit path returns success is prose wearing the
+clothes of a script.
+
+**Fix** — five gates in `backend-typecheck`, the job that already finishes in
+about a minute: `audit:jsonb-binds`, `audit:swallowed-reads` (a RATCHET — the
+954 are pinned and may only fall), `audit:decision-params`, `audit:generators`,
+`audit:trgm`. Each carries the entry it answers in a comment above it in
+ci.yml. `audit:trgm` is deliberately NOT in either deploy workflow: it is a
+static approximation, and a false positive must cost a conversation, never a
+deploy.
+
+The swallowed-read work that came in with this branch fixed 16 reads whose
+failure silently AUTHORISES a write — including a quantity cap that lived
+entirely inside `if (row) {…}`, so a failed read skipped the cap rather than
+enforcing it.
+
+**Class** — this entry defines the shape the classes are recorded in;
+docs/bug-classes.md names each one with its count, its worst cost, and the
+check that now fails on it.
+
+**Ref** - `fix/bug-class-gates`, PR #2127 (with #2141), 2026-08-14
 ## The AutoCount write-back never told AutoCount who sold the order [high]
 
 **Symptom** — the ERP -> AutoCount write-back went live on 2026-08-13. Two
@@ -85,6 +154,39 @@ send; picking one is an owner decision about what AutoCount's purchase reports
 will show.
 
 **Ref** — 2026-08-14, `fix/autocount-so-agent`.
+
+## The file-size ratchet failed a PR for making an over-ceiling file SMALLER [medium]
+
+**Symptom** — PR #2127 opened `backend/src/scm/routes/grns.ts`, which stood at
+**3,591 lines on main** against a ceiling of 3,482, and left it at **3,586**.
+The gate failed it: *3586 lines, ceiling 3482 (over by 104). This file may only
+SHRINK.* The PR had shrunk it.
+
+**Root cause** — the fix earlier that same day taught the gate to charge only
+files the change TOUCHED. That was right, and not enough: touching is not
+growing. A file already carrying 109 lines of someone else's debt then puts
+every later author to a choice the ratchet never meant to offer — abandon the
+improvement, or pay off the debt before you are allowed to fix a bug in that
+file.
+
+**Fix** — a touched file is charged only when THIS change grew it, measured
+against its own line count at the merge base. Growth is still charged from the
+first line; a file with no counterpart at the base is charged as new; and if the
+base cannot be resolved, every touched violation is charged again. The violation
+prints either way — the debt is real and stays visible, it is simply not billed
+to whoever walked past it.
+
+**The check** — `scripts/check-file-size-ratchet.mjs` gains the case, with the
+real numbers: 3,591 at base and 3,586 now is not chargeable; 3,500 at base and
+3,586 now is, from the first line.
+
+**Class** — *a gate whose blast radius is wider than its subject*, third
+instance in two days (the census counting deliberate tombstones, the ratchet
+charging untouched files, this). The subject here is growth; the gate was
+measuring altitude.
+
+**Ref** - `fix/ratchet-charges-growth`, 2026-08-14
+
 ## The by-SKU variant exemptions reached the app and not the audits, and one of them reached the audits and not the app [medium]
 
 **Symptom** — the same rule gave four different answers depending on which

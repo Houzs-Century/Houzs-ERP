@@ -123,7 +123,7 @@ export async function transferLoaner(
   sourceDocNo: string,
   userId: string | null,
   // Multi-company (mig 0061): stamp the source doc's company on every movement.
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<string[]> {
   const errors: string[] = [];
   if (!fromWh || !toWh || fromWh === toWh || lines.length === 0) return errors;
@@ -248,7 +248,7 @@ export async function reverseLoaner(
   toWh: string,
   userId: string | null,
   // Multi-company (mig 0061): stamp the source doc's company on every movement.
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<string[]> {
   const errors: string[] = [];
   if (!fromWh || !toWh || fromWh === toWh) return errors;

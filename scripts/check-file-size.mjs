@@ -152,6 +152,30 @@ function changedFilesAgainstBase() {
   }
 }
 
+/** Line counts at the merge base, so a touched file can be asked whether THIS
+ *  change grew it. null when the base cannot be resolved — the caller then
+ *  charges every touched violation, because a gate that cannot tell must not
+ *  let anything through. */
+function fileLinesAtBase(wanted) {
+  try {
+    git(['rev-parse', '--verify', '--quiet', 'origin/main'], { quiet: true });
+    const base = git(['merge-base', 'HEAD', 'origin/main'], { quiet: true }).trim();
+    if (!base) return null;
+    const out = git(['ls-tree', '-r', '--name-only', '-z', base], { quiet: true });
+    const names = new Set(out.split('\0').filter(Boolean));
+    const lines = new Map();
+    for (const p of names) {
+      /* Only the files a violation could name — reading the whole tree would
+         cost thousands of `git show` calls for nothing. */
+      if (!wanted.has(p)) continue;
+      try { lines.set(p, git(['show', `${base}:${p}`], { quiet: true }).split('\n').length - 1); } catch { /* gone at base */ }
+    }
+    return lines;
+  } catch {
+    return null;
+  }
+}
+
 function readBaseManifest() {
   let base;
   try {
@@ -298,7 +322,23 @@ function main() {
      full, with its numbers — silence would let the tree drift — but only the
      files in this diff can fail the run. */
   const touched = changedFilesAgainstBase();
-  const mine = touched === null ? v.violations : v.violations.filter((x) => touched.has(x.path));
+  /* A file already over its ceiling may be TOUCHED without being charged, as
+     long as this change makes it smaller. The ratchet's subject is GROWTH: a PR
+     that opens a 3,591-line file and leaves it at 3,586 has moved it in the
+     only direction the ratchet asks for, and failing it there tells the author
+     to abandon the improvement or to pay off 104 lines of someone else's debt
+     before they may fix a bug. Measured 2026-08-14 on PR #2127, which did
+     exactly that and was blocked for it.
+     Growth is still charged from the FIRST line: a touched file may not exceed
+     its ceiling, nor its own size at the merge base, whichever is larger. */
+  const baseLines = fileLinesAtBase(new Set(v.violations.map((x) => x.path)));
+  const charged = (x) => {
+    if (touched === null || !touched.has(x.path)) return false;
+    const was = baseLines?.get(x.path);
+    if (was === undefined) return true;              // new here, or no base to compare
+    return x.lines > was;                            // only if THIS change grew it
+  };
+  const mine = touched === null ? v.violations : v.violations.filter(charged);
   const inherited = v.violations.filter((x) => !mine.includes(x));
 
   if (inherited.length) {

@@ -74,6 +74,37 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+
+      # ---- the bug-class gates (docs/bug-classes.md) ------------------------
+      # Each one below replaces a rule that lived in prose and was reproduced
+      # anyway. They are filesystem-only, need no database, and together add a
+      # few seconds to a job that already spends 26s on typecheck alone.
+      #
+      # A pre-serialized value bound to a json/jsonb parameter. Six occurrences
+      # in 15 days, one COE, 22 hand-written warnings in backend/ — and two live
+      # violations still on main when this was added, one of them written by the
+      # repair script for the damage. docs/jsonb-double-encoding-coe.md.
+      - run: npm run audit:jsonb-binds
+      # A read whose failure is discarded (`const { data }` with no `error`,
+      # `.catch(() => {})`). Ratchet, not ban: 954 sites predate it. It is here
+      # because the class GREW from 785 to 954 in the four weeks after it was
+      # declared fixed, and nothing counted.
+      - run: npm run audit:swallowed-reads
+      # A parameter that decides — companyId, itemCode, soItemId, the
+      # idempotency key — declared `?:`, so omitting it is spelled the same as
+      # having nothing to say. Seven recorded occurrences.
+      - run: npm run audit:decision-params
+      # Every generator whose output is committed still RUNS. The codebase map
+      # generator crashed silently for three weeks (2026-08-12) and the map
+      # rotted while every dashboard stayed green.
+      - run: npm run audit:generators
+      # Searched columns have trigram indexes. Wired here and NOT in either
+      # deploy workflow, deliberately: this check is a static approximation and
+      # a false positive must cost a conversation, never a deploy. Until
+      # 2026-08-13 both of its exit paths were exit 0 and it was in no workflow
+      # at all — it could not fail, and nobody ran it.
+      - run: npm run audit:trgm
+
       # tests/generated/ is the collapsed baseline+migrations that
       # tests/setup.ts applies instead of replaying the history per test file.
       # A migration merged without regenerating it would leave the whole suite
@@ -437,6 +468,11 @@ jobs:
       # explicitly here — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
       - run: node --test ../scripts/check-coverage-verdict.mjs
+
+      # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
+      # zero inputs and exits 0 on a tree full of type errors. The typecheck
+      # script above was exactly that until 2026-08-01. Pin the shape.
+      - run: node --test scripts/check-typecheck-gate.test.mjs
 
   frontend-build:
     runs-on: ubuntu-latest
