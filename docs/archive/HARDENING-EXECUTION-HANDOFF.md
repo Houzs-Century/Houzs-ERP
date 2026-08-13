@@ -1,9 +1,11 @@
+> **ARCHIVED 2026-08-13.** Continuation record for a hardening batch merged **2026-07-22**; the file's own header already warns its state columns are stale. Live status is `docs/HARDENING-COMPLETION-LEDGER.md`. Kept for history; do not follow it as a current instruction.
+
 # HOUZS ERP Hardening — Execution Handoff
 
 Last updated: 2026-07-22 (Asia/Kuala_Lumpur)  
 Canonical repository: `hello-houzs/Houzs-ERP`  
 Integration base: `origin/main`  
-Task source of truth: [`HARDENING-COMPLETION-LEDGER.md`](HARDENING-COMPLETION-LEDGER.md)
+Task source of truth: [`HARDENING-COMPLETION-LEDGER.md`](../HARDENING-COMPLETION-LEDGER.md)
 
 This file is the interruption-safe continuation record. The completion ledger contains the complete A–Z scope and acceptance criteria. This handoff contains only the exact execution state needed for another agent to continue without re-auditing the repository.
 
@@ -41,7 +43,7 @@ Production verified by observation on 2026-07-22, not by job colour: live entry 
 
 ### Recorded, not fixed — deploy pipeline
 
-Both are open items in [`deploy-collision-coe.md`](deploy-collision-coe.md) §5 and neither is a code change anyone should make without the owner:
+Both are open items in [`deploy-collision-coe.md`](../deploy-collision-coe.md) §5 and neither is a code change anyone should make without the owner:
 
 1. **The backend keeps the paths-filter diff window that #992 proves untrustworthy.** #992 made the *frontend* release unconditional; `backend` still runs only when `event.before..sha` shows backend files. When a backend-carrying run is cancelled, that range does not contain them, `backend` skips, and merged Worker code **plus its migrations** sit undeployed until the next backend-touching push — while the now-unconditional frontend ships at tip. New skew mode: a current frontend calling API routes the live Worker does not have. Fix is either an unconditional `backend` (spends the Actions minutes the filter was added to save) or `dorny/paths-filter`'s `base:` set to the last **successful** Deploy run's SHA.
 2. **`deploy.yml` publishes the run's own SHA with no ordering check.** On 2026-07-22 the one run that executed (`850014c`) was an *ancestor* of the already-deployed `644d25d`; its `wrangler deploy` would have silently reverted #995, #994 and `8f17f39`. It was stopped only because `npm test` failed — a red test, not a rule. A slow run is a time machine.

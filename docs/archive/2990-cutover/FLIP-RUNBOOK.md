@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The flip this runbook executes was performed **2026-07-21** — `HOUZS_OWNS_2990 = "true"` in `backend/wrangler.toml`. Outcome in `docs/2990-cutover/HANDOFF.md`. Kept for history; do not follow it as a current instruction.
+
 # 2990 → Houzs POS cutover — FLIP RUNBOOK (task #15)
 
 The flip makes Houzs the **writer** for 2990 and repoints the POS at Houzs. It is
