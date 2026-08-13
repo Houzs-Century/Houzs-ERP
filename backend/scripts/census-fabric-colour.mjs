@@ -14,6 +14,11 @@
    carrier count on every invocation — that number, not this comment, is the
    one to quote. (It read 58 carriers, 51 of them live, on 2026-08-13.)
 
+   NOR IS THE COUNTING DONE HERE ANY MORE. resolveCarriers() and countCarrier()
+   moved into lib/colour-carriers.mjs so retire-non-fabric-rows.mjs can ask the
+   identical question of the identical carriers before it deactivates a row.
+   This file is now the REPORT; the lib is the list and the engine both.
+
    HOW TO USE IT. Run it on a colour BEFORE retiring that colour, to size the
    work. Run it AGAIN after, and require every LIVE carrier to report 0. The
    second run is the proof — not a claim, a number anyone can reproduce.
@@ -32,7 +37,11 @@
 
    Writes nothing. */
 import postgres from 'postgres';
-import { CARRIERS, COLOUR_KEYS, likeEscape, boundedRegex } from './lib/colour-carriers.mjs';
+/* The carrier list AND the per-kind SQL both live in lib/colour-carriers.mjs.
+   The switch used to sit in this file; retire-non-fabric-rows.mjs has to ask
+   the identical question before it deactivates a row, and two copies of a
+   per-kind SQL switch is the drift this directory keeps paying for. */
+import { CARRIERS, resolveCarriers, countCarrier } from './lib/colour-carriers.mjs';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -44,71 +53,12 @@ const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
-/** Does this table exist, and does it have these columns? A carrier is only
- *  counted when both hold — otherwise it is SKIPPED and said out loud. */
-async function shape(table) {
-  const [schema, name] = table.split('.');
-  const [reg] = await sql`SELECT to_regclass(${`${schema}.${name}`})::text AS t`;
-  if (!reg.t) return null;
-  const cols = await sql`SELECT column_name FROM information_schema.columns
-                          WHERE table_schema = ${schema} AND table_name = ${name}`;
-  return new Set(cols.map((r) => r.column_name));
-}
-
-/** The column a carrier reads — 'variants' or "allowed_options->'fabrics'". */
-const baseCol = (c) => c.col.replace(/->.*$/, '').replace(/[^a-z_0-9].*$/i, '');
-
-async function countOne(carrier, code, hasCompany) {
-  const co = hasCompany ? `company_id = ${CO} AND ` : '';
-  const esc = likeEscape(code);
-  let where;
-  switch (carrier.kind) {
-    case 'variants':
-      where = COLOUR_KEYS.map((k) => `${carrier.col}->>'${k}' = $1`).join(' OR ');
-      return sql.unsafe(`SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}(${where})`, [code]);
-    case 'vkey':
-      return sql.unsafe(
-        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
-          WHERE ${co}('|' || COALESCE(${carrier.col}, '') || '|') LIKE ('%|fabriccode=' || $1 || '|%') ESCAPE '\\'`,
-        [likeEscape(String(code).toLowerCase())]);
-    case 'text':
-      return sql.unsafe(
-        `SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}COALESCE(${carrier.col}, '') ~ $1`,
-        [boundedRegex(code)]);
-    case 'jsonarr':
-      return sql.unsafe(
-        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
-          WHERE ${co}jsonb_typeof(${carrier.col}) = 'array'
-            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(${carrier.col}) e WHERE e = $1)`,
-        [code]);
-    case 'col':
-      return sql.unsafe(`SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}${carrier.col} = $1`, [code]);
-    case 'blob':
-      return sql.unsafe(
-        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
-          WHERE ${co}COALESCE(${carrier.col}::text, '') LIKE ('%' || $1 || '%') ESCAPE '\\'`,
-        [esc]);
-    default:
-      throw new Error(`unknown kind ${carrier.kind}`);
-  }
-}
-
 async function main() {
   if (!CODES.length) { bad('set CODES="CODE-1,CODE-2"'); process.exit(2); }
   note(`census: ${CODES.length} colour code(s), company ${CO}, ${CARRIERS.length} carriers`);
 
   // resolve each table's shape ONCE
-  const shapes = new Map();
-  for (const t of new Set(CARRIERS.map((c) => c.table))) shapes.set(t, await shape(t));
-
-  const usable = [], skipped = [];
-  for (const c of CARRIERS) {
-    const s = shapes.get(c.table);
-    if (!s) { skipped.push({ ...c, why: 'table does not exist' }); continue; }
-    const col = baseCol(c);
-    if (!s.has(col)) { skipped.push({ ...c, why: `no column ${col}` }); continue; }
-    usable.push({ ...c, hasCompany: s.has('company_id') });
-  }
+  const { usable, skipped } = await resolveCarriers(sql);
 
   note(`\n=== CARRIERS ===`);
   note(`  usable:  ${usable.length}   (live ${usable.filter((c) => c.live).length}, history ${usable.filter((c) => !c.live).length})`);
@@ -126,7 +76,7 @@ async function main() {
     const hits = [];
     for (const c of usable) {
       let n = 0;
-      try { [{ n }] = await countOne(c, code, c.hasCompany); }
+      try { [{ n }] = await countCarrier(sql, c, code, CO); }
       catch (e) { bad(`${c.table}.${c.col}: ${e.message}`); continue; }
       if (n > 0) hits.push({ ...c, n });
       else if (VERBOSE) note(`    0  ${c.table}.${c.col}`);

@@ -87,7 +87,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-colours.ts` | 1 | 71 |
 | `backend/src/scm/routes/fabric-library.ts` | 2 | 91 |
 | `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 249 |
-| `backend/src/scm/routes/fabric-tracking.ts` | 9 | 589 |
+| `backend/src/scm/routes/fabric-tracking.ts` | 9 | 594 |
 | `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2117 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 114 |
 | `backend/src/scm/routes/grns.ts` | 13 | 3591 |
@@ -170,7 +170,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1295 files, 536368 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1295 files, 536373 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
