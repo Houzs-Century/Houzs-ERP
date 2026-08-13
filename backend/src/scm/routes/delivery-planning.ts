@@ -2022,11 +2022,29 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   // Resolve the SO doc_no + the target DO id (latest non-DRAFT/CANCELLED).
   let soDocNo: string | null = null;
   let doId: string | null = null;
+  /* COMPANY GATE for the whole handler. Everything below keys off soDocNo /
+     doId, and both used to be taken straight from the caller-supplied :id (or
+     from an unscoped read of it), so a caller in company A holding a company-B
+     doc number or DO uuid could rewrite B's delivery fields — substatus, dates,
+     driver, POD — and the SO History would record it as a legitimate edit.
+     Resolve the document ONCE, scoped, and refuse before any write. */
+  if (type === 'so') {
+    const { data: own } = await scopeToCompany(
+      sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  } else {
+    const { data: own } = await scopeToCompany(
+      sb.from('delivery_orders').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
+
   if (type === 'so') {
     soDocNo = id;
     if (Object.keys(doUpdates).length > 0) {
-      const { data: doRows } = await sb.from('delivery_orders')
-        .select('id, status').eq('so_doc_no', id);
+      const { data: doRows } = await scopeToCompany(sb.from('delivery_orders')
+        .select('id, status').eq('so_doc_no', id), c);
       const live = ((doRows ?? []) as Array<{ id: string; status: string | null }>)
         .filter((d) => { const s = (d.status ?? '').toUpperCase(); return s !== 'DRAFT' && s !== 'CANCELLED'; });
       doId = live.length > 0 ? live[live.length - 1]!.id : null;
@@ -2147,7 +2165,12 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (Object.keys(doUpdates).length > 0) {
     if (doId) {
       doUpdates.updated_at = new Date().toISOString();
-      const { error } = await sb.from('delivery_orders').update(doUpdates).eq('id', doId);
+      // Scoped again at the write, not only at the gate above: doId can come
+      // from the so_doc_no lookup, and a predicate on the statement that
+      // actually mutates cannot be skipped by a later refactor.
+      const { error } = await scopeToCompany(
+        sb.from('delivery_orders').update(doUpdates).eq('id', doId), c,
+      );
       if (error) {
         if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
         return c.json({ error: 'update_failed', reason: error.message }, 500);

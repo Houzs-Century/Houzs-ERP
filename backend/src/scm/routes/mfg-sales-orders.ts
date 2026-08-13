@@ -10517,6 +10517,14 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const itemId = c.req.param('itemId');
   const photoKey = decodeURIComponent(c.req.param('photoKey'));
 
+  /* The `i.doc_no !== docNo` check below proves the item belongs to the SO in
+     the URL — and BOTH come from the caller, so it proves nothing about whose
+     SO that is. Run the same shared guard its eighteen sibling /:docNo routes
+     use: company first (scopeToCompany, degrading), then the salesperson row
+     scope. Without it a guessed item uuid served another company's product
+     photos out of R2. */
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+
   if (!c.env.SO_ITEM_PHOTOS) {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
@@ -11295,6 +11303,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
    and the UI falls back to the order slip. */
 mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
+  // Same reasoning as the item-photo route: the so_doc_no match below compares
+  // two caller-supplied values. A payment SLIP is a bank record — gate it.
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   const { data: row, error } = await sb
     .from('mfg_sales_order_payments')
     .select('so_doc_no, slip_key')

@@ -71,6 +71,11 @@ const SCOPE_HELPERS = [
      could once drive a 2990 amendment through its whole state machine by id).
      Verified 2026-08-13 at so-amendments.ts:122. */
   "loadAmendmentForWrite",
+  /* mfg-purchase-orders.ts:3354 — resolves the PO with requireActiveCompanyId +
+     scopeToCompanyId (404 NOT_THIS_COMPANY), then refuses any line whose
+     purchase_order_id is not that PO. Every allocation write downstream is on a
+     proven in-company chain. Verified 2026-08-13. */
+  "resolveAllocationParent",
 ];
 
 /** Hand-written scoping: .eq('company_id', …) / .in('company_id', …). */

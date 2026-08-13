@@ -783,7 +783,11 @@ purchaseInvoices.get('/:id', async (c) => {
   const [h, i] = await Promise.all([
     /* grn embed (owner 2026-07-23: "PI need show Do number") — the source GRN's
        doc no + the supplier's delivery-note ref surface on the PI detail. */
-    sb.from('purchase_invoices').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), grn:grns(id, grn_number, delivery_note_ref)`).eq('id', id).maybeSingle(),
+    /* Scoped like this document's own GET /:id/linked (hardened in the same
+       pass): the detail read carried no company predicate, so a uuid opened the
+       other company's purchase invoice — supplier, amounts and the source GRN
+       with it. */
+    scopeToCompany(sb.from('purchase_invoices').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), grn:grns(id, grn_number, delivery_note_ref)`).eq('id', id), c).maybeSingle(),
     sb.from('purchase_invoice_items').select(ITEM).eq('purchase_invoice_id', id).order('created_at'),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
@@ -889,15 +893,19 @@ purchaseInvoices.get('/:id', async (c) => {
 // LINES for the full set and keep `grn`/`purchaseOrder` as the primary for
 // callers that still expect one.
 purchaseInvoices.get('/:id/linked', async (c) => {
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's purchase invoice to its linked document
+     numbers by id. All seven /:id/linked endpoints shared this gap (found
+     2026-08-12 by code read; two module guides claimed scoping that was absent). */
   const sb = c.get('supabase'); const id = c.req.param('id');
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('purchase_invoices')
     .select(`
       id,
       grn:grns(id, grn_number),
       purchase_order:purchase_orders(id, po_number)
     `)
-    .eq('id', id)
+    .eq('id', id), c)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
