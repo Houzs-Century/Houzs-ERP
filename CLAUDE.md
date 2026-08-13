@@ -97,6 +97,36 @@ name carries an index that changes with the shard count, and `backend` is a
 roll-up that is legitimately `skipped` on frontend-only PRs — a skipped required
 check leaves the PR pending forever.
 
+## There IS a linter now — since 2026-08-13, and it is a RATCHET
+
+Until this date the repo had none: no `.eslintrc`, no `eslint.config.*`, no
+`lint` script in any of the seven `package.json` files — while `backend/src` +
+`frontend/src` carried **514** hand-written `eslint-disable` comments that had
+never suppressed anything, because nothing ever ran. `tsc --noEmit` and vitest
+were the only gates, and neither can see a nullish default on something that is
+never nullish.
+
+- `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
+  matrixed over the two apps. NOT a required status check yet.
+- **Every rule is a WARNING.** The gate is `scripts/lint-ratchet.mjs`: a
+  **per-file ceiling** in `<app>/eslint-ratchet.json` that may only **FALL**.
+  A file with no entry has a ceiling of **zero**, so a new file — or a rule that
+  is clean tree-wide — fails on its first violation.
+- **Never raise a number in `eslint-ratchet.json` to make a build pass.** Fix the
+  finding, or write `// eslint-disable-next-line <rule> -- <reason>` at the site
+  so the reason lives next to the code. `npm run lint:update` exists to write the
+  ceilings DOWN after you fix things; using it to write them up is forging the
+  evidence the gate exists to check (same rule as `check-soak-gate.mjs`).
+- **The rule list is `scripts/eslint/houzs-lint-rules.mjs`, and every rule cites
+  the `BUG-HISTORY.md` entry it exists to catch.** Do not add a rule without one.
+  That file also records what was considered and left OFF, and why. It is shared
+  by both apps deliberately — a lint layer whose own rule list is hand-copied per
+  app is the duplicated-list bug wearing a badge.
+- Linting is **type-aware** (`no-unnecessary-condition` needs it), so it lints
+  only what the tsconfigs include: `backend/src/**/*.ts` and
+  `frontend/src/**/*.{ts,tsx}`. `backend/tests/`, `backend/scripts/`,
+  `frontend/perf-lab/` and `frontend/e2e/` are out of scope.
+
 ## Read the map before exploring
 
 - **`docs/CODEBASE-MAP.md`** — what each area is FOR, which trees are dead,

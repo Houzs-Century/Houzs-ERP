@@ -8,6 +8,8 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build:frontend": "npm --prefix frontend run build",
     "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
+    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update",
     "deploy:backend": "npm --prefix backend run deploy",
     "deploy:frontend": "npm --prefix frontend run deploy",
     "deploy:all": "npm run deploy:frontend && npm run deploy:backend",

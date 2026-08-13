@@ -139,6 +139,46 @@ jobs:
           [ "${{ needs.backend-typecheck.result }}" = "success" ] || exit 1
           [ "${{ needs.backend-tests.result }}" = "success" ] || exit 1
 
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
+  # no "lint" script in any of the seven package.json files — while backend/src
+  # and frontend/src carried 514 hand-written `eslint-disable` comments that had
+  # never suppressed anything, because nothing ever ran.
+  #
+  # Its own job and NOT a step inside `backend`/`frontend`, for the reason
+  # backend-typecheck was split out of backend-tests: a lint finding is reported
+  # in ~1 minute instead of behind 334s of tests it does not depend on. It also
+  # keeps the two apps' verdicts separate — `lint (backend)` and
+  # `lint (frontend)` — so one app's ratchet cannot hide the other's.
+  #
+  # `npm run lint` is scripts/lint-ratchet.mjs, not a bare eslint: every rule is
+  # a WARNING and the ratchet is the gate (a per-file ceiling that may only
+  # fall). It prints the per-rule ceiling->now table on every run, pass or fail,
+  # so a green job is evidence the check RAN and not merely that nothing tripped.
+  #
+  # Do NOT make this a required status check until it has run green on a few
+  # merges. Adding it to the ruleset is a separate, deliberate step.
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both legs always run: seeing which app moved is the whole point, and a
+      # cancelled sibling would report as neither pass nor fail.
+      fail-fast: false
+      matrix:
+        app: [backend, frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
   scale-postgres-contract:
     # The full 100k evidence run is deliberately PR-only. GitHub emits both a
     # push and pull_request event for an open branch; running this job twice
