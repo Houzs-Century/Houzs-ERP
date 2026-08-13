@@ -50,6 +50,47 @@ while the human is still on the screen.
 
 ---
 
+## Stat cards summed the server page while a stuck column funnel decided what was on screen [high]
+
+**Symptom** - reported by the owner as two separate faults: *"this 2 PO could
+not find"* (`PO2608-007`, `PO2608-005 revise`) and *"PO outstanding not
+tally"*. Both POs were present, `SUBMITTED`, uncancelled. Every pill count and
+every money total was independently correct against the database - 60 POs,
+RM 164,349.70, pills 13 + 0 + 43 + 4 = 60.
+
+**Root cause (traced)** - a DATE funnel was active on the table. The
+per-column funnels are client-side **and persisted per user** (`dt:filters:*`,
+added 2026-07-29 because *"filters kept resetting on reload"*). A filter set
+once survives every reload, and past the first reload it no longer reads as a
+filter - it reads as a broken list. The stat cards summed the SERVER page and
+knew nothing about the funnels, so the screen showed **5 rows worth RM 9,112.50
+under a card reading RM 164,349.70**, and the two "missing" POs - dated 08-03
+and 08-10 - were three rows below the filter. Two contradictory numbers on one
+screen are indistinguishable from a bug, which is exactly how it was reported.
+
+**Fix** - `DataTable` gained `onFilteredRowsChange`, named and shaped to match
+the `DataGrid` prop it mirrors so a page swapping components does not relearn
+the contract (#2092, Purchase Orders). The same shape was live on Purchase
+Invoices, Sales Invoices and Delivery Orders, so #2097 lifted the logic into
+`hooks/useVisibleRows`, retrofitted Purchase Orders onto it rather than leaving
+a hand-copied block in four pages, and every tile now describes the rows on
+screen and says `Filtered` while a funnel narrows them. #2097 also corrected a
+stale comment shipped in #2092 that claimed the test compared array identity
+when the code compares length - length is right, because the table returns a
+fresh array on every recompute.
+
+**Lesson** - **persisting a filter changes what it means.** A filter the user
+set this minute is understood; the same filter three reloads later is invisible
+state that reframes every number beside it. Anything that survives a reload
+must keep saying so on screen - which is what the `Filtered` label now does.
+A second lesson, from the pair: the follow-up was needed only because the first
+fix was written inline in one page. Fix the shape, not the instance.
+
+**Ref** - PR #2092 and PR #2097, 2026-08-13. Entry written 2026-08-13 during a
+documentation audit, not at merge time.
+
+---
+
 ## The first sales order after the write-back went live was refused, and the documented remedy could not be applied [high]
 
 **Symptom** - `scm.autocount_writeback` was switched to `"1"` on 2026-08-13 and
@@ -475,6 +516,32 @@ exact column list is written out in application code, and nothing type-checks it
 against the database.
 
 **Ref** - `fix/special-addons-save-sort-categories`, 2026-08-12
+
+---
+
+## The Resolution Method dropdown was the only place on the screen still speaking slugs [low]
+
+**Symptom** - on one ASSR screen the same field read two ways. The solution
+summary said `Supplier Service`, the status card said `Supplier Service`, the
+printed document said `Supplier Service` - and the dropdown you actually pick
+from said `supplier_repair`.
+
+**Root cause (traced)** - `InlineEdit` rendered each option's slug as its own
+label. Mobile already mapped its options through the shared `resolutionLabel`
+formatter, so only the desktop control leaked the raw value.
+
+**Fix** - `InlineEdit` takes an optional `optionLabel`; the resolution dropdown
+passes `resolutionLabel`, so picker, summary, card and paper are one
+vocabulary. The unknown-value fallback option goes through the same formatter,
+so a legacy slug is worded rather than shown raw. The default is the identity
+function, so every other `InlineEdit` dropdown is untouched.
+
+**Lesson** - a display formatter applied on three surfaces out of four is not a
+formatter, it is a convention waiting to be broken. The one surface that skipped
+it was the only one users type into.
+
+**Ref** - PR #2040, 2026-08-11. Entry written 2026-08-13 during a documentation
+audit, not at merge time.
 
 ---
 

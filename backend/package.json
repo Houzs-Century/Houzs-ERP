@@ -21,6 +21,8 @@
     "audit:ac-item-map": "node scripts/gen-autocount-item-map.mjs --check",
     "gen:ac-sofa-corpus": "node scripts/gen-sofa-desc2-corpus.mjs",
     "audit:ac-sofa-corpus": "node scripts/gen-sofa-desc2-corpus.mjs --check",
+    "gen:test-schema": "node scripts/gen-test-schema-snapshot.mjs",
+    "audit:test-schema": "node scripts/gen-test-schema-snapshot.mjs --check",
     "gen:route-locator": "node scripts/gen-route-locator.mjs",
     "audit:route-locator": "node scripts/gen-route-locator.mjs --check",
     "audit:trgm": "node scripts/check-trgm-coverage.mjs",

@@ -27,16 +27,48 @@ export default defineConfig(async () => {
     "utf8",
   );
 
+  // Baseline + all migrations, pre-collapsed by
+  // `npm run gen:test-schema`. tests/setup.ts applies THIS instead of
+  // replaying the migration history once per test file; see the long comment
+  // there for the measurements. The baseline and migration bindings stay:
+  // tests/idempotencyPhase2Migration.test.ts reads TEST_MIGRATIONS, and
+  // tests/schemaSnapshotParity.test.ts replays both to prove they agree.
+  const [schemaSnapshot, schemaSeed] = await Promise.all([
+    fs.readFile(
+      path.join(__dirname, "tests/generated/test-schema-snapshot.sql"),
+      "utf8",
+    ),
+    fs
+      .readFile(
+        path.join(__dirname, "tests/generated/test-schema-seed.json"),
+        "utf8",
+      )
+      .then(JSON.parse),
+  ]).catch((cause) => {
+    throw new Error(
+      "tests/generated/ is missing — run `npm run gen:test-schema`",
+      { cause },
+    );
+  });
+
   return {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
-          d1Databases: ["DB"],
+          // DB_PARITY exists solely for tests/schemaSnapshotParity.test.ts,
+          // which replays baseline + migrations into it and asserts the result
+          // equals the collapsed snapshot setup.ts applied to DB. It is the
+          // proof that the snapshot is not drifting away from the migrations;
+          // no other test may touch it. Every test file gets its own isolated
+          // instance, and only that one file ever writes to it.
+          d1Databases: ["DB", "DB_PARITY"],
           kvNamespaces: ["SESSION_CACHE"],
           bindings: {
             TEST_BASELINE_SQL: baselineSql,
             TEST_MIGRATIONS: migrations,
+            TEST_SCHEMA_SNAPSHOT: schemaSnapshot,
+            TEST_SCHEMA_SEED: schemaSeed,
             DASHBOARD_API_KEY: "test-dashboard-key",
             // Never inherit a live database URL into the test runtime.
             DATABASE_URL: "",
