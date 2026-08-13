@@ -15,8 +15,8 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 > | This README says | The code says | Authority |
 > |---|---|---|
 > | Data store is **Cloudflare D1 (SQLite)** | D1 was **removed 2026-06-13**; there is no `env.DB` binding in prod. Supabase Postgres via Hyperdrive (`[[hyperdrive]]` in `backend/wrangler.toml`) | `CLAUDE.md`, `docs/CODEBASE-MAP.md` §4 |
-> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (286 files, to `0285_*`) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
-> | "No backend/frontend unit tests exist yet" | **167** backend test files under `backend/tests/`, run by vitest in `deploy.yml` | `docs/CODEBASE-MAP.md` §1 |
+> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (**284 files, to `0286_*`**, counted 2026-08-14) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
+> | "No backend/frontend unit tests exist yet" | **169** test files under `backend/tests/` (293 across all of `backend/`), run by vitest in CI | `docs/CODEBASE-MAP.md` §1 |
 > | The Modules table (Overview, Orders, PO, ASSR, Projects, Logistics, Team, Settings) | Omits **`/scm/*` entirely** — the vendored SCM supply-chain surface is the largest part of the app | `docs/CODEBASE-MAP.md` §2-3 |
 >
 > **Start at [`docs/README.md`](docs/README.md)** — it maps every doc to the one thing
@@ -29,7 +29,7 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive.** D1 is test-only (removed from prod 2026-06-13) | `backend/src/db/` · `[[hyperdrive]]` in `backend/wrangler.toml` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -266,7 +266,9 @@ The SPA prepends this to every API call. In dev the fallback is `http://localhos
 - **`trips`, `trip_stops`, `trip_events`, `trip_drivers`** — dispatch graph. `trip_events` is append-only (clock-ins, status changes, notes).
 - **`finance_ledger`** — double-entry-ish project cost tracking feeding the Projects P&L.
 
-All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against SQLite views or ad-hoc queries — no pre-computed aggregates, since D1 handles the data volumes comfortably.
+All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against views or ad-hoc queries — no pre-computed aggregates.
+
+> Corrected 2026-08-14: this line said "SQLite views … since **D1** handles the data volumes comfortably". **The data store is Supabase Postgres, reached through Hyperdrive**; D1 is test-only. This is the same stale-D1 claim `CLAUDE.md` calls out as having survived a month past the cutover, still alive in the README.
 
 ---
 

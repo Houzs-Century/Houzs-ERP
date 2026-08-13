@@ -157,11 +157,11 @@ here as such so nobody later cites it as established.
 
 | Item | Why deferred | Owner |
 | --- | --- | --- |
-| **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
+| ~~**`frontend` is now the slowest job (~285s) and gates every PR**~~ — **CLOSED by #2142, 2026-08-13** | It was deferred as "untouched by this work, both plausible, neither measured". It was then measured and split: `frontend` on `main` is now a ROLL-UP over `frontend-checks` / `frontend-build` / `frontend-perf`, with the Playwright browser cached. See the Fixes table above. | — |
 | **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
 | ~~Enable the merge queue~~ — **NOT POSSIBLE on this repo, see below** | `hello-houzs` is a **User** account, and GitHub's merge queue is organization-only. The ruleset page simply does not offer the option | — |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
+| Nearly every workflow file is a one-off `workflow_dispatch` data script (289 of 300 carry `secrets.DATABASE_URL`, re-counted 2026-08-14; this row said "286 of 296") | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -214,8 +214,6 @@ Also measured and recorded so it is not re-investigated: the four test bindings
 total ~320 KB shipped into every isolated worker, and shrinking the largest
 (`TEST_MIGRATIONS`, 201 KB) bought ~8% of setup. Not pursued — the split makes
 it irrelevant for 221 of the files and marginal for the remaining 44.
-| Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -232,12 +230,19 @@ per-shard the same job cost before:
 | `scale-postgres-contract` | ~80s | 70s |
 | `backend-postgres` | ~60s | 38s |
 | `e2e-contract` | ~18s | 17s |
-| **`frontend`** | ~285s | **~285s — untouched** |
+| **`frontend`** | ~285s | **~285s — untouched by #2131** |
 
-**The critical path is now `frontend`, and nothing in this work touched it.**
-A CI run finishes when its slowest job finishes; that used to be
-`backend-tests` at ~380s and it is now `frontend` at ~285s. Further backend
-work buys the PR author almost nothing from here.
+**As of #2131 the critical path was `frontend`, and nothing in THAT PR touched
+it.** A CI run finishes when its slowest job finishes; that used to be
+`backend-tests` at ~380s and it became `frontend` at ~285s.
+
+> **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
+> story.** `frontend` was then split three ways and the Playwright browser
+> cached; on `origin/main` today `frontend` is a ROLL-UP job over
+> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`), not the one
+> serial block described below. The paragraph is kept because the ANALYSIS below
+> is what identified the two candidates that #2142 acted on — read it as the
+> diagnosis, not as the current shape of the job.
 
 That job does, in one serial block: `npm ci`, `check:test-focus`, `typecheck`,
 `test`, two `node --test` gate scripts, `build`, **a second full `vite build` of

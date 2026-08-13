@@ -1,6 +1,11 @@
 # COE — a stringified value bound to a jsonb parameter, three times in one day
 
 **Date** — 2026-08-10, during the AutoCount cutover.
+**Recurred** — 2026-08-13, in this COE's own repair script. Seven production
+rows were damaged and recovered the same afternoon. **The rule this document
+originally gave was not sufficient**; the corrected one is `$n::text::jsonb`.
+If you are here for the rule, read [*IT RECURRED*](#it-recurred--2026-08-13-and-the-script-that-reproduced-it-was-this-coes-own-repair)
+first — Lesson 2 as first written is what produced the recurrence.
 
 ## Trigger
 
@@ -85,6 +90,82 @@ trap, and a fourth (`cross-fill-so-po-variants.mjs`) and fifth
 | #1927 | Read-only probe: connection identity, relation identity in every schema, raw `variants` + `xmin` of rows an apply claims it stamped, key histogram. This is what produced the evidence above. |
 | #1938 | `tx.json(patch)` instead of `JSON.stringify` in `refresh-sofa-colours.mjs`; the same one-line change in the three other scripts still binding a stringified value to a jsonb parameter; `RETURNING` with the script counting what came BACK rather than the command tag; a shape repair driven by `jsonb_typeof(variants) = 'array'` restoring `variants -> 0`; a post-apply read on a fresh connection that prints bound-before / bound-after and emits `::error::` if the number did not move. Removes `probe-write-shapes`, which wrote through the corrupting shape. |
 
+## IT RECURRED — 2026-08-13, and the script that reproduced it was this COE's own repair
+
+Three days after this document was written, the repair built to clean up the
+damage it describes **caused the same damage again**, on production.
+
+`backend/scripts/repair-array-shaped-variants.mjs` reads an array-shaped
+`variants`, proves the tail is redundant against element 0, and writes element 0
+back. Its first version bound the recovered object as **`$2::jsonb`**. That is
+the fix everybody reaches for after reading this COE, and it is a no-op:
+
+- postgres.js infers the bind type and sends the parameter **already typed
+  jsonb**;
+- `::jsonb` applied to a value the server has already typed jsonb casts nothing;
+- so the serialized text was stored as a **jsonb string scalar** instead of
+  being parsed into an object.
+
+Prod apply run **31697989427** (2026-08-13T12:01, `MODE=apply COMPANY=1`) found
+7 array-shaped rows on `scm.mfg_sales_order_items`, reported `written: 7 of 7`,
+and left all seven as jsonb STRINGS — array-shaped damage converted into
+string-shaped damage. The rows were the real ones: `8030-1A(RHF)` ×5,
+`8030-1NA`, `9058-1A(RHF)`.
+
+**They were recovered the same afternoon.** Prod run **31711751493**
+(2026-08-13T14:48) re-classified all seven as *"jsonb STRING holding the object —
+double-encoded, one parse recovers it"*, wrote them with the corrected bind, and
+verified on a fresh connection:
+
+```
+  written: 7 of 7
+  === VERIFIED ON A FRESH CONNECTION ===
+  mis-shaped blocks remaining: 0 (was 7); 0 of those are the refused rows
+  SO 742ac930-…: variants is object, fabricCode reads "HR805-40"
+  SO ad8aa735-…: variants is object, fabricCode reads "AM275-07"
+  SO a9c58080-…: variants is object, fabricCode reads "HR805-30"
+  SO 2fc633eb-…: variants is object, fabricCode reads "CHINO-12"
+  SO f3fb6912-…: variants is object, fabricCode reads "MODENZA-04"
+  SO b1906ba2-…: variants is object, fabricCode reads "MODENZA-04"
+  SO 9dc36f6f-…: variants is object, fabricCode reads "BO315-21"
+```
+
+`jsonb_typeof` is `object` on all seven and `variants->>'fabricCode'` answers
+with a real colour, which is the only assertion that distinguishes a repaired
+row from a plausibly-shaped one.
+
+**THE CORRECTED RULE — `$n::text::jsonb`. The `::text` is load-bearing.**
+
+```sql
+UPDATE … SET variants = $2::text::jsonb WHERE …
+```
+
+`::text` forces the parameter to arrive as TEXT, so the following `::jsonb` is a
+real **parse** rather than a cast that has nothing to do. Written out, the three
+shapes and what each produces:
+
+| bind | what the server receives | result |
+|---|---|---|
+| `sql.json(obj)` / `tx.json(obj)` | jsonb, driver-serialized once | correct object — preferred in tagged-template code |
+| `$n::jsonb` with a `JSON.stringify`d value | jsonb, serialized a second time by the driver | **jsonb STRING scalar** |
+| `$n::text::jsonb` with a `JSON.stringify`d value | text, parsed by Postgres | correct object — the shape to use in `sql.unsafe` |
+
+`::text::jsonb` is what `sql.unsafe(sqlText, params)` needs, because there is no
+tagged template there to hang `sql.json()` off. Both live uses are in
+`repair-array-shaped-variants.mjs` (the bind at line 215, the reason at 198).
+
+**Why this recurrence is the important half of the document.** The original
+lesson said *"never hand a pre-serialized string to a jsonb parameter"*, and the
+repair's author obeyed it in spirit while writing the exact statement that
+re-creates the bug — because the lesson named the value and not the CAST. It is
+the same failure as Lesson 4 one level up: the first COE documented the trap
+precisely enough to be quoted and not precisely enough to be followed.
+
+What caught it was not the rowcount — that said `7 of 7` both times. It was the
+post-write verification asserting `jsonb_typeof` and re-reading `fabricCode` on
+a fresh connection. **A repair that reports rows touched has not verified
+anything.**
+
 ## What the audit RULED OUT
 
 Each of these was a live theory and each is refuted, so nobody re-chases them:
@@ -132,13 +213,16 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
 
 ## Deferred
 
-- **The sibling data damage is not repaired by #1938.** The encoding is fixed in
-  all four writers, but rows already written by
-  `backfill-sofa-special-orders.mjs` (`custom_specials` as a jsonb string) and
-  `backfill-specials-into-variants.mjs` (`variants.specials` as a jsonb string)
-  still hold the double-encoded shape. #1938's probe now measures both so the
-  size is known. Decision owner: the specials workstream, which already has
-  `check-specials-and-ocr.mjs` reading these rows.
+- ~~**The sibling data damage is not repaired by #1938.**~~ **CLOSED.** The
+  jsonb-STRING `custom_specials` rows were NULLed by #1944. The array-shaped
+  remainder was then deliberately NOT touched: the census
+  (`backend/scripts/census-custom-specials-arrays.mjs`) classified them from
+  their ELEMENTS and found they are the BEDFRAME specials pass's correct
+  `string[]`, not this bug's output — NULLing them would have deleted a
+  currently-rendering line item from historical documents. That reasoning is in
+  `BUG-HISTORY.md` under *"The array-shaped custom_specials are NOT the same
+  damage"*. The genuinely array-shaped `variants` rows were repaired on
+  2026-08-13 — see the recurrence section above for how that went.
 - **`public.mfg_sales_order_items` shadowing `scm.`** with `public` ahead of
   `scm` on the search_path. Nothing hit it today because everything is
   schema-qualified. Decision owner: the owner / IT, as a schema cleanup.
@@ -155,10 +239,16 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
    fresh connection — the connection that just wrote is the worst available
    witness.
 2. **Never hand a pre-serialized string to a json/jsonb parameter in
-   postgres.js.** Pass the value; let `sql.json()` type it. The driver applies
-   its own `JSON.stringify` to anything it resolves to OID 114 or 3802, and with
-   `prepare: false` it always learns that type from the server first, so the
-   `::jsonb` cast in your SQL is what triggers the double encoding.
+   postgres.js — and `::jsonb` alone does NOT rescue you.** Pass the value and
+   let `sql.json()` type it. The driver applies its own `JSON.stringify` to
+   anything it resolves to OID 114 or 3802, and with `prepare: false` it always
+   learns that type from the server first, so the `::jsonb` cast in your SQL is
+   what triggers the double encoding — it is not the fix for it. Where you must
+   bind a string (`sql.unsafe`, no tagged template), the cast is
+   **`$n::text::jsonb`**: `::text` makes Postgres PARSE the value instead of
+   re-labelling something it has already typed. Writing `$n::jsonb` there is the
+   mistake that made this incident happen a second time on 2026-08-13 — see the
+   recurrence section above.
 3. **`jsonb || jsonb` is not a merge operator.** It is a merge operator only
    between two objects. Anything else concatenates, silently, into an array —
    and an array answers `->>'anykey'` with NULL, which is exactly the value a

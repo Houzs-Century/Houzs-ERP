@@ -121,10 +121,19 @@ because that endpoint only reports CLASSIC protection and this is a ruleset:
 gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
 ```
 
-It currently returns `deletion`, `non_fast_forward`, and `required_status_checks`
-with contexts `backend-typecheck` + `frontend` and
-**`strict_required_status_checks_policy: true`** — that last flag is *Require
+Checked 2026-08-14, it returns FOUR rule types — `deletion`,
+`non_fast_forward`, `required_status_checks` and **`pull_request`** — with
+contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`**. That last flag is *Require
 branches to be up to date before merging*, and it is the one that matters.
+
+The `pull_request` rule is the newer one and this paragraph listed only three
+until it was re-checked. Its parameters are worth knowing before you plan a
+merge: `required_approving_review_count: 0`, `require_code_owner_review: false`,
+`require_last_push_approval: false`, `allowed_merge_methods: [squash, rebase,
+merge]`. So it forces work through a PR — a direct push to `main` is refused —
+but it asks for no approvals, which is why one-person merges still land. Do not
+read "0 approvals" as "no PR needed".
 
 **There is NO emergency escape hatch.** This paragraph used to end "Repository
 admin is on the bypass list as an emergency escape hatch"; checked 2026-08-13,
@@ -175,7 +184,16 @@ check leaves the PR pending forever.
   files are too big to open whole. Read this INSTEAD of exploring from
   scratch; it is the hand-written judgement layer.
 - **`docs/generated/`** — the mechanical inventory (routes, migrations,
-  largest files), regenerated from the tree so it cannot drift.
+  largest files), regenerated from the tree. **"Cannot drift" is only true of
+  the CI-gated half, and this bullet used to claim it of all four.** CI runs
+  `audit:routes` (the capability matrix) on every PR; it does NOT run
+  `audit:route-locator` or `audit:map`, and both of those artifacts were found
+  STALE on `main` on 2026-08-14. That is deliberate, not an oversight — both
+  generators say so in their own headers ("a navigation doc going stale must
+  never block a deploy"). The practical rule: **treat `route-locator.md` and
+  `codebase-map-facts.md` as hints and re-run the generator before trusting a
+  line number**, and do not "fix" the gap by adding a CI gate without the owner,
+  because the absence is a decision.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -232,8 +250,10 @@ Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
 
-**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
-use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+**`DATABASE_URL` is the credential. There is no other one.** Nearly every
+workflow here uses `secrets.DATABASE_URL` (289 of 300 as of 2026-08-14 —
+`grep -rl secrets.DATABASE_URL .github/workflows | wc -l`, which is the number
+to re-run rather than trust); it is the only database secret this repo holds, at
 repo level or in any of its three environments. If your script needs a
 PostgREST-shaped client — because it imports a real service function out of
 `src/` rather than re-implementing it, which is the right instinct — it needs

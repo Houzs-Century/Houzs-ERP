@@ -516,9 +516,8 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
-   (`customer_delivery_date` or the Processing Date `internal_expected_dd`),
+   (`customer_delivery_date` or the Processing Date `processing_date`),
    paginated so the
-   (`customer_delivery_date` or `processing_date`), paginated so the
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
 2. **Service Cases** (`row_type: 'assr'`, `:1034`) — read from **`public.assr_cases`
@@ -541,14 +540,30 @@ materialised; there is no board table.
 Each of the last three unions is wrapped defensively: a failure logs and leaves
 the SO rows untouched (`:1341-1343`).
 
-**`internal_expected_dd` is the SALES ORDER's Processing Date and nothing else.**
+**`processing_date` is the SALES ORDER's Processing Date and nothing else.**
 The last three sources are jobs, not orders: a service leg, a manual DP job and
 a PMS project window have no deposit gate, no supplier PO and no edit lock, so
-they have no processing date at all. They send `internal_expected_dd: null` and
-carry their own leg date as **`job_date`** (2026-08-13). Before that they put
-the leg date in `internal_expected_dd`, which made the name mean a third thing
-on rows that cannot have one — the same confusion the Processing-Date
-unification exists to end. Nothing on the board reads it for those rows: the
+they have no processing date at all.
+
+> **⚠️ CORRECTED 2026-08-14 — this paragraph described a fix that is NOT in the
+> tree.** It claimed the synthetic rows "send `internal_expected_dd: null` and
+> carry their own leg date as **`job_date`** (2026-08-13)". Verified against
+> `origin/main` `de99056d5`: **`job_date` does not exist anywhere in
+> `backend/src` or `frontend/src`** — a repo-wide grep returns two stale
+> COMMENTS and no field (`shared/so-processing-date.ts:28`,
+> `MobileDeliveryPlanning.tsx:177`). All three synthetic builders still put the
+> leg date straight into the SO's Processing-Date field:
+> `routes/delivery-planning.ts:1169` (ASSR), `:1333` (DP) and `:1470` (project)
+> each write `processing_date: leg.date`.
+>
+> The `job_date` field was really added, and then **removed by the squash that
+> shipped it** — the 13-branch integration merge #2121 kept the wrong side of
+> that conflict. So the name still means a third thing on rows that cannot have
+> one, which is exactly the confusion the Processing-Date unification exists to
+> end. Restoring it is a code change, tracked in open PR **#2129**; this guide
+> now describes the code as it is.
+
+Nothing on the board reads it for those rows: the
 "Internal Est." column was removed in the owner's 2026-08-04 column pass, the HC
 fields drawer (whose `procLockActive` reads it) is offered on `so` rows only,
 and the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first,

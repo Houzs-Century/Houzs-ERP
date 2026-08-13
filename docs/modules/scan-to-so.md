@@ -140,7 +140,7 @@ named for what they are, and nothing about which value flows where changed:
 |---|---|---|---|
 | `ExtractedSlip.slipDate` | **the handwritten slip's own date** — the day the rep wrote the order | OCR output, `scan-so.ts` extraction rule 6 | the duplicate probe (same phone + same slip date + same total), and the payment planner's **fallback** date |
 | `ExtractedPayment.receiptTxnDate` | **a card terminal's printed transaction date** — the swipe date on ONE printed receipt | OCR output, `scan-so.ts` `payments[]` | `planReceiptPayments` → `resolvePaidAt` → the payment-ledger row's **`paid_at`** |
-| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.internal_expected_dd` | the SO itself; the operator keys it at review |
+| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.processing_date` | the SO itself; the operator keys it at review |
 
 Only the third one is still called `processingDate`. If you are reading a date
 off a slip photo or a receipt photo, it is **not** that field.
@@ -177,7 +177,10 @@ The two surfaces seed the **SO's** Processing Date from different facts:
 - `MobileNewSO`'s `scanPrefill` prop is **never supplied** — the screen union in
   `MobileApp.tsx:83` declares it, but neither `setScreen({t:"new-so"})` call site
   passes it. The live mobile scan path is `createDraftFromPrefill`, which sends
-  `internalExpectedDd: null` outright.
+  `processingDate: null` outright (`MobileNewSO.tsx:476`). Note the stale
+  COMMENT twenty lines further down at `:730` still says `internalExpectedDd:
+  null` — this bullet used to be written off that comment rather than off the
+  code, which is how it outlived the rename.
 - Desktop's `soScanPrefill` sessionStorage handoff has a **reader and no
   writer** — `ScanOrderModal` became a pure `/enqueue` surface (§4).
 

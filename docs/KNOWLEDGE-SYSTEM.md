@@ -24,14 +24,23 @@ Read this once. Then you will know where to look, and where to write.
 | Incident post-mortem | `docs/*-coe.md` | A serious outage: what broke, why, what changed. | No — append-only |
 | Human knowledge base | Obsidian vault (`Houzs ERP/`) | Architecture and business reasoning **for people**. | Outside this repo |
 
-Three of these layers stopped depending on goodwill on 2026-08-13:
-`.github/workflows/working-agreement.yml` fails a PR that reads as a fix and
+Three of these layers stopped depending purely on goodwill on 2026-08-13:
+`.github/workflows/working-agreement.yml` reports a PR that reads as a fix and
 adds no `BUG-HISTORY.md` entry, one that moves a module SURFACE without touching
 the guide that quotes the file, and one that changes `migrations-pg` without
 saying in the body how the migration is reversed and what it was verified
 against. The escapes are the labels `no-bug-history-needed` and
 `no-guide-change`, and the check prints what each one waived. The COE layer is
 still prose-only — an incident is a judgement call, not a diff shape.
+
+**"Reports", not "fails the PR" — this paragraph overstated it.** The workflow
+is deliberately NOT a required status check: its own header says *"It reports;
+the owner decides. Adding it to the `main-protection` ruleset is a separate,
+deliberate act."* Verified 2026-08-14 —
+`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main` lists exactly two
+required contexts, `backend-typecheck` and `frontend`. A red *Working agreement*
+check is a visible red X that does not block merge. It also does not run on
+`merge_group` (no `pull_request` payload there, so it could never report).
 
 ### Current state, honestly
 

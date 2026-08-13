@@ -123,8 +123,8 @@ posting.
    **`so_customer_delivery_date`** (delivery-date fallback for pre-snapshot SIs)
    on each row — both list paths. Feeds the SI quick-view drawer (desktop
    `SalesInvoicesListV2` + mobile `MobileModuleList`). **Both are DERIVED
-   response keys read as strings** (mobile via `pick(r, "soInternalExpectedDd",
-   "so_internal_expected_dd")`), so a rename of the SO column must move this key
+   response keys read as strings** (mobile via `pick(r, "soProcessingDate",
+   "so_processing_date")`), so a rename of the SO column must move this key
    on BOTH ends or neither — a backend-only rename blanks the column with no
    error. See docs/modules/sales-order.md, "surfaces that read this date by
    NAME". There is still no `has_children` on an SI because nothing hangs off it.
