@@ -43,7 +43,9 @@
    DRY-RUN by default; APPLY=1 writes. Verification runs on a SECOND, FRESH
    connection (docs/jsonb-double-encoding-coe.md). The write uses
    `jsonb_build_object` over plain TEXT binds, so no json serializer runs over a
-   pre-serialized string and the double-encoding defect cannot recur. */
+   pre-serialized string and the double-encoding defect cannot recur.
+
+   RE-RUN: inert. Only lines with no bound colour are in scope, and binding one takes the line out of scope. */
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";

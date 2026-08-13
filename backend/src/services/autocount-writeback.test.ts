@@ -99,21 +99,21 @@ describe('composeCreateSo', () => {
   });
 
   /* Owner 2026-08-12: the SO's Processing date (账目日期) must reach AutoCount.
-     Its storage is internal_expected_dd — mig 0189 dropped the legacy
-     processing_date column so that this label has exactly one source. */
+     Its storage is processing_date — one column (0189) under one name (0284),
+     so this label has exactly one source. */
   test('the Processing date goes out as the PDate UDF', () => {
-    const p = composeCreateSo({ ...header, internal_expected_dd: '2026-09-01' }, [line()], opts);
+    const p = composeCreateSo({ ...header, processing_date: '2026-09-01' }, [line()], opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('a Processing date that arrives as a timestamp is trimmed to the date', () => {
-    const p = composeCreateSo({ ...header, internal_expected_dd: '2026-09-01T00:00:00' }, [line()], opts);
+    const p = composeCreateSo({ ...header, processing_date: '2026-09-01T00:00:00' }, [line()], opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('no Processing date sends no PDate at all', () => {
     expect(composeCreateSo(header, [line()], opts).UDF.PDate).toBeUndefined();
-    expect(composeCreateSo({ ...header, internal_expected_dd: null }, [line()], opts).UDF.PDate)
+    expect(composeCreateSo({ ...header, processing_date: null }, [line()], opts).UDF.PDate)
       .toBeUndefined();
   });
 });

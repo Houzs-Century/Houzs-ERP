@@ -9,6 +9,8 @@
 //     lookup (kepong -> 52100 Kuala Lumpur, etc.), matching how a real order
 //     stores them (postcode="54200", city="Kuala Lumpur", state="Kuala Lumpur").
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: inert for venues (keyed on the exact stale string, which the write replaces); the postcode/city fill is keyed on those columns being blank.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

@@ -1,11 +1,24 @@
 name: Backfill SO processing + delivery dates (go-live)
 
-# Manual. Backfills proceeded_at (AutoCount UDF_PDate) + customer/line delivery
-#  - creates scm.venues rows for the venue texts (company 1 had none) and
-#    backfills mfg_sales_orders.venue_id so the Edit venue picker resolves
-#  - derives postcode/city/customer_state for orders whose address has no
-#    literal 5-digit postcode (place-name lookup)
+# Manual. Backfills the two AutoCount dates the first export omitted, onto the
+# already-imported company-1 Sales Orders:
+#   UDF_PDate (header)  -> mfg_sales_orders.proceeded_at
+#   SODTL.DeliveryDate  -> mfg_sales_order_items.line_delivery_date, and the
+#                          earliest line date -> customer_delivery_date
 # DRY-RUN by default; apply=1 writes.
+#
+# (This header used to describe the venue-row creation and the postcode/city
+# lookup. Neither is in backfill-so-dates.mjs - both belong to
+# fix-imported-so-venues-address.mjs, which is also where the stale
+# `fix-imported-so-venues` concurrency group below comes from. Corrected
+# 2026-08-13.)
+#
+# RE-RUN: inert on a blank column, REFUSED on a document a person has touched.
+# Until 2026-08-13 every UPDATE was unconditional, so a second run wrote
+# AutoCount's dates back over a delivery date somebody had moved and over a
+# Processing Date a Super Admin had REMOVED. Both guards - IS NULL on the
+# column, and a refusal for any doc whose audit trail names one of these dates
+# - are now in the script, and the run log prints both counts.
 on:
   workflow_dispatch:
     inputs:

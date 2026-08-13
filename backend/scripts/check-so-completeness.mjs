@@ -11,6 +11,7 @@
 // SELECT only. One connection, no DDL, no writes, no transaction. Enum columns
 // are ::text before any string op (the repo's documented trap).
 import postgres from "postgres";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -58,7 +59,7 @@ const catFromGroup = (g) => {
 };
 const isService = (g, code) => snorm(g).includes("SERVICE") || (snorm(code).length > 4 && snorm(code).startsWith("SVC-"));
 
-const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT", "SHIPPED"]);
+const SO_DONE = new Set(SO_TERMINAL_STATES);
 
 async function main() {
   notice("=== SO FIELD-COMPLETENESS — READ-ONLY, why each field is empty and whether it is a bug ===");
@@ -81,7 +82,7 @@ async function main() {
              venue_source, salesperson_id, agent, branding AS header_branding
         FROM scm.mfg_sales_orders
        WHERE company_id = ${companyId}
-         AND UPPER(COALESCE(status::text,'')) NOT IN ('CANCELLED','DRAFT','DELIVERED','INVOICED','CLOSED','SHIPPED')`;
+         AND UPPER(COALESCE(status::text,'')) <> ALL(${SO_TERMINAL_STATES})`;
     const headByDoc = new Map(heads.map((h) => [h.doc_no, h]));
     notice(`live SO headers (CONFIRMED / READY_TO_SHIP / ON_HOLD ...): ${heads.length}`);
 
@@ -92,7 +93,7 @@ async function main() {
         FROM scm.mfg_sales_order_items i
         JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
        WHERE i.company_id = ${companyId} AND i.cancelled = FALSE
-         AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','DRAFT','DELIVERED','INVOICED','CLOSED','SHIPPED')`;
+         AND UPPER(COALESCE(s.status::text,'')) <> ALL(${SO_TERMINAL_STATES})`;
     const physical = lines.filter((l) => l.item_code && !isService(l.item_group, l.item_code));
 
     /* ═══════ (1) WAREHOUSE — why "location" / stock bucket is empty ═══════ */

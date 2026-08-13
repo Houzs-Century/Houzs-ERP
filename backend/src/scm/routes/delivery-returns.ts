@@ -27,7 +27,7 @@ import { doLineRemaining, resolveCandidateDoIds, custKeyOf, type DoRemainingLine
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { isServiceLine } from '../shared';
-import { findServiceLineCodes, serviceLinesNotReturnableResponse } from '../lib/service-line-guard';
+import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -989,7 +989,9 @@ deliveryReturns.post('/', async (c) => {
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
     })), activeCompanyId(c));
-    if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
+    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
+    if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
+    if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
   /* Bug #16 (Commander 2026-05-31) — "no DO, no Return". Every return line MUST
@@ -1179,7 +1181,9 @@ const convertDoLinesToReturn = async (c: any) => {
       const line = remainingMap.get(id)!;
       return { itemCode: line.itemCode, itemGroup: line.itemGroup };
     }), activeCompanyId(c));
-    if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
+    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
+    if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
+    if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
   // 3. Create ONE return header from the FIRST pick's DO. "First" = the DO of
@@ -1367,7 +1371,9 @@ deliveryReturns.post('/:id/items', async (c) => {
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
     }], activeCompanyId(c));
-    if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
+    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
+    if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
+    if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
   const { data: header } = await scopeToCompanyId(sb.from('delivery_returns').select('id').eq('id', id), co.companyId).maybeSingle();
@@ -1421,7 +1427,9 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
       itemCode: (it.itemCode ?? prev.item_code) as string | null | undefined,
       itemGroup: (it.itemGroup ?? prev.item_group) as string | null | undefined,
     }], activeCompanyId(c));
-    if (svc.length > 0) return c.json(serviceLinesNotReturnableResponse(svc), 409);
+    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
+    if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
+    if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
   const qty = (it.qtyReturned ?? it.qty) !== undefined ? Number(it.qtyReturned ?? it.qty) : Number(prev.qty_returned);

@@ -150,6 +150,79 @@ describe("createMirrorMapper / applyMap", () => {
   });
 });
 
+/* aliasCols — the rename 2990 has not deployed yet.
+ *
+ * The failure these guard is the quietest one this receiver has: applyMap drops
+ * an unknown key with no error, the upsert returns 200, and the value simply
+ * stops arriving. The first test PROVES that drop (it is the behaviour, not a
+ * bug); the rest prove the alias converts it into a rename exactly when — and
+ * only when — the destination column has actually moved. */
+describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet deployed)", () => {
+  const db = (cols: string[]) =>
+    ({
+      prepare: () => ({
+        bind: () => ({ all: async () => ({ results: cols.map((col) => ({ col, dtype: "date" })) }) }),
+      }),
+    }) as never;
+
+  it("drops an unknown inbound key in SILENCE — no throw, no marker (the behaviour aliases exist for)", async () => {
+    const m = createMirrorMapper({ t: {} });
+    const map = await m.tableMap(db(["doc_no", "processing_date"]), "t");
+    const out = m.applyMap({ doc_no: "SO-1", internal_expected_dd: "2026-09-01" }, map);
+    expect("internal_expected_dd" in out).toBe(false);
+    expect("processing_date" in out).toBe(false);
+    expect(out.doc_no).toBe("SO-1");
+  });
+
+  it("lands the old inbound name on the renamed dest column", async () => {
+    const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "processing_date" } } });
+    const map = await m.tableMap(db(["doc_no", "processing_date"]), "t");
+    const out = m.applyMap({ doc_no: "SO-1", internal_expected_dd: "2026-09-01" }, map);
+    expect(out.processing_date).toBe("2026-09-01");
+    expect("internal_expected_dd" in out).toBe(false);
+  });
+
+  /* BEFORE the rename both names are the same column, so the alias must not
+     fire — this is the state the SO mirror ships in today. */
+  it("does nothing while the OLD name is still a live dest column", async () => {
+    const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "internal_expected_dd" } } });
+    const map = await m.tableMap(db(["doc_no", "internal_expected_dd"]), "t");
+    const out = m.applyMap({ doc_no: "SO-1", internal_expected_dd: "2026-09-01" }, map);
+    expect(out.internal_expected_dd).toBe("2026-09-01");
+  });
+
+  /* A half-registered alias must not invent a column: the INSERT would name a
+     column the dest table does not have and 500 EVERY delivery — the same
+     forever-wedge the company_id guard exists to prevent. */
+  it("does not invent a dest column that does not exist", async () => {
+    const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "not_a_column" } } });
+    const map = await m.tableMap(db(["doc_no"]), "t");
+    const out = m.applyMap({ doc_no: "SO-1", internal_expected_dd: "2026-09-01" }, map);
+    expect("not_a_column" in out).toBe(false);
+    expect("internal_expected_dd" in out).toBe(false);
+  });
+
+  /* Both spellings in one payload: the source has been deployed and is stating
+     the value under its CURRENT name. The leftover must not overwrite it. */
+  it("keeps the new spelling when the payload carries both", async () => {
+    const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "processing_date" } } });
+    const map = await m.tableMap(db(["doc_no", "processing_date"]), "t");
+    const out = m.applyMap(
+      { doc_no: "SO-1", internal_expected_dd: "2026-09-01", processing_date: "2026-10-02" },
+      map,
+    );
+    expect(out.processing_date).toBe("2026-10-02");
+  });
+
+  it("does not mutate the caller's row object", async () => {
+    const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "processing_date" } } });
+    const map = await m.tableMap(db(["doc_no", "processing_date"]), "t");
+    const row = { doc_no: "SO-1", internal_expected_dd: "2026-09-01" };
+    m.applyMap(row, map);
+    expect(row.internal_expected_dd).toBe("2026-09-01");
+  });
+});
+
 /* The masters mirror (staff + warehouses) added these three rules. Each one is
    silent when wrong — no type error, no test failure elsewhere, just a 500 on
    every delivery or a person quietly unlinked from their own account. */

@@ -147,14 +147,19 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
      ORDER BY p.po_number`).map((r) => ({ ...r }));
 
+  /* "已经 proceed 了" is the STATE "this order carries a Processing Date", and
+     that date is internal_expected_dd — the column the UI writes and the only
+     one soProcessingLocked and MRP read. proceeded_at is stamped only at the
+     IN_PRODUCTION transition, so it excluded proceeded orders the owner can see
+     on screen and this audit was quietly holding them to no bar at all. */
   const soRows = (await sql`
     SELECT i.id, h.doc_no AS doc, h.linked_ac_docno AS ac, i.item_code AS code,
            i.item_group AS grp, i.description2 AS d2, i.variants, i.remark,
-           i.qty, i.photo_urls, h.proceeded_at
+           i.qty, i.photo_urls, h.internal_expected_dd
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.internal_expected_dd IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   for (const [rows, label] of [[poRows, "A. PURCHASE ORDERS — every bedframe + sofa line"],
