@@ -140,7 +140,7 @@ named for what they are, and nothing about which value flows where changed:
 |---|---|---|---|
 | `ExtractedSlip.slipDate` | **the handwritten slip's own date** — the day the rep wrote the order | OCR output, `scan-so.ts` extraction rule 6 | the duplicate probe (same phone + same slip date + same total), and the payment planner's **fallback** date |
 | `ExtractedPayment.receiptTxnDate` | **a card terminal's printed transaction date** — the swipe date on ONE printed receipt | OCR output, `scan-so.ts` `payments[]` | `planReceiptPayments` → `resolvePaidAt` → the payment-ledger row's **`paid_at`** |
-| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.internal_expected_dd` | the SO itself; the operator keys it at review |
+| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.processing_date` (named `internal_expected_dd` until mig 0286, 2026-08-13) | the SO itself; the operator keys it at review |
 
 Only the third one is still called `processingDate`. If you are reading a date
 off a slip photo or a receipt photo, it is **not** that field.
