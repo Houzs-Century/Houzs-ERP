@@ -817,6 +817,22 @@ function CasesView({
       getValue: (r) => (r as any).items_codes || r.item_code,
     },
     {
+      key: "complaint_issue",
+      // Free text — a distinct-values filter menu would be noise, so no
+      // filter; the column still sorts (alphabetical) and the full text
+      // rides the title tooltip. (Nico 2026-08-13)
+      label: "Complaint Issue",
+      render: (r) =>
+        r.complaint_issue ? (
+          <span className="block max-w-[280px] truncate text-[12px]" title={r.complaint_issue}>
+            {r.complaint_issue}
+          </span>
+        ) : (
+          "—"
+        ),
+      getValue: (r) => r.complaint_issue || null,
+    },
+    {
       key: "resolution_method",
       filterable: true,
       label: "Resolution",
