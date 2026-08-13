@@ -107,6 +107,14 @@ jobs:
       - run: npm run audit:test-schema
       # Keeps a new test file from quietly landing in the expensive project.
       - run: npm run audit:test-projects
+      # RUN EXPLICITLY, do not rely on `pretest`. This suite is wired as
+      # `pretest` in package.json, which npm fires for `npm test` and for
+      # nothing else — and since the light/workers split this job runs
+      # `test:light` and backend-tests runs `test:workers`, so `npm test` is
+      # never invoked in backend CI at all. For one afternoon these 100 checks
+      # silently stopped running, and two of them were already failing against
+      # changes made in the same PR that stopped them. ~0.4s.
+      - run: npm run test:scale-contract
       - run: npm run typecheck
       # The 221-file pure-logic suite. It lives here, in the job that already
       # finishes in about a minute, because it takes ~7 SECONDS — it used to be

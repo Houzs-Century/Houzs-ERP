@@ -61,27 +61,47 @@ test("pagination correctness uses the real SO doc_no key when the list has no id
 
 test("PR CI executes and retains the full 100k PostgreSQL evidence run", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(workflow, /scale-postgres-contract:[\s\S]*if: github\.event_name == 'pull_request'/);
+  // The gate must still fire on `pull_request`. It now ALSO fires on
+  // `merge_group`, so the condition is a folded multi-line `if: >-` and the
+  // single-line form this used to match no longer exists. Asserting on the
+  // event name alone keeps the invariant (every PR gets one evidence run)
+  // without pinning the YAML formatting that expresses it.
+  assert.match(workflow, /scale-postgres-contract:[\s\S]*github\.event_name == 'pull_request'/);
   assert.match(workflow, /--orders=100000 --lines=100000 --skus=10000 --users=10000 --runs=20/);
   assert.match(workflow, /--json=artifacts\/scale-pg-100k\.json/);
   assert.match(workflow, /uses: actions\/upload-artifact@v4[\s\S]*if-no-files-found: error/);
 });
 
-// The backend suite is sharded across four runners with
-// `npm test -- --shard=i/n` (see ci.yml). npm appends run arguments to the LAST
-// command in the script, so any `&&` chain inside `test` sends `--shard` to the
-// wrong binary and leaves vitest unsharded — four runners each executing the
-// whole 112-file suite, green, at roughly 2.5x the wall time sharding was
-// introduced to remove. This runs as `pretest` for exactly that reason.
-test("backend test script stays a single command so CI sharding still reaches vitest", async () => {
+// npm appends run arguments to the LAST command in a script, so whatever CI
+// shards MUST be a single command — an `&&` chain sends `--shard` to the wrong
+// binary and leaves vitest unsharded: every runner executing the whole suite,
+// green, at several times the wall time sharding exists to remove.
+//
+// The carrier changed. `test` is now `test:light && test:workers` (the pure-
+// logic project plus the Workers-pool one) and is deliberately NOT what CI
+// shards; ci.yml shards `test:workers`, which is the single command. The
+// invariant is unchanged — only the script it applies to.
+test("the sharded backend script stays a single command so CI sharding still reaches vitest", async () => {
   const pkg = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
-  assert.equal(pkg.scripts.test, "vitest run");
-  assert.equal(pkg.scripts.pretest, "npm run test:scale-contract");
+  assert.equal(pkg.scripts["test:workers"], "vitest run");
+  assert.ok(
+    !pkg.scripts["test:workers"].includes("&&"),
+    "test:workers must stay a single command — CI appends --shard to it",
+  );
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(
     workflow,
-    /npm test -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/,
+    /npm run test:workers -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/,
   );
+});
+
+// `pretest` only fires for `npm test`, and backend CI runs `test:light` and
+// `test:workers` — never `npm test`. So this suite has to be invoked by name in
+// the workflow, or it stops running and nobody finds out. It did, for one
+// afternoon, and two checks in this very file were failing the whole time.
+test("this contract suite is actually invoked by CI, not left to pretest", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(workflow, /- run: npm run test:scale-contract/);
 });

@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The receive-path decision this guide asks the owner to make was made: inbound runs through the `mail-sync/` IMAP poller into `backend/src/routes/mail-inbound.ts`. Superseded by `docs/modules/mail-center.md` (**2026-08-04**). Kept for history; do not follow it as a current instruction.
+
 # Mail Center — go-live guide (owner actions)
 
 The Mail Center has three parts. Two work as soon as the code deploys; one (RECEIVING)
