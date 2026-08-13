@@ -4418,9 +4418,31 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
     return c.json({ error: 'cannot_reopen', message: `Only a cancelled PO can be reopened (this is ${curStatus})` }, 409);
   }
 
+  /* REOPEN IS A THIRD DOOR TO 'SUBMITTED', and it was the only one with no
+     warehouse gate.
+
+     Create forces a warehouse-less PO to DRAFT (:2325-2329, owner 2026-08-02:
+     "a warehouse-less PO receives into the wrong place"), and both /submit
+     (:3977) and /confirm (:4014) run poWarehouseGap. Cancel accepts a DRAFT
+     (:4277 refuses only RECEIVED), so cancel-then-reopen — two buttons on the
+     same screen (PurchaseOrderDetail.tsx:923 and :939) — turned a warehouse-less
+     DRAFT into a live, GRN-receivable PO. The receipt then falls through to the
+     company default warehouse (grns.ts:455-459), which is the AKEMI/TRION-into-
+     C&C-DISPLAY class this repo has already paid for once.
+
+     submitted_at is stamped for the same reason: reopen left it NULL, so a live
+     PO carried no submission timestamp. */
+  const gap = await poWarehouseGap(supabase, id);
+  if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
+
   const { error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .update({ status: 'SUBMITTED', cancelled_at: null, updated_at: new Date().toISOString() })
+    .update({
+      status: 'SUBMITTED',
+      cancelled_at: null,
+      submitted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id), co.companyId);
   if (updErr) return c.json({ error: 'reopen_failed', reason: updErr.message }, 500);
 

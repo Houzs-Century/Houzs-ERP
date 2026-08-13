@@ -589,8 +589,18 @@ export function SalesInvoiceDetailV2() {
   // Persisted SI payment row → the shared PaymentsTable draft shape.
   const apiToDraft = useCallback(
     (p: NonNullable<typeof paymentsQ.data>[number]): PaymentDraft => {
+      /* `credit` and `installment` were both falling through to "Merchant".
+         That is not cosmetic: a payment settled from the customer's credit
+         balance rendered as a card payment, so the operator read it as a
+         mis-entry and deleted it — which took the money off the invoice without
+         returning the credit (the backend now refuses that delete outright).
+         Name every method the backend can store. */
       const methodLabel =
-        p.method === "cash" ? "Cash" : p.method === "transfer" ? "Online" : "Merchant";
+        p.method === "cash" ? "Cash"
+        : p.method === "transfer" ? "Online"
+        : p.method === "credit" ? "Customer credit"
+        : p.method === "installment" ? "Installment"
+        : "Merchant";
       const installmentLabel =
         p.installment_months && p.installment_months > 0
           ? `${p.installment_months} months`

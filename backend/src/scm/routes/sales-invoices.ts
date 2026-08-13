@@ -2093,6 +2093,36 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
+  /* A CREDIT payment cannot be deleted — deleting it takes the money off the
+     invoice and does NOT give the credit back.
+
+     Applying credit writes TWO rows in one transaction (lib/customer-credits.ts,
+     scm.apply_customer_credit_to_si): the payment row here, and a negative
+     APPLIED_TO_SI row on the customer's ledger. This handler deleted only the
+     first. Repo-wide, APPLIED_TO_SI is only ever WRITTEN — nothing reverses it,
+     and reconcileSiOverpay below handles OVERPAY rows only.
+
+     So the invoice went unpaid AND the customer's balance stayed debited: billed
+     twice for money already surrendered. The idempotency guard ("a credit
+     payment row exists") was cleared too, so the same balance could be consumed
+     again.
+
+     REFUSE rather than write a compensating row. Cancelling the invoice is the
+     correct undo and it already exists (creditFromCancelledSi, :2356), it is
+     transactional, and it leaves an auditable pair. A compensating MANUAL_ADJUST
+     from here would invent a second, untransactional path to the same state -
+     and this file's own house rule for money invariants is reject, not
+     normalise. The operator reaches for delete because the UI labelled this row
+     "Merchant"; that mislabel is fixed alongside this. */
+  if (String(doomed.method ?? '').toLowerCase() === 'credit') {
+    return c.json({
+      error: 'credit_payment_not_deletable',
+      message:
+        'This payment was settled from the customer\'s credit balance, so removing it here would ' +
+        'leave the credit spent and the invoice unpaid. Cancel the invoice instead — that returns ' +
+        'the credit to the customer in one step.',
+    }, 409);
+  }
   const { data: inv } = await sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   const { error } = await sb.from('sales_invoice_payments').delete().eq('id', paymentId);
