@@ -1,3 +1,101 @@
+## The stock-location gate left "New order from catalogue" unable to raise ANY company-1 order [high]
+
+**Symptom** - on company 1 (Houzs Century), every cart built on
+`/scm/sales-orders/new/from-products` was refused at Create with
+`422 validation_failed` / `so_state_required` - "Pick the delivery State before
+creating this order." There is no State field on that screen, and no way to
+reach one without abandoning the cart, so the page could not create an order at
+all. Company 2 (2990) was unaffected.
+
+**Root cause** - two correct decisions that were never checked against each
+other. The page collects no address BY DESIGN (its own header says "Payments and
+address are added on the SO detail after save") and lands CONFIRMED. PR #2112
+then made a resolved `sales_location` mandatory at CREATE for the companies in
+`LOCATION_REQUIRED_COMPANY_CODES`, gated on `asDraft !== true`. A flow that
+collects no State and does not draft satisfies neither arm of that gate.
+
+The gate's own DRAFT exemption was the missing piece and was already sitting
+there: `SalesOrderNewGuided` collects no address either and was never affected,
+because it lands a draft unconditionally. #2112 recognised the collision on the
+from-products page and answered it as UI copy - the page told the operator to
+"Switch to Full form" - which is a refusal explained, not an order created, and
+it arrived only after the cart was built. (The module guide claimed the page
+said so "up front"; it never did. That claim is also fixed.)
+
+**Fix** - the page lands a DRAFT for exactly the companies the location rule
+covers, read from the ONE shared list via the new
+`companyRequiresStockLocation` in `frontend/src/vendor/scm/lib/so-form-validate.ts`
+(twin of the backend predicate of the same name). A draft is never written to
+AutoCount, so it owes the account book no Location; the operator adds the
+address on the SO detail and confirms there, where the `DRAFT -> live`
+transition re-runs the same gate. Nothing is bypassed - the gate is deferred to
+the only screen that can satisfy it. Company 2 and every uncovered company keep
+landing CONFIRMED, and adding a company to the list now moves this page with it
+instead of breaking it. The shared `soStockLocationError` call stays, passed
+`asDraft: landsDraft`, so the day this flow stops drafting it is gated
+automatically rather than silently minting locationless orders - the same wiring
+the guided wizard uses. Page copy and the CTA now say "Save draft SO" and
+explain the next step.
+
+**Lesson** - **a gate with an exemption must be checked against every surface,
+because the surface that needs the exemption is the one that cannot satisfy the
+rule.** #2112 correctly listed all four create surfaces and correctly worked out
+that this one could never pass; the step it skipped was asking whether the
+exemption it had just written applied. A surface that is told to go and use a
+different screen is a surface that has been switched off.
+
+**Ref** - 2026-08-13.
+## The State dropdown was cut off after two or three states on every address form [medium]
+
+**Symptom** - the owner, on the Sales Order detail address block: "我的 state 的那个
+UI 也是被直接斩断了,然后很难、很辛苦". Opening State showed MALAYSIA, Johor, Kedah
+and then nothing - the rest of the 16 states existed but were sliced off at the
+card's edge, so picking anything past Kedah meant fighting a list you could not
+see.
+
+**Root cause (traced to the declaration)** - `StatePicker.module.css` had
+`.panel { position: absolute; top: calc(100% + 4px); z-index: 60 }` inside
+`.comboWrap { position: relative }`, i.e. the menu was a normal child of the
+field. `position: absolute` escapes layout flow, but it does NOT escape an
+ancestor's `overflow` clip - any card, drawer or section between the field and
+the viewport that sets `overflow: hidden`/`auto` clips the menu at its own box,
+and the SO detail's address card is only ~150px tall below the field. z-index
+was never the problem, so the earlier bump to 60 could not have helped. The
+component had no `createPortal`, no `position: fixed` and no
+`getBoundingClientRect` anywhere - every other picker in this codebase
+(`SoLineCard`'s SKU/fabric menus, `SearchableSelect`) had already been converted
+to a body portal for exactly this reason, and this one was missed.
+
+**Fix** - the panel is `createPortal(..., document.body)` with
+`position: fixed`, and its top/bottom/left/width/max-height are measured from
+the input's `getBoundingClientRect()`. A `useLayoutEffect` re-measures on
+`scroll` in the CAPTURE phase (the field usually sits in a scrolling card or
+drawer, and those scroll events never reach `window` on the bubble path) and on
+`resize`, removing both listeners when the list closes or the component
+unmounts. When the space below the input cannot hold the list and the space
+above holds more, the panel anchors by its `bottom` edge and grows upward
+instead. Behaviour is untouched: options still commit on `onMouseDown` +
+`preventDefault` so the pick lands before the input blurs, `onBlur` still
+closes, and Escape/arrows/Enter are unchanged - a portal moves the DOM node but
+React events still propagate along the REACT tree, so hosts that close on a
+click in their own subtree (the Warehouse drawer's backdrop) behave as before.
+Mobile is untouched: it passes `compact`, which is a native `<select>`.
+
+**Verified** - reproduced in an isolated harness (a `overflow: hidden` card,
+the shape of the real address block): pre-fix, exactly two states rendered;
+post-fix the full 280px scrollable list paints over the card edge, flips above
+the input near the viewport bottom, and picking still reports
+`("Penang", "Malaysia")`. 13 new tests in `StatePicker.test.tsx`; the 7
+placement ones fail on the pre-fix tree.
+
+**Lesson** - **`position: absolute` is not an escape hatch from `overflow`; only
+leaving the subtree is.** Three menus in this repo were portalled one at a time,
+each as its own bug report, because the fix was applied to the component that
+was complained about rather than to the class. When a shared control is
+converted, grep for its siblings (`grep -L createPortal` over the components
+that render a floating panel) before closing the ticket.
+
+**Ref** - `fix/state-picker-portal`, 2026-08-13
 ## Two ways the sofa write-back could pick a different item for the same sofa [high]
 
 Found while giving the four ambiguous sofa models a single canonical item. Both
