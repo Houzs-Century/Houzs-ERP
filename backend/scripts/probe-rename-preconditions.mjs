@@ -48,12 +48,23 @@
    Usage:  DATABASE_URL=... node scripts/probe-rename-preconditions.mjs
 */
 import postgres from "postgres";
+import {
+  SO_HEADER_LEGACY_PAYLOAD_KEYS,
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  SO_PROCESSING_DATE_PAYLOAD_KEY,
+} from "./lib/so-processing-date.mjs";
 
 const MIGRATION = "0284_scm_processing_date_one_name.sql";
-const OLD_COL = "internal_expected_dd";
-const NEW_COL = "processing_date";
-const OLD_KEY = "internalExpectedDd";
-const NEW_KEY = "processingDate";
+/* This probe is the ONE place entitled to say both spellings, because saying
+   both IS its job — it reads the live catalog and compares. It still does not
+   TYPE either: both come from lib/so-processing-date.mjs, which is where the
+   retired name is recorded, so a future rename moves this comparison with it
+   instead of leaving it comparing two names the database has never heard of. */
+const [OLD_COL] = SO_PROCESSING_DATE_LEGACY_COLUMNS;
+const NEW_COL = SO_PROCESSING_DATE_COLUMN;
+const [OLD_KEY] = Object.keys(SO_HEADER_LEGACY_PAYLOAD_KEYS);
+const NEW_KEY = SO_PROCESSING_DATE_PAYLOAD_KEY;
 const BASE_TABLES = ["mfg_sales_orders", "consignment_sales_orders"];
 /* 0191 copied the payment-totals view's grant set off this never-dropped
    sibling, because it is the only surviving record of what the grantee list was
@@ -112,6 +123,13 @@ const sql = postgres(url, {
   prepare: false,
   max: 1,
 });
+
+/* Column names as SQL TEXT. postgres.js binds a bare `${string}` as a
+   parameter, so `count(${OLD_COL})` would send `count($1)` and count a
+   constant, not a column. Everywhere the two names are compared as VALUES
+   (`a.attname = ${OLD_COL}`) the parameter is exactly right and is left alone. */
+const OLD_FRAG = sql.unsafe(OLD_COL);
+const NEW_FRAG = sql.unsafe(NEW_COL);
 
 async function main() {
   say(`=== 0284 rename pre-flight — LIVE catalog vs what the migration expects ===`);
@@ -241,29 +259,58 @@ async function main() {
     // The data behind those columns. A DROP of a column that is not empty is
     // not a cleanup.
     say(`--- B'. is the legacy consignment column actually dead? --------------------`);
-    if (coExists && has("consignment_sales_orders", NEW_COL)) {
+    /* EVERY count below names only columns the catalog above proved are there.
+       Counting one that is not is 42703, which fails the whole statement and
+       aborts the READ ONLY transaction — so this probe would exit 2 ("could not
+       read") on a database it can read perfectly well, and say nothing about
+       the pre-conditions it exists to report. That is not hypothetical: once
+       0284/0286 have landed, the LEGACY name is the one that is gone. */
+    const coHasOld = coExists && has("consignment_sales_orders", OLD_COL);
+    const coHasNew = coExists && has("consignment_sales_orders", NEW_COL);
+    if (coHasOld && coHasNew) {
       const [n] = await q`
         SELECT count(*)::int AS total,
-               count(processing_date)::int AS legacy_set,
-               count(internal_expected_dd)::int AS live_set
+               count(${NEW_FRAG})::int AS legacy_set,
+               count(${OLD_FRAG})::int AS live_set
         FROM scm.consignment_sales_orders`;
       info(`consignment rows: ${n.total}`);
-      info(`  internal_expected_dd non-NULL (the live date, kept):   ${n.live_set}`);
-      info(`  processing_date      non-NULL (the dead one, DROPPED): ${n.legacy_set}`);
+      const w = Math.max(OLD_COL.length, NEW_COL.length);
+      info(`  ${OLD_COL.padEnd(w)} non-NULL (the live date, kept):   ${n.live_set}`);
+      info(`  ${NEW_COL.padEnd(w)} non-NULL (the dead one, DROPPED): ${n.legacy_set}`);
       check(
         "  legacy consignment values to be destroyed",
         "0 rows",
         `${n.legacy_set} row(s)`,
         n.legacy_set === 0,
       );
+    } else if (coHasNew) {
+      /* Not scored. Step 1 drops the legacy column only while BOTH names are
+         present, so with one name there is nothing for it to destroy and no
+         pre-condition left to hold — and a check invented here to pass would be
+         evidence about a question this database can no longer be asked. */
+      const [n] = await q`
+        SELECT count(*)::int AS total, count(${NEW_FRAG})::int AS set_n
+        FROM scm.consignment_sales_orders`;
+      info(`only ${NEW_COL} is present, so the rename has already run here.`);
+      info(`consignment rows: ${n.total}, ${n.set_n} carrying a Processing Date (counted on ${NEW_COL})`);
     } else {
       info("n/a — no legacy column to drop");
     }
-    if (tableExists("mfg_sales_orders") && has("mfg_sales_orders", OLD_COL)) {
+    /* Same rule: report the column that IS there, and NAME which one was
+       counted. Guarding on OLD_COL alone printed nothing at all after the
+       rename, which reads as "no rows" rather than "asked the wrong name". */
+    const mfgCol = !tableExists("mfg_sales_orders")
+      ? null
+      : has("mfg_sales_orders", OLD_COL) ? OLD_COL
+      : has("mfg_sales_orders", NEW_COL) ? NEW_COL
+      : null;
+    if (mfgCol) {
       const [m] = await q`
-        SELECT count(*)::int AS total, count(internal_expected_dd)::int AS set_n
+        SELECT count(*)::int AS total, count(${sql.unsafe(mfgCol)})::int AS set_n
         FROM scm.mfg_sales_orders`;
-      info(`mfg_sales_orders rows: ${m.total}, ${m.set_n} carrying a Processing Date (renamed, not touched)`);
+      info(`mfg_sales_orders rows: ${m.total}, ${m.set_n} carrying a Processing Date (counted on ${mfgCol}, renamed not touched)`);
+    } else if (tableExists("mfg_sales_orders")) {
+      info(`mfg_sales_orders carries NEITHER ${OLD_COL} nor ${NEW_COL} — there is no Processing Date on it to count`);
     }
     say("");
 

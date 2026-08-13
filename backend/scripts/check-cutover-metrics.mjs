@@ -14,12 +14,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { isDivanOnly, isDivanlessFrame } from "./lib/variant-axes.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const isSofa = (c) => /SOFA/i.test(c || "");
 /* Imported, not re-typed — see scripts/lib/variant-axes.mjs. Local copies of
    these two predicates are how the owner's exemptions came to hold in some
@@ -75,7 +79,7 @@ async function main() {
      owner sees (2026-08-13). */
   const pb = await sql`SELECT i.id, i.item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.doc_no
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.processing_date IS NOT NULL AND i.item_group = 'bedframe'`;
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.${PDATE} IS NOT NULL AND i.item_group = 'bedframe'`;
   const pbBad = pb.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));
   log(`processed bedframe lines: ${pb.length}; complete: ${pb.length - pbBad.length}; INCOMPLETE: ${pbBad.length}`);
   for (const r of pbBad.slice(0, 40)) {
@@ -118,7 +122,7 @@ async function main() {
   const [cov] = await sql`SELECT COUNT(*) total,
     COUNT(emergency_contact_phone) emergency,
     COUNT(building_type) building,
-    COUNT(processing_date) processed,
+    COUNT(${PDATE}) processed,
     COUNT(customer_delivery_date) deliv
     FROM scm.mfg_sales_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const [lcov] = await sql`SELECT COUNT(*) total, COUNT(line_delivery_date) with_date

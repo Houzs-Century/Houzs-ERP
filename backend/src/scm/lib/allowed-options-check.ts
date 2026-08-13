@@ -306,7 +306,7 @@ export type ProductAndModel = ProductAndModelPair & { lookupError: string | null
 export async function loadProductAndModel(
   sb:        any,
   itemCode:  string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<ProductAndModel> {
   const code = (itemCode ?? '').trim();
   if (!code) return { product: null, model: null, lookupError: null };
@@ -342,7 +342,7 @@ export async function loadProductAndModel(
 export async function loadProductsAndModels(
   sb:        any,
   itemCodes: Array<string | null | undefined>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<{ byCode: Map<string, ProductAndModelPair>; lookupError: string | null }> {
   const out = new Map<string, ProductAndModelPair>();
   const codes = Array.from(new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean)));

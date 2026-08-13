@@ -401,7 +401,7 @@ export async function lockSoCommandLease(
   sql: Sql,
   docNo: string,
   leaseToken: string | null | undefined,
-  companyId?: number,
+  companyId: number | null | undefined,
 ): Promise<SoCommandLeaseCheck> {
   const locked = await sql.unsafe<Array<{
     version: number;

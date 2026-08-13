@@ -117,3 +117,98 @@ export const likeEscape = (s) => String(s).replace(/([\\%_])/g, '\\$1');
 /** Regex-escape for the `text` kind, with the non-alphanumeric boundaries. */
 export const boundedRegex = (code) =>
   `(^|[^A-Za-z0-9])${String(code).replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}([^A-Za-z0-9]|$)`;
+
+/* ── THE COUNTING ENGINE ─────────────────────────────────────────────────────
+   These three functions used to live inside census-fabric-colour.mjs, which was
+   fine while the census was the only caller. It is not any more:
+   retire-non-fabric-rows.mjs has to ask the SAME question of the SAME carriers
+   before it deactivates anything, and a second hand-written copy of a per-kind
+   SQL switch is precisely the shape this directory keeps getting burned by —
+   the census walking one set of arms while the writer walks another is how the
+   GRN arm went unswept in #1964 and how five copies of the colour matcher
+   drifted apart in #1893. One engine, imported by both, or the two tools can
+   silently disagree about whether a code is still in use.
+
+   The SQL is unchanged from the census's own switch, byte for byte;
+   backend/tests/colourCarriersEngine.test.ts pins that with a recording stub
+   so the move cannot have altered a predicate. */
+
+/** The column a carrier reads — 'variants' or "allowed_options->'fabrics'". */
+export const baseCol = (c) => c.col.replace(/->.*$/, '').replace(/[^a-z_0-9].*$/i, '');
+
+/** Does this table exist, and what columns does it have? Returns null when the
+ *  table is absent, so the caller can SKIP it OUT LOUD. Two probes have already
+ *  died on a wrong table name and reported nothing; a census that silently
+ *  skips is worse than one that crashes. */
+export async function shape(sql, table) {
+  const [schema, name] = table.split('.');
+  const [reg] = await sql`SELECT to_regclass(${`${schema}.${name}`})::text AS t`;
+  if (!reg.t) return null;
+  const cols = await sql`SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = ${schema} AND table_name = ${name}`;
+  return new Set(cols.map((r) => r.column_name));
+}
+
+/** Split CARRIERS into the ones this database can actually be asked, and the
+ *  ones it cannot. Each usable carrier gains `hasCompany`, because a carrier
+ *  without company_id is counted across ALL companies and the caller has to say
+ *  so rather than pretend the number is scoped. */
+export async function resolveCarriers(sql, carriers = CARRIERS) {
+  const shapes = new Map();
+  for (const t of new Set(carriers.map((c) => c.table))) shapes.set(t, await shape(sql, t));
+
+  const usable = [], skipped = [];
+  for (const c of carriers) {
+    const s = shapes.get(c.table);
+    if (!s) { skipped.push({ ...c, why: 'table does not exist' }); continue; }
+    const col = baseCol(c);
+    if (!s.has(col)) { skipped.push({ ...c, why: `no column ${col}` }); continue; }
+    usable.push({ ...c, hasCompany: s.has('company_id') });
+  }
+  return { usable, skipped };
+}
+
+/** How many rows of ONE carrier name this code. `carrier` must have come from
+ *  resolveCarriers (it needs `hasCompany`). Returns the postgres.js result, so
+ *  the caller destructures `[{ n }]` exactly as the census always has. */
+export function countCarrier(sql, carrier, code, companyId) {
+  const co = carrier.hasCompany ? `company_id = ${companyId} AND ` : '';
+  const esc = likeEscape(code);
+  let where;
+  switch (carrier.kind) {
+    case 'variants':
+      where = COLOUR_KEYS.map((k) => `${carrier.col}->>'${k}' = $1`).join(' OR ');
+      return sql.unsafe(`SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}(${where})`, [code]);
+    case 'vkey':
+      return sql.unsafe(
+        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
+          WHERE ${co}('|' || COALESCE(${carrier.col}, '') || '|') LIKE ('%|fabriccode=' || $1 || '|%') ESCAPE '\\'`,
+        [likeEscape(String(code).toLowerCase())]);
+    case 'text':
+      return sql.unsafe(
+        `SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}COALESCE(${carrier.col}, '') ~ $1`,
+        [boundedRegex(code)]);
+    case 'jsonarr':
+      return sql.unsafe(
+        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
+          WHERE ${co}jsonb_typeof(${carrier.col}) = 'array'
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(${carrier.col}) e WHERE e = $1)`,
+        [code]);
+    case 'col':
+      return sql.unsafe(`SELECT COUNT(*)::int AS n FROM ${carrier.table} WHERE ${co}${carrier.col} = $1`, [code]);
+    case 'blob':
+      return sql.unsafe(
+        `SELECT COUNT(*)::int AS n FROM ${carrier.table}
+          WHERE ${co}COALESCE(${carrier.col}::text, '') LIKE ('%' || $1 || '%') ESCAPE '\\'`,
+        [esc]);
+    default:
+      throw new Error(`unknown kind ${carrier.kind}`);
+  }
+}
+
+/** The one carrier that IS the row a retire targets: scm.fabric_trackings'
+ *  own fabric_code column. Counting it as a "reference" would make every row
+ *  refuse itself, so retire-non-fabric-rows.mjs excludes exactly this and says
+ *  so. Named here, next to the list, so the exclusion cannot drift from it. */
+export const isSelfCarrier = (c) =>
+  c.table === 'scm.fabric_trackings' && c.col === 'fabric_code';

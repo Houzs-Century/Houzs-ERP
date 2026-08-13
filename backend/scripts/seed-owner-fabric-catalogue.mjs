@@ -260,9 +260,9 @@ async function main() {
   for (const e of wanted) {
     const keys = keysOf(e.id, labelFor(e));
     const hits = new Map();
-    for (const k of keys) for (const r of byKey.get(k) || []) hits.set(`${r.fabric_id} ${r.colour_id}`, r);
+    for (const k of keys) for (const r of byKey.get(k) || []) hits.set(`${r.fabric_id}\0${r.colour_id}`, r);
     const rows = [...hits.values()];
-    for (const r of rows) claimed.add(`${r.fabric_id} ${r.colour_id}`);
+    for (const r of rows) claimed.add(`${r.fabric_id}\0${r.colour_id}`);
 
     if (!rows.length) {
       if (!libByStripped.has(e.series)) plan.newSeries.add(e.series);
@@ -313,7 +313,7 @@ async function main() {
   // rows sitting in the owner's series that his list does not mention
   const seriesOfEntry = new Set(wanted.map((e) => e.series));
   const extras = cols.filter((r) => {
-    if (claimed.has(`${r.fabric_id} ${r.colour_id}`)) return false;
+    if (claimed.has(`${r.fabric_id}\0${r.colour_id}`)) return false;
     const s = normColour(r.fabric_id).replace(/[^A-Z0-9]/g, "");
     return [...seriesOfEntry].some((x) => s === x || s.startsWith(x));
   });

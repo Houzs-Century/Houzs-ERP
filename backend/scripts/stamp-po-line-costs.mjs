@@ -71,6 +71,10 @@
 // A line two AutoCount lines want at DIFFERENT prices is refused, not resolved.
 // Idempotent: the unit_price_centi = 0 predicate means a second run finds
 // nothing left to do.
+// RE-RUN: inert. Every UPDATE re-asserts COALESCE(unit_price_centi, 0) = 0, so
+// a second run plans the same lines and writes none of them, and a price a
+// person entered in between is never clobbered.
+//
 // DRY-RUN by default; APPLY=1 writes. The dry-run prints ONE LINE PER PLANNED
 // WRITE -- the same list APPLY walks -- so what a reviewer reads is what runs.
 import fs from "node:fs";
@@ -83,6 +87,16 @@ import { planStamps, normCode, SKIP } from "./lib/po-cost-plan.mjs";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* This stamps MONEY onto production purchase lines, and a wrong cost is worse
+   than no cost - a zero is visible and the receipt gate refuses it, a plausible
+   wrong number is silent for the life of the unit. One environment variable is
+   the same keystroke whether it is meant or mistyped, so the apply path also
+   needs the phrase spelled out. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}"`);
+  process.exit(2);
+}
 const CO = 1;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -190,5 +204,35 @@ async function main() {
      the write, and the predicate correctly declined to overwrite it. */
   log(`DONE. PO lines priced: ${done}; already priced by someone else since the read, left alone: ${skippedWrite}; planned: ${plan.length}`);
   await sql.end();
+
+  /* VERIFY ON A SECOND CONNECTION, reading the VALUES back. The session that
+     wrote is the worst witness that the write landed: on 2026-08-13 a repair
+     reported "written: 7 of 7" over seven rows it had actually turned into
+     jsonb strings. A count is not a shape - and here the shape is money. */
+  const check = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    log("");
+    log("VERIFY (fresh connection) - reading the priced rows back:");
+    const ids = plan.slice(0, 300).map((p) => p.id);
+    if (!ids.length) { log("  nothing planned, nothing to read back."); return; }
+    const rows = await check`SELECT id::text AS id, unit_price_centi, line_total_centi, qty
+                               FROM scm.purchase_order_items WHERE id = ANY(${ids})`;
+    const by = new Map(rows.map((r) => [r.id, r]));
+    let ok = 0, wrong = 0, stillZero = 0;
+    for (const p of plan.slice(0, 300)) {
+      const r = by.get(String(p.id));
+      if (!r) continue;
+      const price = Number(r.unit_price_centi ?? 0);
+      if (price === 0) { stillZero++; continue; }
+      const total = Number(r.line_total_centi ?? 0);
+      if (price === p.centi && total === p.centi * Number(r.qty ?? 0)) ok++;
+      else { wrong++; log(`  MISMATCH ${p.id}: unit ${price} (wanted ${p.centi}), line total ${total} (wanted ${p.centi * Number(r.qty ?? 0)})`); }
+    }
+    log(`  read back ${ok + wrong + stillZero} row(s): ${ok} carry the intended price, ${wrong} do not, ${stillZero} are still zero (declined by the guard, or not reached).`);
+    if (wrong) { console.error("VERIFY FAILED - the rows do not read back as intended."); process.exitCode = 1; }
+    else log("  VERIFY PASS");
+  } finally {
+    await check.end();
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -46,6 +46,13 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The release-discipline ratchet compares the grandfather ledger to
+          # the one at the merge base, and `git merge-base` needs the history
+          # to reach one. With depth 1 it cannot, and the step below FAILS
+          # rather than quietly skipping — a ratchet that cannot see its
+          # baseline is not a ratchet.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -67,6 +74,37 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+
+      # ---- the bug-class gates (docs/bug-classes.md) ------------------------
+      # Each one below replaces a rule that lived in prose and was reproduced
+      # anyway. They are filesystem-only, need no database, and together add a
+      # few seconds to a job that already spends 26s on typecheck alone.
+      #
+      # A pre-serialized value bound to a json/jsonb parameter. Six occurrences
+      # in 15 days, one COE, 22 hand-written warnings in backend/ — and two live
+      # violations still on main when this was added, one of them written by the
+      # repair script for the damage. docs/jsonb-double-encoding-coe.md.
+      - run: npm run audit:jsonb-binds
+      # A read whose failure is discarded (`const { data }` with no `error`,
+      # `.catch(() => {})`). Ratchet, not ban: 954 sites predate it. It is here
+      # because the class GREW from 785 to 954 in the four weeks after it was
+      # declared fixed, and nothing counted.
+      - run: npm run audit:swallowed-reads
+      # A parameter that decides — companyId, itemCode, soItemId, the
+      # idempotency key — declared `?:`, so omitting it is spelled the same as
+      # having nothing to say. Seven recorded occurrences.
+      - run: npm run audit:decision-params
+      # Every generator whose output is committed still RUNS. The codebase map
+      # generator crashed silently for three weeks (2026-08-12) and the map
+      # rotted while every dashboard stayed green.
+      - run: npm run audit:generators
+      # Searched columns have trigram indexes. Wired here and NOT in either
+      # deploy workflow, deliberately: this check is a static approximation and
+      # a false positive must cost a conversation, never a deploy. Until
+      # 2026-08-13 both of its exit paths were exit 0 and it was in no workflow
+      # at all — it could not fail, and nobody ran it.
+      - run: npm run audit:trgm
+
       # tests/generated/ is the collapsed baseline+migrations that
       # tests/setup.ts applies instead of replaying the history per test file.
       # A migration merged without regenerating it would leave the whole suite
@@ -82,6 +120,33 @@ jobs:
       # silently stopped running, and two of them were already failing against
       # changes made in the same PR that stopped them. ~0.4s.
       - run: npm run test:scale-contract
+
+      # The two artefacts a revert cannot undo: a migration, which pg-migrate
+      # applies to prod on the next push to main and tracks by FULL FILENAME,
+      # and a repair script that has already run. The gate is a RATCHET —
+      # today's tree is grandfathered in
+      # backend/scripts/release-discipline-grandfathered.json, a NEW script
+      # must comply, and the grandfathered count prints on every run.
+      #
+      # Its own logic is tested by node:test, which neither vitest project
+      # collects, so it is run explicitly here. A checker nobody runs is not a
+      # checker.
+      - run: npm run test:release-discipline
+      - run: npm run audit:release-discipline
+      # The no-growth half. Separate step so a git-plumbing failure is
+      # obviously not a discipline failure, and so the gate above still stands
+      # if this one ever has to be looked at.
+      #
+      # On a `pull_request` event the checkout is the MERGE with main, so
+      # `merge-base HEAD FETCH_HEAD` resolves to main's tip — the list this
+      # change is actually adding to. If main shrinks the list while a branch is
+      # open, the branch has to update before its own entries stop looking new;
+      # the ruleset already requires branches to be up to date to merge.
+      - name: The grandfather list may only shrink
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          npm run audit:release-discipline -- --ratchet-against FETCH_HEAD
       - run: npm run typecheck
       # The 221-file pure-logic suite. It lives here, in the job that already
       # finishes in about a minute, because it takes ~7 SECONDS — it used to be
@@ -352,6 +417,10 @@ jobs:
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
+      # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
+      # zero inputs and exits 0 on a tree full of type errors. The typecheck
+      # script above was exactly that until 2026-08-01. Pin the shape.
+      - run: node --test scripts/check-typecheck-gate.test.mjs
 
   frontend-build:
     runs-on: ubuntu-latest

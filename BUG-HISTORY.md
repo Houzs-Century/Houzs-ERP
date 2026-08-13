@@ -1,3 +1,72 @@
+# Bug history
+
+Newest first. Each entry is one defect: what was seen, what caused it, what was
+changed, and what class it belongs to. Entries are `##` (recent) or `###` under a
+`## YYYY-MM-DD` date heading (older); nothing else in this file uses those levels.
+
+**Before adding an entry, read [`docs/bug-classes.md`](docs/bug-classes.md).** It
+holds the causes that have recurred here — with a count, the worst thing each one
+cost, and **the name of the check that now fails on it**. If the bug you are about
+to write up is an instance of a class listed there, the check should have caught
+it: say why it did not, and widen the check in the same PR. If it is a new class,
+add it there once it has recurred, with a check — or under *Classes with no check
+yet*, saying what blocks one.
+
+That file exists because this one was not enough on its own. On 2026-08-10 a
+stringified value bound to a jsonb parameter corrupted 146 sofa lines three times
+in an afternoon; it was written up here and given a COE; on 2026-08-13 the repair
+script written to undo the damage reproduced it, turning seven production rows
+string-shaped. The write-up was read. Nothing mechanical enforced it.
+
+
+## Five causes recurred after being written up, because a write-up is not a check [high]
+
+**Symptom** — the same five faults kept coming back, each one already described
+in this file and in a COE, some of them more than once:
+
+1. **A pre-serialized value bound to a json/jsonb parameter.** Six occurrences
+   in 15 days, one COE (docs/jsonb-double-encoding-coe.md), 22 hand-written
+   warnings scattered through `backend/` — and TWO live violations still on
+   main when this gate was written, one of them inside the repair script for
+   the damage the class had already done.
+2. **A read whose failure is discarded** (`const { data }` with no `error`,
+   `.catch(() => {})`). Counted 785 four weeks before this; 954 when counted
+   again. The class GREW by 169 sites after fifteen were fixed by hand and the
+   fix was declared complete. Nothing had ever counted them.
+3. **A parameter that decides, declared optional** — `companyId`, `itemCode`,
+   `soItemId`, the idempotency key. Seven recorded occurrences. `?:` spells
+   "omitted" and "nothing to say" identically, so a by-SKU exemption can be
+   half-applied and typecheck stays green.
+4. **A generator whose output is committed but is never re-run.** The codebase
+   map generator crashed silently for three weeks; the map rotted while every
+   dashboard stayed green.
+5. **Searched columns without a trigram index.** Its checker existed — and
+   until 2026-08-13 BOTH of its exit paths were `exit 0` and it was wired into
+   no workflow at all. It could not fail, and nobody ran it.
+
+**Root cause** — every one of these was already documented. The write-up was
+read; the rule lived in prose; prose does not fail a build. The fifth is the
+purest form: a check whose every exit path returns success is prose wearing the
+clothes of a script.
+
+**Fix** — five gates in `backend-typecheck`, the job that already finishes in
+about a minute: `audit:jsonb-binds`, `audit:swallowed-reads` (a RATCHET — the
+954 are pinned and may only fall), `audit:decision-params`, `audit:generators`,
+`audit:trgm`. Each carries the entry it answers in a comment above it in
+ci.yml. `audit:trgm` is deliberately NOT in either deploy workflow: it is a
+static approximation, and a false positive must cost a conversation, never a
+deploy.
+
+The swallowed-read work that came in with this branch fixed 16 reads whose
+failure silently AUTHORISES a write — including a quantity cap that lived
+entirely inside `if (row) {…}`, so a failed read skipped the cap rather than
+enforcing it.
+
+**Class** — this entry defines the shape the classes are recorded in;
+docs/bug-classes.md names each one with its count, its worst cost, and the
+check that now fails on it.
+
+**Ref** - `fix/bug-class-gates`, PR #2127 (with #2141), 2026-08-14
 ## The AutoCount write-back never told AutoCount who sold the order [high]
 
 **Symptom** — the ERP -> AutoCount write-back went live on 2026-08-13. Two
@@ -85,6 +154,39 @@ send; picking one is an owner decision about what AutoCount's purchase reports
 will show.
 
 **Ref** — 2026-08-14, `fix/autocount-so-agent`.
+
+## The file-size ratchet failed a PR for making an over-ceiling file SMALLER [medium]
+
+**Symptom** — PR #2127 opened `backend/src/scm/routes/grns.ts`, which stood at
+**3,591 lines on main** against a ceiling of 3,482, and left it at **3,586**.
+The gate failed it: *3586 lines, ceiling 3482 (over by 104). This file may only
+SHRINK.* The PR had shrunk it.
+
+**Root cause** — the fix earlier that same day taught the gate to charge only
+files the change TOUCHED. That was right, and not enough: touching is not
+growing. A file already carrying 109 lines of someone else's debt then puts
+every later author to a choice the ratchet never meant to offer — abandon the
+improvement, or pay off the debt before you are allowed to fix a bug in that
+file.
+
+**Fix** — a touched file is charged only when THIS change grew it, measured
+against its own line count at the merge base. Growth is still charged from the
+first line; a file with no counterpart at the base is charged as new; and if the
+base cannot be resolved, every touched violation is charged again. The violation
+prints either way — the debt is real and stays visible, it is simply not billed
+to whoever walked past it.
+
+**The check** — `scripts/check-file-size-ratchet.mjs` gains the case, with the
+real numbers: 3,591 at base and 3,586 now is not chargeable; 3,500 at base and
+3,586 now is, from the first line.
+
+**Class** — *a gate whose blast radius is wider than its subject*, third
+instance in two days (the census counting deliberate tombstones, the ratchet
+charging untouched files, this). The subject here is growth; the gate was
+measuring altitude.
+
+**Ref** - `fix/ratchet-charges-growth`, 2026-08-14
+
 ## The by-SKU variant exemptions reached the app and not the audits, and one of them reached the audits and not the app [medium]
 
 **Symptom** — the same rule gave four different answers depending on which
@@ -148,6 +250,66 @@ The function now has one honest consumer, the audit mirror.
 
 **Ref** — 2026-08-14, this PR.
 
+## Twelve audit scripts kept querying the column 0286 renamed away, and the guard that forbids it could not see them [high]
+
+**Symptom** — every read-only cutover, go-live, reconciliation and completeness
+audit under `backend/scripts` stopped working on 2026-08-13, and none of them
+said so in those words. Twelve `.mjs` files named `internal_expected_dd` in live
+SQL after mig `0286` renamed it to `processing_date` (applied on prod
+2026-08-13T13:46:59Z). Postgres answers a missing column with **42703 and fails
+the WHOLE statement**, so a run produced a stack trace and `exit 1` — not a
+smaller number, no number at all. Two files were quieter than that:
+
+- `probe-rename-preconditions.mjs` guarded its consignment row count on the
+  presence of the NEW name and then SELECTed the OLD one. Post-rename the guard
+  passes, the count 42703s, the READ ONLY transaction aborts, and the probe
+  exits **2 — "the probe itself could not read"**, a false report about a
+  database it can read perfectly well. Its `mfg_sales_orders` count guarded on
+  the OLD name only, so after the rename it printed nothing at all — silence
+  that reads as "no rows" rather than "I asked the wrong name".
+- `backfill-so-dates.mjs`, which WRITES, refuses any document whose audit trail
+  shows a person set, moved or REMOVED one of its dates. That refusal list held
+  `internal_expected_dd` / `internalExpectedDd` and **not** `processing_date` /
+  `processingDate`, so a Super-Admin *Remove Processing Date* performed after
+  2026-08-13 leaves an audit row the scan does not match — and the backfill
+  would write the removed date straight back.
+
+**Root cause, traced not guessed** — the name was a string literal in each
+script, and nothing enumerated them. PR #2153 fixed this class in the backend by
+binding every route to `SO_PROCESSING_DATE_COLUMN` in
+`src/scm/shared/so-processing-date.ts`, and `tests/soDatePairWiring.test.ts`
+forbids the retired name — over a **hand-listed set of five `src/` files**. It
+has to be hand-listed: the backend vitest suite runs in workerd, which has no
+filesystem, so a test there can only check files somebody remembered to add. A
+`.mjs` script cannot import the TypeScript constant either. The one place the
+name was still typed by hand was therefore the one place no guard could reach —
+the same gap `scripts/lib/so-terminal-states.mjs` and
+`scripts/lib/do-shipped-states.mjs` were created to close for their own sets.
+
+**Fix** — `backend/scripts/lib/so-processing-date.mjs`, the .mjs mirror of the
+naming constants, pinned to the TS original by
+`tests/soProcessingDateMirror.test.ts` exactly as the two existing mirrors are.
+All twelve scripts read the column from it. postgres.js binds a bare
+`${string}` as a PARAMETER — `h.${COLUMN}` sends `h.$1` — so the module also
+exports `soProcessingDateFragment(sql)`, a `sql.unsafe` fragment that is inlined
+as SQL text. `sql(name)` is deliberately NOT used: that path picks its builder
+by regex-matching the SQL emitted so far, so the same call renders an identifier
+after `SELECT` and garbage after `IN (...)`, which every one of these queries
+has. `backfill-so-dates.mjs`'s refusal list is now built from the constants,
+current spellings **and** legacy; the probe counts only columns the catalog
+proved are there and names which one it counted.
+
+**Why the new test walks the directory.** `tests/soProcessingDateOneName.node.mjs`
+is `node:test`, run by `npm run test:scale-contract`, and it reads
+`backend/scripts` off disk — so a script written tomorrow is covered by code
+that already exists. Comments are stripped before matching: the rename is a
+story worth telling, and `unify-processing-date.mjs` quotes the owner naming the
+column verbatim. Measured on the tree this branched from: **12 offending files
+before, 0 after.**
+
+**Ref** — 2026-08-14, this PR. Same class as the entry below (a column name in a
+string is invisible to `tsc`); this is the half of the tree that entry's test
+could not see.
 ## Proceed wrote a column migration 0286 had renamed away, and three write paths never asked the both-dates rule [high]
 
 **Symptom** — two faults on the same rule, found together while auditing every
@@ -371,7 +533,119 @@ dry-run; print the write set itself.
 **Ref** — PR #1907 review round 2, 2026-08-11.
 
 
+## Shutting the door on the product rows left them sitting in the fabric master, and a retire tool that could not prove they were unused would have been worse than none [medium]
 
+**Symptom** - the guard below stopped a third product code reaching
+`scm.fabric_trackings`, and deliberately did not touch `SOFA 5535` and
+`SQUARE PILLOW`, which were already in it. The owner's question —
+「为什么sofa 和square pillow在fabric convert里面？」 — was therefore still true of
+prod after the fix that answered it.
+
+**Root cause (of the gap, not of the rows)** - retiring them by hand is a
+two-line UPDATE, and that is exactly the trap. Nothing in this database protects
+a fabric code: there is **not one foreign key to `scm.fabric_colours`**, and
+every reference to a fabric is a bare TEXT string inside jsonb or inside a
+pipe-joined stock key. So "is anything using this code?" cannot be answered by
+the schema, only by counting — across all 58 carriers `lib/colour-carriers.mjs`
+knows about. A hand UPDATE, or a script that checked two or three obvious
+tables, would deactivate a code that a live sales order still names, and the
+line would go unpickable with nothing saying why. That is the same shape as
+#1964 (the GRN arm went unswept) and the 2026-08-11 pass that superseded
+`BO315-2-FEATHER` while 12 live rows still pointed at it.
+
+**Fix** - `backend/scripts/retire-non-fabric-rows.mjs` + its workflow.
+`MODE=plan` is the default, writes nothing, and holds the session
+`default_transaction_read_only`; `MODE=apply` needs
+`CONFIRM="I HAVE REVIEWED THE DRY-RUN"`. **It has no DELETE in it.** A retired
+row gets `is_active = false` and a sentence appended to its description naming
+the word that condemned it and the date, with the original description kept
+verbatim in front — and the plan prints the exact reversal SQL, as a proper
+single-quoted Postgres literal (the first draft emitted `JSON.stringify`, whose
+double quotes Postgres reads as an *identifier*; both target rows contain `"`,
+so the reversal would not have pasted). Before any row is touched the full
+census runs against its code and **any live carrier outside the master refuses
+the row**, which is re-checked inside the apply transaction in case the plan
+went stale. The census engine (`resolveCarriers` / `countCarrier`) moved out of
+`census-fabric-colour.mjs` into `lib/colour-carriers.mjs` so the reporter and
+the writer cannot walk different arms; `tests/colourCarriersEngine.test.ts` pins
+the emitted SQL per carrier kind with a recording stub, so the move is provably
+behaviour-preserving without a database.
+
+**Lesson** - **a write path guard and the rows it would have caught are two
+different jobs, and the second one is only safe if it can prove a negative.**
+The cheap version of this script is four lines and is wrong in the one case that
+matters — a product code that reached a real order. The rule that made it safe
+was not cleverness, it was refusing to answer from the schema (which knows
+nothing) and answering from a count over every carrier instead, with the row's
+own master entry as the single, named exclusion. **And a "reversible" operation
+is only reversible if the reversal you printed actually runs** — that bug was
+invisible in review and obvious the first time the script was executed.
+
+**Ref** - 2026-08-13, this PR. Follows the guard in the entry below.
+
+## Six source files were binary to git, so a production repair tool shipped with no reviewable diff [high]
+
+**Symptom** — `gh pr diff 2082` showed `Binary files differ` for
+`backend/scripts/merge-duplicate-fabric-colours.mjs`; the PR reported **0
+additions** for it. That file is a 280-line tool that repoints fabric colours
+across fifteen line tables and eight stock tables **on production**. It was
+merged with nothing to read. `git grep` answers `Binary file matches` with no
+content, so the file is also invisible to every audit that greps the tree — and
+this repo audits by grep constantly (jsonb binds, swallowed reads, decision
+params, company scope).
+
+**Root cause** — a RAW NUL byte inside a template literal, used as a
+composite-key separator:
+
+```
+const k = `${r.fabric_id}<NUL>${canonId(p)}`;      // the byte itself
+const k = `${r.fabric_id}\0${canonId(p)}`;         // the escape — same value
+```
+
+NUL as a key separator is a fine technique. Writing it as the byte instead of
+the two-character escape is what makes git classify the blob as binary. Both
+spell the same string at runtime; only one is reviewable.
+
+**Measured, not assumed.** Appending one line to the file gave
+`git diff --numstat` → `-  -`. After the fix, the same appended line gave
+`2  0`.
+
+**The class was six files, not one.** Found by the gate written for the first
+one, on its first run:
+
+| file | NULs |
+|---|---|
+| `backend/scripts/merge-duplicate-fabric-colours.mjs` | 1 |
+| `backend/scripts/probe-write-persistence.mjs` | 2 |
+| `backend/scripts/seed-owner-fabric-catalogue.mjs` | 3 |
+| `backend/src/scm/lib/size-variant-description.ts` | 1 |
+| `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` | 2 |
+| `frontend/src/vendor/scm/lib/propose-days.ts` | 1 |
+
+Every one is the same composite-key pattern, and three of them are live
+application source, not scripts — a 76 KB sales-order maintenance page among
+them, whose diffs nobody could read either.
+
+**Fix** — all ten bytes replaced with `\0`. Both typechecks pass
+(`npm run typecheck`, which in the frontend is `tsc -b`; `npx tsc --noEmit`
+there resolves zero inputs and would have proved nothing).
+
+**The check** — `backend/tests/noNulBytesInSource.node.mjs`, in
+`npm run test:scale-contract`. It walks `git ls-files`, refuses to pass if the
+listing returns implausibly few files, and fails on any tracked source file
+carrying a NUL.
+
+**Class** — *a defect that hides the evidence of itself*. The jsonb
+double-encoding class corrupts data you can still query; this one removes the
+diff, so review and audit both silently see nothing.
+
+**The check caught itself first.** Its own `git ls-files -z` split was written
+with the raw separator, so the very first CI run of the gate failed on the gate:
+`backend/tests/noNulBytesInSource.node.mjs (first at byte 1943 of 2878)`. That is
+the strongest evidence it works, and it is why the escape — not the byte — has
+to be the habit: even the person writing the rule reached for the byte.
+
+**Ref** - `fix/nul-byte-in-source`, 2026-08-14
 ## The description tidier called 249 of the owner's own fabric codes broken [medium]
 
 **Symptom** — the 2026-08-14 production plan of `tidy-fabric-descriptions.mjs`
@@ -1622,6 +1896,39 @@ cited BUG-HISTORY entry was re-introduced and the rule had to fire on it.
 suppressions of a check that did not exist.
 
 **Ref** - `eslint-layer`, PR #2137, 2026-08-14
+## A repair that writes four production columns needed one environment variable, and checked its own work on the session that did the writing [high]
+
+**Symptom** — `backend/scripts/repair-migrated-po-lines.mjs` writes
+`so_item_id`, `delivery_date` and `linked_ac_dtlkey` on
+`scm.purchase_order_items` and `expected_at` on `scm.purchase_orders`. Its
+entire apply gate was `APPLY=1`. No confirmation phrase, and no verification
+that re-read the rows afterwards.
+
+**Root cause** — two habits this repo already pays for:
+
+1. **One variable is the same keystroke whether it is meant or mistyped.** Every
+   other gated repair here requires `CONFIRM="I HAVE REVIEWED THE DRY-RUN"`;
+   this one predates that shape and was never brought forward.
+2. **The writing session is the worst witness that a write landed.** The script
+   reported the counts its own UPDATEs returned and stopped there. On
+   2026-08-13 that exact reasoning reported "written: 7 of 7" over seven rows
+   that had been turned into jsonb STRINGS — the count was right and the data
+   was wrong. A count is not a shape.
+
+**Found by** — `scripts/check-release-discipline.mjs`, the gate added in this
+PR, on its first run against the tree. It was not reported by a person.
+
+**Fix** — the apply path now requires the spelled-out CONFIRM phrase and exits
+2 without it; the workflow gained a matching `confirm` input wired to both the
+staging and prod jobs. After the write the script opens a SECOND connection,
+reads the rows back, and asserts the VALUES it intended are the values present
+(and that no header it filled is still blank), failing the run when they are
+not.
+
+**Class** — *a gate that only counts*, docs/bug-classes.md. The check that
+caught it is now in CI, so a new write script cannot land without both halves.
+
+**Ref** - `release-discipline`, PR #2138, 2026-08-14
 
 ## Three bugs in the AutoCount parity checkers, all in OUR queries, none in the data [medium]
 
@@ -2389,6 +2696,19 @@ the model to copy: a key a legitimate human action can restore - a Super Admin
 removing a Processing Date - is not a key, it is a trap. The two safe shapes are
 a key the write itself destroys (`jsonb_typeof = 'string'` -> NULL; a `-1S` line
 re-coded away) and a value re-derived from an immutable source. Everything else
+either converges by construction or has to refuse. A writing script has to state
+its re-run behaviour in its own header, because "is it safe to run this again"
+was a question nobody could answer without reading the whole file - and three
+times this month somebody answered it wrong.
+
+**Correction, 2026-08-13.** This entry originally claimed that "every script in
+`backend/scripts` that writes now states its re-run behaviour in its own
+header". It did not, and saying so stopped anybody checking. Measured by
+`npm --prefix backend run audit:release-discipline` on the day this was written:
+**162 scripts write, and 67 of them carry no re-run note.** They are listed, one
+by one, in `backend/scripts/release-discipline-grandfathered.json`, and a NEW
+writing script without one now fails CI. The rule is real from here; the claim
+that it was already universal was not.
 either converges by construction or has to refuse. Every script in
 `backend/scripts` that writes now states its re-run behaviour in its own header,
 because "is it safe to run this again" was a question nobody could answer without

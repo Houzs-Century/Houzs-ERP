@@ -36,6 +36,12 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import {
+  SO_HEADER_LEGACY_PAYLOAD_KEYS,
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  SO_PROCESSING_DATE_PAYLOAD_KEY,
+} from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -44,6 +50,28 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+
+/* Every spelling this backfill's three dates have EVER been written under, as
+   ILIKE needles against the stored audit jsonb.
+   `scm.mfg_so_audit_log.field_changes` is TEXT written by whichever deploy was
+   live that day, so it keeps the old names forever — which is why the retired
+   ones stay here and why lib/so-processing-date.mjs records them. The CURRENT
+   pair used to be missing outright: the list was written before mig 0286 and
+   named only internal_expected_dd / internalExpectedDd, so a Remove Processing
+   Date performed after 2026-08-13 left an audit row this scan did not match and
+   the backfill would have written the date straight back. Over-refusing costs
+   nothing; re-writing a date somebody removed costs a production decision. */
+const TOUCHED_BY_A_PERSON = [
+  "proceeded_at",
+  "proceededAt",
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_PAYLOAD_KEY,
+  ...SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  ...Object.keys(SO_HEADER_LEGACY_PAYLOAD_KEYS),
+  "Processing Date",
+  "customer_delivery_date",
+  "customerDeliveryDate",
+].map((name) => `%${name}%`);
 
 function parseCsvLine(line) {
   const out = []; let cur = ""; let q = false;
@@ -93,13 +121,7 @@ async function main() {
   const touchedRows = docNos.length
     ? await sql`SELECT DISTINCT so_doc_no FROM scm.mfg_so_audit_log
                  WHERE so_doc_no = ANY(${docNos})
-                   AND (field_changes::text ILIKE '%proceeded_at%'
-                     OR field_changes::text ILIKE '%proceededAt%'
-                     OR field_changes::text ILIKE '%internal_expected_dd%'
-                     OR field_changes::text ILIKE '%internalExpectedDd%'
-                     OR field_changes::text ILIKE '%Processing Date%'
-                     OR field_changes::text ILIKE '%customer_delivery_date%'
-                     OR field_changes::text ILIKE '%customerDeliveryDate%')`
+                   AND field_changes::text ILIKE ANY(${TOUCHED_BY_A_PERSON})`
     : [];
   const touched = new Set(touchedRows.map((r) => r.so_doc_no));
 
