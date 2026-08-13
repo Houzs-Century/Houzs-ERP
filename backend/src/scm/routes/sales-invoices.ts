@@ -36,6 +36,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -1950,7 +1951,7 @@ salesInvoices.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),

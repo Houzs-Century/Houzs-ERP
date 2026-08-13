@@ -18,6 +18,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, comboChargedPrices, type SofaComboRow, type SofaPriceTier,
@@ -2230,8 +2231,12 @@ consignmentOrders.get('/:docNo/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),

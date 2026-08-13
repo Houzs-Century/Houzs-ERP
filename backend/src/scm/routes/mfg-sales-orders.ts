@@ -70,6 +70,7 @@ import { splitSofaBuildIntoModuleLines } from '../shared/so-sofa-split';
    rank the cart order is preserved. Shared with the Backend PDF + POS print
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -4893,7 +4894,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   }> | null = null;
   if (body.payments !== undefined) {
     const parsed = z.array(z.object({
-      method:            z.enum(['merchant', 'transfer', 'cash', 'installment']),
+      method:            z.enum(PAYMENT_METHOD_CODES),
       amountCenti:       z.number().int().positive(),
       approvalCode:      z.string().optional().nullable(),
       merchantProvider:  z.string().trim().min(1).optional().nullable(),
@@ -10649,9 +10650,11 @@ const paymentCreateSchema = z.object({
   /* 2026-06-06 payment-method unify — 'installment' joins the manual route.
      It was already a first-class method on the POS deposit path (SO create
      writes method='installment' raw); now Finance can record installment
-     receipts directly too. Kept in sync with PAYMENT_METHOD_CODES in
-     packages/shared/src/payment-methods.ts. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+     receipts directly too. The enum IS PAYMENT_METHOD_CODES now, imported
+     from scm/shared/payment-methods.ts — "kept in sync with" was a promise
+     seven route files had to keep by hand, pointing at a packages/shared/
+     path that no longer exists in this repo. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -10915,7 +10918,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
 const paymentPatchSchema = z.object({
   version:           z.number().int().min(1).optional(),
   paidAt:            z.string().min(1).optional(),
-  method:            z.enum(['merchant', 'transfer', 'cash', 'installment']).optional(),
+  method:            z.enum(PAYMENT_METHOD_CODES).optional(),
   merchantProvider:  z.string().trim().min(1).optional().nullable(),
   installmentMonths: z.number().int().min(0).max(60).optional().nullable(),
   onlineType:        z.string().trim().min(1).optional().nullable(),

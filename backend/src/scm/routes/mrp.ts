@@ -86,20 +86,34 @@ import {
 } from '../lib/ship-commitment';
 import { chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
+import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
 
 /* SO statuses that no longer create demand (already shipped / closed).
    SHIPPED is included (MRP pairing audit D4, 2026-08-01): rank 4 on the SO
-   ladder means the goods have left the building — every other consumer of
-   "does this SO still demand stock" already treats it as done
-   (so-stock-allocation.ts excludes it from allocation, the /inventory/
-   reservations SO_DONE drops its claims, the amendment flow calls it
-   terminal). MRP was the lone outlier, still planning purchases for orders
-   marked shipped. The audit measured ZERO live SHIPPED-status lines still
-   demanding, so aligning changes no current figure. */
-const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'DRAFT', 'SHIPPED']);
+   ladder means the goods have left the building, and so-stock-allocation.ts
+   already excluded it from allocation while MRP was still planning purchases
+   for it. The audit measured ZERO live SHIPPED-status lines still demanding, so
+   aligning changed no figure.
+
+   THE SET IS shared/so-terminal-states.ts, not a literal. This line and the
+   allocator's `not.in` filter were two of FOURTEEN hand-typed copies of it
+   across ten files (four names, eight of them .mjs audits, four of those also
+   holding an inline SQL copy of their own); the whole reason SHIPPED had to be
+   "added" in the first place is that a set kept in fourteen places gets updated
+   in thirteen.
+
+   ONE CLAIM IN THIS COMMENT WAS FALSE AND IS CORRECTED (2026-08-13): it used to
+   say "the /inventory/ reservations SO_DONE drops its claims" as if that
+   consumer agreed. It does not. routes/inventory.ts holds TWO sets of its own —
+   GET /reservations has FIVE (no DRAFT), GET /products has FOUR (no DRAFT, no
+   SHIPPED) — so a DRAFT order is open demand on both Inventory surfaces and done
+   here, and a SHIPPED order is open demand on one of them. Neither is collapsed
+   into the shared file: resolving the disagreement moves numbers staff read, so
+   it is the owner's call. */
+const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
 /* PO statuses that no longer supply goods. DRAFT is included: a draft PO is
    not yet committed, so it must NOT count as incoming supply — otherwise a
    draft PO would make an SO line look "covered" and hide a real shortage from

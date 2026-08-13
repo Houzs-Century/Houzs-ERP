@@ -197,11 +197,25 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
-Status vocabulary (`:366-376`):
-`DO_STATUSES` = DRAFT, LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED,
-INVOICED, COMPLETED, CANCELLED. `DO_PRESHIP_STATUSES` = DRAFT, LOADED.
-`SHIPPED_STATES` (`:357`) = DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED.
-`DO_STOCK_OUT_STATUSES` = `SHIPPED_STATES` ∪ {COMPLETED}.
+**Status vocabulary — read `backend/src/scm/shared/do-shipped-states.ts`, not
+this paragraph.** Since 2026-08-13 that file is the single declaration of
+`DO_SHIPPED_STATES`, `DO_STOCK_OUT_STATES`, `DO_PRESHIP_STATES` and
+`DO_STATUSES`; `delivery-orders-mfg.ts` (`:402`, `:411`, `:413`, `:419`),
+`consignment-notes.ts`, `lib/reconcile-ledger.ts`,
+`services/agents/delivery-agent.ts` and seven audit scripts all read it through
+`scripts/lib/do-shipped-states.mjs` or the TS module. This doc used to spell the
+sets out here, which made it one more copy of a list that already stood in
+eleven files — and copies of this particular list had already drifted: the
+delivery agent's was missing `COMPLETED`, so its DO pipeline silently omitted
+that bucket.
+
+The shape, so the section still says something: `DO_SHIPPED_STATES` is the
+**write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
+excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the
+**read predicate** ("has this stock already gone out?") and is
+`DO_SHIPPED_STATES ∪ {COMPLETED}`. `tests/doShippedStatesMirror.test.ts` pins
+that relationship and the .mjs mirror.
+
 Filter buckets (`:2180-2185`): `open` = DRAFT+LOADED, `in_transit` =
 DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
 `cancelled` = CANCELLED.
@@ -212,10 +226,10 @@ DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
 
 **A Delivery Order moves inventory OUT.**
 
-**When:** the FIRST transition into ANY status in `SHIPPED_STATES`
-(`:357`). This is deliberately a set, not a single status, so a DO that jumps
-straight to SIGNED or DELIVERED still deducts exactly once. There are two entry
-points to that same deduction:
+**When:** the FIRST transition into ANY status in `SHIPPED_STATES` (`:402`,
+spread from `DO_SHIPPED_STATES`). This is deliberately a set, not a single
+status, so a DO that jumps straight to SIGNED or DELIVERED still deducts exactly
+once. There are two entry points to that same deduction:
 
 - **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
   `deductInventoryForDo` runs right after the item insert.

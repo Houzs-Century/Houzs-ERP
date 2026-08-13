@@ -1,3 +1,101 @@
+## MRP and the Inventory page disagree about whether a DRAFT or SHIPPED order still demands stock [med, LEFT OPEN]
+
+**Symptom** - not a report from staff; found by grep on 2026-08-13 while
+collapsing duplicated constant lists. The "which sales orders are still live"
+set exists in THREE sizes across two files and nothing reconciles them.
+
+**Root cause (traced)** - `routes/mrp.ts` and `lib/so-stock-allocation.ts` treat
+SIX statuses as terminal - CANCELLED, CLOSED, SHIPPED, DELIVERED, INVOICED,
+DRAFT. `routes/inventory.ts` declares TWO sets of its own and neither matches:
+`GET /reservations` (:1424) has FIVE, missing DRAFT; `GET /products` (:494) has
+FOUR, missing DRAFT and SHIPPED. So a DRAFT order counts as open demand on BOTH
+Inventory surfaces and as finished everywhere else, and a SHIPPED order does the
+same on one of them - feeding committed_scheduled / available / surplus, the
+numbers the Inventory page puts in front of staff.
+
+The comment above `mrp.ts`'s set asserted the opposite - "the /inventory/
+reservations SO_DONE drops its claims" - listing that endpoint as one of the
+consumers already aligned when SHIPPED was added on 2026-08-01. It was never
+checked because checking it meant opening a second file that had no link to the
+first, and the second file turned out to hold two answers rather than one. Same
+disease as the delivery-agent entry below: a citation standing in for a
+mechanism.
+
+**Fix (partial, deliberately)** - the SIX-status set is now
+`backend/src/scm/shared/so-terminal-states.ts`, read by `mrp.ts`,
+`so-stock-allocation.ts` (as `SO_TERMINAL_STATES_PGREST`, which renders the
+PostgREST `not.in` string byte-identically) and eight audit scripts via
+`scripts/lib/so-terminal-states.mjs`, pinned by
+`tests/soTerminalStatesMirror.test.ts`. Fourteen copies across ten files, under
+four names, became one. The false claim in mrp.ts's comment is corrected in
+place.
+
+**LEFT OPEN for the owner** - `inventory.ts`'s sets are NOT collapsed into the
+shared file, and each now carries a comment saying so and why. Note there are
+TWO of them in that one file: `GET /products` (:494) has four statuses and
+`GET /reservations` (:1424) has five (it adds SHIPPED), so the page answers "is
+this order open" differently in two places of its own. Widening either changes committed / available / surplus on a
+page staff act on; that is a business decision about whether a DRAFT order
+reserves stock, not a tidy-up. Those two are now the only survivors, and each
+says in code where the others are.
+
+**Lesson** - **when two lists of the same fact differ, find out which is right
+BEFORE merging them.** The tempting move here was to import the shared set into
+`inventory.ts` and call the class fixed. That would have silently changed
+numbers on a live page under cover of a refactor - the opposite of the point.
+
+**Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
+
+---
+
+## The delivery agent's DO pipeline never counted COMPLETED, because it kept its own copy of the status list [med]
+
+**Symptom** - the Delivery Agent brief's `doPipeline.byStatus` reported every
+delivery-order bucket except COMPLETED. Nothing errored; the bucket was simply
+absent, which reads identically to "there are none".
+
+**Root cause (traced)** - `services/agents/delivery-agent.ts:539` declared its
+own `DO_STATUSES` with the comment "the DO lifecycle (delivery-orders-mfg.ts
+state machine)" and eight values. The state machine it names has NINE
+(`delivery-orders-mfg.ts`, the `PATCH /:id/status` guard): the copy had lost
+COMPLETED. `collectDoStatusCounts` issues one count per member of that list, so
+a status missing from the list is a status never queried.
+
+Found while sweeping the duplicated-constant-list class, and it is that class
+exactly: two declarations of one fact, one of which is the authority and one of
+which nobody re-checked. The same sweep found the DO "has shipped" set written
+out by hand in ELEVEN files across two different spellings - five states, and the
+same five plus COMPLETED - which is how `check-stock-truth.mjs` came to measure
+delivered COGS over a set that excludes completed deliveries while
+`check-doc-line-vs-movement.mjs` measures lines-vs-movements over one that
+includes them, with neither output mentioning the difference.
+
+**Fix** - `backend/src/scm/shared/do-shipped-states.ts` is now the only
+declaration: `DO_SHIPPED_STATES` (the write trigger, COMPLETED deliberately
+absent - nothing ships INTO completion, so listing it would arm a second
+deduction on that hop), `DO_STOCK_OUT_STATES` (the read predicate, = shipped +
+COMPLETED), `DO_PRESHIP_STATES` and `DO_STATUSES`. `delivery-orders-mfg.ts`,
+`consignment-notes.ts`, `lib/reconcile-ledger.ts` and `delivery-agent.ts` import
+it; the seven `.mjs` audits import `scripts/lib/do-shipped-states.mjs`, pinned to
+the TS file by `tests/doShippedStatesMirror.test.ts` the way
+`phoneNormaliseMirror` and `variantAxesMirror` pin theirs. The agent's pipeline
+gains its COMPLETED bucket; every other call site keeps the exact list it had.
+
+**Left, deliberately, for the owner** - `lib/reconcile-ledger.ts` scans the
+5-state set, so a COMPLETED delivery order whose OUT never landed is invisible
+to the ledger-integrity sweep. Widening it to `DO_STOCK_OUT_STATES` would change
+what System Health reports, which is not a change to make while collapsing a
+duplicated list. Noted in the code at the constant.
+
+**Lesson** - **a comment naming the file it copied from is not a link to it.**
+Both drifted copies said, in words, where the truth lived; neither could notice
+when the truth moved. Import it, or pin it with a test - a citation is not a
+mechanism.
+
+**Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
+
+---
+
 ## The first sales order after the write-back went live was refused, and the documented remedy could not be applied [high]
 
 **Symptom** - `scm.autocount_writeback` was switched to `"1"` on 2026-08-13 and
@@ -1335,10 +1433,13 @@ So every pair is classified from the data before anything is written: `LOSSLESS`
 (every losing colour has a counterpart on the winner) applies; `REFUSED-LOSSY`
 (the loser holds colours the winner does not) is **held and reported**, and only
 merges under an explicit `MOVE_COLOURS=1` that re-parents those colours onto the
-winner first. The repoint reaches all four arms that can name a series - SO, PO,
-GRN and DO - because a merge that writes two of them leaves the other two
-pointing at a superseded row, which is the same unswept-arm shape #1964 found in
-the GRN snapshot.
+winner first. The repoint reaches every arm that can name a series - four at the
+time of this entry (SO, PO, GRN, DO) - because a merge that writes two of them
+leaves the other two pointing at a superseded row, which is the same unswept-arm
+shape #1964 found in the GRN snapshot. *(Corrected 2026-08-13: the arm list is
+`ARMS` in `backend/scripts/lib/fabric-write.mjs` and is fifteen now. The "four"
+above is what this PR shipped, kept as the record; do not read it as the current
+count - read `ARMS`.)*
 
 **What is NOT in the 32, and is not being guessed at** - `CH141` vs `CHANTIC`
 and `NX` vs `NX016` share ZERO colour codes, so a colour-code detector is

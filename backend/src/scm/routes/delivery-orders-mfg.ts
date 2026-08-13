@@ -13,6 +13,11 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import {
+  DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES,
+  DO_STATUSES as SHARED_DO_STATUSES,
+} from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
@@ -385,9 +390,17 @@ const crewSnapshotCols =
 
 /* DO statuses that count as "shipped" — goods have left our hands, so stock
    has been deducted. The FIRST transition into ANY of these fires the
-   inventory OUT. Kept here as one list so deduction is robust no matter how
-   the status is advanced (DISPATCHED step-by-step, or a jump to SIGNED). */
-const SHIPPED_STATES = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED'];
+   inventory OUT. Robust no matter how the status is advanced (DISPATCHED
+   step-by-step, or a jump to SIGNED).
+
+   The list itself lives in shared/do-shipped-states.ts, with the read-side
+   superset beside it: consignment-notes.ts, lib/reconcile-ledger.ts and six
+   audit scripts each held their own hand-typed copy of one or the other, and
+   the two spellings had already drifted into answering the same question
+   differently. Widened to `string[]` here because the shared list is `as const`
+   and its `.includes()` would then only accept the literal union, while every
+   call site below passes a raw status off a row. */
+const SHIPPED_STATES: string[] = [...DO_SHIPPED_STATES];
 
 /* ── DO status vocabulary + legal-transition guard (audit gap #4) ──────────────
    The full set of raw delivery_orders.status values (union of DO_STATUS_BUCKETS +
@@ -396,17 +409,15 @@ const SHIPPED_STATES = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVO
    could post an unknown value, or fall a shipped DO back to a pre-ship status —
    e.g. DELIVERED→DRAFT — which leaves the stock OUT movement standing (a plain
    status write never reverses it) while the DO reads un-shipped. */
-const DO_STATUSES = new Set([
-  'DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED',
-  'COMPLETED', 'CANCELLED',
-]);
+const DO_STATUSES = new Set<string>(SHARED_DO_STATUSES);
 /* Pre-ship statuses — no stock has left our hands yet. */
-const DO_PRESHIP_STATUSES = new Set(['DRAFT', 'LOADED']);
+const DO_PRESHIP_STATUSES = new Set<string>(DO_PRESHIP_STATES);
 /* Statuses in which the inventory OUT has already been written. Once a DO is in
    any of these, its stock is deducted, so it must NOT drop back to a pre-ship
    status (the OUT would be orphaned). COMPLETED sits past INVOICED, so goods
-   have certainly shipped — include it alongside SHIPPED_STATES. */
-const DO_STOCK_OUT_STATUSES = new Set([...SHIPPED_STATES, 'COMPLETED']);
+   have certainly shipped — see shared/do-shipped-states.ts for why this is a
+   different set from SHIPPED_STATES and must stay one. */
+const DO_STOCK_OUT_STATUSES = new Set<string>(DO_STOCK_OUT_STATES);
 
 const nextNum = async (sb: any, c: any, prefixOverride?: string): Promise<string> => {
   const d = new Date();
@@ -5037,8 +5048,12 @@ deliveryOrdersMfg.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
