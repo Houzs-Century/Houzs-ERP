@@ -1205,3 +1205,73 @@ describe('a document opens every master it names — warehouse and dropdowns too
     expect(m.UdfOptions).toEqual([]);
   });
 });
+
+/* Regression: HC-SO-2608-001, 2026-08-13. The first real sales order saved
+   after the write-back was switched on was refused —
+
+     refused, nothing sent (ItemCodeError): line 1 — ERP item code '9028-1S'
+     maps to 2 AutoCount items and the document names no supplier to choose
+     between them
+
+   — and the documented remedy, a supplier SKU binding, could not be applied.
+   bindingsFor was handed the RAW line codes ('9028-1A(LHF)', '9028-2A(RHF)')
+   while resolveAcItemCode looked the binding up by the collapsed base code
+   ('9028-1S'), so the map never contained the key that was asked for. Four
+   sofa models in the cutover map are ambiguous this way (9028, 9058, 5152,
+   5080); until this, every sales order containing one of them was refused
+   with no possible fix. */
+describe('a sofa resolves through the binding recorded for its model', () => {
+  const sofaSo = {
+    doc_no: 'HC-SO-SOFA', so_date: '2026-08-13', debtor_name: 'LIM', agent: null,
+    sales_location: 'KL WAREHOUSE', branding: null, venue: null,
+    address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
+  };
+  /* Two compartments of one build, exactly as the ERP stores them: the price
+     sits on the first row and the same Desc2 on both, which is what lets D9
+     fold them into a single line carrying '9028-1S'. */
+  const compartments = ['1A(LHF)', '2A(RHF)'].map((comp, i) => ({
+    doc_no: 'HC-SO-SOFA',
+    item_code: `9028-${comp}`,
+    item_group: 'sofa',
+    description: `SOFA 9028 ${comp}`,
+    description2: '1A(LHF) + 2A(RHF) (28")',
+    qty: 1,
+    unit_price_centi: i === 0 ? 399000 : 0,
+    location: 'KL',
+  }));
+
+  test('without a binding it is still refused, and the reason names the base code', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      supplier_material_bindings: [],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(String(row.last_error)).toContain('ItemCodeError');
+    expect(String(row.last_error)).toContain('9028-1S');
+  });
+
+  test('a binding on the MODEL BASE CODE is found and the document sends', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      /* The row an operator can actually create: the ERP model code on the
+         left, the account book's item on the right. Before the fix this row
+         existed and changed nothing, because the query never asked for it. */
+      supplier_material_bindings: [{
+        company_id: 1, material_code: '9028-1S', material_kind: 'mfg_product',
+        supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
+      }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).not.toBe('skipped');
+    expect(row.op).toBe('create_so');
+    /* ONE line, and it carries the AutoCount code the binding named. */
+    expect(row.payload.body.Details).toHaveLength(1);
+    expect(row.payload.body.Details[0].ItemCode).toBe('AMN-SF9028 SOFA');
+  });
+});

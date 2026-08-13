@@ -30,6 +30,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import {
   callAcService,
   AGENT_MAP,
@@ -1453,6 +1454,17 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
  * `is_main_supplier` first, so a code bound to several suppliers resolves to the
  * one the business actually buys from. A PO narrows further: it knows its own
  * creditor, and that supplier's binding wins over the main one.
+ *
+ * THE CODES ASKED FOR MUST BE THE CODES THE RESOLVER LOOKS UP, and for a sofa
+ * those are not the codes on the ERP lines. Callers pass raw line codes, but D9
+ * collapses a sofa's compartments into ONE line carrying a SYNTHESISED
+ * `<model>-1S` (autocount-sofa-collapse.ts:356), and that is the string
+ * resolveAcItemCode checks the binding map for. Querying only the raw codes
+ * fetched bindings for '9028-1A(LHF)' and friends while the resolver asked for
+ * '9028-1S' — so the override could never fire for ANY sofa, and the four sofa
+ * models whose ERP code maps to two AutoCount items were unresolvable by any
+ * amount of data entry. Expanding the query with each line's sofa base code
+ * costs nothing for a non-sofa line (splitSofaCode returns null).
  */
 async function bindingsFor(
   sb: Sb,
@@ -1461,7 +1473,12 @@ async function bindingsFor(
   supplierId?: string | null,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const wanted = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];
+  const raw = codes.map((c) => (c ?? '').trim()).filter(Boolean);
+  const sofaBases = raw
+    .map((c) => splitSofaCode(c))
+    .filter((s): s is { model: string; compartment: string } => s != null)
+    .map((s) => `${s.model}-1S`);
+  const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
   let q = sb.from('supplier_material_bindings')
     .select('material_code, supplier_id, supplier_sku, is_main_supplier')
