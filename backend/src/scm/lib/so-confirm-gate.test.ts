@@ -152,12 +152,15 @@ describe('collectSoConfirmProblems', () => {
 });
 
 /* ── IO wrapper: loads the header + non-cancelled lines + catalog membership,
-   scoped to the SO's OWN company. Mock supabase in the house style. */
+   scoped to the SO's OWN company. Mock supabase in the house style.
+   `broken` names tables whose read answers with a PostgREST error — resolved,
+   not thrown, exactly as supabase-js reports a failure. */
 type Row = Record<string, unknown> & { _table: string };
-const makeSb = (rows: Row[]) => ({
+const makeSb = (rows: Row[], broken: string[] = []) => ({
   from(table: string) {
     const eqs: Array<[string, unknown]> = [];
     const ins: Array<[string, unknown[]]> = [];
+    const err = broken.includes(table) ? { message: `connection reset (${table})` } : null;
     const run = () => rows
       .filter((r) => r._table === table)
       .filter((r) => eqs.every(([col, v]) => r[col] === v))
@@ -166,9 +169,9 @@ const makeSb = (rows: Row[]) => ({
       select: () => builder,
       eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
       in: (col: string, vs: unknown[]) => { ins.push([col, vs]); return builder; },
-      maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
-      then: (resolve: (v: { data: Row[]; error: null }) => void) =>
-        resolve({ data: run(), error: null }),
+      maybeSingle: async () => (err ? { data: null, error: err } : { data: run()[0] ?? null, error: null }),
+      then: (resolve: (v: { data: Row[] | null; error: unknown }) => void) =>
+        resolve(err ? { data: null, error: err } : { data: run(), error: null }),
     };
     return builder;
   },
@@ -207,5 +210,51 @@ describe('soConfirmProblemsForDoc', () => {
   it('a same-company code passes', async () => {
     const withOwn = [...fixtures, { _table: 'mfg_products', code: 'FOREIGN-1', company_id: 1 } as Row];
     expect(await soConfirmProblemsForDoc(makeSb(withOwn), 'HC-SO-2607-013')).toEqual([]);
+  });
+
+  /* ── A GATE THAT COULD NOT LOOK DOES NOT SAY "ALL CLEAR" ─────────────────
+     An EMPTY problem list is what the caller spends as permission to confirm
+     the draft and enqueue it to AutoCount (mfg-sales-orders.ts, the
+     DRAFT→CONFIRMED transition: `if (confirmProblems.length > 0) return 422`).
+
+     The lines read was the dangerous one: `items ?? []` turned a failed query
+     into an order with NO lines, every per-line rule then had nothing to object
+     to, and the gate returned []. These tests make each read REJECT and assert
+     the gate returns a PROBLEM. If the error binding is dropped again they
+     fail — the lines case with a bare [], which is the bug itself. */
+  const clean: Row[] = [
+    {
+      _table: 'mfg_sales_orders', doc_no: 'HC-SO-2607-013',
+      salesperson_id: 'staff-1', agent: null, venue: 'PJ', venue_id: null, company_id: 1,
+    },
+    {
+      _table: 'mfg_sales_order_items', doc_no: 'HC-SO-2607-013',
+      item_code: 'GOOD-1', item_group: 'others', description: null, line_no: 1, cancelled: false,
+    },
+    { _table: 'mfg_products', code: 'GOOD-1', company_id: 1 },
+  ];
+
+  it('the clean order confirms — so the refusals below are the read, not the order', async () => {
+    expect(await soConfirmProblemsForDoc(makeSb(clean), 'HC-SO-2607-013')).toEqual([]);
+  });
+
+  it('an unreadable LINES read refuses instead of confirming a lineless order', async () => {
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_order_items']), 'HC-SO-2607-013');
+    expect(codes(problems)).toEqual(['so_confirm_check_failed']);
+    expect(problems[0]!.message).toContain('connection reset');
+  });
+
+  it('an unreadable HEADER read refuses, and says so rather than blaming the salesperson', async () => {
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_orders']), 'HC-SO-2607-013');
+    // It always refused (an empty header reads as "no salesperson"); what
+    // changed is that it now names what actually happened.
+    expect(codes(problems)).toEqual(['so_confirm_check_failed']);
+    expect(codes(problems)).not.toContain('salesperson_required');
+  });
+
+  it('an unreadable CATALOG read refuses, and does not call every code non-catalog', async () => {
+    const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_products']), 'HC-SO-2607-013');
+    expect(codes(problems)).toEqual(['so_confirm_check_failed']);
+    expect(codes(problems)).not.toContain('so_line_not_catalog');
   });
 });

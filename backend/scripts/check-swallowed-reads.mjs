@@ -137,7 +137,7 @@ if (grown.length > 0) {
   console.error('    if (error) return c.json({ error: "..." }, 500);   // NOT `data ?? []`');
   console.error('    const rows = data ?? [];   // now this really does mean "empty"');
   console.error('\nRaising the ceiling in swallowed-read-baseline.json is not the fix.');
-  console.error('The ceiling exists because 956 sites predate the rule, not to make room.\n');
+  console.error('The ceiling exists because 938 sites predate the rule, not to make room.\n');
 }
 
 if (improved.length > 0) {

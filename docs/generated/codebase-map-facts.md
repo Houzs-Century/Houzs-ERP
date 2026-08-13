@@ -64,7 +64,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 146 |
-| `backend/src/scm/routes/categories.ts` | 10 | 488 |
+| `backend/src/scm/routes/categories.ts` | 10 | 506 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1101 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2405 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 957 |
@@ -90,7 +90,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-tracking.ts` | 9 | 589 |
 | `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2117 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 114 |
-| `backend/src/scm/routes/grns.ts` | 13 | 3482 |
+| `backend/src/scm/routes/grns.ts` | 13 | 3477 |
 | `backend/src/scm/routes/helpers.ts` | 3 | 171 |
 | `backend/src/scm/routes/hr.ts` | 19 | 1536 |
 | `backend/src/scm/routes/inventory-adjustments.ts` | 1 | 222 |
@@ -101,7 +101,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 293 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 381 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1184 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1210 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4485 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12094 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 100 |
@@ -115,14 +115,14 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1093 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 116 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 365 |
-| `backend/src/scm/routes/product-models.ts` | 16 | 1462 |
+| `backend/src/scm/routes/product-models.ts` | 16 | 1464 |
 | `backend/src/scm/routes/products.ts` | 2 | 78 |
 | `backend/src/scm/routes/public-images.ts` | 2 | 47 |
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 683 |
-| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1258 |
-| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1060 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2379 |
-| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1389 |
+| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1253 |
+| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1059 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2376 |
+| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1388 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 484 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 310 |
@@ -164,13 +164,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 147 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 284 | `0285_sales_orders_ac_udf_pdate.sql` (0285) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 284 | `0286_scm_processing_date_one_name.sql` (0286) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1269 files, 529756 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1275 files, 531191 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -190,7 +190,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4183 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3732 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
-| `backend/src/scm/routes/grns.ts` | 3482 |
+| `backend/src/scm/routes/grns.ts` | 3477 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3366 |
 | `backend/src/services/projects.ts` | 3173 |

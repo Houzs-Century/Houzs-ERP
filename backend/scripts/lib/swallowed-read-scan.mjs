@@ -22,13 +22,20 @@
 //     `pms.canPayment ?? true` on a money surface."
 // The owner named the cost himself: 「它們不會報錯。它們悄悄發生，你兩個月後對帳才發現」.
 //
-// WHY A RATCHET AND NOT A BAN. 956 sites exist in backend/src today, across 105
+// WHY A RATCHET AND NOT A BAN. 938 sites exist in backend/src today, across 115
 // files. Most are certainly fine; nothing separates the safe ones from the
-// dangerous ones, and no honest change deletes 956 destructures in one PR. What
+// dangerous ones, and no honest change deletes 938 destructures in one PR. What
 // IS provable is the direction: the 2026-07-17 census counted 785 of 1,277, the
 // class was declared fixed in 15 money documents, and four weeks later it had
-// grown to 956 of 1,794. The class did not recur despite the fix; it grew
+// grown to 954 of 1,794. The class did not recur despite the fix; it grew
 // during it, because nothing counted.
+//
+// AND THE DIRECTION IS NOW DOWN. The first descent took 16 of them — every read
+// found whose empty result AUTHORISES a write (a remaining-qty cap, a "nothing
+// still references this" delete probe, a duplicate check before a destructive
+// cascade, a gate that decides a state change), with the ceilings lowered by
+// exactly that. Ranked by consequence, not by file: see docs/bug-classes.md,
+// "The first descent".
 //
 // So the gate is per-file ceilings that may only fall. Site 957 fails the
 // build. Fixing sites requires lowering the ceiling in the same PR, which is
