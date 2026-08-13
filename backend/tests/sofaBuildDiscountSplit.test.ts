@@ -21,7 +21,14 @@ import { distributeBuildDiscount, distributeProportionally } from '../src/scm/sh
  * re-validates the discount against the MODULE's unit price and 422s
  * `invalid_discount` — so such a row could be created but not edited.
  *
- * The fix spreads the discount by unit-price weight with distributeProportionally.
+ * The fix is distributeBuildDiscount. Plain proportional shares were NOT enough
+ * and these tests are why: distributeProportionally floors every share and drops
+ * the residue on the LAST entry, so at the top of the allowed discount range that
+ * last share exceeds its own module's capacity and the row goes negative again —
+ * by 1 sen instead of by RM1,000. The 'uneven module prices' case below caught
+ * that, and the CODE changed rather than the assertion. distributeBuildDiscount
+ * caps each share at its module's qty x unit and re-homes the excess.
+ *
  * These tests assert the two properties that make that correct, because the
  * arithmetic is the whole fix:
  *   1. EXACT — the shares sum to the discount, so the header total (computed

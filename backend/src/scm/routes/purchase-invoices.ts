@@ -1820,7 +1820,24 @@ purchaseInvoices.post('/from-grn', async (c) => {
      can't subtract the full discount twice. */
   const discFor = (it: GrnLine & { _remaining: number }) =>
     Math.round(Number(it.discount_centi ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
-  const subtotal = lines.reduce((s, it) => s + (it._remaining * it.unit_price_centi - discFor(it)), 0);
+  /* CLAMP INSIDE THE SUM, exactly like the sibling /from-grn-items path
+     (:1637, "clamp each line before summing so a discount > qty×price can't
+     drive the PI subtotal negative"). This path summed UNCLAMPED while writing
+     CLAMPED lines (:1858), so the header total and Σ line_total_centi
+     disagreed by the un-clamped excess.
+
+     The premise is real, not theoretical: grns.ts:1695 reads
+     `Number(it.discountCenti ?? 0)` with NO upper bound and stores it raw at
+     :1708 — only line_total_centi is clamped there too (:1711, and the same at
+     :1932). So a GRN line can genuinely carry discount_centi > qty × unit.
+
+     Concretely: GRN with A qty 1 @ RM100 disc 0, and B qty 1 @ RM10 disc RM30.
+     Lines written: 10000 and max(0, 1000-3000)=0, Σ = RM100. Header was
+     10000 + (1000-3000) = RM80. total_centi is what AP pays from and what
+     computePiSettlement clamps against, so the invoice reached PAID RM20 short
+     of its own lines. (recomputePiTotals re-derives from line_total_centi, so a
+     later line edit healed it — the two figures disagreed only until then.) */
+  const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_centi - discFor(it)), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),

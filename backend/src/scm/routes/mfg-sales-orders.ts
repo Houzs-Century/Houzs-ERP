@@ -8950,7 +8950,30 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   const qty = Number(prev.qty);
   const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
-  const newTotal = (qty * newUnit) - Number(prev.discount_centi ?? 0);
+  /* The unit price just MOVED and the stored discount did not. newUnit is
+     clamped at 0; newTotal was not, so a variant edit that lowers the price
+     (a fabric moving PRICE_3 -> PRICE_1 gives a negative sellingDeltaCenti)
+     drove the line total NEGATIVE — and every downstream document clamps that
+     away with Math.max(0, ...), so the discount was silently deleted and the
+     customer over-billed. Same failure the sofa-build split had.
+
+     REJECT, don't normalize — the house rule this file already set for exactly
+     this invariant on the price-override path (:6199, audit 2026-06-11 C-2:
+     "reject an override price that would push the line total negative
+     (discount invariant: 0 <= discount <= qty × unit)"). Silently shrinking the
+     discount would change the money without telling anyone. */
+  const prevDiscount = Number(prev.discount_centi ?? 0);
+  if (prevDiscount > qty * newUnit) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `This change lowers the unit price to ${(newUnit / 100).toFixed(2)}, and the line already carries a ` +
+        `${(prevDiscount / 100).toFixed(2)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
+      discount: prevDiscount,
+      max: qty * newUnit,
+    }, 422);
+  }
+  const newTotal = (qty * newUnit) - prevDiscount;
   const newUnitCost = Math.max(0, Number(prev.unit_cost_centi ?? 0) + costDeltaCenti);
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     variants: nextVariants,
@@ -9274,6 +9297,19 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
 
   const qty = Number(prev.qty);
   const discount = Number(prev.discount_centi ?? 0);
+  // Same invariant as the price-override path (:6199) and the variant edit
+  // above: a product SWAP to a cheaper SKU must not leave a discount that no
+  // longer fits, because the negative total is then clamped away downstream.
+  if (discount > qty * unitSen) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `That product is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `Reduce the discount first, then swap the product.`,
+      discount,
+      max: qty * unitSen,
+    }, 422);
+  }
   const newTotal = (qty * unitSen) - discount;
   const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
   if (newTotal < prevTotal && await isPosTabletCaller(c)) {
@@ -9793,6 +9829,18 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     ? recomputed.unit_cost_sen
     : await snapshotUnitCostSen(sb, newCode, 0, c);
   const discount = Number(prev.discount_centi ?? 0);
+  // Same invariant as :6199 / the variant edit / the product swap — a sofa
+  // exchange to a cheaper build must not strand a discount that no longer fits.
+  if (discount > qty * unit) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `That build is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `Reduce the discount first, then exchange the sofa.`,
+      discount,
+      max: qty * unit,
+    }, 422);
+  }
   const newBuildTotal = (qty * unit) - discount;
   const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
   if (posTablet && newBuildTotal < oldBuildTotal) {
