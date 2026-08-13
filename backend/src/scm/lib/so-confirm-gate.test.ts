@@ -3,9 +3,15 @@ import { collectSoConfirmProblems, soConfirmProblemsForDoc } from './so-confirm-
 
 /* ═══════════════════════════════════════════════════════════════════════════
    The confirm gate (owner rulings 2026-08-08): a Sales Order may only become
-   CONFIRMED with a salesperson, a venue, every line a REAL catalog SKU, and
-   every goods line's required variant axes filled (colour-KIV satisfies the
-   fabric axis — KIV blocks the Processing Date, not confirm).
+   CONFIRMED with a salesperson, a venue, and every line a REAL catalog SKU.
+
+   It does NOT ask whether the lines are spec-complete. That is the PROCEED
+   rule — owner 2026-08-13, "只要是没有 proceed 这一张订单，其实都不一定是需要
+   填写的，除非它是 proceed 了" — and it lives with the other proceed gates in
+   shared/so-save-problems.ts, fired by a Processing Date. The tests below pin
+   that boundary in BOTH directions, because a variant check briefly lived here
+   too (2026-08-08) and made a real order for a real customer unbookable before
+   the customer had chosen a seat height.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const GOOD = {
@@ -17,7 +23,7 @@ const GOOD = {
     {
       itemCode: 'Y103-(Q)',
       group: 'bedframe',
-      variants: { divanHeight: '5"', legHeight: '6"', gap: '2"', fabricCode: 'BO315-22' },
+      // spec facts are the PROCEED gate's business, not this gate's
     },
   ],
 };
@@ -48,7 +54,7 @@ describe('collectSoConfirmProblems', () => {
   it('a product-less line (the scan placeholder) blocks confirm, naming the line', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
-      lines: [...GOOD.lines, { itemCode: '', group: 'others', variants: null, lineNo: 2, description: '' }],
+      lines: [...GOOD.lines, { itemCode: '', group: 'others', lineNo: 2, description: '' }],
     });
     expect(codes(problems)).toContain('so_line_no_product');
     expect(problems.find((p) => p.code === 'so_line_no_product')?.message).toContain('Line 2');
@@ -57,7 +63,7 @@ describe('collectSoConfirmProblems', () => {
   it('a free-text line (blank code, text riding in description) blocks confirm and names the text', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
-      lines: [{ itemCode: ' ', group: 'others', variants: null, description: 'Square pillow Col: BO315-22' }],
+      lines: [{ itemCode: ' ', group: 'others', description: 'Square pillow Col: BO315-22' }],
     });
     expect(codes(problems)).toEqual(['so_line_no_product']);
     expect(problems[0]!.message).toContain('Square pillow Col: BO315-22');
@@ -66,52 +72,49 @@ describe('collectSoConfirmProblems', () => {
   it('a non-catalog code blocks confirm', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
-      lines: [{ itemCode: 'NOPE-1', group: 'others', variants: null }],
+      lines: [{ itemCode: 'NOPE-1', group: 'others' }],
       nonCatalogCodes: ['NOPE-1'],
     });
     expect(codes(problems)).toEqual(['so_line_not_catalog']);
     expect(problems[0]!.message).toContain('NOPE-1');
   });
 
-  it('a bedframe with no variant selections at all reports every required axis (HC-SO-2607-008)', () => {
+  /* ── THE BOUNDARY (owner 2026-08-13) ────────────────────────────────────
+     An order with NO Processing Date has not been proceeded, so nothing here
+     may ask whether it is buildable. These four are the shapes the 2026-08-08
+     gate refused; every one of them is a legitimate confirmed order. */
+  it('a bedframe with NO variant selections at all still confirms — not proceeded yet', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
-      lines: [{ itemCode: 'Y103-(Q)', group: 'bedframe', variants: null }],
-    });
-    expect(codes(problems)).toEqual([
-      'variants_incomplete', 'variants_incomplete', 'variants_incomplete', 'variants_incomplete',
-    ]);
-    expect(problems.map((p) => p.field)).toEqual(['Divan Height', 'Leg Height', 'Gap', 'Fabrics']);
-  });
-
-  it('colour-KIV satisfies the fabric axis (KIV blocks the Processing Date, never confirm)', () => {
-    const problems = collectSoConfirmProblems({
-      ...GOOD,
-      lines: [{
-        itemCode: 'SOFA-1',
-        group: 'sofa',
-        variants: { seatHeight: '28', fabricId: 'f-1', fabricLabel: 'EZ' },
-      }],
+      lines: [{ itemCode: 'Y103-(Q)', group: 'bedframe' }],
     });
     expect(problems).toEqual([]);
   });
 
-  it('the POS vocabulary satisfies the sofa axes (depth == seatHeight)', () => {
+  it('a sofa with no seat height and no fabric still confirms', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
-      lines: [{ itemCode: 'SOFA-1', group: 'sofa', variants: { depth: '28', fabricCode: 'EZ-01' } }],
+      lines: [{ itemCode: '9028-1A(LHF)', group: 'sofa' }],
     });
     expect(problems).toEqual([]);
   });
 
-  it('service / mattress / accessory / others lines carry no axes and pass', () => {
+  it('a colour-KIV sofa confirms (it blocks the Processing Date, never confirm)', () => {
+    const problems = collectSoConfirmProblems({
+      ...GOOD,
+      lines: [{ itemCode: 'SOFA-1', group: 'sofa' }],
+    });
+    expect(problems).toEqual([]);
+  });
+
+  it('service / mattress / accessory / others lines pass, as they always did', () => {
     const problems = collectSoConfirmProblems({
       ...GOOD,
       lines: [
-        { itemCode: 'SVC-DELIVERY', group: 'service', variants: null },
-        { itemCode: 'AKKA-FIRM', group: 'mattress', variants: null },
-        { itemCode: 'PILLOW-1', group: 'accessory', variants: null },
-        { itemCode: 'MISC-1', group: 'others', variants: null },
+        { itemCode: 'SVC-DELIVERY', group: 'service' },
+        { itemCode: 'AKKA-FIRM', group: 'mattress' },
+        { itemCode: 'PILLOW-1', group: 'accessory' },
+        { itemCode: 'MISC-1', group: 'others' },
       ],
     });
     expect(problems).toEqual([]);
@@ -124,14 +127,27 @@ describe('collectSoConfirmProblems', () => {
       venue: null,
       venueId: null,
       lines: [
-        { itemCode: '', group: 'others', variants: null },
-        { itemCode: 'Y103-(Q)', group: 'bedframe', variants: null },
+        { itemCode: '', group: 'others' },
+        // spec-incomplete, and deliberately NOT a problem here
+        { itemCode: 'Y103-(Q)', group: 'bedframe' },
       ],
     });
     expect(codes(problems)).toEqual([
       'salesperson_required', 'venue_required', 'so_line_no_product',
-      'variants_incomplete', 'variants_incomplete', 'variants_incomplete', 'variants_incomplete',
     ]);
+  });
+
+  it('no problem this gate can raise is ever about a variant', () => {
+    const problems = collectSoConfirmProblems({
+      salespersonId: null, agent: null, venue: null, venueId: null,
+      lines: [
+        { itemCode: '', group: 'bedframe' },
+        { itemCode: 'NOPE-1', group: 'sofa' },
+        { itemCode: 'Y103-(Q)', group: 'bedframe' },
+      ],
+      nonCatalogCodes: ['NOPE-1'],
+    });
+    expect(problems.some((p) => p.code === 'variants_incomplete')).toBe(false);
   });
 });
 
