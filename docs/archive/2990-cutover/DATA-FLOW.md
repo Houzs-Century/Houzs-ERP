@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-08-13.** The open question here (full replace vs one-way mirror vs both) was settled by the **2026-07-21** flip: Houzs owns the 2990 write path (`HOUZS_OWNS_2990="true"`) *and* the one-way mirror receivers stay mounted (`/api/sync/*-mirror` in `backend/src/index.ts`). Recorded in `docs/2990-cutover/HANDOFF.md`; the mirror's live design is `docs/2990-live-sync/00_DESIGN.md`. Kept for history; do not follow it as a current instruction.
+
 # 2990 ⇄ Houzs data flow — model + the open bidirectional question
 
 Owner described (2026-07-13, going to sleep): "POS data enters the OLD 2990
