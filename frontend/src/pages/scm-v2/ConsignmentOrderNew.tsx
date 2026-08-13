@@ -973,6 +973,14 @@ export const ConsignmentOrderNew = () => {
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
               inheritVariantsByCategory={inheritVariantsByCategory}
+              /* Mandatory ONLY once a Processing Date is set — which is exactly
+                 what THIS document's own server does: consignment-orders.ts:687
+                 runs findIncompleteVariantLines only `procDate ? ... : []`.
+                 Omitting this prop took SoLineCard's `= true` default, so the
+                 form demanded fabric/seat/leg on a dateless draft that the
+                 server would have accepted. Same conditional rule as
+                 SalesOrderNew; the CO is an ORDER, not a downstream document. */
+              variantsRequired={!!processingDate}
             />
           ))}
 

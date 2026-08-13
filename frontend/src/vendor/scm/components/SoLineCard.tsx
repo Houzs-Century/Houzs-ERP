@@ -172,7 +172,7 @@ const SoLineCardInner = ({
   docNo,
   itemId,
   isEditing = true,
-  variantsRequired = true,
+  variantsRequired,
   searchHint,
 }: {
   index:     number;
@@ -192,11 +192,28 @@ const SoLineCardInner = ({
   isEditing?: boolean;
   /* Whether the category-mandatory variants (fabric / seat / divan / leg / gap)
      are REQUIRED on this line — drives the ` *` marker + red invalid ring.
-     Matches the backend, which only enforces them once a Processing Date is set
-     (mfg-sales-orders variants gate). SO New / Detail pass !!processingDate.
-     DEFAULT true so Consignment + any other consumer is unchanged (owner
-     2026-07-14). */
-  variantsRequired?: boolean;
+
+     MANDATORY PROP, no default, deliberately. It used to default to `true` "so
+     Consignment + any other consumer is unchanged" (owner 2026-07-14), and that
+     default is what shipped the bug: nine of the eleven render sites never
+     passed it, so every consignment and downstream form demanded fabric / seat /
+     leg on a line its OWN SERVER would have accepted. A Consignment Order's
+     route runs the check only `procDate ? ... : []` (consignment-orders.ts:687),
+     and consignment notes / returns, delivery returns and sales invoices do not
+     run it at all — findIncompleteVariantLines appears zero times in those
+     files.
+
+     A silent default cannot be reviewed. Requiring the prop turns "someone
+     forgot" from a red ring the operator cannot get past into a compile error,
+     which is the only version of this that stays fixed.
+
+     THE RULE, so a new caller can decide in one read:
+       · an ORDER that carries a Processing Date  -> !!processingDate
+         (SO New/Detail, Consignment Order New/Detail — matches their servers)
+       · a DOWNSTREAM document built from one     -> false
+         (DO, consignment note/return, delivery return, sales invoice — the
+          variants ride in with the items and are not re-specified here) */
+  variantsRequired: boolean;
   /* Scan-Order (Task #73) — the OCR rawText for a NO-MATCH line, shown as the
      SKU picker's placeholder so the operator sees what was on the slip while
      they pick a real SKU. It is a HINT ONLY — never committed as the product

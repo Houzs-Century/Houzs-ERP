@@ -593,6 +593,11 @@ export const ConsignmentOrderDetail = () => {
                   docNo={header.doc_no}
                   itemId={it.id}
                   isEditing
+                  /* Conditional on the Processing Date, matching this document's
+                     own PATCH gate (consignment-orders.ts:1267 only collects
+                     offenders when internalExpectedDd is set). Was defaulting to
+                     true. */
+                  variantsRequired={!!header.internal_expected_dd}
                 />
               );
             })}
@@ -604,6 +609,8 @@ export const ConsignmentOrderDetail = () => {
                 onChange={patchAddingDraft}
                 onRemove={cancelAddLine}
                 canRemove
+                // Same rule as the saved lines above.
+                variantsRequired={!!header.internal_expected_dd}
               />
             )}
 
