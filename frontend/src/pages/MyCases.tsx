@@ -31,6 +31,7 @@ type MyCase = {
   status: string;
   priority: string;
   doc_no: string | null;
+  ref_no: string | null;
   customer_name: string | null;
   phone: string | null;
   complained_date: string | null;
@@ -107,9 +108,11 @@ export function MyCases() {
     return cases.filter((c) => {
       if (stageFilter !== "all" && c.stage !== stageFilter) return false;
       if (!term) return true;
-      // Covers the same fields the card surfaces: case no / SO / customer /
-      // issue text / item code / the matched sales-agent name.
-      return [c.assr_no, c.doc_no, c.customer_name, c.complaint_issue, c.item_code, c.sales_agent]
+      // Covers the same fields the card surfaces: case no / SO / Ref /
+      // customer / issue text / item code / the matched sales-agent name.
+      // Ref No included 2026-08-12 (Nico): reps identify a case by its
+      // ref (HC…/ZNT…/PG…) more often than by anything else.
+      return [c.assr_no, c.doc_no, c.ref_no, c.customer_name, c.complaint_issue, c.item_code, c.sales_agent]
         .some((f) => f && f.toLowerCase().includes(term));
     });
   }, [cases, q, stageFilter]);
@@ -221,6 +224,9 @@ export function MyCases() {
                     <StagePill stage={c.stage} />
                     {c.doc_no && (
                       <span className="font-mono text-[11px] text-ink-muted">SO {c.doc_no}</span>
+                    )}
+                    {c.ref_no && (
+                      <span className="font-mono text-[11px] text-ink-muted">Ref {c.ref_no}</span>
                     )}
                   </div>
                   {c.customer_name && (
