@@ -218,6 +218,46 @@ This repair reaches **509 of the 589** the code match could not.
 
 **Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
 (fix/po-dedication-and-dates).
+
+## The repository had no linter at all, and 514 `eslint-disable` comments addressed to one that was never there [high]
+
+**Symptom** — not a single incident; a whole family of them. Eleven entries in
+this file are defects a type-aware linter reports for free: a floating promise
+that leaked a timer and skipped a production frontend release, an `as never`
+that silenced a real type error, a condition that could never be false because
+the value was already non-nullable. Each was found by a person, after it shipped.
+
+**Root cause** — `git ls-tree origin/main | grep -cE "eslint\\.config|\\.eslintrc"`
+returned **0**. There was no ESLint configuration anywhere in the repo, in
+either app. Meanwhile `git grep -c eslint-disable` over `backend/src` and
+`frontend/src` returns **514 comments across 159 files** — written over months,
+addressed to a linter that has never run. They were pure decoration, and worse
+than nothing: they read as evidence that a check exists.
+
+**Fix** — type-aware ESLint 9 in both apps (`backend/eslint.config.mjs`,
+`frontend/eslint.config.mjs`), sharing one rule set in
+`scripts/eslint/houzs-lint-rules.mjs`, where every rule cites the BUG-HISTORY
+entry it answers. Wired to CI as `lint (backend)` and `lint (frontend)`.
+
+Every rule is `warn`, deliberately: the gate is `scripts/lint-ratchet.mjs`,
+which holds a PER-FILE CEILING that may only fall. The tree starts at
+`no-unnecessary-condition` 2,617 / `no-explicit-any` 989 /
+`no-floating-promises` 1 / `no-restricted-syntax` 166 in the backend and
+1,807 / 538 / 799 / 140 in the frontend, across 309 and 344 files. Failing the
+build on 7,046 pre-existing warnings on day one is how a lint layer gets
+deleted in week two; pinning them and refusing growth is how it survives. A
+file absent from the manifest has a ceiling of ZERO, so a NEW file is held to
+the clean standard immediately.
+
+**Proved, not assumed** — each rule was mutation-tested: the defect from its
+cited BUG-HISTORY entry was re-introduced and the rule had to fire on it.
+
+**Class** — *a rule that lives only in prose*, docs/bug-classes.md. The
+`eslint-disable` comments are the sharpest instance this repo has produced: 514
+suppressions of a check that did not exist.
+
+**Ref** - `eslint-layer`, PR #2137, 2026-08-14
+
 ## Three bugs in the AutoCount parity checkers, all in OUR queries, none in the data [medium]
 
 **Symptom** — both read-only checks crashed on 2026-08-10, and the section that
