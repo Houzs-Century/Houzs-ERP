@@ -385,11 +385,36 @@ writes `internal_expected_dd`.
 `meetsProceedGate` in `order-rules` is now the single rule behind ALL of it:
 setting `internal_expected_dd`, the create-time auto-stamp of `proceeded_at`, and
 both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH
-/:docNo` `proceededAt`). `proceeded_at` stays a separate COLUMN because it is a
-timestamp the system writes, not a date a user picks — what was unified is the
-RULE, not the storage. Net effect: the proceed paths LOOSENED by one condition
+/:docNo` `proceededAt`). Net effect: the proceed paths LOOSENED by one condition
 (email), the processing-date path TIGHTENED by four (name / address / postcode /
 delivery date), and the threshold became per-company.
+
+**And then the STORAGE too (owner 2026-08-13).** *"把 internal expected date、
+processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2079 moved
+519 company-1 orders out of `proceeded_at` into `internal_expected_dd`; both
+companies report zero split. `proceeded_at` is now stop-writing / stop-reading
+ahead of a drop, not a second fact.
+
+#### The surfaces that read this date by NAME, not by binding
+
+Everything below reads the Processing Date through a **string** — a select list,
+a `Record<string, unknown>` lookup, a stored jsonb key, an inbound mirror
+payload. They matter because they all fail the same way when the name moves: no
+error, no type failure, just a value that stops arriving. The one place the name
+lives is **`backend/src/scm/shared/so-processing-date.ts`**; these are bound to
+it, and the removal condition for each legacy alias is written there.
+
+| Surface | What a rename does to it | Bound? |
+|---|---|---|
+| `routes/so-mirror.ts` → `lib/mirror-map.applyMap` | 2990 is a SEPARATE repo on its own deploy schedule and keeps POSTing the old column. `applyMap` filters against the dest table's `information_schema` and DROPS an unknown key: no error, 200 returned, the date never arrives on any company-2 SO. | `aliasCols`, guarded on both sides (old name gone from dest AND new name present), so it is a no-op until the rename lands |
+| `lib/autocount-outbox.SO_HEADER_COLS` | A string select list. PostgREST answers a missing column with 42703 and fails the WHOLE query; `noteReadFailure` records a `skipped` outbox row and the operator's save succeeds regardless — quiet, not loud. | interpolated from the constant (one template literal + `as const`; supabase-js needs a literal type) |
+| `lib/autocount-outbox.soEditHeader` | Reads its header off a bare `Record`, so NOT type-checked. A stale literal reads `undefined` → `acUdfDate` null → the omit-when-absent rule fires → `UDF.PDate` is never sent and the AutoCount book keeps the old date. | keyed on the constant |
+| `services/autocount-writeback.AcSoHeader` / `composeCreateSo` | The header is passed `as never` at the call site, so only the field name inside the type is checking anything. | computed property key from the constant |
+| `scm.so_amendments.header_changes` (jsonb) | The heaviest one. Written at REQUEST time, read at APPROVE time — days later, across deploys. `applySoAmendment` `continue`s on a key the allow-list lacks, and `routes/so-amendments.ts` gates on the same literal. A pending amendment would approve cleanly, audit cleanly, skip the deposit gate, and write nothing. | `canonicaliseSoHeaderChanges` on both read sites |
+| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.node.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_centi, balance_centi_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
+| `frontend/src/vendor/scm/lib/so-field-policy.test.ts` | Parses the backend policy table out of the file by regex on **quoted literals**. Loud (row-for-row equality), but it constrains HOW a rename may be written: the policy rows must keep string literals, so do not replace them with a constant. | n/a — a constraint, not a fix |
+| `so_internal_expected_dd` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts` and `routes/delivery-orders-mfg.ts`, then read as a string by four frontends (`SalesInvoicesListV2`, `MfgDeliveryOrdersListV2`, and `MobileModuleList`'s `pick(r, "soInternalExpectedDd", "so_internal_expected_dd")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13 |
+| `SalesOrderDetailListing.tsx` `opt(r, 'internal_expected_dd')` | An untyped string accessor over the flattened header; a miss renders `—`. The grid `key` is already `processing_date` and is a SAVED LAYOUT key — do not rename that, users' stored layouts reference it. | not bound |
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 

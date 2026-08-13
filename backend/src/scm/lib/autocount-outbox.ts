@@ -25,12 +25,28 @@
 // A row whose parent is not resolved yet is left pending WITHOUT burning an
 // attempt. Sweeps drain oldest-first, so the parent's create is ahead of it in
 // the same batch and usually resolves on the very same sweep.
+//
+// A QUEUED PAYLOAD SPEAKS AUTOCOUNT, NOT ERP — checked 2026-08-13, because it
+// decides whether renaming an ERP column strands rows already in the queue.
+// `payload.body` is the composed AcSyncService document (DebtorName, DocDate,
+// UDF.{BRANDING,VENUE,ToPONo,PDate}, Details[]); the only ERP identifiers that
+// survive into it are `writeback` / `lineWriteback` / `fromDoc` / `selfDoc`,
+// which name a TABLE and `doc_no` or `id`. No ERP column name for a business
+// field is frozen in there, so an ERP column rename cannot strand a queued row
+// and no payload migration is needed. `mastersOf` reads the payload's UDF block
+// for BRANDING and VENUE only — PDate is a date, not a dropdown master.
+//
+// What a rename CAN break here is the compose side, and silently: SO_HEADER_COLS
+// is a string select list, `soEditHeader` reads its header out of a bare
+// Record, and `composeCreateSo` is handed `header as never`. All three are keyed
+// on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 import { splitSofaCode } from '../../services/autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
   callAcService,
   AGENT_MAP,
@@ -198,11 +214,18 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
-/* internal_expected_dd is the SO's "Processing date" — the ONE storage behind
-   that UI label since mig 0189 dropped the legacy processing_date column. It
-   leaves as the PDate UDF. */
+/* The Processing date is INTERPOLATED from the shared constant, not spelled out
+   here. This list is a STRING handed to PostgREST, so it is one of the surfaces
+   that reads a column by NAME: rename the column and leave the literal and this
+   whole select 42703s, which noteReadFailure records as a `skipped` outbox row
+   and nobody watching a save would ever see. Interpolating means the select
+   list, the AcSoHeader type and soEditHeader's read all move together —
+   see shared/so-processing-date.ts. */
+/* ONE template literal + `as const`: supabase-js parses this select list at the
+   TYPE level and needs a literal type. `'…' + \`${X}\`` widens to `string`,
+   which makes the row come back as GenericStringError. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, internal_expected_dd, linked_ac_docno';
+  `doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, ${SO_PROCESSING_DATE_COLUMN}, linked_ac_docno` as const;
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -1428,8 +1451,12 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
      in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
      this function — a cleared date sends nothing rather than blanking the
      account book's value, which is the conservative half of the pair and the
-     one that cannot destroy data. */
-  const pdate = acUdfDate(h.internal_expected_dd as string | null | undefined);
+     one that cannot destroy data.
+     `h` is a bare Record, so this read is NOT type-checked: a stale literal here
+     would read undefined, omit PDate under the very rule above, and stop the
+     Processing date reaching the account book with nothing logged. Keyed on the
+     shared constant so it moves with the column. */
+  const pdate = acUdfDate(h[SO_PROCESSING_DATE_COLUMN] as string | null | undefined);
   if (pdate) udf.PDate = pdate;
   if (Object.keys(udf).length) out.UDF = udf;
 

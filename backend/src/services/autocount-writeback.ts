@@ -33,6 +33,7 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -112,11 +113,20 @@ export interface ErpSoHeader {
   ref: string | null;
   po_doc_no: string | null;
   /** The SO's "Processing date" — the field with that label in the UI, and the
-   *  owner's 账目日期. Its storage is `internal_expected_dd` and there is only
-   *  ONE such field: mig 0189 dropped the legacy `processing_date` column
-   *  precisely because two columns for one label kept producing blank dates.
-   *  Do not reintroduce a second source for it. Goes out as the `PDate` UDF. */
-  internal_expected_dd?: string | null;
+   *  owner's 账目日期. There is only ONE such field: mig 0189 dropped the legacy
+   *  `processing_date` column precisely because two columns for one label kept
+   *  producing blank dates. Do not reintroduce a second source for it. Goes out
+   *  as the `PDate` UDF.
+   *
+   *  KEYED ON THE SHARED CONSTANT, not on a literal, and that is load-bearing:
+   *  the outbox reads this header out of a PostgREST select whose column list is
+   *  a STRING (autocount-outbox.SO_HEADER_COLS) and hands it around as a
+   *  `Record<string, unknown>` in places. Rename the column and leave a literal
+   *  here and the read is `undefined`, `acUdfDate` returns null, `if (pdate)`
+   *  is false, and the PDate UDF is simply never sent — a live order whose
+   *  Processing date silently stops reaching the account book. With the constant
+   *  the select list, the type and every read move together. */
+  [SO_PROCESSING_DATE_COLUMN]?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -535,7 +545,7 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
-      PDate: acUdfDate(header.internal_expected_dd),
+      PDate: acUdfDate(header[SO_PROCESSING_DATE_COLUMN]),
     }),
     Details: composeDetails(live(lines), {
       ...opts,

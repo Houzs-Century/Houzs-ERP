@@ -85,7 +85,18 @@ export type PlanningOrder = {
      with the amend dates above. */
   amend_reason: string | null;
   effective_delivery_date: string | null;
+  /* The SALES ORDER's Processing Date, and nothing else. NULL on every
+     synthetic row (`row_type` assr / dp / project): a service leg, a DP job and
+     a PMS project window are not sales orders and have no processing date — a
+     deposit gate, a supplier PO and an edit lock are what the date means, and
+     none of them exist on those rows. Their own date is `job_date` below.
+     Read by DeliveryFieldsDrawer's procLockActive, which the board only offers
+     on `so` rows. */
   internal_expected_dd: string | null;
+  /* The synthetic row's own leg date — the ASSR pickup/delivery/inspection
+     trigger, the DP order's requested date, the PMS SETUP/DISMANTLE window
+     start. NULL on `so` rows, which are orders rather than jobs. */
+  job_date: string | null;
   /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
      lines, so the SO is soft-locked with no processing date involved. Read by
      DeliveryFieldsDrawer's procLockActive call to route a replacement_disposal
