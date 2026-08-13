@@ -100,7 +100,14 @@ It currently returns `deletion`, `non_fast_forward`, and `required_status_checks
 with contexts `backend-typecheck` + `frontend` and
 **`strict_required_status_checks_policy: true`** — that last flag is *Require
 branches to be up to date before merging*, and it is the one that matters.
-Repository admin is on the bypass list as an emergency escape hatch.
+
+**There is NO emergency escape hatch.** This paragraph used to end "Repository
+admin is on the bypass list as an emergency escape hatch"; checked 2026-08-13,
+the ruleset returns `bypass_actors: null` and `current_user_can_bypass:
+"never"`. Nobody can force a merge, including the owner. That is fine while
+merges are one-at-a-time, and it is the thing to fix FIRST if a merge queue is
+ever switched on — a queue that jams with no bypass blocks `main` for everyone
+until someone edits the ruleset itself.
 
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
