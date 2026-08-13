@@ -3,8 +3,7 @@
 // NO React, no I/O. Desktop `SalesOrderNew` and mobile `MobileNewSO` both feed
 // their own state into these, so a guard can't exist on one surface and be
 // missing on the other (mobile was missing the past-date / processing>delivery
-// guards, and silently DROPPED a slip-less payment — a real money bug where a
-// cashier's payment never posted).
+// guards desktop had).
 //
 // Each guard returns the FIRST blocking error as `{ title, body? }` (both
 // surfaces short-circuit on the first failure) or null when the input passes.
@@ -110,32 +109,20 @@ export function soDateGuardError(i: SoDateGuardInput): SoFormError | null {
   return null;
 }
 
-export interface SoPaymentGuardRow {
-  /** Payment amount in sen/cents. */
-  amountCenti: number;
-  /**
-   * True when this amount-bearing row has proof attached — a freshly uploaded
-   * slip session OR (desktop) a scanned receipt whose R2 key IS the slip.
-   */
-  hasSlip: boolean;
-}
+/* NO SLIP GUARD LIVES HERE ANY MORE (Owner 2026-08-13) — "其实 SalesOrder
+   所有的付款都不强制 ... 如果是 manually 填写的话,基本上不需要强求." A payment
+   slip is OPTIONAL on every SO surface, so `soSliplessPaymentError` is gone
+   rather than kept as a guard that always passes.
 
-/**
- * Every amount-bearing payment must carry a slip before the SO is saved — the
- * POST /:docNo/payments route 400s a slip-less payment, and (the bug this
- * closes on mobile) silently dropping such a row loses the payment entirely.
- * Mirrors desktop `SalesOrderNew.onSave` Spec D4.
- */
-export function soSliplessPaymentError(rows: SoPaymentGuardRow[]): SoFormError | null {
-  const n = rows.filter((r) => r.amountCenti > 0 && !r.hasSlip).length;
-  if (n === 0) return null;
-  return {
-    title: "Each payment needs a slip uploaded before saving.",
-    body:
-      `${n} payment row${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} missing a slip — upload ` +
-      `${n === 1 ? "it" : "them"} (the "Slip *" button) and try again.`,
-  };
-}
+   What replaced it is NOT another guard: it is the requirement that every
+   amount-bearing row is actually POSTED. The rule this file used to enforce
+   only existed because both surfaces' post-create writers SKIPPED a slip-less
+   row, so refusing the save was the only thing standing between a cashier and
+   a payment that silently never booked. Both writers now post on AMOUNT alone
+   (`recordNewPayments` on mobile, `flushPaymentDrafts` on desktop), which is
+   what makes dropping the guard safe. `so-slip-optional-contract.test.ts`
+   pins that pairing on both surfaces — if a writer ever goes back to
+   filtering on the slip, that is the money bug returning, not a style change. */
 
 /**
  * The companies whose orders must resolve a stock location before they can be

@@ -21,8 +21,12 @@ export function SlipUploadField({
   onCleared,
   onImageScan,
 }: {
-  /** When true, the trigger label reads "Slip *" to signal the SAVED-mode
-   *  requirement. DRAFT-mode callers leave it false (slip optional). */
+  /** Renders the "*" marker on the trigger. NO CALLER SETS THIS ANY MORE and
+   *  none should: a payment slip is optional on every Sales-Order path (Owner
+   *  2026-08-13, after SAVED mode dropped the requirement on 2026-07-13). Kept
+   *  only because the marker is the honest way to say "required" if some other
+   *  document type ever mounts this field under a rule of its own — an
+   *  asterisk on an SO payment row is a bug, not a style choice. */
   required?: boolean;
   disabled?: boolean;
   onConfirmed: (uploadSessionId: string) => void;

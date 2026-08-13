@@ -55,7 +55,7 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -251,16 +251,17 @@ export function SalesOrderNewFromProducts() {
        runs, so a bad cart surfaces one plain sentence here instead of a raw
        server 400/409. A cart CAN mix categories, so hasSofaMixConflict is the
        real guard here (a sofa + bedframe/mattress cart 400s so_sofa_no_other_main
-       on the server). This flow collects no dates or payments (added on the SO
-       detail), so soDateGuardError / soSliplessPaymentError run on empty inputs
-       and pass — kept for single-logic-layer parity so a future date/payment
-       field is guarded automatically. Variant completeness
-       (missingRequiredVariants) only fires once a processing date is set (server
-       parity); none is set here, so it's enforced on the SO detail. */
+       on the server). This flow collects no dates (added on the SO detail), so
+       soDateGuardError runs on empty inputs and passes — kept for
+       single-logic-layer parity so a future date field is guarded
+       automatically. Payments are not guarded at all: the slip is optional
+       everywhere (owner 2026-08-13) and this flow collects no payment. Variant
+       completeness (missingRequiredVariants) only fires once a processing date
+       is set (server parity); none is set here, so it's enforced on the SO
+       detail. */
     const preErr =
       soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
-      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soSliplessPaymentError([]);
+      (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null);
     if (preErr) {
       setPostError(soErrorText(preErr));
       return;

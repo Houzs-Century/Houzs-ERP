@@ -659,6 +659,61 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
   for salespersons on both surfaces.
 
+### The payment slip is OPTIONAL on every SO path (owner ruling 2026-08-13, SURFACE CHANGE)
+
+> Owner, verbatim: *"其实 SalesOrder 所有的付款都不强制 … 如果我们用 OCR scan
+> 的话,它就可以直接进。那如果是 manually 填写的话,基本上不需要强求."*
+
+A slip is proof, not a precondition. SAVED mode dropped the requirement on
+2026-07-13; the NEW-SO (create) path kept it as "spec D4 — one slip per
+payment" until 2026-08-13. It is now gone from every surface.
+
+| where | before | now |
+|---|---|---|
+| `POST /:docNo/payments` (SAVED) | optional since 2026-07-13 | unchanged |
+| SO create `payments[]` zod | `uploadSessionId: z.string().min(1)` | `.min(1).optional().nullable()` — `''` still rejected, because an empty string is a client forgetting to omit the field |
+| SO create slip resolution | every row resolved or `400 slip_required` | rows that CLAIM a session resolve or 400; a row with none books `slip_key: null` |
+| desktop / mobile save guard | shared `soSliplessPaymentError` blocked the save | **the function is deleted**, not neutered |
+| `PaymentsTable` draft row | `<SlipUploadField required>` — red "Slip *" | `required={false}`; no callsite sets it any more |
+| mobile PayCard copy | per-row "Planned — …" + "Each payment needs a slip to be recorded" | "A slip is optional — attach one here, or add it later" |
+
+**The half that is NOT about the guard, and is the part that can lose money.**
+Both create surfaces used to POST only the payment rows that carried a slip, so
+the guard was the only thing standing between a cashier and a row that silently
+never booked (BUG-HISTORY: *"Mobile silently dropped a slip-less SO payment"*).
+Removing the guard alone would have re-created that bug on both surfaces. Both
+writers now filter on the AMOUNT and nothing else — `recordNewPayments`
+(mobile, renamed from `recordSlipBackedPayments`) and `flushPaymentDrafts` /
+`paymentIntents` (desktop). **A guard removal and a writer filter are one
+change; `so-slip-optional-contract.test.ts` fails if either half moves alone.**
+
+`pendingDepositCenti` moved with them on both surfaces. It is GATE-ONLY money
+(never booked) that tells the create what the client is about to post, and it
+used to be filtered on the slip session. Left alone, a slip-less deposit would
+count as RM0 against a Processing Date — the exact deadlock the field exists to
+close, with the money plainly on screen.
+
+**What a `slip_required` 400 still means.** Three sites remain and none of them
+says "a payment needs a slip": a *claimed* session that does not resolve
+(create, and `POST /:docNo/payments` inside `if (p.uploadSessionId)`), two
+payments claiming one session, and `POST /:docNo/payments/:id/slip`, where a
+slip **is** the request. Absent is fine; wrong is not — an id that resolves to
+nothing would book a payment whose proof points nowhere.
+
+Rule + schema: `backend/src/scm/lib/so-create-payment-slips.ts` (pure;
+`soCreatePaymentsSchema` + `planCreatePaymentSlips`, the route keeps the
+`pending_slip_uploads` read). Tests: `so-create-payment-slips.test.ts` (rule),
+`soCreateSlipOptionalWiring.test.ts` (the route is wired to it),
+`so-slip-optional-contract.test.ts` (both frontends).
+
+**The OCR path is untouched.** A Scan-Order receipt was never a per-payment
+slip session: it rides the create body as `receiptImageKey`, lands on the header
+as `receipt_image_key`, and becomes the single-deposit row's `slip_key`
+(`slipKey ?? receiptImageKey`). `paymentIntents()` still excludes the
+receipt-backed draft so it is not booked twice, and the seeded draft still
+carries the key. What changed for that path is only that it no longer needs to
+be an *exemption* from anything.
+
 ### Delivery fee — every ringgit is a line (owner ruling 2026-08-07)
 
 > Owner, verbatim intent: *"正常来说,全部都会有 SKU 的,不可能没有 SKU,一定要有
