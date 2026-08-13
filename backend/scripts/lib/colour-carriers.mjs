@@ -75,9 +75,20 @@ export const CARRIERS = [
   ...VKEY_TABLES.map(([t, c]) => ({ table: t, kind: 'vkey', col: c, live: true })),
   { table: 'scm.stock_take_lines', kind: 'text', col: 'variant_label', live: true },
 
-  // the masters
-  { table: 'scm.fabric_colours', kind: 'col', col: 'colour_id', live: true },
-  { table: 'scm.fabric_trackings', kind: 'col', col: 'fabric_code', live: true },
+  /* The masters, split by the supersede rule.
+     A merge here does NOT delete the losing row: it sets active = false and
+     writes what absorbed it into the label, so a historical document naming
+     the old code still resolves for display. That row is therefore HISTORY by
+     design — and counting it as live made `require_clean=1` impossible to
+     satisfy: the 2026-08-14 census of the six LAMB VELVET merges reported
+     `NOT CLEAN — 6 live rows`, one per tombstone the merge was supposed to
+     leave. A gate that can never pass is not a gate.
+     The ACTIVE half stays live and must still reach zero, which is what
+     proves the loser was actually superseded rather than left switched on. */
+  { table: 'scm.fabric_colours', kind: 'col', col: 'colour_id', live: true, activeOnly: true },
+  { table: 'scm.fabric_colours', kind: 'col', col: 'colour_id', live: false, supersededOnly: true, note: 'superseded catalogue rows — the tombstone the merge leaves on purpose' },
+  { table: 'scm.fabric_trackings', kind: 'col', col: 'fabric_code', live: true, activeOnly: true },
+  { table: 'scm.fabric_trackings', kind: 'col', col: 'fabric_code', live: false, supersededOnly: true, note: 'superseded converter rows' },
 
   // what a model is ALLOWED to offer, and what a SKU defaults to
   { table: 'scm.product_models', kind: 'jsonarr', col: "allowed_options->'fabrics'", live: true },

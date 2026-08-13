@@ -58,8 +58,19 @@ async function shape(table) {
 /** The column a carrier reads — 'variants' or "allowed_options->'fabrics'". */
 const baseCol = (c) => c.col.replace(/->.*$/, '').replace(/[^a-z_0-9].*$/i, '');
 
-async function countOne(carrier, code, hasCompany) {
-  const co = hasCompany ? `company_id = ${CO} AND ` : '';
+/** The supersede half of a master table. A merge sets active = false and
+ *  records the absorber in the label; that row is the audit trail, not a miss.
+ *  Split here rather than in the caller so the predicate travels with the
+ *  carrier and no future caller can forget it. */
+function activeClause(carrier, activeCol) {
+  if (!activeCol) return '';                    // resolved as unsplittable upstream
+  if (carrier.activeOnly) return `COALESCE(${activeCol}, true) = true AND `;
+  if (carrier.supersededOnly) return `COALESCE(${activeCol}, true) = false AND `;
+  return '';
+}
+
+async function countOne(carrier, code, hasCompany, activeCol = null) {
+  const co = (hasCompany ? `company_id = ${CO} AND ` : '') + activeClause(carrier, activeCol);
   const esc = likeEscape(code);
   let where;
   switch (carrier.kind) {
@@ -107,7 +118,15 @@ async function main() {
     if (!s) { skipped.push({ ...c, why: 'table does not exist' }); continue; }
     const col = baseCol(c);
     if (!s.has(col)) { skipped.push({ ...c, why: `no column ${col}` }); continue; }
-    usable.push({ ...c, hasCompany: s.has('company_id') });
+    /* The flag is spelled two ways in this schema. A carrier that asks to be
+       split and finds NEITHER is SKIPPED out loud: counting it unsplit would
+       report the same rows under both halves and read as clean. */
+    const activeCol = s.has('active') ? 'active' : (s.has('is_active') ? 'is_active' : null);
+    if ((c.activeOnly || c.supersededOnly) && !activeCol) {
+      skipped.push({ ...c, why: 'asks for an active/superseded split, but the table has no active or is_active column' });
+      continue;
+    }
+    usable.push({ ...c, hasCompany: s.has('company_id'), activeCol });
   }
 
   note(`\n=== CARRIERS ===`);
@@ -126,7 +145,7 @@ async function main() {
     const hits = [];
     for (const c of usable) {
       let n = 0;
-      try { [{ n }] = await countOne(c, code, c.hasCompany); }
+      try { [{ n }] = await countOne(c, code, c.hasCompany, c.activeCol); }
       catch (e) { bad(`${c.table}.${c.col}: ${e.message}`); continue; }
       if (n > 0) hits.push({ ...c, n });
       else if (VERBOSE) note(`    0  ${c.table}.${c.col}`);
