@@ -134,7 +134,9 @@ still need `edit` on `scm.sales.delivery`.
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
    **This is a DERIVED response field, and both ends read it as a string** —
-   mobile via `pick(r, "soInternalExpectedDd", "so_internal_expected_dd")`. If
+   mobile via `pick(r, "soProcessingDate", "so_processing_date")`
+   (`MobileModuleList.tsx:1147,1198`; corrected 2026-08-14 — this line named
+   `soInternalExpectedDd` / `so_internal_expected_dd`, retired by mig 0286). If
    the SO column is ever renamed, rename this response key on BOTH ends or
    neither: a backend-only rename blanks the "Processing" column with no error
    anywhere. See docs/modules/sales-order.md, "surfaces that read this date by
