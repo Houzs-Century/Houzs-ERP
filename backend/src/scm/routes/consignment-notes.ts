@@ -52,10 +52,18 @@ consignmentNotes.use('*', supabaseAuth);
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
 async function noteHasDownstream(sb: any, noteId: string): Promise<{ error: string; message: string } | null> {
-  const { count: crCount } = await sb.from('consignment_delivery_returns')
+  const { count: crCount, error: crErr } = await sb.from('consignment_delivery_returns')
     .select('id', { head: true, count: 'exact' })
     .eq('consignment_do_id', noteId)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `crCount ?? 0` read as "no Consignment Return", which is the
+     absence that authorises the line edit / CANCELLED transition this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (crErr) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Consignment Note has a Consignment Return, so it is locked for safety — try again (${crErr.message}).` };
+  }
   if ((crCount ?? 0) > 0) {
     return { error: 'note_has_downstream', message: 'Consignment Note has a Consignment Return — cancel it first to edit' };
   }
