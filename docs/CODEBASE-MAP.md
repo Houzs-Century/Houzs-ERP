@@ -393,6 +393,12 @@ re-check the cited file rather than trusting the line.
   sofa decomposition, and `Desc2` as the only place a specification lives); what the
   5-minute drain does automatically and the four cases that will **never** be automatic;
   and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
+  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
+  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
+  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
+  location, the salesperson). Also records what was ruled out, including two theories
+  that were stated and then refuted.
 - `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
   the public internet with **no key** on two routes, one of them ~52 MB of purchase
   history. OPEN, needs an owner action. Do not build on that relay.
