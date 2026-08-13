@@ -1,5 +1,15 @@
 # Module: Scan to Sales Order (OCR)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — a phone photo of a handwritten showroom slip becomes
 a DRAFT Sales Order, and the operator's corrections train the next scan. Same
 structure as [`sales-order.md`](./sales-order.md).

@@ -8,7 +8,15 @@ BUY side of the same doc-machinery (list hook → `/api/scm/<doc>` handler →
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **SO → PO → GRN → PI**. The PO is the only document in that
 chain that moves **no stock at all** (see §5).
@@ -154,7 +162,8 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
 | PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
-| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. |
+| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
+| POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Bulk-sets supplier and/or expected date across several POs. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well — worth knowing before calling it on a wide selection. |
 
 **There is no document-level DELETE.** `DELETE /:id` existed until 2026-08-11 and
 hard-purged a CANCELLED PO. It was removed under the owner's rule

@@ -1,5 +1,15 @@
 # Module: Sales Order (SCM)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — the data flow from the screen down to the database,
 plus the performance characteristics. First of the per-module set; the same
 structure applies to PO / DO / SI / GRN (they are near-identical clones).
@@ -669,7 +679,7 @@ Flow:
    downline, or all for directors / `scm.so.view_all`). Feeds the main query's `.in()`.
 2. **Main query** — reads the VIEW `mfg_sales_orders_with_payment_totals` (so the
    Balance column is live = total − Σpayments), `order by so_date desc limit 500`.
-   ⚠️ **VIEW-TRAP** (`docs/scm-view-trap-coe.md`): the view's column set is frozen at
+   ⚠️ **VIEW-TRAP** (`backend/docs/scm-view-trap-coe.md`): the view's column set is frozen at
    CREATE VIEW; a base-table column added to `HEADER` that the view lacks 500s the
    whole page. Post-view columns (delivery_state, amended_delivery_date) are read
    separately off the base table.

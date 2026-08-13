@@ -1,5 +1,15 @@
 # Module: Delivery / TMS
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — the delivery board (Pending Delivery / Pending
 Schedule / Overdue / Delivered), the region model, and Driver / Helper / Lorry
 assignment. Third of the per-module set (see `docs/modules/sales-order.md` for

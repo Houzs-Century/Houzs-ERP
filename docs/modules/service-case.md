@@ -1,5 +1,15 @@
 # Module: Service Case (ASSR)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — after-sales service cases from intake to close:
 the screen, the pipeline, the API, the tables, and who is allowed to do what.
 Second of the per-module set (see `docs/modules/sales-order.md` for the shape).
@@ -168,7 +178,7 @@ is the ones that matter; the full machine-checked gate list is
 | PATCH | `/api/assr/:id` | `requirePermission("service_cases.write")` `:1657` | Field edits, whitelisted by `PATCH_FIELDS` |
 | POST | `/api/assr/:id/transition` | `service_cases.write` `:2570` | Move stage (any-to-any; fires the survey email on `completed`) |
 | POST | `/api/assr/:id/mark-opened` | `service_cases.write` `:1744` | Mig 106 auto-advance `pending_review` → `under_verification` on first open |
-| POST | `/api/assr/:id/approve` | `service_cases.approve` `:2523` | Cost approval |
+| POST | `/api/assr/:id/approve` | `service_cases.approve` | Cost approval. **The key was UNDECLARED until 2026-08-13** — the route had always checked it, but it was missing from `services/permissions.ts`, so it never reached `PERMISSION_KEYS`, could not be granted in the roles matrix, and only `*` holders passed. Cost approval was accidentally Owner/IT-only. Now declared; who can approve today is unchanged, but the gate is grantable. |
 | POST | `/api/assr/:id/generate-po` | `service_cases.manage` `:2470` | Mint the service PO number |
 | GET | `/api/assr/summary` | `service_cases.read` `:584` | KPI tiles (backlog, aging, SLA breach, by stage/status/location/category) |
 | GET | `/api/assr/metrics`, `/metrics/drill` | `service_cases.read` `:2064`, `:2320` | Reporting |

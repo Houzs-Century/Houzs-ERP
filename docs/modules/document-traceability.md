@@ -1,5 +1,15 @@
 # Module: Cross-document traceability display (SCM)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Read-time, DISPLAY-ONLY surfacing of "which Sales-side documents did this
 purchase document's items end up assigned to", on the expandable rows of the
 Purchase Order / GRN / Purchase Invoice lists. No DB writes, no snapshot, no

@@ -8,7 +8,15 @@ it carries more inventory machinery than the other three siblings combined.
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **PO → GRN → PI**, with **GRN → PR** (Purchase Return) as the
 send-back branch. The route file's own one-liner: *"PO → GRN → Purchase Invoice.

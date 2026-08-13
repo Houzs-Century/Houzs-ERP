@@ -6,7 +6,15 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 
 > Convention: money in **sen**, dates UTC. Reads/writes via `/api/scm/*`.
 >
-> Line references are against `feat/warehouse-type-unify`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 ---
 
@@ -15,7 +23,7 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/Warehouses.tsx` | DataGrid, per-column filter + sort. Type column + label at `:22-33`. |
-| Shared edit drawer | `frontend/src/vendor/scm/components/WarehouseFormDrawer.tsx` | Type dropdown replaces the old "Mark as Showroom" checkbox (mig 0171). |
+| Shared edit drawer | `frontend/src/vendor/scm/components/WarehouseFormDrawer.tsx` | Type dropdown replaces the old "Mark as Showroom" checkbox (mig 0177). |
 | Master admin (inline) | `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` | Legacy inline table — also uses `useCreateWarehouse` / `useUpdateWarehouse`. |
 | Query hook | `frontend/src/vendor/scm/lib/inventory-queries.ts` | `useWarehouses({ includeInactive })`, staleTime 5 min. `Warehouse` + `WarehouseType`. |
 
@@ -37,7 +45,7 @@ these migrations:
 | `0148_venue_binding.sql` | `is_showroom bool NOT NULL DEFAULT false` + `venue_name text`. |
 | `0177_scm_warehouse_type_and_unify.sql` | `scm.warehouse_type` enum + `type` column (NOT NULL); 2990 renames; cross-company copies for warehouse + service types. |
 
-### Type enum (mig 0171)
+### Type enum (mig 0177)
 
 `scm.warehouse_type` has FIVE values:
 
