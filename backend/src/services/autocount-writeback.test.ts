@@ -18,6 +18,7 @@ import {
   mapOrPassthrough,
   callAcService,
   acServiceConfig,
+  acUdfDate,
   AC_DEBTOR_CODE,
   AGENT_MAP,
   LOCATION_MAP,
@@ -95,6 +96,49 @@ describe('composeCreateSo', () => {
   test('a blank UDF is dropped, not sent as an empty option', () => {
     const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()], opts);
     expect(p.UDF).toEqual({});
+  });
+
+  /* Owner 2026-08-12: the SO's Processing date (账目日期) must reach AutoCount.
+     Its storage is internal_expected_dd — mig 0189 dropped the legacy
+     processing_date column so that this label has exactly one source. */
+  test('the Processing date goes out as the PDate UDF', () => {
+    const p = composeCreateSo({ ...header, internal_expected_dd: '2026-09-01' }, [line()], opts);
+    expect(p.UDF.PDate).toBe('2026-09-01');
+  });
+
+  test('a Processing date that arrives as a timestamp is trimmed to the date', () => {
+    const p = composeCreateSo({ ...header, internal_expected_dd: '2026-09-01T00:00:00' }, [line()], opts);
+    expect(p.UDF.PDate).toBe('2026-09-01');
+  });
+
+  test('no Processing date sends no PDate at all', () => {
+    expect(composeCreateSo(header, [line()], opts).UDF.PDate).toBeUndefined();
+    expect(composeCreateSo({ ...header, internal_expected_dd: null }, [line()], opts).UDF.PDate)
+      .toBeUndefined();
+  });
+});
+
+describe('acUdfDate — what may be handed to a date UDF', () => {
+  test('passes a plain date through and trims a timestamp to it', () => {
+    expect(acUdfDate('2026-09-01')).toBe('2026-09-01');
+    expect(acUdfDate('2026-09-01T13:45:00Z')).toBe('2026-09-01');
+    expect(acUdfDate('2026-09-01 13:45:00')).toBe('2026-09-01');
+  });
+
+  test('empties are nothing to send', () => {
+    expect(acUdfDate(null)).toBeNull();
+    expect(acUdfDate(undefined)).toBeNull();
+    expect(acUdfDate('')).toBeNull();
+  });
+
+  /* NOT passed through, deliberately. AcSyncService writes every UDF inside its
+     exception-swallowing Set(), so a value AutoCount rejects fails invisibly —
+     no error, no failed outbox row, a date that silently never updates. Only
+     what is unambiguously a date is worth sending. */
+  test('anything that is not a date is dropped rather than passed through', () => {
+    expect(acUdfDate('01/09/2026')).toBeNull();
+    expect(acUdfDate('next Tuesday')).toBeNull();
+    expect(acUdfDate('2026-9-1')).toBeNull();
   });
 });
 
