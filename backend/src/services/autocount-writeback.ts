@@ -668,7 +668,26 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
+    if (dtlKey == null) return d;
+    /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
+     * Location runs under, applied to the item itself. Owner 2026-08-13: an
+     * edit to an order that came in through the API changes its Description 2,
+     * never its SKU.
+     *
+     * The ERP's answer for these codes is a POLICY, not a reading of the book.
+     * A sales order does not know the brand, so four sofa models resolve to one
+     * canonical item — right for a new order, wrong for the 194 real lines the
+     * book already holds under the two brand items the cutover collapsed. An
+     * edit that sent the canonical code would move every one of them, silently,
+     * in a licensed ledger.
+     *
+     * Swapping the product on a line still propagates, because that is a DELETE
+     * plus an ADD: the removed row arrives in `retired` and is zeroed, and the
+     * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
+     * an in-place item change on a line the book owns is dropped, and the ERP
+     * has no such operation. */
+    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a

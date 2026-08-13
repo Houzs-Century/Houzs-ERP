@@ -11,10 +11,12 @@ name: AutoCount write-back — re-queue a refused document (DRY-RUN gated)
 # real enqueue against the real document and records the write instead of
 # performing it, so it can only disagree with APPLY about whether the row lands.
 #
-# Access path: PostgREST (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, schema
-# `scm`), NOT the pg DATABASE_URL — that is what the enqueue speaks. Those are
-# Worker secrets; they must also exist as GitHub Actions secrets, as they already
-# do for "Recompute 2990 SO stock allocation".
+# Access path: DATABASE_URL through lib/pgrest-shim.mjs — the enqueue needs a
+# PostgREST-SHAPED client, not PostgREST credentials. Copy
+# recompute-so-allocation.yml. Do NOT copy recompute-2990-so-allocation.yml:
+# it is three characters away by name and wired to two secrets that do not
+# exist in this repo, at repo level or in any of its three environments. The
+# first dispatch of this workflow failed on exactly that.
 #
 # Read the result with "AutoCount write-back queue — health (read-only)": a
 # re-queued document is a pending row there, and its old skip is annotated
@@ -63,8 +65,7 @@ jobs:
       # and the composer is never re-implemented in a script.
       - run: npx tsx scripts/requeue-autocount-skipped.mjs
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DOC_NO: ${{ inputs.doc_no }}
           DOC_TYPE: ${{ inputs.doc_type }}
           APPLY: ${{ inputs.apply }}

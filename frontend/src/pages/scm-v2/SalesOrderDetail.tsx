@@ -764,6 +764,25 @@ export const SalesOrderDetail = () => {
     setIsEditing(false);
   };
 
+  /* Leaving edit mode has to leave the EDIT ROUTE too, not just flip a flag.
+     SalesOrderDetailV2 is a thin router that renders THIS component whenever
+     `?edit=1` is on the URL, so `setIsEditing(false)` alone left the operator
+     on this legacy ledger — a visibly different page from the V2 detail they
+     pressed Edit on, at the same address, with no way back to it except the
+     browser's own Back (owner 2026-08-10: "按 Cancel 出來不一樣的頁面").
+     Dropping the param hands them back to SalesOrderDetailV2ReadOnly.
+
+     `replace` because the editor URL is a mode, not a place: V2's goEdit
+     PUSHED `?edit=1` onto the history, so replacing it here collapses the pair
+     instead of stacking a second detail entry that Back would have to walk
+     through twice.
+
+     NOT called on the amendment path — a submitted amendment deliberately
+     stays on this page to show its raised-amendment notice. */
+  const returnToDetail = () => {
+    if (docNo) navigate(`/scm/sales-orders/${docNo}`, { replace: true });
+  };
+
   const enterEdit  = () => { setSaveError(null); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
@@ -771,6 +790,7 @@ export const SalesOrderDetail = () => {
     // The seed/clear effect wipes editingDrafts + addingDraft when isEditing
     // flips to false, discarding any uncommitted line edits.
     endEditSession();
+    returnToDetail();
   };
 
   /* Whole-order Save — persists the order in one shot:
@@ -926,6 +946,9 @@ export const SalesOrderDetail = () => {
       .then(() => {
         setSavingOrder(false);
         endEditSession();
+        // Same exit as Cancel — a completed Save is done with the edit route.
+        // (The amendment path below deliberately stays put.)
+        returnToDetail();
       })
       .catch((e) => {
         setSavingOrder(false);
