@@ -2030,10 +2030,6 @@ type CustomerEntry = {
 const customerSoDateOf = (o: { created_at: string | null; so_date: string | null }): string =>
   o.created_at ?? o.so_date ?? '';
 
-mfgSalesOrders.post('/:docNo/force-unlock', async (c) => {
-  return c.json({ ok: true, docNo: c.req.param('docNo') });
-});
-
 mfgSalesOrders.get('/customers', async (c) => {
   const sb = c.get('supabase');
   /* Same row-level visibility scope as the SO list: allowed salesperson ids
