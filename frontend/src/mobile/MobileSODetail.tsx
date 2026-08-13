@@ -156,6 +156,10 @@ type SoHeader = {
      open_amendment is the light summary of any in-flight amendment (status NOT IN
      SENT/REJECTED). Same flags the desktop SalesOrderDetail routes on. */
   amendment_eligible: boolean | null;
+  /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
+     only). Feeds soProcLockActive (line ~390), so the phone freezes the same
+     fields the desktop does with no processing date involved. */
+  po_locked: boolean | null;
   has_open_amendment: boolean | null;
   open_amendment: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Scan-flow proof photos (migrations 0033 + 0034) — R2 keys for the

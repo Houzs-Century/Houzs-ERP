@@ -1,0 +1,86 @@
+name: merge-duplicate-fabric-colours
+
+# Merge the duplicate COLOURS that sit inside one series — 68 of them on prod:
+#   M2402-08 = M2402-8-YELLOW, GARFIELD-01 = GARFIELD-1-SOFT LINEN, and so on.
+# One physical colour, two rows: the old format kept the colour NAME inside the
+# code, the 2026-08-11 normalisation introduced the tidy SERIES-NN.
+#
+# Repoints through the FULL carrier list, not the four arms the previous passes
+# knew: 15 line tables across the whole alias chain, the stored description2
+# every PDF prints, the 8 variant_key stock tables, the model's colour
+# whitelist, and the cost row. A census on live data showed BO315-2-FEATHER
+# sitting in inventory_movements and inventory_lots as well as SO and PO — a
+# four-arm merge moves the documents and strands the stock.
+#
+# REFUSES rather than guesses when the two colour NAMES disagree, when the cost
+# tiers disagree, or when neither code is the canonical shape. The last script
+# that guessed was wrong 38 times.
+#
+# mode=plan writes nothing. mode=apply runs ONE TRANSACTION PER PAIR, so a bad
+# pair cannot abort the rest, and verifies on a fresh connection. Nothing is
+# deleted — the losing row is superseded and its label records what absorbed it.
+#
+# AFTER APPLY: run census-fabric-colour with require_clean=1 over the merged
+# codes. This script proves the 15 line arms; the census proves all 51 carriers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      pairs:
+        description: "comma-separated LOSING colour_id(s) to restrict to (blank = all)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-duplicate-fabric-colours
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Merge duplicate colours (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          PAIRS: ${{ inputs.pairs }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and a half-finished run reports success
+        run: |
+          set -o pipefail
+          node scripts/merge-duplicate-fabric-colours.mjs | tee colour-merge.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-duplicate-fabric-colours-${{ inputs.mode }}
+          path: backend/colour-merge.txt
+          retention-days: 90

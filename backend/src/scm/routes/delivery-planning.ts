@@ -69,6 +69,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { soProcessingLocked } from './mfg-sales-orders';
+import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -855,6 +856,15 @@ deliveryPlanning.get('/', async (c) => {
   /* multi-company: id → code map (HOUZS / 2990 / …) so each shared-queue row can
      carry a readable company_code label. Built once. */
   const codeMap = companyCodeMap(c);
+  /* PO lock per row (owner 2026-08-12, 2990 only) — the drawer decides
+     client-side whether a replacement_disposal change saves directly or routes
+     into an amendment, and it decides from the row. Without this fact on the row
+     the drawer would attempt the direct write, collect the guard's 409, and
+     strand the operator with a change they were told to request and no way to
+     request it. ONE batched chain for the whole board (see soPoLockedMany), not
+     a per-row query; Houzs doc numbers are filtered out inside it, so a
+     Houzs-only board costs nothing. */
+  const poLockedDocs = await soPoLockedMany(sb, docNos);
   const orders = soRows.map((r) => {
     const docNo = String(r.doc_no ?? '');
     /* Branding — derived 1:1 with the SO list (never the empty header field).
@@ -974,6 +984,8 @@ deliveryPlanning.get('/', async (c) => {
       // EFFECTIVE date (amended ?? original) — what the countdown actually uses.
       effective_delivery_date: effectiveDD,
       internal_expected_dd: internalDD,
+      /* Feeds procLockActive in the drawer alongside internal_expected_dd. */
+      po_locked: poLockedDocs.has(docNo),
       days_left: daysBetween(today, effectiveDD),
       // address (HC delivery-sheet columns)
       address: [r.address1, r.address2].filter(Boolean).join(', ') || null,
@@ -1155,6 +1167,10 @@ deliveryPlanning.get('/', async (c) => {
           amend_reason: null,
           effective_delivery_date: leg.date,
           internal_expected_dd: leg.date,
+          /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
+             number, and it carries no replacement_disposal for the drawer to
+             lock. Always false; a Set lookup on a row key would be meaningless. */
+          po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
           postcode: null,
@@ -1315,6 +1331,9 @@ deliveryPlanning.get('/', async (c) => {
         amend_reason: null,
         effective_delivery_date: date,
         internal_expected_dd: date,
+        /* Synthetic DP job row — so_doc_no is `DP:<id>`, not a real SO doc
+           number, and it carries no replacement_disposal for the drawer to lock. */
+        po_locked: false,
         days_left: date ? daysBetween(today, date) : null,
         address,
         postcode: (d.postcode as string | null) ?? null,
@@ -1449,6 +1468,10 @@ deliveryPlanning.get('/', async (c) => {
           amend_reason: null,
           effective_delivery_date: leg.date,
           internal_expected_dd: leg.date,
+          /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
+             number, and it carries no replacement_disposal for the drawer to
+             lock. Always false; a Set lookup on a row key would be meaningless. */
+          po_locked: false,
           days_left: daysBetween(today, leg.date),
           address,
           postcode: null,
@@ -2056,7 +2079,19 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     const current = (before.data as { replacement_disposal?: string | null } | null)?.replacement_disposal ?? null;
     const requested = (soUpdates['replacement_disposal'] ?? null) as string | null;
     const genuineChange = String(current ?? '') !== String(requested ?? '');
-    if (genuineChange && soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+    /* Owner 2026-08-12 — the PO lock (2990 only) is the same soft lock reached
+       by the other road, so the board write must respect it identically or the
+       drawer's amendment routing has a hole exactly where a supplier is already
+       building. ONE 409 body for both: from this board the operator's next
+       action is the same either way ("raise it as an amendment, Logistics
+       approves"), and the error CODE is what the SCM client maps to a curated
+       sentence — a second code here would need its own entry to avoid surfacing
+       raw. */
+    const dpLocked = genuineChange && (
+      soProcessingLocked(lockRow as { internal_expected_dd?: string | null; proceeded_at?: string | null; status?: string | null } | null)
+      || await soPoLocked(sb, soDocNo)
+    );
+    if (dpLocked) {
       return c.json({
         error: 'so_locked_processing',
         reason: 'Replacement / disposal is locked on this order — request the change as an amendment instead (it goes to Logistics for approval in SO Amendments).',

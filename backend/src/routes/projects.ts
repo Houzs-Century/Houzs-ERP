@@ -999,6 +999,9 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingSalesAttending = false;
   let pendingAgreement = false;
   let pendingDefectReview = false;
+  // true = this reviewer takes every OTHER state (Shukor); false = only the
+  // region states (Nancy). See DEFECT_REVIEW_REGION_STATES.
+  let pendingDefectReviewExclude = false;
   if (c.req.query("my_pending") === "1" && user) {
     // Owner 2026-07-13 — staged "My Pending". Approvers (anyone holding a
     // checklist approval permission, or `*`) see ONLY the items awaiting
@@ -1066,15 +1069,22 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       if (kbList.length) approverBrands = kbList;
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
     else if (r === "logistic") pendingLogistic = true; // setup not arranged
-    else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
-      // Shukor (owner 2026-08-07): the Storekeeper Supervisor is the defect
-      // clean-or-replace reviewer. A fresh defect upload (no Done/Replace yet)
-      // lands here; he clicks Done (cleaned) or Replace (escalate to purchaser).
-      // Keyed on POSITION, not role — his role is the shared "Storekeeper", so
-      // the driver/helper/storekeeper arm below would otherwise cage him to his
-      // own crewed events. This lane is deliberately NOT crew-scoped: he reviews
-      // defects across every event (see assigned_user_id below).
+    else if (r === "ops exec") {
+      // Nancy (owner 2026-08-11): the Ops Exec reviews defects for the region
+      // warehouse states (Penang/Kelantan/Terengganu/Perak) BEFORE they reach
+      // the purchaser. Keyed on her UNIQUE role — her position "Operation
+      // Executive" is shared with the purchasers Sim/Farra. Scoped to the region
+      // states only (exclude = false).
       pendingDefectReview = true;
+    } else if ((user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor") {
+      // Shukor (owner 2026-08-07; region split 2026-08-11): the Storekeeper
+      // Supervisor triages fresh defects for every state OUTSIDE Nancy's region
+      // (the second warehouse). Keyed on POSITION, not role — his role is the
+      // shared "Storekeeper", so the driver/helper/storekeeper arm below would
+      // otherwise cage him to his own crewed events. NOT crew-scoped (see
+      // assigned_user_id below).
+      pendingDefectReview = true;
+      pendingDefectReviewExclude = true;
     } else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
     else if (r.includes("sales")) {
       // Sales PIC: their SALES-PIC-badged tasks + the Sales Attending assignment.
@@ -1094,6 +1104,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     pending_sales_attending: pendingSalesAttending || undefined,
     pending_agreement: pendingAgreement || undefined,
     pending_defect_review: pendingDefectReview || undefined,
+    pending_defect_review_states: pendingDefectReview ? DEFECT_REVIEW_REGION_STATES : undefined,
+    pending_defect_review_exclude: pendingDefectReviewExclude || undefined,
     stage: c.req.query("stage"),
     // Date-derived event phase for the field/sales slim bar (owner 2026-07-21).
     // Only "setup" | "dismantle" are honoured; anything else is ignored.
@@ -3701,6 +3713,12 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
 // position names are owner-editable free text; see the pmsAccess note).
 // Drivers intentionally stay unscoped (owner kept them see-all).
 const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper", "storekeeper supervisor"]);
+// Two-warehouse defect-review split (owner 2026-08-11). Projects in these
+// (canonical, Title-Case) states go to Nancy (Ops Exec) for clean-or-replace;
+// every other state goes to Shukor (Storekeeper Supervisor). Both escalate a
+// Replace to the purchaser (Sim / Farra). "Penang" canonicalises to "Pulau
+// Pinang" (mig 0175), so match that spelling.
+const DEFECT_REVIEW_REGION_STATES = ["Pulau Pinang", "Kelantan", "Terengganu", "Perak"];
 function isCrewScopedUser(user: { position_name?: string | null; permissions?: string[]; permissions_set?: Set<string> | string[] } | null | undefined): boolean {
   if (!user) return false;
   const granted = (user as any).permissions_set ?? user.permissions;
@@ -4259,13 +4277,16 @@ app.post(
     const position = (user?.position_name ?? "").trim().toLowerCase();
     const isAdmin =
       hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
-    // Shukor (owner 2026-08-07) is the Storekeeper Supervisor; he triages every
-    // fresh defect. The purchaser (Sim / Farra) and BD only close escalations.
-    const isReviewer = position === "storekeeper supervisor";
+    // Defect reviewers triage a fresh defect (Done = cleaned, Replace =
+    // escalate). Two warehouses (owner 2026-08-11): Shukor the Storekeeper
+    // Supervisor + Nancy the Ops Exec (region states). The purchaser (Sim /
+    // Farra) and BD only close escalations. State routing governs My Pending
+    // visibility; either reviewer may act, the frontend shows the right one.
+    const isReviewer = position === "storekeeper supervisor" || role === "ops exec";
     const isPurchaser = role.includes("purchaser") || role.includes("bd");
     if (!isAdmin && !isReviewer && !isPurchaser) {
       return c.json(
-        { error: "Only the storekeeper supervisor, purchaser or BD can log defect actions" },
+        { error: "Only a defect reviewer, purchaser or BD can log defect actions" },
         403
       );
     }
@@ -4278,7 +4299,7 @@ app.post(
     // purchaser / BD close a replace with Done, they do not re-escalate.
     if (status === "replace" && !isReviewer && !isAdmin) {
       return c.json(
-        { error: "Only the storekeeper supervisor can mark a defect for replacement" },
+        { error: "Only a defect reviewer can mark a defect for replacement" },
         403
       );
     }
