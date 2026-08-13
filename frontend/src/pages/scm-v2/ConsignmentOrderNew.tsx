@@ -513,7 +513,7 @@ export const ConsignmentOrderNew = () => {
         emergencyContactName:         emergencyName  || undefined,
         emergencyContactRelationship: emergencyRel   || undefined,
         emergencyContactPhone:        emergencyPhone || undefined,
-        internalExpectedDd:   processingDate || undefined,
+        processingDate:       processingDate || undefined,
         customerDeliveryDate: deliveryDate   || undefined,
         note: note || undefined,
         items: validLines.map((l) => ({

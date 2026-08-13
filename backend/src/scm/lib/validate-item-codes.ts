@@ -39,12 +39,20 @@ export type ValidateResult =
  * exists ONLY in the other company — and the now-scoped pricing read then finds
  * nothing for it, prices the line at 0 and rejects the order as pricing_drift.
  * A clean "that item code isn't in this company's catalogue" beats a drift
- * number nobody can act on. null/undefined degrades to no predicate.
+ * number nobody can act on.
+ *
+ * companyId is a REQUIRED positional argument even though `null` still
+ * degrades to no predicate — the SAME reason scopeToCompanyId states in
+ * lib/companyScope.ts: a caller must not be able to get "every company" by
+ * saying nothing. This is a REFUSAL gate, so an omitted scope does not fail
+ * loudly, it silently admits the other company's SKU. Pass activeCompanyId(c)
+ * on a request path; pass an explicit `null` only where the caller genuinely
+ * has no company (pre-migration / a test), which now reads as a decision.
  */
 export async function validateItemCodes(
   sb: any,
   codes: Array<string | null | undefined>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
   opts?: { requireActive?: boolean },
 ): Promise<ValidateResult> {
   const unique = [...new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean))];

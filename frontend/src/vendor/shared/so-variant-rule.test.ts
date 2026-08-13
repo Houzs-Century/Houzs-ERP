@@ -12,34 +12,34 @@ const labels = (axes: Array<{ label: string }>) => axes.map((a) => a.label);
 
 describe('missingConfirmVariantAxes', () => {
   it('a bedframe with nothing picked reports every required axis (the HC-SO-2607-008 shape)', () => {
-    expect(labels(missingConfirmVariantAxes('bedframe', null)))
+    expect(labels(missingConfirmVariantAxes('bedframe', null, null)))
       .toEqual(['Divan Height', 'Leg Height', 'Gap', 'Fabrics']);
   });
 
   it('a complete bedframe passes', () => {
     expect(missingConfirmVariantAxes('bedframe', {
       divanHeight: '5"', legHeight: '6"', gap: '2"', fabricCode: 'BO315-22',
-    })).toEqual([]);
+    }, null)).toEqual([]);
   });
 
   it('colour-KIV satisfies the fabric axis at confirm — but NOT for the Processing Date', () => {
     const kiv = { seatHeight: '28', fabricId: 'f-1', fabricLabel: 'EZ' };
-    expect(missingConfirmVariantAxes('sofa', kiv)).toEqual([]);
-    expect(labels(missingVariantAxes('sofa', kiv))).toEqual(['Fabrics']);
+    expect(missingConfirmVariantAxes('sofa', kiv, null)).toEqual([]);
+    expect(labels(missingVariantAxes('sofa', kiv, null))).toEqual(['Fabrics']);
   });
 
   it('KIV only excuses the fabric axis — other gaps still report', () => {
-    expect(labels(missingConfirmVariantAxes('sofa', { fabricId: 'f-1', fabricLabel: 'EZ' })))
+    expect(labels(missingConfirmVariantAxes('sofa', { fabricId: 'f-1', fabricLabel: 'EZ' }, null)))
       .toEqual(['Seat Height']);
   });
 
   it('the POS vocabulary satisfies the sofa axes (depth == seatHeight)', () => {
-    expect(missingConfirmVariantAxes('sofa', { depth: '28', fabricCode: 'EZ-01' })).toEqual([]);
+    expect(missingConfirmVariantAxes('sofa', { depth: '28', fabricCode: 'EZ-01' }, null)).toEqual([]);
   });
 
   it('categories with no axes (mattress / accessory / service / others) always pass', () => {
     for (const g of ['mattress', 'accessory', 'service', 'others', '', null]) {
-      expect(missingConfirmVariantAxes(g, null)).toEqual([]);
+      expect(missingConfirmVariantAxes(g, null, null)).toEqual([]);
     }
   });
 });

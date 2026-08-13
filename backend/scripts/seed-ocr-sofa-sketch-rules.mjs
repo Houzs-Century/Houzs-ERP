@@ -17,6 +17,8 @@
 // regenerates, so a weekly cron cannot wipe it.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent. ON CONFLICT (salesperson) DO UPDATE re-writes the same rules, overwriting anything a person has tuned since.
 import postgres from "postgres";
 
 const DST = process.env.DATABASE_URL;

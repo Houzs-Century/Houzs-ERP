@@ -24,8 +24,11 @@
 // DRY-RUN" to commit. Default is DRY-RUN: it prints every row it WOULD delete,
 // grouped by PO, inside a transaction it then ROLLs BACK. Read-only until both
 // gates are set.
+//
+// RE-RUN: inert. The allocations it deletes are gone; the rest are re-tested for being dead on every run.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const CONFIRM = (process.env.CONFIRM || "").trim();
@@ -73,7 +76,7 @@ async function planRows() {
      ORDER BY po.po_number, a.seq`;
 }
 
-const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT", "SHIPPED"]);
+const SO_DONE = new Set(SO_TERMINAL_STATES);
 const liveTarget = (r) => r.so_item_id && !r.so_cancelled && !SO_DONE.has(r.so_status);
 
 async function main() {

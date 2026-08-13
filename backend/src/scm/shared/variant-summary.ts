@@ -107,7 +107,7 @@ export function foldRedundantSpecials(list: string[]): string[] {
  *
  * A KIV line may SAVE freely — KIV is a legitimate sale-time state. What it
  * must NOT do is enter production: the Processing-Date gate
- * (so-save-problems `fabric_colour_kiv`) blocks setting internal_expected_dd
+ * (so-save-problems `fabric_colour_kiv`) blocks setting processing_date
  * while any non-cancelled line is still KIV (owner rule 2026-07-24 after
  * SO-2607-016 reached production planning with two KIV sofa lines and the
  * factory could not proceed).
