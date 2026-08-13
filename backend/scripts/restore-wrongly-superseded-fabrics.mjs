@@ -29,7 +29,9 @@
    "[merged into X on ...]".
 
    MODE=plan (default) prints and writes nothing.
-   MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
+   MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN".
+
+   RE-RUN: inert. A revived row is active and its label no longer carries the supersede note, so it is not found again. */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
 

@@ -72,6 +72,19 @@ it in either direction.
 | `seed-scm-reference-data.sql` (164 KB) | reference/seed rows | manual |
 | *(views)* | **nothing — see gap #1** | `apply-scm-views.mjs`, reading a sibling repo |
 
+### These files are a PRE-MIGRATION baseline, not the live schema
+
+They are replayed to rebuild the shape the migration tree then evolves, so they
+deliberately still carry retired names. The one that catches people: the Sales
+Order's Processing Date is `scm.mfg_sales_orders.processing_date` on any live
+database, but `2990s-full-schema.sql` (and `consignment/0153_consignment_module.sql`
+for the consignment twin) still say `internal_expected_dd`, because that is the
+name the column had when the snapshot was taken. `migrations-pg/0284` renames it,
+and a fresh build runs the snapshot FIRST and 0284 after, so the end state is
+correct. Do not "fix" the snapshot — that would make 0284 a no-op on a fresh
+build while the consignment table kept its dead legacy `processing_date`, and the
+two databases would diverge on the exact column this whole saga is about.
+
 ## Taking the snapshot
 
 `.github/workflows/dump-scm-schema.yml` — manual, read-only, defaults to staging.

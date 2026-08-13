@@ -418,6 +418,15 @@ rule deliberately — the downstream lock, `backend/src/scm/lib/downstream-lock.
 ("已经转到下游的单据, AutoCount 不许取消/改动"). Good: the two systems refuse the same
 things for the same reasons.
 
+**Corrected 2026-08-13.** That statement was true of the intent and not quite true of
+the code: the lock's child counts dropped their PostgREST `error`, so a read that
+FAILED folded to "nothing downstream" and the cancel went through — the exact
+divergence ("一边取消一边没取消") this section is about, arriving through the guard
+rather than through the push. Fixed in `sweep/swallowed-error`: an unreadable count
+now refuses with `downstream_check_failed`. The four route-local clones of the same
+guard (PC Order, CO, PC Receive, Consignment Note) carried it too and are fixed with
+it.
+
 **The failure case the owner named — "一边取消一边没取消".** Today, with the wiring
 merged and enabled, an ERP cancel whose push fails would retry six times
 (`MAX_ATTEMPTS = 6`, `autocount-outbox.ts:46`), then set `status = 'failed'` and emit

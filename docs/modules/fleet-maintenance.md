@@ -46,9 +46,28 @@ and (PUSPAKOM) PASS/FAIL result + reinspection deadline. `lorry_id` FK →
 `scm.lorries(id)` ON DELETE CASCADE. **Append-only**: renewing INSERTs a new row;
 the current document per `(lorry, doc_type)` is the latest-expiring row.
 
-**Company scope matches `scm.lorry_service_records`**, NOT a hard scope: the
-fleet is unified across companies (`scm.lorries` has no `company_id`), so
-`company_id` here is stamped on insert but never used to scope reads.
+**Company scope — CORRECTED 2026-08-13 (unscoped-write sweep).** The previous
+text here read: *"Company scope matches `scm.lorry_service_records`, NOT a hard
+scope: the fleet is unified across companies (`scm.lorries` has no `company_id`),
+so `company_id` here is stamped on insert but never used to scope reads."* Two of
+those claims were wrong and one is now out of date:
+
+- `scm.lorries` **does** carry `company_id` — migration `0083` adds it `NOT NULL`
+  with a Houzs backfill wherever the relation is a TABLE (it is skipped only where
+  `lorries` exists as a VIEW; that guard is why the column looked absent).
+- The lorry MASTER is still deliberately unified — a vehicle is one vehicle, and
+  every fleet read lists the whole fleet. That part stands.
+- This module's OWN tables (the vault, its attachments, maintenance plans,
+  mileage readings, breakdown cases, work orders + parts, components + events,
+  workshops) are **per-company**: every insert stamps `activeCompanyId(c)`, and
+  since the 2026-08-13 sweep **every write and every by-id read that gates a
+  write is scoped with `scopeToCompany`**. The SCM supabase client is
+  service-role, so RLS re-checks nothing; that predicate is the isolation.
+
+KNOWN GAP, not yet closed: the LIST/DETAIL reads (`GET /dashboard`,
+`GET /vehicles/:id`, `GET /reminders`) are still unscoped, so a both-company user
+can be shown a work order they can no longer edit (the write 404s). Closing the
+reads is a separate pass — see the unscoped-write sweep PR.
 
 **Denormalization sync.** For ROAD_TAX / INSURANCE / PUSPAKOM the append route
 updates the matching flat column on `scm.lorries` to the latest vault expiry, so
@@ -107,8 +126,11 @@ breakdown cases) are not supplied yet (§6).
   ROAD_TAX/INSURANCE/PUSPAKOM; the append route keeps the flat columns in sync.
   Do not write the flat columns directly for these types outside that route, or
   the cache and the vault will disagree.
-- **Unified fleet.** `scm.lorries` and the vault are NOT company-scoped on read
-  (a lorry's compliance is visible wherever the lorry is).
+- **Unified fleet MASTER, per-company RECORDS.** `scm.lorries` is deliberately
+  not company-scoped (a lorry is one lorry). The vault and every other table in
+  this module ARE per-company: reads are still unscoped (known gap, §3), but as
+  of 2026-08-13 every WRITE carries `scopeToCompany`. Do not "simplify" a write
+  by dropping that predicate — it is the only isolation there is.
 
 ## 6. Status seams (Phase 3 now feeds them)
 

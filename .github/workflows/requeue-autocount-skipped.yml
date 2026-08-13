@@ -1,0 +1,74 @@
+name: AutoCount write-back — re-queue a refused document (DRY-RUN gated)
+
+# A document the write-back REFUSED is written to scm.autocount_outbox as a
+# `skipped` row and stays there forever: no route re-attempts a CREATE for a
+# document that already exists, and an edit of a document with no
+# linked_ac_docno does nothing. So fixing the cause — setting the stock location,
+# adding the supplier binding that disambiguates an item code — does not bring
+# the order back. This asks again.
+#
+# DRY RUN unless apply=1, and the dry run is not a prediction: it executes the
+# real enqueue against the real document and records the write instead of
+# performing it, so it can only disagree with APPLY about whether the row lands.
+#
+# Access path: DATABASE_URL through lib/pgrest-shim.mjs — the enqueue needs a
+# PostgREST-SHAPED client, not PostgREST credentials. Copy
+# recompute-so-allocation.yml. Do NOT copy recompute-2990-so-allocation.yml:
+# it is three characters away by name and wired to two secrets that do not
+# exist in this repo, at repo level or in any of its three environments. The
+# first dispatch of this workflow failed on exactly that.
+#
+# Read the result with "AutoCount write-back queue — health (read-only)": a
+# re-queued document is a pending row there, and its old skip is annotated
+# `[re-queued ...]` so it stops reading as backlog.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: "One ERP document number (HC-SO-2608-002). Empty = every skipped row in scope"
+        required: false
+        default: ""
+        type: string
+      doc_type:
+        description: "Scope when no doc_no is given. Only SO and PO have an AutoCount create"
+        required: false
+        default: "ALL"
+        type: choice
+        options: [ALL, SO, PO]
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+# Its own group. A recovery run must never queue behind — or displace — a deploy.
+concurrency:
+  group: requeue-autocount-skipped
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the REAL enqueueSoCreate / enqueuePoCreate are imported from src
+      # and the composer is never re-implemented in a script.
+      - run: npx tsx scripts/requeue-autocount-skipped.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOC_NO: ${{ inputs.doc_no }}
+          DOC_TYPE: ${{ inputs.doc_type }}
+          APPLY: ${{ inputs.apply }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

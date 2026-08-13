@@ -755,10 +755,10 @@ sofaCombos.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
-  const { error } = await supabase
+  const { error } = await scopeToCompany(supabase
     .from('sofa_combo_pricing')
     .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id);
+    .eq('id', id), c);
 
   if (error) {
     if (error.code === '42501' || /permission denied/i.test(error.message)) {

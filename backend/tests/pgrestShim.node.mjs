@@ -73,3 +73,32 @@ test("an unimplemented method still gaps loudly rather than guessing", async () 
     /pgrest-shim GAP/,
   );
 });
+
+test("neq emits <> with the value as a parameter", async () => {
+  // requeueSkipped's own probe: has this document been queued again since?
+  //   .from('autocount_outbox').select('id').eq('doc_no', x).neq('status', 'skipped')
+  const sql = fakeSql([{ id: "row-1" }]);
+  const sb = pgrestShim(sql);
+  const { data, error } = await sb.from("autocount_outbox").select("id")
+    .eq("doc_no", "HC-SO-1").neq("status", "skipped");
+  assert.equal(error, null);
+  assert.deepEqual(data, [{ id: "row-1" }]);
+  const call = lastCall(sql);
+  assert.match(call.text, /"doc_no" = \$1/);
+  assert.match(call.text, /"status" <> \$2/);
+  assert.deepEqual(call.params, ["HC-SO-1", "skipped"]);
+});
+
+test("neq(col, null) is a loud gap, not a silent match-nothing", async () => {
+  // `<> NULL` is NULL for every row, so translating it literally would return
+  // an empty set and look like a legitimate answer. PostgREST spells the intent
+  // as not(col,'is',null); the shim says so rather than guessing.
+  const sql = fakeSql([]);
+  const sb = pgrestShim(sql);
+  assert.throws(
+    () => sb.from("autocount_outbox").select("id").neq("linked_ac_docno", null),
+    (e) => /GAP/.test(e.message) && /not\('linked_ac_docno', 'is', null\)/.test(e.message),
+  );
+  // and nothing was sent
+  assert.equal(sql.calls.length, 0);
+});
