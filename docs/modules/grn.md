@@ -36,7 +36,20 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
-| Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert (`:74`, `:60-61`). |
+| Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
+
+**The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
+`+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
+no auth of its own — so withholding `onNew` is the only thing that keeps the wizard
+away from a caller who may not write. `MobileApp.tsx` gated the DO and SI convert
+targets and then fell through to a literal `: true`, which covered this one: a
+`view`-level holder of `scm.procurement.grn` was offered the `+`, filled in the whole wizard, and
+met the area guard's 403 at the end of it. The gate is now
+`canOperateGoodsReceipts(can, pageAccess)` (`frontend/src/auth/salesAccess.ts`), which mirrors
+`scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
+`*` always passing. The target chain has no default arm, so a new ConvertTarget
+that forgets its gate will not typecheck.
+
 
 Desktop routes: `frontend/src/App.tsx:542-545`, behind
 `<ScmGuard area="scm.procurement.grn">`.

@@ -202,11 +202,34 @@ the phrase map was NOT vendored into the runtime bundles.
 
 ### Deleting an SO — DRAFT only, and the test-order escape hatch
 
-`DELETE /:docNo` (`mfg-sales-orders.ts:5555`) hard-deletes a **DRAFT and nothing
-else** — `409 so_not_draft` on anything CONFIRMED or later. That is deliberate: a
-confirmed order is CANCELLED, a reversible audited status change that also books
-any deposit as customer credit, and cancel is FINAL (`:5396` — no un-cancel,
-because the credit has no claw-back).
+`DELETE /:docNo` hard-deletes a **DRAFT and nothing else** — `409 so_not_draft`
+on anything CONFIRMED or later. That is deliberate: a confirmed order is
+CANCELLED, a reversible audited status change that also books any deposit as
+customer credit, and cancel is FINAL (no un-cancel, because the credit has no
+claw-back).
+
+**Three locks, not one (2026-08-14).** The first two live in
+`backend/src/scm/lib/so-lifecycle-guards.ts` (`soDiscardBlocked`), next to the
+status-transition table they depend on. `status === 'DRAFT'` is a claim about a
+COLUMN, not about the document chain, and the handler used to treat the two as
+the same thing. They are not, because ON_HOLD used to let a row walk backwards
+into DRAFT (below). So the route also asks:
+
+| lock | refusal | why |
+|---|---|---|
+| `soHasDownstream(sb, docNo)` | `409` (the lock's own payload) | The same lock CANCELLED consults. `delivery_orders.so_doc_no` / `sales_invoices.so_doc_no` are `ON DELETE SET NULL`, so a delete leaves a real DO and a real invoice pointing at nothing. |
+| a row in `mfg_sales_order_payments` | `409 so_has_payments` | The cascade takes the payment ledger with it and the DO/SI that could have explained it are gone too. A real draft CAN carry a POS deposit, so this is a refusal with an instruction — void the payments, or cancel instead of discarding. Fails CLOSED: an unreadable ledger is not an empty one. |
+| `version` CAS + edit lease | `428` / `409` | Unchanged. |
+
+**ON_HOLD is not a route back to DRAFT (2026-08-14).**
+`soStatusTransitionError` (`scm/lib/so-lifecycle-guards.ts`) treats ON_HOLD as unranked so an order can be paused
+from anywhere and resumed to wherever the operator needs — but that was written
+as an unconditional pass on BOTH edges, which made `DELIVERED > ON_HOLD > DRAFT`
+legal in two ordinary PATCHes even though `DELIVERED > DRAFT` is refused on rank.
+`ON_HOLD > DRAFT` now returns `409 illegal_status_transition`. Every other resume
+target is unchanged: nothing legitimately resumes into "not yet written", and an
+order that must go back to the beginning is cancelled and re-raised, which leaves
+a document behind.
 
 Which leaves the POS smoke-test problem: a real handover on 2990 POS mints a real
 `doc_no`, a real payment and real PWP vouchers. To purge one, use

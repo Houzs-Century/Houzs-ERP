@@ -301,11 +301,32 @@ transition. The resolved value is **snapshotted** onto
 (`transitionStage` `:650-706`), so amending a profile later does not rewrite
 history.
 
-**Escalation** — `runSlaEscalation` (`backend/src/services/assrEscalation.ts:17-27`)
+**Escalation** — `runSlaEscalation` (`backend/src/services/assrEscalation.ts`)
 stamps `escalated_at` on open cases more than 24 h past `deadline_at`, logs to
 `assr_activity`, and emails the assignee plus `service_cases.manage` holders.
-Runs from the daily cron (`backend/src/index.ts:459`) and manually via
+Runs from the daily cron (`backend/src/index.ts`) and manually via
 `POST /api/assr/run-escalation`.
+
+**"Open" means neither terminal stage, and not archived (2026-08-14).** There
+are TWO terminal stages — `completed` and `voided`. Both stamp `closed_at`, both
+render as "Closed". Every open / backlog / aging / SLA-breach predicate used to
+be a hand-written `stage != 'completed'`, roughly thirty copies naming one of the
+two, so a VOIDED case stayed in the backlog, kept aging, kept breaching, and was
+picked up by this cron — which mailed the assignee and every manager about a case
+somebody had closed precisely so it would stop demanding attention. Archived
+cases were never excluded either.
+
+The predicate now has one home: `assrOpenStageSql(alias)` in
+`backend/src/services/assrStages.ts`, used by the escalation candidates, the
+three `is_breached` CASE arms in `services/assr.ts`, and every count and list
+filter in `routes/assr.ts`. Two rules go with it:
+
+- The **closed** side (`stage = 'completed'`) is deliberately NOT collapsed into
+  it. That drives the resolved counts and the average-resolution-time figures,
+  and a voided case was not resolved. "Not open" and "resolved" are different
+  questions.
+- The `stage IS NULL` arm is load-bearing. `stage NOT IN (…)` is NULL for a
+  legacy row, which is not TRUE, so those rows would silently leave every count.
 
 ### Transition (`services/assr.ts:650-706`)
 
@@ -424,6 +445,25 @@ Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 (`assrCompanySql` `:109`, `assrCompanyIds` `:115`), every creator stamps
 `assrCreateCompanyId` (`:124`), and an SO-attached case inherits the SO's own
 company (`createAssrCase`).
+
+**The PRINT route applies both halves too (2026-08-14).**
+`GET /api/assr-print/:id` (`routes/assr_print.ts`) emits the same case content as
+the JSON detail route, as a letterheaded document. It had the company check and
+nothing else, so a visibility-scoped salesperson could render ANY case in their
+own company by walking the id — and get MORE out of it than the JSON route would
+give them, because the office variant printed `creditor_name` in full. Both rules
+now live in `backend/src/services/assrVisibility.ts` — `services/` cannot import
+from `routes/`, so that is the only direction in which both surfaces can share
+them — and are called by both:
+
+| exported from `services/assrVisibility.ts` | answers |
+|---|---|
+| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all (self + downline + the legacy `sales_agent` reach)? `true` for an unrestricted caller. |
+| `assrCallerIsScoped(c)` | is this caller visibility-restricted, i.e. must not see supplier identity? |
+| `stripCreditorFields(row)` | removes the creditor columns, both naming conventions. |
+
+If you add a third surface that renders a case, it calls these. A rule enforced
+on one of two routes that emit the same content is not enforced.
 
 ### Frontend gates
 

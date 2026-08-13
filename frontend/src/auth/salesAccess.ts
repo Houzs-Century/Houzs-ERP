@@ -234,6 +234,47 @@ export function canOperateSalesInvoices(
 }
 
 /**
+ * PROCUREMENT OPERATE gate — "may this user CREATE or CHANGE a PO / GRN".
+ *
+ * Same job as {@link canOperateScmSalesDoc} for the two supply-chain areas, and
+ * split out because the RULE half differs: the Sales-JD write denial keys off
+ * `SALES_JD[area] === "view"` (backend `services/salesJdAccess.ts`), which names
+ * only `scm.sales.delivery` and `scm.sales.invoices`. Procurement is not a
+ * document Sales views-but-cannot-write; it is one they are not granted at all,
+ * so the page_access matrix is the whole answer and adding an `isSalesStaff`
+ * term here would invent a second, divergent rule.
+ *
+ * The backend term this mirrors is `scm/middleware/area-guard`: `edit` on the
+ * area for POST/PATCH/PUT/DELETE. `MobileConvertWizard` POSTs `/grns` and
+ * `/mfg-purchase-orders/from-sos`, so a `view`-level holder offered the "+"
+ * walks into a 403 after filling in the whole wizard.
+ */
+function canOperateScmProcurement(
+  can: (perm: string) => boolean,
+  pageAccess: (page: string) => AccessLevel,
+  area: "scm.procurement.po" | "scm.procurement.grn",
+): boolean {
+  if (can("*")) return true;
+  return ACCESS_RANK[pageAccess(area)] >= ACCESS_RANK.edit;
+}
+
+/** May this user raise or change a PURCHASE ORDER (incl. SO→PO convert)? */
+export function canOperatePurchaseOrders(
+  can: (perm: string) => boolean,
+  pageAccess: (page: string) => AccessLevel,
+): boolean {
+  return canOperateScmProcurement(can, pageAccess, "scm.procurement.po");
+}
+
+/** May this user raise or change a GOODS RECEIPT (incl. PO→GRN convert)? */
+export function canOperateGoodsReceipts(
+  can: (perm: string) => boolean,
+  pageAccess: (page: string) => AccessLevel,
+): boolean {
+  return canOperateScmProcurement(can, pageAccess, "scm.procurement.grn");
+}
+
+/**
  * SCM COSTING gate — "may this user see cost/margin on a SUPPLY-CHAIN surface".
  *
  * Owner 2026-07-17: "margin 給2990開啊 houzs的也是啊 是看什麽position 的" — the
