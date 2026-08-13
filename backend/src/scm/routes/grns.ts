@@ -933,6 +933,19 @@ async function grnReverseWouldGoNegative(
   // Sum the qty we'd reverse OUT per (product_code, variant_key) bucket.
   const needByBucket = new Map<string, { product_code: string; variant_key: string; need: number }>();
   for (const l of lines) {
+    /* SERVICE lines never entered inventory, so they cannot be reversed out of
+       it. The POST path skips them (:511) and this guard did not, which made a
+       landed-cost GRN IMPOSSIBLE TO CANCEL: a freight line (qty 1, RM4,500)
+       produced no IN, so inventory_balances holds no row for it, onHand 0 < need
+       1, and the cancel returned 409 grn_consumed_downstream — "already consumed
+       downstream — make a Purchase Return instead" — naming a cause that does
+       not exist. The same guard also blocked the warehouse relocate (:2671) and
+       the freight line's own deletion (:3356).
+
+       Worse if the balance read had ever errored: `return null` lets the cancel
+       through, and the movement build below (which had the same gap) would then
+       write an OUT for a non-stock SKU — a permanent negative on-hand. */
+    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.material_code })) continue;
     const qty = Number(l.qty_accepted ?? 0);
     if (qty <= 0) continue;
     const variant_key = computeVariantKey(l.item_group, l.variants ?? null);
@@ -2549,6 +2562,11 @@ grns.patch('/:id/cancel', async (c) => {
          Manual lines (no PO link) stay un-batched → plain FIFO, as before. */
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
       const movements = lineList
+        /* Mirrors the POST filter at :511. Without it the cancel wrote an OUT
+           for a freight line that never had an IN — stock that was never
+           received being removed, i.e. a permanent negative on-hand for a
+           non-stock SKU. */
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .map((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
@@ -2671,7 +2689,35 @@ grns.patch('/:id', async (c) => {
       const consumedLock = await grnReverseWouldGoNegative(sb, oldWh, lineList);
       if (consumedLock) return c.json(consumedLock, 409);
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
+
+      /* THE ORIGINAL LANDED COST, read back from this GRN's own IN movements.
+         The IN below used to be priced `toMyrSen(unit_price_centi, rate)` — the
+         BASE cost — while the receipt had opened its lots at the LANDED cost
+         (base + allocated freight, :524). So relocating a warehouse consumed at
+         landed and re-opened at base, and the capitalised freight left inventory
+         value permanently. On a container GRN that is the whole freight bill.
+
+         Re-reading the movement is better than recomputing the allocation: it is
+         the basis those units actually entered at, it needs no access to
+         postGrnAndRollup's local allocByItemId, and it stays correct if the
+         allocation rule ever changes. Same approach as the stock-take reversal.
+
+         Was masked until now: a GRN carrying a freight line could not be
+         relocated at all, because the guard above counted that line as stock.
+         Fixing that guard is what makes this reachable. */
+      const { data: priorIns } = await sb.from('inventory_movements')
+        .select('product_code, variant_key, unit_cost_sen')
+        .eq('source_doc_type', 'GRN')
+        .eq('source_doc_id', id)
+        .eq('movement_type', 'IN');
+      const landedByBucket = new Map<string, number>();
+      for (const m of ((priorIns ?? []) as Array<{ product_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
+        const cost = Number(m.unit_cost_sen ?? 0);
+        if (cost > 0) landedByBucket.set(`${m.product_code}::${m.variant_key ?? ''}`, cost);
+      }
+
       const movements = lineList
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
@@ -2683,7 +2729,16 @@ grns.patch('/:id', async (c) => {
           };
           return [
             { ...base, movement_type: 'OUT' as const, warehouse_id: oldWh, notes: 'GRN warehouse changed — out of old warehouse' },
-            { ...base, movement_type: 'IN' as const, warehouse_id: newWh, unit_cost_sen: toMyrSen(Number(it.unit_price_centi ?? 0), c0?.exchange_rate ?? 1), notes: 'GRN warehouse changed — into new warehouse' },
+            {
+              ...base,
+              movement_type: 'IN' as const,
+              warehouse_id: newWh,
+              // Landed cost from the original IN; base only when there is no
+              // prior movement to read (a pre-0154 GRN, or a zero-cost line).
+              unit_cost_sen: landedByBucket.get(`${it.material_code}::${variant_key}`)
+                ?? toMyrSen(Number(it.unit_price_centi ?? 0), c0?.exchange_rate ?? 1),
+              notes: 'GRN warehouse changed — into new warehouse',
+            },
           ];
         });
       if (movements.length > 0) {
