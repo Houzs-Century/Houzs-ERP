@@ -39,12 +39,24 @@
 > guard an `/edit` of those documents is REFUSED. Safe, and blocked. For PO that is
 > most of the file. Re-run the workflow before quoting these; they move with the data.
 >
-> **What has NOT changed, and is the thing to hold on to:** the DB toggle
-> `scm.app_config` -> `scm.autocount_writeback` is still `off`, and
-> `scm.autocount_outbox` still holds **zero rows of any status** — verified
-> 2026-08-12 by running `.github/workflows/autocount-outbox-health.yml`, which
-> reported `QUEUE EMPTY`. **No ERP document has ever reached AutoCount.** Anyone
-> asking "is it synced yet" should run that workflow rather than read a document.
+> **Is the write-back live?** That is a question about the database, so it has no
+> durable answer in a document. Run
+> `.github/workflows/autocount-outbox-health.yml`; it reads the
+> `scm.app_config -> scm.autocount_writeback` flag itself and prints the queue by
+> status, with the reason and remedy for each `skipped` row.
+>
+> **CORRECTED 2026-08-14.** This paragraph used to read: *"the DB toggle … is
+> still `off`, and `scm.autocount_outbox` still holds zero rows of any status —
+> verified 2026-08-12 … **No ERP document has ever reached AutoCount.**"* All
+> three sentences were falsified the next day. BUG-HISTORY's 2026-08-13 entry
+> (top of file, "Fixing the cause of a refused write-back did not bring the
+> document back") records `HC-SO-2608-001` (`ItemCodeError`) and `HC-SO-2608-002`
+> (`MissingLocationError`) sitting in `scm.autocount_outbox` as `skipped`. A row
+> cannot exist with the flag off — `backend/src/scm/lib/autocount-outbox.ts:192`
+> gates every enqueue on `isWritebackEnabled`. The lesson is the one this
+> document already stated two lines above and then broke itself: *"Re-run the
+> workflow before quoting these; they move with the data."* A doc may name the
+> tool that answers a live-data question. It may not cache the answer.
 
 **Assessment date: 2026-08-11.** Scope: the owner's go-live blocker #1 —
 
