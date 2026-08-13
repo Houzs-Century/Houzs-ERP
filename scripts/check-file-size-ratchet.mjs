@@ -126,3 +126,22 @@ test('a violation in a file the change does not touch is reported, not charged',
   assert.deepEqual(inherited.map((x) => x.path), ['a/untouched.ts']);
   assert.equal(inherited[0].over, 109, 'the inherited violation still carries its numbers — silence would let the tree drift');
 });
+
+test('a touched file already over its ceiling passes if this change SHRANK it', () => {
+  /* 2026-08-14, PR #2127: grns.ts was 3,591 on main (109 over its ceiling) and
+     3,586 on the branch — the branch had moved it in the only direction the
+     ratchet asks for, and was failed for it. The subject is GROWTH. */
+  const measured = [{ path: 'a/big.ts', lines: 3586 }];
+  const ceilings = { 'a/big.ts': 3482 };
+  const v = verdict(measured, ceilings, 2000);
+  assert.equal(v.violations.length, 1, 'still a violation — the debt is real and stays reported');
+
+  const touched = new Set(['a/big.ts']);
+  const atBase = new Map([['a/big.ts', 3591]]);
+  const charged = v.violations.filter((x) => touched.has(x.path) && x.lines > (atBase.get(x.path) ?? -1));
+  assert.deepEqual(charged, [], 'shrinking a file already over its ceiling is not chargeable');
+
+  const grew = new Map([['a/big.ts', 3500]]);
+  const chargedGrew = v.violations.filter((x) => touched.has(x.path) && x.lines > (grew.get(x.path) ?? -1));
+  assert.equal(chargedGrew.length, 1, 'growing it further is charged from the first line');
+});
