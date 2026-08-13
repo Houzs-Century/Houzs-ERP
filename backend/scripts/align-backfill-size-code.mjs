@@ -3,6 +3,8 @@
 // a (K)/(Q)/(S)/(SS)/(SK)/(SP) suffix but has an empty size_code (legacy rows).
 // Read-only for anything with a size_code already set. MODE=dry-run (default)
 // reports; MODE=apply writes.
+//
+// RE-RUN: inert. Keyed on size_code being NULL or empty, which its own write fills; nothing re-opens it.
 import postgres from "postgres";
 const mode = (process.env.MODE || "dry-run").toLowerCase();
 const apply = mode === "apply";

@@ -27,6 +27,7 @@
 // ENUMS. COALESCE(col,'') coerces '' INTO the enum and throws. Always ::text
 // first.
 import postgres from "postgres";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -87,9 +88,15 @@ const catFromGroup = (g) => {
 
 /* ── ported: mrp.ts SO_DONE / PO_DEAD ────────────────────────────────────────
    SHIPPED added 2026-08-01 (fix/mrp-consistency-tails, audit D4): the engine now
-   treats a SHIPPED SO as done, matching so-stock-allocation + /inventory/
-   reservations. Keep this replica in lockstep or its figures lie. */
-const SO_DONE = new Set(["DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "DRAFT", "SHIPPED"]);
+   treats a SHIPPED SO as done, matching so-stock-allocation.
+
+   NO LONGER A REPLICA. "Keep this replica in lockstep or its figures lie" is
+   what this comment used to say, and it lied about /inventory/ reservations in
+   the same breath: that endpoint's SO_DONE has FOUR statuses, not these six
+   (see routes/inventory.ts, left disagreeing on purpose — BUG-HISTORY
+   2026-08-13). The set is imported now, so an audit reading a different lens
+   than the allocator is no longer something anyone has to remember. */
+const SO_DONE = new Set(SO_TERMINAL_STATES);
 const PO_DEAD = new Set(["CANCELLED", "DRAFT"]);
 
 /* ── ported: mrp.ts L171-173 ─────────────────────────────────────────────── */
@@ -673,7 +680,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
      WHERE i.company_id = ${companyId} AND i.cancelled = FALSE
        AND UPPER(COALESCE(i.stock_status,'')) IN ('READY','PARTIAL')
-       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT','SHIPPED')`;
+       AND UPPER(COALESCE(s.status::text,'')) <> ALL(${SO_TERMINAL_STATES})`;
   const readyByCat = new Map(CATS.map((c) => [c, { n: 0, withBatch: 0 }]));
   for (const r of readyRows) {
     const c = catKey(prodByCode.get(r.item_code)?.category ?? catFromGroup(r.item_group));
@@ -764,7 +771,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
      WHERE i.company_id = ${companyId} AND i.cancelled = FALSE
-       AND UPPER(COALESCE(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','DELIVERED','INVOICED','DRAFT','SHIPPED')
+       AND UPPER(COALESCE(s.status::text,'')) <> ALL(${SO_TERMINAL_STATES})
      GROUP BY i.doc_no HAVING COUNT(DISTINCT COALESCE(i.warehouse_id::text,'NULL')) > 1`;
   notice(`  live SOs whose LINES carry >1 distinct warehouse_id (incl. NULL): ${sofaWhSplit.length}`);
   notice("   -- before the 2026-07-31 'warehouse follows the SO' change every one of these split");

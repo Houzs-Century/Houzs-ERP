@@ -32,7 +32,7 @@ export type SoDetailGateHeader = {
   status?: string | null;
   has_children?: boolean | null;
   proceeded_at?: string | null;
-  internal_expected_dd?: string | null;
+  processing_date?: string | null;
   /* Server-computed: a live (non-cancelled) Purchase Order already claims one of
      this SO's lines — 2990 only (owner 2026-08-12). NOT derivable client-side —
      the detail payload carries no PO linkage — which is exactly why it arrives
@@ -88,7 +88,7 @@ export function isLocked(
    Mirrors the backend pair soProcessingLocked || soPoLocked. */
 export function procLockActive(header: SoDetailGateHeader): boolean {
   if (header.po_locked === true) return true;
-  const orig = (header.internal_expected_dd ?? '').slice(0, 10);
+  const orig = (header.processing_date ?? '').slice(0, 10);
   if (orig === '' || !(orig < todayMyt())) return false;
   const status = (header.status ?? '').toUpperCase();
   if (status) return status !== 'DRAFT' && status !== 'CANCELLED';

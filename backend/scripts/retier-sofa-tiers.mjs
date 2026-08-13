@@ -13,6 +13,23 @@
 // move P1->P2. Touches seat grids, each supplier's binding matrices
 // (incl. STD keys), flat base/price1 lanes, and that supplier's combo
 // batch (both scopes). Audited. DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: REFUSED once the combo batch has been shifted. This is a ONE-SHOT
+// migration and the combo block below is the reason it cannot simply be made
+// idempotent: it shifts by POSITION (P1->P2, P2->P3, P3->deleted), not by
+// value, so a second pass takes the band the first pass promoted to P2 and
+// pushes it to P3, and soft-DELETES the band the first pass promoted to P3.
+// The second run destroys exactly what the first one built. The seat grids,
+// binding matrices and flat lanes are value-guarded and would be inert on
+// their own; the pre-flight below refuses the whole script anyway, because a
+// half-shifted price list is worse than an unshifted one.
+//
+// The receipt is in the data, not in a flag file: before this runs, the
+// 2026-08 combo batch has no soft-deleted rows (it was loaded hours earlier by
+// load-supplier-combos.mjs / load-hookka-combos.mjs). After it runs, every old
+// PRICE_3 row in the batch carries a deleted_at. So one deleted row in the
+// batch means "already shifted, or a person has retired a combo by hand" - and
+// both are reasons to stop and let someone look.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
@@ -43,6 +60,20 @@ try {
   const cid = co.id;
   const stats = {};
   const bump = (k) => { stats[k] = (stats[k] || 0) + 1; };
+  /* PRE-FLIGHT, before a single write. A shifted batch must not be shifted
+     again - see the header. Checked outside the transaction so the refusal is
+     a plain message rather than a rollback nobody reads. */
+  const [{ n: retired }] = await sql`SELECT COUNT(*)::int AS n FROM scm.sofa_combo_pricing
+    WHERE deleted_at IS NOT NULL AND notes = ANY(${COMBO_NOTES})`;
+  if (retired) {
+    console.error(`REFUSED: ${retired} row(s) of the 2026-08 combo batch are already soft-deleted, `
+      + `which is what THIS script does to the old PRICE_3 band. Shifting again would push the `
+      + `promoted P2 band to P3 and delete the promoted P3 band. If a person retired those combos `
+      + `by hand and the shift really has not run, say so and re-run the combo block deliberately.`);
+    await sql.end({ timeout: 3 });
+    process.exit(2);
+  }
+
   await sql.begin(async (tx) => {
     const now = new Date().toISOString();
     const audit = (code, field, oldV, newV) => APPLY

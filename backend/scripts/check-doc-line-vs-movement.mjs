@@ -34,6 +34,7 @@
 // legitimate answer — the answer IS the output.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+import { DO_STOCK_OUT_STATES } from "./lib/do-shipped-states.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -70,7 +71,7 @@ const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
    that made the movement ledger disagree with the documents on the four sofas
    while every document looked correct on its own. */
 async function sweep() {
-  const SHIPPED = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED", "COMPLETED"];
+  const SHIPPED = DO_STOCK_OUT_STATES;
 
   notice("SWEEP MODE — every shipped DO and posted GRN, document lines vs movements, per item.");
 

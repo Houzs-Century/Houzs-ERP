@@ -1,10 +1,18 @@
 /* EVERY place a fabric COLOUR code is stored, and how to count it there.
 
-   WHY THIS FILE EXISTS. The shared sweep helper (fabric-write.mjs) knows FOUR
-   document arms — SO, PO, GRN, DO. A 2026-08-13 audit read the source of every
-   table in the schema and found 43 carriers. That gap is why the fabric
-   catalogue has been "cleaned" repeatedly and has never come out clean: each
-   pass moved four arms and left the rest naming a code that no longer exists.
+   WHY THIS FILE EXISTS. The write side (fabric-write.mjs) reaches the tables a
+   sweep must REPAIR. This file is the wider census: it also names the masters,
+   the whitelists, the carts and the history blobs — everywhere a retired code
+   can still be READ from — so a merge can be proved complete rather than
+   assumed complete. As of 2026-08-13 that is 58 carriers, 51 of them live.
+
+   THE ARM LISTS BELOW ARE IMPORTED, NEVER RE-TYPED. This file used to declare
+   its own copy of the fifteen line tables, the eight variant_key buckets and
+   the five-key colour alias chain, beside the copies fabric-write.mjs already
+   held. Two lists for one fact is how the GRN arm went unswept in #1964, how
+   five copies of the colour matcher drifted apart in #1893, and how extending
+   the shared arm list from 4 to 15 did nothing for a merger that was not
+   reading it. Add an arm in fabric-write.mjs and it appears here for free.
 
    NOTHING IN THE DATABASE WILL CATCH A MISS. There is not one foreign key to
    scm.fabric_colours; every reference is an unenforced TEXT string inside jsonb
@@ -34,46 +42,32 @@
      col       a plain text column holding the code itself.
      blob      a whole jsonb document searched as text — used for history. */
 
+import { ARMS, VKEY_ARMS, COLOUR_ALIASES } from './fabric-write.mjs';
+
 /** The alias chain the app treats as ONE fabric axis. Order matters only for
  *  reporting; a row is dirty if ANY of them names the code.
- *  Source: so-variant-rule.ts fabricCode aliases + allowed-options-check.ts
- *  (colourId is the POS picker's key). */
-export const COLOUR_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor', 'colourId'];
+ *  ONE definition, in fabric-write.mjs, which is where the repoints that write
+ *  these keys back live — a census that walked a different chain than the
+ *  repair would report clean rows the repair had never touched. Re-exported so
+ *  census-fabric-colour.mjs keeps importing it from here. */
+export const COLOUR_KEYS = COLOUR_ALIASES;
 
 /** Line tables carrying a `variants` jsonb. Each also carries description2.
- *  `co` is the company predicate for that table — every one of these has its
- *  own company_id (migrations 0083 / 0089 / 0090), which is what we use: the
- *  service-role client bypasses RLS, so this predicate is the only isolation. */
-const LINE_TABLES = [
-  'scm.mfg_sales_order_items',
-  'scm.purchase_order_items',
-  'scm.grn_items',
-  'scm.delivery_order_items',
-  'scm.sales_invoice_items',
-  'scm.purchase_invoice_items',
-  'scm.purchase_return_items',
-  'scm.delivery_return_items',
-  'scm.consignment_sales_order_items',
-  'scm.consignment_delivery_order_items',
-  'scm.consignment_delivery_return_items',
-  'scm.purchase_consignment_order_items',
-  'scm.purchase_consignment_receive_items',
-  'scm.purchase_consignment_return_items',
-  'scm.inventory_movements',
-];
+ *  Derived from fabric-write.mjs's ARMS — the same fifteen tables the repair
+ *  sweeps, in the same order. The census must not be able to know a table the
+ *  repair does not, nor the reverse; that gap IS the bug this pair keeps
+ *  producing. Only the NAMES are taken: an arm's `ex` is a company predicate
+ *  written for a bound $1, and this file builds its own predicates per kind.
+ *
+ *  Every one of these has its own company_id (migrations 0083 / 0089 / 0090),
+ *  which is what the caller filters on: the service-role client bypasses RLS,
+ *  so that predicate is the only isolation. */
+const LINE_TABLES = ARMS.map((a) => a.t);
 
-/** Tables whose variant_key materialises the colour into a stock bucket. */
-const VKEY_TABLES = [
-  ['scm.inventory_movements', 'variant_key'],
-  ['scm.inventory_lots', 'variant_key'],
-  ['scm.inventory_lot_consumptions', 'variant_key'],
-  ['scm.stock_transfer_lines', 'variant_key'],
-  ['scm.stock_take_lines', 'variant_key'],
-  ['scm.warehouse_rack_items', 'variant_key'],
-  ['scm.warehouse_rack_movements', 'variant_key'],
-  // the ship commitment's frozen bucket — compared, never recomputed (mig 0230)
-  ['scm.delivery_order_items', 'committed_variant_key'],
-];
+/** Tables whose variant_key materialises the colour into a stock bucket —
+ *  fabric-write.mjs's VKEY_ARMS, name and column, nothing else. Includes the
+ *  ship commitment's frozen bucket, compared and never recomputed (mig 0230). */
+const VKEY_TABLES = VKEY_ARMS.map((a) => [a.t, a.c]);
 
 export const CARRIERS = [
   ...LINE_TABLES.map((t) => ({ table: t, kind: 'variants', col: 'variants', live: true })),

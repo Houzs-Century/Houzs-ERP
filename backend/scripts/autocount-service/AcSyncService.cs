@@ -358,7 +358,13 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // transferMaster MUST be true on the purchase side. That flag copies the
+        // source PO's header master (supplier/currency/terms) onto the target; with
+        // false the GRN is built with no supplier, the purchase detail ctor looks
+        // that row up in the master table, IndexOf returns -1, and Save() dies with
+        // "there is no row at position -1". The sales classes tolerate false (DO and
+        // IV are PROVEN with it, DO-011260 / DO-011262) so they are left alone.
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
@@ -367,7 +373,8 @@ class AcSyncService {
       case "PI": {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // see the GR case above — purchase side needs transferMaster = true
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
         doc.Save();

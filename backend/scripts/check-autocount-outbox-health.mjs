@@ -125,6 +125,21 @@ try {
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const total = counts.reduce((a, r) => a + r.n, 0);
 
+  /* A RE-QUEUED skip is history, not backlog.
+     This table is append-only and a skipped row is never deleted, so once the
+     re-queue tool has asked the question again the ORIGINAL refusal would
+     otherwise sit in this report forever, sending an operator to fix something
+     that is already fixed and already queued. requeue-autocount-skipped.mjs
+     prefixes the reason with `[re-queued <when> -> outbox <id>]`
+     (REQUEUE_NOTE_PREFIX in src/scm/lib/autocount-requeue.ts — this script runs
+     under plain node against postgres.js and cannot import it, so the literal
+     lives in both places). The row keeps status 'skipped', because it IS still
+     true that nothing was ever sent for it; what changed is that it is no longer
+     the open question. */
+  const REQUEUED_PREFIX = "[re-queued";
+  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUED_PREFIX));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUED_PREFIX));
+
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
     /* What empty MEANS depends on the switch read above, so say which. The old
@@ -144,7 +159,8 @@ try {
       `queue: ${total} row(s) — ` +
         ["pending", "sent", "failed", "skipped"]
           .map((s) => `${s} ${by[s] ?? 0}`)
-          .join(" / "),
+          .join(" / ") +
+        (settled.length ? ` (${settled.length} of the skipped have been re-queued)` : ""),
     );
   }
 
@@ -173,10 +189,10 @@ try {
   /* SKIPPED, classified. Unclassified rows are printed rather than counted
      away: a reason this script does not recognise is a code path that grew a
      new refusal, and rolling it into 'other' is how it stays invisible. */
-  if ((by.skipped ?? 0) > 0) {
+  if (outstanding.length > 0) {
     const seen = new Set();
     for (const [needle, meaning] of SKIP_KINDS) {
-      const hits = skipped.filter((r) => r.last_error.includes(needle));
+      const hits = outstanding.filter((r) => r.last_error.includes(needle));
       hits.forEach((r) => seen.add(r.doc_no + r.op));
       if (!hits.length) continue;
       notice(`  skipped ${hits.length}: ${meaning}`);
@@ -189,12 +205,23 @@ try {
         notice(`    - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 400)}`);
       }
     }
-    const rest = skipped.filter((r) => !seen.has(r.doc_no + r.op));
+    const rest = outstanding.filter((r) => !seen.has(r.doc_no + r.op));
     for (const r of rest) {
       notice(`  skipped (UNRECOGNISED reason): ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 200)}`);
     }
   } else {
-    notice("SKIPPED: 0");
+    notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
+  }
+
+  if (settled.length) {
+    notice(
+      `RE-QUEUED: ${settled.length} skipped row(s) have been asked again by the re-queue workflow. ` +
+        "Each one's document is a PENDING row above (or already sent); these are the record of the " +
+        "refusal, not an open item.",
+    );
+    for (const r of settled) {
+      notice(`  - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 300)}`);
+    }
   }
 } finally {
   await pg.end({ timeout: 5 });
