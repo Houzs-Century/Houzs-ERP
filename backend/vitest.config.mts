@@ -5,6 +5,7 @@ import {
   readD1Migrations,
 } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { classifyTests } from "./scripts/lib/classify-tests.mjs";
 
 // Wires vitest into the Cloudflare Workers runtime. Each test file gets
 // its own isolated D1 instance with the same schema as production
@@ -33,12 +34,11 @@ export default defineConfig(async () => {
   // there for the measurements. The baseline and migration bindings stay:
   // tests/idempotencyPhase2Migration.test.ts reads TEST_MIGRATIONS, and
   // tests/schemaSnapshotParity.test.ts replays both to prove they agree.
-  const testProjects = JSON.parse(
-    await fs.readFile(
-      path.join(__dirname, "tests/generated/test-projects.json"),
-      "utf8",
-    ),
-  );
+  // Classified from the source tree at config time, not read from a committed
+  // list. A committed split is a pure function of the tree, so the only thing a
+  // copy of it can add is a chance to be stale — which it was, twice, within a
+  // day. See scripts/lib/classify-tests.mjs.
+  const testProjects = await classifyTests(__dirname);
 
   const [schemaSnapshot, schemaSeed] = await Promise.all([
     fs.readFile(
