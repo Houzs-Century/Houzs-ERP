@@ -14,10 +14,19 @@
 //     from the ?fromSo= query STRING rather than the fetch, kept showing the
 //     linkage. Perfect linkage, blank document.
 //
-// THAT DISAGREEMENT IS OVER, and not the way the first bullet expected: as of
-// 2026-08-13 a conversion never crosses a company, so /from-sos scopes BOTH its
-// source reads and the "2990 SO converted while browsing as Houzs" case simply
-// cannot arise. The shared column set below is still the reason the two sides
+// THAT DISAGREEMENT IS OVER, and the FIRST bullet is the one that won. The
+// shared Delivery Planning queue is real and the owner confirmed it on
+// 2026-08-13: /from-sos still converts a 2990 SO while the caller browses as
+// Houzs, and the DO it mints is a 2990 DO — 2990's company_id, 2990's prefix,
+// and, as of that date, 2990's warehouse and stock lines too. The header used
+// to inherit while the LINES stamped the active company, which is how a 2990 DO
+// came to deduct HOUZS stock; both now resolve from one `sourceCompanyId`.
+//
+// A passing draft of that day's sweep scoped both source reads to the ACTIVE
+// company and rewrote this paragraph to say the cross-company case "cannot
+// arise". It was reverted — scoping here does not make the conversion safe, it
+// makes the document invisible to the dispatcher who came to convert it. The
+// shared column set below is still the reason the two sides
 // cannot drift on WHICH fields carry across, which is what this file is for.
 //
 // So the column set and the field mapping live HERE and are imported by both

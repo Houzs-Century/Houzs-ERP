@@ -310,13 +310,27 @@ describe('SI convert-from-DO-lines cannot see a cross-company source', () => {
 });
 
 /* ── SO -> DO ─────────────────────────────────────────────────────────────────
-   The FIRST hop. This one is worth its own note: until 2026-08-13 the DO header
-   insert INHERITED the source SO's company on purpose, so the shared Delivery
-   Planning queue could cut a 2990 DO while browsing as Houzs — while the DO
-   LINES were stamped with the ACTIVE company, which would have left header and
-   lines disagreeing. The conversion no longer crosses a company at all, so the
-   inherit can only ever resolve to the active company and the two agree. */
-describe('DO convert-from-SO-lines cannot see a cross-company source', () => {
+   THE ONE CONVERSION THAT CROSSES THE SWITCHER ON PURPOSE, and the tests below
+   assert exactly that — the opposite of every other converter in this file.
+
+   Delivery Planning is a SHARED queue: a Houzs dispatcher converts a 2990 SO
+   and the result is a 2990 DO, under 2990's document prefix, drawing 2990's
+   stock. The destination INHERITS the source's company rather than claiming it,
+   so the books stay straight without hiding the document from the person who
+   came to ship it.
+
+   THE REAL DEFECT HERE was never the crossing. It was that the HEADER inherited
+   while the LINES, the warehouse resolution and the stock lookups all used the
+   ACTIVE company — so a 2990 DO deducted HOUZS stock. Both now resolve from one
+   `sourceCompanyId`, taken from the picked SO lines.
+
+   This route was broken TWICE on 2026-08-13 before the owner confirmed the
+   design: once by adding a cross-company refusal (killing the feature), once by
+   scoping its source reads (killing it structurally). An earlier draft of THIS
+   BLOCK asserted the second mistake as correct behaviour. If these tests ever
+   start asserting that a 2990 line is invisible to a Houzs caller, that is the
+   third time — read companyScope.ts's INHERIT paragraph before changing them. */
+describe('DO convert-from-SO-lines INHERITS the source company (shared Delivery Planning)', () => {
   const sos = (): Row[] => [
     /* Both DRAFT so the deliverability gate — the first rule AFTER the source
        read — is what stops every request that gets that far. It is the marker
@@ -332,14 +346,28 @@ describe('DO convert-from-SO-lines cannot see a cross-company source', () => {
     mfg_sales_orders: sos(), mfg_sales_order_items: soItems(), delivery_orders: [], delivery_order_items: [],
   });
 
-  test("B's SO line is not visible to A — no delivery order is cut", async () => {
+  test("B's SO line IS visible to A — that is the shared queue, not a leak", async () => {
+    /* THE POINT OF THIS ROUTE. A 404 here would mean the Houzs dispatcher
+       cannot see the 2990 order they were asked to ship. Reaching the
+       deliverability gate — the first rule AFTER the source read — proves the
+       line was found. */
     const t = tables();
     const res = await postJson(harness(t, CO_A).app, '/delivery-orders-mfg/from-sos', {
       picks: [{ soItemId: 'soi-b', qty: 1 }],
     });
-    expect(res.status).toBe(404);
-    expect((await res.json() as Row).error).toBe('so_item_not_found');
-    expect(t.delivery_orders).toHaveLength(0);
+    expect(res.status).not.toBe(404);
+    expect((await res.json() as Row).error).not.toBe('so_item_not_found');
+  });
+
+  test("the source read is NOT pinned to the ACTIVE company", async () => {
+    /* The inverse of every other converter in this file, and the assertion that
+       fails first if someone "fixes" this route by scoping it. */
+    const t = tables();
+    const h = harness(t, CO_A);
+    await postJson(h.app, '/delivery-orders-mfg/from-sos', { picks: [{ soItemId: 'soi-b', qty: 1 }] });
+    const pinnedToActive = h.log.filter((l) =>
+      l.startsWith('mfg_sales_order_items.select') && l.includes(`eq:company_id:${CO_A}`));
+    expect(pinnedToActive).toHaveLength(0);
   });
 
   test("A's own SO line IS found — it fails the NEXT rule instead", async () => {
@@ -354,12 +382,27 @@ describe('DO convert-from-SO-lines cannot see a cross-company source', () => {
     expect(t.delivery_orders).toHaveLength(0);
   });
 
-  test('the source line read carries the company predicate', async () => {
-    const t = tables();
-    const h = harness(t, CO_A);
-    await postJson(h.app, '/delivery-orders-mfg/from-sos', { picks: [{ soItemId: 'soi-a', qty: 1 }] });
-    expect(h.log).toContain('mfg_sales_order_items.select:eq:company_id');
-  });
+  /* WHAT THIS HARNESS CANNOT PROVE, written down rather than faked.
+     The fake PostgREST client logs `${table}.${op}:eq:${col}` — the COLUMN name
+     and not the VALUE. So it can say whether a read carries a company predicate;
+     it cannot say WHICH company that predicate names. For every other converter
+     in this file that is enough, because there the question is binary: scoped or
+     not. Here it is not — the source reads ARE scoped, to the SOURCE company,
+     and a log line reading `eq:company_id` looks identical either way.
+
+     Two attempts to assert it through the log failed for two different reasons:
+     the first because a DRAFT fixture never reaches the header load at all (the
+     assertion passed over an empty list, which is the "verdict computed over
+     nothing" trap this repo keeps finding), the second because the value simply
+     is not recorded.
+
+     So the inherit DIRECTION is proved behaviourally above — B's line is
+     reachable from A, and the read is not pinned to A — and the stamp itself is
+     proved by `scripts/check-conversion-guards.mjs`, whose INHERIT kind fails if
+     the source reads become active-scoped or if the handler stops resolving a
+     `sourceCompanyId`. Both failure modes were driven and observed. A fixture
+     rich enough to cut a whole DO (warehouses, stock, allocation) would prove it
+     end to end and is the honest next step; this file does not pretend to. */
 
   test('an UNRESOLVED company degrades to allowed', async () => {
     /* Reaching the deliverability gate on a 2990 line is the proof: with no

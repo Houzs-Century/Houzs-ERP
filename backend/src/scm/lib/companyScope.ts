@@ -603,13 +603,29 @@ export const MIRRORED_SO_CREATE_BLOCKED: { error: string; message: string } = {
  * field and each line's link). There is no single source read to scope, so the
  * comparison is the mechanism. Those callers are the reason this stays.
  *
- * This block used to carry a third rule — "INHERIT is correct where the
- * destination stamps the SOURCE's company", citing POST /from-sos in
- * delivery-orders-mfg.ts as a path deliberately left cross-company for the
- * shared Delivery Planning queue. That is no longer true of any converter:
- * /from-sos scopes both of its source reads, so its inherit stamp can only ever
- * resolve to the active company. Do not reintroduce a cross-company conversion
- * from this paragraph.
+ * THE THIRD RULE IS REAL AND IT SURVIVED — read this before "fixing" the route
+ * it names, because two people have now broken it in one day.
+ *
+ * INHERIT is correct where the destination stamps the SOURCE's company.
+ * `POST /from-sos` in delivery-orders-mfg.ts is that path: the shared Delivery
+ * Planning queue, where a 2990 SO converts into a 2990 DO under 2990's document
+ * prefix. It crosses the switcher ON PURPOSE, and it keeps the books straight
+ * because the destination never CLAIMS the document — it takes the source's
+ * company, its prefix, and (since 2026-08-13) its warehouse and stock lines too.
+ * That last part was the real defect there: the header inherited while the LINES
+ * stamped the active company, so a 2990 DO deducted HOUZS stock.
+ *
+ * On 2026-08-13 that route was broken TWICE by people who did not read this
+ * paragraph — once by adding a crossCompanySourceRefusal (which killed the
+ * feature outright), once by scoping its source reads to the active company
+ * (which killed it structurally, since the dispatcher can then no longer SEE the
+ * 2990 SO). The owner confirmed the design; both were reverted.
+ * `scripts/check-conversion-guards.mjs` now carries an INHERIT kind that fails
+ * if either mistake comes back, so this is enforced and not merely asked for.
+ *
+ * The distinction that decides which rule applies is one question: does the
+ * destination stamp the SOURCE's company, or the ACTIVE one? Inherit is safe;
+ * claiming is re-parenting.
  *
  * UNRESOLVED (no active company — pre-migration / cold-start) and a source row
  * with a NULL company_id both DEGRADE to allowed, matching the three-state

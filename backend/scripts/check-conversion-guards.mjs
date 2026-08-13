@@ -95,8 +95,17 @@ const ROUTE_DIRS = [
    Keyed on file+route, not line, so the registry survives the file moving. */
 const SOURCES = {
   "backend/src/scm/routes/delivery-orders-mfg.ts::POST /from-sos": {
-    doc: "SO -> DO",
+    doc: "SO -> DO, the shared Delivery Planning queue",
     source: ["mfg_sales_order_items", "mfg_sales_orders"],
+    inherit:
+      "the ONE conversion that legitimately crosses the switcher. A 2990 SO " +
+      "becomes a 2990 DO under 2990's prefix — the destination inherits the " +
+      "source's company rather than claiming the document, so the books stay " +
+      "straight without hiding it. companyScope.ts has said so since the rule " +
+      "was written ('deliberately NOT block all cross-company conversion'); " +
+      "the route was nonetheless broken twice in one day, once by adding a " +
+      "refusal and once by scoping the source, before the owner confirmed the " +
+      "design on 2026-08-13.",
   },
   "backend/src/scm/routes/delivery-returns.ts::POST /from-do": {
     doc: "DO -> DR",
@@ -254,6 +263,7 @@ function stripComments(lines) {
 const findings = [];
 const converted = [];
 const legacy = [];
+const inherits = [];
 const seenKeys = new Set();
 
 for (const dir of ROUTE_DIRS) {
@@ -350,6 +360,53 @@ for (const dir of ROUTE_DIRS) {
         continue;
       }
 
+      /* THE INHERIT KIND. One conversion legitimately runs across the switcher:
+         SO -> DO, the shared Delivery Planning queue. It holds the invariant a
+         THIRD way — it does not refuse the other company's document and it does
+         not hide it; it INHERITS it, so a 2990 SO becomes a 2990 DO under 2990's
+         prefix and the destination never claims the document as its own.
+
+         `companyScope.ts` has said this since the rule was written ("deliberately
+         NOT block all cross-company conversion"), and this route was broken twice
+         in one day by people who did not read it: once by adding a refusal, once
+         by scoping the source. The owner confirmed the design; this is the check
+         that stops the third time.
+
+         VERIFIED, NOT EXEMPTED. Two things must hold, and both are the OPPOSITE
+         of what the other kinds check:
+           1. the declared source tables must NOT be scoped to the ACTIVE company
+              — that is what would hide the document the caller came to convert;
+           2. the handler must resolve a SOURCE company and use it, which is what
+              makes the destination a 2990 document rather than a Houzs one.
+         An entry that stops doing either is a finding like any other. */
+      if (entry.inherit) {
+        const scopedNow = scopedTables(text);
+        const wronglyScoped = entry.source.filter((t) => scopedNow.has(t));
+        const resolvesSource = /sourceCompanyId/.test(text);
+        if (wronglyScoped.length > 0) {
+          findings.push({
+            ...row,
+            problem: "inherit_source_wrongly_scoped",
+            detail:
+              `declared INHERIT (${entry.inherit}) but scopes ${wronglyScoped.join(", ")} ` +
+              "to the ACTIVE company — that hides the very document this route exists " +
+              "to convert. Scope it to the SOURCE company instead, or change the kind",
+          });
+        } else if (!resolvesSource) {
+          findings.push({
+            ...row,
+            problem: "inherit_without_source_company",
+            detail:
+              "declared INHERIT but never resolves a source company, so the " +
+              "destination stamps the ACTIVE one — which is re-parenting, the " +
+              "exact thing INHERIT is claimed to avoid",
+          });
+        } else {
+          inherits.push({ ...row, reason: entry.inherit, source: entry.source });
+        }
+        continue;
+      }
+
       if (entry.legacyRefusal) {
         if (GUARD.test(text)) {
           legacy.push({ ...row, reason: entry.legacyRefusal });
@@ -404,10 +461,11 @@ legacy.sort(sortRows);
 if (jsonOut) {
   console.log(JSON.stringify({ converted, legacy, findings }, null, 2));
 } else {
-  const total = converted.length + legacy.length + findings.length;
+  const total = converted.length + legacy.length + inherits.length + findings.length;
   console.log(
     `${total} document conversions.\n` +
       `${converted.length} load their SOURCE scoped (the standard).\n` +
+      `${inherits.length} INHERIT the source's company on purpose (the shared queue).\n` +
       `${legacy.length} still hold the rule by REFUSAL instead.\n` +
       `${findings.length} problems.\n\n` +
       `A conversion never crosses a company. Since 2026-08-13 that is enforced by\n` +
@@ -427,6 +485,17 @@ if (jsonOut) {
       if (f.file !== last) { console.log(`\n${f.file}`); last = f.file; }
       console.log(`  L${String(f.line).padEnd(5)} ${f.route}`);
       console.log(`         ${f.problem}: ${f.detail}`);
+    }
+    console.log("");
+  }
+  if (inherits.length) {
+    console.log("=== INHERIT — crosses the switcher ON PURPOSE, destination takes the SOURCE's company ===");
+    let last = "";
+    for (const f of inherits) {
+      if (f.file !== last) { console.log(`\n${f.file}`); last = f.file; }
+      console.log(`  L${String(f.line).padEnd(5)} ${f.route}   ${f.doc ?? ""}`);
+      console.log(`         source: ${f.source.join(", ")}  (deliberately NOT scoped to the active company)`);
+      console.log(`         ${f.reason}`);
     }
     console.log("");
   }

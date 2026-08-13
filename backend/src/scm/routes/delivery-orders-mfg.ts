@@ -65,7 +65,6 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
-import type { CompanyScopeCtx } from '../lib/companyScope';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -3073,26 +3072,34 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
 
    IMPORTANT (route ordering): STATIC path, so it MUST be registered BEFORE the
    `/:id` param route below — same reason as /deliverable-so-lines above. */
-/** Load a source SO header for conversion, SCOPED to the active company.
+/** Load a source SO header for conversion, scoped to the SOURCE company.
  *
- *  Shared by the form preview (GET /so-source/:docNo, which scopes to the
- *  caller's ALLOWED companies — a preview may look across the switcher) and the
- *  commit (POST /from-sos), so the two can never copy different column sets.
+ *  Shares its column list (SO_CONVERT_HEADER) with the form preview
+ *  GET /so-source/:docNo, so preview and commit can never copy different fields.
  *
- *  The commit read used to carry no company predicate at all. It does now:
- *  a conversion never crosses a company, and the way that is enforced is that
- *  the SOURCE simply is not visible, not that a later comparison remembers to
- *  refuse. `c` is REQUIRED rather than optional for the same reason
- *  scopeToCompanyId takes a required id — an omitted scope must not compile. */
+ *  NOT scoped to the ACTIVE company, and that is the whole point of this route:
+ *  POST /from-sos is the one conversion that legitimately runs across the
+ *  switcher (shared Delivery Planning queue), so scoping this read to the active
+ *  company would hide the very document the caller is converting. It is not
+ *  unscoped either — `sourceCompanyId` is the company the picked SO LINES
+ *  resolved to, so the header can only ever be the header of the lines being
+ *  shipped, and header and lines cannot come from two different books.
+ *
+ *  `sourceCompanyId` is a REQUIRED positional argument for the same reason
+ *  scopeToCompanyId's id is: an omitted scope must not compile. `undefined` is
+ *  the three-state sentinel's UNRESOLVED state (pre-migration rows with no
+ *  company_id) and degrades to no predicate, exactly as the rest of
+ *  scm/lib/companyScope.ts does. */
 async function loadSoHeaderForConversion(
   sb: ReturnType<typeof getSupabaseService>,
   docNo: string,
-  c: CompanyScopeCtx,
+  sourceCompanyId: number | undefined,
 ): Promise<{ head: Record<string, unknown> | null; error: string | null }> {
-  const { data, error } = await scopeToCompany(sb
+  const q = sb
     .from('mfg_sales_orders')
     .select(SO_CONVERT_HEADER)
-    .eq('doc_no', docNo), c)
+    .eq('doc_no', docNo);
+  const { data, error } = await (sourceCompanyId != null ? scopeToCompanyId(q, sourceCompanyId) : q)
     .maybeSingle();
   if (error) return { head: null, error: error.message };
   return { head: (data as unknown as Record<string, unknown>) ?? null, error: null };
@@ -3353,12 +3360,15 @@ deliveryOrdersMfg.post('/', async (c) => {
        so a cross-company SO reached only through a line's soItemId — with no
        header soDocNo at all — is caught too.
 
-       This clause used to end by saying the multi-SO POST /from-sos path was
-       "deliberately NOT guarded this way" because it INHERITS the source SO's
-       company for the shared Delivery Planning queue. That has not been true
-       since a refusal was added there, and it is doubly untrue now: /from-sos
-       scopes BOTH its source reads, so a cross-company SO is not visible to it
-       at all. Neither SO->DO path crosses a company today. */
+       THE MULTI-SO POST /from-sos PATH IS DELIBERATELY NOT GUARDED THIS WAY, and
+       that difference is the whole point of the two routes. It serves the shared
+       Delivery Planning queue, so it INHERITS the source SO's company —
+       resolving it once and stamping it on the DO, its lines, its doc number,
+       its warehouse lookups, its audit row and its AutoCount book. THIS route is
+       the plain per-company create: it stamps the ACTIVE company below, so for
+       it a cross-company source really would re-company the order, and it
+       refuses. Same rule ("a conversion never RE-COMPANIES a document"), two
+       correct implementations of it. */
     const soDocNos = [...new Set(refDocNos.filter((d): d is string => !!d))];
     if (soDocNos.length > 0) {
       const { data: soCoRows, error: soCoErr } = await sb
@@ -3825,7 +3835,21 @@ function buildItemRow(
      3. Create ONE DO — header copied from the FIRST pick's SO; so_doc_no = that
         SO; ref = "Merged from <distinct SO doc_nos>" when the picks span >1 SO.
         One DO line per pick (qty = picked qty, so_item_id = soItemId).
-     4. recomputeTotals + deductInventoryForDo (both idempotent). */
+     4. recomputeTotals + deductInventoryForDo (both idempotent).
+
+   ── THIS IS THE ONE CONVERSION THAT CROSSES COMPANIES, AND IT INHERITS ──
+   Every other converter in this codebase holds "a conversion never crosses a
+   company" by SCOPING its source read to the active company. This one must not:
+   Delivery Planning is a single queue shared by both companies, so a Houzs
+   dispatcher converting a 2990 sales order is the normal working day, and a
+   scoped read makes that order invisible to him. The rule the exception keeps is
+   the one that protects the books — the destination never CLAIMS the document:
+   a 2990 SO produces a 2990 DO, under 2990's prefix, with 2990's stock, on
+   2990's audit timeline and in 2990's AutoCount book. `doCompanyId` below is
+   that decision, resolved once and used everywhere. The reason the rule is
+   stated as "never re-company" rather than "never cross" is written up in
+   scm/lib/companyScope.ts (isCrossCompanySource), and
+   scripts/check-conversion-guards.mjs verifies it per route. */
 /* Exported so the company-scope tests can drive it without the supabaseAuth
    bridge, which cannot run in the vitest harness. Same reason
    createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
@@ -3833,7 +3857,7 @@ function buildItemRow(
 export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
-     The insert stamps the active company, so the id is not caller-supplied.
+     The insert stamps the SOURCE company, so the id is not caller-supplied.
      Verified 2026-08-13. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ soItemId?: string; qty?: number }>; confirmShortStock?: boolean; warehouseId?: string; asDraft?: boolean; dropShip?: boolean };
@@ -3853,33 +3877,80 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   //    yet, so first map picked SO item ids → their doc_no, then derive
   //    remaining scoped to exactly those SOs.
   const pickedIds = [...pickQtyById.keys()];
-  /* SOURCE LOAD, SCOPED. The picked SO LINES are where every id this handler
-     acts on enters, and they arrive in the request body. Scoping the read is
-     what makes "a conversion never crosses a company" structural: another
-     company's soItemId resolves to NO ROW, so there is no cross-company source
-     for a later comparison to have to catch.
-     REPLACED a crossCompanySourceRefusal on `mfg_sales_orders` that stood right
-     below and can no longer fire — docNos is now derived exclusively from rows
-     this predicate returned.
+  /* SOURCE LOAD — WIDENED TO THE CALLER'S GRANTED COMPANIES, NOT NARROWED TO THE
+     ACTIVE ONE. This is THE documented exception to "a conversion never crosses
+     a company" (scm/lib/companyScope.ts, isCrossCompanySource): Delivery
+     Planning is one SHARED queue across both companies, so a Houzs dispatcher
+     converts a 2990 sales order every day. The rule the exception still honours
+     is that the destination never CLAIMS the document — the DO it cuts is a 2990
+     DO, under 2990's prefix, drawing 2990's stock. Everything below derives from
+     `doCompanyId` for exactly that reason.
 
-     THE COST, stated because it is the one thing this shape is worse at: a
-     hand-crafted request naming the other company's line gets `so_item_not_found`
-     (with the id) instead of "that order belongs to 2990, switch company". Same
-     trade-off, and the same reasoning, as the PO's /:id/convert-from-so — naming
-     the other company would require an UNSCOPED read of a document this handler
-     otherwise never touches. The picker only ever offers this company's lines,
-     so no operator reaches it. */
-  const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
+     scopeToAllowedCompanies, not "no predicate": a caller granted only Houzs
+     still cannot reach a 2990 line, and the three-state sentinel applies as
+     everywhere else (undefined -> no predicate so single-company Houzs is
+     unchanged; [] -> nothing). Same widening, and the same reasoning, as the
+     preview this screen loads from — GET /so-source/:docNo.
+
+     company_id rides along because it is what the source company is RESOLVED
+     from; without it the inherit below would have nothing to inherit. */
+  const { data: pickedItemRows, error: pErr } = await scopeToAllowedCompanies(sb
     .from('mfg_sales_order_items')
-    .select('id, doc_no')
+    .select('id, doc_no, company_id')
     .in('id', pickedIds), c);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const idToDoc = new Map<string, string>();
-  for (const r of (pickedItemRows ?? []) as Array<{ id: string; doc_no: string }>) idToDoc.set(r.id, r.doc_no);
+  const pickedRows = (pickedItemRows ?? []) as Array<{ id: string; doc_no: string; company_id: number | null }>;
+  for (const r of pickedRows) idToDoc.set(r.id, r.doc_no);
   const missing = pickedIds.filter((id) => !idToDoc.has(id));
   if (missing.length > 0) return c.json({ error: 'so_item_not_found', missing }, 404);
 
   const docNos = [...new Set([...idToDoc.values()])];
+
+  /* ── THE SOURCE COMPANY, RESOLVED ONCE ───────────────────────────────────────
+     Read from the picked SO LINES — the only place ids enter this handler — and
+     used for EVERY company-derived decision below: the header read, the sofa
+     guards, the warehouse resolution, the stock check, the doc-number prefix,
+     the header stamp, the line stamps, the audit row and the AutoCount book.
+
+     Resolving it once is the fix, not a tidy-up. This handler used to inherit
+     the source company on the DO HEADER and its doc number while passing
+     `activeCompanyId(c)` to the warehouse resolution, the stock/allocation
+     lookups and the sofa-set checks — so a 2990 order converted by a Houzs
+     dispatcher was checked against HOUZS warehouses and HOUZS's product
+     catalogue, and its lines were stamped HOUZS under a 2990 header. The
+     document said 2990 and the goods came out of the wrong building.
+
+     THREE STATES, the same sentinel as allowedCompanyIds:
+      · exactly one company across the picks -> that is the source company;
+      · a NULL company_id anywhere (pre-migration row) -> UNRESOLVED, degrade to
+        the active company, which is what single-company Houzs has always done;
+      · more than one company -> REFUSED. One delivery order posts to ONE set of
+        books; merging two companies' orders into it has no correct stamp, no
+        correct prefix and no correct warehouse. The picker cannot produce this
+        (one customer, one company) so no operator reaches it. */
+  const sourceCompanies = new Set<number>();
+  let sourceCompanyMissing = false;
+  for (const r of pickedRows) {
+    const n = Number(r.company_id);
+    if (r.company_id == null || !Number.isInteger(n) || n <= 0) sourceCompanyMissing = true;
+    else sourceCompanies.add(n);
+  }
+  if (sourceCompanies.size > 1) {
+    const codes = companyCodeMap(c);
+    return c.json({
+      error: 'mixed_source_companies',
+      message: 'These Sales Order lines belong to different companies. One Delivery Order can only ship one company\'s orders.',
+      companies: [...sourceCompanies].map((id) => codes.get(id) ?? String(id)),
+    }, 400);
+  }
+  const sourceCompanyId: number | undefined =
+    (!sourceCompanyMissing && sourceCompanies.size === 1) ? [...sourceCompanies][0] : undefined;
+  /* The company this DO WILL BE. `activeCompanyId(c)` is the UNRESOLVED degrade
+     and the only active-company read left in this handler — every other decision
+     reads this one value, so the document, its numbering, its stock and its
+     books cannot disagree with each other. */
+  const doCompanyId = sourceCompanyId ?? activeCompanyId(c);
 
   /* Audit gap #4 — every source SO must be committed (CONFIRMED or beyond) before
      its lines can ship into a DO. Blocks a DRAFT / ON_HOLD / CANCELLED SO. */
@@ -3945,11 +4016,15 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
      force-grab (confirmShortStock waives soft stock, NOT the no-batch rule). */
   let dropShipped = false;
   {
+    /* doCompanyId, not the active one: the sofa guard resolves the product's
+       category out of THAT company's catalogue. Asked as Houzs about a 2990
+       sofa, mfg_products answers nothing, the line stops looking like a sofa and
+       the dye-lot rule silently does not apply. */
     const sofaOffenders = await findSofaLinesWithoutCompleteBatch(sb, sortedPicks.map((line) => ({
       itemCode: line.itemCode,
       itemGroup: line.itemGroup ?? null,
       soItemId: line.soItemId,
-    })), activeCompanyId(c));
+    })), doCompanyId);
     if (sofaOffenders.length > 0) {
       /* Drop-ship waiver (mig 0057) — waive Type-A only on confirmed dropShip +
          every affected line bound to a PO (the incoming batch must be known). */
@@ -3963,7 +4038,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     }
     /* Type B — whole sofa set must ship together (no partial set / orphan).
        NEVER waived by drop-ship. */
-    const partial = await findIncompleteSofaSets(sb, sortedPicks.map((line) => line.soItemId), activeCompanyId(c));
+    const partial = await findIncompleteSofaSets(sb, sortedPicks.map((line) => line.soItemId), doCompanyId);
     if (partial.length > 0) {
       markIdempotencyNoWrite(c);
       return c.json(sofaIncompleteSetResponse(partial), 409);
@@ -3989,17 +4064,24 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     variantKey: computeVariantKey(line.itemGroup ?? null, (line.variants as VariantAttrs | null) ?? null),
     qty: pickQtyById.get(line.soItemId) ?? 0,
   }));
+  /* doCompanyId throughout: the goods leave the SOURCE company's warehouses, so
+     the pre-flight has to ask about those. Passing the active company here is
+     how a 2990 order came to be measured against a Houzs building — the same
+     "the check and the movement measured two different warehouses" failure
+     checkDoStockAvailability's own header records, one company over.
+     deductInventoryForDo re-resolves from the persisted DO header, which carries
+     doCompanyId, so the check and the OUT now read one company. */
   const lineWarehouses = await resolveDoLineWarehouses(
     sb,
     stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
     headerWarehouseId,
-    activeCompanyId(c),
+    doCompanyId,
   );
   const shipWarehouseId = headerWarehouseId
     ?? primaryWarehouseOf([...lineWarehouses.values()])
-    ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
+    ?? (await defaultWarehouseId(sb, doCompanyId));
   const shortages: StockShortage[] = await checkDoStockAvailability(
-    sb, stockLines, headerWarehouseId, activeCompanyId(c),
+    sb, stockLines, headerWarehouseId, doCompanyId,
   );
 
   /* Binding follows the fact (mig 0230) — per PICK, not per header flag. This is
@@ -4019,7 +4101,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     })),
     shipWarehouseId ?? null,
     shortages,
-    activeCompanyId(c),
+    /* The incoming-PO batch a short line binds against belongs to the SOURCE
+       company's purchasing, not the dispatcher's. */
+    doCompanyId,
   );
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (commitmentPlan.setConflicts.length > 0) {
@@ -4037,7 +4121,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   // Column list + load are SHARED with GET /so-source/:docNo (see the header on
   // loadSoHeaderForConversion) so the form's preview and this commit can never
   // disagree about which SO fields carry across.
-  const loaded = await loadSoHeaderForConversion(sb, firstSoDocNo, c);
+  const loaded = await loadSoHeaderForConversion(sb, firstSoDocNo, sourceCompanyId);
   if (loaded.error) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
   if (!loaded.head) return c.json({ error: 'not_found' }, 404);
   const head = loaded.head;
@@ -4048,35 +4132,32 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   const emPhoneRaw = head.emergency_contact_phone as string | null;
   const today = todayMyt();
 
-  // Mint the DO number under the SOURCE SO's company prefix, matching the
-  // company_id stamp below.
-  //
-  // THIS NO LONGER SPANS COMPANIES, and the comment used to say it did. Both
-  // source reads above are scoped to the ACTIVE company now, so `head` is either
-  // an active-company SO — in which case source prefix == active prefix and this
-  // is a no-op — or a pre-migration row with no company_id, where srcPrefix is
-  // undefined and nextNum falls back to the active prefix anyway. It is kept
-  // rather than simplified to companyDocPrefix(c) because it is the DERIVATION
-  // that is right: the DO's numbering follows the document it is cut from.
+  // Mint the DO number under the company this DO WILL BE — a 2990 order cut from
+  // the shared Delivery Planning queue becomes `2990-DO-2608-001`, whoever is at
+  // the switcher. THIS DOES SPAN COMPANIES, deliberately: it is what keeps the
+  // books straight, because the destination never claims the document as its own
+  // (see the source-company block above and companyScope.ts's inherit note).
+  // Derived from doCompanyId rather than from head.company_id so the prefix and
+  // the company_id stamp below read the ONE resolved value and cannot drift.
+  // undefined (unresolved) -> nextNum falls back to the active company's prefix.
   //
   // docPrefixForCode, NOT a local copy of the rule: this line used to inline
   // `code !== 'HOUZS' ? code + '-' : ''`, and a second copy of a numbering rule
   // is a numbering rule that will disagree with itself the first time it moves.
-  const srcCode = head.company_id != null ? companyCodeMap(c).get(Number(head.company_id)) : undefined;
+  const srcCode = doCompanyId != null ? companyCodeMap(c).get(Number(doCompanyId)) : undefined;
   const srcPrefix = srcCode != null ? docPrefixForCode(srcCode) : undefined;
 
   const { data: doHeader, error: hErr } = await insertWithDocNoRetry<{ id: string; do_number: string }>(
     () => nextNum(sb, c, srcPrefix),
     (doNumber) => sb.from('delivery_orders').insert({
-    /* multi-company: inherit the SOURCE SO's company. Since the source reads
-       above are scoped, that is the ACTIVE company for every row that can reach
-       here; the `??` covers only a pre-migration SO with a NULL company_id.
-       Reads as an inherit because it IS one — the DO belongs to whichever
-       company's order it ships — but it can no longer differ from the active
-       company, and the DO LINES below are stamped with the active company
-       (stampCompany), so header and lines cannot disagree. They could before:
-       this insert inherited while the lines stamped active. */
-    company_id: (head.company_id as number | null) ?? activeCompanyId(c),
+    /* multi-company: INHERIT the source SO's company (doCompanyId), which for
+       this route can genuinely differ from the active one — a 2990 order
+       converted while browsing as Houzs stays a 2990 delivery order, on 2990's
+       books, drawing 2990's stock. The DO LINES below stamp the SAME value, so
+       header and lines cannot disagree; they used to, because the header
+       inherited while the lines went through stampCompany (= the ACTIVE
+       company). */
+    company_id: doCompanyId,
     do_number: doNumber,
     /* so_doc_no has a FK to mfg_sales_orders(doc_no) → one valid doc. The full
        set of source SOs is recorded in `ref` below when the picks span >1 SO. */
@@ -4169,9 +4250,14 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       committed_variant_key: commitments.has(line.soItemId)
         ? (commitments.get(line.soItemId)?.variantKey ?? '') : null,
       committed_batch_strict: commitments.get(line.soItemId)?.strictBatch === true,
+      /* The SAME value the header inherited — NOT stampCompany, which stamps the
+         ACTIVE company by contract and is therefore wrong on the one route whose
+         document may belong to the other company. Omitted entirely when
+         unresolved, matching stampCompany's own degrade. */
+      ...(doCompanyId != null ? { company_id: doCompanyId } : {}),
     };
   });
-  const { error: iErr } = await sb.from('delivery_order_items').insert(stampCompany(doRows, c));
+  const { error: iErr } = await sb.from('delivery_order_items').insert(doRows);
   if (iErr) {
     // Roll the header back so we don't leave a headerless DO.
     await sb.from('delivery_orders').delete().eq('id', dh.id);
@@ -4209,17 +4295,24 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   /* Past both compensating branches (items-insert rollback, race-conflict
      rollback) — the DO is permanent from here. Written after recomputeTotals so
      localTotalCenti is the rolled-up figure. */
+  /* The ACTOR stays the caller — this row records who cut the DO, and on this
+     route that is legitimately someone from the other company. The COMPANY is
+     the document's (doCompanyId): the entry belongs on the 2990 delivery order's
+     timeline, not on Houzs's. */
   await recordDoCreate(
-    sb, c.get('houzsUser'), activeCompanyId(c), dh.id, doRows.length,
+    sb, c.get('houzsUser'), doCompanyId, dh.id, doRows.length,
     `Converted from Sales Order${docNos.length === 1 ? '' : 's'} ${docNos.join(', ')}`,
   );
 
   /* ERP -> AutoCount SO->DO. A MERGED DO (several source SOs) has no AutoCount
      shape — see recordConvertSkipped — so it is written down as skipped instead
      of being invented or dropped. */
+  /* companyId picks the AutoCount BOOK the transfer is written into, and gates
+     it on that company's writeback flag. A 2990 DO belongs in 2990's book
+     whoever converted it, so this is the document's company, not the active one. */
   if (docNos.length === 1) {
     await enqueueConvert(sb, {
-      companyId: activeCompanyId(c),
+      companyId: doCompanyId,
       op: 'so_to_do',
       from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNos[0] },
       to: { table: 'delivery_orders', keyCol: 'id', key: dh.id },
@@ -4230,7 +4323,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     });
   } else if (docNos.length > 1) {
     await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
+      companyId: doCompanyId,
       op: 'so_to_do',
       docType: 'DO',
       docNo: dh.do_number,
