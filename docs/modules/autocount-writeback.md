@@ -417,7 +417,51 @@ holds the per-gap evidence and the order to do it in.
 
 Between the ERP's line list and AutoCount's, two things do not line up. Both are
 handled in `composeDetails` (`src/services/autocount-writeback.ts`), in this
-order, and **both refuse the WHOLE document rather than send part of it.**
+order.
+
+> **CHANGED 2026-08-13, owner decision. Read this before the two sections below —
+> they describe the mechanisms, and these are the rules those mechanisms now run
+> under.**
+>
+> **D9 no longer folds a NEW order.** One ERP line goes to AutoCount as one
+> line: `9028-1A(LHF)` and `9028-2A(RHF)` each arrive as themselves. Folding is
+> reserved for a build the account book ALREADY holds as a single line, and the
+> DtlKeys say which is which, per build — compartments sharing one key fold,
+> distinct keys are left alone, no keys at all is a create. Mixed (some keyed,
+> some not) still folds, so the keyless-line refusal in 7a stops the document
+> and asks for a backfill. The rule lives in `collapseSofaLines`'s `flush()`.
+>
+> **D10 no longer refuses an unknown code.** It resolves to the ERP's own code
+> and `/ensure-masters` opens the item (7e). The old rule was right while
+> sending an unmapped code meant referencing an item the licensed book does not
+> hold; it does not any more, and its cost was total — whole product ranges are
+> in no cutover row, so every order containing one was blocked outright. A BLANK
+> code is still refused, and a MAPPED code is still never sent as itself.
+>
+> **The full order of preference when nothing else decides**, for a document
+> with no creditor (which every sales order is, since the PO does not exist yet
+> when the order is written back):
+>
+> 1. one candidate — take it
+> 2. the document's creditor, when it has one (purchase orders only)
+> 3. a candidate NAMED like the ERP code
+> 4. `HOK`, then `NB` — the owner's supplier preference; settles 103 of the 117
+>    ambiguous codes, almost all BEDFRAME
+> 5. the ERP's own code, opened on first use
+>
+> **Because the shape is settled first, the resolver does no sofa reasoning.**
+> A folded line reaches it as `<model>-1S`, an unfolded one as its own
+> compartment code, and each resolves to what it is. A compartment is never
+> redirected to its model — that used to happen and it gave one sofa two
+> different AutoCount items depending on which side of the collapse the caller
+> sat. See BUG-HISTORY, 2026-08-13.
+>
+> **An EDIT never sends `ItemCode` for a line AutoCount already owns.** Same
+> rule `Location` runs under: the book's own value is the truth on a line it
+> holds. Swapping a product still propagates, because a swap is a delete plus an
+> add — the removed row is retired and the added row has no DtlKey, so it keeps
+> its code. 194 real lines sit under the two brand items the cutover collapsed
+> and an edit must not move them.
 
 ### D10 — `material_code` is not `ItemCode`
 

@@ -144,7 +144,7 @@ const canonicalOwnCode = (erpItemCode: string): string => erpItemCode.trim();
  * owner's chain, in order. Never returns null: step 5 always has an answer.
  */
 function chooseWithoutSupplier(
-  ownCode: string,
+  erpItemCode: string,
   code: string,
   candidates: AcItemMapEntry[],
 ): { acItemCode: string; via: 'same-name' | 'preferred-supplier' | 'erp-canonical' } {
@@ -163,7 +163,7 @@ function chooseWithoutSupplier(
   }
 
   /* 5. Our own code. */
-  return { acItemCode: canonicalOwnCode(ownCode), via: 'erp-canonical' };
+  return { acItemCode: canonicalOwnCode(erpItemCode), via: 'erp-canonical' };
 }
 
 export function resolveAcItemCode(
@@ -196,8 +196,6 @@ export function resolveAcItemCode(
   const bound = opts.bindings?.get(code);
   let candidates = index.byErp.get(code) ?? [];
   let via: 'direct' | 'sofa-model' = 'direct';
-  /* What "our own code" means for this line — see canonicalOwnCode. */
-  let ownCode = erpItemCode;
 
   /* A sofa compartment has no AutoCount item of its own — the whole point of
      D9 is that AutoCount holds ONE line for the build. So the compartment
@@ -206,33 +204,24 @@ export function resolveAcItemCode(
      sources is what makes the answer honest: ERP model 8030 really does stand
      for three different AutoCount items, and pretending otherwise would pick
      one of them at random. */
+  /* A BUILD's base code may be in the map only under a model the cutover folded
+     onto this one (SOFA_MODEL_ALIAS), so widen to those before giving up.
+     Base codes ONLY. A compartment is no longer redirected here: since
+     2026-08-13 the shape is decided before the resolver runs — collapseSofaLines
+     folds a build the account book already holds as one line and leaves
+     everything else alone — so a compartment that reaches this function is a
+     line of its own and resolves to its own code. Redirecting it to the model
+     would put the build's item on one compartment's line, and it also made the
+     answer depend on which side of the collapse the caller sat: the alias
+     expansion gave a compartment of 9028 an extra HOK candidate the base never
+     saw, and the HOK preference took it. */
   if (!candidates.length) {
     const split = splitSofaCode(erpItemCode);
-    /* RESOLVE THE COMPARTMENT AS ITS BUILD, by asking the same question of the
-       model base code. D9 always collapses before the composer resolves, so the
-       base code's answer is the one that reaches AutoCount — and a compartment
-       resolved on its own has to match it or the ERP opens two items for one
-       sofa depending on which side of the collapse the caller sits.
-       They really did diverge: the alias expansion below pulls in every
-       AutoCount model the cutover folded onto this ERP model, so a compartment
-       of 9028 saw HOK-5530 SOFA (via the alias) and took it on the HOK
-       preference, while 9028-1S itself sees only the two brand items and falls
-       through to its own code. Guarded on the base differing from the input so
-       a base code can never recurse into itself. */
-    if (split) {
-      const base = up(`${split.model}-1S`);
-      if (base !== code) return resolveAcItemCode(base, opts);
+    if (split && up(split.compartment) === '1S') {
       via = 'sofa-model';
-      /* A compartment's own code is not an item in anybody's book — the whole
-         point of D9 is that AutoCount holds ONE line for the build. So when we
-         fall back to our own code it must be the MODEL BASE, the same string
-         the collapsed line carries, or resolving one line at a time and
-         resolving the built document would open two different items. */
-      ownCode = `${split.model}-1S`;
-      const models = [split.model, ...(ALIAS_SOURCES.get(up(split.model)) ?? [])];
       const seen = new Set<string>();
       const acc: AcItemMapEntry[] = [];
-      for (const m of models) {
+      for (const m of ALIAS_SOURCES.get(up(split.model)) ?? []) {
         for (const e of index.byErp.get(up(`${m}-1S`)) ?? []) {
           if (seen.has(e.ac)) continue;
           seen.add(e.ac);
@@ -243,49 +232,29 @@ export function resolveAcItemCode(
     }
   }
 
-  /* A TIE-BREAKER MUST NAME ONE OF THE TIED ITEMS.
+  /* THE LIVE BINDING, and it normally wins.
    *
-   * The binding normally WINS outright, and that is deliberate: the book can be
-   * renamed and a 2026-08-05 snapshot cannot know, so an unrecognised SKU is
-   * trusted. That reasoning holds while the map gives at most one answer.
+   * `scm.supplier_material_bindings.supplier_sku` is what this ERP records the
+   * account book calls each product. It is the only one of the two sources that
+   * GROWS — the compiled map is a snapshot of 2026-08-05 — so an unrecognised
+   * SKU is trusted where the map gives at most one answer: the book can be
+   * renamed and the snapshot cannot know.
    *
-   * It does not hold when the code is AMBIGUOUS. There the binding is not an
-   * override, it is a tie-breaker among items the book is known to hold — and a
-   * tie-breaker naming a third string has not broken the tie, it has invented an
-   * item. A rename cannot explain it either: if one candidate had been renamed
-   * the binding would name the new name, and the OTHER candidate would still be
-   * sitting there in the map. So this is wrong data, and sending it writes an
-   * ItemCode the licensed book does not have — the exact outcome the "no
-   * fallback to material_code" rule at the top of this file exists to prevent.
-   * On a purchase order the resulting line cannot even be deleted.
-   *
-   * Measured against production on 2026-08-13, this is not hypothetical. All
-   * four ambiguous sofa models carried bindings and not one named a real item:
-   * the MAIN supplier's row for 9028-1S held the ERP's own code '9028-1S', and
-   * the rest held 'AMN-SF9028 SOFA 1S' where the book has 'AMN-SF9028 SOFA'.
-   * These refused already, because the binding was unreachable for a collapsed
-   * sofa line; making it reachable without this guard would have turned four
-   * loud refusals into phantom items opened in a licensed account book.
-   *
-   * Checked AFTER the sofa fallback so the refusal names what the book really
-   * holds, which is the whole remedy an operator needs.
-   */
-  if (bound) {
-    if (candidates.length <= 1 || index.acCodes.has(up(bound))) {
-      return { ok: true, acItemCode: bound, via: 'binding' };
-    }
-    /* Otherwise IGNORE it and let the chain below decide. It used to refuse
-       here, which was right while there was no other answer — but blocking a
-       salesperson's order on a typo in a column that belongs to purchasing is
-       not. The bad rows stay visible: check-autocount-ambiguous-items.mjs
-       validates every binding against the book and lists them. */
+   * It is IGNORED where the code is ambiguous and the binding names none of the
+   * candidates. There the binding is not an override but a tie-breaker among
+   * items the book is known to hold, and naming a third string has not broken
+   * the tie — it has invented an item. Measured on production 2026-08-13, all
+   * four ambiguous sofa models carried exactly that: the main supplier's row for
+   * 9028-1S held the ERP's own code and the rest held '<real code> 1S'. Sending
+   * one opens a phantom item in a licensed book; refusing blocks a salesperson
+   * over a typo in a column that belongs to purchasing. Neither — the chain
+   * below decides, and check-autocount-ambiguous-items lists the bad rows. */
+  if (bound && (candidates.length <= 1 || index.acCodes.has(up(bound)))) {
+    return { ok: true, acItemCode: bound, via: 'binding' };
   }
 
-  /* Nothing in the book under this code — whole product ranges opened after the
-     2026-08-05 snapshot are like this. Open it under our own name rather than
-     refusing the document. */
   if (!candidates.length) {
-    return { ok: true, acItemCode: canonicalOwnCode(ownCode), via: 'erp-canonical' };
+    return { ok: true, acItemCode: canonicalOwnCode(erpItemCode), via: 'erp-canonical' };
   }
   if (candidates.length === 1) return { ok: true, acItemCode: candidates[0].ac, via };
 
@@ -313,7 +282,7 @@ export function resolveAcItemCode(
 
   /* No creditor to ask — and on a SALES ORDER there never is one, because the
      purchase order does not exist yet when the order is written back. */
-  return { ok: true, ...chooseWithoutSupplier(ownCode, code, candidates) };
+  return { ok: true, ...chooseWithoutSupplier(erpItemCode, code, candidates) };
 }
 
 /**

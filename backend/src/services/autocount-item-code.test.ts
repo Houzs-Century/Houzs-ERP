@@ -161,12 +161,18 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
     }
   });
 
-  it('resolves a sofa COMPARTMENT through the model base SKU', () => {
-    // The compartment has no AutoCount item of its own — that is the whole of D9.
+  it('a sofa COMPARTMENT resolves to ITSELF, not to the model', () => {
+    /* Was: a compartment resolved through the model base SKU, because D9 always
+       folded first and AutoCount held one line per build. Since 2026-08-13 the
+       SHAPE is decided before the resolver runs, so a compartment that reaches
+       here is a line of its own and must carry its own code — redirecting it
+       would put the whole build's item on one compartment's line. */
     const base = resolveAcItemCode('5526-1S');
     expect(base.ok).toBe(true);
     const comp = resolveAcItemCode('5526-1A(LHF)');
     expect(comp.ok).toBe(true);
+    if (comp.ok) { expect(comp.acItemCode).toBe('5526-1A(LHF)'); expect(comp.via).toBe('erp-canonical'); }
+    return;
     /* IDENTICAL to the base, answer and reason both. A compartment resolves by
        asking the same question of the model base code, so `via` reports how the
        BASE was settled rather than a 'sofa-model' of its own — and the two can
@@ -316,25 +322,47 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
   });
 });
 
-describe('a sofa document refuses before it resolves', () => {
-  it('surfaces the collapse refusal, not an ItemCode error', () => {
-    // A corner alone is not a build; the collapse refuses it, and that refusal
-    // must not be masked by an ItemCode failure on a compartment SKU.
-    expect(() => composeDetails([
+/* Owner 2026-08-13: a NEW order sends one AutoCount line per ERP line. Only a
+   build the account book ALREADY holds as a single line still folds, and it
+   says so itself — its compartments share one DtlKey. See
+   autocount-sofa-collapse.test.ts for the shape rule; these pin what the
+   composer does with each shape. */
+describe('a sofa CREATE sends one line per compartment', () => {
+  it('a corner alone is no longer a refusal — it is simply its own line', () => {
+    /* Was: the collapse refused a lone corner, because a corner is not a build.
+       Nothing is being built now, so there is nothing to refuse; the line goes
+       in as itself and /ensure-masters opens the code. */
+    const { details } = composeDetails([
       line({ item_code: '5526-CNR', item_group: 'sofa', description2: '1 + 1 (28")' }),
-    ])).toThrow(SofaCollapseError);
+    ]);
+    expect(details).toHaveLength(1);
+    expect(details[0].ItemCode).toBe('5526-CNR');
   });
 
-  it('a clean sofa build reaches AutoCount as ONE line with the book\'s own ItemCode', () => {
+  it('a clean build reaches AutoCount as TWO lines, each under its own code', () => {
     const d2 = '1 + 1 (28") / COL: BEIGE';
     const so = composeCreateSo({ doc_no: 'SO-1', customer_name: 'X' } as never, [
       line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000 }),
       line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0 }),
     ]);
-    expect(so.Details).toHaveLength(1);
-    expect(so.Details[0].ItemCode).toBe('RDS-5526 SOFA');
-    expect(so.Details[0].Desc2).toBe(d2);
-    expect(so.Details[0].UnitPrice).toBe(2500);
+    expect(so.Details).toHaveLength(2);
+    expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
+    /* Both carry the same Desc2 and the price sits on the first, which is how
+       the ERP stores a build — the owner has seen this and accepted it. */
+    expect(so.Details.map((d) => d.Desc2)).toEqual([d2, d2]);
+    expect(so.Details.map((d) => d.UnitPrice)).toEqual([2500, 0]);
+  });
+
+  it('the SAME build already folded in the book stays ONE line, on the book\'s item', () => {
+    const d2 = '1 + 1 (28") / COL: BEIGE';
+    const { details } = composeDetails([
+      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000, linked_ac_dtlkey: 501 }),
+      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0, linked_ac_dtlkey: 501 }),
+    ]);
+    expect(details).toHaveLength(1);
+    expect(details[0].ItemCode).toBe('RDS-5526 SOFA');
+    expect(details[0].Desc2).toBe(d2);
+    expect(details[0].UnitPrice).toBe(2500);
   });
 });
 
@@ -450,10 +478,12 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
     if (r.ok) { expect(r.acItemCode).toBe('SOME-BRAND-NEW-CODE-9999'); expect(r.via).toBe('erp-canonical'); }
   });
 
-  test('the sofa COMPARTMENTS a real order carries land on the same code', () => {
-    const r = resolveAcItemCode('9028-1A(LHF)', {});
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.acItemCode).toBe('9028-1S');
+  test('each sofa COMPARTMENT of a new order carries its own code', () => {
+    for (const c of ['9028-1A(LHF)', '9028-2A(RHF)']) {
+      const r = resolveAcItemCode(c, {});
+      expect(r.ok, c).toBe(true);
+      if (r.ok) { expect(r.acItemCode, c).toBe(c); expect(r.via, c).toBe('erp-canonical'); }
+    }
   });
 
   test('2 — a PURCHASE ORDER still follows its own creditor, ahead of all of this', () => {

@@ -1241,10 +1241,11 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     location: 'KL',
   }));
 
-  test('with NO binding at all it now sends, on the canonical item', async () => {
-    /* This refused until 2026-08-13 — 9028-1S is two brand items in the cutover
-       map and a sales order names no creditor. The standing choice settles it
-       with one canonical item, opened by /ensure-masters on first use. */
+  test('with NO binding at all it now sends, one line per compartment', async () => {
+    /* This refused outright until 2026-08-13: 9028-1S is two brand items in the
+       cutover map and a sales order names no creditor. A create no longer folds
+       the build, so each compartment goes in under its own code and
+       /ensure-masters opens them on first use. */
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
@@ -1253,19 +1254,23 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
-    expect(row.payload.body.Details).toHaveLength(1);
-    expect(row.payload.body.Details[0].ItemCode).toBe('9028-1S');
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
   });
 
-  test('a binding on the MODEL BASE CODE is found and the document sends', async () => {
+  test('a binding on the COMPARTMENT is found and the document sends', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
       /* The row an operator can actually create: the ERP model code on the
          left, the account book's item on the right. Before the fix this row
          existed and changed nothing, because the query never asked for it. */
+      /* Keyed by the code the line actually carries. Before 2026-08-13 the
+         resolver was handed a synthesised '9028-1S' that no ERP line held, and
+         bindingsFor queried the raw codes — so the two never met and the
+         override could not fire for any sofa. */
       supplier_material_bindings: [{
-        company_id: 1, material_code: '9028-1S', material_kind: 'mfg_product',
+        company_id: 1, material_code: '9028-1A(LHF)', material_kind: 'mfg_product',
         supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
       }],
     });
@@ -1273,8 +1278,9 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
     expect(row.op).toBe('create_so');
-    /* ONE line, and it carries the AutoCount code the binding named. */
-    expect(row.payload.body.Details).toHaveLength(1);
-    expect(row.payload.body.Details[0].ItemCode).toBe('AMN-SF9028 SOFA');
+    /* The bound line takes the AutoCount code the binding named; the other
+       keeps its own. */
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['AMN-SF9028 SOFA', '9028-2A(RHF)']);
   });
 });

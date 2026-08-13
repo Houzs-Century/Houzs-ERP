@@ -489,13 +489,13 @@ describe('an edit never rewrites the item on a line AutoCount already owns', () 
     expect(Object.prototype.hasOwnProperty.call(p.Lines[0], 'ItemCode')).toBe(false);
   });
 
-  test('a CREATE still carries it — there is nothing to preserve yet', () => {
+  test('a CREATE carries it — one line per compartment, each its own code', () => {
     const { details } = composeDetails([
       compartment('1A(LHF)', { unit_price_centi: 399_000 }),
       compartment('2A(RHF)'),
     ], real);
-    expect(details).toHaveLength(1);
-    expect(details[0].ItemCode).toBe('9028-1S');
+    expect(details).toHaveLength(2);
+    expect(details.map((d) => d.ItemCode)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
   });
 
   test('an ordinary line the book owns keeps its item too — not just the sofas', () => {
