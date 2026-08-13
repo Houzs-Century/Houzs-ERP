@@ -26,6 +26,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { serviceNotify } from './dialog-service';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -216,5 +217,6 @@ export const useDeleteConsignmentReturnItem = () => {
       qc.invalidateQueries({ queryKey: ['consignment-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['consignment-return'] });
     },
+    onError: writeFailed,
   });
 };

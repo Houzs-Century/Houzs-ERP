@@ -45,6 +45,14 @@ const jsonOut = process.argv.includes("--json");
 const SCOPE_HELPERS = [
   "scopeToCompany",
   "scopeToCompanyId",
+  /* CROSS-COMPANY scoping - a bound to the caller's ALLOWED set, not to one
+     active company. It is a real boundary and was missing from this list, so
+     every correctly-scoped TMS / cross-company handler counted as unscoped.
+     Note it is NOT caught by the "scopeToCompany" entry above: the substring
+     test fails on scopeToALLOWEDCompanies. */
+  "scopeToAllowedCompanies",
+  "allowedCompaniesSql",
+  "allowedCompanyIds",
   "requireActiveCompanyId",
   "activeCompanyId",
   "companyScopeSql",

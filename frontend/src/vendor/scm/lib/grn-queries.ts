@@ -5,6 +5,7 @@
 // /return query surface + verified-save + supabase + serviceNotify). Only the
 // GRN hooks are pulled here, copied VERBATIM except for the boundary:
 //   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
+import { writeFailed } from './mutation-error';
 //     → /api/scm), instead of the source's relative './authed-fetch' that pulled
 //     in supabase.
 //   • the dropped `import { supabase }` / `verifiedSave` machinery — none of the
@@ -217,6 +218,7 @@ export const useDeleteGrnItem = () => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
     },
+    onError: writeFailed,
   });
 };
 

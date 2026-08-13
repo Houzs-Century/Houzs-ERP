@@ -5013,7 +5013,19 @@ deliveryOrdersMfg.get('/:id/payments', async (c) => {
      salesperson's payment ledger by enumerating ids. Out-of-scope /
      missing → 404. Directors/view-all bypass. */
   {
-    const { data: hdr } = await sb.from('delivery_orders').select('salesperson_id').eq('id', id).maybeSingle();
+    /* THE PARENT IS THE ONLY GATE THERE CAN BE. scm.delivery_order_payments has
+       no company_id of its own — it is scoped THROUGH its parent DO
+       (delivery_order_id -> delivery_orders.company_id), confirmed against prod
+       by scripts/diag-do-payments.mjs, which is also why the 2990 importer
+       skipped the table ("SKIP delivery_order_payments: no company_id"). That
+       contract only holds if the parent read is scoped, and it was not: all
+       three payment endpoints (this GET, the POST and the DELETE below) reached
+       the DO by uuid alone. The salesperson scope underneath is a different
+       axis — it bounds WHICH PERSON, never which company, and anyone with
+       view-all passes it untouched. */
+    const { data: hdr } = await scopeToCompany(
+      sb.from('delivery_orders').select('salesperson_id').eq('id', id), c,
+    ).maybeSingle();
     if (!hdr) return c.json({ error: 'not_found' }, 404);
     const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
     if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
@@ -5052,7 +5064,11 @@ const paymentCreateSchema = z.object({
 deliveryOrdersMfg.post('/:id/payments', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
-  const { data: doc } = await sb.from('delivery_orders').select('id').eq('id', id).maybeSingle();
+  // company-scope: through the parent DO - the payment row carries no
+  // company_id. See the note on GET /:id/payments above.
+  const { data: doc } = await scopeToCompany(
+    sb.from('delivery_orders').select('id').eq('id', id), c,
+  ).maybeSingle();
   if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
 
   let body: unknown;
@@ -5088,6 +5104,14 @@ deliveryOrdersMfg.post('/:id/payments', async (c) => {
 
 deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
+  /* company-scope: through the parent DO. The mismatch check below only proves
+     the payment belongs to the DO in the URL — it says nothing about whose DO
+     that is, so on its own it let one company delete a money record off the
+     other's delivery. See the note on GET /:id/payments above. */
+  const { data: doc } = await scopeToCompany(
+    sb.from('delivery_orders').select('id').eq('id', id), c,
+  ).maybeSingle();
+  if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
   const { data: row } = await sb.from('delivery_order_payments').select('delivery_order_id').eq('id', paymentId).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);
   if ((row as { delivery_order_id: string }).delivery_order_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);

@@ -1,4 +1,5 @@
 // Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the Sales-Order
+import { writeFailed } from './mutation-error';
 // read / detail / status / mutation hooks the vendored SO list + detail pages
 // use. The full source module (~2000 lines) carries the entire SO/DO/SI/DR
 // query surface; the DO/SI/DR hooks are intentionally NOT vendored here.
@@ -448,6 +449,7 @@ export const useOverrideMfgSoLinePrice = () => {
       // aggregate, move with it.
       invalidateSoLists(qc);
     },
+    onError: writeFailed,
   });
 };
 
@@ -530,6 +532,7 @@ export const useDeleteSoItemPhoto = () => {
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
     },
+    onError: writeFailed,
   });
 };
 

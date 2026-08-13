@@ -28,6 +28,7 @@ import type {
   NewPoItem,
 } from './suppliers-queries';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -152,6 +153,7 @@ export function useDeletePurchaseConsignmentOrderItem() {
       qc.invalidateQueries({ queryKey: ['pc-order-detail', vars.poId] });
       qc.invalidateQueries({ queryKey: ['pc-order'] });
     },
+    onError: writeFailed,
   });
 }
 

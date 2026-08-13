@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 import { createElement, Fragment } from 'react';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -76,6 +77,7 @@ export function useCreateCurrency() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['currencies'] }),
+    onError: writeFailed,
   });
 }
 
@@ -110,5 +112,6 @@ export function useUpdateCurrency() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['currencies'] }),
+    onError: writeFailed,
   });
 }
