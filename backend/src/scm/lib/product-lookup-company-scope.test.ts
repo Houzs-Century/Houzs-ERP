@@ -195,8 +195,20 @@ describe('validateItemCodes — must move in lock-step with the pricing read', (
     expect(await validateItemCodes(sb(), ['CODYS-(K)'], 1)).toEqual({ ok: true });
   });
 
-  it('UNSCOPED admits it — which the now-scoped pricing read would then price at 0', async () => {
-    expect(await validateItemCodes(sb(), ['CODYS-(K)'])).toEqual({ ok: true });
+  it('EXPLICITLY unscoped admits it — which the now-scoped pricing read would then price at 0', async () => {
+    // `null` still degrades to no predicate; what changed (optional-param-noop
+    // sweep, 2026-08-13) is that it can no longer happen by SAYING NOTHING.
+    expect(await validateItemCodes(sb(), ['CODYS-(K)'], null)).toEqual({ ok: true });
+  });
+
+  it('omitting the company is a COMPILE error, not a silent unscoped gate', () => {
+    // companyId is a required positional argument, and this is the assertion
+    // that fails without it. Never invoked: the point is that the call does not
+    // compile. Make the parameter optional again and the directive below goes
+    // unused, which `npm run typecheck` reports as TS2578.
+    // @ts-expect-error
+    const omitted = () => validateItemCodes(sb(), ['CODYS-(K)']);
+    expect(omitted).toBeInstanceOf(Function);
   });
 });
 
