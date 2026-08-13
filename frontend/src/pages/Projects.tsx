@@ -1369,6 +1369,28 @@ function ProjectsListView() {
         all.push(...batch);
         if (batch.length === 0 || all.length >= (res.total ?? all.length)) break;
       }
+      // Owner 2026-08-12: cluster same-event rows (same venue + start date)
+      // together so an event's different-brand projects sit side by side in the
+      // export instead of being scattered by the brand/date sort. Overall order
+      // is preserved — each event stays where its FIRST row appeared, and its
+      // other brands are pulled up next to it (stable within the event).
+      {
+        const eventKey = (r: ProjectRow) =>
+          `${(r.venue ?? "").trim().toUpperCase()}||${r.start_date ?? ""}`;
+        const origIdx = new Map<ProjectRow, number>();
+        all.forEach((r, i) => origIdx.set(r, i));
+        const firstSeen = new Map<string, number>();
+        for (const r of all) {
+          const k = eventKey(r);
+          if (!firstSeen.has(k)) firstSeen.set(k, origIdx.get(r)!);
+        }
+        all.sort((a, b) => {
+          const fa = firstSeen.get(eventKey(a))!;
+          const fb = firstSeen.get(eventKey(b))!;
+          if (fa !== fb) return fa - fb;
+          return origIdx.get(a)! - origIdx.get(b)!;
+        });
+      }
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
@@ -3271,9 +3293,12 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
-  // An event that has not started only carries booked rental, so counting it
-  // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "completed";
+  // Owner decision 2026-08-11: default to the full picture. "completed" was
+  // the original default (an unstarted event carries only booked rental, which
+  // reads as a loss that has not happened), but half the year's sales sat on
+  // events staff never marked completed, so the completed-only view kept
+  // understating revenue by ~50% and reading as "the numbers are wrong".
+  const scope = params.get("af_scope") ?? "all";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -6052,15 +6077,22 @@ function ProjectDetailContent({
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
       // Two-stage defect triage (owner 2026-08-07):
-      //  - canReview  = Storekeeper Supervisor (Shukor) or admin — triages a
-      //    fresh defect: Done (cleaned) or Replace (escalate to purchaser).
+      //  - canReview  = the defect reviewer for THIS project's state (owner
+      //    2026-08-11 two-warehouse split): Nancy (Ops Exec role) for the region
+      //    states, Shukor (Storekeeper Supervisor) for every other state; admin
+      //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
       //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
       //    escalated (Replace) defect with Done once the replacement is ordered.
-      canReview:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
       canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
@@ -9400,6 +9432,27 @@ function ChecklistRow({
     fileInputRef.current?.click();
   }
 
+  // Remove a file from a card-section task (owner 2026-08-11: "add remove button
+  // for whoever can edit"). Gated in the UI on the SAME attach capability
+  // (canManage) as the Attach button, so anyone who can add a file can remove it;
+  // the backend DELETE already allows projects.write / tick-for-own-role.
+  async function removeAttachment(att: TaskAttachment) {
+    if (
+      !(await dialog.confirm({
+        message: `Remove "${att.file_name}"?`,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/checklist/attachments/${att.id}`);
+      onAttachmentsChanged?.();
+    } catch (e: any) {
+      toast?.error(e?.message || "Something went wrong. Please try again.");
+    }
+  }
+
   /** Open one attachment in a new tab (auth-protected R2 goes through
    *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
    *  Used by the per-file chips on pill rows (Rental Payment / Security
@@ -9584,18 +9637,32 @@ function ChecklistRow({
         {attachments && attachments.length > 0 && (
           <div className="mt-1.5 flex flex-col gap-0.5">
             {attachments.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
-                title={`Open ${a.file_name}`}
-                className="flex items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
-              >
-                <Paperclip size={11} className="shrink-0" />
-                <span className="truncate underline decoration-dotted underline-offset-2">
-                  {a.file_name}
-                </span>
-              </button>
+              <div key={a.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
+                  title={`Open ${a.file_name}`}
+                  className="flex min-w-0 items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
+                >
+                  <Paperclip size={11} className="shrink-0" />
+                  <span className="truncate underline decoration-dotted underline-offset-2">
+                    {a.file_name}
+                  </span>
+                </button>
+                {/* Remove file — shown to whoever can attach here (owner
+                    2026-08-11). id < 0 = merged crew photo, never removable. */}
+                {canManage && !readOnlyAttach && a.id > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
+                    title="Remove file"
+                    aria-label={`Remove ${a.file_name}`}
+                    className="shrink-0 text-ink-muted hover:text-err"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -11630,11 +11697,36 @@ function ScheduleRef({
     }
   };
   return (
-    <div className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3">
+    <div
+      // PASTE-TO-UPLOAD (owner 2026-08-11): a schedule screenshot is normally
+      // on the clipboard (Snipping Tool / PrtSc), not saved as a file, so
+      // click-to-browse alone forced a pointless save-then-pick detour. Click
+      // the box (tabIndex makes it focusable) then Ctrl+V / Cmd+V and the
+      // clipboard image uploads straight away. Both routes stay available.
+      tabIndex={readOnly ? -1 : 0}
+      onPaste={(e) => {
+        if (readOnly || busy) return;
+        const items = Array.from(e.clipboardData?.items ?? []);
+        const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+        if (!img) return; // let a normal text paste through untouched
+        const blob = img.getAsFile();
+        if (!blob) return;
+        e.preventDefault();
+        const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        // Clipboard blobs are nameless — stamp one so the row reads sensibly.
+        void upload(new File([blob], `schedule-${Date.now()}.${ext}`, { type: blob.type }));
+      }}
+      className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
+    >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
           Schedule reference
         </span>
+        {!readOnly && (
+          <span className="text-[9.5px] text-ink-muted">
+            click here, then Ctrl+V to paste a screenshot
+          </span>
+        )}
       </div>
       {items.length > 0 ? (
         <PhotoGroup label="Schedule" photos={items} onChange={() => photos.reload()} />

@@ -21,6 +21,8 @@
 //   4. purchase_consignment_receives.warehouse_id (the source receive doc)
 //
 // Env: DATABASE_URL. APPLY=1 to write (default DRY-RUN). One transaction.
+//
+// RE-RUN: inert. A row already parked at PJ is either out of scope or matched by an IS DISTINCT FROM guard.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

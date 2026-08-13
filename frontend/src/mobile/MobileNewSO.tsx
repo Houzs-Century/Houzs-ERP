@@ -12,7 +12,8 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
   buildAmendmentHeaderChanges,
@@ -74,7 +75,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../vendor/shared/so-variant-rule";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { lineIdentity } from "@2990s/shared";
 import { normalizePhone } from "../vendor/shared/phone";
@@ -213,7 +214,7 @@ type SoHeader = {
   customer_state: string | null;
   city: string | null;
   postcode: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   customer_delivery_date: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
@@ -472,7 +473,7 @@ export async function createDraftFromPrefill(prefill: MobileScanPrefill, idempot
     city: prefill.city.trim() || null,
     postcode: prefill.postcode.trim() || null,
     // DRAFT: no dates (the interactive "Save draft" nulls these too).
-    internalExpectedDd: null,
+    processingDate: null,
     customerDeliveryDate: null,
     /* EXPLICIT draft flag — the backend statuses the SO on body.asDraft === true
        (mfg-sales-orders.ts POST /), NOT on empty dates. Without it a scanned,
@@ -718,7 +719,18 @@ export function MobileNewSO({
   // Order info
   // Reconciled against the live building_type catalog — seed it straight (see custType).
   const [buildingType, setBuildingType] = useState(scanPrefill?.buildingType ?? "");
-  const [procDate, setProcDate] = useState(scanPrefill?.processingDate ?? "");
+  /* SEEDING NOTE (unchanged by the 2026-08-13 rename, flagged by it): this is
+     the Sales Order's PROCESSING DATE (internal_expected_dd, the factory-start
+     date), but it is seeded from `slipDate` — the day the rep WROTE the slip.
+     Those are different facts. Desktop derives the same field from
+     Delivery − 6 weeks and never reads the slip's date.
+     LATENT, not live: no `setScreen({t:"new-so"})` call site supplies
+     `scanPrefill` (MobileApp.tsx declares it in the union and never passes it),
+     and the live mobile scan path is createDraftFromPrefill, which sends
+     internalExpectedDd: null. Re-wire that handoff and this starts stamping
+     factory dates off slip handwriting. Fixing it is a behaviour change, not a
+     rename — see docs/modules/scan-to-so.md §2b. */
+  const [procDate, setProcDate] = useState(scanPrefill?.slipDate ?? "");
   const [delivDate, setDelivDate] = useState(scanPrefill?.deliveryDate ?? "");
   const [note, setNote] = useState(scanPrefill?.note ?? "");
 
@@ -770,7 +782,7 @@ export function MobileNewSO({
      `hasOpenAmend` blocks raising a SECOND amendment while one is in flight. */
   const [amendEligible, setAmendEligible] = useState(false);
   const [hasOpenAmend, setHasOpenAmend] = useState(false);
-  /* FIX D2/D3 — the PERSISTED processing date (internal_expected_dd) drives the
+  /* FIX D2/D3 — the PERSISTED processing date (processing_date) drives the
      processing-date lock. Kept separate from the editable procDate form value so
      the lock reflects what the backend has, not an in-flight edit. */
   const [origProcDate, setOrigProcDate] = useState<string>("");
@@ -863,7 +875,9 @@ export function MobileNewSO({
           phone: toE164(scanPrefill.phone),
           custType: custType, buildingType: buildingType,
           note: scanPrefill.note,
-          procDate: scanPrefill.processingDate, delivDate: scanPrefill.deliveryDate,
+          // Coerced the SAME way procDate is seeded above (from the slip's own
+          // date), so the "scanned" badge and the learning diff agree with it.
+          procDate: scanPrefill.slipDate, delivDate: scanPrefill.deliveryDate,
           addr1: scanPrefill.address1, state: state,
           city: scanPrefill.city, postcode: scanPrefill.postcode,
         }
@@ -903,8 +917,8 @@ export function MobileNewSO({
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
-        setProcDate((h.internal_expected_dd ?? "").slice(0, 10));
-        setOrigProcDate((h.internal_expected_dd ?? "").slice(0, 10));
+        setProcDate((h.processing_date ?? "").slice(0, 10));
+        setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
         setOrigDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
         setNote(h.note ?? "");
@@ -951,7 +965,7 @@ export function MobileNewSO({
           city: h.city ?? "",
           postcode: h.postcode ?? "",
           salesLocation: h.sales_location ?? "",
-          procDate: (h.internal_expected_dd ?? "").slice(0, 10),
+          procDate: (h.processing_date ?? "").slice(0, 10),
           delivDate: (h.customer_delivery_date ?? "").slice(0, 10),
           ecName: h.emergency_contact_name ?? "",
           ecPhone: toE164(h.emergency_contact_phone),
@@ -1077,6 +1091,10 @@ export function MobileNewSO({
     const hit = list.find((m) => m.state === state);
     return hit?.warehouse?.code ?? "";
   }, [state, stateWarehousesQ.data]);
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   /* Effective venue to SEND on save — the operator's manual pick when they
      changed it, otherwise the derived default (resolvedVenueId already folds
@@ -1117,15 +1135,15 @@ export function MobileNewSO({
 
   /* ── FIX D2/D3 — processing-date LOCK (mirror the backend + SalesOrderDetail).
      The backend locks an SO once "today (MYT)" is strictly AFTER its processing
-     date (internal_expected_dd) on a non-DRAFT / non-CANCELLED order: line
+     date (processing_date) on a non-DRAFT / non-CANCELLED order: line
      add/edit/delete + the identity columns State / City / Postcode are rejected
      409 so_locked_processing. Delegated to the SHARED procLockActive() (which
-     reads internal_expected_dd + status against todayMyt()) so this edit form
+     reads processing_date + status against todayMyt()) so this edit form
      can't drift from the mobile detail screen or desktop — DRAFT / CANCELLED
      stay editable. In EDIT mode we DISABLE line editing + State/City/Postcode,
      but keep the rest of the customer info + address lines + note editable. */
   const procLocked = useMemo(
-    () => isEdit && procLockActive({ internal_expected_dd: origProcDate, status: soStatus }),
+    () => isEdit && procLockActive({ processing_date: origProcDate, status: soStatus }),
     [isEdit, origProcDate, soStatus],
   );
   /* AMENDMENT MODE (desktop SalesOrderDetail parity) — the SO is
@@ -1414,7 +1432,13 @@ export function MobileNewSO({
       phones: phone.trim() ? [phone.trim()] : ai.phones,
       location: ai.location,
       deliveryDate: delivDate || ai.deliveryDate,
-      processingDate: procDate || ai.processingDate,
+      /* UNCHANGED MAPPING, now visibly odd (see the procDate seed above): the
+         SO's Processing Date field is written back into the slip's own
+         `slipDate`. It is only consistent because mobile SEEDED procDate from
+         slipDate, so an untouched field inverts to exactly the AI's read and
+         contributes no diff. Backend `CARRIED_NOT_INVERTED` lists slipDate for
+         precisely this reason. Rewiring it is a behaviour change, not a rename. */
+      slipDate: procDate || ai.slipDate,
       salesRep: scanSalesperson || ai.salesRep,
       customerSoRef: custRef.trim() || ai.customerSoRef,
       paymentMethod: ai.paymentMethod,
@@ -1732,25 +1756,20 @@ export function MobileNewSO({
       setError(SOFA_MIX_MESSAGE);
       return;
     }
-    /* Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CREATING a
-       CONFIRMED order requires every line's category-required axes, date or
-       no date. With a Processing Date the full rule applies
-       (missingVariantAxes — colour-KIV blocks a date, owner 2026-07-24);
-       a date-less confirmed CREATE applies the confirm rule
-       (missingConfirmVariantAxes — colour-KIV satisfies the fabric axis).
-       Drafts still save with gaps, and the EDIT sheet keeps its original
-       procDate-only rule — editing an existing order (e.g. fixing a remark)
-       must never be hostage to gaps the edit didn't touch; the confirm gate
-       on the status route owns those at Create Sales Order time. */
-    if (!asDraft && (procDate || !isEdit)) {
-      const missOf = (l: LineItem) =>
-        procDate
-          ? missingVariantAxes(l.itemGroup, l.variants, l.itemCode)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants, l.itemCode);
+    /* Variant completeness is the PROCEED rule, and only the proceed rule
+       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
+       的，除非它是 proceed 了"). A Processing Date IS proceed — colour-KIV also
+       blocks a date, owner 2026-07-24 — so the axes are demanded exactly when
+       a date is being set, on create and on edit alike. This briefly also ran
+       on a date-less CONFIRMED create (2026-08-08, HC-SO-2607-008); that made
+       a real order for a real customer unbookable before the customer had
+       picked a seat height, and is removed. Drafts were never gated. */
+    if (!asDraft && procDate) {
+      const missOf = (l: LineItem) => missingVariantAxes(l.itemGroup, l.variants, l.itemCode);
       const offender = namedLines.find((l) => missOf(l).length > 0);
       if (offender) {
         const miss = missOf(offender).map((a) => a.label).join(", ");
-        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}".`);
+        setError(`Complete the required options (${miss}) on "${offender.name || offender.itemCode}" before setting a Processing Date.`);
         return;
       }
     }
@@ -1769,6 +1788,19 @@ export function MobileNewSO({
       setError("Pick a salesperson before confirming this order (drafts can be saved without one).");
       return;
     }
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with desktop via soStockLocationError. Create only: an EDIT enqueues an
+       AutoCount edit, which leaves the account book's own Location alone. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+      isEdit,
+    });
+    if (locationErr) { setError(soErrorText(locationErr)); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from
@@ -1863,7 +1895,7 @@ export function MobileNewSO({
            split can't drift. */
         const { changes: headerChanges } = buildAmendmentHeaderChanges(
           {
-            internalExpectedDd:   procOut,
+            processingDate:   procOut,
             customerDeliveryDate: delivOut,
             customerState:        state,
             postcode:             postcode.trim(),
@@ -1875,7 +1907,7 @@ export function MobileNewSO({
             address2:             addr2.trim(),
           },
           {
-            internalExpectedDd:   origProcDate,
+            processingDate:   origProcDate,
             customerDeliveryDate: origDelivDate,
             customerState:        origState,
             postcode:             origPostcode,
@@ -1886,7 +1918,7 @@ export function MobileNewSO({
         );
         const outgoingPatch = amendmentMode
           ? withFrozenHeaderFieldsReverted(patch, {
-              internalExpectedDd:   origProcDate,
+              processingDate:   origProcDate,
               customerDeliveryDate: origDelivDate,
               customerState:        origState,
               postcode:             origPostcode,
@@ -2791,7 +2823,7 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
     city: v.city.trim() || null,
     postcode: v.postcode.trim() || null,
     salesLocation: v.salesLocation || undefined,
-    internalExpectedDd: v.procDate || null,
+    processingDate: v.procDate || null,
     customerDeliveryDate: v.delivDate || null,
     emergencyContactName: v.ecName.trim() || null,
     emergencyContactPhone: v.ecPhone.trim() || null,

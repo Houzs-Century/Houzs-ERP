@@ -27,7 +27,22 @@
 
 **(3) 改名字 = 一次只有一个成员的 merge。** 把 `ZL-3` 改成 `ZL-03`,会改掉活跃单据
 `variants->>'fabricCode'` 里存的那个字符串。所以**改名也必须把单据一起 repoint**,
-四条 arm(SO / PO / GRN / DO)一条都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+一条 arm 都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+
+> **arm 是 15 条,不是 4 条**(2026-08-13 从 `backend/scripts/lib/fabric-write.mjs`
+> 的 `ARMS` 量出来:SO / PO / GRN / DO / SI / PI / PRT / DRT / CSO / CDO / CDRT /
+> PCO / PCR / PCRT / MOV)。这行本来写「四条 arm(SO / PO / GRN / DO)」,那是
+> 2026-08-11 当天的实况;`repair-superseded-colour-refs.mjs` 就是去收拾那次
+> 「只认得 15 条里的 4 条」留下的活单。除了 `variants` 两个轴之外,同一个码还materialise
+> 在 `description2`、库存桶 `variant_key`、和 model 的 `allowed_options` 白名单里,
+> 也要一起跟着走。**不要照抄这段清单去手写扫描,`lib/fabric-write.mjs` 才是唯一那份。**
+
+**(4) 这一家脚本可以再跑,但要看得懂 plan。** `normalize-fabric-codes.mjs` 的
+CODE / LABEL 那段里,如果 `->` 右边比左边**少了一个词**(`J9226-01 SAND` 变成
+`J9226-01`),那就是颜色名字被抹掉,不是整理。2026-08-13 的 prod plan 一次提了
+200 条这种,全部 code 没变、只掉名字。原因是名字本来住在 code 里,第一趟把它搬去
+label,第二趟再从 code 推就推不出来了。修法是把 label 也当成名字的来源
+(`lib/fabric-code.mjs` 的 `nameFromLabel`),现在第二趟是空转。
 
 ---
 
@@ -78,6 +93,37 @@
 
 所以本脚本补了 **RE-PARENT**:把颜色搬到它**自己的码所指的系列**,顺手把指着旧系列的活跃行
 (`variants->>'fabricId'`)一起 repoint,旧系列如果因此空了就 `active = false` 退休 —— **不删**。
+
+---
+
+## 2C. 第二天的第二半 - Fabric Converter (scm.fabric_trackings)
+
+**Converter 是主表，布料库是它镜像出来的**，不是反过来 (`fabric-tracking.ts:74-82`)。
+2026-08-11 上午的正规化改的是镜像那一侧，主表原封不动，于是两边的码劈开了 —— 而
+`fabric_code` 正是**价格档位**的 join key。owner 看到画面时的原话：**"两边一定要一样的啊"**。
+
+| 时间 (UTC) | run | 做了什么 |
+|---|---|---|
+| 08-11 ~10:2x | `align-fabric-trackings` **31478813584** | PLAN，量出**492 条单据行**对不上主表（SO 310 / PO 126 / GRN 54 / DO 2），涉及 76 个码 |
+| 08-11 ~10:4x | `repair-split-colour-numbers` **31487319388** | APPLY，还原 6 个被切坏的四位数码（`NOVENA-100` 名字「3」→ `NOVENA-1003` 等），0 条活跃单据受影响 |
+| 08-11 ~11:2x | `align-fabric-trackings` **31488481377** | APPLY **失败并整个回滚** —— tier 是 enum，绑成了 text。没写进任何东西 |
+| 08-11 ~11:4x | `align-fabric-trackings` **31489281011** | APPLY，**code 改写 386 / series 填 220 / 重复停用 88 / 新建主表行 122**；孤儿行 **492 → 15**；VERIFY PASS |
+
+**收盘时的两个硬指标（verify 会挡）：**
+- 一个 code 被超过一行 **active** 持有 = **0** —— 这正是 `loadFabricByCode` 里说的「档位静默掉档」的成因
+- 布料库里有、Converter 没有 active 主行的颜色 = **0** —— 两边一一对应
+
+**还开着的：**
+
+| # | 还开着的 | 下一步 |
+|---|---|---|
+| 1 | **122 个新建的主表行没有价格档位** —— 整个 TR 和 DE 在内 | **owner**：去 Converter 画面设 PRICE_1/2/3。脚本不编价格 |
+| 2 | 15 条单据行仍对不上主表（原 492） | 跑一次 plan，第 1 段会逐个列出来 |
+| 3 | 32 个 Converter 有、布料库没有的码（`NOVENA-1005`、`GORGE-3001` 这类四位数） | 开单时选不到；要补就往库里镜像 |
+| 4 | **SO 上 7 条 `variants` 是阵列形状** | 跟 fabric 无关。08-11 08:1x 之后出现（在那之前两次 apply 都量到 0），另一路改 specials jsonb 留下的，见 `docs/jsonb-double-encoding-coe.md` |
+
+> **给一年后的人：改布料码永远从 Converter 改起。** 只改布料库，画面看起来对了，
+> 价格档位却会静默掉到 PRICE_2，而且没有任何东西会报错。
 
 ---
 

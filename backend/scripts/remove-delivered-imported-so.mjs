@@ -15,6 +15,8 @@
 //     all is reported; the owner decides those case by case)
 // Anything with a downstream reference is REPORTED and left untouched.
 // MODE=dry-run default; MODE=apply needs CONFIRM="I HAVE REVIEWED THE DRY-RUN".
+//
+// RE-RUN: inert. The documents it removes are gone.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

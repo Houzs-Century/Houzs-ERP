@@ -96,6 +96,17 @@ by the **Tier 2 downstream-lock** pattern (`...HasDownstream`) — a line cannot
 removed once a downstream document consumes it — and, on the money paths, by
 status guards.
 
+> **Corrected 2026-08-13.** Until `sweep/swallowed-error`, the "downstream-lock"
+> guard in this column was weaker than the table claims: every implementation
+> (`scm/lib/downstream-lock.ts` and the four route-local clones —
+> `pcoHasDownstream`, `coHasDownstream`, `pcReceiveHasDownstream`,
+> `noteHasDownstream`) destructured `count` / `data` without `error`, so a read
+> that FAILED folded to "no downstream document" and the line delete went
+> through. The guard is now fail-closed: an unreadable count returns
+> `downstream_check_failed` and the call site 409s as it always did for a real
+> lock. See BUG-HISTORY.md, "A guard that says all clear because it could not
+> look".
+
 | file | endpoint | guard |
 |---|---|---|
 | `mfg-sales-orders.ts:8404` | `/:docNo/items/:itemId` | `so_total_below_original` |

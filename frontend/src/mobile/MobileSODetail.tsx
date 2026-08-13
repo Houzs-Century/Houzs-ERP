@@ -134,9 +134,9 @@ type SoHeader = {
   city: string | null;
   postcode: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   /* proceeded_at — when the salesperson proceeded the order (server-stamped).
-     Used with internal_expected_dd to reflect the processing-date LOCK. */
+     Used with processing_date to reflect the processing-date LOCK. */
   proceeded_at: string | null;
   so_date: string | null;
   created_at: string | null;
@@ -156,6 +156,10 @@ type SoHeader = {
      open_amendment is the light summary of any in-flight amendment (status NOT IN
      SENT/REJECTED). Same flags the desktop SalesOrderDetail routes on. */
   amendment_eligible: boolean | null;
+  /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
+     only). Feeds soProcLockActive (line ~390), so the phone freezes the same
+     fields the desktop does with no processing date involved. */
+  po_locked: boolean | null;
   has_open_amendment: boolean | null;
   open_amendment: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Scan-flow proof photos (migrations 0033 + 0034) — R2 keys for the
@@ -996,7 +1000,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Venue" value={val(h.venue ?? h.venue_id)} /></div></div>
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing date" value={dl(h.internal_expected_dd)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery date" value={dl(h.customer_delivery_date)} mono /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop
                   SalesOrderDetailV2 parity), reusing THIS screen's own amber family
@@ -1476,7 +1480,7 @@ const HIST_FIELD_LABEL: Record<string, string> = {
   debtorName: "Customer", debtorCode: "Customer code", agent: "Agent",
   phone: "Phone", email: "Email", soDate: "SO date", status: "Status",
   paymentMethod: "Payment method", depositCenti: "Deposit",
-  internalExpectedDd: "Processing date", customerSoNo: "Customer SO ref",
+  processingDate: "Processing date", customerSoNo: "Customer SO ref",
   customerPo: "Customer PO", customerDeliveryDate: "Delivery date",
   amendedDeliveryDate: "Amended delivery date",
   amendDateFromCustomer: "Amend date (customer)", amendReason: "Amend reason",

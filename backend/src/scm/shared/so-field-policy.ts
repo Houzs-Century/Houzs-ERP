@@ -72,8 +72,8 @@ export type SoHeaderFieldPolicy = {
    omission — see SO_FREE_HEADER_NOTE below for why that default is deliberate. */
 export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
   {
-    column: 'internal_expected_dd',
-    payloadKey: 'internalExpectedDd',
+    column: 'processing_date',
+    payloadKey: 'processingDate',
     label: 'Processing Date',
     cls: 'CONTROLLED',
     reason:
@@ -299,7 +299,7 @@ export const lockedColumnsChanged = (
     .filter((col) => col in updates && normValue(updates[col]) !== normValue(before[col]))
     .filter((col) => !(
       opts.superAdminClearsProcessingDate === true
-      && (col === 'internal_expected_dd' || col === 'customer_delivery_date')
+      && (col === 'processing_date' || col === 'customer_delivery_date')
       && normValue(updates[col]) === ''
     ));
 

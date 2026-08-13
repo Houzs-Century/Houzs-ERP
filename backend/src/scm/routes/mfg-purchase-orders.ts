@@ -612,7 +612,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   /* Commander 2026-05-28 — PO-from-SO redesign. Surface three extra fields
      so the frontend grid can render Processing Date + derive each PO line's
      warehouse (from the SO's sales_location) + delivery date (from the SO
-     LINE's own line_delivery_date). internal_expected_dd + sales_location
+     LINE's own line_delivery_date). processing_date + sales_location
      come off the SO header; line_delivery_date off the item. */
   const { data: items, error } = await scopeToCompany(
     supabase
@@ -620,7 +620,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
       .select(`
       id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_centi,
       variants, line_suffix, cancelled, line_delivery_date,
-      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, internal_expected_dd, sales_location )
+      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, processing_date, sales_location )
     `),
     c,
   )
@@ -637,7 +637,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     so: {
       doc_no: string; debtor_name: string | null; branding: string | null; status: string;
       so_date: string; customer_delivery_date: string | null;
-      internal_expected_dd: string | null; sales_location: string | null;
+      processing_date: string | null; sales_location: string | null;
     };
   };
 
@@ -710,7 +710,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
         variants:        r.variants,
         lineSuffix:      r.line_suffix,
         // Commander 2026-05-28 — new fields for the redesigned PO-from-SO grid.
-        processingDate:   r.so.internal_expected_dd,
+        processingDate:   r.so.processing_date,
         salesLocation:    r.so.sales_location,
         lineDeliveryDate: r.line_delivery_date,
         mainSupplierCode: mainSupplierByCode.get(r.item_code)?.code ?? null,
@@ -3357,7 +3357,11 @@ async function resolveAllocationParent(
   poId: string,
   itemId: string,
 ): Promise<
-  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null }
+  /* companyId travels back with the parent so the allocation writers can put the
+     predicate on their OWN statement rather than trusting this lookup to have
+     covered them — the client is service-role, so nothing re-checks between the
+     two round trips. */
+  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null; companyId: number }
   | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
 > {
   const co = requireActiveCompanyId(c);
@@ -3382,7 +3386,7 @@ async function resolveAllocationParent(
   if (!itemRow || itemRow.purchase_order_id !== poId) {
     return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
   }
-  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number };
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number, companyId: co.companyId };
 }
 
 /* The line's current allocations, seq-ordered — the base every write plans on. */
@@ -3508,8 +3512,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     }
     updates.so_item_id = nextSoItemId;
   }
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) {
     if (/allocation_exceeds_line_qty/.test(error.message ?? '')) {
       return c.json({ error: 'allocation_conflict', message: "The line's allocations changed underneath this edit — reload and try again." }, 409);
@@ -3539,16 +3543,16 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   const doomed = existing.find((a) => a.id === allocationId);
   if (!doomed) return c.json({ error: 'allocation_not_found', message: 'That allocation no longer exists on this line.' }, 404);
 
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* Close the gap: survivors move DOWN in ascending order, so each UPDATE
      lands in a seq the delete (or the previous move) just freed and the
      UNIQUE (item, seq) constraint can never collide mid-resequence. */
   for (const move of resequenceAfterDelete(existing, allocationId)) {
-    const { error: seqErr } = await sb.from('purchase_order_item_allocations')
-      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId);
+    const { error: seqErr } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId), parent.companyId);
     if (seqErr) break; // leave a gap rather than fail the delete — display-only cosmetics
   }
   await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
@@ -4334,10 +4338,10 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
        again after a reopen, is re-entered in the allocation editor. */
     const poItemIds = lineRows.map((l) => l.id).filter(Boolean);
     if (poItemIds.length > 0) {
-      await supabase
+      await scopeToCompanyId(supabase
         .from('purchase_order_item_allocations')
         .delete()
-        .in('purchase_order_item_id', poItemIds);
+        .in('purchase_order_item_id', poItemIds), co.companyId);
     }
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
@@ -4377,12 +4381,27 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, po_number, company_id')
+    .select('id, status, po_number, company_id, linked_ac_docno')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
+
+  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK. The 2.2 SDK has no
+     un-cancel - CancelDocument is a command, not a flag, and a whole-file grep
+     of the reflected surface for uncancel / set_Cancelled returns nothing. A
+     reopen here would leave the PO live in the ERP and cancelled in the account
+     book, with nothing able to close the gap. Raise a new PO instead. */
+  const acDocNo = (cur as { linked_ac_docno?: string | null }).linked_ac_docno;
+  if (curStatus === 'CANCELLED' && acDocNo) {
+    return c.json({
+      error: 'cancel_is_final',
+      message: 'This purchase order was cancelled in AutoCount too, and AutoCount has no '
+        + 'un-cancel. Raise a new purchase order instead.',
+      acDocNo,
+    }, 409);
+  }
   // Idempotent — a live PO is already open, echo back.
   if (curStatus === 'SUBMITTED' || curStatus === 'PARTIALLY_RECEIVED') {
     return c.json({ purchaseOrder: { id, status: curStatus } });

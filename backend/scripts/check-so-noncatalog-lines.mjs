@@ -20,7 +20,7 @@
 //      required — it defaults).
 //   E. DRAFT orders carrying a Processing Date (owner addendum, 2990-SO-2608-
 //      007: a draft has not started processing — the scan job used to pin
-//      internal_expected_dd to the scan day; the fix stops the default, this
+//      processing_date to the scan day; the fix stops the default, this
 //      lists the rows it already stamped). The processing-date LOCK was
 //      verified to ignore DRAFTs on both ends (soProcessingLocked /
 //      procLockActive), so these rows mislead, they do not lock.
@@ -113,7 +113,7 @@ try {
            NULLIF(TRIM(COALESCE(so.agent, '')), '')  AS agent,
            NULLIF(TRIM(COALESCE(so.venue, '')), '')  AS venue,
            so.venue_id,
-           so.internal_expected_dd,
+           so.processing_date,
            so.so_date,
            (COALESCE(so.address1, '') ILIKE '%jalan test%'
              OR COALESCE(so.debtor_name, '') ILIKE '%test%') AS test_hint,
@@ -153,8 +153,8 @@ try {
     const test = r.test_hint === true;
     const base = { doc: r.doc_no, status: str(r.status) || "?", company: r.company_id ?? "—", test };
     const lines = Array.isArray(r.lines) ? r.lines : [];
-    if (str(r.status).toUpperCase() === "DRAFT" && r.internal_expected_dd != null) {
-      draftWithProc.push({ ...base, procDate: ymd(r.internal_expected_dd), soDate: ymd(r.so_date) });
+    if (str(r.status).toUpperCase() === "DRAFT" && r.processing_date != null) {
+      draftWithProc.push({ ...base, procDate: ymd(r.processing_date), soDate: ymd(r.so_date) });
     }
     for (const ln of lines) {
       const code = str(ln.code);

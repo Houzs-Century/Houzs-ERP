@@ -33,6 +33,7 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -111,6 +112,14 @@ export interface ErpSoHeader {
   phone: string | null;
   ref: string | null;
   po_doc_no: string | null;
+  /** The SO's "Processing date" — the field with that label in the UI, and the
+   *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
+   *  such field: 0189 dropped a dead second column carrying this label, and 0284
+   *  renamed the surviving one (internal_expected_dd) onto the name everybody
+   *  says, because two names for one field kept producing blank dates just as
+   *  reliably as two columns did. Do not reintroduce a second source, or a
+   *  second name, for it. Goes out as the `PDate` UDF. */
+  processing_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -135,6 +144,8 @@ export interface ErpPoHeader {
 }
 
 export interface ErpLine {
+  /** The ERP row id. Only the add-a-line path needs it — see `newLineIds`. */
+  id?: string | null;
   item_code: string;
   item_group?: string | null;
   description: string | null;
@@ -250,7 +261,11 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
-  Header: Record<string, string | null>;
+  /* `UDF` is a NESTED object, because that is how AcSyncService reads it
+     (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
+     silently ignored — the connector's own decompiled source made the same
+     point about its create path, and it cost a round of blind pushes then. */
+  Header: Record<string, string | null | Record<string, string>>;
   Lines: AcEditLine[];
 }
 
@@ -292,6 +307,32 @@ export interface ComposeOptions {
   supplierCode?: string | null;
   /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
+  /**
+   * The document's own location, used for a line that carries none of its own.
+   * A sales order knows where it sells from even when a line does not.
+   */
+  defaultLocation?: string | null;
+  /**
+   * CREATE only. A line that still resolves to no location is REFUSED rather
+   * than sent — see MissingLocationError for the live-book evidence. An edit
+   * must never set this: there, an absent location means "leave the account
+   * book's own value alone".
+   */
+  requireLocation?: boolean;
+  /**
+   * ERP code (uppercased) -> AutoCount ItemCode, from
+   * `scm.supplier_material_bindings`. Consulted BEFORE the compiled cutover
+   * map: the binding is the live record and the CSV is a 2026-08-05 snapshot,
+   * so only the binding can know a product opened since.
+   */
+  bindings?: Map<string, string> | null;
+  /**
+   * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
+   * that a keyless line is genuinely new rather than un-backfilled. Honoured
+   * only when EVERY keyless line on the document is one of these; see the
+   * comment in composeEdit for why both halves are required.
+   */
+  newLineIds?: Set<string>;
 }
 
 /**
@@ -307,6 +348,39 @@ export class SofaCollapseError extends Error {
     );
     this.name = 'SofaCollapseError';
     this.refusals = refusals;
+  }
+}
+
+/**
+ * A CREATE with no stock location is refused, because AutoCount refuses it too.
+ *
+ * MEASURED ON THE LIVE BOOK, 2026-08-11 11:54:59: a `/create-so` whose lines
+ * carried no `Location` came back
+ * `AutoCount.Data.ForeignKeyException ... FK_SODTL_Location ... table
+ * "dbo.Location", column 'Location'`. The same document at 11:57:43 with
+ * `Location: "KL"` on both lines saved. AcSyncService's create path applies the
+ * key unconditionally (`Set(() => d.Location = Str(it, "Location"))`) and `Str`
+ * turns an absent key into `""` — and `""` is not a row in `dbo.Location`.
+ *
+ * The omission rule was introduced with a comment claiming it was "a NO-OP on
+ * the create routes". It is not, and it was wrong in the direction that fails
+ * EVERY create. The rule stays correct for an EDIT, where a blank would
+ * overwrite the location the account book already holds; on a CREATE there is
+ * nothing to preserve and a foreign key to satisfy.
+ */
+export class MissingLocationError extends Error {
+  readonly lines: ReadonlyArray<{ index: number; itemCode: string }>;
+  constructor(lines: Array<{ index: number; itemCode: string }>) {
+    super(
+      `${lines.length} line(s) carry no stock location and none can be inherited from the `
+      + `document: ${lines.map((l) => `${l.index + 1} (${l.itemCode})`).join(', ')}. `
+      + 'AutoCount rejects a document line whose Location is not in dbo.Location, and an '
+      + 'absent key reaches it as the empty string — so this create would fail on '
+      + 'FK_SODTL_Location. Set the warehouse on the line, or the sales location on the '
+      + 'document, then save again.',
+    );
+    this.name = 'MissingLocationError';
+    this.lines = lines;
   }
 }
 
@@ -358,17 +432,24 @@ export function composeDetails(
   if (refusals.length) throw new SofaCollapseError(refusals);
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
+  const locationless: Array<{ index: number; itemCode: string }> = [];
   const details: AcDetail[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
       supplierCode: opts.supplierCode ?? null,
       index: opts.itemIndex,
+      bindings: opts.bindings ?? null,
     });
     if (!r.ok) {
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
-    const location = l.location ? mapOrPassthrough(l.location, LOCATION_MAP) ?? l.location : null;
+    const raw = l.location ?? opts.defaultLocation ?? null;
+    const location = raw ? mapOrPassthrough(raw, LOCATION_MAP) ?? raw : null;
+    if (!location && opts.requireLocation) {
+      locationless.push({ index: i, itemCode: r.acItemCode });
+      return;
+    }
     const d: AcDetail = {
       ItemCode: r.acItemCode,
       Description: l.description ?? null,
@@ -389,6 +470,7 @@ export function composeDetails(
     details.push(d);
   });
   if (failures.length) throw new ItemCodeError(failures);
+  if (locationless.length) throw new MissingLocationError(locationless);
 
   return { details, collapsed };
 }
@@ -409,6 +491,28 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(entries)) if (v) out[k] = v;
   return out;
+}
+
+/**
+ * A date on its way into an AutoCount UDF, normalised to `YYYY-MM-DD`.
+ *
+ * The ERP stores these as text and they arrive in more than one shape — a bare
+ * date from a date input, a full ISO timestamp from anything that went through
+ * a Date. AutoCount's own reader hands the same field back as
+ * `SOUDF_PDate: "2026-08-12T00:00:00"`, which the inbound pull already trims
+ * with `dateOnly()`; this is that trim on the way out, so a round trip does not
+ * change the value.
+ *
+ * Anything that is not a date is dropped rather than passed through. Every UDF
+ * write inside AcSyncService is wrapped in its exception-swallowing `Set()`
+ * helper, so a value AutoCount rejects fails INVISIBLY — no error, no failed
+ * outbox row, just a field that never updates. Sending only what is
+ * unambiguously a date is the half of that we control from here.
+ */
+export function acUdfDate(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/.exec(String(v).trim());
+  return m ? m[1] : null;
 }
 
 export function composeCreateSo(
@@ -434,8 +538,13 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
+      PDate: acUdfDate(header.processing_date),
     }),
-    Details: composeDetails(live(lines), opts).details,
+    Details: composeDetails(live(lines), {
+      ...opts,
+      defaultLocation: opts.defaultLocation ?? header.sales_location,
+      requireLocation: true,
+    }).details,
   };
 }
 
@@ -458,6 +567,11 @@ export function composeCreatePo(
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
+      /* A purchase order has no location of its own — the ship-to warehouse is
+         per LINE (purchase_order_items.warehouse_id). There is nothing to
+         inherit, so a line without one is refused rather than guessed at. */
+      defaultLocation: opts.defaultLocation ?? null,
+      requireLocation: true,
     }).details,
   };
 }
@@ -509,7 +623,7 @@ export function composeCreatePo(
 export function composeEdit(
   docType: AcDocType,
   docNo: string,
-  header: Record<string, string | null>,
+  header: Record<string, string | null | Record<string, string>>,
   lines: ErpLine[],
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
@@ -554,7 +668,26 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
+    if (dtlKey == null) return d;
+    /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
+     * Location runs under, applied to the item itself. Owner 2026-08-13: an
+     * edit to an order that came in through the API changes its Description 2,
+     * never its SKU.
+     *
+     * The ERP's answer for these codes is a POLICY, not a reading of the book.
+     * A sales order does not know the brand, so four sofa models resolve to one
+     * canonical item — right for a new order, wrong for the 194 real lines the
+     * book already holds under the two brand items the cutover collapsed. An
+     * edit that sent the canonical code would move every one of them, silently,
+     * in a licensed ledger.
+     *
+     * Swapping the product on a line still propagates, because that is a DELETE
+     * plus an ADD: the removed row arrives in `retired` and is zeroed, and the
+     * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
+     * an in-place item change on a line the book owns is dropped, and the ERP
+     * has no such operation. */
+    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a
@@ -564,6 +697,40 @@ export function composeEdit(
 
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
+
+  /* ADDING A LINE to a document AutoCount already has.
+   *
+   * A keyless line has two possible meanings and they are opposite: it is a
+   * line the operator just added, or it is a legacy line whose key was never
+   * backfilled. Guess "new" and the second case appends a SECOND COPY of a line
+   * that is already in a live account book — permanently, on a purchase order.
+   * So the ERP is not allowed to infer it. It has to be TOLD, by the route that
+   * did the adding, and even then only when the rest of the document proves the
+   * backfill is complete.
+   *
+   * Both halves are required:
+   *   1. the caller named this ERP row as one it just inserted, and
+   *   2. EVERY OTHER line on the document already carries a key.
+   *
+   * (2) is what makes (1) safe to believe. A document with other keyless lines
+   * has not been backfilled, so "the rest are keyed" cannot vouch for this one
+   * and the whole edit is refused as before. */
+  const declaredNew = opts.newLineIds ?? null;
+  if (declaredNew && declaredNew.size && keyless.length) {
+    const isDeclared = (i: number) => {
+      const id = collapsed[i].sourceIndexes
+        .map((ix) => lines[ix]?.id)
+        .find((v) => v != null);
+      return id != null && declaredNew.has(String(id));
+    };
+    if (keyless.every(isDeclared)) {
+      for (const i of keyless) {
+        (keyed[i] as AcDetail & { IsNewLine?: true }).IsNewLine = true;
+      }
+      keyless.length = 0;
+    }
+  }
+
   if (keyless.length) {
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
@@ -607,6 +774,7 @@ export const AC_ROUTE = {
   gr_to_pi: '/gr-to-pi',
   cancel: '/cancel',
   edit: '/edit',
+  ensure_masters: '/ensure-masters',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;

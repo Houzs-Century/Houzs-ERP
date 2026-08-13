@@ -23,6 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import { paginateAll } from './paginate-all';
+import { DO_SHIPPED_STATES } from '../shared/do-shipped-states';
 
 /** One flagged document — a posted/shipped doc with no matching movement. */
 export type LedgerIssue = { docType: string; id: string; docNo: string; status: string };
@@ -30,10 +31,20 @@ export type LedgerIssue = { docType: string; id: string; docNo: string; status: 
 /** Full reconcile result; same shape the /reconcile route has always returned. */
 export type ReconcileResult = { asOf: string; issueCount: number; issues: LedgerIssue[] };
 
-// Delivery-Order shipped states that mean the DO has deducted stock (OUT).
-// Identical to consignment-notes' SHIPPED_STATES — a dispatched/in-transit/
-// signed/delivered/invoiced doc has shipped, so it must have an OUT movement.
-const DO_SHIPPED = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED'];
+// Delivery-Order shipped states that mean the DO has deducted stock (OUT): a
+// dispatched/in-transit/signed/delivered/invoiced doc has shipped, so it must
+// have an OUT movement. Read from shared/do-shipped-states.ts, which is also
+// what delivery-orders-mfg.ts and consignment-notes.ts read — "identical to
+// consignment-notes' SHIPPED_STATES" is what this comment used to CLAIM, and a
+// claim is not a mechanism.
+//
+// This is the 5-state set, so a COMPLETED delivery order is NOT scanned — and
+// COMPLETED is a legal DO status (DO_STATUSES, delivery-orders-mfg.ts) that sits
+// past INVOICED, i.e. one whose OUT should exist. Behaviour is unchanged from
+// the hand-typed list this replaced; whether the sweep should widen to
+// DO_STOCK_OUT_STATES is a real question and an owner's call, not something to
+// change while collapsing a duplicated list. Flagged in the PR, not fixed here.
+const DO_SHIPPED: readonly string[] = DO_SHIPPED_STATES;
 
 // A row from any document header read below: id + a doc-number col + status.
 type DocRow = Record<string, string | null | undefined>;

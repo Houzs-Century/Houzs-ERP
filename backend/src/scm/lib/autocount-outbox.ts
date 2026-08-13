@@ -25,21 +25,45 @@
 // A row whose parent is not resolved yet is left pending WITHOUT burning an
 // attempt. Sweeps drain oldest-first, so the parent's create is ahead of it in
 // the same batch and usually resolves on the very same sweep.
+//
+// A QUEUED PAYLOAD SPEAKS AUTOCOUNT, NOT ERP — checked 2026-08-13, because it
+// decides whether renaming an ERP column strands rows already in the queue.
+// `payload.body` is the composed AcSyncService document (DebtorName, DocDate,
+// UDF.{BRANDING,VENUE,ToPONo,PDate}, Details[]); the only ERP identifiers that
+// survive into it are `writeback` / `lineWriteback` / `fromDoc` / `selfDoc`,
+// which name a TABLE and `doc_no` or `id`. No ERP column name for a business
+// field is frozen in there, so an ERP column rename cannot strand a queued row
+// and no payload migration is needed. `mastersOf` reads the payload's UDF block
+// for BRANDING and VENUE only — PDate is a date, not a dropdown master.
+//
+// What a rename CAN break here is the compose side, and silently: SO_HEADER_COLS
+// is a string select list, `soEditHeader` reads its header out of a bare
+// Record, and `composeCreateSo` is handed `header as never`. All three are keyed
+// on shared/so-processing-date.ts for exactly that reason.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isWritebackEnabled } from './autocount-writeback-flag';
+import { splitSofaCode } from '../../services/autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
   callAcService,
+  AGENT_MAP,
+  LOCATION_MAP,
+  BRANDING_MAP,
+  VENUE_MAP,
+  mapOrPassthrough,
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
   composeDetails,
   composeEdit,
+  acUdfDate,
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
+  MissingLocationError,
   SofaCollapseError,
   type AcDocType,
   type AcOp,
@@ -190,24 +214,28 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
 /* Column lists, named once. A select that asks PostgREST for a column the table
    does not have fails the WHOLE query with 42703 — it does not drop the column
    and carry on — so these are the single place a phantom column can enter. */
+/* processing_date is the SO's "Processing date" — the ONE storage behind that
+   UI label, under the ONE name since mig 0284 (0189 had already dropped the
+   dead legacy column of this name; 0284 then renamed the live
+   internal_expected_dd onto it). It leaves as the PDate UDF. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
    for a column a table does not have fails the whole query with 42703. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled';
+  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
-const PO_HEADER_COLS = 'id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, linked_ac_docno';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -241,6 +269,7 @@ const PO_ITEM_COLS =
    later `const soLine` would be in its temporal dead zone and every import of
    this module would throw. */
 const soLine = (r: Record<string, unknown>): ErpLine => ({
+  id: r.id == null ? null : String(r.id),
   item_code: String(r.item_code ?? r.material_code ?? ''),
   item_group: (r.item_group as string) ?? null,
   description: (r.description as string) ?? null,
@@ -252,7 +281,43 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   /* undefined on the five tables that have no such column, which composeEdit
      reads as "live" — the same answer the column's own default gives. */
   cancelled: r.cancelled === true,
+  /* Filled in by withLocations below. The raw column is a warehouse UUID and
+     AutoCount wants the short code, so the line cannot carry it on its own. */
+  location: null,
 });
+
+/**
+ * Hang the AutoCount stock location on each line.
+ *
+ * `warehouse_id` is a `scm.warehouses` UUID; AutoCount's `dbo.Location` is
+ * keyed by the short code (KL, PG, HQ...), so one lookup per document turns
+ * the ids into codes. Lines share warehouses, so this is one `in` query, not
+ * one per line.
+ *
+ * A line with no warehouse keeps `location: null` and the caller decides:
+ * a create refuses it (MissingLocationError), an edit simply omits the key so
+ * the account book keeps its own value.
+ */
+async function withLocations(
+  sb: Sb,
+  rows: Record<string, unknown>[],
+  lines: ErpLine[],
+): Promise<ErpLine[]> {
+  const ids = [...new Set(rows.map((r) => r.warehouse_id).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  if (!ids.length) return lines;
+  const wh = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').in('id', ids));
+  const byId = new Map<string, string>();
+  for (const w of (wh ?? []) as Array<Record<string, unknown>>) {
+    const code = (w.code as string | null) ?? (w.name as string | null);
+    if (w.id && code) byId.set(String(w.id), code);
+  }
+  return lines.map((l, i) => {
+    const id = rows[i]?.warehouse_id;
+    const code = typeof id === 'string' ? byId.get(id) ?? null : null;
+    return code ? { ...l, location: code } : l;
+  });
+}
 
 interface AcDownstreamSpec {
   table: AcLinkTable;
@@ -406,7 +471,8 @@ async function noteReadFailure(
 ): Promise<void> {
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
-    || e instanceof ItemCodeError;
+    || e instanceof ItemCodeError
+    || e instanceof MissingLocationError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -457,14 +523,15 @@ export async function enqueueSoCreate(
     const items = await readOrThrow('mfg_sales_order_items',
       sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', opts.docNo));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
     /* Composed TWICE on purpose: once to learn which ERP rows produced which
        AutoCount detail (a sofa build is several rows and one detail), once for
        the payload itself. Both calls are pure and the document is already
        committed; sharing state between them would be the only way to get them
        out of step. */
-    const { collapsed, details } = composeDetails(lines);
-    const body = composeCreateSo(header as never, lines);
+    const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code));
+    const { collapsed, details } = composeDetails(lines, { bindings });
+    const body = composeCreateSo(header as never, lines, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -511,6 +578,11 @@ async function readPoHeader(sb: Sb, poId: string) {
   const s = supplier as { code?: string | null; name?: string | null } | null;
   return {
     id: String(h.id ?? poId),
+    /* Carried for the binding lookup, which narrows by the PO's OWN supplier:
+       one internal code can be bound to several, and the one this order buys
+       from beats the main one. */
+    company_id: (h.company_id as number | null) ?? null,
+    supplier_id: h.supplier_id == null ? null : String(h.supplier_id),
     po_number: String(h.po_number ?? ''),
     po_date: (h.po_date as string | null) ?? null,
     creditor_code: s?.code ?? null,
@@ -540,9 +612,10 @@ export async function enqueuePoCreate(
     const items = await readOrThrow('purchase_order_items',
       sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', opts.poId));
     const rows = (items ?? []) as Record<string, unknown>[];
-    const lines = rows.map(soLine);
-    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code });
-    const body = composeCreatePo(header, lines);
+    const lines = await withLocations(sb, rows, rows.map(soLine));
+    const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
+    const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
+    const body = composeCreatePo(header, lines, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_po',
@@ -619,6 +692,18 @@ export async function enqueueConvert(
          off for a whole-document transfer, where "all outstanding" is the same
          answer and AutoCount's own book is the better authority on it. */
       body: {
+        /* THE ERP NUMBERS ITS OWN DOCUMENTS, on every type.
+           A create already sent its DocNo and AutoCount took it; a conversion
+           sent none, so AutoCount auto-numbered the DO, the GRN, the invoice
+           and the purchase invoice — four of the six types carrying a number
+           nobody in this building would recognise, and every reconciliation
+           having to go through linked_ac_docno instead of the number on the
+           paperwork. The service was always ready for it: SalesHeader and
+           PurchaseHeader both apply DocNo when the payload carries one.
+           Supplying our own does NOT advance AutoCount's counter, so anything
+           raised in its own UI keeps its own series in parallel — which is
+           what tells the two apart. */
+        DocNo: opts.docNo ?? null,
         DocDate: opts.docDate ?? null,
         Ref: opts.ref ?? null,
         ...(source.keys ? { DtlKeys: source.keys } : {}),
@@ -1067,6 +1152,16 @@ export async function enqueueEdit(
     docId?: string | null;
     createdBy?: number | null;
     /**
+     * ERP row ids this very request INSERTED.
+     *
+     * A keyless line means two opposite things - just added, or never
+     * backfilled - and guessing "added" appends a second copy of a line the
+     * account book already holds. The ERP is therefore not allowed to infer it:
+     * the route that did the adding says so, and composeEdit honours it only
+     * when every keyless line on the document is one of these.
+     */
+    newLineIds?: string[];
+    /**
      * Lines the ERP has just HARD-DELETED, named by the AutoCount key the row
      * carried. Composed from the document as it is now, so a deleted line is
      * simply absent — and /edit applies only the lines it is given, which would
@@ -1082,7 +1177,7 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
@@ -1099,7 +1194,7 @@ export async function enqueueEdit(
       if (composed.create) {
         const { error } = await sb.from('autocount_outbox')
           .update({
-            payload: { ...(pending.payload ?? {}), body: composed.create },
+            payload: { ...(pending.payload ?? {}), body: composed.create() },
             updated_at: new Date().toISOString(),
           })
           .eq('id', pending.id);
@@ -1242,41 +1337,44 @@ async function composeDownstreamState(
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
-    create: null as Record<string, unknown> | null,
+    create: null as (() => Record<string, unknown>) | null,
     edit: () => composeEdit(
       docType, String(h.linked_ac_docno ?? docNo), spec.header(h), lines, {}, retired,
     ),
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = []) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
   const items = await readOrThrow('mfg_sales_order_items',
     sb.from('mfg_sales_order_items').select(SO_ITEM_COLS).eq('doc_no', docNo));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const soRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
+  const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
-    create: composeCreateSo(header as never, lines) as unknown as Record<string, unknown>,
+    /* LAZY. An edit builds this same state, and composing a create it will
+       never send would refuse the edit for the create's reasons — a line with
+       no stock location is fatal to a create and irrelevant to an edit. */
+    create: () => composeCreateSo(header as never, lines, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
-    edit: () => composeEdit('SO', String(h.linked_ac_docno ?? docNo), {
-      DebtorName: (h.debtor_name as string) ?? null,
-      Attention: (h.debtor_name as string) ?? null,
-      Ref: (h.ref as string) ?? null,
-      Phone1: (h.phone as string) ?? null,
-      InvAddr1: (h.address1 as string) ?? null,
-      InvAddr2: (h.address2 as string) ?? null,
-      InvAddr3: (h.address3 as string) ?? null,
-      InvAddr4: (h.address4 as string) ?? null,
-    }, lines, {}, retired),
+    edit: () => composeEdit(
+      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines,
+      {
+        bindings,
+        ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
+      },
+      retired,
+    ),
   };
 }
 
@@ -1285,23 +1383,239 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   if (!header) return null;
   const items = await readOrThrow('purchase_order_items',
     sb.from('purchase_order_items').select(PO_ITEM_COLS).eq('purchase_order_id', poId));
-  const lines = ((items ?? []) as Record<string, unknown>[]).map(soLine);
+  const poRows = (items ?? []) as Record<string, unknown>[];
+  const lines = await withLocations(sb, poRows, poRows.map(soLine));
+  const poBindings = await bindingsFor(sb, header.company_id ?? null, lines.map((l) => l.item_code), header.supplier_id);
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
-    create: composeCreatePo(header, lines) as unknown as Record<string, unknown>,
+    create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
     edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }, lines, { supplierCode: header.creditor_code }, retired),
+    }, lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
   };
 }
 
 // ── drain ───────────────────────────────────────────────────────────────────
+
+/**
+ * The SO header fields an EDIT carries.
+ *
+ * A create sends the salesperson, the sales location, the document date and the
+ * three UDFs; an edit used to send none of them, so changing any one of those on
+ * a live order never reached AutoCount at all (divergence D8). The account book
+ * accepts every one of them on `/edit` — `AcSyncService.Edit()` has them in its
+ * allow-list and calls `ApplyUdf` — so this was the ERP declining to speak, not
+ * AutoCount refusing to listen.
+ *
+ * A NULL VALUE IS OMITTED, NEVER SENT. The service's header loop is
+ * `ContainsKey`-gated and `Str` turns a present-but-null into `""`, so sending
+ * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
+ * the account book has". The same rule as the line-level Location, one level up.
+ */
+function soEditHeader(h: Record<string, unknown>): Record<string, string | null | Record<string, string>> {
+  const out: Record<string, string | null | Record<string, string>> = {
+    DebtorName: (h.debtor_name as string) ?? null,
+    Attention: (h.debtor_name as string) ?? null,
+    Ref: (h.ref as string) ?? null,
+    Phone1: (h.phone as string) ?? null,
+    InvAddr1: (h.address1 as string) ?? null,
+    InvAddr2: (h.address2 as string) ?? null,
+    InvAddr3: (h.address3 as string) ?? null,
+    InvAddr4: (h.address4 as string) ?? null,
+  };
+  const agent = mapOrPassthrough((h.agent as string) ?? null, AGENT_MAP);
+  if (agent) out.Agent = agent;
+  const loc = mapOrPassthrough((h.sales_location as string) ?? null, LOCATION_MAP);
+  if (loc) out.SalesLocation = loc;
+  if (h.so_date) out.DocDate = String(h.so_date);
+
+  const udf: Record<string, string> = {};
+  const branding = mapOrPassthrough((h.branding as string) ?? null, BRANDING_MAP);
+  if (branding) udf.BRANDING = branding;
+  const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
+  if (venue) udf.VENUE = venue;
+  if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
+     in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
+     this function — a cleared date sends nothing rather than blanking the
+     account book's value, which is the conservative half of the pair and the
+     one that cannot destroy data. */
+  const pdate = acUdfDate(h.processing_date as string | null | undefined);
+  if (pdate) udf.PDate = pdate;
+  if (Object.keys(udf).length) out.UDF = udf;
+
+  return out;
+}
+
+/**
+ * What AutoCount calls each of these products, from the LIVE binding.
+ *
+ * `scm.supplier_material_bindings` is this ERP's own record of the cross-ref:
+ * `material_code` is our internal code, `supplier_sku` is AutoCount's, one row
+ * per supplier. It was populated at the cutover precisely so ERP codes could be
+ * pushed BACK, and it is the only one of the two sources that GROWS — the
+ * compiled CSV is a snapshot of the book on 2026-08-05 and cannot know a
+ * product opened since.
+ *
+ * That gap was not cosmetic: without this the resolver refused every
+ * post-cutover SKU, a refused line refuses the whole document, and the document
+ * never reached the drain — so `/ensure-masters` never ran for the very case it
+ * was built for.
+ *
+ * `is_main_supplier` first, so a code bound to several suppliers resolves to the
+ * one the business actually buys from. A PO narrows further: it knows its own
+ * creditor, and that supplier's binding wins over the main one.
+ *
+ * THE CODES ASKED FOR MUST BE THE CODES THE RESOLVER LOOKS UP, and for a sofa
+ * those are not the codes on the ERP lines. Callers pass raw line codes, but D9
+ * collapses a sofa's compartments into ONE line carrying a SYNTHESISED
+ * `<model>-1S` (autocount-sofa-collapse.ts:356), and that is the string
+ * resolveAcItemCode checks the binding map for. Querying only the raw codes
+ * fetched bindings for '9028-1A(LHF)' and friends while the resolver asked for
+ * '9028-1S' — so the override could never fire for ANY sofa, and the four sofa
+ * models whose ERP code maps to two AutoCount items were unresolvable by any
+ * amount of data entry. Expanding the query with each line's sofa base code
+ * costs nothing for a non-sofa line (splitSofaCode returns null).
+ */
+async function bindingsFor(
+  sb: Sb,
+  companyId: number | null | undefined,
+  codes: string[],
+  supplierId?: string | null,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const raw = codes.map((c) => (c ?? '').trim()).filter(Boolean);
+  const sofaBases = raw
+    .map((c) => splitSofaCode(c))
+    .filter((s): s is { model: string; compartment: string } => s != null)
+    .map((s) => `${s.model}-1S`);
+  const wanted = [...new Set([...raw, ...sofaBases])];
+  if (!wanted.length) return out;
+  let q = sb.from('supplier_material_bindings')
+    .select('material_code, supplier_id, supplier_sku, is_main_supplier')
+    .in('material_code', wanted)
+    .eq('material_kind', 'mfg_product')
+    .order('is_main_supplier', { ascending: false });
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const rows = await readOrThrow('supplier_material_bindings', q);
+  const bySupplier = new Map<string, string>();
+  for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
+    const code = String(r.material_code ?? '').trim().toUpperCase();
+    const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
+    if (!code || !sku) continue;
+    if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {
+      bySupplier.set(code, sku);
+    }
+    if (!out.has(code)) out.set(code, sku);
+  }
+  /* The document's own supplier overrides the main one, per code. */
+  for (const [code, sku] of bySupplier) out.set(code, sku);
+  return out;
+}
+
+/**
+ * The masters a payload NAMES, in the shape /ensure-masters consumes.
+ *
+ * Read off the payload that is about to be sent, never recomposed from the
+ * database: the payload is the snapshot of what the user's save produced, and a
+ * master derived from anything else could differ from the one the document
+ * actually references.
+ *
+ * The debtor is deliberately absent. Houzs writes every order against ONE fixed
+ * AutoCount debtor and overwrites the name field per customer, so there is no
+ * per-customer account to open — and opening one would create an AR account
+ * nobody asked for. If that convention ever changes, this is where it changes.
+ */
+export function mastersOf(body: Record<string, unknown>): Record<string, unknown> | null {
+  const items = new Map<string, { ItemCode: string; Description: string; UOM?: string }>();
+  const details = [
+    ...(Array.isArray(body.Details) ? body.Details : []),
+    ...(Array.isArray(body.Lines) ? body.Lines : []),
+  ] as Array<Record<string, unknown>>;
+  for (const d of details) {
+    const code = typeof d?.ItemCode === 'string' ? d.ItemCode.trim() : '';
+    /* A retired line names a code the book already has, by construction — it is
+       addressed by a DtlKey AutoCount issued. Nothing to open. */
+    if (!code || d?.Retire === true) continue;
+    if (!items.has(code)) {
+      items.set(code, {
+        ItemCode: code,
+        Description: typeof d.Description === 'string' && d.Description ? d.Description : code,
+        ...(typeof d.UOM === 'string' && d.UOM ? { UOM: d.UOM } : {}),
+      });
+    }
+  }
+
+  /* A PURCHASE agent is a different master from a sales one: different table
+     (dbo.PurchaseAgent), different foreign key (FK_PO_PurchaseAgent), different
+     SDK command. Opening 'OTHERS' as a sales agent does nothing for a purchase
+     order that names it — /create-po is refused and the whole document is lost.
+     Proved on the live book 2026-08-12, after ensure-masters had already
+     reported agent:OTHERS as existing.
+     CreditorCode is the discriminator because it is the one field only a
+     purchase document carries; CreatePo applies it unconditionally. */
+  const isPurchase = typeof body.CreditorCode === 'string' && body.CreditorCode.trim().length > 0;
+  const agents: Array<{ Agent: string }> = [];
+  const purchaseAgents: Array<{ PurchaseAgent: string }> = [];
+  const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
+  if (agent) {
+    if (isPurchase) purchaseAgents.push({ PurchaseAgent: agent });
+    else agents.push({ Agent: agent });
+  }
+
+  /* A PURCHASE ORDER NAMES A CREDITOR, and CreatePo applies CreditorCode
+     unconditionally — so a supplier the account book does not have fails the
+     same foreign key a missing item does, and takes the whole PO with it. The
+     DEBTOR stays absent for the opposite reason: Houzs writes every order
+     against ONE fixed account and overwrites the name, so there is no
+     per-customer account to open. */
+  const creditors: Array<{ AccNo: string; CompanyName: string }> = [];
+  const cred = typeof body.CreditorCode === 'string' ? body.CreditorCode.trim() : '';
+  if (cred) {
+    creditors.push({
+      AccNo: cred,
+      CompanyName: typeof body.CreditorName === 'string' && body.CreditorName
+        ? body.CreditorName : cred,
+    });
+  }
+
+  /* THE STOCK LOCATIONS THE DOCUMENT ACTUALLY USES — the header's sales
+     location and every line's own. This is the one the live book already
+     proved: FK_SODTL_Location, on a line whose Location was empty. */
+  const locations = new Map<string, { Location: string }>();
+  const addLoc = (v: unknown) => {
+    const code = typeof v === 'string' ? v.trim() : '';
+    if (code && !locations.has(code)) locations.set(code, { Location: code });
+  };
+  addLoc(body.SalesLocation);
+  for (const d of details) if (d?.Retire !== true) addLoc(d?.Location);
+
+  /* THE DROPDOWN OPTIONS. Read off the UDF block the payload is sending, so
+     the list only ever learns a value a real document is carrying. */
+  const udfOptions: Array<{ List: string; Value: string }> = [];
+  const udf = (body.UDF ?? null) as Record<string, unknown> | null;
+  for (const listName of ['BRANDING', 'VENUE']) {
+    const v = udf && typeof udf[listName] === 'string' ? (udf[listName] as string).trim() : '';
+    if (v) udfOptions.push({ List: listName, Value: v });
+  }
+
+  if (!items.size && !agents.length && !purchaseAgents.length && !creditors.length
+      && !locations.size && !udfOptions.length) return null;
+  return {
+    Items: [...items.values()],
+    Agents: agents,
+    PurchaseAgents: purchaseAgents,
+    Creditors: creditors,
+    Locations: [...locations.values()],
+    UdfOptions: udfOptions,
+  };
+}
 
 /** Read one ERP document's AutoCount counterpart number. */
 async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
@@ -1477,6 +1791,28 @@ export async function dispatchOne(
   }
 
   const attempts = (row.attempts ?? 0) + 1;
+
+  /* MASTERS FIRST, and only for the two operations that can introduce one.
+     A document naming an item, a salesperson or a customer the account book
+     does not have fails on a FOREIGN KEY and takes the whole document with it —
+     the live book proved the shape by answering FK_SODTL_Location to a create
+     whose lines carried no location. A conversion cannot introduce a master
+     (it transfers lines that are already there) and neither can a cancel. */
+  if (row.op === 'create_so' || row.op === 'create_po' || row.op === 'edit') {
+    const masters = mastersOf(body);
+    if (masters) {
+      const ensured = await callAcService(env, 'ensure_masters', masters, fetchImpl);
+      if (!ensured.ok) {
+        await mark(sb, row.id, {
+          attempts,
+          last_error: `masters not opened, document not sent: ${ensured.error ?? 'unknown'}`,
+          ...(ensured.retryable && attempts < MAX_ATTEMPTS ? {} : { status: 'failed' }),
+        });
+        return ensured.retryable && attempts < MAX_ATTEMPTS ? 'retry' : 'failed';
+      }
+    }
+  }
+
   const result = await callAcService(env, row.op, body, fetchImpl);
 
   if (result.ok) {
