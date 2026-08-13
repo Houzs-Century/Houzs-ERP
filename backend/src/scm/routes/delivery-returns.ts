@@ -18,6 +18,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
@@ -949,6 +950,33 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
   );
 }
 
+/* CROSS-COMPANY GUARD for the DO -> DR conversion.
+
+   companyScope.ts names four converters of this shape (SO->DO, SO->SI, DO->SI,
+   PO->GRN) and every one of them refuses a source document from another
+   company. DO -> DR is a FIFTH and had no check at all: both create paths take
+   the source DO from the request and insertHeader stamps `activeCompanyId(c)`,
+   so a 2990 delivery returned while the switcher said Houzs minted a HOUZS
+   return — Houzs doc number, Houzs company_id — which then writes the stock IN
+   and re-opens the source SO against Houzs' books for goods Houzs never sold.
+
+   REFUSE, not inherit, for the same reason as the SI converter: the return is
+   minted under the ACTIVE company's numbering, so inheriting would leave the
+   doc number and the company_id disagreeing. Unresolved company / NULL source
+   company degrade to allowed — the three-state sentinel, as everywhere. */
+async function crossCompanyDoSourceBlocked(sb: any, c: any, doIds: string[]) {
+  const ids = [...new Set(doIds.filter((x): x is string => !!x))];
+  if (ids.length === 0) return null;
+  const { data } = await sb.from('delivery_orders')
+    .select('id, do_number, company_id').in('id', ids);
+  for (const row of ((data ?? []) as Array<{ do_number: string | null; company_id: number | null }>)) {
+    if (isCrossCompanySource(row.company_id, c)) {
+      return crossCompanyConversionBlocked(row.do_number, row.company_id, c);
+    }
+  }
+  return null;
+}
+
 // ── Create ──────────────────────────────────────────────────────────────
 // Accepts the full DO-cloned header + line items. A return is RECEIVED on
 // creation → stock is increased immediately (idempotent).
@@ -971,6 +999,28 @@ deliveryReturns.post('/', async (c) => {
   {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+  }
+
+  /* CROSS-COMPANY GUARD (see crossCompanyDoSourceBlocked) — the source DO is
+     whatever the caller names: the header's deliveryOrderId and the parent of
+     every picked DO line. Checked BEFORE the header insert so nothing has to be
+     rolled back. */
+  {
+    const doIds: string[] = [];
+    const headerDoId = (body.deliveryOrderId as string | undefined) ?? null;
+    if (headerDoId) doIds.push(headerDoId);
+    const doItemIds = [...new Set(items
+      .map((it) => (it.doItemId as string | undefined) ?? null)
+      .filter((x): x is string => !!x))];
+    if (doItemIds.length > 0) {
+      const { data: parents } = await sb.from('delivery_order_items')
+        .select('delivery_order_id').in('id', doItemIds);
+      for (const r of ((parents ?? []) as Array<{ delivery_order_id: string | null }>)) {
+        if (r.delivery_order_id) doIds.push(r.delivery_order_id);
+      }
+    }
+    const blocked = await crossCompanyDoSourceBlocked(sb, c, doIds);
+    if (blocked) return c.json(blocked, 409);
   }
 
   /* An unlinked line on a return that NAMES a Delivery Order still brings the
@@ -1148,6 +1198,13 @@ const convertDoLinesToReturn = async (c: any) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
+  /* CROSS-COMPANY GUARD — see crossCompanyDoSourceBlocked. insertHeader below
+     stamps the ACTIVE company and nextNum mints under the ACTIVE prefix, so a
+     2990 DO returned from the Houzs view would become a Houzs return. */
+  {
+    const blocked = await crossCompanyDoSourceBlocked(sb, c, doIds);
+    if (blocked) return c.json(blocked, 409);
+  }
   const remainingMap = await doReturnableRemaining(sb, doIds);
 
   // 2a. Same-customer guard — every picked line must share ONE customer.

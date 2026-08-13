@@ -4324,6 +4324,14 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     .upsert(crewRow, { onConflict: 'do_id' })
     .select(crewSnapshotCols).maybeSingle();
   if (crewErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (crewErr.code === '42501') return c.json({ error: 'forbidden', reason: crewErr.message }, 403);
     return c.json({ error: 'crew_save_failed', reason: crewErr.message }, 500);
   }
@@ -4582,8 +4590,16 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
   /* so_doc_no is selected for the unlinked-line guard below — adding a line by
      hand is the other way an SO's own item lands on its DO without consuming
      the order's quantity. */
-  const { data: header } = await sb.from('delivery_orders')
-    .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id).maybeSingle();
+  /* company-scope: prove the PARENT DO — the same gate the line PATCH (:4780)
+     and DELETE (:5073) already carry. This ADD path was the one left unscoped,
+     so company A holding B's DO uuid could push a line onto B's delivery; the
+     insert below stamps the ACTIVE company, and on an already-shipped DO the
+     resync moves B's stock out. company_id was already selected here and read
+     only by the audit row, never as a predicate. */
+  const { data: header } = await scopeToCompany(
+    sb.from('delivery_orders')
+      .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id), c,
+  ).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
 
   /* Edge #1+#2 — if the DO is already shipped, an added line ships immediately

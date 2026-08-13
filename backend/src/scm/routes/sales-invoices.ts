@@ -1430,10 +1430,19 @@ salesInvoices.post('/from-dos', async (c) => {
 });
 
 /* ── Append a Delivery Order's lines into an EXISTING invoice ────────────── */
-salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge — same reason postStockTakeHandler / patchSalesInvoiceStatusHandler are.
+   The route registration below is unchanged. */
+export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const doId = c.req.param('doId');
 
-  const { data: si } = await sb.from('sales_invoices').select('id, invoice_number, status').eq('id', id).maybeSingle();
+  /* company-scope: the header read is the gate for this handler, exactly as on
+     PATCH / DELETE /:id/items/:itemId. It was unscoped, so company A holding B's
+     invoice uuid appended lines to B's invoice — and the insert below stamps the
+     ACTIVE company, so the lines landed on B's document tagged as A's. */
+  const { data: si } = await scopeToCompany(
+    sb.from('sales_invoices').select('id, invoice_number, status').eq('id', id), c,
+  ).maybeSingle();
   if (!si) return c.json({ error: 'not_found' }, 404);
   if ((si as { status: string }).status === 'CANCELLED') return c.json({ error: 'invoice_cancelled' }, 409);
   /* ISSUED gate — same rule as the other three line paths. The in-place "append
@@ -1445,9 +1454,23 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
     return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
   }
 
-  const { data: doHeader } = await sb.from('delivery_orders').select('id, status').eq('id', doId).maybeSingle();
+  const { data: doHeader } = await sb.from('delivery_orders')
+    .select('id, status, do_number, company_id').eq('id', doId).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
   if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
+  /* CROSS-COMPANY GUARD — this is the same DO -> SI conversion as POST /from-dos
+     (:1247), just the PARTIAL form: a second delivery folded into an invoice that
+     already exists. That path refuses a source DO from another company; this one
+     did not check at all, so a 2990 delivery could be appended to a Houzs invoice
+     and 2990's revenue posted to Houzs' books by the resync below. Same rule,
+     same refusal — REFUSE rather than inherit, because the invoice was already
+     minted under one company's numbering. */
+  {
+    const dh = doHeader as { do_number?: string | null; company_id?: number | null };
+    if (isCrossCompanySource(dh.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(dh.do_number ?? null, dh.company_id, c), 409);
+    }
+  }
 
   const { data: doItems } = await sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
@@ -1541,7 +1564,8 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
      note on the PO's convert-from-so. */
   await queueAcSiEdit(c, id);
   return c.json({ ok: true, added: rows.length }, 201);
-});
+};
+salesInvoices.post('/:id/items/from-do/:doId', appendDoLinesToSalesInvoiceHandler);
 
 // ── Header PATCH (editable SO/DO-style fields) ─────────────────────────────
 salesInvoices.patch('/:id', async (c) => {
@@ -1944,7 +1968,15 @@ salesInvoices.get('/:id/payments', async (c) => {
      salesperson's payment ledger by enumerating ids. Out-of-scope /
      missing → 404. Directors/view-all bypass. */
   {
-    const { data: hdr } = await sb.from('sales_invoices').select('salesperson_id').eq('id', id).maybeSingle();
+    /* company-scope: the salesperson dimension answers "is this MY invoice" and
+       returns false straight away for a view-all tier, so on its own it is not
+       tenancy — a director in company A could read B's payment ledger. Company
+       first, for everyone, exactly as the DO twin does (delivery-orders-mfg.ts
+       GET /:id/payments). The payment rows themselves carry the invoice's id
+       only, so the parent is the only place to check. */
+    const { data: hdr } = await scopeToCompany(
+      sb.from('sales_invoices').select('salesperson_id').eq('id', id), c,
+    ).maybeSingle();
     if (!hdr) return c.json({ error: 'not_found' }, 404);
     const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
     if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
@@ -2029,11 +2061,21 @@ async function recomputePaid(sb: any, salesInvoiceId: string) {
   }
 }
 
-salesInvoices.post('/:id/payments', async (c) => {
+/* Exported for the company-scope tests — see appendDoLinesToSalesInvoiceHandler. */
+export const postSalesInvoicePaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
-  const { data: doc } = await sb.from('sales_invoices')
-    .select('id, status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  /* company-scope: money IN on someone else's book. The read selected
+     company_id and never compared it, and the insert's own comment claimed to
+     "match the SI's company" while stamping the ACTIVE one — so a payment
+     against company B's invoice was filed under company A, and recomputePaid
+     then moved B's paid_centi and AR status. The DO twin
+     (delivery-orders-mfg.ts POST /:id/payments) has been scoped since
+     2026-08-13; this one was missed. */
+  const { data: doc } = await scopeToCompany(
+    sb.from('sales_invoices')
+      .select('id, status, invoice_number, company_id, paid_centi').eq('id', id), c,
+  ).maybeSingle();
   if (!doc) return c.json({ error: 'sales_invoice_not_found' }, 404);
   if ((doc as { status?: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   /* LEAK GUARD (DRAFT) — a DRAFT invoice is not yet committed; it cannot accept
@@ -2054,7 +2096,9 @@ salesInvoices.post('/:id/payments', async (c) => {
   const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
 
   const { data, error } = await sb.from('sales_invoice_payments').insert({
-    company_id:         activeCompanyId(c), // multi-company: match the SI's company
+    // Multi-company: the ACTIVE company, which the scoped read above has now
+    // proven IS the invoice's company (it 404s otherwise).
+    company_id:         activeCompanyId(c),
     sales_invoice_id:   id,
     paid_at:            p.paidAt,
     method:             p.method,
@@ -2100,10 +2144,23 @@ salesInvoices.post('/:id/payments', async (c) => {
   }
 
   return c.json({ payment: data }, 201);
-});
+};
+salesInvoices.post('/:id/payments', postSalesInvoicePaymentHandler);
 
 salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
+  /* company-scope: through the parent invoice, BEFORE anything is read or
+     destroyed. The doc-mismatch check below only proves the payment belongs to
+     the invoice in the URL — it says nothing about whose invoice that is, so on
+     its own it let one company take a money record off the other's invoice and
+     re-run its AR status. Same guard as the DO twin
+     (delivery-orders-mfg.ts DELETE /:id/payments/:paymentId). */
+  {
+    const { data: own } = await scopeToCompany(
+      sb.from('sales_invoices').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */
   const { data: row } = await sb.from('sales_invoice_payments')
@@ -2495,15 +2552,23 @@ salesInvoices.patch('/:id/payment', async (c) => {
   const amount = Number(body.amountCenti ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
 
-  const { data: cur } = await sb.from('sales_invoices')
-    .select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  /* company-scope: the same money event as POST /:id/payments, reached through
+     the legacy quick-pay screen — so it gets the same gate. Unscoped it wrote a
+     cash payment onto another company's invoice and rolled that invoice's paid
+     status. */
+  const { data: cur } = await scopeToCompany(
+    sb.from('sales_invoices')
+      .select('status, invoice_number, company_id, paid_centi').eq('id', id), c,
+  ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   if ((cur as { status: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   /* LEAK GUARD (DRAFT) — same as POST /:id/payments: a draft can't be paid. */
   if ((cur as { status: string }).status === 'DRAFT') return c.json({ error: 'not_payable', message: 'SI is a draft — confirm it before recording payments' }, 409);
 
   const { error } = await sb.from('sales_invoice_payments').insert({
-    company_id: activeCompanyId(c), // multi-company: match the SI's company
+    // Multi-company: the ACTIVE company, proven to be the invoice's by the
+    // scoped read above.
+    company_id: activeCompanyId(c),
     sales_invoice_id: id,
     paid_at: todayMyt(),
     method: 'cash',
