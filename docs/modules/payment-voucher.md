@@ -83,6 +83,24 @@ Mounted at `/api/scm/payment-vouchers`, behind
 vitest harness can mount them on a bare Hono app (the `supabaseAuth` bridge cannot
 run there). Precedent and shape: `backend/tests/companyScopeHardening.test.ts`.
 
+**`POST /:id/post` was UNSCOPED until 2026-08-13** (PR #2086; BUG-HISTORY, *"The
+writes the read-hardening audit left"*). The voucher was loaded with
+`.eq('id', id)` and no company predicate while the `GET /:id` of the same row
+already carried one, so a voucher id from the other company loaded here and went
+on to post a journal entry against it. Three statements were scoped in that fix —
+the voucher read, the `journal_entries` idempotency lookup, and the POSTED status
+flip — behind `requireActiveCompanyId`. Note the asymmetry that let this survive
+an audit: `backend/tests/companyScopeHardening.test.ts`, cited as the precedent
+directly above, covers the **cancel** path and not the **post** path.
+
+**The idempotency read now reports its own failure.** It used to be
+`const { data: existingRows }` with the error discarded: a failed query left
+`existingRows` undefined, `?? []` turned that into *"no journal entry exists"*,
+and the handler posted a SECOND GL entry against the same voucher. It now returns
+`500 post_failed` with the reason. **A failed read must never read as an absence
+when the absence is what authorises the write** — this is the rule for every
+idempotency check in this module, not a detail of this one.
+
 ### POST /:id/post response
 ```
 { ok, jeNo, jeId, totalSen,
