@@ -187,6 +187,12 @@ import {
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
 import { soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
+import {
+  claimedSlipSessionIds,
+  planCreatePaymentSlips,
+  soCreatePaymentsSchema,
+  type SoCreatePayment,
+} from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
@@ -5034,24 +5040,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      atomically with the order: deposit_centi on the header = Σ rows, each row
      lands in mfg_sales_order_payments as an is_deposit row. Absent payments[]
      → the legacy single depositCenti/paymentMethod path runs unchanged, so
-     old PWA clients keep working. */
-  let posPayments: Array<{
-    method: 'merchant' | 'transfer' | 'cash' | 'installment';
-    amountCenti: number;
-    approvalCode?: string | null;
-    merchantProvider?: string | null;
-    installmentMonths?: number | null;
-    uploadSessionId: string;
-  }> | null = null;
+     old PWA clients keep working.
+
+     Each row's `uploadSessionId` is OPTIONAL (Owner 2026-08-13) — schema and
+     rule both live in lib/so-create-payment-slips.ts. */
+  let posPayments: SoCreatePayment[] | null = null;
   if (body.payments !== undefined) {
-    const parsed = z.array(z.object({
-      method:            z.enum(PAYMENT_METHOD_CODES),
-      amountCenti:       z.number().int().positive(),
-      approvalCode:      z.string().optional().nullable(),
-      merchantProvider:  z.string().trim().min(1).optional().nullable(),
-      installmentMonths: z.number().int().min(0).max(60).optional().nullable(),
-      uploadSessionId:   z.string().min(1),        // spec D4 — one slip per payment
-    })).min(1).max(10).safeParse(body.payments);
+    const parsed = soCreatePaymentsSchema.safeParse(body.payments);
     if (!parsed.success) {
       await rollbackPwpClaims();
       return c.json({ error: 'invalid_payments', issues: parsed.error.issues }, 400);
@@ -5062,42 +5057,38 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     ? posPayments.reduce((acc, p) => acc + p.amountCenti, 0)
     : null;
 
-  /* Spec D4 — resolve each split payment's slip session → R2 key up front.
-     All-or-nothing: any unresolved slip rejects the order BEFORE the header
-     insert (and rolls back PWP claims), so no SO is created with half its
-     payment proofs missing. Accepts 'uploaded' only — a promoted session
-     belongs to an earlier payment (replay guard). */
-  let posPaymentSlipKeys: string[] | null = null;
+  /* Resolve each split payment's slip session → R2 key up front, for the rows
+     that CLAIM one. A slip-less row resolves to null and books slip-less — the
+     slip is optional (Owner 2026-08-13); a slip that is claimed and does not
+     resolve still refuses the create. The rule is
+     `planCreatePaymentSlips` (so-create-payment-slips.ts); this block is its
+     IO. All-or-nothing, BEFORE the header insert (and rolling back PWP
+     claims), so no SO is created with half its payment proofs missing. */
+  let posPaymentSlipKeys: Array<string | null> | null = null;
   if (posPayments) {
-    const sessionIds = posPayments.map((p) => p.uploadSessionId);
-    if (new Set(sessionIds).size !== sessionIds.length) {
-      await rollbackPwpClaims();
-      return c.json({ error: 'slip_required', reason: 'Each payment needs its own slip.' }, 400);
-    }
-    const { data: slipRows, error: slipRowsErr } = await sb
-      .from('pending_slip_uploads')
-      .select('upload_session_id, r2_key, status')
-      .in('upload_session_id', sessionIds);
-    if (slipRowsErr) {
-      await rollbackPwpClaims();
-      return c.json({ error: 'lookup_failed', reason: slipRowsErr.message }, 500);
-    }
-    const slipById = new Map((slipRows ?? []).map((r) => {
-      const t = r as { upload_session_id: string; r2_key: string | null; status: string };
-      return [t.upload_session_id, t] as const;
-    }));
-    posPaymentSlipKeys = [];
-    for (let i = 0; i < sessionIds.length; i++) {
-      const row = slipById.get(sessionIds[i]!);
-      if (!row || row.status !== 'uploaded' || !row.r2_key) {
+    const sessionIds = claimedSlipSessionIds(posPayments);
+    const slipById = new Map<string, { r2_key: string | null; status: string }>();
+    // A wholly slip-less create claims nothing, so it pays for no query.
+    if (sessionIds.length > 0) {
+      const { data: slipRows, error: slipRowsErr } = await sb
+        .from('pending_slip_uploads')
+        .select('upload_session_id, r2_key, status')
+        .in('upload_session_id', sessionIds);
+      if (slipRowsErr) {
         await rollbackPwpClaims();
-        return c.json({
-          error: 'slip_required',
-          reason: `Payment ${i + 1} slip missing or not uploaded.`,
-        }, 400);
+        return c.json({ error: 'lookup_failed', reason: slipRowsErr.message }, 500);
       }
-      posPaymentSlipKeys.push(row.r2_key);
+      for (const r of slipRows ?? []) {
+        const t = r as { upload_session_id: string; r2_key: string | null; status: string };
+        slipById.set(t.upload_session_id, { r2_key: t.r2_key, status: t.status });
+      }
     }
+    const plan = planCreatePaymentSlips(posPayments, slipById);
+    if (!plan.ok) {
+      await rollbackPwpClaims();
+      return c.json({ error: 'slip_required', reason: plan.reason }, 400);
+    }
+    posPaymentSlipKeys = plan.slipKeys;
   }
 
   /* POS auto-Proceed (Loo 2026-06-09) — if this handover already satisfies the
@@ -5416,10 +5407,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         merchant_provider:  merchantProvider,
         installment_months: installmentMonths,
         approval_code:      p.approvalCode ?? null,
-        /* Split rows each carry their OWN uploaded slip (hard-required above),
-           so no scan-receipt fallback is needed here — only the single-deposit
-           scan path (below) inherits `receiptImageKey`. */
-        slip_key:           posPaymentSlipKeys![i],
+        /* A split row's OWN slip when it sent one, else null — the slip is
+           optional (Owner 2026-08-13). Deliberately NOT falling back to
+           `receiptImageKey`: that key is the single-deposit scan path's proof
+           (below) and stamping it on several split rows would put one photo on
+           payments it does not evidence. */
+        slip_key:           posPaymentSlipKeys![i] ?? null,
         /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
            onlineType, so transfer falls back to 'Bank transfer'. */
         account_sheet:      deriveAccountSheet(p.method, merchantProvider, null),
@@ -5446,19 +5439,27 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
          errors), the row stays 'uploaded' → the reaper would delete the R2
          object after TTL and the same session would be replayable — so a no-op
          promote is logged LOUDLY instead of swallowed. Best-effort: the payment
-         row stands either way (slip_key already persisted on it). */
-      const { data: promoted, error: promoteErr } = await sb
-        .from('pending_slip_uploads')
-        .update({ status: 'promoted', promoted_at: new Date().toISOString() })
-        .eq('upload_session_id', p.uploadSessionId)
-        .select('upload_session_id');
-      if (promoteErr || !promoted || promoted.length === 0) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
-          + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
-          + ' — slip will be reaped after TTL; replay window open until then.',
-        );
+         row stands either way (slip_key already persisted on it).
+
+         Guarded on the session because the slip is OPTIONAL now (Owner
+         2026-08-13): with no id there is nothing to promote, and an unguarded
+         `.eq('upload_session_id', null)` is a filter nobody wrote on purpose.
+         The AUDIT below still runs — a slip-less payment is just as much a
+         payment. */
+      if (p.uploadSessionId) {
+        const { data: promoted, error: promoteErr } = await sb
+          .from('pending_slip_uploads')
+          .update({ status: 'promoted', promoted_at: new Date().toISOString() })
+          .eq('upload_session_id', p.uploadSessionId)
+          .select('upload_session_id');
+        if (promoteErr || !promoted || promoted.length === 0) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[so-create] slip promote FAILED for session ${p.uploadSessionId} on ${docNo}: `
+            + (promoteErr?.message ?? 'no row matched (RLS uploader mismatch?)')
+            + ' — slip will be reaped after TTL; replay window open until then.',
+          );
+        }
       }
       await recordSoAudit(sb, {
         docNo,
@@ -11140,10 +11141,12 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }, 400);
   }
 
-  /* Owner 2026-07-13 — the slip is OPTIONAL now. Only when the client attached
-     one (uploadSessionId present) do we resolve the upload session → committed
-     R2 key; an unresolved / not-yet-uploaded session is still rejected so a
-     dangling id never books a slip-less payment silently. Absent session →
+  /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
+     optional on EVERY SO path, so this route is no longer the loose end of a
+     stricter create. Only when the client attached one (uploadSessionId
+     present) do we resolve the upload session → committed R2 key; an
+     unresolved / not-yet-uploaded session is still rejected so a dangling id
+     never books a payment whose proof points nowhere. Absent session →
      paymentSlipKey stays null (records slip-less). */
   let paymentSlipKey: string | null = null;
   if (p.uploadSessionId) {
@@ -11155,7 +11158,12 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     if (slipErr) return c.json({ error: 'lookup_failed', reason: slipErr.message }, 500);
     const slipRowT = slipRow as { r2_key: string | null; status: string } | null;
     if (!slipRowT || slipRowT.status !== 'uploaded' || !slipRowT.r2_key) {
-      return c.json({ error: 'slip_required', reason: 'Upload the payment slip first.' }, 400);
+      /* Names the CLAIM, not a requirement — the payment saves fine with no
+         slip; what it cannot do is carry one that never finished uploading. */
+      return c.json({
+        error: 'slip_required',
+        reason: "That payment slip hasn't finished uploading. Attach it again, or save the payment without one.",
+      }, 400);
     }
     paymentSlipKey = slipRowT.r2_key;
   }
@@ -11658,7 +11666,11 @@ mfgSalesOrders.post('/:docNo/payments/:id/slip', async (c) => {
 
   /* Resolve the upload session → committed R2 key. Same contract as the POST
      route: only a session that finished its PUT ('uploaded') resolves, so a
-     dangling id can never blank out or mis-point an existing slip. */
+     dangling id can never blank out or mis-point an existing slip.
+
+     `uploadSessionId` is REQUIRED on this route and that is not the rule the
+     owner relaxed on 2026-08-13 — attaching a slip is the whole point of the
+     endpoint. A payment that wants no slip simply never calls it. */
   const { data: slipRow, error: slipErr } = await sb
     .from('pending_slip_uploads')
     .select('r2_key, status')
