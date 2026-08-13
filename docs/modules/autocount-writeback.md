@@ -917,6 +917,42 @@ name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
 status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
 completely different problems.
 
+## 7z. HOW TO CALL THE SERVICE — read this before concluding you cannot
+
+Three facts, because a session that did not have them concluded from this
+repository that the service was unreachable and that the whole QA had to be run
+by a person standing at the office machine. None of that is true.
+
+**1. Call the HOSTNAME, never the ZeroTier IP.**
+
+```
+POST https://autocount.houzscentury.com/<route>
+```
+
+A direct call to `10.147.17.100:8900` **will be refused** — 400, or 403 with a
+forged `Host` — and that is not a fault to debug. The listener prefix is
+`http://localhost:<port>/`, so http.sys serves loopback only. **cloudflared runs
+ON that host and connects from loopback**, which is exactly why the tunnel path
+works where a direct one cannot. Verified from an ordinary workstation
+2026-08-11.
+
+**2. The key is the `X-API-KEY` header**, its value being the host's
+`C:\Tempc-svc-key.txt` — the same value as the `AC_SYNC_KEY` Worker secret,
+which is already set. No key gets 401; a service with no key file configured
+refuses everything with 503 (fail-closed, `#2025`).
+
+**3. `it-houzs.dev` is a DIFFERENT relay** — the legacy read middleware. It has
+never fronted AcSyncService and never will. Finding `/health` 404 there proves
+nothing about this service.
+
+**What this means for who can do it:** anyone, from anywhere. No ZeroTier, no
+office visit, no SQL password — the HTTP path needs the API key, not the
+database. The office machine is needed for exactly one thing: **rebuilding the
+exe** (`docs/autocount-service-deploy.md`), because it compiles against licensed
+assemblies. Even that is not exclusive — `build-local.ps1` compiles the source
+on any workstation with AutoCount 2.2 installed, which is how a CS0234 was
+caught before it shipped.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
