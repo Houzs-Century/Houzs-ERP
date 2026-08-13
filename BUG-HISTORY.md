@@ -583,6 +583,99 @@ question this audit could not answer, so the re-key is at worst a harmless
 widening — but the stated reason for it does not match the DDL.
 
 **Ref** - `fix/company-scope-sweep`, 2026-08-13.
+## The State dropdown was cut off after two or three states on every address form [medium]
+
+**Symptom** - the owner, on the Sales Order detail address block: "我的 state 的那个
+UI 也是被直接斩断了,然后很难、很辛苦". Opening State showed MALAYSIA, Johor, Kedah
+and then nothing - the rest of the 16 states existed but were sliced off at the
+card's edge, so picking anything past Kedah meant fighting a list you could not
+see.
+
+**Root cause (traced to the declaration)** - `StatePicker.module.css` had
+`.panel { position: absolute; top: calc(100% + 4px); z-index: 60 }` inside
+`.comboWrap { position: relative }`, i.e. the menu was a normal child of the
+field. `position: absolute` escapes layout flow, but it does NOT escape an
+ancestor's `overflow` clip - any card, drawer or section between the field and
+the viewport that sets `overflow: hidden`/`auto` clips the menu at its own box,
+and the SO detail's address card is only ~150px tall below the field. z-index
+was never the problem, so the earlier bump to 60 could not have helped. The
+component had no `createPortal`, no `position: fixed` and no
+`getBoundingClientRect` anywhere - every other picker in this codebase
+(`SoLineCard`'s SKU/fabric menus, `SearchableSelect`) had already been converted
+to a body portal for exactly this reason, and this one was missed.
+
+**Fix** - the panel is `createPortal(..., document.body)` with
+`position: fixed`, and its top/bottom/left/width/max-height are measured from
+the input's `getBoundingClientRect()`. A `useLayoutEffect` re-measures on
+`scroll` in the CAPTURE phase (the field usually sits in a scrolling card or
+drawer, and those scroll events never reach `window` on the bubble path) and on
+`resize`, removing both listeners when the list closes or the component
+unmounts. When the space below the input cannot hold the list and the space
+above holds more, the panel anchors by its `bottom` edge and grows upward
+instead. Behaviour is untouched: options still commit on `onMouseDown` +
+`preventDefault` so the pick lands before the input blurs, `onBlur` still
+closes, and Escape/arrows/Enter are unchanged - a portal moves the DOM node but
+React events still propagate along the REACT tree, so hosts that close on a
+click in their own subtree (the Warehouse drawer's backdrop) behave as before.
+Mobile is untouched: it passes `compact`, which is a native `<select>`.
+
+**Verified** - reproduced in an isolated harness (a `overflow: hidden` card,
+the shape of the real address block): pre-fix, exactly two states rendered;
+post-fix the full 280px scrollable list paints over the card edge, flips above
+the input near the viewport bottom, and picking still reports
+`("Penang", "Malaysia")`. 13 new tests in `StatePicker.test.tsx`; the 7
+placement ones fail on the pre-fix tree.
+
+**Lesson** - **`position: absolute` is not an escape hatch from `overflow`; only
+leaving the subtree is.** Three menus in this repo were portalled one at a time,
+each as its own bug report, because the fix was applied to the component that
+was complained about rather than to the class. When a shared control is
+converted, grep for its siblings (`grep -L createPortal` over the components
+that render a floating panel) before closing the ticket.
+
+**Ref** - `fix/state-picker-portal`, 2026-08-13
+## Two ways the sofa write-back could pick a different item for the same sofa [high]
+
+Found while giving the four ambiguous sofa models a single canonical item. Both
+are the same class: one fact derived in two places that were allowed to disagree.
+
+**1. A compartment resolved differently from its own collapsed build.**
+`resolveAcItemCode` had a fallback that sent a compartment (`9028-1A(LHF)`)
+through the model base code, widening the candidate list with every AutoCount
+model the cutover folded onto that ERP model (`SOFA_MODEL_ALIAS`). So a
+compartment of 9028 saw `HOK-5530 SOFA` through the alias and took it on the
+HOK preference, while `9028-1S` itself sees only the two brand items and falls
+through. Resolving one line at a time and resolving the built document gave two
+different AutoCount items for one sofa.
+
+**Fix** - the SHAPE is now decided before the resolver runs, so the resolver
+does no sofa reasoning at all: a folded line arrives as `<model>-1S`, an
+unfolded one as its own compartment code, and each resolves to what it is. The
+alias widening stays, restricted to base codes, which is the only shape it was
+ever meaningful for.
+
+**2. A run of ONE compartment stopped folding.** The new shape rule reads the
+DtlKeys — compartments sharing one key are one line in the book and fold;
+distinct keys are already separate lines and do not. A run of length one always
+satisfies "all keys distinct", so every single-piece build silently stopped
+folding. The visible damage was in the refusal tests: four of them went quiet,
+passing lines through instead of refusing a bad Desc2, because a passthrough
+line is never handed to the code that refuses.
+
+**Fix** - the distinct-keys test requires at least two compartments.
+
+**A third was caught in review before it shipped.** The first version of the
+shape rule was "does the line have a key". A new order gets its keys back from
+the create, so its very first edit would have folded two real account-book lines
+into one. The owner spotted it: *"如果他有 delete 东西等等，就算是建立新的
+order，他就会整个 SKU 换掉，不是吗？"*
+
+**Lesson** - **when a pipeline decides a shape, nothing downstream may re-derive
+it.** Every one of these came from the resolver holding its own opinion about
+what a sofa is, alongside the collapse that had already decided. The fix that
+actually holds is not a better opinion, it is deleting the second one.
+
+**Ref** - `feat/ac-sofa-default-code`, 2026-08-13
 ## A new workflow was wired to two secrets that do not exist, by copying the one workflow that already was [medium]
 
 **Symptom** - the first dispatch of "Re-queue skipped AutoCount documents" died
