@@ -18,6 +18,11 @@
 // the so_item_id dedication ONLY — the paperwork that readiness reads, not an
 // inventory event. Nothing here touches inventory_movements or lots.
 //
+// It also stores PODTL.DtlKey now. The value was computed at three sites and
+// written nowhere, so the link back to the AutoCount line existed only inside
+// this process; every later repair had to re-derive it from supplier_sku
+// prefixes and (qty, Desc2) buckets.
+//
 // DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -26,6 +31,8 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { acDeliveryDate, acDtlKey } from "./lib/ac-po-line.mjs";
+import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -94,20 +101,20 @@ async function main() {
   const whByCode = new Map(whs.map((w) => [norm(w.code), w.id]));
   const whId = (loc) => { const k = norm(loc); return whByCode.get(norm(SALESLOC[k] || k)) ?? whByCode.get(k) ?? null; };
 
-  // ERP SO lines, addressable by (AutoCount SO doc | erp code), in line order
+  /* ERP SO lines, addressable by (AutoCount SO doc | erp code), in line order.
+     The hand-out rule now lives in lib/so-line-dedication.mjs so the
+     outstanding-PO import and the repair claim from the SAME pool — a line is
+     claimed once no matter which writer asks. A cancelled line is not offered. */
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
-  const soByKey = new Map();
-  for (const it of soItems) {
-    const k = `${it.ac}|${norm(it.item_code)}`;
-    if (!soByKey.has(k)) soByKey.set(k, []);
-    soByKey.get(k).push(it);
-  }
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
+      AND COALESCE(i.cancelled, false) = false
+    ORDER BY i.line_no`;
   const takenSoItem = new Set(
     (await sql`SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`)
       .map((r) => r.so_item_id),
   );
+  const taker = makeSoLineTaker(soItems, takenSoItem);
 
   const existing = new Set(
     (await sql`SELECT linked_ac_docno FROM scm.purchase_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`)
@@ -136,7 +143,6 @@ async function main() {
   /* Resolve each PO line's SO line. Same-code lines on one SO are handed out in
      order and never reused, so two PO lines for the same SKU on one order bind
      to two DIFFERENT SO lines instead of both claiming the first. */
-  const handedOut = new Map();
   const plan = [];
   let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0, sofaPlaceholderBind = 0;
   const sofaDecode = [];
@@ -150,24 +156,13 @@ async function main() {
       /* Hand out the SO line for one ERP code on one AutoCount order: same-code
          lines are consumed in order and never reused, so two PO lines for the
          same SKU bind to two DIFFERENT SO lines. */
-      const takeSoLine = (erpCode) => {
-        if (!src || !erpCode) return null;
-        const k = `${src.doc}|${norm(erpCode)}`;
-        const cands = soByKey.get(k);
-        if (!cands) return null;
-        const used = handedOut.get(k) ?? 0;
-        const pick = cands.find((c, i) => i >= used && !takenSoItem.has(c.id));
-        if (!pick) return null;
-        handedOut.set(k, cands.indexOf(pick) + 1);
-        takenSoItem.add(pick.id);
-        return pick.id;
-      };
+      const takeSoLine = (erpCode) => (src ? taker.take(src.doc, erpCode) : null);
       const wh = whId(l.Location);
       if (!wh) noWh++;
       const recv = Math.round(Number(l.GrQty ?? 0));
       const qty = Math.round(Number(l.Qty ?? 0));
       const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
-      const deliveryDate = l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null;
+      const deliveryDate = acDeliveryDate(l);
       const group = prodCat.get(norm(l.erp)) ?? "others";
 
       /* SOFA — one AutoCount line is one BUILD; the ERP models it as one line
@@ -222,7 +217,7 @@ async function main() {
               name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
               supplierSku: `${l.ItemCode} ${cmp}`,
               qty, recv, priceCenti: first ? priceCenti : 0,
-              wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants, note: null,
+              wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants, note: null,
             });
             first = false;
           }
@@ -239,7 +234,7 @@ async function main() {
           code, description: l.Description, desc2: l.Desc2, group,
           name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
           supplierSku: l.ItemCode, qty, recv, priceCenti, wh, soItemId,
-          dtlKey: Number(l.DtlKey), deliveryDate,
+          dtlKey: acDtlKey(l), deliveryDate,
           variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
           note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
         });
@@ -253,7 +248,7 @@ async function main() {
         code: l.erp, description: l.Description, desc2: l.Desc2, group,
         name: (prodByCode.get(String(l.erp).toUpperCase()) || {}).name || l.Description || l.erp,
         supplierSku: l.ItemCode, qty, recv, priceCenti,
-        wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants: null, note: null,
+        wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants: null, note: null,
       });
     }
     const anyRecv = items.some((i) => i.recv > 0);
@@ -307,7 +302,7 @@ async function main() {
              description, description2, notes,
              qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
              custom_specials, variants,
-             warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
+             warehouse_id, so_item_id, company_id, delivery_date, from_mrp, linked_ac_dtlkey)
           VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.name ?? it.description}, ${it.supplierSku ?? null},
                   ${it.description}, ${it.desc2},
                   ${it.note ? (it.desc2 ? it.desc2 + " | " + it.note : it.note) : (it.desc2 || null)},
@@ -315,7 +310,7 @@ async function main() {
                   ${it.group === "bedframe" ? "SET" : "UNIT"},
                   ${it.variants && it.variants.specials && it.variants.specials.length ? sql.json(it.variants.specials) : null},
                   ${it.variants ? sql.json(it.variants) : null},
-                  ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
+                  ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false, ${it.dtlKey ?? null})`;
       }
     });
     made++;
