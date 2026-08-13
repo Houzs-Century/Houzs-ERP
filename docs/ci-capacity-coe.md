@@ -268,6 +268,41 @@ repo moves under an organization. Until then:
 | Transfer the repo to an organization | unlocks the queue, plus org secrets and teams | a real migration; collaborators and integrations need re-setting |
 | Turn OFF `strict_required_status_checks_policy` | removes the O(n²) entirely | removes the guard added after three migration-collision incidents. Would need the duplicate-migration check moved to a pre-deploy gate first |
 
+## The hidden cost of the BUG-HISTORY rule, and the one-line fix
+
+Draining the backlog surfaced something nobody had measured. Of the first five
+pull requests that turned `DIRTY` after an unrelated merge landed:
+
+| PR | conflicting file |
+| --- | --- |
+| #2043 | `BUG-HISTORY.md` |
+| #1914 | `BUG-HISTORY.md` |
+| #1867 | `BUG-HISTORY.md` |
+| #2037 | `docs/modules/autocount-writeback.md` |
+
+**Four out of five, and not one line of code.** `BUG-HISTORY.md` is
+append-at-the-top and mandatory, so with N branches open, every one of them
+edits the same first line of the same file. Merge any one and the other N-1
+conflict — on a file where both sides are always wanted.
+
+The rule is right and should not change; the mechanics were wrong.
+`.gitattributes` now carries:
+
+```
+BUG-HISTORY.md merge=union
+```
+
+`union` is a built-in git merge driver that keeps both sides of a conflicting
+hunk instead of stopping. For a newest-first ledger where each branch prepends
+its own block, that is the correct resolution every time — it is precisely what
+was being done by hand. Scoped to this one file: two branches revising the same
+*existing* entry would get both copies, which is wrong for `docs/modules/*.md`
+and anything else edited in place.
+
+Resolving one of these by hand also demonstrated the treadmill: the fix was
+pushed, and `main` had moved again before GitHub finished recomputing. Manual
+resolution does not converge while the base branch is live.
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
