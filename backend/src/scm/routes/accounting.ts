@@ -26,6 +26,29 @@ import { paginateAll } from '../lib/paginate-all';
 import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { nextJeNo, jePrefixForCompany } from '../lib/doc-no';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+
+/* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
+   `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
+   journal entry, its posting, and the SI / PI revenue postings.
+
+   Its only gate was `moneyWriteDenial` in the SCM area guard, and that fails
+   OPEN for a caller with no position (services/positionPolicy.ts: "Unidentifiable
+   caller (no position) -> not denied"). Payment vouchers are double-gated —
+   flat keys on every write verb ON TOP of that policy — and the GL, which is
+   what a voucher posts INTO, was not gated at all. The asymmetry is even named
+   in positionPolicy's own comment: "payment-vouchers additionally checks flat
+   scm.payment_voucher.* perms, so it was already double-gated; accounting was
+   not gated at all."
+
+   Gated on `scm.payment_voucher.post` — owner decision 2026-08-13, asked
+   directly. It reuses a key that already exists and is already granted to the
+   finance positions, so nobody is locked out today; inventing a new
+   `scm.accounting.post` would have taken effect with NOBODY holding it and
+   stopped GL posting until the positions matrix was updated. The semantics are
+   near enough: posting a voucher IS posting to the GL. */
+const requireGlPost = (c: Parameters<typeof hasHouzsPerm>[0]) =>
+  hasHouzsPerm(c, 'scm.payment_voucher.post');
 import {
   scopeToCompany, activeCompanyId, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -117,6 +140,7 @@ accounting.get('/journal-entries/:id', async (c) => {
 });
 
 accounting.post('/journal-entries', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to write to the general ledger." }, 403);
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -193,6 +217,7 @@ accounting.post('/journal-entries', async (c) => {
  * Exported so the route test can drive it without the supabaseAuth bridge,
  * which cannot run in this harness. */
 export const postJournalEntryHandler = async (c: any) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
@@ -241,6 +266,7 @@ accounting.post('/journal-entries/:id/post', postJournalEntryHandler);
    ════════════════════════════════════════════════════════════════════════ */
 
 accounting.post('/post/si/:invoiceNumber', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const invoiceNumber = c.req.param('invoiceNumber');
   const sb = c.get('supabase');
 
@@ -412,6 +438,7 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
 }
 
 accounting.post('/post/pi/:invoiceNumber', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const invoiceNumber = c.req.param('invoiceNumber');
   const sb = c.get('supabase');
 
