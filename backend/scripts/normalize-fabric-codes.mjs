@@ -29,7 +29,10 @@
    NOTHING IS DELETED. A row that loses is superseded - active = false, label
    records what absorbed it - the same rule #1972 set and the catalogue script
    follows. Live lines are repointed on BOTH axes (fabricCode and fabricId)
-   across all four arms, through lib/fabric-write.
+   across EVERY arm lib/fabric-write knows (fifteen as of 2026-08-13), together
+   with the stored description2, the variant_key stock bucket and the model's
+   allowed_options whitelist — a code change that moves only variants is what
+   stranded stock on 2026-08-11.
 
    THE OWNER'S OWN 12 SERIES ARE SKIPPED. seed-owner-fabric-catalogue.mjs
    already drove those to their canonical form from his list, including colour
@@ -40,7 +43,17 @@
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
 import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel } from "./lib/fabric-code.mjs";
-import { countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy } from "./lib/fabric-write.mjs";
+import {
+  countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy,
+  /* A colour CODE change is not just a variants edit. The same string is also
+     materialised into the physical stock bucket (variant_key), rendered into
+     the stored description2 every PDF prints, and listed in the model's
+     allowed_options whitelist. Repointing variants alone is what left
+     BO315-2-FEATHER's 3 SO lines and 3 PO lines pointing at one code while its
+     3 inventory_movements and 3 inventory_lots rows stayed in the other —
+     found by the census on 2026-08-13, after the 2026-08-11 pass. */
+  repointDescription2, repointVariantKey, repointAllowedOptions, skippedArms,
+} from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -256,7 +269,12 @@ async function main() {
           const r = await repointColour(tx, CO, l.r.colour_id, m.newId);
           const n = sum(r);
           movedLines += n;
-          if (n) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)})`);
+          /* Same transaction, same rename: the printed text, the stock bucket
+             and the model whitelist follow the code or they contradict it. */
+          const d2 = busy(await repointDescription2(tx, CO, l.r.colour_id, m.newId));
+          const vk = busy(await repointVariantKey(tx, CO, l.r.colour_id, m.newId));
+          const md = (await repointAllowedOptions(tx, CO, l.r.colour_id, m.newId)).n;
+          if (n || d2 || vk || md) note(`  repointed ${n}: "${l.r.colour_id}" -> "${m.newId}" (${busy(r)}) desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
         }
         await tx`UPDATE scm.fabric_colours
                     SET active = false,
@@ -270,6 +288,10 @@ async function main() {
       const from = c.win.r.colour_id;
       if (normColour(from) !== c.newId) {
         movedLines += sum(await repointColour(tx, CO, from, c.newId));
+        const d2 = busy(await repointDescription2(tx, CO, from, c.newId));
+        const vk = busy(await repointVariantKey(tx, CO, from, c.newId));
+        const md = (await repointAllowedOptions(tx, CO, from, c.newId)).n;
+        if (d2 || vk || md) note(`  carried with "${from}" -> "${c.newId}": desc2[${d2 || "-"}] stock[${vk || "-"}] models[${md}]`);
       }
       const seriesNow = plan.seriesRename.get(c.win.r.fabric_id)?.to ?? c.win.r.fabric_id;
       const clash = await tx`SELECT 1 FROM scm.fabric_colours
@@ -304,6 +326,11 @@ async function main() {
     for (const s of plan.seriesRename.values()) {
       const still = sum(await countSeries(v, CO, s.from));
       if (still) { fails++; bad(`${still} line(s) still name series "${s.from}"`); }
+    }
+    const skipped = skippedArms();
+    if (skipped.length) {
+      note(`  ARMS SKIPPED (absent from this database — never sweep silently):`);
+      for (const sk of skipped) note(`    ${sk.kind.padEnd(12)} ${String(sk.table).padEnd(42)} ${sk.why}`);
     }
     for (const a of await arrayShapeCheck(v, CO)) {
       note(`  ${a.arm}: array-shaped variants blocks (must be 0): ${a.n}`);
