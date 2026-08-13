@@ -33,6 +33,13 @@ export type SoDetailGateHeader = {
   has_children?: boolean | null;
   proceeded_at?: string | null;
   internal_expected_dd?: string | null;
+  /* Server-computed: a live (non-cancelled) Purchase Order already claims one of
+     this SO's lines — 2990 only (owner 2026-08-12). NOT derivable client-side —
+     the detail payload carries no PO linkage — which is exactly why it arrives
+     as a fact instead of a fourth local re-derivation of "is this order
+     committed". Absent (Houzs, or a cached pre-deploy payload) reads as false,
+     so the gate degrades to the date rule alone. */
+  po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
   balance_centi?: number | null;
   paid_centi_total?: number | null;
@@ -70,8 +77,17 @@ export function isLocked(
    IN_PRODUCTION), which let a CONFIRMED SO past its processing date stay directly
    editable. DRAFT / CANCELLED stay editable; when status is absent we fall back to
    the `proceeded_at` marker so we never over-lock a status-blind header. Mirrors
-   the backend soProcessingLocked exactly. */
+   the backend soProcessingLocked exactly.
+
+   Owner 2026-08-12 — the same soft lock now has a SECOND road: `po_locked`, set
+   by the server when a live PO already claims one of this SO's lines (2990
+   only). It short-circuits the date test entirely, including the DRAFT /
+   CANCELLED exemptions below — a DRAFT SO cannot have a PO raised against it,
+   and a CANCELLED one releases via cancelling the PO, not by editing the SO. So
+   there is no state where po_locked is true and the date exemptions should win.
+   Mirrors the backend pair soProcessingLocked || soPoLocked. */
 export function procLockActive(header: SoDetailGateHeader): boolean {
+  if (header.po_locked === true) return true;
   const orig = (header.internal_expected_dd ?? '').slice(0, 10);
   if (orig === '' || !(orig < todayMyt())) return false;
   const status = (header.status ?? '').toUpperCase();

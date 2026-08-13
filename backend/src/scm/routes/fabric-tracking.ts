@@ -53,7 +53,18 @@ const TIER_FIELD_TO_COL: Record<string, string> = {
    INSERT fabric_library/fabric_colours but not UPDATE/DELETE — so we never
    clobber a Master-Admin selling-tier edit, and re-syncing an existing fabric
    is a no-op instead of a 403/permission error. Selling tiers stay POS-only. */
-const seriesOf = (code: string): string => code.split('-')[0] || code;
+/* The series is everything BEFORE the trailing colour number, not everything
+   before the first dash. "AM275-02" -> AM275 either way, but "SF-AT-01" is
+   SF-AT and "ALPINE-5311-13" is ALPINE-5311; splitting on the first dash calls
+   them SF and ALPINE and mirrors the colour into the wrong series. Matches how
+   normalize-fabric-codes.mjs derives it, so a fabric created here and a fabric
+   normalised there land in the same place. */
+const seriesOf = (code: string): string => {
+  const v = (code || '').trim().toUpperCase();
+  const m = /^(.+)[\s-]+\d{1,3}$/.exec(v);
+  const head = (m ? m[1] : v.split('-')[0]) || v;
+  return head.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || v;
+};
 const colourLabelOf = (code: string, description: string | null): string => {
   const desc = (description ?? '').trim();
   const sp = desc.indexOf(' ');
@@ -395,7 +406,28 @@ fabricTracking.patch('/:id/supplier-code', async (c) => {
   return c.json({ ok: true, supplierCode: next });
 });
 
-/* PR #38 — Make fabric description editable from the Fabric Converter table. */
+/* PR #38 — Make fabric description editable from the Fabric Converter table.
+
+   AND MAKE THE EDIT REACH THE PICKER (owner 2026-08-13: "Description 好像是直接
+   可以更改。如果可以更改的话，到时候可以 save 得到吗？").
+
+   It saved, and it did nothing. The description is the ONLY place a colour's
+   NAME is written — colourLabelOf takes everything after the code — and the
+   name a salesperson actually sees when picking fabric on an SO comes from the
+   MIRRORED row in scm.fabric_colours, not from here. That mirror was written
+   once, at create (:143) and at CSV import, and never again: the description
+   PATCH did not touch it, and both mirror upserts carry
+   `ignoreDuplicates: true`, so even re-running the sync would skip a colour
+   that already exists.
+
+   So the Converter showed the new text, every fabric picker kept the old one,
+   and nothing reported a problem. That is the whole bug: an edit that appears
+   to work and reaches nobody.
+
+   The label is updated in place, scoped to the company and to the colour_id
+   that IS this fabric's code. Best-effort and reported, never fatal: the cost
+   ledger — the thing the operator was editing — has already been written, and
+   a library hiccup must not turn a saved edit into an error. */
 fabricTracking.patch('/:id/description', async (c) => {
   const id = c.req.param('id');
   let body: { description?: string | null };
@@ -408,18 +440,35 @@ fabricTracking.patch('/:id/description', async (c) => {
   const trimmed = typeof body.description === 'string' ? body.description.trim() : null;
   const next = trimmed === '' ? null : trimmed;
 
+  /* fabric_code comes back so the mirror can be aimed at the right colour
+     without a second read — the row was just proven to be this company's. The
+     .select().maybeSingle() stays OUTSIDE scopeToCompanyId, the shape every
+     other handler in this file uses. */
   const { data, error } = await scopeToCompanyId(supabase
     .from('fabric_trackings')
     .update({ fabric_description: next })
     .eq('id', id), co.companyId)
-    .select('id').maybeSingle();
+    .select('id, fabric_code').maybeSingle();
 
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ ok: true, description: next });
+
+  const row = data as { id: string; fabric_code: string | null };
+  const code = (row.fabric_code ?? '').trim();
+  let pickerWarning: string | null = null;
+  if (code) {
+    const { error: mirrorErr } = await scopeToCompanyId(supabase
+      .from('fabric_colours')
+      .update({ label: colourLabelOf(code, next) })
+      .eq('fabric_id', seriesOf(code))
+      .eq('colour_id', code), co.companyId);
+    if (mirrorErr) pickerWarning = `fabric_colours: ${mirrorErr.message}`;
+  }
+
+  return c.json({ ok: true, description: next, pickerLabel: code ? colourLabelOf(code, next) : null, ...(pickerWarning ? { pickerWarning } : {}) });
 });
 
 fabricTracking.patch('/:id/tier', async (c) => {

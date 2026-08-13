@@ -801,15 +801,21 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const defectActionsValue = useMemo(
     () => ({
       actions: (((data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      // Two-stage defect triage (owner 2026-08-07): canReview = the Storekeeper
-      // Supervisor (Shukor) or admin triages a fresh defect (Done / Replace);
-      // canPurchase = the purchaser (Sim / Farra) / BD or admin closes an
-      // escalated (Replace) defect with Done. Mirrors desktop Projects.tsx.
-      canReview:
-        !!user &&
-        (user.permissions?.includes("*") ||
-          user.permissions?.includes("projects.manage") ||
-          /^storekeeper supervisor$/i.test((user.position_name ?? "").trim())),
+      // Two-stage defect triage (owner 2026-08-07; two-warehouse split
+      // 2026-08-11): canReview = the reviewer for THIS project's state — Nancy
+      // (Ops Exec role) for the region states, Shukor (Storekeeper Supervisor)
+      // for every other state; admin always. canPurchase = purchaser (Sim /
+      // Farra) / BD or admin closes an escalated (Replace) defect. Mirrors desktop.
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((data as any)?.project?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
       canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||

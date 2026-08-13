@@ -21,7 +21,39 @@ const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
 const SPECIAL_WORD = /depth|\b(?:bottom|bttm|umbrella|umb|nylon|nilon|cover\w*|back\s*rest|backrest|back\s*cushion|backcushion|head\s*rest|headrest|cushion|firm\w*|soft\w*|harder|notch|stitch\w*|stich\w*|holes?|push\s*back|extend\w*|separate|packing|bracket|wood\w*|arm\s*rest|armrest|arm|adj\w*table|slider|plane|plain|legs?|height|seating|in\s?front|feeling|stopper|microgel|movable)\b/i;
 // "CH141-4 WOOD" is a fabric colour, not a request for a wooden anything
 const COLOUR_LIKE = /^[A-Z]{1,6}\s?\d{2,5}\s*[-#]?\s*\d{0,3}\s*\(?[A-Z0-9 ]{0,20}\)?$/i;
-function parseSofa(d2raw, model, recl = false) {
+/* An UNLABELLED colour code — "BO315-21 (PEARL)/28"/2L" — was read as an
+   unrecognised structure token and thrown away, so the colour never reached the
+   line. That is the whole missing-Fabrics bucket on sofa: 85 of 86 blank colour
+   axes hold no value at all rather than an unresolvable one.
+
+   It is recovered only through `opts.knownColour`, a predicate the CALLER
+   supplies and which must consult scm.fabric_colours. Without it this function
+   behaves exactly as before. The asymmetry is deliberate: a code the fabric
+   library can confirm is a copy of what AutoCount wrote, and a code it cannot
+   confirm is a guess — and this migration does not guess. Sizes and piece
+   lists are excluded before the library is consulted so a numeric coincidence
+   can never be promoted to a colour. */
+function unlabelledColour(d2raw, knownColour) {
+  for (const raw of String(d2raw || "").split(/[/\n]+/)) {
+    const seg = raw.trim();
+    if (!seg || seg.length > 40) continue;
+    const t = seg.replace(/\s*\((?:feather|foam)\)\s*/i, "").trim();
+    /* A fabric code always reads letters-then-digits — BO315, CH141, GD2502,
+       M2402, SL0095, HR 805. A piece token reads the other way round (2L, 1NA,
+       3S), and a size has no letters at all. That one asymmetry separates them
+       without having to enumerate the piece vocabulary, which would rot the
+       moment a new compartment is minted. */
+    if (!/[A-Z]\s?\d/i.test(t)) continue;
+    if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
+    if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
+    if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
+    const hit = knownColour(t) || knownColour(t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
+  }
+  return null;
+}
+
+function parseSofa(d2raw, model, recl = false, opts = {}) {
   const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
   let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "")
@@ -71,6 +103,13 @@ function parseSofa(d2raw, model, recl = false) {
   d2 = d2.replace(/col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/gi, (_, val) => {
     if (!o.color) o.color = val.trim(); return " ";
   });
+  /* Read the raw text, not `d2`: by this point the composite-token guards above
+     have already rewritten it, and the colour must be the string AutoCount
+     actually holds. */
+  if (!o.color && typeof opts.knownColour === "function") {
+    const u = unlabelledColour(d2raw, opts.knownColour);
+    if (u) { o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`); }
+  }
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {

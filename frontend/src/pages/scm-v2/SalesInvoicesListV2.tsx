@@ -44,6 +44,7 @@ import {
 } from "../../components/DocumentLinesExpansion";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -874,13 +875,19 @@ export function SalesInvoicesListV2() {
     cancelled: 0,
   };
 
-  // Money KPIs are summed over the CURRENT page only (paginated contract has no
-  // full-set money sums), so their cards are labelled "on this page".
+  /* The rows the TABLE is showing — the server page minus whatever the
+     per-column funnels hide (owner 2026-08-13, following the Purchase Orders
+     fix). See hooks/useVisibleRows for why summarising the server page put two
+     contradictory numbers on one screen. */
+  const visible = useVisibleRows(rows);
+
+  // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
+  // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let revenueCenti = 0;
     let outstandingCenti = 0;
     let paidCenti = 0;
-    for (const r of rows) {
+    for (const r of visible.rows) {
       const t = r.total_centi ?? r.local_total_centi ?? 0;
       const paid = r.paid_centi ?? 0;
       revenueCenti += t;
@@ -888,7 +895,7 @@ export function SalesInvoicesListV2() {
       outstandingCenti += Math.max(0, t - paid);
     }
     return { revenueCenti, outstandingCenti, paidCenti };
-  }, [rows]);
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -1646,11 +1653,16 @@ export function SalesInvoicesListV2() {
           />
 
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {/* Every tile describes the rows ON SCREEN and says so while a
+                column funnel narrows them (owner 2026-08-13). The count tile
+                switches SOURCE, not just wording: `total` is the server's full
+                match count and contradicts the table the moment a client-side
+                funnel hides part of the page. */}
             <StatCard
               pending={statsPending}
               label="Total Invoices"
-              value={total.toLocaleString("en-MY")}
-              subtitle="All matching invoices"
+              value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+              subtitle={visible.filtered ? "Filtered · shown below" : "All matching invoices"}
               rail="bg-primary"
               active
             />
@@ -1658,14 +1670,14 @@ export function SalesInvoicesListV2() {
               pending={statsPending}
               label="Billed"
               value={fmtRm(money.revenueCenti)}
-              subtitle="Sum on this page"
+              subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
               value={fmtRm(money.outstandingCenti)}
-              subtitle="Balance on this page"
+              subtitle={visible.filtered ? "Balance · filtered" : "Balance on this page"}
               tone="error"
               rail="bg-err"
             />
@@ -1673,7 +1685,7 @@ export function SalesInvoicesListV2() {
               pending={statsPending}
               label="Paid"
               value={fmtRm(money.paidCenti)}
-              subtitle="Receipts on this page"
+              subtitle={visible.filtered ? "Receipts · filtered" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"
             />
@@ -1753,6 +1765,8 @@ export function SalesInvoicesListV2() {
             <DataTable<SiRow>
               tableId="sales-invoices-v2"
               rows={rows}
+              /* Feeds the stat strip so the tiles describe what is on screen. */
+              onFilteredRowsChange={visible.onFilteredRowsChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}

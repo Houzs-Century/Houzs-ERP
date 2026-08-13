@@ -196,8 +196,16 @@ async function main() {
     for (const [, b] of groupSofaBuilds(rows)) {
       const f = b[0];
       const model = modelOf(f.code);
-      if (b.some((r) => /SOFA UNPARSED/.test(r.remark || ""))) {
-        for (const r of b) buildIssue.set(r.id, "COMPARTMENT: placeholder, never decoded (SOFA UNPARSED)");
+      /* The remark marks the LINE the decoder could not read, not the build.
+         Failing the whole build on any one line's remark over-reported by 11 of
+         30 in production: HC-PO-009018 is correctly decomposed to
+         1A(LHF)+1NA+1A(RHF) and was failed only because it also carries a
+         STOOL, whose own Desc2 is a dimension with no structure to parse and
+         none needed - STOOL IS its compartment. Only a line that fell back to
+         the bare 1S placeholder is genuinely undecoded. */
+      const undecoded = b.filter((r) => /SOFA UNPARSED/.test(r.remark || "") && /^1S$/i.test(compartmentOf(r.code)));
+      if (undecoded.length) {
+        for (const r of undecoded) buildIssue.set(r.id, "COMPARTMENT: the build collapsed to a bare 1S placeholder, never decoded");
         continue;
       }
       const ps = parseSofa(f.d2, model, reclOf(model));

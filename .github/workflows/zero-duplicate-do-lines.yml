@@ -1,0 +1,62 @@
+name: Zero the duplicate migrated DO lines (owner Option B)
+
+# Manual. Sets qty = 0 on the surplus lines of the MIGRATED delivery orders the
+# cutover writer inserted twice, and writes an audit note onto each line saying
+# what it was and why. The ROW STAYS - nothing is deleted, which is the owner's
+# rule, and `scm.delivery_order_items` has no line-level cancel column to use
+# instead. Option B of docs/migrated-do-duplicate-lines.md, approved by the
+# owner 2026-08-11.
+#
+# The script refuses any document that is not `migrated_no_stock`, any document
+# with an inventory movement, and any surplus line carrying money or already
+# claimed by an invoice or a return. It prints every prior value IN FULL before
+# writing, and verifies on a second, fresh connection afterwards.
+#
+# DRY-RUN by default; apply=1 writes. See backend/scripts/zero-duplicate-do-lines.mjs.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+# Own group, never the deploy's.
+concurrency:
+  group: zero-duplicate-do-lines-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Zero the surplus lines
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+        run: |
+          set -o pipefail
+          node scripts/zero-duplicate-do-lines.mjs | tee zero-dup-do.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zero-duplicate-do-lines-${{ inputs.apply == '1' && 'apply' || 'dryrun' }}
+          path: backend/zero-dup-do.txt
+          retention-days: 30

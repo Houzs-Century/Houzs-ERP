@@ -340,6 +340,62 @@ Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
 approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.
 
+#### Company 1 cannot create an order with no stock location (owner 2026-08-13, SURFACE CHANGE)
+
+> Owner, verbatim intent: *"Company 1 (Houzs Century) 开单必须有 State。Company 2
+> (2990) 不需要。其他公司也不必填。以后要加新公司我会再讲。"*
+
+The AutoCount write-back refused both of the owner's first two test orders —
+`HC-SO-2608-002` came back `refused, nothing sent (MissingLocationError)`,
+because AutoCount's `FK_SODTL_Location` rejects a line whose `Location` is not
+a row in `dbo.Location` and an absent key reaches it as `""`. Neither order had
+a delivery address, so neither had a State, so `deriveSalesLocationFromState`
+returned null and the header saved with `sales_location` NULL. The ERP was
+accepting a class of order it already knew the account book would refuse, and
+only saying so afterwards in an outbox row.
+
+**The rule** (`backend/src/scm/lib/so-location-gate.ts`):
+
+| | |
+|---|---|
+| gated on | the **DERIVED warehouse** (`sales_location`), never on the bare presence of a State — a State with no `state_warehouse_mappings` row derives nothing either, so "a State was picked" does not answer AutoCount's question |
+| `so_state_required` | no State picked. The salesperson fixes it, on this screen |
+| `so_state_unmapped` | this State has no warehouse mapped. An **admin** task — naming it separately stops the salesperson being told to pick a State they already picked |
+| companies | `LOCATION_REQUIRED_COMPANY_CODES = ['HOUZS']`. Add a company by putting its `companies.code` in that array (and its twin in `so-form-validate.ts`); nothing else changes. Identified by CODE, not id — the bigint ids differ between staging and prod |
+| unknown company | **not gated**, same reasoning as `processingDateThresholdFor`'s looser fallback: over-gating stops the shop floor with no signal |
+| shape | one `SaveProblem` in the shared `validation_failed` + `problems[]` 422, so every SO surface renders it through the existing `humanApiError` / `SaveProblemsList` path |
+
+**Where it runs — the invariant is "wherever we enqueue an AutoCount create, a
+location exists".** There are exactly two such places, and both are gated:
+
+1. **Create** (`createSalesOrderCore`), on `asDraft !== true`, immediately after
+   `derivedSalesLocation` is resolved and before the header insert. A refusal
+   calls `rollbackPwpClaims()` first, so a rejected order burns no voucher.
+2. **`DRAFT -> live`** (`PATCH /:docNo/status`), on `fromNorm === 'DRAFT' &&
+   toStatus !== 'CANCELLED'` — the exact condition of the `enqueueSoCreate`
+   below it. Not gated on a cancel: discarding a junk scan draft queues no
+   create and must not be stranded.
+
+**Drafts are exempt**, same as the confirm gate and for the same reason: a
+draft is the scan job's guess awaiting an operator's verdict, is never written
+to AutoCount, and blocking it would break the scan flow. `backend/tests/soLocationGateWiring.test.ts`
+fails if a THIRD `enqueueSoCreate` callsite ever appears un-gated.
+
+**Frontend twins (change together).** The rule is `soStockLocationError` in the
+shared `frontend/src/vendor/scm/lib/so-form-validate.ts`, called by all four
+create surfaces — `SalesOrderNew`, `MobileNewSO` (create only; an EDIT enqueues
+an AutoCount *edit*, which leaves the book's own Location alone),
+`SalesOrderNewGuided` (inert — that flow always lands a DRAFT, wired so it is
+gated automatically if that ever changes) and `SalesOrderNewFromProducts`.
+
+> **`SalesOrderNewFromProducts` cannot raise a company-1 order.** That flow
+> collects no address by design ("address is added on the SO detail after
+> save") and lands CONFIRMED, so under company 1 it has no way to resolve a
+> warehouse. The page now says so up front and points at *Switch to Full form*,
+> rather than letting the operator build a cart and meet a 422. The backend
+> would refuse it either way — this is the UI telling the truth earlier, not a
+> second rule.
+
 **Historical backfill for the header-unresolvable lines (2026-08-01, gated).**
 Part `so-warehouse` on `backend/scripts/repair-2990-doc-refs.mjs` (workflow
 **Repair 2990 doc references**) stamps `warehouse_id` on the lines the read
@@ -434,6 +490,54 @@ enforced in code:
 | `fabricId` / `colourId` / `fabricCode` / `colourLabel` / `fabricLabel` / `gap` / `divanHeight` / `legHeight` / `totalHeight` / `size` | the AutoCount re-parse sweeps — `OWNED_VARIANT_KEYS` in `backend/scripts/lib/variant-merge.mjs` |
 | `specials` (and the HOOKKA singular `special`) | `backend/scripts/backfill-specials-into-variants.mjs`, the only writer with the money guard — a picked add-on's surcharge folds into the authoritative unit price, so stamping a PRICED code reprices a historical document |
 | everything else (POS configurator, line editors) | its own writer |
+
+**HYDRAULIC is a tickable code, and it does NOT replace `divanHeight`**
+(owner 2026-08-11, *"开 special order 那边勾选"* — this overrode the earlier
+recommendation that a hydraulic base stay a property of the divan and never
+become a `special_addons` row). The two are **complementary, not alternatives**:
+
+- the **tick** (`variants.specials` gains `Hydraulic`) records *what the bed is*;
+- **`variants.divanHeight`** records *how big it is*, and `parse-bedframe.mjs`
+  derives it from the very same hydraulic wording (outer figure wins, an
+  inner-only figure converts at +2 — owner's ruling 2026-08-10).
+
+45 of the 49 lines that say HYDRAULIC carry both and must keep carrying both;
+dropping the height in favour of the tick would discard a measurement someone
+took. The chain — slip Desc2 to parser phrase to picker code, *and* the height
+surviving — is pinned end-to-end in `backend/tests/parseBedframeHydraulic.test.ts`.
+The code is created **at price 0** (`seed-hydraulic-special-addon.mjs`); the
+owner sets the price when he is ready, and it must stay 0 while the 49 migrated
+lines are being stamped.
+
+Categories on a `special_addons` row must be **UPPERCASE** — both pickers filter
+with `a.categories.includes(category.toUpperCase())`
+(`SoLineCard.tsx` and `mobile/MobileNewSO.tsx`), so a lowercase token yields a
+row the backfill can map to and no human can ever tick.
+
+**What actually landed in production, 2026-08-11.** The `Hydraulic` row was
+created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
+`sell=0 cost=0`, `categories=BEDFRAME`, `active=true`, read back on a fresh
+connection. The stamp ran through `backfill-specials-into-variants.mjs` with
+`SKIP_PRICED=1` (run **31454747001**): **SO 41 + PO 8 = 49 lines**, with **27
+unrelated lines held back** for carrying a priced code. Every money column was
+summed inside the transaction before and after — `unit_price_centi`,
+`total_centi`, `unit_cost_centi`, `line_cost_centi`, `special_order_price_sen`,
+`divan_price_sen`, `leg_price_sen` — all **IDENTICAL**, and the transaction
+would have rolled back on any difference. A fresh read-only re-run
+(**31454827796**) shows every one of the 49 now carrying the code, no line still
+waiting to gain it, and `divanHeight` intact on the 46 that had one.
+
+**The 3 lines with NO `divanHeight`** — the tick is the only thing the ERP knows
+about these beds, so a human must read the slip. No height was inferred:
+
+| doc | item | AutoCount Desc2 |
+|---|---|---|
+| `HC-SO-012403` | `BEDFRAME KIV` | `LVL 1 QUEEN HYDRAULIC` |
+| `HC-SO-013122` | `BEDFRAME KIV` | `LVL1 HYDRAULIC KING` |
+| `HC-SO-012039` | `HILTON (A)-(Q)` | `hydraulic` |
+
+Two are `BEDFRAME KIV` placeholders whose Desc2 names no measurement at all; the
+third is a real HILTON line whose entire Desc2 is the word `hydraulic`.
 
 A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
 object; rebuilding deletes every key it has not heard of. `custom_specials` is a
@@ -755,3 +859,39 @@ Note the reachability gate: a migrated SO is only `amendment_eligible` once it i
 processing-locked, and the importer does not set `internal_expected_dd`, so today
 most migrated orders cannot reach this path at all. The exemption exists so that
 giving one a Processing Date does not silently destroy its price later.
+
+### A priced special add-on is CHARGED, not only costed (owner 2026-08-11)
+
+Owner: *"让收费追上成本."* The SELLING path used to drop the surcharge the COST
+path booked, so a priced add-on could only ever reduce margin.
+
+The surcharge total is `breakdown.unitPriceSen - breakdown.basePriceSen` in
+`scm/lib/mfg-pricing-recompute.ts`. The selling base is pinned at 0 by
+`computeMfgLinePrice` (the product price tables are COST), so that subtraction
+IS the director-authored selling surcharges — specials, divan, leg, total
+height. It reached the customer's price through exactly one branch, gated on
+`category !== 'SOFA' && effectiveBaseSen > 0`, which exempted two populations:
+
+| exempt | why it was exempt | what it cost |
+|---|---|---|
+| every SOFA line | excluded by category; the sofa branch rebuilt the price from Σ module prices and never re-added the surcharges | the COST branch beside it DID re-add its own (`costSurchargesSen` on top of Σ module costs), so a priced sofa add-on was costed and never charged |
+| any line whose product carries `sell_price_sen = 0` | excluded by the `> 0` test, in any category | same — costed, never charged |
+
+Both now charge it, from the same figure the cost path uses. **A migrated line
+still cannot re-price**: the new `sellingSurchargesSen > 0` arm is inert under
+`trustOperatorSelling === 'including-zero'`, so the marker blocks it
+structurally, not merely via the trust overwrite at the end of the function.
+That belt-and-braces is load-bearing — 10,856 of 13,909 migrated lines are
+priced 0 and 549 of those are SOFA, i.e. the exempt populations and the migrated
+corpus are very nearly the same set. Pinned in
+`mfg-pricing-recompute.surcharge.test.ts`.
+
+**Clients that SUBMIT a price must now add the add-on themselves.** A trusted
+(non-POS) author is unaffected — their hand-typed price is persisted as-is, and
+the desktop line editor's `pricingBreakdown` is display-only by design. A
+drift-gated POS caller is not: it must send `sofaSellingSen + surcharges + …` or
+`driftThresholdExceeded` will 400 it. `specialAddonsSurchargeSen`
+(`scm/shared/mfg-pricing.ts`) is the helper for exactly that and has **no caller
+in either tree** — it is a WIRING GAP, not dead code, and must not be deleted.
+It is inert only while every add-on is priced 0; the first add-on the owner
+prices is the moment a price-submitting client has to call it.

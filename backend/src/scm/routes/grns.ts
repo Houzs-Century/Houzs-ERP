@@ -6,7 +6,19 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
 import { grnHasDownstream } from '../lib/downstream-lock';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+
+/* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
+   the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
+async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
@@ -1742,6 +1754,28 @@ grns.post('/', async (c) => {
      recomputeGrnTotals so totalCenti is the rolled-up figure. */
   await recordGrnCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO.
+     This is the hand-built receipt — the owner's 2026-05-29 decision that a GRN
+     need not have a parent PO. AutoCount has no create for a GRN at all; it
+     builds one only by transferring a PO's lines. Even when a purchaseOrderId
+     IS supplied here, sending a conversion would be WRONG rather than merely
+     approximate: AcSyncService resolves the source lines from AutoCount's own
+     outstanding predicate (DtlKeys()), so the account book would receive the
+     PO's outstanding lines, not the quantities the receiver actually typed and
+     accepted on this form. That is a wrong value, and a wrong value is worse
+     than a blank — so the divergence is recorded instead of guessed.
+     The two real conversion routes are POST /from-pos and /from-po-items. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'GR',
+    docNo: h.grn_number,
+    docId: h.id,
+    missing: (body.purchaseOrderId as string | undefined)
+      ? 'hand-entered receipt quantities rather than a whole-PO transfer'
+      : 'no source Purchase Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   const movementErrors = postRes && postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes && postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
@@ -2570,13 +2604,23 @@ grns.patch('/:id', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* Multi-company: the service-role client bypasses RLS, so an app-level
+     predicate is the ONLY isolation. The GET at :1382 was scoped by the
+     2026-08-10 audit; this PATCH — the write — was not, on either its read or
+     its UPDATE, so a GRN id from the other company could be loaded here and
+     edited. Reads were hardened then and writes were left, which is the
+     systemic half of that audit. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* GRN_AUDIT_SELECT, not the five columns the relocation needs: this row is
      also the BEFORE half of every from->to pair recorded at the end of the
      handler. An audit entry carrying only the new value does not answer "what
      changed". One read serves both — the relocation block below reads its
      warehouse / status / rate out of the same row it always did. */
-  const { data: beforeRow } = await sb.from('grns')
-    .select(GRN_AUDIT_SELECT).eq('id', id).maybeSingle();
+  const { data: beforeRow } = await scopeToCompanyId(sb.from('grns')
+    .select(GRN_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* Before the relocation block below, which writes inventory movements — those
@@ -2699,8 +2743,13 @@ grns.patch('/:id', async (c) => {
       rateChanged = true;
     }
   }
-  const { data, error } = await sb.from('grns').update(updates).eq('id', id).select(HEADER).single();
+  const { data, error } = await scopeToCompanyId(sb.from('grns')
+    .update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  /* maybeSingle, not single: the company predicate can legitimately match zero
+     rows, and `single()` would turn that into a 500 rather than the 404 that
+     tells the truth. */
+  if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
   /* Diff the NORMALISED values actually written (`updates`), not the raw body —
      currency is upper-cased, exchange_rate is derived from it and the allocation
@@ -2733,6 +2782,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
+  await queueAcGrnEdit(c, id);
   return c.json({ grn: data });
 });
 
@@ -2968,6 +3018,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
+  await queueAcGrnEdit(c, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3238,6 +3289,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
+  await queueAcGrnEdit(c, grnId);
   return c.json({ ok: true });
 });
 
@@ -3305,6 +3357,11 @@ grns.delete('/:id/items/:itemId', async (c) => {
      lands, so refusing here matters more than anywhere else in this file. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'grn_items', itemId);
 
   const { error } = await sb.from('grn_items').delete().eq('id', itemId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -3390,5 +3447,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
+  await queueAcGrnEdit(c, grnId, retire);
   return c.body(null, 204);
 });

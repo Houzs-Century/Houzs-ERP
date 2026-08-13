@@ -1,8 +1,39 @@
 # Line retirement — what has to change before a line can be cancelled instead of deleted
 
-**Status: NOT SHIPPED. This is the evidence for why, and the order to do it in.**
+**Status: the AUTOCOUNT half is shipped. The ERP-side soft cancel is not.**
+This is the evidence for why, and the order to do the rest in.
 
 Date: 2026-08-11.
+
+---
+
+## Re-measured against the tree, 2026-08-11 (feat/writeback-all-six)
+
+The six gaps below were written as predictions. Three have since closed, and one
+of those closed after this plan was last edited:
+
+| gap | status now | evidence |
+|---|---|---|
+| 1 - derived columns freeze on a cancelled line | **OPEN** | `so-stock-allocation.ts:148` filters `cancelled = false`, and nothing resets `stock_status` / `stock_qty_ready` / `allocated_batch_no` on cancel |
+| 2 - `sofa_partial_set` phantom | CLOSED | `sofa-batch-guard.ts:202,221` both filter |
+| 3 - removed-line set never classifies a cancelled line as REMOVED | **OPEN -> now CLOSED here** | was `currentIdSet` over every row; both `amendment-po-followup.ts` and `so-revision.ts` now exclude cancelled |
+| 4 - cancelled line printed on a customer PDF | CLOSED | `sales-order-pdf.ts:317` filters, PR #1956 |
+| 5 - a cancelled SO line stays purchasable | **half open -> now CLOSED here** | `soLinkTargetRefusal` already refused it on the four line-level binds, and the From-SO picker filters; the BULK path `convertSosToPosCore` (behind `POST /from-sos` and the MRP agent, neither of which goes through either gate) did not, and now refuses `so_line_cancelled` |
+| 6 - free gifts regenerate / line_no collides | **OPEN** | `free-gift-reconcile.ts:127` still hard-deletes, and builds `existing` from non-cancelled rows only |
+
+**What shipped in feat/writeback-all-six**: PR 3 below, out of order and
+deliberately. `composeEdit` now sends `Retire: true` for a cancelled line AND for
+a line the ERP hard-deleted (named by `retiredLineOf` before the row goes), so
+line removal reaches AutoCount correctly for all six document types TODAY. That
+closes the owner's stated gate - "delete an SKU and AutoCount accepts it" -
+without retaining a single cancelled row anywhere, which is what the reader sweep
+below is expensive because of. Steps 2 and 4 of PR 1 shipped with it (gaps 3 and
+5), because both are inert today and both are prerequisites.
+
+**What is left is exactly the ERP-side soft cancel**: gaps 1 and 6, then the
+`cancelled` column on the other five line tables, then converting each DELETE.
+Until then the ERP still hard-deletes a line - the owner's cancel-never-delete
+rule is honoured towards AutoCount and not yet inside the ERP.
 
 ---
 
@@ -150,11 +181,18 @@ Ship as **two** PRs, SO first. Each must be complete on its own side.
 3. Teach the load-bearing readers listed above, PO completion first.
 4. Then convert `DELETE /:id/items/:itemId`.
 
-### PR 3 — drive the AutoCount retirement
+### PR 3 — drive the AutoCount retirement — **SHIPPED, ahead of 1 and 2**
 
-Only after 1 and 2. Send `Retire: true` on a cancelled line in `composeEdit`,
-instead of omitting the line. Requires the line to still carry its
-`linked_ac_dtlkey`, which is exactly why line identity had to come first.
+Done in feat/writeback-all-six. `composeEdit` sends `Retire: true` for a
+cancelled line, and `enqueueEdit({ retire })` sends it for a line the ERP
+hard-deleted, read by `retiredLineOf` before the DELETE destroys the key.
+
+Taking it first was the point, not an accident: it needs no retained cancelled
+row, so it carries none of the reader risk that makes 1 and 2 expensive, and
+without it a line removal is invisible to AutoCount whichever way the ERP
+records it. A cancelled line with no `linked_ac_dtlkey` is REFUSED rather than
+dropped - line identity still has to come first for the row to be nameable, it
+just does not have to come first in time.
 
 ---
 
