@@ -20,10 +20,14 @@
 //
 // SELECT only. No writes. Enum columns ::text before string ops.
 import postgres from "postgres";
+import { SO_PROCESSING_DATE_COLUMN, soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
 const sql = postgres(DSN, { ssl: "require", max: 1, idle_timeout: 20, connect_timeout: 60 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const pad = (s, n) => String(s ?? "").slice(0, n).padEnd(n);
 const blank = (v) => v == null || String(v).trim() === "";
@@ -86,7 +90,7 @@ async function main() {
     const heads = await sql`
       SELECT s.doc_no, s.status::text AS status, s.salesperson_id, s.venue,
              s.sales_location, s.customer_state, s.postcode, s.city, s.address1,
-             s.internal_expected_dd, st.showroom_warehouse_id
+             s.${PDATE}, st.showroom_warehouse_id
         FROM scm.mfg_sales_orders s
         LEFT JOIN scm.staff st ON st.id = s.salesperson_id
        WHERE s.company_id = ${companyId}
@@ -124,7 +128,10 @@ async function main() {
       const pcWh = whFromState(postcodeState(h.postcode));
       if (pcWh) { whPostcode += 1; continue; }
       whNone += 1;
-      const proceeded = h.internal_expected_dd != null;
+      /* Read by the same constant the SELECT above was built from. postgres.js
+         keys the row by the COLUMN name, so a literal here goes undefined —
+         silently, and every SO would read as un-proceeded. */
+      const proceeded = h[SO_PROCESSING_DATE_COLUMN] != null;
       const addrBlank = blank(h.address1) && blank(h.postcode) && blank(h.customer_state);
       if (proceeded) { proceededNoWh += 1; proceededNoWhDocs.push(h.doc_no); }
       else { unproceededNoWh += 1; if (addrBlank) noWhFillLater += 1; }

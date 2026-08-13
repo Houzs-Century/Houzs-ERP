@@ -19,13 +19,28 @@
 // So: add a searched column, run this, and the missing index is named before it
 // becomes a performance mystery.
 //
-// NOT A CI GATE, deliberately. It is a static approximation — it reads source
-// text, not a query plan — and the sibling `audit:routes` gate jammed prod twice
-// in one day. A false positive here must cost a conversation, never a deploy.
-// Run it when you touch search: `npm --prefix backend run audit:trgm`.
+// NOT A DEPLOY GATE, deliberately. It is a static approximation — it reads
+// source text, not a query plan — and the sibling `audit:routes` gate jammed
+// prod twice in one day. A false positive here must cost a conversation, never
+// a deploy. That reasoning is still correct and is why this script appears in
+// ci.yml and in NEITHER deploy workflow.
 //
-// Exit code is 0 for every legitimate answer, including "gaps found". The
-// answer is the output; a red job would read as "the check broke".
+// TWO MODES, because until 2026-08-13 there was only one and it was a no-op.
+//
+//   node scripts/check-trgm-coverage.mjs            exit 0 always — the question
+//   node scripts/check-trgm-coverage.mjs --check    exit 1 on a gap — the gate
+//
+// The original wrote "Exit code is 0 for every legitimate answer, including
+// 'gaps found'", and both exit paths were `process.exit(0)`. Combined with
+// being wired into zero workflows, that made it a check that could not fail and
+// that nobody ran — while sitting in package.json under `audit:` beside five
+// real gates, which is how it reads as coverage it never provided. A guard
+// everyone trusts that does not work is worse than no guard.
+//
+// The escape hatch for a false positive already exists and predates this
+// change: add the column to ACCEPTED below WITH a reason. That is a code review
+// about one line, which is exactly the "conversation" the paragraph above asks
+// for — and it happens on a PR, not on a deploy.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -141,4 +156,12 @@ for (const [rel, cols] of Object.entries(byRelation).sort()) {
 }
 console.log(`\nIf a column genuinely should not be indexed, add it to ACCEPTED in`);
 console.log(`this script WITH a reason. An entry without one silences a real gap.`);
+
+// `--check` is the gate form (ci.yml). Bare invocation stays exit-0 so running
+// it by hand to ASK the question never looks like a broken script.
+if (process.argv.includes("--check")) {
+  console.error(`\n${missing.length} searched column(s) have no trigram index. Add the`);
+  console.error(`migration in this PR, or add each column to ACCEPTED with a reason.`);
+  process.exit(1);
+}
 process.exit(0);

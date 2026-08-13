@@ -54,7 +54,7 @@ type DocRow = Record<string, string | null | undefined>;
  * client. `sb` is a supabase-js client already scoped to the `scm` schema
  * (getSupabaseService(env) — db.schema='scm'), the same one the route uses.
  */
-export async function reconcileLedger(sb: any, companyId?: number | null): Promise<ReconcileResult> {
+export async function reconcileLedger(sb: any, companyId: number | null | undefined): Promise<ReconcileResult> {
   // Per-company scoping: when a companyId is given (operator-facing /reconcile,
   // which is per-company), every read is filtered to that company so the report
   // can't surface the other company's doc numbers. When omitted (System Health's

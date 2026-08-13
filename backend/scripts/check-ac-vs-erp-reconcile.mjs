@@ -16,12 +16,16 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const CO = 1;
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const isSofa = (c) => /SOFA/i.test(c || "");
@@ -54,7 +58,7 @@ async function main() {
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     LEFT JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
-    WHERE h.company_id = ${CO} AND h.internal_expected_dd IS NOT NULL AND COALESCE(i.cancelled,false) = false
+    WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
   log(`processed bedframe/sofa lines: ${ded.bf_lines}; with a dedicated PO: ${ded.with_po}; whose PO is received: ${ded.po_received}`);
   const [poc] = await sql`SELECT COUNT(*)::int pos,
@@ -66,13 +70,13 @@ async function main() {
   log("═══ 2. stock status ═══");
   const st = await sql`SELECT i.item_group, i.stock_status, COUNT(*)::int n
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = ${CO} AND h.internal_expected_dd IS NOT NULL AND COALESCE(i.cancelled,false) = false
+    WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
     GROUP BY 1, 2 ORDER BY 1, 3 DESC`;
   for (const r of st) log(`   ${r.item_group ?? "(none)"} ${r.stock_status ?? "(null)"}: ${r.n}`);
   const [hdrs] = await sql`SELECT COUNT(*) FILTER (WHERE status = 'READY_TO_SHIP')::int ready,
       COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int confirmed
-    FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND internal_expected_dd IS NOT NULL
+    FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND ${PDATE} IS NOT NULL
       AND status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
   log(`processed order headers: READY_TO_SHIP ${hdrs.ready}; CONFIRMED ${hdrs.confirmed}`);
 
@@ -83,7 +87,7 @@ async function main() {
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
-    WHERE h.company_id = ${CO} AND h.internal_expected_dd IS NOT NULL AND COALESCE(i.cancelled,false) = false
+    WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
       AND COALESCE(poi.received_qty,0) >= i.qty AND i.stock_status <> 'READY'
     ORDER BY h.doc_no LIMIT 200`;
