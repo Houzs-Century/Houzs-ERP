@@ -205,20 +205,21 @@ if (ratchetAgainst) {
 
 // ── Verdict ────────────────────────────────────────────────────────────────
 // Printed on every run, pass or fail. The debt is the point.
-console.log('');
-console.log(`Release discipline — scanned ${scriptFiles.length} scripts (${scanned.filter((s) => s.inScope).length} open a database, ${writers.length} write) and ${migrationFiles.length} migrations.`);
-console.log(`  GRANDFATHERED: ${grandfatheredRules} rule(s) across ${stillOwed.size} script(s), and ${below.length} migration(s) below reversal-note floor ${String(floor).padStart(4, '0')}.`);
-if (stillOwed.size) {
-  const worst = [...stillOwed.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 5);
-  console.log(`  Owed the most: ${worst.map(([n, r]) => `${n} (${r.length})`).join(', ')}`);
-}
-console.log(`  These are DEBT, not the standard. A new script must comply; the list may only shrink.`);
+//
+// ONE console.log for the whole block, deliberately: GitHub interleaves a
+// step's stdout and stderr freely, and the first cut of this printed its last
+// summary line INSIDE the problem list.
+const worst = [...stillOwed.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 5);
+console.log([
+  '',
+  `Release discipline — scanned ${scriptFiles.length} scripts (${scanned.filter((s) => s.inScope).length} open a database, ${writers.length} write) and ${migrationFiles.length} migrations.`,
+  `  GRANDFATHERED: ${grandfatheredRules} rule(s) across ${stillOwed.size} script(s), and ${below.length} migration(s) below reversal-note floor ${String(floor).padStart(4, '0')}.`,
+  ...(worst.length ? [`  Owed the most: ${worst.map(([n, r]) => `${n} (${r.length})`).join(', ')}`] : []),
+  '  These are DEBT, not the standard. A new script must comply; the list may only shrink.',
+  ...(problems.length ? [] : ['  No new violations.']),
+].join('\n'));
 
 if (problems.length) {
-  console.error('');
-  console.error(`Release discipline: ${problems.length} problem(s).`);
-  console.error('');
-  for (const p of problems) console.error(`  - ${p}\n`);
+  console.error(`\nRelease discipline: ${problems.length} problem(s).\n\n${problems.map((p) => `  - ${p}\n`).join('\n')}`);
   process.exit(1);
 }
-console.log('  No new violations.');
