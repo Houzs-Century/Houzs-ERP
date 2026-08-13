@@ -1,5 +1,12 @@
 -- 0287 — key the compartment fabric-tier override (compartment_id, company_id).
 --
+-- REVERSAL: ALTER TABLE scm.compartment_fabric_tier_overrides DROP CONSTRAINT compartment_fabric_tier_overrides_pkey;
+--           ALTER TABLE scm.compartment_fabric_tier_overrides ADD CONSTRAINT compartment_fabric_tier_overrides_pkey PRIMARY KEY (compartment_id);
+--           ALTER TABLE scm.compartment_fabric_tier_overrides ALTER COLUMN company_id DROP NOT NULL;
+--           PARTIAL, same shape as 0289: the single-column key only takes the
+--           rows back while no compartment_id is held by both companies, which
+--           is precisely what this migration makes possible.
+--
 -- THE SAME DEFECT AS 0284, in a table that moves MONEY. Mig 0025 created
 -- scm.compartment_fabric_tier_overrides keyed `compartment_id text PRIMARY KEY`
 -- (0025:11). Mig 0083 then added company_id to it — one of the 116 tables that

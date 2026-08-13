@@ -192,6 +192,7 @@ import {
 } from '../lib/validate-item-codes';
 import { collectSoConfirmProblems, soConfirmProblemsForDoc } from '../lib/so-confirm-gate';
 import { soLocationProblem, soLocationProblemForDoc } from '../lib/so-location-gate';
+import { soAgentToStamp, readStaffForStamp, followSalespersonToAgent } from '../lib/so-agent';
 import {
   claimedSlipSessionIds,
   planCreatePaymentSlips,
@@ -3445,7 +3446,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const salespersonIdToStamp = canAttributeOther
     ? ((body.salespersonId as string) ?? callerStaffId ?? null)
     : callerStaffId;
-
+  /* ONE read of the selected salesperson, feeding both the `agent` stamp and the
+     venue chain below — scm/lib/so-agent.ts has the rule and the FK it closes. */
+  const stampStaff = await readStaffForStamp(sb as never, salespersonIdToStamp);
+  const agentToStamp = soAgentToStamp(body.agent, stampStaff?.name ?? null);
   /* Migration 0086 + Loo 2026-06-06 — venue follows the SELECTED salesperson:
      an admin/coordinator entering an SO on behalf of a PJ salesperson stamps
      PJ automatically (before, only the CALLER's venue counted, so any
@@ -3457,16 +3461,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      NULL — admins oversee every venue by design. */
   let venueIdToStamp: string | null = (body.venueId as string | null | undefined) ?? null;
   if (!venueIdToStamp && salespersonIdToStamp) {
-    if (salespersonIdToStamp === callerStaffId) {
-      venueIdToStamp = (callerStaff?.venue_id as string | null) ?? null;
-    } else {
-      const { data: spStaff } = await sb
-        .from('staff')
-        .select('venue_id')
-        .eq('id', salespersonIdToStamp)
-        .maybeSingle();
-      venueIdToStamp = (spStaff as { venue_id?: string | null } | null)?.venue_id ?? null;
-    }
+    venueIdToStamp = salespersonIdToStamp === callerStaffId
+      ? ((callerStaff?.venue_id as string | null) ?? null)
+      : (stampStaff?.venueId ?? null);
   }
   if (!venueIdToStamp) {
     if (callerStaff && callerStaff.venue_id &&
@@ -3587,7 +3584,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   if ((body as { asDraft?: unknown }).asDraft !== true) {
     const confirmProblems = collectSoConfirmProblems({
       salespersonId: salespersonIdToStamp,
-      agent: (body.agent as string | null | undefined) ?? null,
+      agent: agentToStamp,
       venue: resolvedVenueName,
       venueId: venueIdToStamp,
       lines: items.map((it) => ({
@@ -4318,7 +4315,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       line_date: (it.lineDate as string) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
-      agent: (body.agent as string) ?? null,
+      agent: agentToStamp,
       item_group: it.itemGroup ?? 'others',
       item_code: it.itemCode,
       description: correctedSizeDescription(itemCode, it.description as string | null, sizeSkuMap)
@@ -4704,7 +4701,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         line_date: lineDateToday,
         debtor_code: (body.debtorCode as string) ?? null,
         debtor_name: customerName,
-        agent: (body.agent as string) ?? null,
+        agent: agentToStamp,
         item_group: 'service',
         item_code: spec.itemCode,
         description: spec.description,
@@ -5045,7 +5042,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     branding: (body.branding as string) ?? null,
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
-    agent: (body.agent as string) ?? null,
+    agent: agentToStamp,
     sales_location: derivedSalesLocation ?? null,
     ref: (body.ref as string) ?? null,
     po_doc_no: (body.poDocNo as string) ?? null,
@@ -6744,6 +6741,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     updates['customer_state'] = canonicalizeMyState(updates['customer_state'] as string | null);
   }
 
+  /* `agent` follows a reassigned salesperson; a PATCH naming `agent` still wins.
+     scm/lib/so-agent.ts says why this must precede the read below. */
+  await followSalespersonToAgent(sb as never, updates, body);
   /* A PATCH is a real mutation only when at least one recognised, normalised
      field differs from storage. Compare before validation or derivation so an
      unchanged phone/dropdown/date cannot demand a version, bump it, or fire a

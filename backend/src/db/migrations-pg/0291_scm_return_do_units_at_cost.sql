@@ -1,5 +1,10 @@
 -- 0286 — return a shipped DO's units at their ORIGINAL cost, not a blended average.
 --
+-- REVERSAL: CREATE OR REPLACE FUNCTION scm.fn_return_do_units_at_cost(...) AS
+--           <the prior body, from its own earlier migration>. The definition
+--           change touches no rows; movements already written by the new body
+--           stay as written and are not undone by restoring the old one.
+--
 -- THE BUG (audit ledger B6; owner decision 2026-08-13 "按原成本退回").
 --
 -- When an operator REDUCES a line qty on an already-shipped DO,

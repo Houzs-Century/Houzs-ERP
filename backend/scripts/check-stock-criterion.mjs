@@ -25,6 +25,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -32,6 +33,9 @@ const TOP = Number(process.env.TOP || 40);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -149,7 +153,7 @@ async function main() {
     SELECT COALESCE(i.item_group,'(none)') g, COALESCE(i.stock_status,'(null)') s, count(*)::int n
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-     WHERE h.company_id = 1 AND h.internal_expected_dd IS NOT NULL
+     WHERE h.company_id = 1 AND h.${PDATE} IS NOT NULL
        AND COALESCE(i.cancelled,false) = false
        AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
      GROUP BY 1,2 ORDER BY 1,2`;
@@ -162,7 +166,7 @@ async function main() {
     SELECT COUNT(*) FILTER (WHERE status = 'READY_TO_SHIP')::int ready,
            COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int confirmed
       FROM scm.mfg_sales_orders
-     WHERE company_id = 1 AND internal_expected_dd IS NOT NULL
+     WHERE company_id = 1 AND ${PDATE} IS NOT NULL
        AND status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
   log(`  processed order headers: READY_TO_SHIP ${hdrs.ready}; CONFIRMED ${hdrs.confirmed}`);
 
@@ -172,7 +176,7 @@ async function main() {
     SELECT count(*)::int n, count(*) FILTER (WHERE i.item_group = 'sofa')::int sofa
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-     WHERE h.company_id = 1 AND h.internal_expected_dd IS NOT NULL
+     WHERE h.company_id = 1 AND h.${PDATE} IS NOT NULL
        AND COALESCE(i.cancelled,false) = false
        AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
        AND i.stock_status = 'PENDING' AND i.warehouse_id IS NULL`;

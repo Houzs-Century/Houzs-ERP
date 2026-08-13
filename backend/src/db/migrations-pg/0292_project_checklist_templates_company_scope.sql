@@ -1,4 +1,12 @@
 -- 0288 — project checklist TEMPLATES become per-company: record the contract in
+--
+-- REVERSAL: per table (project_checklist_templates, _sections, _items):
+--           DROP INDEX IF EXISTS public.idx_<table>_company_id;
+--           ALTER TABLE public.<table> DROP CONSTRAINT IF EXISTS <table>_company_id_fkey;
+--           ALTER TABLE public.<table> DROP COLUMN IF EXISTS company_id;
+--           FULLY reversible: the column did not exist on these three tables
+--           before, and no row is deleted - existing rows are backfilled to
+--           HOUZS, which is where they came from.
 -- the schema, and re-assert the column the routes are about to depend on.
 --
 -- READ THE NEXT PARAGRAPH BEFORE ASSUMING THIS ADDS A COLUMN. IT USUALLY DOES
