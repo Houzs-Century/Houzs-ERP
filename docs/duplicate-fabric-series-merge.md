@@ -74,14 +74,20 @@ implementation, would delete nine named colours from the picker in favour of a
 series whose only colour is labelled literally `FABRIC`. The tool reports the
 before and after colour by colour and stops rather than guessing.
 
-## Four document arms, not two
+## Read `ARMS`, never a count — it was four, it is fifteen
 
 The reference **count** that picks the winner comes from SO and PO lines. The
-**repoint** has to reach every table whose `variants` can name a series —
-`mfg_sales_order_items`, `purchase_order_items`, `grn_items`,
-`delivery_order_items` — or a merge leaves an arm pointing at a superseded row.
-That is the same unswept-arm shape #1964 found in the GRN snapshot. All four are
-measured and written.
+**repoint** has to reach every table whose `variants` can name a series, or a
+merge leaves an arm pointing at a superseded row. That is the same unswept-arm
+shape #1964 found in the GRN snapshot. Every arm is measured and written.
+
+The arms live in `ARMS` in `backend/scripts/lib/fabric-write.mjs:35`. **Measured
+2026-08-14: fifteen** — SO, PO, GRN, DO, SI, PI, PRT, DRT, CSO, CDO, CDRT, PCO,
+PCR, PCRT, MOV. *Corrected 2026-08-14: the heading above read "Four document
+arms, not two" and this paragraph enumerated four table names inline, while the
+paragraph below already warned not to trust a count quoted in prose. A heading
+that says four when the list says fifteen is the exact shape that let the
+four-arm sweep strand stock.*
 
 ## The jsonb write
 
@@ -201,6 +207,29 @@ confirms.
 Duplicate **colours inside one series** (`CH141-1` and `CH141-1-CREAM` as two
 picker choices for one fabric). That is not a series merge and is out of scope
 for this decision; the count and examples are printed on every run.
+
+> **The "68 duplicate pairs" figure is wrong by 20× — added 2026-08-14.**
+> `backend/scripts/merge-duplicate-fabric-colours.mjs:4` states, as the live case
+> count, *"THE CASES, from a prod run on 2026-08-13 — 68 of them:"*. Commit
+> `dae5797a` (#2084), the same day, resolved it: *"it is why the '68 duplicate
+> pairs' figure resolved to **3 live pairs**: the rest were already retired, and
+> their stranded references were invisible to both tools."* The 68 came from a
+> detector that counted rows, not live pairs. The correction landed in the commit
+> message and in a new script; the header of the tool that does the WRITING was
+> never updated, so the inflated number is still the first thing its next reader
+> sees. **That header is a source file and is deliberately not edited by this
+> docs-only change** — it needs its own diff, and the right fix is to print the
+> count the script already measures at run time rather than quote one in prose,
+> exactly as the `ARMS` rule above says.
+>
+> Note also that `merge-duplicate-fabric-colours.mjs` contains a **literal NUL
+> byte** at `:127` (a raw `0x00` used as a map-key separator inside a template
+> literal instead of the escape `\0`). `file` reports it as binary, so a plain
+> `grep -rn` **silently skips the entire file** — including any audit that would
+> have caught the stale 68 in its own header. Verify with
+> `LC_ALL=C grep -naP '[\x00-\x08\x0b\x0c\x0e-\x1f]' backend/scripts/merge-duplicate-fabric-colours.mjs`.
+> This repo's stated method is 直接去查看源代码 via grep; one control byte takes a
+> file out of that method's reach.
 
 ---
 
