@@ -90,7 +90,7 @@ import {
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { formatPhone } from '@2990s/shared/phone';
-import { soDateGuardError, soSliplessPaymentError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneyCenti } from '@2990s/shared';
@@ -459,9 +459,12 @@ export const SalesOrderNew = () => {
         amountCenti:            p.depositCenti > 0 ? p.depositCenti : 0,
         /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
            deposit's slip. Tag the draft with the receipt's R2 key so the save
-           treats the slip-required guard as satisfied (no second upload) and
-           records the deposit through the SO-create proof rather than the
-           strict per-payment slip route. */
+           records the deposit through the SO-create proof (receiptImageKey on
+           the header) rather than the per-payment slip route. This used to be
+           what satisfied the slip-required guard; that guard is gone (Owner
+           2026-08-13) but the ROUTING still matters — without the tag the row
+           would post as an ordinary payment and the receipt would never land
+           on it. */
         receiptImageKey:        payload.receiptImageKey || '',
       }]);
     }
@@ -1198,9 +1201,9 @@ export const SalesOrderNew = () => {
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
       /* Bug #3 (2026-06-24) — a receipt-backed deposit (scanned in the modal) is
-         recorded through the SO-create body's deposit fields, not the strict
-         per-payment route (which 400s without a slip session). Skip it here so
-         it isn't double-booked. */
+         recorded through the SO-create body's deposit fields, where the receipt
+         becomes its proof. `paymentIntents()` has already excluded it, so this
+         list never double-books it. */
       .map((d) => async () => {
         const { method } = labelToApi(d.methodLabel);
         const body: { docNo: string } & Record<string, unknown> = {
@@ -1216,8 +1219,10 @@ export const SalesOrderNew = () => {
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
-          /* Spec D4 — the SO payments route requires a slip; the onSave gate
-             below guarantees every amount-bearing draft carries one. */
+          /* Null when the operator attached none — the slip is OPTIONAL
+             (Owner 2026-08-13) and the route records a slip-less payment.
+             A row is posted on its AMOUNT alone; never filter this list on the
+             slip, or the payment silently never books. */
           uploadSessionId: d.slipUploadSessionId,
         };
         /* Task #122 (cascade) — replay the L2 picks per method so the
@@ -1517,27 +1522,12 @@ export const SalesOrderNew = () => {
       return;
     }
 
-    /* Spec D4 — every SO payment must carry its own slip. The SO payments
-       route (POST /:docNo/payments) 400s a slip-less payment, so gate the
-       create here: any amount-bearing draft without a confirmed slip blocks
-       the save and tells commander which rows to fix.
-       Bug #3 (2026-06-24) — a draft seeded from a card receipt scanned in the
-       modal carries the receipt's R2 key (receiptImageKey). The receipt IS the
-       slip, so it satisfies the guard WITHOUT a second upload; it is recorded
-       through the SO-create deposit fields (order-level proof), not the strict
-       per-payment route. */
-    // Every amount-bearing payment needs a slip (a scanned receipt's R2 key
-    // counts). Shared with mobile via soSliplessPaymentError.
-    const sliplessErr = soSliplessPaymentError(
-      paymentDrafts.map((d) => ({
-        amountCenti: d.amountCenti,
-        hasSlip: !!(d.slipUploadSessionId || d.receiptImageKey),
-      })),
-    );
-    if (sliplessErr) {
-      notify({ ...sliplessErr, tone: 'error' });
-      return;
-    }
+    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
+       A payment slip is optional on every SO path now, so an amount-bearing
+       draft saves without one; the row is still POSTED (flushPaymentDrafts
+       filters on amount, never on the slip), which is the half that matters.
+       A scanned card receipt still rides along on its own path — see
+       receiptDeposit below. */
 
     /* Cascade guard (spec 1) — a chosen payment method needs its required
        sub-field(s): Merchant → Bank + Plan; Online → Sub-Type; Cash → none.
@@ -1589,13 +1579,16 @@ export const SalesOrderNew = () => {
        the gate refused the save with the amount plainly on screen — and because
        the per-payment posts happen AFTER create, the create had to succeed first
        for the money to ever land. Deadlock.
-       Counted for the GATE ONLY, server-side: it is never booked, so excluding
-       the receipt deposit here just avoids counting the same ringgit twice.
-       Only drafts that already hold a verified slip session are included — the
-       same condition flushPaymentDrafts needs to post them — so this can never
-       claim money the client is not about to record. */
-    const pendingDepositCenti = paymentDrafts
-      .filter((d) => d.amountCenti > 0 && !!d.slipUploadSessionId && d !== receiptDeposit)
+       Counted for the GATE ONLY, server-side: it is never booked. The rows are
+       exactly `paymentIntents()` — what flushPaymentDrafts is about to post,
+       which by its own filter excludes the receipt-backed deposit the create
+       body already carries — so this can neither claim money the client is not
+       about to record nor count the same ringgit twice. It used to ALSO demand
+       a slip session; once the slip became optional (Owner 2026-08-13) that
+       would have re-opened the very deadlock this field exists to close, a
+       slip-less deposit counting as RM0 against a Processing Date the operator
+       can see is paid for. */
+    const pendingDepositCenti = paymentIntents()
       .reduce((sum, d) => sum + d.amountCenti, 0);
 
     create.mutate(

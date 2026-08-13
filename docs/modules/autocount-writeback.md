@@ -423,7 +423,51 @@ holds the per-gap evidence and the order to do it in.
 
 Between the ERP's line list and AutoCount's, two things do not line up. Both are
 handled in `composeDetails` (`src/services/autocount-writeback.ts`), in this
-order, and **both refuse the WHOLE document rather than send part of it.**
+order.
+
+> **CHANGED 2026-08-13, owner decision. Read this before the two sections below —
+> they describe the mechanisms, and these are the rules those mechanisms now run
+> under.**
+>
+> **D9 no longer folds a NEW order.** One ERP line goes to AutoCount as one
+> line: `9028-1A(LHF)` and `9028-2A(RHF)` each arrive as themselves. Folding is
+> reserved for a build the account book ALREADY holds as a single line, and the
+> DtlKeys say which is which, per build — compartments sharing one key fold,
+> distinct keys are left alone, no keys at all is a create. Mixed (some keyed,
+> some not) still folds, so the keyless-line refusal in 7a stops the document
+> and asks for a backfill. The rule lives in `collapseSofaLines`'s `flush()`.
+>
+> **D10 no longer refuses an unknown code.** It resolves to the ERP's own code
+> and `/ensure-masters` opens the item (7e). The old rule was right while
+> sending an unmapped code meant referencing an item the licensed book does not
+> hold; it does not any more, and its cost was total — whole product ranges are
+> in no cutover row, so every order containing one was blocked outright. A BLANK
+> code is still refused, and a MAPPED code is still never sent as itself.
+>
+> **The full order of preference when nothing else decides**, for a document
+> with no creditor (which every sales order is, since the PO does not exist yet
+> when the order is written back):
+>
+> 1. one candidate — take it
+> 2. the document's creditor, when it has one (purchase orders only)
+> 3. a candidate NAMED like the ERP code
+> 4. `HOK`, then `NB` — the owner's supplier preference; settles 103 of the 117
+>    ambiguous codes, almost all BEDFRAME
+> 5. the ERP's own code, opened on first use
+>
+> **Because the shape is settled first, the resolver does no sofa reasoning.**
+> A folded line reaches it as `<model>-1S`, an unfolded one as its own
+> compartment code, and each resolves to what it is. A compartment is never
+> redirected to its model — that used to happen and it gave one sofa two
+> different AutoCount items depending on which side of the collapse the caller
+> sat. See BUG-HISTORY, 2026-08-13.
+>
+> **An EDIT never sends `ItemCode` for a line AutoCount already owns.** Same
+> rule `Location` runs under: the book's own value is the truth on a line it
+> holds. Swapping a product still propagates, because a swap is a delete plus an
+> add — the removed row is retired and the added row has no DtlKey, so it keeps
+> its code. 194 real lines sit under the two brand items the cutover collapsed
+> and an edit must not move them.
 
 ### D10 — `material_code` is not `ItemCode`
 
@@ -872,6 +916,42 @@ for a purchase order naming it. This one is worth remembering because
 name is in `C:\Temp\ac-sync-service.log` on the host. Read the log, not the
 status code — `FK_PO_PurchaseAgent` and `FK_PO_Creditor` are the same 500 and
 completely different problems.
+
+## 7z. HOW TO CALL THE SERVICE — read this before concluding you cannot
+
+Three facts, because a session that did not have them concluded from this
+repository that the service was unreachable and that the whole QA had to be run
+by a person standing at the office machine. None of that is true.
+
+**1. Call the HOSTNAME, never the ZeroTier IP.**
+
+```
+POST https://autocount.houzscentury.com/<route>
+```
+
+A direct call to `10.147.17.100:8900` **will be refused** — 400, or 403 with a
+forged `Host` — and that is not a fault to debug. The listener prefix is
+`http://localhost:<port>/`, so http.sys serves loopback only. **cloudflared runs
+ON that host and connects from loopback**, which is exactly why the tunnel path
+works where a direct one cannot. Verified from an ordinary workstation
+2026-08-11.
+
+**2. The key is the `X-API-KEY` header**, its value being the host's
+`C:\Tempc-svc-key.txt` — the same value as the `AC_SYNC_KEY` Worker secret,
+which is already set. No key gets 401; a service with no key file configured
+refuses everything with 503 (fail-closed, `#2025`).
+
+**3. `it-houzs.dev` is a DIFFERENT relay** — the legacy read middleware. It has
+never fronted AcSyncService and never will. Finding `/health` 404 there proves
+nothing about this service.
+
+**What this means for who can do it:** anyone, from anywhere. No ZeroTier, no
+office visit, no SQL password — the HTTP path needs the API key, not the
+database. The office machine is needed for exactly one thing: **rebuilding the
+exe** (`docs/autocount-service-deploy.md`), because it compiles against licensed
+assemblies. Even that is not exclusive — `build-local.ps1` compiles the source
+on any workstation with AutoCount 2.2 installed, which is how a CS0234 was
+caught before it shipped.
 
 ## 8. Configuration
 

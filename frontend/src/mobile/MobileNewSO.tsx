@@ -12,7 +12,7 @@ import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
-import { soDateGuardError, soSliplessPaymentError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soStockLocationError, soErrorText } from "../vendor/scm/lib/so-form-validate";
 import { useBranding } from "../hooks/useBranding";
 import { newIdempotencyKey, idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import {
@@ -166,7 +166,7 @@ type Payment = {
   key: string;
   /** Money idempotency key — minted ONCE per payment row and reused by every
    *  retry of that row, so a re-submitted create cannot book it twice.
-   *  recordSlipBackedPayments has two call sites and the rows survive a failed
+   *  recordNewPayments has two call sites and the rows survive a failed
    *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
   method: string; // Cash / Merchant / Online / Installment
@@ -1479,10 +1479,19 @@ export function MobileNewSO({
     );
   };
 
-  /* Post-create payment recording — records each SLIP-BACKED row AFTER the SO
-     exists, through the same POST /:docNo/payments the SO-detail screen uses. */
-  async function recordSlipBackedPayments(createdDocNo: string) {
-    const rows = pays.filter((p) => p.slipSession && toCenti(p.amount) > 0);
+  /* Post-create payment recording — records each amount-bearing row AFTER the
+     SO exists, through the same POST /:docNo/payments the SO-detail screen uses.
+
+     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT. It used to also demand a
+     slipSession, which silently dropped a slip-less row: the cashier's payment
+     never posted and the SO read unpaid (BUG-HISTORY, the money bug that
+     produced the shared slipless guard). With the slip now OPTIONAL everywhere
+     (Owner 2026-08-13) that guard is gone, so this filter is the only thing
+     deciding whether the money is recorded — it must never look at the slip
+     again. The route accepts a null uploadSessionId and records the row
+     slip-less. */
+  async function recordNewPayments(createdDocNo: string) {
+    const rows = pays.filter((p) => toCenti(p.amount) > 0);
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
@@ -1495,7 +1504,8 @@ export function MobileNewSO({
         accountSheet: p.account.trim() || null,
         approvalCode: p.approval.trim() || null,
         collectedBy: p.collectedBy || null,
-        uploadSessionId: p.slipSession,
+        // '' when no slip was attached — send null, not an empty session id.
+        uploadSessionId: p.slipSession || null,
       };
       if (code === "merchant") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
       else if (code === "installment") { body.merchantProvider = p.bank || null; body.installmentMonths = planToMonths(p.plan); }
@@ -1510,7 +1520,7 @@ export function MobileNewSO({
     }
     if (failed > 0) {
       const detail = firstError ? ` ${firstError}` : "";
-      void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment slip(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
+      void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
     }
   }
 
@@ -1839,21 +1849,18 @@ export function MobileNewSO({
       const addrMsg = missingAddressMsg();
       if (addrMsg) { setError(addrMsg); return; }
     }
-    /* Every amount-bearing payment row needs its slip uploaded (slipSession set)
-       BEFORE save — SHARED with desktop via soSliplessPaymentError. This closes
-       a money bug: recordSlipBackedPayments only POSTs rows WITH a slipSession,
-       so a row with an amount but no slip was silently dropped and the payment
-       never posted. Guards only the NEW rows in `pays`; already-recorded
-       payments live in existingPays (read-only) and are untouched. */
-    const sliplessErr = soSliplessPaymentError(
-      pays.map((p) => ({ amountCenti: toCenti(p.amount), hasSlip: !!p.slipSession })),
-    );
-    if (sliplessErr) { setError(soErrorText(sliplessErr)); return; }
+    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
+       The guard that used to sit here existed because `recordNewPayments` only
+       POSTed rows carrying a slipSession, so refusing the save was all that
+       stood between a cashier and a payment that silently never booked. That
+       writer now posts on AMOUNT alone, so the row lands either way and there
+       is nothing left to refuse. Removing the guard WITHOUT that change would
+       re-introduce the exact money bug it was written for. */
     /* Cascade guard — a chosen method needs its sub-field(s): Merchant → Bank +
        Plan, Online → Sub-Type, Cash → none. Uses the SHARED desktop rule
        (missingMethodSubField) at the SAME point desktop runs it: BEFORE the SO is
        created. Without it, save() passed every check, the SO was created, and
-       recordSlipBackedPayments then POSTed the incomplete row — the server 400s
+       recordNewPayments then POSTed the incomplete row — the server 400s
        payment_method_field_required, which is caught below and surfaced only as
        the generic "record them again" toast, AFTER the order already exists. The
        payment never books and the SO reads unpaid. Only amount-bearing rows are
@@ -1982,8 +1989,8 @@ export function MobileNewSO({
             setError(e instanceof Error ? e.message : "Couldn't submit the amendment. Please try again.");
             return;
           }
-          // A slip-backed payment recorded alongside the amendment still posts.
-          await recordSlipBackedPayments(docNo);
+          // A payment recorded alongside the amendment still posts, slip or not.
+          await recordNewPayments(docNo);
           /* useCreateAmendment invalidated the SO lists already; that raw payment
              lands after it and moves the list's paid / outstanding aggregates. */
           invalidateSoShared(qc);
@@ -2059,7 +2066,7 @@ export function MobileNewSO({
           loadedVersionRef.current = headerResult.version;
           activeLineLeaseRef.current = null;
         }
-        await recordSlipBackedPayments(docNo);
+        await recordNewPayments(docNo);
 
         /* The header PATCH + line diff + payments above are raw authedFetch, so
            nothing has told the desktop SO list its rows moved. Invalidate once
@@ -2083,17 +2090,20 @@ export function MobileNewSO({
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
-        /* GATE-ONLY, never booked. recordSlipBackedPayments runs AFTER this
+        /* GATE-ONLY, never booked. recordNewPayments runs AFTER this
            create, so at CREATE time the backend saw RM0 and the Processing-Date
            deposit gate refused the save with the money plainly on screen — and
            the create had to succeed before the payments could ever be posted.
            Deadlock, identical to the desktop screen (same fix, same PR: the two
            surfaces share this rule and only one of them being fixed is the
-           recurring bug class in CLAUDE.md). Same filter recordSlipBackedPayments
-           uses, so this can never claim money it is not about to record. */
+           recurring bug class in CLAUDE.md). Same filter recordNewPayments
+           uses — the AMOUNT, and only the amount — so this can never claim
+           money it is not about to record. It used to also demand a
+           slipSession; once the slip became optional (Owner 2026-08-13) that
+           would have re-opened this very deadlock for a slip-less deposit. */
         pendingDepositCenti: (() => {
           const c = pays
-            .filter((p) => p.slipSession && toCenti(p.amount) > 0)
+            .filter((p) => toCenti(p.amount) > 0)
             .reduce((sum, p) => sum + toCenti(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
@@ -2103,11 +2113,11 @@ export function MobileNewSO({
       const res = await createSo.mutateAsync({ ...body, idempotencyKey: soIdemKey });
       if (res?.docNo) {
         await uploadStagedPhotos(res.docNo);
-        await recordSlipBackedPayments(res.docNo);
+        await recordNewPayments(res.docNo);
       }
       maybeLearnFromScan();
       /* useCreateMfgSalesOrder already invalidated the SO lists at POST success,
-         but recordSlipBackedPayments posts RAW (not via useAddSalesOrderPayment)
+         but recordNewPayments posts RAW (not via useAddSalesOrderPayment)
          and lands after it, moving the list's paid / outstanding aggregates. */
       invalidateSoShared(qc);
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
@@ -2594,9 +2604,13 @@ export function MobileNewSO({
                   ))}
                 </div>
                 <button className="addline" onClick={() => setPays((p) => [...p, newPayment()])}>+ Add Payment</button>
+                {/* Owner 2026-08-13 — the slip is optional, so this line no
+                    longer claims a row without one is only "planned". Every
+                    amount-bearing row is recorded; the slip can follow later
+                    from the SO detail screen. */}
                 {!!pays.length && (
-                  <div style={{ fontSize: 10, color: "#a16a2e", marginTop: 6 }}>
-                    Each payment needs a slip to be recorded. Slip-backed rows are saved to the order on {isEdit ? "Save" : "Create"}; rows without a slip stay as planned entries — add their slip here or from the SO detail screen.
+                  <div style={{ fontSize: 10, color: "#767b6e", marginTop: 6 }}>
+                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. A slip is optional — attach one here, or add it later from the SO detail screen.
                   </div>
                 )}
               </div>
@@ -3714,9 +3728,11 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
             </button>
           </div>
         </div>
-        {pay.slipPhase !== "done" && (
-          <div style={{ fontSize: 10, color: "#a16a2e" }}>Planned — add a slip to record this payment on the order.</div>
-        )}
+        {/* The per-row amber warning is gone (Owner 2026-08-13): it called a
+            slip-less row a mere plan, which was true only while the writer
+            filtered on the slip. The slip is optional and the row is recorded
+            on its amount, so that line asked for something not required and
+            implied the money would not book without it. */}
       </div>
     </div>
   );

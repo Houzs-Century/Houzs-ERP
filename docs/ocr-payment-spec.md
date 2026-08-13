@@ -140,6 +140,9 @@ prefixes is a STALE SW cache (old frontend) — hard-refresh resolves it. Genuin
    store that receipt image AS the payment's slip so the "Each payment needs a slip uploaded
    before saving" guard is auto-satisfied — the owner has no separate slip, the receipt IS it.
    (PaymentsTable scanReceiptIntoRow + the slip-required guard + the scan-payment R2 image.)
+   *2026-08-13: shipped, and the guard it was auto-satisfying no longer exists — the slip is
+   optional on every SO path (owner ruling; see `docs/modules/sales-order.md`). Storing the
+   receipt as the payment's slip is still the behaviour: it is now proof, not an exemption.*
 4. **Payments table right side skewed** — the Slip upload column overflows / is cut off;
    layout fix in PaymentsTable (responsive/overflow).
 5. (Confirm w/ owner) the per-line PHOTOS upload section on scanned lines — keep or drop?

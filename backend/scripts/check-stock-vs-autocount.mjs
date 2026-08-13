@@ -190,9 +190,26 @@ async function main() {
   log(`  COMPARED although AutoCount files them under ItemGroup SOFA (pillows / bolsters / stools the binding CSV calls ACCESSORY, and the balance importer imported): ${excluded.sofaGroupButCompared} units`);
   for (const [l, q] of unmappedWhLoc) log(`  UNMAPPED LOCATION ${l}: ${q} units have no ERP warehouse`);
 
-  const erpBal = await sql`SELECT product_code, warehouse_id, SUM(qty)::int qty
-    FROM scm.inventory_balances WHERE company_id = ${CO} GROUP BY product_code, warehouse_id`;
-  const erpCell = new Map(erpBal.map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  /* The sofa exclusion has to be SYMMETRIC. Excluding whole sofas on the
+     AutoCount side alone leaves the ERP's per-COMPARTMENT stock
+     (8030-1A(RHF), 9028-CNR, ...) with nothing to compare against, so every
+     compartment cell reports as ERP-only — a gap invented by the filter, not
+     found by it. Harmless while the ERP held no sofa stock; the moment
+     import-ac-sofa-stock.mjs opened 103 compartment lots (2026-08-11) it added
+     57 phantom ERP-only cells in the very next run.
+     AutoCount counts one sofa, the ERP counts its compartments: the two sides
+     are not commensurable at all, which is exactly why section 4 excludes sofa
+     from the balance axis. Exclude it on BOTH sides, and report the total so
+     the exclusion stays visible rather than silent. */
+  const erpBal = await sql`SELECT b.product_code, b.warehouse_id, SUM(b.qty)::int qty,
+      bool_or(UPPER(COALESCE(p.category::text,'')) = 'SOFA') AS is_sofa
+    FROM scm.inventory_balances b
+    LEFT JOIN scm.mfg_products p ON p.code = b.product_code AND p.company_id = ${CO}
+   WHERE b.company_id = ${CO} GROUP BY b.product_code, b.warehouse_id`;
+  const erpSofa = erpBal.filter((r) => r.is_sofa);
+  const erpSofaUnits = erpSofa.reduce((s, r) => s + Number(r.qty), 0);
+  log(`  ERP side, same exclusion: ${erpSofa.length} sofa-compartment cells / ${erpSofaUnits} units held out (AutoCount counts one whole sofa where the ERP counts its compartments — the two are not commensurable, so the balance axis excludes sofa on BOTH sides)`);
+  const erpCell = new Map(erpBal.filter((r) => !r.is_sofa).map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
   const whName = new Map(whs.map((w) => [String(w.id), w.name]));
 
   /* Did the cutover import actually run? The repo contains a script that

@@ -248,8 +248,9 @@ function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: st
 
 /* ── Add / Edit Payment sheet ────────────────────────────────────────────────
    Records ONE payment through POST /:docNo/payments — the SAME endpoint + body
-   shape MobileNewSO.recordSlipBackedPayments uses — or PATCHes an existing row
-   (edit mode). Slip is OPTIONAL (owner 2026-07-13). No pricing logic lives here;
+   shape MobileNewSO.recordNewPayments uses — or PATCHes an existing row
+   (edit mode). Slip is OPTIONAL (owner 2026-07-13, and since 2026-08-13 on the
+   new-SO path too, which is what renamed that function). No pricing logic here;
    the backend recomputes the balance and derives the Account Sheet. Design = the
    shared .hz-m bottom sheet + fld / fld-i / fld-l classes. */
 export function AddPaymentSheet({
@@ -360,7 +361,7 @@ export function AddPaymentSheet({
     if (!canSave) return;
     setError(null);
     setBusy(true);
-    /* Same body MobileNewSO.recordSlipBackedPayments POSTs — do NOT reimplement
+    /* Same body MobileNewSO.recordNewPayments POSTs — do NOT reimplement
        pricing; the backend recomputes the balance. In EDIT mode the same fields
        PATCH the existing row (slip untouched). */
     const code = paymentMethodCodeForValue(method) ?? "cash";
