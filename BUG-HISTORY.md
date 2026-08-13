@@ -1,3 +1,38 @@
+## A test froze the OLD ASSR company rule, so the stale copy of it looked correct [medium]
+
+**Symptom.** None visible, and that is the finding. When this branch deleted
+`search.ts`'s private copy of `assrCompanySql` — a copy still applying a HOUZS
+pin the owner removed on 2026-07-20, so a 2990 rep saw HOUZS service cases and
+missed their own — `tests/searchScope.test.ts` went RED. The obvious reading was
+that the fix had broken something. It had not. The test was the second stale
+artifact.
+
+**Root cause (traced).** PR #934 (`dc16fb2e`, 2026-07-21) deleted
+`assrPinsToHouzs()` and the `houzsCompanySql` branch, leaving
+`assrCompanySql(c, col) = allowedCompaniesSql(c, col)` — no role consulted at
+all (`routes/assr.ts:141`). It updated `assr.ts` and
+`tests/assrCompanyScope.test.ts` and missed TWO other places that held the old
+rule: the private copy in `search.ts` and `tests/searchScope.test.ts`, whose
+`toEqual([9001])` is a frozen snapshot of the pre-#934 pin (last touched by #910
+and #859, both older than #934).
+
+**Two stale artifacts agreeing with each other is why neither looked wrong.**
+The test asserted the copy's behaviour, the copy satisfied the test, and the
+pair was self-consistent and jointly wrong for three weeks. A drift only becomes
+visible when something OUTSIDE the pair is compared against it.
+
+**Fix.** The test now asserts the real rule, plus the direction nothing covered:
+a Sales rep granted only 2990 sees ONLY the 2990 case. That is the half of the
+old pin's damage that was invisible — it did not merely add HOUZS cases the rep
+holds no grant for, it HID the rep's own.
+
+**Lesson.** A test is a copy of a rule, and it rots exactly like the code copies
+`check-shared-mirrors` exists to referee. When a rule changes, grep for its
+NAME across `src` AND `tests` before deciding the change is complete — #934
+changed the rule in one file and left it standing in two others.
+
+**Ref.** #934 (the original miss), this branch (both copies removed), 2026-08-13.
+
 ## Move up / Move down on a category did nothing when the server refused it [medium]
 
 **Symptom.** The owner's canonical shape: press the kebab menu's "Move up", the
@@ -47,9 +82,15 @@ unit_cost_sen = round(out_total_cost / out_qty)
 That average blends units that HAVE a cost with units that do not. A "ship
 anyway" oversell leaves its short units with no lot consumption, so they
 contribute 0 to `out_total_cost` while still counting in `out_qty`. Return 4 of an
-OUT of 10 where 6 cost 100 sen and 4 cost nothing and it hands back 120 sen/unit —
-480 sen of capitalised value for stock that is worth either 1,000 or 0 depending
+OUT of 10 where 6 cost 100 sen and 4 cost nothing and it hands back 60 sen/unit —
+240 sen of capitalised value for stock that is worth either 400 or 0 depending
 on which units came back, and the qty delta does not say which.
+
+**Correction 2026-08-13 (audit).** This paragraph first read "120 sen/unit — 480
+sen … either 1,000 or 0". The arithmetic is `600 / 10 = 60`, and both the code
+this entry describes and the migration that replaced it say 60: mig 0286's
+header worked example, and `delivery-orders-mfg.ts:1788`. The mechanism was
+right; the numbers were not.
 
 The DO CANCEL path never had this problem: `fn_reverse_do_out` (0198) walks
 `inventory_lot_consumptions`, the row-level record of which lot paid for which
@@ -157,8 +198,8 @@ same ungated umbrella (`currencies.ts:76`, `categories.ts` ×7, `staff.ts:433`).
 fabric: the row does not change, no message appears, nothing in the console. The
 button reads as broken.
 
-**Root cause (traced).** `vendor/scm/lib/fabric-queries.ts` had NINE mutations,
-nine `onSuccess`, and ZERO `onError`. The server's refusal — the SCM area guard
+**Root cause (traced).** `vendor/scm/lib/fabric-queries.ts` had EIGHT mutations,
+eight `onSuccess`, and ZERO `onError`. The server's refusal — the SCM area guard
 wanting `edit` where the grid's GET only needs `view`
 (`scm/middleware/area-guard.ts:16`), a 409 while the active company has not
 resolved, a 404 on the other company's row — arrived, was correct, and was
@@ -171,6 +212,19 @@ usefully, and the DEVELOPER cannot see it either.
 **Fix.** Shared `writeFailed` (`vendor/scm/lib/mutation-error.ts`) showing the
 SERVER's own sentence — `authedFetch` throws Errors carrying it, and a generic
 "something went wrong" would only send the next person hunting again.
+
+**Correction 2026-08-13 (audit).** Two details in this entry were wrong about the
+file it names. (1) The count is EIGHT, not nine — `fabric-queries.ts` has eight
+`useMutation` calls (`useUpdateFabricTier`, `…SupplierCode`, `…Series`,
+`…Active`, `…Description`, `useCreateFabric`, `useBulkUpsertFabrics`,
+`useDeleteFabric`), and had eight before the fix too (`git show e1fb493b^` — 8
+`useMutation`, 0 `onError`). The file's own header comment at
+`fabric-queries.ts:17` still says "all nine"; it is wrong the same way.
+(2) Fabric does NOT use the shared `writeFailed`: it defines a local
+`fabricWriteFailed` (`fabric-queries.ts:31`) with its own title, "That change was
+not saved". Same shape — it surfaces `err.message`, the server's own sentence —
+but the shared helper is what the OTHER 33 files import (31 `*-queries.ts`, plus
+`Categories.tsx` and `PhotoGallery.tsx`), not this one.
 
 **System-wide.** New `frontend/scripts/check-silent-mutations.mjs`: 297
 `useMutation` sites, 270 with no `onError`. It does a SECOND pass over each
@@ -211,6 +265,15 @@ it fails to compile instead of shipping a field the operator cannot get past.
 HC-SO-2607-008) requires category axes on CONFIRM "date or no date". That is an
 explicit owner decision; its marker and its gate disagree and that is an owner
 call, recorded not silently resolved.
+
+**Superseded, same day.** That owner call was made and the gate is gone. The
+block is now `if (processingDate)` — variant completeness is the PROCEED rule and
+only the proceed rule (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不
+一定是需要填写的，除非它是 proceed 了"). The comment that replaced it records why:
+running it at confirm "made a salesperson unable to book a real order from a real
+customer who had not yet picked a seat height". Read this paragraph as history,
+not as an open item; the code is `SalesOrderNew.tsx:1443-1455`, commit
+`1d7d36cc`.
 
 **Ref** - `fix/company-scope-sweep`, 2026-08-13.
 
@@ -336,6 +399,35 @@ delete cannot fix that. Making it `(company_id, model_id)` is a migration AND a
 business question (does Houzs want per-company fabric-tier deltas at all, or is
 one shared table the intent?), so it is recorded here for the owner rather than
 changed unilaterally.
+
+**Both halves of that paragraph were overtaken, same branch — read it as
+history.** The two tables looked identical and are not, and telling them apart
+needed the PARENT table, not the child's column list.
+
+- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql`
+  re-keys `scm.compartment_fabric_tier_overrides` to `(compartment_id,
+  company_id)`, and the PUT moved to `onConflict: 'compartment_id,company_id'`
+  in the same change (`fabric-tier-addon.ts:274`) — the constraint and the
+  caller's `onConflict` must move together or every save is a `42P10`, the
+  `special_addons` lesson below. It was NOT an owner question: the same file
+  already scoped the GET by company, so the intent was on record and only the
+  key was the leftover.
+- MODEL: not a defect at all. `product_models` itself carries `company_id` —
+  rows are created with `company_id: activeCompanyId(c)`
+  (`product-models.ts:445`) and listed through `scopeToCompany` (`:181`) — so
+  each company owns its own model rows with their own uuids and two companies
+  can never contend for one `model_id`. A key of `(model_id)` already implies a
+  company. `onConflict: 'model_id'` therefore still stands at
+  `fabric-tier-addon.ts:155`, deliberately; the retraction is written into the
+  route at `:173-192`.
+
+Open, and unsettled from source: mig 0287's header justifies itself with
+"`scm.compartment_library` carries NO `company_id`", and mig 0089:74 stamps
+`company_id` on that very table (NOT NULL, FK, index). 0089's own header says the
+text PK was left alone so "a 2990 import must use ids distinct from Houzs's".
+Whether the two companies actually share compartment ids in production is a data
+question this audit could not answer, so the re-key is at worst a harmless
+widening — but the stated reason for it does not match the DDL.
 
 **Ref** - `fix/company-scope-sweep`, 2026-08-13.
 
@@ -503,6 +595,30 @@ falls back to `callerStaffId` when `salespersonId` is ABSENT - an explicit null
 still means null. That is not the phantom risk the surrounding comment guards
 against: `resolveOwnerStaffId` returns the caller's REAL staff row, never the
 bridge's pinned SYSTEM uuid.
+
+**Correction 2026-08-13 (audit) - "an explicit null still means null" is not what
+the code does.** The stamp is
+`canAttributeOther ? ((body.salespersonId as string) ?? callerStaffId ?? null) : callerStaffId`
+(`mfg-sales-orders.ts:3537`). `??` is nullish coalescing: it falls back on `null`
+AND on `undefined`, and `body` is a raw `c.req.json()` bag (`:3299`) with no zod
+step that could distinguish the two. So an explicit `null` falls back to the
+caller as well. That is load-bearing rather than academic - MOBILE sends an
+explicit null. `MobileNewSO.tsx:1090` maps its `__self__` sentinel to `null`,
+while desktop `SalesOrderNew.tsx:1619` sends `undefined` (dropped by
+JSON.stringify). Both work; only one of them works for the reason this entry
+gives. The same wrong distinction is written into the route comment at `:3535`.
+
+**Only the DESKTOP surface got the user_id key.** `MobileNewSO.tsx:1179`'s
+`selfStaffMatch` still matches by email, then name - no `userId`, no staff id -
+so the IT Admin (email NULL) still misses there and the page still seeds the
+`__self__` sentinel. Mobile never had the roster filter (no `filteredStaffList`),
+so its picker is not empty and the admin can pick themselves by hand; and the
+backend fallback above means a submitted null is stamped correctly. But the
+mobile confirm gate `!outgoingSalespersonId && !selfStaffMatch`
+(`MobileNewSO.tsx:1772`) fires on exactly that state, so an attribute_other
+caller who does not re-pick is still refused - client-side now, with a clearer
+sentence. Desktop and mobile are one product (CLAUDE.md); this pair is still
+split.
 
 **Lesson** - **joining two systems on a human-typed field is a join that will
 silently return nothing.** Both halves of this were the same mistake: email was
