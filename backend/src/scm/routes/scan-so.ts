@@ -4780,6 +4780,14 @@ scanSo.post('/jobs/clear-failed', async (c) => {
 // something), which is also what every pre-existing caller means.
 // ===========================================================================
 scanSo.post('/samples/:id/confirm', async (c) => {
+  /* company-scope: scm.so_scan_samples is a GLOBAL OCR TRAINING POOL, not a
+     business document. Verified 2026-08-13 against its CREATE TABLE in
+     migrations-pg/0023_so_scan_samples.sql:27 and every later ALTER (0023's own
+     `salesperson`, 0033's `image_key`) - it has NO company_id column, and mig
+     0083's bulk company_id sweep deliberately skipped it. The pool is keyed by
+     SALESPERSON, with a reserved '__GLOBAL__' row holding the cross-rep product
+     alias dictionary; distilling rules per company would split the training set
+     that makes the extractor work. Same shape as my_localities. */
   const id = c.req.param('id');
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing sample id.' }, 400);
 

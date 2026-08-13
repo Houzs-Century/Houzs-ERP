@@ -164,10 +164,24 @@ fabricTierAddonConfig.delete('/special/:modelId', async (c) => {
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const modelId = c.req.param('modelId');
-  const { error } = await gate.supabase
+  /* Scoped like the GET above (L112). scm.model_fabric_tier_overrides carries
+     company_id NOT NULL (mig 0083), so an id-only delete removed another
+     company's override and its SO recompute silently fell back to the global Δ
+     — a price change with no edit behind it. Same fix as sofa-combos and
+     model-free-gifts in this pass.
+
+     KNOWN, NOT FIXED HERE — the PK is `model_id` ALONE (2990s-full-schema.sql:770;
+     mig 0083 added company_id NOT NULL and left the PRIMARY KEY untouched), so
+     the table can physically hold only ONE row per model across ALL companies
+     and the upsert above (onConflict: 'model_id') OVERWRITES whichever company
+     got there first. Scoping the delete cannot fix that; the PK has to become
+     (company_id, model_id), which is a migration and an owner decision about
+     whether per-company fabric-tier overrides are wanted at all. Recorded in
+     BUG-HISTORY rather than changed unilaterally. */
+  const { error } = await scopeToCompany(gate.supabase
     .from('model_fabric_tier_overrides')
     .delete()
-    .eq('model_id', modelId);
+    .eq('model_id', modelId), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });
@@ -238,10 +252,12 @@ fabricTierAddonConfig.delete('/compartment-special/:compartmentId', async (c) =>
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const compartmentId = c.req.param('compartmentId');
-  const { data: deleted, error } = await gate.supabase
+  // Scoped like its model-level twin above; same single-column-PK caveat, here
+  // `compartment_id text PRIMARY KEY` (mig 0025:11).
+  const { data: deleted, error } = await scopeToCompany(gate.supabase
     .from('compartment_fabric_tier_overrides')
     .delete()
-    .eq('compartment_id', compartmentId)
+    .eq('compartment_id', compartmentId), c)
     .select('compartment_id');
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!deleted || deleted.length === 0) return c.json({ error: 'not_found' }, 404);

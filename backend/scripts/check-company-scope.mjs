@@ -58,6 +58,11 @@ const SCOPE_HELPERS = [
   "selfScopedSalesBlocked",
   "salesDocOutOfScope",
   "requireScmCompany",
+  /* so-amendments.ts — the shared guard load for all SIX mutation gates. Its
+     own body calls scopeToCompany and its comment records why (a HOUZS caller
+     could once drive a 2990 amendment through its whole state machine by id).
+     Verified 2026-08-13 at so-amendments.ts:122. */
+  "loadAmendmentForWrite",
 ];
 
 /** Hand-written scoping: .eq('company_id', …) / .in('company_id', …). */
