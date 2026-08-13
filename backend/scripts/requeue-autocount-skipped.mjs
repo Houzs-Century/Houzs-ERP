@@ -50,14 +50,26 @@
 // document and records the write instead of performing it, so DRY RUN and APPLY
 // take the identical code path and can only disagree about whether the row lands.
 //
-// Access path: PostgREST (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, schema
-// `scm`), NOT the pg DATABASE_URL, because that is what the enqueue speaks.
+// Access path: DATABASE_URL, through lib/pgrest-shim.mjs.
+//
+// The enqueue speaks PostgREST, so it needs a PostgREST-shaped client — but
+// that does NOT mean it needs PostgREST credentials. The shim gives the same
+// shape over the pg connection, and DATABASE_URL is the credential 286 of this
+// repo's workflows already use. Copy recompute-so-allocation.yml, which does
+// exactly this for the same reason.
+//
+// This shipped once wired to SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, copied
+// from recompute-2990-so-allocation.yml — the ONE workflow in the repo that
+// references those, three characters away from the working one by name, and
+// broken for the same reason: neither secret exists in this repo, at repo
+// level or in any of its three environments. The first dispatch failed on it.
 //
 // Run: npx tsx scripts/requeue-autocount-skipped.mjs            (DRY RUN)
 //      APPLY=1 npx tsx scripts/requeue-autocount-skipped.mjs    (writes)
 import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
+import postgres from "postgres";
 import { requeueSkipped } from "../src/scm/lib/autocount-requeue.ts";
+import { pgrestShim } from "./lib/pgrest-shim.mjs";
 
 const APPLY = process.env.APPLY === "1" || process.argv.includes("--apply");
 const DOC_NO = (process.env.DOC_NO || "").trim();
@@ -82,25 +94,19 @@ function fromDevVars(field) {
     return undefined;
   }
 }
-const SUPABASE_URL = process.env.SUPABASE_URL || fromDevVars("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || fromDevVars("SUPABASE_SERVICE_ROLE_KEY");
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error(
-    "Need SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (the Houzs Supabase REST creds). " +
-      "These are Worker secrets; they must also exist as GitHub Actions secrets for the workflow to run.",
-  );
+const DATABASE_URL = process.env.DATABASE_URL || fromDevVars("DATABASE_URL");
+if (!DATABASE_URL) {
+  console.error("DATABASE_URL not set (env var or .dev.vars). Aborting.");
   process.exit(1);
 }
 
 const notice = (msg) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
-// The SAME client getSupabaseService() builds: service role, default schema
-// `scm`, so every sb.from('autocount_outbox') inside the enqueue resolves to
-// scm.autocount_outbox unchanged.
-const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  db: { schema: "scm" },
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+// Same SHAPE getSupabaseService() builds, default schema `scm`, so every
+// sb.from('autocount_outbox') inside the enqueue resolves to
+// scm.autocount_outbox unchanged — it cannot tell the difference.
+const pg = postgres(DATABASE_URL, { ssl: "require", prepare: false, max: 1 });
+const sb = pgrestShim(pg, "scm");
 
 /* One line per outcome, in the operator's vocabulary. The verb says whether
    anything happened; the detail says what to do next. */
