@@ -276,8 +276,9 @@ Not generic narrative.
   waives the proof and then prints the wording back and asks you to change it.
   This exists because PR #1763's body said "every desktop + mobile call site"
   and five of its thirteen call sites did not get the argument; see **BUG CLASS
-  unverified-completeness-claim** at the top of `BUG-HISTORY.md`. Roughly one
-  PR in seven here makes a claim of this shape.
+  unverified-completeness-claim** at the top of `BUG-HISTORY.md`. As of
+  2026-08-13 the detector fires on 13.6% of merged commit messages — roughly one
+  PR in seven makes a claim of this shape; re-measure before quoting that.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw

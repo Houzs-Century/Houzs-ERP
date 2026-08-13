@@ -31,8 +31,9 @@
 // ---------------------------------------------------------------------------
 // 1. The trigger vocabulary.
 //
-// CALIBRATED, not guessed. Run against all 3,231 commits reachable from
-// origin/main on 2026-08-13, this exact detector fires on 30 titles (0.9%) and
+// CALIBRATED, not guessed — and the numbers below are a snapshot, not a
+// standing fact. AS OF 2026-08-13, run against all 3,231 commits then reachable
+// from origin/main, this exact detector fires on 30 titles (0.9%) and
 // 438 title-or-body messages (13.6%). Sampling those 438 by matched noun, they
 // are overwhelmingly REAL scope claims: "all four arms" (x46), "every caller"
 // (x49), "both surfaces" (x53), "every reader", "all six line-DELETE routes".
@@ -106,9 +107,10 @@ export const POPULATION_NOUNS = [
  *
  *  THREE filler tokens, not more. The bound is what stops a quantifier reaching
  *  down a sentence to an unrelated noun ("All of the numbers the owner quoted
- *  came from the production reader" must not match). Measured on this repo's
- *  3,231 commits: 3 tokens fires on 438 messages, 4 on 456 — the 18 extra are
- *  not worth the extra reach, and 3 is exactly enough for "desktop + mobile".
+ *  came from the production reader" must not match). Measured 2026-08-13 over
+ *  the 3,231 commits then reachable from origin/main: 3 tokens fires on 438
+ *  messages, 4 on 456 — the 18 extra are not worth the extra reach, and 3 is
+ *  exactly enough for "desktop + mobile".
  *
  *  Each alternative carries its OWN trailing boundary. A shared `\b` after the
  *  group is wrong: there is no word boundary between `+` and the space that

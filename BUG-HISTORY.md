@@ -601,9 +601,11 @@ lived in the PR BODY, not the title — the title says only "DIVAN ONLY lines do
 not require a mattress Gap". Any check that reads titles alone misses it.
 
 **How common** - the detector in `scripts/lib/completeness-claim.mjs`, run over
-all 3,231 commits reachable from `origin/main` on 2026-08-13, fires on 30 titles
-(0.9%) and 438 title-or-body messages (13.6%). Roughly one merged PR in seven
-makes a claim of this shape. Before this gate, none of them was checkable.
+all 3,231 commits reachable from `origin/main` **as of 2026-08-13**, fires on 30
+titles (0.9%) and 438 title-or-body messages (13.6%): roughly one merged PR in
+seven makes a claim of this shape. Before this gate, none of them was checkable.
+Those figures are a snapshot of that date and will drift; re-run the detector
+over `git log` before quoting them.
 
 **The remedy** - `.github/workflows/completeness-claim.yml`. When a PR title or
 body claims completeness, the body must carry a fenced block tagged
