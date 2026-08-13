@@ -534,19 +534,19 @@ Total: 987 route registrations across 129 files.
 - L1178  POST   /entries/:id/push
 
 ## backend/src/scm/routes/grns.ts  (13)
-- L984  GET    /
-- L1201  GET    /outstanding-po-items
-- L1389  GET    /:id
-- L1459  GET    /:id/linked
-- L1525  POST   /
-- L1801  POST   /from-pos
-- L2119  PATCH  /:id/post
-- L2130  POST   /from-po-items
-- L2422  PATCH  /:id/cancel
-- L2618  PATCH  /:id
-- L2808  POST   /:id/items
-- L3044  PATCH  /:id/items/:itemId
-- L3327  DELETE /:id/items/:itemId
+- L1041  GET    /
+- L1258  GET    /outstanding-po-items
+- L1446  GET    /:id
+- L1516  GET    /:id/linked
+- L1582  POST   /
+- L1872  POST   /from-pos
+- L2202  PATCH  /:id/post
+- L2213  POST   /from-po-items
+- L2523  PATCH  /:id/cancel
+- L2719  PATCH  /:id
+- L2909  POST   /:id/items
+- L3147  PATCH  /:id/items/:itemId
+- L3436  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-consignment-receives.ts  (13)
 - L415  GET    /
