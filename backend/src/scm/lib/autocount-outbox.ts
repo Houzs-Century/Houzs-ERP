@@ -49,11 +49,11 @@ import { splitSofaCode } from '../../services/autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import {
   callAcService,
-  AGENT_MAP,
   LOCATION_MAP,
   BRANDING_MAP,
   VENUE_MAP,
   mapOrPassthrough,
+  resolveAcAgent,
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
@@ -63,6 +63,7 @@ import {
   acServiceConfig,
   ItemCodeError,
   KeylessLineError,
+  MissingAgentError,
   MissingLocationError,
   SofaCollapseError,
   type AcDocType,
@@ -218,8 +219,12 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    UI label, under the ONE name since mig 0284 (0189 had already dropped the
    dead legacy column of this name; 0284 then renamed the live
    internal_expected_dd onto it). It leaves as the PDate UDF. */
+/* salesperson_id is the ERP's REAL salesperson identity (a scm.staff uuid);
+   `agent` is the legacy free text beside it. Both are read because the write-
+   back needs the second only when the first is empty — see readSalespersonName
+   and resolveAcAgent. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
 /* `cancelled` is on THIS list and on no other, because only
    scm.mfg_sales_order_items has the column (the other five line tables are
    still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
@@ -317,6 +322,31 @@ async function withLocations(
     const code = typeof id === 'string' ? byId.get(id) ?? null : null;
     return code ? { ...l, location: code } : l;
   });
+}
+
+/**
+ * The salesperson's NAME, for the AutoCount Sales Agent.
+ *
+ * Exactly the division `withLocations` draws one level down: the ERP column is
+ * a foreign key (`salesperson_id` -> `scm.staff`) and AutoCount wants the
+ * string, so the id is resolved HERE, beside the other header reads, and the
+ * composer stays pure. `staff.name` is the same field the SO PDF prints and the
+ * SO list resolves through `useStaffLookup`, so the account book learns a rep
+ * under the spelling the rest of the ERP already shows.
+ *
+ * A FAILED READ THROWS rather than degrading to null. Null means "this order
+ * has no salesperson", which on a create is a refusal naming a remedy the
+ * operator can act on ("assign a salesperson"); an unreadable `scm.staff` would
+ * send them after an order that already has one. AcReadError says what actually
+ * happened.
+ */
+async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<string | null> {
+  const id = typeof salespersonId === 'string' ? salespersonId.trim() : '';
+  if (!id) return null;
+  const row = await readOrThrow('staff',
+    sb.from('staff').select('name').eq('id', id).maybeSingle());
+  const name = ((row as { name?: string | null } | null)?.name ?? '').trim();
+  return name || null;
 }
 
 interface AcDownstreamSpec {
@@ -460,8 +490,12 @@ async function readOrThrow<T>(
  *   ItemCodeError     — a line has no single AutoCount ItemCode (D10): either
  *                       the cutover map has never heard of it, or it maps to
  *                       several items and the document names no supplier.
+ *   MissingAgentError — the order names no salesperson AutoCount can be given,
+ *                       and a blank one is refused by FK_SO_SalesAgent (the
+ *                       2026-08-13 go-live failure). MissingLocationError's
+ *                       twin, one level up.
  *
- * All four must land in the outbox. A refusal nobody can see is
+ * All of them must land in the outbox. A refusal nobody can see is
  * indistinguishable from a write-back that quietly stopped working.
  */
 async function noteReadFailure(
@@ -472,7 +506,8 @@ async function noteReadFailure(
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
     || e instanceof ItemCodeError
-    || e instanceof MissingLocationError;
+    || e instanceof MissingLocationError
+    || e instanceof MissingAgentError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -531,7 +566,12 @@ export async function enqueueSoCreate(
        out of step. */
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code));
     const { collapsed, details } = composeDetails(lines, { bindings });
-    const body = composeCreateSo(header as never, lines, { bindings });
+    /* The salesperson is resolved for EVERY create, not only when `agent` is
+       blank: the composer decides which of the two sources the account book
+       gets, and it can only choose between values it has been given. */
+    const salespersonName = await readSalespersonName(
+      sb, (header as Record<string, unknown>).salesperson_id);
+    const body = composeCreateSo(header as never, lines, salespersonName, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -1354,6 +1394,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const lines = await withLocations(sb, soRows, soRows.map(soLine));
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
+  const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1361,14 +1402,14 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
-      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h), lines,
+      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h, salespersonName), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1417,8 +1458,18 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * `ContainsKey`-gated and `Str` turns a present-but-null into `""`, so sending
  * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
  * the account book has". The same rule as the line-level Location, one level up.
+ *
+ * AN EDIT IS NEVER REFUSED FOR A MISSING AGENT, which is where it parts company
+ * with the create. On a create a blank Agent is a foreign-key failure that
+ * loses the whole document; here the account book already holds a value and
+ * omitting the key leaves it alone. Refusing would strand every legacy order
+ * that has no salesperson on either source and gain nothing.
  */
-function soEditHeader(h: Record<string, unknown>): Record<string, string | null | Record<string, string>> {
+function soEditHeader(
+  h: Record<string, unknown>,
+  /** REQUIRED, never optional: it decides whether Agent is sent at all. */
+  salespersonName: string | null,
+): Record<string, string | null | Record<string, string>> {
   const out: Record<string, string | null | Record<string, string>> = {
     DebtorName: (h.debtor_name as string) ?? null,
     Attention: (h.debtor_name as string) ?? null,
@@ -1429,7 +1480,7 @@ function soEditHeader(h: Record<string, unknown>): Record<string, string | null 
     InvAddr3: (h.address3 as string) ?? null,
     InvAddr4: (h.address4 as string) ?? null,
   };
-  const agent = mapOrPassthrough((h.agent as string) ?? null, AGENT_MAP);
+  const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
   if (agent) out.Agent = agent;
   const loc = mapOrPassthrough((h.sales_location as string) ?? null, LOCATION_MAP);
   if (loc) out.SalesLocation = loc;
