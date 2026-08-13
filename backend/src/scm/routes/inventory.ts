@@ -510,6 +510,19 @@ inventory.get('/products', async (c) => {
      unchanged. */
   const products = (data ?? []) as Array<Record<string, unknown>>;
   const codes = products.map((p) => String(p.product_code));
+  /* GET /products. DELIBERATELY NOT shared/so-terminal-states.ts, which carries
+     SIX. This four-status set omits DRAFT and SHIPPED, so a draft or shipped
+     order still counts as open demand HERE while MRP and the allocator treat it
+     as done — it drives committed_scheduled / available / surplus on the
+     Inventory page.
+
+     Three different answers to "is this order still open" survive this repo:
+     FOUR here, FIVE in GET /reservations below (:1424 — it has SHIPPED), SIX in
+     the shared file. Measured 2026-08-13 while collapsing that six-status set's
+     fourteen copies, and left standing on purpose: each spelling moves a number
+     staff act on, so choosing one is a business decision, not a side effect of a
+     de-duplication. Do not "helpfully" merge them without it.
+     See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED']);
   const PO_LIVE = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED']);
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1448,6 +1461,13 @@ inventory.get('/reservations', async (c) => {
   // 2. READY SO demand (company-scoped) — the lines the allocator flipped to
   //    READY because stock exists for them. allocated_batch_no is forward-compat
   //    (mig 0121): fall back to a batch-less select if the column is absent.
+  /* GET /reservations. FIVE statuses: this one HAS SHIPPED, so it differs from
+     shared/so-terminal-states.ts (SIX) by DRAFT alone — a draft order still
+     reserves stock here. GET /products above (:494) has FOUR, dropping SHIPPED
+     as well, so the two halves of this one file already disagree with each other.
+     Measured and left standing 2026-08-13 for the same reason as that one: each
+     spelling drives a number a human reads, so picking one is a business
+     decision. See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'SHIPPED']);
   type SoJoin = {
     created_at: string | null; status: string | null;

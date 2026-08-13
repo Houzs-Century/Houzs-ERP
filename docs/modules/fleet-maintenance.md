@@ -58,33 +58,51 @@ and (PUSPAKOM) PASS/FAIL result + reinspection deadline. `lorry_id` FK →
 `scm.lorries(id)` ON DELETE CASCADE. **Append-only**: renewing INSERTs a new row;
 the current document per `(lorry, doc_type)` is the latest-expiring row.
 
-**Company scope matches `scm.lorry_service_records`**, NOT a hard scope:
-`company_id` here is stamped on insert but never used to scope reads. Verified
-2026-08-13 against BOTH the migration headers (`0202:29-34`, `0203:38-40`,
-`0204:42-43`, each saying "STAMPED on insert for provenance but NOT used to
-scope reads") AND the read path — `GET /dashboard` reads the vault, plans,
-mileage, breakdowns, work orders and WO parts with ZERO company predicates
-(`fleet-maintenance.ts:635-649`), and `GET /lorries` is explicitly unscoped
-(`lorries.ts:132-134`, "one shared lorry fleet across ALL companies").
+**Company scope — CORRECTED 2026-08-13 (unscoped-write sweep).** The previous
+text here read: *"Company scope matches `scm.lorry_service_records`, NOT a hard
+scope: the fleet is unified across companies (`scm.lorries` has no `company_id`),
+so `company_id` here is stamped on insert but never used to scope reads."* Two of
+those claims were wrong and one is now out of date:
 
-> **Correction (2026-08-13):** those headers justify themselves with "`scm.lorries`
-> has no `company_id`", and that premise is **false** — migration
-> `0083_multicompany_company_id.sql:313` added the column, backfilled it to HOUZS,
-> set it `NOT NULL`, gave it an FK to `public.companies(id)` and indexed it, and
-> `lorries.ts:182` stamps it on every insert. The BEHAVIOUR is still unified,
-> because the read path carries no predicate — but do not re-derive that from the
-> column list, which is exactly the mistake `CLAUDE.md` records as having given
-> the wrong answer twice in opposite directions on these tables.
+- `scm.lorries` **does** carry `company_id` — migration `0083` adds it `NOT NULL`
+  with a Houzs backfill wherever the relation is a TABLE (it is skipped only where
+  `lorries` exists as a VIEW; that guard is why the column looked absent).
+- The lorry MASTER is still deliberately unified — a vehicle is one vehicle, and
+  every fleet read lists the whole fleet. That part stands.
+- This module's OWN tables (the vault, its attachments, maintenance plans,
+  mileage readings, breakdown cases, work orders + parts, components + events,
+  workshops) are **per-company**: every insert stamps `activeCompanyId(c)`, and
+  since the 2026-08-13 sweep **every write and every by-id read that gates a
+  write is scoped with `scopeToCompany`**. The SCM supabase client is
+  service-role, so RLS re-checks nothing; that predicate is the isolation.
 
-> **The rule is about LORRIES and the vault — do not generalise it to the whole
-> module.** `scm.workshops` IS company-scoped on read: `GET /workshops` filters
-> `.eq("company_id", activeCompanyId(c))` (`fleet-maintenance.ts:2060`),
-> `PATCH /workshops/:id` scopes by id AND company (`:2136`), and
-> `mintWorkshopCode` / `mintRecordNo` mint per company (`:2041`, `:2051`) behind
-> `UNIQUE (company_id, code)` (mig 0241). The route file carries the same caveat
-> inline at `:258`. §11 introduces the workshop master but lists none of its
+KNOWN GAP, not yet closed: the LIST/DETAIL reads (`GET /dashboard`,
+`GET /vehicles/:id`, `GET /reminders`) are still unscoped, so a both-company user
+can be shown a work order they can no longer edit (the write 404s). Closing the
+reads is a separate pass — see the unscoped-write sweep PR.
+
+> **Two 2026-08-13 sweeps reached opposite conclusions here, and the merge kept
+> the one the CODE agrees with.** A parallel audit read the same migration
+> headers (`0202:29-34`, `0203:38-40`, `0204:42-43` — "STAMPED on insert for
+> provenance but NOT used to scope reads") plus `GET /dashboard`, found no
+> predicates anywhere, and REFUTED 13 fleet leads on that basis, changing
+> nothing. It was right about the reads and wrong about the writes, because the
+> other sweep had already scoped them: `fleet-maintenance.ts` now carries 13
+> `scopeToCompany` calls while `GET /dashboard` still carries none. Both halves
+> of that sentence are checkable, and together they are exactly the gap above.
+>
+> The lesson is the one `CLAUDE.md` already records and this file proves twice:
+> the migration header is not the current behaviour, and neither is the column
+> list. Read the path you are asking about.
+
+> **`scm.workshops` is the sharpest case of "do not generalise the rule".** It is
+> company-scoped ON READ, unlike everything else here: `GET /workshops` filters
+> `.eq("company_id", activeCompanyId(c))` (`:2092`), and `mintWorkshopCode` /
+> `mintRecordNo` mint per company (`:2073`, `:2083`) behind `UNIQUE (company_id,
+> code)` (mig 0241). §11 introduces the workshop master and lists **none** of its
 > three endpoints — `GET`, `POST` and `PATCH /workshops/:id` appear in no table
-> in this doc.
+> in this document.
+
 
 **Denormalization sync.** For ROAD_TAX / INSURANCE / PUSPAKOM the append route
 updates the matching flat column on `scm.lorries` to the latest vault expiry, so
@@ -143,8 +161,11 @@ breakdown cases) are not supplied yet (§6).
   ROAD_TAX/INSURANCE/PUSPAKOM; the append route keeps the flat columns in sync.
   Do not write the flat columns directly for these types outside that route, or
   the cache and the vault will disagree.
-- **Unified fleet.** `scm.lorries` and the vault are NOT company-scoped on read
-  (a lorry's compliance is visible wherever the lorry is).
+- **Unified fleet MASTER, per-company RECORDS.** `scm.lorries` is deliberately
+  not company-scoped (a lorry is one lorry). The vault and every other table in
+  this module ARE per-company: reads are still unscoped (known gap, §3), but as
+  of 2026-08-13 every WRITE carries `scopeToCompany`. Do not "simplify" a write
+  by dropping that predicate — it is the only isolation there is.
 
 ## 6. Status seams (Phase 3 now feeds them)
 

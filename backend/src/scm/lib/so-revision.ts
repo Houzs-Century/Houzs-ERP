@@ -56,6 +56,7 @@ import { todayMyt } from './my-time';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
+import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -603,7 +604,15 @@ export async function applySoAmendment(
      Every key is re-checked against AMENDABLE_HEADER_FIELDS — the create route
      already rejects an unlisted key, this is defence in depth on the last step
      before the write. */
-  const headerChanges = amendment.header_changes ?? null;
+  /* CANONICALISE THE STORED KEYS FIRST.
+     `header_changes` is a jsonb written at REQUEST time and read here at APPROVE
+     time — days later, across any number of deploys. The loop below `continue`s
+     on a key the allow-list does not have, so a payload-key rename would make an
+     already-pending amendment approve cleanly, audit cleanly, and never write
+     its value. Rewriting legacy spellings onto today's keys before anything
+     reads them is what stops that; it is an identity map until a rename lands.
+     See shared/so-processing-date.ts for the removal condition. */
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   const headerApplied: string[] = [];
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const headerUpdates: Record<string, unknown> = {};

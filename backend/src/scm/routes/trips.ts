@@ -17,6 +17,17 @@
 // revenue_centi is sourced from that. Dual-read camelCase ?? snake_case on every
 // result column (the pg driver camelCases result columns).
 //
+// COMPANY SCOPE — CROSS-COMPANY, which is NOT the same as unscoped. Trips is a
+// TMS shared queue (lib/companyScope.ts, "CROSS-COMPANY VIEW modules"): reads
+// WIDEN to the caller's granted companies via scopeToAllowedCompanies, and so do
+// the WRITES. The SCM supabase client is service-role, so RLS re-checks nothing
+// and that predicate is the only thing standing between a company-1-only
+// dispatcher and a company-2 trip they hold no grant for. Inserts still stamp
+// the ACTIVE company (a trip is raised from whichever company you are in; it may
+// still reference the other company's DOs). Where a write is by id, use
+// maybeSingle — the predicate can legitimately match zero rows, and single()
+// would render that 404 as a 500.
+//
 // Houzs port of 2990's apps/api/src/routes/trips.ts — same plumbing as the
 // sibling SCM routes (supabaseAuth + scm-scoped c.get('supabase'); paginateAll
 // from ../lib/paginate-all, mintMonthlyDocNo from ../lib/doc-no). scm.trips /
@@ -726,6 +737,8 @@ export const deleteTripStopHandler = async (c: any) => {
     sb.from('trip_stops').select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId), c,
   ).maybeSingle();
   if (!stopRow) return c.json({ error: 'not_found' }, 404);
+  /* The predicate goes on the DELETE itself, not only on the read above: the
+     read cannot protect the write, the client being service-role. */
   const { error } = await scopeToAllowedCompanies(
     sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId), c,
   );
@@ -841,18 +854,18 @@ export const optimizeTripRouteHandler = async (c: any) => {
          response and the next page load would have to re-bill Google to show it.
          eta_offset_s is an OFFSET from departure, not a clock time: the trip's
          start can move, and a stored wall-clock ETA would go stale silently. */
-      await sb.from('trip_stops').update({
+      await scopeToAllowedCompanies(sb.from('trip_stops').update({
         stop_no: st.order,
         leg_distance_m: st.legDistanceMetres,
         leg_duration_s: st.legDurationSeconds,
         eta_offset_s: st.etaSecondsFromDepart,
         route_optimised_at: optimisedAt,
-      }).eq('id', st.ref).eq('trip_id', id);
+      }).eq('id', st.ref).eq('trip_id', id), c);
     }
     // The trip's own distance was hand-typed until now; the optimiser knows it.
-    await sb.from('trips')
+    await scopeToAllowedCompanies(sb.from('trips')
       .update({ total_distance_km: Math.round(result.totalDistanceMetres / 100) / 10, updated_at: optimisedAt })
-      .eq('id', id);
+      .eq('id', id), c);
     applied = true;
   }
   return c.json({ ...result, applied });

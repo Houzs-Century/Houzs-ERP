@@ -9,6 +9,8 @@
 // master rows. In-place modules UPDATE (rows are hours old, unreferenced).
 //
 // DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: inert. The modules rewrite is gated on `changed`, so a corrected row is not rewritten.
 import postgres from "postgres";
 
 const APPLY = process.env.APPLY === "1";

@@ -412,8 +412,16 @@ export async function recomputePcoReceived(
    scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
    the receive is free to edit. */
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('purchase_consignment_receive_items')
+  const { data, error } = await sb.from('purchase_consignment_receive_items')
     .select('returned_qty').eq('pc_receive_id', receiveId);
+  /* A failed read is not an empty line set (mirrors scm/lib/downstream-lock.ts).
+     Dropping the error made `data ?? []` read as "no line has been returned",
+     which is the absence that authorises the cancel / line edit this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (error) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Receive has a Consignment Return, so it is locked for safety — try again (${error.message}).` };
+  }
   const any = ((data ?? []) as Array<{ returned_qty: number }>)
     .some((r) => (r.returned_qty ?? 0) > 0);
   if (any) return { error: 'pc_receive_has_downstream', message: 'Receive has a Consignment Return — delete it first to edit' };

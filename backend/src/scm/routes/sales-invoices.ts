@@ -37,6 +37,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -665,9 +666,9 @@ function siTransitionReject(prev: string, next: string): string {
 
 // ── List ────────────────────────────────────────────────────────────────
 /* Stamp the linked SO's dates onto SI list rows for the quick-view drawer:
-   so_internal_expected_dd (the "Processing date" — mfg_sales_orders.
-   internal_expected_dd, the one true user date since the legacy
-   processing_date column was dropped, mig 0189) and so_customer_delivery_date
+   so_processing_date (the "Processing date" — mfg_sales_orders.processing_date,
+   the one true user date, and since mig 0284 under the one name the UI, the API
+   and every human already use) and so_customer_delivery_date
    (fallback for pre-snapshot SIs whose own customer_delivery_date is null).
    One batched read keyed by so_doc_no; mutates rows in place, same style as
    gateSiFinance. Called on BOTH list paths (legacy + paginated). */
@@ -675,17 +676,17 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const soDocNos = [...new Set(list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
-  const byDoc = new Map<string, { internal_expected_dd: string | null; customer_delivery_date: string | null }>();
+  const byDoc = new Map<string, { processing_date: string | null; customer_delivery_date: string | null }>();
   if (soDocNos.length > 0) {
     const { data } = await sb.from('mfg_sales_orders')
-      .select('doc_no, internal_expected_dd, customer_delivery_date').in('doc_no', soDocNos);
-    for (const s of ((data ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null; customer_delivery_date: string | null }>)) {
-      if (s.doc_no) byDoc.set(s.doc_no, { internal_expected_dd: s.internal_expected_dd ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
+      .select('doc_no, processing_date, customer_delivery_date').in('doc_no', soDocNos);
+    for (const s of ((data ?? []) as Array<{ doc_no: string | null; processing_date: string | null; customer_delivery_date: string | null }>)) {
+      if (s.doc_no) byDoc.set(s.doc_no, { processing_date: s.processing_date ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
     }
   }
   for (const r of list) {
     const so = byDoc.get((r.so_doc_no as string | null) ?? '');
-    r.so_internal_expected_dd = so?.internal_expected_dd ?? null;
+    r.so_processing_date = so?.processing_date ?? null;
     r.so_customer_delivery_date = so?.customer_delivery_date ?? null;
   }
 }
@@ -1775,17 +1776,22 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Re-pricing an invoice line moves revenue and margin, so the company gate is
+     strict: refuse an unresolved company rather than fall through to "every
+     company", and pin the status gate, the line read and the UPDATE itself. The
+     `sales_invoice_id` predicate proves the line is on THIS invoice, not that
+     the invoice is in THIS company's books. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   {
-    /* company-scope: the header read is the gate for this whole handler — every
-       line write below keys on (itemId, sales_invoice_id), so proving the
-       INVOICE is ours proves the chain. It was unscoped, so the status gate
-       right below it was real but company-blind: company A holding B's invoice
-       uuid could edit B's lines, and the ISSUED / CANCELLED checks would happily
-       consult B's status to decide. */
-    const { data: hd } = await scopeToCompany(
-      sb.from('sales_invoices').select('status').eq('id', id), c,
-    ).maybeSingle();
-    if (!hd) return c.json({ error: 'not_found' }, 404);
+    /* This read is the gate for the whole handler — every line write below keys
+       on (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
+       chain. Unscoped, the status gate right below was real but company-BLIND:
+       the ISSUED / CANCELLED checks would consult the OTHER company's status to
+       decide whether this edit was allowed. */
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
     }
@@ -1805,10 +1811,10 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `do_item_id` are business-logic only and deliberately not in
      SI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('sales_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
     .select(SI_LINE_AUDIT_SELECT + ', variants, do_item_id')
-    .eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern (see SI_AUDIT_SELECT
@@ -1858,7 +1864,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('sales_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -1899,17 +1905,13 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
 
 salesInvoices.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   {
-    /* company-scope: the header read is the gate for this whole handler — every
-       line write below keys on (itemId, sales_invoice_id), so proving the
-       INVOICE is ours proves the chain. It was unscoped, so the status gate
-       right below it was real but company-blind: company A holding B's invoice
-       uuid could edit B's lines, and the ISSUED / CANCELLED checks would happily
-       consult B's status to decide. */
-    const { data: hd } = await scopeToCompany(
-      sb.from('sales_invoices').select('status').eq('id', id), c,
-    ).maybeSingle();
-    if (!hd) return c.json({ error: 'not_found' }, 404);
+    // Header read is the gate — same reasoning as the line PATCH above.
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before deleting lines.' }, 409);
     }
@@ -1922,9 +1924,9 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was invoiced, and there is nothing left to join
      back to. */
-  const { data: doomedRow } = await sb.from('sales_invoice_items')
-    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!doomedRow) return c.json({ error: 'not_found' }, 404);
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
+    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = doomedRow as unknown as Record<string, unknown>;
 
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
@@ -1932,7 +1934,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'sales_invoice_items', itemId);
 
-  const { error } = await sb.from('sales_invoice_items').delete().eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the INVOICE and it still exists. DELETE on
@@ -2004,7 +2006,7 @@ salesInvoices.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -2167,9 +2169,14 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   }
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */
-  const { data: row } = await sb.from('sales_invoice_payments')
-    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
+  /* Taking money back off an invoice is a books change, so the company gate is
+     strict — an unresolved company refuses rather than reaching every company's
+     receipts. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: row } = await scopeToCompanyId(sb.from('sales_invoice_payments')
+    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
+  if (!row) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
   /* A CREDIT payment cannot be deleted — deleting it takes the money off the
@@ -2201,9 +2208,10 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
         'the credit to the customer in one step.',
     }, 409);
   }
-  const { data: inv } = await sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id), co.companyId).maybeSingle();
+  if (!inv) return c.json(NOT_THIS_COMPANY, 404);
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
-  const { error } = await sb.from('sales_invoice_payments').delete().eq('id', paymentId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
   try { await reconcileSiOverpay(sb, id); }

@@ -140,6 +140,66 @@ For the machine-generated route inventory see
 
 ---
 
+## 2b. Three different dates, three different names (2026-08-13)
+
+Until 2026-08-13 this module used the word **`processingDate` for three
+unrelated facts**, which is how the wrong one kept getting picked. They are now
+named for what they are, and nothing about which value flows where changed:
+
+| Name | What it is | Where it lives | Where it goes |
+|---|---|---|---|
+| `ExtractedSlip.slipDate` | **the handwritten slip's own date** — the day the rep wrote the order | OCR output, `scan-so.ts` extraction rule 6 | the duplicate probe (same phone + same slip date + same total), and the payment planner's **fallback** date |
+| `ExtractedPayment.receiptTxnDate` | **a card terminal's printed transaction date** — the swipe date on ONE printed receipt | OCR output, `scan-so.ts` `payments[]` | `planReceiptPayments` → `resolvePaidAt` → the payment-ledger row's **`paid_at`** |
+| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.internal_expected_dd` | the SO itself; the operator keys it at review |
+
+Only the third one is still called `processingDate`. If you are reading a date
+off a slip photo or a receipt photo, it is **not** that field.
+
+- The planner's precedence is `receiptTxnDate` → `slipDate` → today, each
+  clamped by `resolvePaidAt` to `[today−60d, today+7d]`
+  (`scan-receipt-plan.ts`). The SO's Processing Date is **not an input to the
+  planner at all** — it does not appear in `PlanReceiptPaymentsInput`.
+- The sibling `scan-payment` prompt calls its equivalent of `receiptTxnDate`
+  **`paidAt`**, because that route emits the ledger value directly. Here the two
+  must stay distinct: `ExtractedPayment.receiptTxnDate` is the raw OCR read,
+  `PlannedReceiptPayment.paidAt` is the clamped value actually booked.
+- **Back-compat:** stored `so_scan_samples.extracted` / `corrected` blobs written
+  before the rename still carry the old `processingDate` key, and those blobs are
+  fed back verbatim as few-shot examples — so the model can echo the old key.
+  `normalizeSlip` reads `slipDate ?? processingDate` and
+  `receiptTxnDate ?? processingDate` for exactly that reason. Do not remove those
+  fallbacks until the sample pool has fully rolled over.
+
+### Known mismatch, NOT fixed by the rename — latent, not live
+
+The two surfaces seed the **SO's** Processing Date from different facts:
+
+- **Mobile** — `MobileNewSO.tsx` seeds its `procDate` state from
+  `scanPrefill.slipDate`, i.e. **the day the rep wrote the slip**, which is not
+  a factory-start date at all.
+- **Desktop** — `SalesOrderNew.tsx` derives it as **Delivery − 6 weeks**
+  (`PROCESSING_LEAD_DAYS = 42`), floored at today, and never reads the slip's
+  date. Its own comment already says "a scanned slip may carry a Delivery date
+  but never a Processing date".
+
+**Neither is reachable today**, which is why this is a write-up and not a fix:
+
+- `MobileNewSO`'s `scanPrefill` prop is **never supplied** — the screen union in
+  `MobileApp.tsx:83` declares it, but neither `setScreen({t:"new-so"})` call site
+  passes it. The live mobile scan path is `createDraftFromPrefill`, which sends
+  `internalExpectedDd: null` outright.
+- Desktop's `soScanPrefill` sessionStorage handoff has a **reader and no
+  writer** — `ScanOrderModal` became a pure `/enqueue` surface (§4).
+
+So the wrong-value seed is **latent**: it fires the moment someone re-wires
+either handoff, which is exactly the kind of reconnection this module has done
+before. Both paths also invert the SO's Processing Date back into the slip's
+`slipDate` when building a `corrected` learning blob; that is inert because
+`slipDate` is in `CARRIED_NOT_INVERTED` (§4), so the key never reaches a
+distiller. The rename made all of this legible; it changed none of it.
+
+---
+
 ## 3. Backend — the background pipeline
 
 `backend/src/scm/routes/scan-so.ts` (4,815 lines). Model `claude-sonnet-4-6`
@@ -336,6 +396,8 @@ carried across untouched and contributes **no diff**. The list is in code as
 | `locationMatch` / `location` | the create core's venue-by-active-project autofill resolves a venue the slip never named |
 | `remarks` | still carried, but the reason recorded beside it in code (`scan-sample-review.ts:88-89` — "the dedup path prefixes the note") is **stale**: the pipeline never writes into the SO note (§3). Whether `remarks` should now become invertible is an owner call, not readable from the tree |
 | `processingDate` | a DRAFT never carries a Processing Date (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo |
+| `slipDate` (the SLIP'S OWN date — **not** the SO's Processing Date; see §2b) | the SO has no column for it, and the SO's Processing Date is a **different fact**. A DRAFT never carries a Processing Date at all (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo. Inverting the SO's factory-start date back into `slipDate` would teach the model to read it off the slip's date line |
+
 | `priceRmGuess` | the create core **reprices** every goods line — `unit_price_centi` is the catalog's figure, not a correction |
 | `installmentPlanMatch` | the header stores an integer month count; the pool's label spelling is unrecoverable, and inventing one breaks the never-invent rule |
 | `onlineTypeMatch` | there is no `online_type` column on the SO header (it lives on the payment ledger row) |

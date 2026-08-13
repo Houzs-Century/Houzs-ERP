@@ -200,7 +200,15 @@ books saying "returned" with an empty shelf. Raise a new return instead.
 - **The resync is a target walk.** Never add an incremental `+qty` write beside
   it; the two would double-apply.
 - **SERVICE lines are excluded from stock, everywhere.** Check
-  `isServiceLine({ itemGroup, itemCode })`, not the category string.
+  `isServiceLine({ itemGroup, itemCode })`, not the category string — and note
+  that the payload signal is only half the guard. `findServiceLineCodes` also
+  reads `mfg_products.category`, because a crafted payload can lie about both
+  `item_group` and the code prefix. **Corrected 2026-08-13:** that catalog read
+  used to drop its `error`, so a failed lookup returned the same empty list as
+  "all clear" and the SERVICE line was admitted. It now returns
+  `{ ok: false, reason }` and all four DR write paths 409 with
+  `service_check_failed` rather than saving an unchecked line. See
+  BUG-HISTORY.md, "A guard that says all clear because it could not look".
 - **`houzsUser.id`, not `user.id`**, for anything scope-related.
 - **No mobile twin.** Do not go looking for one.
 

@@ -64,10 +64,18 @@ purchaseConsignmentOrders.use('*', supabaseAuth);
    purchase_consignment_receives instead of the real grns table. Returns the
    blocking JSON, or null if the PC Order is free to edit. */
 async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string; message: string } | null> {
-  const { count } = await sb.from('purchase_consignment_receives')
+  const { count, error } = await sb.from('purchase_consignment_receives')
     .select('id', { head: true, count: 'exact' })
     .eq('purchase_consignment_order_id', pcoId)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `count ?? 0` read as "no PC Receive", which is the very
+     absence that authorises the cancel / line edit this guard exists to refuse.
+     A failed read must never read as an absence when the absence is what
+     authorises the write — so an unreadable count locks too. */
+  if (error) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this PC Order has a Consignment Receive, so it is locked for safety — try again (${error.message}).` };
+  }
   if ((count ?? 0) > 0) {
     /* "cancel it first", not "delete it": a PC Receive has no delete either
        (only PATCH /:id/cancel), so the old "delete or cancel" wording told the

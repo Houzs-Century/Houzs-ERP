@@ -102,10 +102,22 @@ the two-demand-sets divergence the audit caught.
 
 - Source: `mfg_sales_order_items` (non-cancelled) joined `!inner` to its SO
   header. Status filter is pushed into SQL AND re-applied in JS via `SO_DONE`.
-- `SO_DONE = DELIVERED, INVOICED, CLOSED, CANCELLED, DRAFT, SHIPPED` —
-  SHIPPED added 2026-08-01 (audit D4) to match `so-stock-allocation.ts`, the
-  reservations endpoint and the amendment terminal set. ON_HOLD still demands
-  (owner call: a held order still drives purchasing).
+- `SO_DONE` is **`SO_TERMINAL_STATES`** from
+  `backend/src/scm/shared/so-terminal-states.ts` — read it there rather than
+  from this line, which was one of **fourteen** hand-typed copies across ten
+  files until 2026-08-13 (`mrp.ts`, `so-stock-allocation.ts`'s PostgREST
+  `not.in` string, and eight audit scripts — four names, plus inline SQL copies
+  inside four of those same scripts). SHIPPED was added 2026-08-01
+  (audit D4) to match `so-stock-allocation.ts` and the amendment terminal set.
+  ON_HOLD still demands (owner call: a held order still drives purchasing).
+- **The reservations endpoint does NOT agree, despite what this guide (and
+  `mrp.ts`'s own comment) used to say.** `routes/inventory.ts` holds TWO sets of
+  its own: `GET /reservations` has **five** (adds SHIPPED, still no DRAFT) and
+  `GET /products` has **four** (`DELIVERED, INVOICED, CLOSED, CANCELLED`). So a
+  DRAFT order is open demand on both Inventory surfaces and done here, and a
+  SHIPPED order is open demand on one of them. Measured 2026-08-13, left standing
+  deliberately: aligning either moves the Inventory page's
+  committed / available / surplus figures and needs the owner's decision.
 - Effective qty per line = `qty - (delivered net of returns)` via
   `soDeliverableRemaining` (delivery-orders-mfg.ts) — DRAFT and CANCELLED DOs
   never count as delivered. `so-stock-allocation.ts` step 3 follows the same
@@ -204,5 +216,9 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
   string ops (the detector documents the trap).
 - One business rule, one home: `SO_DONE`-vs-allocation-status,
   DRAFT-DO-delivered, and the legacy-pool rule each drifted once already —
-  that is precisely what the 2026-08-01 PR converged. If you change one copy,
-  grep for its siblings (this guide's tables name them all).
+  that is precisely what the 2026-08-01 PR converged. Since 2026-08-13 the
+  status set is an IMPORT (`shared/so-terminal-states.ts` + its
+  `scripts/lib/so-terminal-states.mjs` mirror, pinned by
+  `tests/soTerminalStatesMirror.test.ts`), so there is no longer a sibling copy
+  to grep for — which is the point: "grep for its siblings" is advice that only
+  works on the days someone remembers to follow it.

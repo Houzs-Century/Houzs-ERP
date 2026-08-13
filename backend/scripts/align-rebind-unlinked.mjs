@@ -9,6 +9,8 @@
 // name-based match against a read-only dump of the AutoCount Item master.
 //
 // MODE=dry-run (default) reports; MODE=apply writes. company_id=1 (Houzs Century).
+//
+// RE-RUN: inert. A code that already has a binding is skipped, so a second run inserts nothing.
 import postgres from "postgres";
 import fs from "fs";
 const mode = (process.env.MODE || "dry-run").toLowerCase();

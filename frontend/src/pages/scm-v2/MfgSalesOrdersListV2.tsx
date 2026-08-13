@@ -148,7 +148,7 @@ type SoRow = {
   /** Any line shipped/allocated from a PO-less stock ADJUSTMENT — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank. */
   source_po_adj?: boolean;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   customer_delivery_date: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
@@ -575,11 +575,10 @@ function DetailDrawer({
                 <MetaItem k="Branding" v={brandOf(row)} />
                 <MetaItem k="Order date" v={fmtDate(row.so_date)} />
                 {/* Owner 2026-07-24 — the quick view showed only the order
-                    date; operators need Processing (internal_expected_dd, the
-                    one true user date since legacy processing_date was
-                    dropped) and Delivery at a glance. Both already ride the
-                    list payload (HEADER). */}
-                <MetaItem k="Processing" v={fmtDate(row.internal_expected_dd)} />
+                    date; operators need Processing (processing_date, the one
+                    true user date) and Delivery at a glance. Both already ride
+                    the list payload (HEADER). */}
+                <MetaItem k="Processing" v={fmtDate(row.processing_date)} />
                 <MetaItem k="Delivery" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem
                   k="Payment"
@@ -1688,10 +1687,10 @@ export function MfgSalesOrdersListV2() {
       width: "140px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.internal_expected_dd ?? "",
+      getValue: (r) => r.processing_date ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {fmtDate(r.internal_expected_dd)}
+          {fmtDate(r.processing_date)}
         </span>
       ),
     },

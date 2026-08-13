@@ -18,6 +18,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, comboChargedPrices, type SofaComboRow, type SofaPriceTier,
@@ -51,6 +52,7 @@ import {
 import {
   checkAllowedOptions,
   loadProductAndModel,
+  variantCheckUnavailableResponse,
 } from '../lib/allowed-options-check';
 import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
@@ -77,10 +79,18 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
   // A Consignment Order's downstream is a Consignment Note (consignment_delivery_orders
   // keyed on consignment_so_doc_no) — NOT the real delivery_orders/sales_invoices
   // tables (those never reference a CS- doc number, so the lock silently never fired).
-  const { count: noteCount } = await sb.from('consignment_delivery_orders')
+  const { count: noteCount, error: noteErr } = await sb.from('consignment_delivery_orders')
     .select('id', { head: true, count: 'exact' })
     .eq('consignment_so_doc_no', coDocNo)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `noteCount ?? 0` read as "no Consignment Note", which is the
+     absence that authorises the line edit / CANCELLED transition this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (noteErr) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Consignment Order has a Consignment Note, so it is locked for safety — try again (${noteErr.message}).` };
+  }
   if ((noteCount ?? 0) > 0) {
     return { error: 'co_has_downstream', message: 'Consignment Order has a Consignment Note — cancel it first to edit' };
   }
@@ -214,9 +224,17 @@ const HEADER =
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  /* No `processing_date` in this line any more, and it is NOT an omission: the
+     consignment header carried TWO columns, a dead legacy `processing_date`
+     that nothing has ever written and the live date under the old name
+     `internal_expected_dd`. Mig 0284 dropped the dead one and renamed the live
+     one onto the freed name — it is selected two lines down, next to
+     customer_delivery_date, where the date it partners with lives. Selecting a
+     dropped column is a hard PostgREST error (the 0189 lesson), so this had to
+     go in the same commit as the migration. */
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
-  'customer_state, customer_country, customer_delivery_date, internal_expected_dd, linked_do_doc_no, ' +
+  'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
@@ -602,7 +620,7 @@ consignmentOrders.get('/mine', async (c) => {
       .from('consignment_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'total_revenue_centi, line_count, deposit_centi',
       )
       .eq('salesperson_id', myStaffId)
@@ -772,7 +790,7 @@ consignmentOrders.post('/', async (c) => {
        2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
        3. All MATTRESS lines must share ONE brand. */
   {
-    const procDate  = (body.internalExpectedDd  as string | null | undefined) || null;
+    const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
     /* must-pair stays a short-circuit (structurally-incomplete date pair). */
     if (Boolean(procDate) !== Boolean(delivDate)) {
@@ -874,7 +892,9 @@ consignmentOrders.post('/', async (c) => {
     if (!it) continue;
     const code = String(it.itemCode ?? '');
     if (!code) continue;
-    const { product, model } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const err = checkAllowedOptions(
       product,
       model,
@@ -1078,7 +1098,7 @@ consignmentOrders.post('/', async (c) => {
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
     customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
-    internal_expected_dd: (body.internalExpectedDd as string) ?? null,
+    processing_date: (body.processingDate as string) ?? null,
     customer_so_no: (body.customerSoNo as string) ?? null,
     customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
@@ -1130,7 +1150,7 @@ consignmentOrders.post('/', async (c) => {
   captureIfSet('localTotalCenti', total);
   captureIfSet('paymentMethod', body.paymentMethod);
   captureIfSet('depositCenti', body.depositCenti);
-  captureIfSet('internalExpectedDd', body.internalExpectedDd);
+  captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
@@ -1311,7 +1331,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
     ['customerDeliveryDate', 'customer_delivery_date'],
-    ['internalExpectedDd', 'internal_expected_dd'],
+    ['processingDate', 'processing_date'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -1383,7 +1403,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
   /* Processing Date set → every non-cancelled line must carry its category-
      required variants. Collected (not returned) — aggregated with the date rules
      below. */
-  if (body['internalExpectedDd'] !== undefined && body['internalExpectedDd'] !== null && body['internalExpectedDd'] !== '') {
+  if (body['processingDate'] !== undefined && body['processingDate'] !== null && body['processingDate'] !== '') {
     const { data: liveItems } = await scopeToCompanyId(sb
       .from('consignment_sales_order_items')
       .select('id, item_code, item_group, variants, cancelled')
@@ -1406,9 +1426,9 @@ consignmentOrders.patch('/:docNo', async (c) => {
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     const deliv = body['customerDeliveryDate'];
-    const origProc = (beforeRow?.['internal_expected_dd'] as string | null) ?? null;
+    const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
@@ -1682,7 +1702,9 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* allowed_options check on add-item. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1842,7 +1864,9 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const shouldRecompute = it.variants !== undefined || it.unitPriceCenti !== undefined || it.itemCode !== undefined;
 
   if (it.variants !== undefined || it.itemCode !== undefined) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -2370,8 +2394,12 @@ consignmentOrders.get('/:docNo/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),

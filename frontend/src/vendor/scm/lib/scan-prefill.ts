@@ -127,7 +127,13 @@ export type ReconciledPrefill = {
   customerSoRef:   string;
   note:            string;
   deliveryDate:    string | null;  // only when a clean YYYY-MM-DD
-  processingDate:  string | null;
+  /* The SLIP'S OWN written date (ExtractedSlip.slipDate), only when a clean
+     YYYY-MM-DD. It is NOT the Sales Order's Processing Date
+     (internal_expected_dd) — that is the factory-start date, a different fact,
+     and the two only ever shared a name. Anything that seeds the SO's
+     Processing Date from this is seeding it from the day the rep wrote the
+     slip. */
+  slipDate:        string | null;
   customerType:    string;         // snapped customer_type VALUE ('' = none)
   buildingType:    string;         // snapped building_type VALUE ('' = none)
   venueId:         string;         // resolved venue id ('' = no confident match)
@@ -272,7 +278,7 @@ export function reconcileScanPrefill(
     customerSoRef:   ex.customerSoRef ?? '',
     note: noteParts.join('\n'),
     deliveryDate:   ex.deliveryDate && ISO_DATE_RE.test(ex.deliveryDate) ? ex.deliveryDate : null,
-    processingDate: ex.processingDate && ISO_DATE_RE.test(ex.processingDate) ? ex.processingDate : null,
+    slipDate:       ex.slipDate && ISO_DATE_RE.test(ex.slipDate) ? ex.slipDate : null,
     customerType: snapValue(ex.customerTypeMatch?.value ?? '', catalogs.customerType),
     buildingType: snapValue(ex.buildingTypeMatch?.value ?? '', catalogs.buildingType),
     venueId,

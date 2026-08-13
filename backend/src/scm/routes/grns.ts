@@ -773,7 +773,19 @@ async function verifyGrnOverReceipt(
     }
     return null;
   } catch {
-    // Best-effort: a verification read failure must not block the receipt.
+    // Best-effort: a thrown verification failure must not block the receipt.
+    /* ⚠️ AND THE THREE READS ABOVE DROP THEIR `error` — a PostgREST failure is
+       RETURNED, not thrown, so it never reaches this catch. It folds to
+       `?? []`, the cap check finds nothing over, and an over-received line
+       stays committed. That is the 2026-08-13 swallowed-error class ("a guard
+       that says all clear because it could not look", BUG-HISTORY.md), left
+       here DELIBERATELY: reading those errors means 409-ing legitimate
+       receipts on a transient blip, which reverses the best-effort policy this
+       comment states, and that is the owner's call. The sweep fixed the guards
+       whose fail-closed answer costs nothing; this one is listed, not churned.
+       Same note applies to the add-line verifier below and to the over-invoice
+       / over-return twins in purchase-invoices.ts, purchase-returns.ts and the
+       purchase-consignment routes. */
     return null;
   }
 }
@@ -2490,16 +2502,22 @@ grns.patch('/:id/cancel', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* Cancelling reverses stock and re-opens a PO, so it must never reach another
+     company's receipt. Same strict pattern as POST /:id/post above: refuse an
+     unresolved company outright, then pin every read AND every status flip. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // Read → guard → update → reverse (mirrors PO cancel's split-to-avoid-PGRST116).
-  const { data: cur, error: readErr } = await sb.from('grns')
+  const { data: cur, error: readErr } = await scopeToCompanyId(sb.from('grns')
     .select('id, status, grn_number, warehouse_id')
-    .eq('id', id).maybeSingle();
+    .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
-  if (!cur) return c.json({ error: 'not_found' }, 404);
+  if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as { id: string; status: string; grn_number: string; warehouse_id: string | null };
   // Idempotent — already cancelled, echo back without re-reversing.
   if (head.status === 'CANCELLED') {
-    const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+    const { data } = await scopeToCompanyId(sb.from('grns').select(HEADER).eq('id', id), co.companyId).maybeSingle();
     return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
   }
 
@@ -2515,9 +2533,9 @@ grns.patch('/:id/cancel', async (c) => {
      inventory OUT + PO recount below would over-reverse (drive stock negative /
      wrongly re-open a PO). Short-circuit: just flip DRAFT → CANCELLED. */
   if (head.status === 'DRAFT') {
-    const { data } = await sb.from('grns')
+    const { data } = await scopeToCompanyId(sb.from('grns')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .eq('id', id).eq('status', 'DRAFT').select(HEADER).maybeSingle();
+      .eq('id', id).eq('status', 'DRAFT'), co.companyId).select(HEADER).maybeSingle();
     /* Still recorded even though nothing was reversed: the document existed and
        someone voided it, and the note is what tells a reader why no stock moved. */
     await recordEntityAudit(sb, {
@@ -2559,13 +2577,13 @@ grns.patch('/:id/cancel', async (c) => {
      UPDATE excludes CANCELLED so two concurrent cancels race on the row and
      only ONE flips it (the other gets no row back → idempotent no-op), so the
      inventory reversal + PO recount below run exactly once, never double. */
-  const { data: updRow, error: updErr } = await sb.from('grns')
+  const { data: updRow, error: updErr } = await scopeToCompanyId(sb.from('grns')
     .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-    .eq('id', id).neq('status', 'CANCELLED').select('id').maybeSingle();
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
   if (!updRow) {
     // Lost the race — a concurrent cancel already flipped it. Echo idempotently.
-    const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
+    const { data } = await scopeToCompanyId(sb.from('grns').select(HEADER).eq('id', id), co.companyId).maybeSingle();
     return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
   }
 
@@ -3217,13 +3235,20 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
 
+  /* A line edit moves stock and money, so it gets the same strict company gate
+     as the header writes: refuse an unresolved company, and pin the GRN gate
+     read AND the line UPDATE to it. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return c.json({
@@ -3375,7 +3400,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { error } = await sb.from('grn_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('grn_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row.
@@ -3497,13 +3522,18 @@ grns.delete('/:id/items/:itemId', async (c) => {
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
 
+  // Same strict company gate as the line PATCH — a delete reverses stock too.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await sb.from('grns').select('status').eq('id', grnId).maybeSingle();
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
     return c.json({
@@ -3557,7 +3587,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'grn_items', itemId);
 
-  const { error } = await sb.from('grn_items').delete().eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('grn_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the GRN and it still exists. DELETE on

@@ -64,7 +64,7 @@ export const DeliveryFieldsDrawer = ({
      that ONE field into an amendment request while everything else still saves
      directly. Same predicate the SO editor uses (procLockActive). */
   const procLocked = procLockActive({
-    internal_expected_dd: order.internal_expected_dd,
+    processing_date: order.processing_date,
     status: order.status,
     /* Owner 2026-08-12 — the board row carries the PO half of the lock (the
        drawer cannot derive it: the payload has no PO linkage). Omitting it here

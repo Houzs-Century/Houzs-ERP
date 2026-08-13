@@ -26,6 +26,15 @@
 
    Don't add a 5th code here without wiring its branch logic end-to-end
    (POS card behaviour, deposit ledger, payments route, list-grid summary).
+
+   THE ROUTE SCHEMAS READ PAYMENT_METHOD_CODES, they do not re-type it. Until
+   2026-08-13 seven `z.enum(['merchant','transfer','cash','installment'])`
+   literals stood in mfg-sales-orders / consignment-orders / consignment-notes /
+   delivery-orders-mfg / sales-invoices — in a different order from this list,
+   with one of them carrying a "kept in sync with PAYMENT_METHOD_CODES in
+   packages/shared/src/payment-methods.ts" comment naming a path this repo does
+   not have. A 5th code added here would have been rejected by every payments
+   endpoint, which is the failure the paragraph above was written to prevent.
    ---------------------------------------------------------------------------- */
 
 /** Internal method code — persisted on payment rows, branched on in code. */
