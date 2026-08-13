@@ -2,7 +2,7 @@
 // so-to-do-fields — WHAT AN SO CARRIES INTO A DELIVERY ORDER, in one place.
 //
 // WHY THIS FILE EXISTS. There were two SO→DO converters and they disagreed:
-//   · POST /delivery-orders-mfg/from-sos loads the source SO header with NO
+//   · POST /delivery-orders-mfg/from-sos loaded the source SO header with NO
 //     company predicate, deliberately — "a 2990 SO may be converted while
 //     browsing as Houzs" (its own comment), because Delivery Planning is a
 //     shared cross-company queue.
@@ -13,6 +13,12 @@
 //     "Converted from <doc>" badge and the document-flow strip, both derived
 //     from the ?fromSo= query STRING rather than the fetch, kept showing the
 //     linkage. Perfect linkage, blank document.
+//
+// THAT DISAGREEMENT IS OVER, and not the way the first bullet expected: as of
+// 2026-08-13 a conversion never crosses a company, so /from-sos scopes BOTH its
+// source reads and the "2990 SO converted while browsing as Houzs" case simply
+// cannot arise. The shared column set below is still the reason the two sides
+// cannot drift on WHICH fields carry across, which is what this file is for.
 //
 // So the column set and the field mapping live HERE and are imported by both
 // sides. A field added to the DO snapshot is added once.

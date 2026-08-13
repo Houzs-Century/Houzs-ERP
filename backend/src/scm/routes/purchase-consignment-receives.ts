@@ -23,6 +23,7 @@
 // Numbering: PCR-YYMM-NNN.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
@@ -843,31 +844,37 @@ purchaseConsignmentReceives.post('/', async (c) => {
 // ── POST /from-pcos ─────────────────────────────────────────────────────
 // Batch-convert multiple PC Orders into ONE PC Receive (same supplier).
 // Pre-fills qty_received + qty_accepted with the outstanding qty per line.
-purchaseConsignmentReceives.post('/from-pcos', async (c) => {
-  /* company-scope: every source PC Order is refused when it belongs to another
-     company (isCrossCompanySource, below); the by-id writes are this handler's
-     own rollback. Verified 2026-08-13. */
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Order is not visible here at all; the by-id writes are this handler's own
+     rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseConsignmentOrderIds?: string[]; deliveryNoteRef?: string; notes?: string; warehouseId?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const pcoIds = body.purchaseConsignmentOrderIds ?? [];
   if (pcoIds.length === 0) return c.json({ error: 'pco_ids_required' }, 400);
 
-  const { data: pcos, error: pcoErr } = await sb.from('purchase_consignment_orders')
+  /* SOURCE LOAD, SCOPED — the PC Order ids arrive in the request body, so this
+     is the read that decides what this conversion can see. Scoped, so another
+     company's PC Order resolves to NO ROW and falls out at `pcos_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's PC Order gets
+     `pcos_not_found` instead of "that consignment order belongs to 2990, switch
+     company" — the trade the PO's /:id/convert-from-so already records, taken for
+     the same reason: naming the other company needs an UNSCOPED read this
+     handler otherwise never makes. */
+  const { data: pcos, error: pcoErr } = await scopeToCompany(sb.from('purchase_consignment_orders')
     .select('id, pc_number, supplier_id, status, company_id')
-    .in('id', pcoIds);
+    .in('id', pcoIds), c);
   if (pcoErr) return c.json({ error: 'load_failed', reason: pcoErr.message }, 500);
   const pcoList = (pcos ?? []) as Array<{ id: string; pc_number: string; supplier_id: string; status: string; company_id?: number | null }>;
   if (pcoList.length === 0) return c.json({ error: 'pcos_not_found' }, 404);
-
-  /* CROSS-COMPANY CONVERSION (lib/companyScope) — the PC Orders are read by id
-     with no company predicate and the receive below stamps the ACTIVE company,
-     so the other company's consignment order would be received into this
-     company's books and its received_qty advanced from here. */
-  {
-    const foreign = pcoList.find((p) => isCrossCompanySource(p.company_id, c));
-    if (foreign) return c.json(crossCompanyConversionBlocked(foreign.pc_number, foreign.company_id, c), 409);
-  }
 
   const supplierIds = new Set(pcoList.map((p) => p.supplier_id));
   if (supplierIds.size > 1) {
@@ -875,11 +882,15 @@ purchaseConsignmentReceives.post('/from-pcos', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  const { data: items } = await sb.from('purchase_consignment_order_items')
+  // LINE-level half of the same source document — scoped under the same
+  // predicate as the header read above. `.in('purchase_consignment_order_id',
+  // pcoIds)` is id-keyed, and an id-keyed read on a converter is the shape this
+  // sweep exists for, so it carries the predicate rather than inheriting it.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_order_items')
     .select('id, purchase_consignment_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date')
-    .in('purchase_consignment_order_id', pcoIds);
+    .in('purchase_consignment_order_id', pcoIds), c);
   const itemList = ((items ?? []) as unknown as Array<{
     id: string; purchase_consignment_order_id: string; material_kind: string; material_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_centi: number;
@@ -961,7 +972,8 @@ purchaseConsignmentReceives.post('/from-pcos', async (c) => {
   await recomputePcReceiveTotals(sb, h.id);
 
   return c.json({ id: h.id, grnNumber: h.receive_number, pcoCount: pcoList.length, lineCount: itemList.length }, 201);
-});
+};
+purchaseConsignmentReceives.post('/from-pcos', createPcReceiveFromPcosHandler);
 
 purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   // Kept as a no-op endpoint for backward compat — receives are created POSTED.

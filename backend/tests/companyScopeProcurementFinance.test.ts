@@ -16,8 +16,16 @@ import { describe, expect, test } from 'vitest';
 import {
   cancelPurchaseInvoiceHandler,
   createPurchaseInvoiceFromGrnHandler,
+  createPurchaseInvoicesFromGrnItemsHandler,
 } from '../src/scm/routes/purchase-invoices';
 import { createPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
+import { createGrnFromPosHandler, createGrnsFromPoItemsHandler } from '../src/scm/routes/grns';
+import { createPcReceiveFromPcosHandler } from '../src/scm/routes/purchase-consignment-receives';
+import {
+  createPcReturnFromPcReceivesHandler,
+  createPcReturnFromPcReceiveHandler,
+} from '../src/scm/routes/purchase-consignment-returns';
+import { convertSosToPosCore } from '../src/scm/routes/mfg-purchase-orders';
 
 const CO_A = 1; // HOUZS
 const CO_B = 2; // 2990
@@ -97,6 +105,12 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   app.patch('/purchase-invoices/:id/cancel', cancelPurchaseInvoiceHandler as never);
   app.post('/payment-vouchers', createPaymentVoucherHandler as never);
   app.post('/purchase-invoices/from-grn', createPurchaseInvoiceFromGrnHandler as never);
+  app.post('/purchase-invoices/from-grn-items', createPurchaseInvoicesFromGrnItemsHandler as never);
+  app.post('/grns/from-pos', createGrnFromPosHandler as never);
+  app.post('/grns/from-po-items', createGrnsFromPoItemsHandler as never);
+  app.post('/purchase-consignment-receives/from-pcos', createPcReceiveFromPcosHandler as never);
+  app.post('/purchase-consignment-returns/from-pc-receives', createPcReturnFromPcReceivesHandler as never);
+  app.post('/purchase-consignment-returns/from-pc-receive', createPcReturnFromPcReceiveHandler as never);
   return { app, log };
 }
 
@@ -222,40 +236,377 @@ describe('payment voucher allocations (settle a purchase invoice at post time)',
   });
 });
 
-/* ── GRN → PI conversion ──────────────────────────────────────────────────────
-   companyScope.ts states the rule for this shape: a converter whose destination
-   stamps the ACTIVE company must REFUSE a cross-company source, because the
-   conversion would otherwise move the document between the two companies' books.
-   Four converters elsewhere already apply it; none of the purchase-side ones
-   did. Converting the other company's receipt here would mint this company's
-   supplier invoice, book this company's AP, and re-cost this company's lots for
-   goods it never received. */
-describe('GRN -> purchase invoice conversion (mints AP against the active company)', () => {
+/* ── THE CONVERSION SUITE (purchase side) ─────────────────────────────────────
+   A document conversion never crosses a company. As of 2026-08-13 that is held
+   by SCOPING THE SOURCE LOAD rather than by comparing companies after loading it
+   unscoped, so every test below asserts the same two things in the same shape:
+
+     · the other company's source YIELDS NOTHING — the handler answers with its
+       own "I could not find that" error, and no destination document is written;
+     · this company's source is STILL VISIBLE — the handler gets past the source
+       read and stops on a LATER, unrelated rule.
+
+   The second half is the one that matters most. A scope sweep's real failure
+   mode is hiding a company's own documents from its own users, which nobody
+   reports as a bug; it just reads as "the button does nothing".
+
+   These assertions changed shape on 2026-08-13. They used to expect
+   `cross_company_conversion_blocked` — the 409 the REFUSAL mechanism returned.
+   Under the scoped-source mechanism there is no refusal to return, because there
+   is no cross-company row to refuse. The cost is the worse message, and that is
+   deliberate: see the note in each handler and in check-conversion-guards.mjs. */
+
+describe('GRN -> purchase invoice, whole receipt (mints AP against the active company)', () => {
   const grns = (): Row[] => [
     { id: 'grn-a', grn_number: 'HC-GRN-2608-001', company_id: CO_A, status: 'POSTED', supplier_id: 's1', purchase_order_id: null, currency: 'MYR', exchange_rate: 1 },
     { id: 'grn-b', grn_number: '2990-GRN-2608-001', company_id: CO_B, status: 'POSTED', supplier_id: 's9', purchase_order_id: null, currency: 'MYR', exchange_rate: 1 },
   ];
 
-  test("A cannot convert B's goods receipt, and no invoice is created", async () => {
+  test("B's goods receipt is not visible to A — no invoice is created", async () => {
     const t: Record<string, Row[]> = { grns: grns(), grn_items: [], purchase_invoices: [] };
     const res = await jsonPost(harness(t, CO_A).app, '/purchase-invoices/from-grn', { grnId: 'grn-b' });
-    expect(res.status).toBe(409);
-    expect((await res.json() as Row).error).toBe('cross_company_conversion_blocked');
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('grn_not_found');
     expect(t.purchase_invoices).toHaveLength(0);
   });
 
-  test("A's own receipt is not refused by the conversion guard", async () => {
+  test('the SOURCE read carries the company predicate, not just some read', async () => {
+    /* Without this the previous test would also pass on a handler that found the
+       GRN and then failed for an unrelated reason. */
+    const t: Record<string, Row[]> = { grns: grns(), grn_items: [], purchase_invoices: [] };
+    const h = harness(t, CO_A);
+    await jsonPost(h.app, '/purchase-invoices/from-grn', { grnId: 'grn-a' });
+    expect(h.log).toContain('grns.select:eq:company_id');
+    expect(h.log).toContain('grn_items.select:eq:company_id');
+  });
+
+  test("A's own receipt is still convertible", async () => {
     const t: Record<string, Row[]> = { grns: grns(), grn_items: [], purchase_invoices: [] };
     const res = await jsonPost(harness(t, CO_A).app, '/purchase-invoices/from-grn', { grnId: 'grn-a' });
-    /* It stops later, on "nothing_to_invoice" (this fixture has no GRN lines) —
-       what matters is that it got PAST the company guard rather than being
-       refused for belonging to someone else. */
-    expect((await res.json() as Row).error).not.toBe('cross_company_conversion_blocked');
+    /* Stops later, on "nothing_to_invoice" (this fixture has no GRN lines) — the
+       proof wanted: the source WAS found, and the refusal was a downstream rule. */
+    expect((await res.json() as Row).error).toBe('nothing_to_invoice');
   });
 
   test('an unresolved company degrades to allowed, as the three-state contract requires', async () => {
+    // companies master unreadable (pre-migration / cold start): scopeToCompany
+    // adds no predicate at all, so single-company Houzs keeps converting.
     const t: Record<string, Row[]> = { grns: grns(), grn_items: [], purchase_invoices: [] };
     const res = await jsonPost(harness(t, undefined).app, '/purchase-invoices/from-grn', { grnId: 'grn-b' });
-    expect((await res.json() as Row).error).not.toBe('cross_company_conversion_blocked');
+    expect((await res.json() as Row).error).not.toBe('grn_not_found');
+  });
+});
+
+describe('GRN -> purchase invoice, picked lines', () => {
+  /* The parent GRN rides a `!inner` embed, so the fixture row carries it the way
+     PostgREST returns it. Scoping grn_items therefore closes BOTH ends. */
+  const grnItems = (): Row[] => [
+    {
+      id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
+      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', discount_centi: 0, unit_price_centi: 100,
+      grn: { id: 'grn-a', grn_number: 'HC-GRN-2608-001', supplier_id: 's1', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_A },
+    },
+    {
+      id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
+      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', discount_centi: 0, unit_price_centi: 100,
+      grn: { id: 'grn-b', grn_number: '2990-GRN-2608-001', supplier_id: 's9', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_B },
+    },
+  ];
+
+  test("B's receipt line is not visible to A", async () => {
+    const t: Record<string, Row[]> = { grn_items: grnItems(), purchase_invoices: [], purchase_invoice_items: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-invoices/from-grn-items', {
+      picks: [{ grnItemId: 'gi-b', qty: 0 }],
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json() as Row).error).toBe('item_not_found');
+    expect(t.purchase_invoices).toHaveLength(0);
+  });
+
+  test("A's own receipt line IS found — it fails the NEXT rule instead", async () => {
+    /* qty 0 on both requests, so the only difference between this test and the
+       one above is whether the source row was visible. `item_not_found` is
+       checked BEFORE `qty_must_be_positive`, so the two errors discriminate
+       exactly on that. */
+    const t: Record<string, Row[]> = { grn_items: grnItems(), purchase_invoices: [], purchase_invoice_items: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-invoices/from-grn-items', {
+      picks: [{ grnItemId: 'gi-a', qty: 0 }],
+    });
+    expect((await res.json() as Row).error).toBe('qty_must_be_positive');
+  });
+
+  test('the source read carries the company predicate', async () => {
+    const t: Record<string, Row[]> = { grn_items: grnItems(), purchase_invoices: [] };
+    const h = harness(t, CO_A);
+    await jsonPost(h.app, '/purchase-invoices/from-grn-items', { picks: [{ grnItemId: 'gi-a', qty: 0 }] });
+    expect(h.log).toContain('grn_items.select:eq:company_id');
+  });
+});
+
+/* ── PO -> GRN ────────────────────────────────────────────────────────────────
+   Receiving the other company's purchase order would write stock IN — and the
+   cost behind it — into this company's inventory and books. */
+describe('PO -> GRN, whole purchase orders', () => {
+  const pos = (): Row[] => [
+    { id: 'po-a', po_number: 'HC-PO-2608-001', company_id: CO_A, supplier_id: 's1', status: 'SUBMITTED', currency: 'MYR' },
+    { id: 'po-b', po_number: '2990-PO-2608-001', company_id: CO_B, supplier_id: 's9', status: 'SUBMITTED', currency: 'MYR' },
+  ];
+
+  test("B's purchase order is not visible to A — no GRN is created", async () => {
+    const t: Record<string, Row[]> = { purchase_orders: pos(), purchase_order_items: [], grns: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/grns/from-pos', { purchaseOrderIds: ['po-b'] });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('pos_not_found');
+    expect(t.grns).toHaveLength(0);
+  });
+
+  test("A's own purchase order is still convertible", async () => {
+    const t: Record<string, Row[]> = { purchase_orders: pos(), purchase_order_items: [], grns: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/grns/from-pos', { purchaseOrderIds: ['po-a'] });
+    // Past the source read and past the receivable-status gate; stops on the
+    // fixture having no outstanding lines.
+    expect((await res.json() as Row).error).toBe('nothing_outstanding');
+  });
+
+  test('BOTH source reads carry the company predicate — header and lines', async () => {
+    const t: Record<string, Row[]> = { purchase_orders: pos(), purchase_order_items: [], grns: [] };
+    const h = harness(t, CO_A);
+    await jsonPost(h.app, '/grns/from-pos', { purchaseOrderIds: ['po-a'] });
+    expect(h.log).toContain('purchase_orders.select:eq:company_id');
+    expect(h.log).toContain('purchase_order_items.select:eq:company_id');
+  });
+
+  test('an unresolved company degrades to allowed', async () => {
+    const t: Record<string, Row[]> = { purchase_orders: pos(), purchase_order_items: [], grns: [] };
+    const res = await jsonPost(harness(t, undefined).app, '/grns/from-pos', { purchaseOrderIds: ['po-b'] });
+    expect((await res.json() as Row).error).not.toBe('pos_not_found');
+  });
+});
+
+describe('PO -> GRN, picked lines', () => {
+  const poItems = (): Row[] => [
+    {
+      id: 'poi-a', purchase_order_id: 'po-a', company_id: CO_A, qty: 5, received_qty: 0,
+      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', unit_price_centi: 100,
+      po: { id: 'po-a', po_number: 'HC-PO-2608-001', supplier_id: 's1', status: 'SUBMITTED', purchase_location_id: 'wh1', currency: 'MYR' },
+    },
+    {
+      id: 'poi-b', purchase_order_id: 'po-b', company_id: CO_B, qty: 5, received_qty: 0,
+      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', unit_price_centi: 100,
+      po: { id: 'po-b', po_number: '2990-PO-2608-001', supplier_id: 's9', status: 'SUBMITTED', purchase_location_id: 'wh9', currency: 'MYR' },
+    },
+  ];
+
+  test("B's PO line is not visible to A", async () => {
+    const t: Record<string, Row[]> = { purchase_order_items: poItems(), grns: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/grns/from-po-items', { picks: [{ poItemId: 'poi-b', qty: 0 }] });
+    expect(res.status).toBe(400);
+    expect((await res.json() as Row).error).toBe('item_not_found');
+    expect(t.grns).toHaveLength(0);
+  });
+
+  test("A's own PO line IS found — it fails the NEXT rule instead", async () => {
+    const t: Record<string, Row[]> = { purchase_order_items: poItems(), grns: [] };
+    const res = await jsonPost(harness(t, CO_A).app, '/grns/from-po-items', { picks: [{ poItemId: 'poi-a', qty: 0 }] });
+    expect((await res.json() as Row).error).toBe('qty_must_be_positive');
+  });
+
+  test('the source read carries the company predicate', async () => {
+    const t: Record<string, Row[]> = { purchase_order_items: poItems(), grns: [] };
+    const h = harness(t, CO_A);
+    await jsonPost(h.app, '/grns/from-po-items', { picks: [{ poItemId: 'poi-a', qty: 0 }] });
+    expect(h.log).toContain('purchase_order_items.select:eq:company_id');
+  });
+});
+
+/* ── Consignment: PC Order -> PC Receive, PC Receive -> PC Return ─────────────
+   Receiving or returning the other company's consigned goods moves that
+   company's received_qty and books the stock movement here. */
+describe('PC Order -> PC Receive', () => {
+  const pcos = (): Row[] => [
+    { id: 'pco-a', pc_number: 'HC-PC-2608-001', company_id: CO_A, supplier_id: 's1', status: 'SUBMITTED' },
+    { id: 'pco-b', pc_number: '2990-PC-2608-001', company_id: CO_B, supplier_id: 's9', status: 'SUBMITTED' },
+  ];
+
+  test("B's consignment order is not visible to A — no receive is created", async () => {
+    const t: Record<string, Row[]> = {
+      purchase_consignment_orders: pcos(), purchase_consignment_order_items: [],
+      purchase_consignment_receives: [],
+    };
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-receives/from-pcos', {
+      purchaseConsignmentOrderIds: ['pco-b'],
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('pcos_not_found');
+    expect(t.purchase_consignment_receives).toHaveLength(0);
+  });
+
+  test("A's own consignment order is still convertible", async () => {
+    const t: Record<string, Row[]> = {
+      purchase_consignment_orders: pcos(), purchase_consignment_order_items: [],
+      purchase_consignment_receives: [],
+    };
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-receives/from-pcos', {
+      purchaseConsignmentOrderIds: ['pco-a'],
+    });
+    expect((await res.json() as Row).error).toBe('nothing_outstanding');
+  });
+
+  test('BOTH source reads carry the company predicate — header and lines', async () => {
+    const t: Record<string, Row[]> = {
+      purchase_consignment_orders: pcos(), purchase_consignment_order_items: [],
+      purchase_consignment_receives: [],
+    };
+    const h = harness(t, CO_A);
+    await jsonPost(h.app, '/purchase-consignment-receives/from-pcos', { purchaseConsignmentOrderIds: ['pco-a'] });
+    expect(h.log).toContain('purchase_consignment_orders.select:eq:company_id');
+    expect(h.log).toContain('purchase_consignment_order_items.select:eq:company_id');
+  });
+});
+
+describe('PC Receive -> PC Return', () => {
+  const receives = (): Row[] => [
+    { id: 'pcr-a', receive_number: 'HC-PCR-2608-001', company_id: CO_A, supplier_id: 's1', purchase_consignment_order_id: null, status: 'POSTED' },
+    { id: 'pcr-b', receive_number: '2990-PCR-2608-001', company_id: CO_B, supplier_id: 's9', purchase_consignment_order_id: null, status: 'POSTED' },
+  ];
+  /* qty_rejected 0 and qty_accepted fully returned, so BOTH converters stop on
+     their own "nothing left to return" rule once the source is visible. */
+  const receiveItems = (): Row[] => [
+    { id: 'pcri-a', pc_receive_id: 'pcr-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'pcri-b', pc_receive_id: 'pcr-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_centi: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+  ];
+  const tables = (): Record<string, Row[]> => ({
+    purchase_consignment_receives: receives(),
+    purchase_consignment_receive_items: receiveItems(),
+    purchase_consignment_returns: [],
+    purchase_consignment_return_items: [],
+  });
+
+  test("batch: B's receive is not visible to A — no return is created", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-returns/from-pc-receives', {
+      pcReceiveIds: ['pcr-b'],
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('pc_receives_not_found');
+    expect(t.purchase_consignment_returns).toHaveLength(0);
+  });
+
+  test("batch: A's own receive is still convertible", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-returns/from-pc-receives', {
+      pcReceiveIds: ['pcr-a'],
+    });
+    expect((await res.json() as Row).error).toBe('no_rejected_qty');
+  });
+
+  test("single: B's receive is not visible to A — no return is created", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-returns/from-pc-receive', {
+      pcReceiveId: 'pcr-b',
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('pc_receive_not_found');
+    expect(t.purchase_consignment_returns).toHaveLength(0);
+  });
+
+  test("single: A's own receive is still convertible", async () => {
+    const t = tables();
+    const res = await jsonPost(harness(t, CO_A).app, '/purchase-consignment-returns/from-pc-receive', {
+      pcReceiveId: 'pcr-a',
+    });
+    expect((await res.json() as Row).error).toBe('nothing_to_return');
+  });
+
+  test('BOTH source reads carry the company predicate, on both converters', async () => {
+    for (const url of [
+      '/purchase-consignment-returns/from-pc-receives',
+      '/purchase-consignment-returns/from-pc-receive',
+    ]) {
+      const h = harness(tables(), CO_A);
+      await jsonPost(h.app, url, { pcReceiveIds: ['pcr-a'], pcReceiveId: 'pcr-a' });
+      expect(h.log).toContain('purchase_consignment_receives.select:eq:company_id');
+      expect(h.log).toContain('purchase_consignment_receive_items.select:eq:company_id');
+    }
+  });
+});
+
+/* ── SO -> PO ─────────────────────────────────────────────────────────────────
+   Driven through convertSosToPosCore rather than the route, because the core is
+   the single authority both the HTTP picker and the Procurement Agent's headless
+   createDraftPosFromPicks run — testing the route would leave the agent path
+   unproven, and the agent supplies its own reconstructed company context. */
+describe('SO -> PO (convertSosToPosCore, shared by the picker and the agent)', () => {
+  const soItems = (): Row[] => [
+    {
+      id: 'soi-a', doc_no: 'HC-SO-2608-001', company_id: CO_A, item_code: 'M1', description: null,
+      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_centi: 100,
+      line_delivery_date: null, warehouse_id: null, photo_urls: null, cancelled: false,
+      so: { sales_location: null, customer_delivery_date: null },
+    },
+    {
+      id: 'soi-b', doc_no: '2990-SO-2608-001', company_id: CO_B, item_code: 'M9', description: null,
+      item_group: null, variants: null, qty: 5, po_qty_picked: 0, unit_price_centi: 100,
+      line_delivery_date: null, warehouse_id: null, photo_urls: null, cancelled: false,
+      so: { sales_location: null, customer_delivery_date: null },
+    },
+  ];
+
+  const runCore = (tables: Record<string, Row[]>, companyId: number | undefined, body: unknown) => {
+    const log: string[] = [];
+    const sb = {
+      from: (t: string) => new FakeQuery((tables[t] ||= []), t, log),
+      rpc: async () => ({ data: true, error: null }),
+    };
+    const get = (key: string): unknown => {
+      if (key === 'supabase') return sb;
+      if (key === 'user') return { id: 'u1' };
+      if (key === 'houzsUser') return undefined;
+      if (key === 'companyId') return companyId;
+      if (key === 'allowedCompanyIds') return undefined;
+      if (key === 'companyCode') return companyId === CO_B ? '2990' : 'HOUZS';
+      return undefined;
+    };
+    return convertSosToPosCore({
+      req: { json: async () => body },
+      get: get as never,
+      env: { DB: undefined } as never,
+      json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
+    });
+  };
+
+  test("B's SO line is not visible to A — no PO is raised", async () => {
+    const t: Record<string, Row[]> = { mfg_sales_order_items: soItems(), purchase_orders: [] };
+    const out = await runCore(t, CO_A, { picks: [{ soItemId: 'soi-b', qty: 0 }] });
+    expect(out.status).toBe(400);
+    expect(out.body.error).toBe('item_not_found');
+    expect(t.purchase_orders).toHaveLength(0);
+  });
+
+  test("A's own SO line IS found — it fails the NEXT rule instead", async () => {
+    const t: Record<string, Row[]> = { mfg_sales_order_items: soItems(), purchase_orders: [] };
+    const out = await runCore(t, CO_A, { picks: [{ soItemId: 'soi-a', qty: 0 }] });
+    expect(out.body.error).toBe('qty_must_be_positive');
+  });
+
+  test('the legacy (doc_no, item_code) branch is scoped too', async () => {
+    /* This branch FABRICATES a line when nothing matches, so an unscoped read
+       returning the other company's row would have been used verbatim — qty and
+       price copied off another company's order. Scoped, it simply does not
+       match, and the fabricated row carries only what the caller sent. */
+    const t: Record<string, Row[]> = { mfg_sales_order_items: soItems(), purchase_orders: [] };
+    const out = await runCore(t, CO_A, {
+      soItems: [{ soDocNo: '2990-SO-2608-001', itemCode: 'M9', itemName: 'Mat', qty: 1 }],
+    });
+    // Falls through to the "no orderable SO" / unbound-SKU path rather than
+    // pricing off 2990's line. What must NOT happen is a PO row.
+    expect(t.purchase_orders).toHaveLength(0);
+    expect(out.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test('an unresolved company degrades to allowed', async () => {
+    const t: Record<string, Row[]> = { mfg_sales_order_items: soItems(), purchase_orders: [] };
+    const out = await runCore(t, undefined, { picks: [{ soItemId: 'soi-b', qty: 0 }] });
+    expect(out.body.error).not.toBe('item_not_found');
   });
 });

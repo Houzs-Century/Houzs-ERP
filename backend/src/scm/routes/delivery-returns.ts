@@ -964,7 +964,15 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
    minted under the ACTIVE company's numbering, so inheriting would leave the
    doc number and the company_id disagreeing. Unresolved company / NULL source
    company degrade to allowed — the three-state sentinel, as everywhere. */
-/* DELEGATES to crossCompanySourceRefusal (scm/lib/companyScope.ts) since
+/* ONE CALLER LEFT: the bare-create POST / below. The /from-do + /from-dos
+   converter used this too and no longer does — it scopes its source reads
+   instead, so a cross-company DO is not visible to it and a refusal there could
+   never fire. POST / keeps the refusal because its source DO arrives as an
+   OPTIONAL body field on a path that also serves manual, DO-less returns: there
+   is no single source read to scope, and the ids come from two places (the
+   header deliveryOrderId and each line's doItemId).
+
+   DELEGATES to crossCompanySourceRefusal (scm/lib/companyScope.ts) since
    2026-08-13. This was its own copy of the rule, and grns.ts had a third —
    three implementations of one invariant, each named differently, which is
    precisely why four conversions were guarded and seven were not with nothing
@@ -1174,7 +1182,11 @@ deliveryReturns.post('/', async (c) => {
         set). recomputeTotals, then increaseInventoryForReturn (idempotent).
 
    Mounted at both /from-do and /from-dos so existing callers keep working. */
-const convertDoLinesToReturn = async (c: any) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const convertDoLinesToReturn = async (c: any) => {
   let body: { picks?: Array<{ doItemId?: string; qty?: number; qtyReturned?: number; condition?: string }> };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -1195,10 +1207,26 @@ const convertDoLinesToReturn = async (c: any) => {
 
   // 1. Resolve each picked DO line → its parent DO, then derive remaining.
   const pickedIds = [...pickQtyById.keys()];
-  const { data: pickedItemRows, error: pErr } = await sb
+  /* SOURCE LOAD, SCOPED — the picked DO LINES are where the caller's ids enter
+     this converter, so this is the read that decides what a conversion can see.
+     Scoped, so another company's doItemId resolves to NO ROW: the invariant is
+     structural rather than a comparison a later edit could drop.
+     REPLACED the crossCompanyDoSourceBlocked call that stood right below and can
+     no longer fire — doIds is now derived only from rows this predicate returned,
+     and the DO header read below is scoped too.
+
+     THE COST: a hand-crafted request naming the other company's DO line gets
+     `do_item_not_found` instead of "that delivery belongs to 2990, switch
+     company" — true from this company's view, unhelpful from the operator's.
+     Accepted for the same reason the PO's /:id/convert-from-so accepts it:
+     naming the other company would need an UNSCOPED read of a document this
+     handler otherwise never touches. The bare-create POST / above still uses the
+     refusal, because there the source DO arrives as a body field on a path that
+     also serves manual returns with no DO at all. */
+  const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
     .from('delivery_order_items')
     .select('id, delivery_order_id')
-    .in('id', pickedIds);
+    .in('id', pickedIds), c);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const idToDo = new Map<string, string>();
   for (const r of (pickedItemRows ?? []) as Array<{ id: string; delivery_order_id: string }>) idToDo.set(r.id, r.delivery_order_id);
@@ -1206,13 +1234,6 @@ const convertDoLinesToReturn = async (c: any) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
-  /* CROSS-COMPANY GUARD — see crossCompanyDoSourceBlocked. insertHeader below
-     stamps the ACTIVE company and nextNum mints under the ACTIVE prefix, so a
-     2990 DO returned from the Houzs view would become a Houzs return. */
-  {
-    const blocked = await crossCompanyDoSourceBlocked(sb, c, doIds);
-    if (blocked) return c.json(blocked, 409);
-  }
   const remainingMap = await doReturnableRemaining(sb, doIds);
 
   // 2a. Same-customer guard — every picked line must share ONE customer.
@@ -1268,14 +1289,16 @@ const convertDoLinesToReturn = async (c: any) => {
   const firstDoId = sortedPicks[0]!.deliveryOrderId;
   const distinctDoNumbers = [...new Set(sortedPicks.map((l) => l.doNumber))].sort();
 
-  // Pull the FIRST DO's header for the return header snapshot.
-  const { data: doHeader, error: dhErr } = await sb.from('delivery_orders')
+  // Pull the FIRST DO's header for the return header snapshot. SCOPED: the
+  // header is the second half of the same source document, so it is read under
+  // the same predicate as the lines above.
+  const { data: doHeader, error: dhErr } = await scopeToCompany(sb.from('delivery_orders')
     .select('id, do_number, debtor_code, debtor_name, phone, email, salesperson_id, agent, ' +
             'customer_type, building_type, branding, venue, venue_id, ref, customer_so_no, ' +
             'sales_location, customer_state, customer_country, address1, address2, city, state, postcode, ' +
             'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
             'warehouse_id, currency, note')
-    .eq('id', firstDoId).maybeSingle();
+    .eq('id', firstDoId), c).maybeSingle();
   if (dhErr) return c.json({ error: 'load_failed', reason: dhErr.message }, 500);
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
   const doh = doHeader as unknown as Record<string, unknown>;

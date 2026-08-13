@@ -33,7 +33,10 @@ import { describe, expect, test } from 'vitest';
 import {
   postSalesInvoicePaymentHandler,
   appendDoLinesToSalesInvoiceHandler,
+  createSalesInvoiceFromDoLinesHandler,
 } from '../src/scm/routes/sales-invoices';
+import { createDoFromSoLinesHandler } from '../src/scm/routes/delivery-orders-mfg';
+import { convertDoLinesToReturn } from '../src/scm/routes/delivery-returns';
 
 const CO_A = 1; // HOUZS
 const CO_B = 2; // 2990
@@ -113,6 +116,9 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   });
   app.post('/sales-invoices/:id/payments', postSalesInvoicePaymentHandler as never);
   app.post('/sales-invoices/:id/items/from-do/:doId', appendDoLinesToSalesInvoiceHandler as never);
+  app.post('/sales-invoices/from-dos', createSalesInvoiceFromDoLinesHandler as never);
+  app.post('/delivery-orders-mfg/from-sos', createDoFromSoLinesHandler as never);
+  app.post('/delivery-returns/from-dos', convertDoLinesToReturn as never);
   return { app, log };
 }
 
@@ -166,8 +172,25 @@ describe('SI payment create is company-scoped', () => {
   });
 });
 
-// ── POST /:id/items/from-do/:doId — the fifth DO -> SI converter ─────────────
-describe('SI append-from-DO refuses a cross-company source', () => {
+/* ── THE CONVERSION SUITE (sales side) ────────────────────────────────────────
+   SO -> DO -> SI is one chain and DO -> DR hangs off its middle, so all four
+   converters are tested together here, on the one harness that already carries
+   the invoice half. A document conversion never crosses a company; as of
+   2026-08-13 that is held by SCOPING THE SOURCE LOAD rather than by comparing
+   companies after loading it unscoped, so each test asserts the same pair:
+
+     · the other company's source YIELDS NOTHING — the handler answers with its
+       own "I could not find that", and no destination document is written;
+     · this company's source is STILL VISIBLE — it gets past the source read and
+       stops on a LATER, unrelated rule.
+
+   These assertions changed shape on 2026-08-13: they used to expect
+   `cross_company_conversion_blocked`, the 409 the REFUSAL mechanism returned.
+   There is no refusal to return now, because there is no cross-company row to
+   refuse. The message is worse and that is the recorded cost of the trade. */
+
+// ── POST /:id/items/from-do/:doId — DO -> SI, the PARTIAL form ───────────────
+describe('SI append-from-DO cannot see a cross-company source', () => {
   const invoices = (): Row[] => [
     { id: 'si-a', invoice_number: 'HC-SI-2608-001', company_id: CO_A, status: 'DRAFT' },
     { id: 'si-b', invoice_number: '2990-SI-2608-001', company_id: CO_B, status: 'DRAFT' },
@@ -177,23 +200,18 @@ describe('SI append-from-DO refuses a cross-company source', () => {
     { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED' },
   ];
 
-  test("A cannot append its own invoice from B's delivery order", async () => {
+  test("B's delivery order is not visible to A's invoice", async () => {
     const t: Record<string, Row[]> = {
       sales_invoices: invoices(), delivery_orders: dos(),
       delivery_order_items: [], sales_invoice_items: [],
     };
     const res = await postJson(harness(t, CO_A).app, '/sales-invoices/si-a/items/from-do/do-b');
-    expect(res.status).toBe(409);
-    const body = await res.json() as Row;
-    expect(body.error).toBe('cross_company_conversion_blocked');
-    // Names the document and both companies — the operator's next question.
-    expect(body.sourceDocNo).toBe('2990-DO-2608-001');
-    expect(body.sourceCompany).toBe('2990');
-    expect(body.activeCompany).toBe('HOUZS');
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('delivery_order_not_found');
     expect(t.sales_invoice_items).toHaveLength(0);
   });
 
-  test("A cannot append B's invoice at all — the header read is scoped", async () => {
+  test("A cannot append B's invoice at all — the DESTINATION read is scoped too", async () => {
     const t: Record<string, Row[]> = {
       sales_invoices: invoices(), delivery_orders: dos(),
       delivery_order_items: [], sales_invoice_items: [],
@@ -203,9 +221,9 @@ describe('SI append-from-DO refuses a cross-company source', () => {
     expect(t.sales_invoice_items).toHaveLength(0);
   });
 
-  test('a SAME-company append gets past both gates', async () => {
+  test('a SAME-company append gets past both ends', async () => {
     // No DO lines to copy, so the handler reaches its own do_fully_invoiced
-    // refusal — which is exactly the proof wanted: neither company gate fired.
+    // refusal — which is exactly the proof wanted: neither end hid anything.
     const t: Record<string, Row[]> = {
       sales_invoices: invoices(), delivery_orders: dos(),
       delivery_order_items: [], sales_invoice_items: [],
@@ -215,12 +233,195 @@ describe('SI append-from-DO refuses a cross-company source', () => {
     expect((await res.json() as Row).error).toBe('do_fully_invoiced');
   });
 
+  test('BOTH source reads carry the company predicate — header and lines', async () => {
+    const t: Record<string, Row[]> = {
+      sales_invoices: invoices(), delivery_orders: dos(),
+      delivery_order_items: [], sales_invoice_items: [],
+    };
+    const h = harness(t, CO_A);
+    await postJson(h.app, '/sales-invoices/si-a/items/from-do/do-a');
+    expect(h.log).toContain('delivery_orders.select:eq:company_id');
+    expect(h.log).toContain('delivery_order_items.select:eq:company_id');
+  });
+
   test('an UNRESOLVED company degrades to allowed, matching the other converters', async () => {
     const t: Record<string, Row[]> = {
       sales_invoices: invoices(), delivery_orders: dos(),
       delivery_order_items: [], sales_invoice_items: [],
     };
     const res = await postJson(harness(t, undefined).app, '/sales-invoices/si-a/items/from-do/do-b');
-    expect((await res.json() as Row).error).not.toBe('cross_company_conversion_blocked');
+    expect((await res.json() as Row).error).not.toBe('delivery_order_not_found');
+  });
+});
+
+/* ── DO -> SI, picked lines ───────────────────────────────────────────────────
+   The money hop: this mints the invoice, posts the revenue and the AR. */
+describe('SI convert-from-DO-lines cannot see a cross-company source', () => {
+  const dos = (): Row[] => [
+    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
+    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
+  ];
+  const doItems = (): Row[] => [
+    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+  ];
+  const tables = (): Record<string, Row[]> => ({
+    delivery_orders: dos(), delivery_order_items: doItems(),
+    sales_invoices: [], sales_invoice_items: [], delivery_returns: [], delivery_return_items: [],
+  });
+
+  test("B's delivery line is not visible to A — no invoice is minted", async () => {
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/sales-invoices/from-dos', {
+      picks: [{ doItemId: 'doi-b', qty: 1 }],
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('do_item_not_found');
+    expect(t.sales_invoices).toHaveLength(0);
+  });
+
+  test("A's own delivery line IS visible — its live remaining is derived", async () => {
+    /* Ask for MORE than the line's remaining. Reaching `over_remaining` proves
+       the source line was found AND its Pending pool computed off the source
+       document — a deeper proof than merely getting a different 404. */
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/sales-invoices/from-dos', {
+      picks: [{ doItemId: 'doi-a', qty: 99 }],
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json() as Row).error).toBe('over_remaining');
+    expect(t.sales_invoices).toHaveLength(0);
+  });
+
+  test('the source line read carries the company predicate', async () => {
+    const t = tables();
+    const h = harness(t, CO_A);
+    await postJson(h.app, '/sales-invoices/from-dos', { picks: [{ doItemId: 'doi-a', qty: 99 }] });
+    expect(h.log).toContain('delivery_order_items.select:eq:company_id');
+  });
+
+  test('an UNRESOLVED company degrades to allowed', async () => {
+    const t = tables();
+    const res = await postJson(harness(t, undefined).app, '/sales-invoices/from-dos', {
+      picks: [{ doItemId: 'doi-b', qty: 1 }],
+    });
+    expect((await res.json() as Row).error).not.toBe('do_item_not_found');
+  });
+});
+
+/* ── SO -> DO ─────────────────────────────────────────────────────────────────
+   The FIRST hop. This one is worth its own note: until 2026-08-13 the DO header
+   insert INHERITED the source SO's company on purpose, so the shared Delivery
+   Planning queue could cut a 2990 DO while browsing as Houzs — while the DO
+   LINES were stamped with the ACTIVE company, which would have left header and
+   lines disagreeing. The conversion no longer crosses a company at all, so the
+   inherit can only ever resolve to the active company and the two agree. */
+describe('DO convert-from-SO-lines cannot see a cross-company source', () => {
+  const sos = (): Row[] => [
+    /* Both DRAFT so the deliverability gate — the first rule AFTER the source
+       read — is what stops every request that gets that far. It is the marker
+       for "the source was visible". */
+    { doc_no: 'HC-SO-2608-001', company_id: CO_A, status: 'DRAFT', debtor_code: 'C1', debtor_name: 'Cust' },
+    { doc_no: '2990-SO-2608-001', company_id: CO_B, status: 'DRAFT', debtor_code: 'C9', debtor_name: 'Other' },
+  ];
+  const soItems = (): Row[] => [
+    { id: 'soi-a', doc_no: 'HC-SO-2608-001', company_id: CO_A },
+    { id: 'soi-b', doc_no: '2990-SO-2608-001', company_id: CO_B },
+  ];
+  const tables = (): Record<string, Row[]> => ({
+    mfg_sales_orders: sos(), mfg_sales_order_items: soItems(), delivery_orders: [], delivery_order_items: [],
+  });
+
+  test("B's SO line is not visible to A — no delivery order is cut", async () => {
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/delivery-orders-mfg/from-sos', {
+      picks: [{ soItemId: 'soi-b', qty: 1 }],
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('so_item_not_found');
+    expect(t.delivery_orders).toHaveLength(0);
+  });
+
+  test("A's own SO line IS found — it fails the NEXT rule instead", async () => {
+    /* HC-SO-2608-001 is a DRAFT, so the deliverability gate refuses it. That gate
+       runs AFTER the source read, so reaching it proves the line was visible. */
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/delivery-orders-mfg/from-sos', {
+      picks: [{ soItemId: 'soi-a', qty: 1 }],
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json() as Row).error).toBe('so_not_deliverable');
+    expect(t.delivery_orders).toHaveLength(0);
+  });
+
+  test('the source line read carries the company predicate', async () => {
+    const t = tables();
+    const h = harness(t, CO_A);
+    await postJson(h.app, '/delivery-orders-mfg/from-sos', { picks: [{ soItemId: 'soi-a', qty: 1 }] });
+    expect(h.log).toContain('mfg_sales_order_items.select:eq:company_id');
+  });
+
+  test('an UNRESOLVED company degrades to allowed', async () => {
+    /* Reaching the deliverability gate on a 2990 line is the proof: with no
+       resolvable company, scopeToCompany adds no predicate and single-company
+       Houzs keeps converting exactly as it did pre-migration. */
+    const t = tables();
+    const res = await postJson(harness(t, undefined).app, '/delivery-orders-mfg/from-sos', {
+      picks: [{ soItemId: 'soi-b', qty: 1 }],
+    });
+    expect((await res.json() as Row).error).toBe('so_not_deliverable');
+  });
+});
+
+/* ── DO -> DR ─────────────────────────────────────────────────────────────────
+   A return writes stock back IN and re-opens the source SO, so a cross-company
+   source moves the other company's inventory under this company's document. */
+describe('DR convert-from-DO-lines cannot see a cross-company source', () => {
+  const dos = (): Row[] => [
+    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
+    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
+  ];
+  const doItems = (): Row[] => [
+    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+  ];
+  const tables = (): Record<string, Row[]> => ({
+    delivery_orders: dos(), delivery_order_items: doItems(),
+    delivery_returns: [], delivery_return_items: [], sales_invoice_items: [], sales_invoices: [],
+  });
+
+  test("B's delivery line is not visible to A — no return is created", async () => {
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/delivery-returns/from-dos', {
+      picks: [{ doItemId: 'doi-b', qty: 1 }],
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json() as Row).error).toBe('do_item_not_found');
+    expect(t.delivery_returns).toHaveLength(0);
+  });
+
+  test("A's own delivery line IS visible — its returnable remaining is derived", async () => {
+    const t = tables();
+    const res = await postJson(harness(t, CO_A).app, '/delivery-returns/from-dos', {
+      picks: [{ doItemId: 'doi-a', qty: 99 }],
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json() as Row).error).toBe('over_remaining');
+    expect(t.delivery_returns).toHaveLength(0);
+  });
+
+  test('the source line read carries the company predicate', async () => {
+    const t = tables();
+    const h = harness(t, CO_A);
+    await postJson(h.app, '/delivery-returns/from-dos', { picks: [{ doItemId: 'doi-a', qty: 99 }] });
+    expect(h.log).toContain('delivery_order_items.select:eq:company_id');
+  });
+
+  test('an UNRESOLVED company degrades to allowed', async () => {
+    const t = tables();
+    const res = await postJson(harness(t, undefined).app, '/delivery-returns/from-dos', {
+      picks: [{ doItemId: 'doi-b', qty: 1 }],
+    });
+    expect((await res.json() as Row).error).not.toBe('do_item_not_found');
   });
 });

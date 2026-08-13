@@ -5,51 +5,66 @@
 // THE INVARIANT, stated once so it stops being re-derived per route:
 //
 //     A converter reads a SOURCE document by id and writes a NEW document from
-//     it. If it does not compare the source's company_id to the active company,
-//     it silently RE-PARENTS money: the source company's goods, revenue or
-//     liability land in the other company's books, under the other company's
-//     document number, and nothing on screen says so.
+//     it. If the source is another company's, the conversion silently
+//     RE-PARENTS money: the source company's goods, revenue or liability land in
+//     the other company's books, under the other company's document number, and
+//     nothing on screen says so.
 //
-// That is not a per-route judgement call. It is the same rule every ERP applies
-// to every conversion, and this repo already believed it — `companyScope.ts`
-// carries `isCrossCompanySource` + `crossCompanyConversionBlocked` and FOUR
-// conversions used them (SO->DO, SO->SI, DO->SI, PO->GRN).
+// THE MECHANISM CHANGED ON 2026-08-13, AND THAT IS WHAT THIS FILE NOW CHECKS.
 //
-// WHY THIS SCRIPT EXISTS. On 2026-08-13 a module sweep found SEVEN MORE
-// conversions that used neither:
+// There were two ways to hold the invariant:
 //
-//     DO->SI (the PARTIAL form)    a 2990 delivery folded into a Houzs invoice;
-//                                  postSiRevenue then posted 2990's revenue to
-//                                  Houzs' books
-//     DO->DR                       a 2990 delivery returned as a HOUZS return,
-//                                  Houzs doc number, stock written back to the
-//                                  wrong ledger
-//     SO->PO                       a HOUZS purchase order + supplier commitment
-//                                  minted from a 2990 SO line
-//     GRN->PI, GRN->PR             a receipt re-companied into this company's
-//                                  AP; stock drawn OUT of the other company's
-//                                  warehouse under this company's refund
-//     PCO->PC-receive              receiving the other company's consignment
-//     PC-receive->PC-return        returning the other company's consigned goods
+//   A — REFUSE.      Load the source UNSCOPED, compare its company_id to the
+//                    active one, return 409 "that document belongs to 2990,
+//                    switch company". This is what every converter did, via
+//                    `crossCompanySourceRefusal` in scm/lib/companyScope.ts, and
+//                    what the first version of this script asserted: 16
+//                    conversions, 0 unguarded.
 //
-// Four guarded, seven unguarded, and NOTHING IN THE CODE SAID WHICH WAS WHICH.
-// The company-scope checker could not see them either: a converter usually
-// scopes its own destination document perfectly well, so it looks scoped. What
-// it fails to scope is the SOURCE.
+//   B — CANNOT SEE.  Load the source SCOPED, so a cross-company source is not
+//                    there at all.
 //
-// So the fix is not seven patches. It is this: the invariant is now mechanical,
-// and a new converter cannot ship without it.
+// The owner chose B. The difference is not stylistic. Under A the invariant is a
+// comparison somebody has to remember to write, in a handler that reads
+// correctly without it; under B it is a property of the read itself, and the
+// failure mode of forgetting is an empty result rather than a re-companied
+// document. A also has to be re-derived per route — the reason SEVEN of eleven
+// conversions had no check at all when this was last audited, with nothing in
+// the code saying which was which.
 //
-// WHAT IT CHECKS. Every route whose PATH declares a conversion — `/from-x`,
-// `/convert-from-x`, `/:id/items/from-x/:y` — must reference
-// `isCrossCompanySource` inside its handler, or delegate to a function that
-// does. Paths are the signal because this codebase names conversions
-// consistently and has done since the SCM import; a converter that hides behind
-// a non-conversion path name is out of reach here and belongs to a reader.
+// WHAT B COSTS, recorded here because it is the honest half: the operator-facing
+// message gets worse. A says "SO-2606-002 belongs to 2990, switch company and
+// convert it there". B says "not found" / "has no items", which is true from
+// this company's view and unhelpful from the operator's. Naming the other
+// company would require an UNSCOPED read of a document the handler otherwise
+// never touches — widening the read surface to improve an error message is the
+// wrong trade on a conversion path. Every converted handler states this in its
+// own comment; `mfg-purchase-orders.ts` `/:id/convert-from-so` is the original.
 //
-// WHAT IT DOES NOT CHECK: whether the guard is applied to the RIGHT document.
-// A handler that guards the header and forgets the per-line source passes here.
-// Two of the seven above needed both, and only reading them told us so.
+// WHAT THIS SCRIPT CHECKS. Every route whose PATH declares a conversion —
+// `/from-x`, `/convert-from-x`, `/:id/items/from-x/:y` — must appear in the
+// SOURCES registry below naming the source TABLE(s) it reads by id, and each of
+// those tables must be read through `scopeToCompany(...)` / `scopeToCompanyId(...)`
+// inside the handler, its named delegate, or a same-file function it calls.
+//
+// A conversion route with NO registry entry is a FINDING, not a pass. That is
+// deliberate: the registry is where the next author has to answer the one
+// question this audit found people skipping — WHICH document is the source. A
+// checker that guessed would guess wrong; of the leads in the 2026-08-13 audit,
+// more than half were.
+//
+// LEGACY-REFUSAL entries. A registry entry may declare `legacyRefusal: '<why>'`
+// instead of relying on the scope. Those are checked the OLD way — the
+// `crossCompanySourceRefusal` / `isCrossCompanySource` rule must be present —
+// and are listed under their own heading so nobody reads them as converted. This
+// is not an exemption list: something real is verified for every row, and an
+// entry whose refusal disappears is a finding like any other.
+//
+// WHAT IT STILL DOES NOT CHECK: that the scoped table is genuinely THE source.
+// The registry says which table that is, and the registry is written by a
+// reader. A handler that scopes its header and reads its lines unscoped passes
+// here if only the header is declared — so declare both; several conversions
+// have both, and the LINE table is an entry point in its own right.
 //
 // Usage:
 //   node backend/scripts/check-conversion-guards.mjs           # report
@@ -71,35 +86,133 @@ const ROUTE_DIRS = [
   path.join(backendRoot, "src", "routes"),
 ];
 
+/* ── THE REGISTRY ───────────────────────────────────────────────────────────
+   key   = "<file>::<METHOD> <path>" exactly as this script reports it.
+   source = the tables this conversion reads BY ID from the caller's input.
+            HEADER and LINE both, where both exist — each is an entry point.
+   legacyRefusal = still on mechanism A; the reason it has not been converted.
+
+   Keyed on file+route, not line, so the registry survives the file moving. */
+const SOURCES = {
+  "backend/src/scm/routes/delivery-orders-mfg.ts::POST /from-sos": {
+    doc: "SO -> DO",
+    source: ["mfg_sales_order_items", "mfg_sales_orders"],
+  },
+  "backend/src/scm/routes/delivery-returns.ts::POST /from-do": {
+    doc: "DO -> DR",
+    source: ["delivery_order_items", "delivery_orders"],
+  },
+  "backend/src/scm/routes/delivery-returns.ts::POST /from-dos": {
+    doc: "DO -> DR (same handler as /from-do)",
+    source: ["delivery_order_items", "delivery_orders"],
+  },
+  "backend/src/scm/routes/grns.ts::POST /from-pos": {
+    doc: "PO -> GRN (whole POs)",
+    source: ["purchase_orders", "purchase_order_items"],
+  },
+  "backend/src/scm/routes/grns.ts::POST /from-po-items": {
+    doc: "PO -> GRN (picked lines; parent PO rides an !inner embed)",
+    source: ["purchase_order_items"],
+  },
+  "backend/src/scm/routes/mfg-purchase-orders.ts::POST /from-sos": {
+    doc: "SO -> PO, through the shared convertSosToPosCore",
+    source: ["mfg_sales_order_items"],
+  },
+  "backend/src/scm/routes/mfg-purchase-orders.ts::POST /:id/convert-from-so": {
+    doc: "SO -> existing PO. The model: destination PO through scopeToCompanyId, source SO items through scopeToCompany",
+    source: ["mfg_sales_order_items"],
+  },
+  "backend/src/scm/routes/purchase-consignment-receives.ts::POST /from-pcos": {
+    doc: "PC Order -> PC Receive",
+    source: ["purchase_consignment_orders", "purchase_consignment_order_items"],
+  },
+  "backend/src/scm/routes/purchase-consignment-returns.ts::POST /from-pc-receives": {
+    doc: "PC Receive -> PC Return (batch)",
+    source: ["purchase_consignment_receives", "purchase_consignment_receive_items"],
+  },
+  "backend/src/scm/routes/purchase-consignment-returns.ts::POST /from-pc-receive": {
+    doc: "PC Receive -> PC Return (single)",
+    source: ["purchase_consignment_receives", "purchase_consignment_receive_items"],
+  },
+  "backend/src/scm/routes/purchase-invoices.ts::POST /from-grn-items": {
+    doc: "GRN -> PI (picked lines; parent GRN rides an !inner embed)",
+    source: ["grn_items"],
+  },
+  "backend/src/scm/routes/purchase-invoices.ts::POST /from-grn": {
+    doc: "GRN -> PI (whole GRN)",
+    source: ["grns", "grn_items"],
+  },
+  "backend/src/scm/routes/purchase-returns.ts::POST /from-grns": {
+    doc: "GRN -> Purchase Return (batch)",
+    source: ["grns", "grn_items"],
+    legacyRefusal:
+      "NOT CONVERTED. purchase-returns.ts was held by concurrent work during the " +
+      "2026-08-13 sweep, so it was left on mechanism A rather than edited under " +
+      "someone else. Convert it the same way its siblings were: scope the grns " +
+      "and grn_items reads, delete the refusal, record the message trade-off.",
+  },
+  "backend/src/scm/routes/purchase-returns.ts::POST /from-grn": {
+    doc: "GRN -> Purchase Return (single)",
+    source: ["grns", "grn_items"],
+    legacyRefusal:
+      "NOT CONVERTED — same reason as its /from-grns twin above.",
+  },
+  "backend/src/scm/routes/sales-invoices.ts::POST /from-dos": {
+    doc: "DO -> SI (picked lines)",
+    source: ["delivery_order_items", "delivery_orders"],
+  },
+  "backend/src/scm/routes/sales-invoices.ts::POST /:id/items/from-do/:doId": {
+    doc: "DO -> SI, PARTIAL form: a second delivery folded into an existing invoice",
+    source: ["delivery_orders", "delivery_order_items"],
+  },
+};
+
 /* A path that DECLARES a conversion. Anchored on the segment, so `/from-sos`,
    `/from-grn-items`, `/:id/convert-from-so` and `/:id/items/from-do/:doId` all
    match while `/informations` does not. */
 const CONVERSION_PATH = /(^|\/)(from-[a-z0-9-]+|convert-from-[a-z0-9-]+)(\/|$)/;
 const HANDLER =
   /^\s*[A-Za-z_$][\w$]*\s*\.\s*(get|post|put|patch|delete)\s*\(\s*['"`](\/[^'"`]*)['"`]/;
-/* `crossCompanySourceRefusal` is THE primitive — one shared implementation of
-   the invariant, in scm/lib/companyScope.ts. `isCrossCompanySource` is its
-   lower-level half, still used directly by a few handlers that already hold the
-   source row and need no second load; both count.
-
-   This pattern itself had to be corrected the moment the three duplicate
-   implementations were collapsed into the primitive: it named only the OLD
-   helper, so unifying the rule made this script report the unified handlers as
-   UNGUARDED. A checker keyed to a name breaks when the name is improved — which
-   is an argument for having exactly one name, not for leaving three. */
+/* The legacy (mechanism A) rule. `crossCompanySourceRefusal` is the shared
+   primitive; `isCrossCompanySource` its lower-level half. Only LEGACY-REFUSAL
+   registry entries are checked against this now. */
 const GUARD = /crossCompanySourceRefusal|isCrossCompanySource/;
 /* A converter may hand the work to a shared core (convertSosToPosCore,
-   convertDoLinesToReturn). Naming the delegate in the registration line is
-   enough IF that delegate itself guards — checked below by resolving it. */
+   convertDoLinesToReturn) or be registered on a named handler
+   (createPurchaseInvoiceFromGrnHandler). Resolved below. */
 const NAMED_DELEGATE =
   /^\s*[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*['"`][^'"`]*['"`]\s*,\s*([A-Za-z_$][\w$]*)\s*\)/;
-const OPT_OUT = /conversion-guard-ok:/;
+
+/* THE SCOPE EXTRACTOR — which TABLE does each scopeToCompany/scopeToCompanyId
+   call scope? The house idiom wraps the builder directly:
+
+       scopeToCompany(sb.from('grns').select(...).eq('id', id), c)
+       scopeToCompanyId(sb\n  .from('purchase_orders')\n  .select(...), co.companyId)
+
+   so the answer is the FIRST `.from('X')` after the call opens. The window stops
+   at the first `;` on purpose: `q = scopeToCompany(q, c); ... sb.from('grns')`
+   is the re-assignment idiom (grns.ts list handlers), where the table sits in an
+   EARLIER statement and reading forward would credit the wrong query. That false
+   pass is precisely the failure this repo has produced in three checkers. */
+const SCOPE_CALL = /\bscopeToCompany(?:Id)?\s*\(/g;
+function scopedTables(text) {
+  const found = new Set();
+  for (const m of text.matchAll(SCOPE_CALL)) {
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 400);
+    const stop = after.indexOf(";");
+    const window = stop === -1 ? after : after.slice(0, stop);
+    const f = /\.from\(\s*['"`]([A-Za-z0-9_]+)['"`]/.exec(window);
+    if (f) found.add(f[1]);
+  }
+  return found;
+}
 
 /* SELF-TEST. Three checkers in this repo have reported a clean run from a
    pattern that could not match. Assert before scanning; refuse to report from a
    dead one. */
 {
   const t = (s) => { CONVERSION_PATH.lastIndex = 0; return CONVERSION_PATH.test(s); };
+  const st = (s) => [...scopedTables(s)].join(",");
   const ok =
     t("/from-sos") && t("/from-grn-items") && t("/:id/convert-from-so") &&
     t("/:id/items/from-do/:doId") &&
@@ -107,7 +220,14 @@ const OPT_OUT = /conversion-guard-ok:/;
     HANDLER.test("purchaseReturns.post('/from-grn', async (c) => {") &&
     NAMED_DELEGATE.exec("deliveryReturns.post('/from-do', convertDoLinesToReturn)")?.[1] === "convertDoLinesToReturn" &&
     GUARD.test("if (isCrossCompanySource(dh.company_id, c)) {") &&
-    GUARD.test("await crossCompanySourceRefusal(sb, c, table, ids, col);");
+    GUARD.test("await crossCompanySourceRefusal(sb, c, table, ids, col);") &&
+    // the extractor finds the wrapped table, on one line and across lines
+    st("await scopeToCompany(sb.from('grns').select('id'), c)") === "grns" &&
+    st("await scopeToCompanyId(sb\n  .from('purchase_orders')\n  .select('id')\n  .eq('id', x), co.companyId)") === "purchase_orders" &&
+    // ...and does NOT credit a query in a LATER statement
+    st("q = scopeToCompany(q, c);\nconst r = sb.from('grns').select('id');") === "" &&
+    // ...and an unscoped read contributes nothing
+    st("const { data } = await sb.from('grns').select('id').eq('id', id);") === "";
   if (!ok) {
     console.error("check-conversion-guards: internal pattern self-test FAILED - not reporting.");
     process.exit(2);
@@ -132,7 +252,9 @@ function stripComments(lines) {
 }
 
 const findings = [];
-const guarded = [];
+const converted = [];
+const legacy = [];
+const seenKeys = new Set();
 
 for (const dir of ROUTE_DIRS) {
   if (!fs.existsSync(dir)) continue;
@@ -141,45 +263,45 @@ for (const dir of ROUTE_DIRS) {
     const raw = fs.readFileSync(path.join(dir, file), "utf8").split("\n");
     const lines = stripComments(raw);
 
-    /* Resolve a named callee by scanning the WHOLE file for its body — a
-       converter that delegates is guarded iff its delegate is.
-
-       ONE LEVEL, and the indirection is not hypothetical: grns.ts wraps the
-       whole rule in a file-local `firstCrossCompanyPo` that batch-loads the POs
-       and returns the refusal, and mfg-purchase-orders routes two different URLs
-       through `convertSosToPosCore`. Both ARE guarded; a body-text scan calls
-       them naked. That false positive is the reason the first run of this script
-       reported seven gaps that included four correct handlers — the same
-       "reports a plausible wrong number" failure every other checker here has
-       produced at least once. */
-    /* RECURSIVE, bounded at 3 hops and cycle-safe. One level was not enough:
-       delivery-returns registers `/from-do` on `convertDoLinesToReturn`, which
-       calls `crossCompanyDoSourceBlocked`, which calls the shared primitive —
-       three hops. A one-level resolver called that handler unguarded, which is
-       the same false-negative-inverted failure every checker here has produced:
-       a confident number that is simply wrong. */
-    const delegateGuards = (name, depth = 0, seenFns = new Set()) => {
-      if (depth > 3 || seenFns.has(name)) return false;
-      seenFns.add(name);
+    /* Resolve a named function to its BODY TEXT, so the caller can ask what that
+       body scopes. RECURSIVE, bounded at 2 hops and cycle-safe: a converter that
+       delegates is scoped iff its delegate is, and the indirection is real —
+       delivery-returns registers /from-do on `convertDoLinesToReturn`,
+       mfg-purchase-orders routes /from-sos through `convertSosToPosCore`, and
+       purchase-invoices registers /from-grn on
+       `createPurchaseInvoiceFromGrnHandler`. A body-text scan alone calls all
+       three unscoped, which is the confident-and-wrong number every checker here
+       has produced at least once. */
+    const bodyOf = (name) => {
       const decl = new RegExp(`(?:async\\s+function|function|const)\\s+${name}\\b`);
       const start = lines.findIndex((l) => decl.test(l));
-      if (start === -1) return false;
+      if (start === -1) return null;
       let braces = 0, opened = false;
-      const bodyLines = [];
+      const body = [];
       for (let i = start; i < lines.length; i++) {
         const l = lines[i] ?? "";
-        bodyLines.push(l);
-        if (GUARD.test(l)) return true;
+        body.push(l);
         for (const ch of l) {
           if (ch === "{") { braces++; opened = true; }
           else if (ch === "}") braces--;
         }
         if (opened && braces <= 0) break;
       }
-      const inner = [...new Set(
-        [...bodyLines.join("\n").matchAll(/\b([a-z][A-Za-z0-9_]{4,})\s*\(/g)].map((x) => x[1]),
+      return body.join("\n");
+    };
+    const reachableText = (seedText, depth = 0, seenFns = new Set()) => {
+      let text = seedText;
+      if (depth >= 2) return text;
+      const called = [...new Set(
+        [...seedText.matchAll(/\b([a-z][A-Za-z0-9_]{4,})\s*\(/g)].map((x) => x[1]),
       )];
-      return inner.some((fn) => delegateGuards(fn, depth + 1, seenFns));
+      for (const fn of called) {
+        if (seenFns.has(fn)) continue;
+        seenFns.add(fn);
+        const b = bodyOf(fn);
+        if (b) text += "\n" + reachableText(b, depth + 1, seenFns);
+      }
+      return text;
     };
 
     for (let i = 0; i < lines.length; i++) {
@@ -189,76 +311,148 @@ for (const dir of ROUTE_DIRS) {
       if (!CONVERSION_PATH.test(routePath)) continue;
       if (method.toLowerCase() === "get") continue; // a picker READ is not a conversion
 
-      // Body: from here to the next handler registration, or 400 lines.
-      let end = lines.length;
-      for (let j = i + 1; j < Math.min(i + 400, lines.length); j++) {
-        if (HANDLER.test(lines[j] ?? "")) { end = j; break; }
-      }
-      const body = lines.slice(i, end).join("\n");
-      const rawBody = raw.slice(i, end).join("\n");
-
-      /* Guarded if the rule is in the body, in a named delegate on the
-         registration line, or in ANY same-file function the body calls. The
-         last is what catches firstCrossCompanyPo / convertSosToPosCore. */
+      /* THE HANDLER'S OWN TEXT, and NOTHING ELSE.
+         · registered on a NAMED handler -> exactly that function's body. Do NOT
+           also take the source slice after the registration line: a converter
+           extracted to a const is registered at the END of its own declaration,
+           so the slice that follows is the NEXT handler's declaration. That read
+           a sibling's scoped query as this route's and passed a deliberately
+           un-scoped `/from-dos` — caught only because the scope was reverted on
+           purpose to see the checker fail. A checker that cannot fail has not
+           been tested.
+         · registered INLINE -> from here to the next registration, or 400 lines. */
       const delegate = NAMED_DELEGATE.exec(lines[i] ?? "")?.[1];
-      const calledInBody = [...new Set(
-        [...body.matchAll(/\b([a-z][A-Za-z0-9_]{4,})\s*\(/g)].map((x) => x[1]),
-      )];
-      const isGuarded =
-        GUARD.test(body) ||
-        (delegate ? delegateGuards(delegate) : false) ||
-        calledInBody.some((fn) => delegateGuards(fn));
-      const via = GUARD.test(body)
-        ? null
-        : (delegate && delegateGuards(delegate) ? delegate
-          : calledInBody.find((fn) => delegateGuards(fn)) ?? null);
-      const row = {
-        file: `backend/${relDir}/${file}`,
-        line: i + 1,
-        route: `${method.toUpperCase()} ${routePath}`,
-        via,
-      };
-      if (isGuarded) guarded.push(row);
-      else if (OPT_OUT.test(rawBody)) guarded.push({ ...row, via: "opt-out" });
-      else findings.push(row);
+      let text = delegate ? bodyOf(delegate) : null;
+      if (text === null) {
+        let end = lines.length;
+        for (let j = i + 1; j < Math.min(i + 400, lines.length); j++) {
+          if (HANDLER.test(lines[j] ?? "")) { end = j; break; }
+        }
+        text = lines.slice(i, end).join("\n");
+      }
+      text = reachableText(text);
+
+      const rel = `backend/${relDir}/${file}`;
+      const route = `${method.toUpperCase()} ${routePath}`;
+      const key = `${rel}::${route}`;
+      seenKeys.add(key);
+      const entry = SOURCES[key];
+      const row = { file: rel, line: i + 1, route, doc: entry?.doc ?? null };
+
+      if (!entry) {
+        findings.push({
+          ...row,
+          problem: "source_not_declared",
+          detail:
+            "new or renamed conversion: add it to the SOURCES registry in this " +
+            "script naming the table(s) it reads by id, then scope those reads",
+        });
+        continue;
+      }
+
+      if (entry.legacyRefusal) {
+        if (GUARD.test(text)) {
+          legacy.push({ ...row, reason: entry.legacyRefusal });
+        } else {
+          findings.push({
+            ...row,
+            problem: "legacy_refusal_missing",
+            detail:
+              "declared as still on the refusal mechanism, but neither " +
+              "crossCompanySourceRefusal nor isCrossCompanySource is reachable " +
+              "from this handler — it is now unguarded by EITHER mechanism",
+          });
+        }
+        continue;
+      }
+
+      const scoped = scopedTables(text);
+      const unscoped = entry.source.filter((t) => !scoped.has(t));
+      if (unscoped.length === 0) {
+        converted.push({ ...row, source: entry.source });
+      } else {
+        findings.push({
+          ...row,
+          problem: "source_not_scoped",
+          detail: `declared source table(s) read with no company predicate: ${unscoped.join(", ")}`,
+          unscoped,
+        });
+      }
     }
   }
 }
 
+/* A registry entry with no route is as much a defect as a route with no entry:
+   it means a conversion was renamed or removed and the registry still claims to
+   describe it, which is how a checker comes to report on code that is not
+   there. */
+for (const key of Object.keys(SOURCES)) {
+  if (seenKeys.has(key)) continue;
+  const [file, route] = key.split("::");
+  findings.push({
+    file, line: 0, route, doc: SOURCES[key].doc,
+    problem: "stale_registry_entry",
+    detail: "registry names a conversion this scan did not find — renamed, moved or deleted",
+  });
+}
+
 const sortRows = (a, b) => a.file.localeCompare(b.file) || a.line - b.line;
 findings.sort(sortRows);
-guarded.sort(sortRows);
+converted.sort(sortRows);
+legacy.sort(sortRows);
 
 if (jsonOut) {
-  console.log(JSON.stringify({ guarded, findings }, null, 2));
+  console.log(JSON.stringify({ converted, legacy, findings }, null, 2));
 } else {
+  const total = converted.length + legacy.length + findings.length;
   console.log(
-    `${guarded.length + findings.length} document conversions.\n` +
-      `${findings.length} do NOT compare the SOURCE document's company.\n\n` +
-      `A conversion that skips this re-parents money silently: the source\n` +
-      `company's goods, revenue or liability land in the other company's books\n` +
-      `under the other company's document number. Guard with\n` +
-      `isCrossCompanySource + crossCompanyConversionBlocked (scm/lib/companyScope.ts),\n` +
-      `or annotate a verified-safe one with "// conversion-guard-ok: <reason>".\n`,
+    `${total} document conversions.\n` +
+      `${converted.length} load their SOURCE scoped (the standard).\n` +
+      `${legacy.length} still hold the rule by REFUSAL instead.\n` +
+      `${findings.length} problems.\n\n` +
+      `A conversion never crosses a company. Since 2026-08-13 that is enforced by\n` +
+      `scoping the SOURCE load (scopeToCompany / scopeToCompanyId,\n` +
+      `scm/lib/companyScope.ts) rather than by comparing companies afterwards, so\n` +
+      `a cross-company source is not visible to the converter at all. The cost is\n` +
+      `a worse message on a hand-crafted request ("not found" rather than "belongs\n` +
+      `to 2990") — each converted handler states that in its own comment.\n\n` +
+      `A NEW CONVERSION MUST BE ADDED TO THE SOURCES REGISTRY in this script,\n` +
+      `naming which document it reads by id. There is no default: guessing is what\n` +
+      `this audit found people doing, and more than half the guesses were wrong.\n`,
   );
   if (findings.length) {
-    console.log("=== UNGUARDED ===");
+    console.log("=== PROBLEMS ===");
     let last = "";
     for (const f of findings) {
       if (f.file !== last) { console.log(`\n${f.file}`); last = f.file; }
       console.log(`  L${String(f.line).padEnd(5)} ${f.route}`);
+      console.log(`         ${f.problem}: ${f.detail}`);
     }
+    console.log("");
   }
-  console.log("\n=== GUARDED ===");
+  if (legacy.length) {
+    console.log("=== STILL ON THE REFUSAL MECHANISM ===");
+    let last = "";
+    for (const f of legacy) {
+      if (f.file !== last) { console.log(`\n${f.file}`); last = f.file; }
+      console.log(`  L${String(f.line).padEnd(5)} ${f.route}   ${f.doc ?? ""}`);
+      console.log(`         ${f.reason}`);
+    }
+    console.log("");
+  }
+  console.log("=== SOURCE LOADED SCOPED ===");
   let last = "";
-  for (const f of guarded) {
+  for (const f of converted) {
     if (f.file !== last) { console.log(`\n${f.file}`); last = f.file; }
-    console.log(`  L${String(f.line).padEnd(5)} ${f.route}${f.via ? `   via ${f.via}` : ""}`);
+    console.log(`  L${String(f.line).padEnd(5)} ${f.route}`);
+    console.log(`         source: ${f.source.join(", ")}${f.doc ? `   (${f.doc})` : ""}`);
   }
   console.log(
-    `\nNOT a proof of correctness: this checks that the guard is PRESENT, not\n` +
-      `that it is applied to the right document. Two of the seven gaps found on\n` +
-      `2026-08-13 needed the header AND the per-line source, and only reading\n` +
+    `\nNOT a proof of correctness: this checks that the DECLARED source tables are\n` +
+      `read through a scope helper, not that the declaration names the right\n` +
+      `document. The registry is written by a reader; a handler that declares only\n` +
+      `its header and reads its lines unscoped passes here. Declare both — several\n` +
+      `of these conversions have a header AND a line entry point, and only reading\n` +
       `them said so.`,
   );
 }

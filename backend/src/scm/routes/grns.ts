@@ -2,6 +2,7 @@
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
@@ -49,8 +50,15 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    delivery-returns.ts's `crossCompanyDoSourceBlocked` — three implementations
    of one invariant, each with its own name, which is exactly why four
    conversions were guarded and seven were not with nothing in the code saying
-   which was which. The wrapper stays because it names the TABLE and the doc-no
-   COLUMN once for this file's three call sites. */
+   which was which.
+
+   ONE CALLER LEFT: the bare-create POST /, whose `purchaseOrderId` is an
+   OPTIONAL body field on a path that also serves manual, PO-less receipts —
+   there is no single source read to scope. The two declared converters
+   (/from-pos, /from-po-items) used this and no longer do: they scope their
+   source reads instead, so a cross-company PO is not visible to them and a
+   refusal there could never fire. The wrapper stays for the one caller because
+   it names the TABLE and the doc-no COLUMN in one place. */
 async function firstCrossCompanyPo(
   sb: any,
   c: any,
@@ -1821,17 +1829,33 @@ grns.post('/', async (c) => {
 // all POs. Pre-fills qty_received + qty_accepted with the outstanding qty
 // (po_item.qty - po_item.received_qty) per line. Returns the new GRN's id
 // so the UI can navigate to its detail page for review.
-grns.post('/from-pos', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseOrderIds?: string[]; deliveryNoteRef?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poIds = body.purchaseOrderIds ?? [];
   if (poIds.length === 0) return c.json({ error: 'po_ids_required' }, 400);
 
-  // Load POs to verify same supplier + grab po_number for traceability.
-  const { data: pos, error: poErr } = await sb.from('purchase_orders')
+  /* SOURCE LOAD, SCOPED — the purchaseOrderIds arrive in the request body, so
+     this is the read that decides which POs this conversion can see. Scoped, so
+     another company's PO id resolves to NO ROW and falls out at the
+     `pos_not_found` below.
+     REPLACED a firstCrossCompanyPo refusal that stood right after this load and
+     can no longer fire: poList, and the PO-item read further down (keyed on the
+     same poIds), now contain only this company's rows.
+
+     THE COST: a hand-crafted request naming the other company's PO gets
+     `pos_not_found` instead of "that purchase order belongs to 2990, switch
+     company". Same trade-off, and the same reasoning, as the PO's
+     /:id/convert-from-so — naming the other company would require an UNSCOPED
+     read of a document this handler otherwise never touches. */
+  const { data: pos, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, supplier_id, status, currency')
-    .in('id', poIds);
+    .in('id', poIds), c);
   if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
   const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; currency?: string | null }>;
   if (poList.length === 0) return c.json({ error: 'pos_not_found' }, 404);
@@ -1840,12 +1864,6 @@ grns.post('/from-pos', async (c) => {
      that are still open for receipt. Without this a DRAFT / CANCELLED /
      already-RECEIVED PO could be converted to a GRN and write stock IN. Mirrors
      the 409 `/from-po-items` already enforces per pick. */
-  {
-    const x = await firstCrossCompanyPo(sb, c, poIds);
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x) return c.json(x.blocked, 409);
-  }
-
   const notReceivable = poList.find((p) => !isReceivablePoStatus(p.status));
   if (notReceivable) {
     return c.json({ error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status }, 409);
@@ -1857,14 +1875,18 @@ grns.post('/from-pos', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  // Load PO items with outstanding qty (+ variant fields for PR #44).
-  const { data: items } = await sb.from('purchase_order_items')
+  // Load PO items with outstanding qty (+ variant fields for PR #44). SCOPED —
+  // the LINE-level half of the same source document. Belt and braces on top of
+  // the scoped header read (poIds are already proven to be this company's), and
+  // the belt matters: `.in('purchase_order_id', poIds)` is an id-keyed read, and
+  // an id-keyed read on a converter is exactly the shape this sweep exists for.
+  const { data: items } = await scopeToCompany(sb.from('purchase_order_items')
     .select('id, purchase_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date, ' +
       // Migration 0180 — revised dates so the GRN line carries the EFFECTIVE date.
       'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
-    .in('purchase_order_id', poIds);
+    .in('purchase_order_id', poIds), c);
   const itemList = ((items ?? []) as unknown as Array<{
     id: string; purchase_order_id: string; material_kind: string; material_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_centi: number;
@@ -2044,7 +2066,8 @@ grns.post('/from-pos', async (c) => {
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
-});
+};
+grns.post('/from-pos', createGrnFromPosHandler);
 
 export const postGrnHandler = async (c: any) => {
   /* Confirm transition (DRAFT → POSTED) — this is where the GRN commits.
@@ -2150,7 +2173,11 @@ grns.patch('/:id/post', postGrnHandler);
    atomically (per-doc; best-effort across docs).
 
    Returns { created: [{ id, grnNumber, purchaseOrderId, poNumber, lineCount }], total }. */
-grns.post('/from-po-items', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
      The insert stamps the active company, so the id is not caller-supplied.
@@ -2161,9 +2188,21 @@ grns.post('/from-po-items', async (c) => {
   const picks = body.picks ?? [];
   if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
 
-  // Load every selected PO item with its parent PO header.
+  /* SOURCE LOAD, SCOPED — the picked PO LINES are where the caller's ids enter,
+     so this read is what a conversion can see. Scoped, so another company's
+     poItemId resolves to NO ROW and falls out at the per-pick `item_not_found`
+     below; the parent PO rides the `!inner` embed, so it cannot arrive from
+     outside the company either.
+     REPLACED a firstCrossCompanyPo refusal that stood below the validation loop
+     and can no longer fire — itemList holds only rows this predicate returned.
+
+     THE COST: a hand-crafted request naming the other company's line gets
+     `item_not_found` (with the id) instead of "that purchase order belongs to
+     2990, switch company", for the same reason /:id/convert-from-so accepts it —
+     naming the other company needs an UNSCOPED read this handler otherwise has
+     no reason to make. */
   const ids = picks.map((p) => p.poItemId);
-  const { data: itemsData, error: itemsErr } = await sb
+  const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('purchase_order_items')
     .select(`
       id, purchase_order_id, material_kind, material_code, material_name,
@@ -2174,7 +2213,7 @@ grns.post('/from-po-items', async (c) => {
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, purchase_location_id, currency )
     `)
-    .in('id', ids);
+    .in('id', ids), c);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
@@ -2209,12 +2248,6 @@ grns.post('/from-po-items', async (c) => {
     if (!isReceivablePoStatus(row.po.status)) {
       return c.json({ error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status }, 409);
     }
-  }
-
-  {
-    const x = await firstCrossCompanyPo(sb, c, itemList.map((r) => r.purchase_order_id));
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x) return c.json(x.blocked, 409);
   }
 
   /* One probe for the whole batch, not one per bucket: every bucket below writes
@@ -2432,7 +2465,8 @@ grns.post('/from-po-items', async (c) => {
   }
 
   return c.json({ created, total: created.length }, 201);
-});
+};
+grns.post('/from-po-items', createGrnsFromPoItemsHandler);
 
 /* ── PATCH /:id/cancel — cancel a GRN + reverse its receipt ─────────────────
    Commander 2026-05-29 — the GRN module is a Confirmed-clone of the PO module,

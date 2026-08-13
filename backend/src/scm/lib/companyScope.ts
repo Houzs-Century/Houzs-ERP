@@ -569,33 +569,47 @@ export const MIRRORED_SO_CREATE_BLOCKED: { error: string; message: string } = {
 };
 
 /**
- * CROSS-COMPANY CONVERSION GUARD.
+ * CROSS-COMPANY CONVERSION GUARD — THE OLDER OF THE TWO MECHANISMS.
  *
- * The converters (SO -> DO, SO -> SI, DO -> SI, PO -> GRN) all follow the same
- * shape: load a SOURCE document by id/doc_no, then INSERT a new document
- * stamped `company_id: activeCompanyId(c)`. The source load is NOT scoped —
- * every one of them reads the source by primary key with no company predicate,
- * and the DB client is service-role, so nothing else re-checks it.
+ * READ THIS FIRST: since 2026-08-13 the standard way to hold "a conversion never
+ * crosses a company" is to SCOPE THE SOURCE LOAD, not to compare companies after
+ * loading it unscoped. A converter reads its source through `scopeToCompany` /
+ * `scopeToCompanyId`, so another company's document is not visible to it and
+ * there is nothing left to compare. `scripts/check-conversion-guards.mjs` asserts
+ * that per route, against a registry naming which document is the source.
  *
- * That combination silently RE-COMPANIES the document: convert a 2990 sales
- * order while the switcher says Houzs Century and you get a HOUZS delivery
- * order — Houzs doc number, Houzs company_id — which then posts the stock
- * movement, the invoice revenue and the commission against Houzs' books for an
- * order Houzs never sold. The source row legitimately exists in this database
- * (the one-way 2990 SO mirror puts it there); what must not happen is Houzs
- * claiming it as its own document.
+ * The shape this function was written for: load a SOURCE document by id/doc_no
+ * with NO company predicate, then INSERT a new document stamped
+ * `company_id: activeCompanyId(c)`. The DB client is service-role, so nothing
+ * else re-checks it. That combination silently RE-COMPANIES the document:
+ * convert a 2990 sales order while the switcher says Houzs and you get a HOUZS
+ * delivery order — Houzs doc number, Houzs company_id — which then posts the
+ * stock movement, the invoice revenue and the commission against Houzs' books
+ * for an order Houzs never sold. The source row legitimately exists in this
+ * database (the one-way 2990 SO mirror puts it there); what must not happen is
+ * Houzs claiming it as its own document.
  *
- * The rule, and it is deliberately NOT "block all cross-company conversion":
+ * WHY SCOPING WON. Both mechanisms give the same answer. The difference is what
+ * happens when someone forgets: a missing comparison leaves a handler that reads
+ * perfectly well and re-companies money, while a missing predicate leaves an
+ * empty result. Seven of eleven conversions had no comparison at all when this
+ * was audited, and nothing in the code said which seven.
  *
- *  • INHERIT is correct and already implemented where the destination stamps
- *    the SOURCE's company — POST /from-sos in delivery-orders-mfg.ts stamps
- *    `head.company_id` and mints under the source's prefix, so a 2990 SO
- *    converted from the shared Delivery Planning queue becomes a 2990 DO. That
- *    path keeps the books straight and is left alone.
+ * WHERE THIS FUNCTION IS STILL RIGHT, and it is not a leftover: the BARE-CREATE
+ * paths — `POST /` on delivery-returns, grns, purchase-consignment-receives,
+ * purchase-consignment-returns, purchase-invoices, sales-invoices. There the
+ * source document is an OPTIONAL body field on a route that also serves manual,
+ * source-less documents, and the ids arrive from two places at once (a header
+ * field and each line's link). There is no single source read to scope, so the
+ * comparison is the mechanism. Those callers are the reason this stays.
  *
- *  • REFUSE is correct where the destination stamps the ACTIVE company. There
- *    the conversion would move the document between companies' books, so it
- *    must fail loudly rather than write a mis-attributed row.
+ * This block used to carry a third rule — "INHERIT is correct where the
+ * destination stamps the SOURCE's company", citing POST /from-sos in
+ * delivery-orders-mfg.ts as a path deliberately left cross-company for the
+ * shared Delivery Planning queue. That is no longer true of any converter:
+ * /from-sos scopes both of its source reads, so its inherit stamp can only ever
+ * resolve to the active company. Do not reintroduce a cross-company conversion
+ * from this paragraph.
  *
  * UNRESOLVED (no active company — pre-migration / cold-start) and a source row
  * with a NULL company_id both DEGRADE to allowed, matching the three-state
@@ -664,6 +678,20 @@ export function crossCompanyConversionBlocked(
  * is in the active company (or the company is unresolved, which degrades to
  * allowed exactly like every other helper in this file).
  *
+ * WHO STILL CALLS IT. The BARE-CREATE paths, and one converter pair. A
+ * declared converter (`/from-x`, `/convert-from-x`) scopes its source read
+ * instead — see the note on isCrossCompanySource above — so a refusal on one of
+ * those can never fire and is dead code that looks like protection. If you are
+ * adding this call to a `/from-x` route, scope the read instead.
+ *
+ *   · `POST /` on delivery-returns, grns, purchase-consignment-receives,
+ *     purchase-consignment-returns, purchase-invoices, sales-invoices — the
+ *     source is an optional body field on a route that also serves manual,
+ *     source-less documents, so there is no single source read to scope.
+ *   · purchase-returns.ts `/from-grns` + `/from-grn` — NOT YET CONVERTED; the
+ *     file was held by concurrent work on 2026-08-13. The registry in
+ *     check-conversion-guards.mjs names them and says so.
+ *
  * WHY IT EXISTS AS A SHARED PRIMITIVE. Before 2026-08-13 this exact rule was
  * written THREE different ways: inline in some handlers, as a file-local
  * `firstCrossCompanyPo` in grns.ts, and as a file-local
@@ -674,9 +702,9 @@ export function crossCompanyConversionBlocked(
  * invoice, a 2990 SO mint a HOUZS purchase order, and stock be drawn out of one
  * company's warehouse under the other's refund.
  *
- * One rule, one implementation, one name, and
- * `scripts/check-conversion-guards.mjs` asserts every conversion route reaches
- * it. That is the part that keeps it true after this session.
+ * Collapsing three copies into one name is what made the NEXT step possible:
+ * once the rule had one name it could be counted, and counting it is what showed
+ * that a comparison anyone can forget was the wrong mechanism for it.
  *
  * FAILS CLOSED on a read error. If we cannot prove the source belongs here, we
  * do not convert it: unlike a read, a conversion MOVES money, so "unknown" must

@@ -27,6 +27,7 @@
 // Numbering: PCT-YYMM-NNN.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
@@ -560,29 +561,37 @@ purchaseConsignmentReturns.post('/', async (c) => {
 
 // Batch-convert multiple POSTED PC Receives into ONE PC Return. Aggregates all
 // qty_rejected lines across the selected receives (must share a supplier).
-purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
-  /* company-scope: every source PC Receive is refused when it belongs to another
-     company (isCrossCompanySource, below); the by-id write is this handler's own
-     rollback. Verified 2026-08-13. */
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Receive is not visible here at all; the by-id write is this handler's own
+     rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveIds?: string[]; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const receiveIds = body.pcReceiveIds ?? [];
   if (receiveIds.length === 0) return c.json({ error: 'pc_receive_ids_required' }, 400);
 
-  const { data: receives, error: recvErr } = await sb.from('purchase_consignment_receives')
+  /* SOURCE LOAD, SCOPED — the receive ids arrive in the request body, so this is
+     the read that decides what this conversion can see. Scoped, so another
+     company's receive resolves to NO ROW and falls out at
+     `pc_receives_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receive gets
+     `pc_receives_not_found` instead of "that receive belongs to 2990, switch
+     company" — the trade the PO's /:id/convert-from-so already records, taken
+     here for the same reason. */
+  const { data: receives, error: recvErr } = await scopeToCompany(sb.from('purchase_consignment_receives')
     .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
-    .in('id', receiveIds);
+    .in('id', receiveIds), c);
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
   const recvList = (receives ?? []) as Array<{ id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null }>;
   if (recvList.length === 0) return c.json({ error: 'pc_receives_not_found' }, 404);
-
-  /* CROSS-COMPANY CONVERSION (lib/companyScope) — sources read by id with no
-     company predicate, destination stamped with the ACTIVE company. */
-  {
-    const foreign = recvList.find((r) => isCrossCompanySource(r.company_id, c));
-    if (foreign) return c.json(crossCompanyConversionBlocked(foreign.receive_number, foreign.company_id, c), 409);
-  }
 
   const notPosted = recvList.filter((g) => g.status !== 'POSTED');
   if (notPosted.length > 0) {
@@ -594,10 +603,13 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  const { data: items } = await sb.from('purchase_consignment_receive_items')
+  // LINE-level half of the same source document — same predicate as the header
+  // read above, because `.in('pc_receive_id', receiveIds)` is itself an id-keyed
+  // read and that is the shape this sweep exists for.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
     .select('id, pc_receive_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .in('pc_receive_id', receiveIds)
-    .gt('qty_rejected', 0);
+    .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty) — a
   // receive line can be returned across multiple PRs. Drop fully-returned lines.
   const rejectedItems = ((items ?? []) as Array<{
@@ -667,38 +679,49 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
   try { await resyncPcReturnInventory(sb, h.id, user.id); } catch { /* best-effort */ }
 
   return c.json({ id: h.id, returnNumber: h.return_number, pcReceiveCount: recvList.length, lineCount: rejectedItems.length }, 201);
-});
+};
+purchaseConsignmentReturns.post('/from-pc-receives', createPcReturnFromPcReceivesHandler);
 
 /* ── POST /from-pc-receive ──────────────────────────────────────────────
    Single-receive convert. Copies ALL of the receive's accepted lines (remaining
    only) into a NEW PC Return so the user can trim qty in the draft. */
-purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
-  /* company-scope: the source PC Receive is refused when it belongs to another
-     company (isCrossCompanySource, below); the remaining by-id statements read
-     that verified receive's lines and roll back this handler's own header.
-     Verified 2026-08-13. */
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Receive is not visible here at all; the remaining by-id statements read that
+     receive's own lines and roll back this handler's own header. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveId?: string; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const receiveId = body.pcReceiveId;
   if (!receiveId) return c.json({ error: 'pc_receive_id_required' }, 400);
 
-  const { data: receive, error: recvErr } = await sb.from('purchase_consignment_receives')
+  /* SOURCE LOAD, SCOPED — pcReceiveId arrives in the request body, so this is
+     the read that decides what this conversion can see. Scoped, so another
+     company's receive resolves to NO ROW and falls out at
+     `pc_receive_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receive gets
+     `pc_receive_not_found` instead of "that receive belongs to 2990, switch
+     company" — same trade, same reason, as the PO's /:id/convert-from-so. */
+  const { data: receive, error: recvErr } = await scopeToCompany(sb.from('purchase_consignment_receives')
     .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
-    .eq('id', receiveId).maybeSingle();
+    .eq('id', receiveId), c).maybeSingle();
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
   if (!receive) return c.json({ error: 'pc_receive_not_found' }, 404);
   const g = receive as { id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null };
-  // CROSS-COMPANY CONVERSION — same rule and reason as the /from-pc-receives twin.
-  if (isCrossCompanySource(g.company_id, c)) {
-    return c.json(crossCompanyConversionBlocked(g.receive_number, g.company_id, c), 409);
-  }
   if (g.status !== 'POSTED') return c.json({ error: 'pc_receive_not_posted', status: g.status }, 409);
 
-  const { data: items } = await sb.from('purchase_consignment_receive_items')
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
     .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .eq('pc_receive_id', receiveId)
-    .gt('qty_accepted', 0);
+    .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
@@ -761,7 +784,8 @@ purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
   try { await resyncPcReturnInventory(sb, h.id, user.id); } catch { /* best-effort */ }
 
   return c.json({ id: h.id, returnNumber: h.return_number }, 201);
-});
+};
+purchaseConsignmentReturns.post('/from-pc-receive', createPcReturnFromPcReceiveHandler);
 
 purchaseConsignmentReturns.patch('/:id/post', async (c) => {
   // Kept for backward compat; idempotent. POST creates PRs as POSTED.

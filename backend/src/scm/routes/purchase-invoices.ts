@@ -1,6 +1,7 @@
 // /purchase-invoices — supplier billing us (after GRN).
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { buildVariantSummary, isServiceLine } from '../shared';
@@ -1550,7 +1551,11 @@ purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
    computeGrnFlags, recostForPi), so they are multi-GRN correct unchanged.
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
-purchaseInvoices.post('/from-grn-items', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
      The insert stamps the active company, so the id is not caller-supplied.
@@ -1567,9 +1572,21 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
   const picks = body.picks ?? [];
   if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
 
-  // Load picked GRN items + parent GRN headers.
+  /* SOURCE LOAD, SCOPED — the picked GRN LINES are where the caller's ids enter,
+     so this read is what the conversion can see. Scoped, so another company's
+     grnItemId resolves to NO ROW and falls out at the per-pick `item_not_found`
+     below; the parent GRN rides the `!inner` embed, so it cannot arrive from
+     outside the company either.
+     REPLACED an isCrossCompanySource comparison that sat in that validation loop
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's GRN line gets
+     `item_not_found` (with the id) instead of "that receipt belongs to 2990,
+     switch company" — the trade the PO's /:id/convert-from-so records, taken here
+     for the same reason: naming the other company would need an UNSCOPED read
+     this handler otherwise never makes. */
   const ids = picks.map((p) => p.grnItemId);
-  const { data: itemsData, error: itemsErr } = await sb
+  const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('grn_items')
     .select(`
       id, grn_id, material_kind, material_code, material_name, item_group,
@@ -1579,7 +1596,7 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
       special_order_price_sen, discount_centi,
       grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, company_id )
     `)
-    .in('id', ids);
+    .in('id', ids), c);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
@@ -1601,16 +1618,6 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
   for (const p of picks) {
     const row = byId.get(p.grnItemId);
     if (!row) return c.json({ error: 'item_not_found', grnItemId: p.grnItemId }, 400);
-    /* CROSS-COMPANY CONVERSION (lib/companyScope) — the source GRN is loaded by
-       id with no company predicate while the PI below is stamped
-       `activeCompanyId(c)`, so converting the other company's receipt here would
-       re-company it: a Houzs-numbered supplier invoice, Houzs AP, Houzs re-cost,
-       for goods that company never received. REFUSE is the documented answer for
-       a destination that stamps the ACTIVE company; INHERIT is only correct
-       where the destination stamps the SOURCE's. */
-    if (isCrossCompanySource(row.grn.company_id, c)) {
-      return c.json(crossCompanyConversionBlocked(row.grn.grn_number, row.grn.company_id, c), 409);
-    }
     if (p.qty <= 0) return c.json({ error: 'qty_must_be_positive', grnItemId: p.grnItemId }, 400);
     // Cap each pick at the GRN line's REMAINING (qty_accepted - invoiced_qty -
     // returned_qty), not raw qty_accepted — a line can be invoiced across
@@ -1830,7 +1837,8 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
   }
 
   return c.json({ created, total: created.length }, 201);
-});
+};
+purchaseInvoices.post('/from-grn-items', createPurchaseInvoicesFromGrnItemsHandler);
 
 /* ── POST /from-grn ─────────────────────────────────────────────────────
    Single-GRN convert (GRN list right-click "Convert to PI"). Copies ALL of
@@ -1839,8 +1847,8 @@ purchaseInvoices.post('/from-grn-items', async (c) => {
    from-grn-items but scoped to one whole GRN and returns a single id.
 
    Body: { grnId }  →  201 { id, invoiceNumber }. */
-/* Exported so the cross-company conversion guard below can be driven directly —
-   the supabaseAuth bridge cannot run in the vitest harness. */
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. */
 export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnId?: string };
@@ -1848,25 +1856,30 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const grnId = body.grnId;
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
 
-  const { data: grn, error: grnErr } = await sb.from('grns')
+  /* SOURCE LOAD, SCOPED — grnId arrives in the request body, so this is the read
+     that decides what this conversion can see. Scoped, so another company's GRN
+     resolves to NO ROW and falls out at `grn_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receipt gets
+     `grn_not_found` instead of "that receipt belongs to 2990, switch company" —
+     the same trade the PO's /:id/convert-from-so records, and taken for the same
+     reason: naming the other company would require an UNSCOPED read of a
+     document this handler otherwise never touches. */
+  const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, company_id')
-    .eq('id', grnId).maybeSingle();
+    .eq('id', grnId), c).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
   const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; company_id?: number | null };
-  /* CROSS-COMPANY CONVERSION (lib/companyScope) — see the twin guard in
-     /from-grn-items. The GRN is read by id with no company predicate and the PI
-     is stamped with the ACTIVE company, so without this the other company's
-     receipt becomes this company's supplier invoice + AP posting. */
-  if (isCrossCompanySource(g.company_id, c)) {
-    return c.json(crossCompanyConversionBlocked(g.grn_number, g.company_id, c), 409);
-  }
   if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
 
-  const { data: items, error: iErr } = await sb.from('grn_items')
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: items, error: iErr } = await scopeToCompany(sb.from('grn_items')
     .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi')
     .eq('grn_id', grnId)
-    .gt('qty_accepted', 0);
+    .gt('qty_accepted', 0), c);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
   type GrnLine = {
     id: string; material_kind: string; material_code: string; material_name: string;

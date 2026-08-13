@@ -34,6 +34,7 @@
 // Mounted at '/sales-invoices' in scm/index.ts.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
@@ -1151,7 +1152,11 @@ salesInvoices.post('/', async (c) => {
 });
 
 /* ── Convert picked DO LINES (partial qty) → ONE Sales Invoice ───────────── */
-salesInvoices.post('/from-dos', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ doItemId?: string; qty?: number }>; asDraft?: unknown };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1170,10 +1175,22 @@ salesInvoices.post('/from-dos', async (c) => {
   if (pickQtyById.size === 0) return c.json({ error: 'picks_required' }, 400);
 
   const pickedIds = [...pickQtyById.keys()];
-  const { data: pickedItemRows, error: pErr } = await sb
+  /* SOURCE LOAD, SCOPED — the picked DO LINES are where the caller's ids enter,
+     so this read decides what this conversion can see. Scoped, so another
+     company's doItemId resolves to NO ROW and falls out at `do_item_not_found`.
+     Together with the scoped DO-header read below this REPLACES the
+     isCrossCompanySource comparison that used to sit under it and can no longer
+     fire.
+
+     THE COST: a hand-crafted request naming the other company's delivery line
+     gets `do_item_not_found` instead of "that delivery belongs to 2990, switch
+     company" — the trade the PO's /:id/convert-from-so records, taken here for
+     the same reason. Invoicing is the money hop of this chain, so the cheaper
+     error message is the right side to lose. */
+  const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
     .from('delivery_order_items')
     .select('id, delivery_order_id')
-    .in('id', pickedIds);
+    .in('id', pickedIds), c);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const idToDo = new Map<string, string>();
   for (const r of (pickedItemRows ?? []) as Array<{ id: string; delivery_order_id: string }>) idToDo.set(r.id, r.delivery_order_id);
@@ -1227,29 +1244,15 @@ salesInvoices.post('/from-dos', async (c) => {
     'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
     'address1, address2, city, state, postcode, phone, currency, ' +
     'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship';
-  const { data: doHeaderRow, error: hLoadErr } = await sb
+  // HEADER half of the same source document — same predicate as the lines.
+  const { data: doHeaderRow, error: hLoadErr } = await scopeToCompany(sb
     .from('delivery_orders')
     .select(DO_HEADER)
-    .eq('id', firstDoId)
+    .eq('id', firstDoId), c)
     .maybeSingle();
   if (hLoadErr) return c.json({ error: 'load_failed', reason: hLoadErr.message }, 500);
   if (!doHeaderRow) return c.json({ error: 'delivery_order_not_found' }, 404);
   const head = doHeaderRow as unknown as Record<string, unknown>;
-
-  /* CROSS-COMPANY GUARD — the insert below stamps the ACTIVE company and
-     nextNum mints under the ACTIVE company's prefix, so a 2990 DO invoiced from
-     the Houzs view would become a Houzs invoice: 2990's revenue and AR on
-     Houzs' books. This is the SECOND hop of the same conversion chain — the DO
-     itself may legitimately be a 2990 document, because POST /from-sos in
-     delivery-orders-mfg.ts correctly inherits the source SO's company. Refuse
-     rather than inherit: unlike the shared Delivery Planning queue, invoicing
-     is a per-company book with its own numbering. */
-  if (isCrossCompanySource(head.company_id, c)) {
-    return c.json(
-      crossCompanyConversionBlocked(head.do_number as string | null, head.company_id, c),
-      409,
-    );
-  }
 
   const nowIso = new Date().toISOString();
   const phoneRaw = head.phone as string | null;
@@ -1427,7 +1430,8 @@ salesInvoices.post('/from-dos', async (c) => {
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
   return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied }, 201);
-});
+};
+salesInvoices.post('/from-dos', createSalesInvoiceFromDoLinesHandler);
 
 /* ── Append a Delivery Order's lines into an EXISTING invoice ────────────── */
 /* Exported so the company-scope tests can drive it without the supabaseAuth
@@ -1454,32 +1458,32 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
   }
 
-  const { data: doHeader } = await sb.from('delivery_orders')
-    .select('id, status, do_number, company_id').eq('id', doId).maybeSingle();
+  /* SOURCE LOAD, SCOPED — this is the same DO -> SI conversion as POST /from-dos,
+     in its PARTIAL form: a second delivery folded into an invoice that already
+     exists. The source DO id is a URL PARAM, so this read is where it enters.
+     Scoped, so another company's doId resolves to NO ROW and falls out at
+     `delivery_order_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire. The destination invoice was already scoped above —
+     both ends of this conversion are now closed by construction.
+
+     THE COST: a hand-crafted request naming the other company's delivery gets
+     `delivery_order_not_found` instead of "that delivery belongs to 2990, switch
+     company", exactly as the PO's /:id/convert-from-so accepts for its source. */
+  const { data: doHeader } = await scopeToCompany(sb.from('delivery_orders')
+    .select('id, status, do_number, company_id').eq('id', doId), c).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
   if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
-  /* CROSS-COMPANY GUARD — this is the same DO -> SI conversion as POST /from-dos
-     (:1247), just the PARTIAL form: a second delivery folded into an invoice that
-     already exists. That path refuses a source DO from another company; this one
-     did not check at all, so a 2990 delivery could be appended to a Houzs invoice
-     and 2990's revenue posted to Houzs' books by the resync below. Same rule,
-     same refusal — REFUSE rather than inherit, because the invoice was already
-     minted under one company's numbering. */
-  {
-    const dh = doHeader as { do_number?: string | null; company_id?: number | null };
-    if (isCrossCompanySource(dh.company_id, c)) {
-      return c.json(crossCompanyConversionBlocked(dh.do_number ?? null, dh.company_id, c), 409);
-    }
-  }
 
-  const { data: doItems } = await sb.from('delivery_order_items').select(
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: doItems } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
     'unit_price_centi, discount_centi, unit_cost_centi, variants, notes, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
     'custom_specials, line_suffix, special_order_price_sen',
   ).eq('delivery_order_id', doId)
     .order('line_no', { ascending: true, nullsFirst: false })
-    .order('created_at');
+    .order('created_at'), c);
 
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
   const remainingMap = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));

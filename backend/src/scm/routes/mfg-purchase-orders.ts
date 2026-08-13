@@ -39,8 +39,7 @@ import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
-  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import {
   loadLeadTimeBase,
@@ -1643,14 +1642,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     /* Owner 2026-08-10 (migration 0274) — the SO line's photos ride along to the
        PO line. R2 keys, not bytes: the PO points at the SAME objects. */
     photo_urls: string[] | null;
-    so: { sales_location: string | null; customer_delivery_date: string | null; company_id?: number | null } | null;
+    so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
     'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
-    /* company_id rides the embed for the cross-company conversion guard below —
-       the source SO lines are read by id / (doc_no, item_code) with no company
-       predicate, and the PO this core emits is stamped with the ACTIVE company. */
-    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date, company_id )';
+    /* company_id used to ride this embed so the two branches below could COMPARE
+       the source SO's company to the active one. Both source reads are SCOPED
+       now, so there is nothing to compare — a cross-company line is not returned
+       at all. The embed stays for sales_location / customer_delivery_date. */
+    'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
   const normSo = (r: { so: unknown }): SoItem['so'] => {
@@ -1665,10 +1665,27 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
 
   if (body.picks && body.picks.length > 0) {
     const ids = body.picks.map((p) => p.soItemId);
-    const { data: rows, error } = await supabase
+    /* SOURCE LOAD, SCOPED — the picked SO LINES are where the caller's ids enter
+       this core, so this read decides what the conversion can see. Scoped, so a
+       soItemId from the other company resolves to NO ROW and falls out at the
+       per-pick `item_not_found` below.
+       REPLACED an isCrossCompanySource comparison that sat in that loop and can
+       no longer fire.
+
+       THE COST: a hand-crafted request naming the other company's line gets
+       `item_not_found` (with the id) instead of "that order belongs to 2990,
+       switch company", exactly as /:id/convert-from-so accepts for its own
+       source — naming the other company would need an UNSCOPED read this core
+       otherwise never makes.
+
+       Same context on both call paths: the HTTP route wires the real Hono
+       context, and createDraftPosFromPicks builds a synthetic one that carries
+       companyId + allowedCompanyIds together (procurement-execute passes both or
+       neither), so the agent never lands in scopeToCompany's fail-closed branch. */
+    const { data: rows, error } = await scopeToCompany(supabase
       .from('mfg_sales_order_items')
       .select(SO_ITEM_SELECT)
-      .in('id', ids);
+      .in('id', ids), c);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const byId = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byId.set(r.id, { ...r, so: normSo(r) });
@@ -1676,18 +1693,6 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
-      /* CROSS-COMPANY CONVERSION (lib/companyScope) — this core stamps the PO
-         with `activeCompanyId(c)` and mints under companyDocPrefix(c), while the
-         SO lines above are read by id with no company predicate. Converting the
-         other company's order therefore RE-COMPANIES the demand: a Houzs PO,
-         Houzs doc number, Houzs supplier commitment, raised against an order
-         Houzs never sold — and po_qty_picked advances on that company's SO line.
-         This is the same shape companyScope.ts names for SO->DO and SO->SI; PO
-         was the converter with no guard. REFUSE, because the destination stamps
-         the ACTIVE company rather than inheriting the source's. */
-      if (isCrossCompanySource(row.so?.company_id, c)) {
-        return c.json(crossCompanyConversionBlocked(row.doc_no, row.so?.company_id, c), 409);
-      }
       /* A retired line has no demand to purchase against. The line-level bind
          (soLinkTargetRefusal) has refused this since it was written and the
          From-SO picker never lists one, but THIS is the bulk create — reached by
@@ -1719,22 +1724,21 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // Best-effort match by (doc_no, item_code). Doesn't update po_qty_picked.
     const codes  = [...new Set(soItems.map((it) => it.itemCode))];
     const docNos = [...new Set(soItems.map((it) => it.soDocNo))];
-    const { data: rows } = await supabase
+    /* SOURCE LOAD, SCOPED — same rule as the picks branch, and it matters more
+       here: this legacy branch FABRICATES a minimal row when the (doc_no,
+       item_code) pair does not match, so an unscoped read that returned the other
+       company's line would have been used verbatim. Scoped, that line simply
+       does not match, and the request falls through to the fabricated row — which
+       carries qty and price from the CALLER, not from another company's order. */
+    const { data: rows } = await scopeToCompany(supabase
       .from('mfg_sales_order_items')
       .select(SO_ITEM_SELECT)
       .in('doc_no', docNos)
-      .in('item_code', codes);
+      .in('item_code', codes), c);
     const byKey = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byKey.set(`${r.doc_no}|${r.item_code}`, { ...r, so: normSo(r) });
     for (const it of soItems) {
       const row = byKey.get(`${it.soDocNo}|${it.itemCode}`);
-      /* Same cross-company conversion guard as the picks branch. Only a REAL
-         matched row is checked: the fabricated fallback below carries `so: null`,
-         which isCrossCompanySource degrades to allowed exactly as it does for a
-         pre-migration NULL company_id — an unknown doc must not start failing. */
-      if (row && isCrossCompanySource(row.so?.company_id, c)) {
-        return c.json(crossCompanyConversionBlocked(row.doc_no, row.so?.company_id, c), 409);
-      }
       // Even if no SO row found, fabricate a minimal one so PO still gets created.
       pickedItems.push({
         row: row ?? {
@@ -3775,21 +3779,29 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
   if (!soItems || soItems.length === 0) {
-    /* conversion-guard-ok: this converter is closed by CONSTRUCTION rather than
-       by a refusal. The PO loads through scopeToCompanyId and the SO items
-       through scopeToCompany, so another company's SO yields zero rows and lands
-       here — there is no unscoped read for a cross-company source to arrive
-       through, which is why it does not call crossCompanySourceRefusal like its
-       ten siblings.
+    /* THE MODEL. This converter is closed by CONSTRUCTION rather than by a
+       refusal: the destination PO loads through scopeToCompanyId and the source
+       SO items through scopeToCompany, so another company's SO yields zero rows
+       and lands here. There is no unscoped read for a cross-company source to
+       arrive through.
+
+       It was the only one shaped this way; on 2026-08-13 the owner made it the
+       standard and its ten siblings were converted to match. The marker that
+       used to sit at the top of this comment ("conversion-guard-ok:") was an
+       opt-out from a checker that asserted a REFUSAL was present — that checker
+       now asserts the SOURCE LOAD IS SCOPED instead, which this handler passes
+       on its merits, so the opt-out is gone rather than left as a token nobody
+       reads.
 
        THE TRADE-OFF, stated because it is the one thing this shape is worse at:
-       the sibling converters answer "that document belongs to 2990, switch
-       company and convert it there", and this one answers "has no items", which
-       is true from this company's view and unhelpful from the operator's. It is
-       left as-is deliberately: naming the other company would require an
-       UNSCOPED read of a document this handler otherwise never touches, and
-       widening the read surface to improve an error message is the wrong trade
-       on a conversion path. */
+       a refusal answers "that document belongs to 2990, switch company and
+       convert it there", and this answers "has no items", which is true from
+       this company's view and unhelpful from the operator's. It is accepted
+       deliberately: naming the other company would require an UNSCOPED read of a
+       document this handler otherwise never touches, and widening the read
+       surface to improve an error message is the wrong trade on a conversion
+       path. Every converted sibling records the same trade at its own source
+       load. */
     return c.json({ error: 'so_has_no_items', reason: `Sales Order ${soDocNo} has no items to convert.` }, 404);
   }
 

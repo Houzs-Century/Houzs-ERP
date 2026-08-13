@@ -11,6 +11,7 @@
 // Mounted at '/delivery-orders-mfg' in apps/api/src/index.ts.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
 import { buildVariantSummary } from '../shared';
@@ -62,8 +63,9 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
-  isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
+  isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import type { CompanyScopeCtx } from '../lib/companyScope';
 import type { getSupabaseService } from '../../db/supabase';
 import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -3071,18 +3073,26 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
 
    IMPORTANT (route ordering): STATIC path, so it MUST be registered BEFORE the
    `/:id` param route below — same reason as /deliverable-so-lines above. */
-/** Load a source SO header for conversion. Shared by the form preview
- *  (GET /so-source/:docNo) and the commit (POST /from-sos) so the two can never
- *  copy different column sets. No company predicate — see the header above; the
- *  commit path has always read it this way and the preview now matches. */
+/** Load a source SO header for conversion, SCOPED to the active company.
+ *
+ *  Shared by the form preview (GET /so-source/:docNo, which scopes to the
+ *  caller's ALLOWED companies — a preview may look across the switcher) and the
+ *  commit (POST /from-sos), so the two can never copy different column sets.
+ *
+ *  The commit read used to carry no company predicate at all. It does now:
+ *  a conversion never crosses a company, and the way that is enforced is that
+ *  the SOURCE simply is not visible, not that a later comparison remembers to
+ *  refuse. `c` is REQUIRED rather than optional for the same reason
+ *  scopeToCompanyId takes a required id — an omitted scope must not compile. */
 async function loadSoHeaderForConversion(
   sb: ReturnType<typeof getSupabaseService>,
   docNo: string,
+  c: CompanyScopeCtx,
 ): Promise<{ head: Record<string, unknown> | null; error: string | null }> {
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select(SO_CONVERT_HEADER)
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .maybeSingle();
   if (error) return { head: null, error: error.message };
   return { head: (data as unknown as Record<string, unknown>) ?? null, error: null };
@@ -3341,10 +3351,14 @@ deliveryOrdersMfg.post('/', async (c) => {
 
        Checked over the SAME refDocNos set as the deliverability guard above,
        so a cross-company SO reached only through a line's soItemId — with no
-       header soDocNo at all — is caught too. The multi-SO POST /from-sos path
-       is deliberately NOT guarded this way: it INHERITS the source SO's
-       company and mints under the source's prefix, which is the correct
-       cross-company behaviour for the shared Delivery Planning queue. */
+       header soDocNo at all — is caught too.
+
+       This clause used to end by saying the multi-SO POST /from-sos path was
+       "deliberately NOT guarded this way" because it INHERITS the source SO's
+       company for the shared Delivery Planning queue. That has not been true
+       since a refusal was added there, and it is doubly untrue now: /from-sos
+       scopes BOTH its source reads, so a cross-company SO is not visible to it
+       at all. Neither SO->DO path crosses a company today. */
     const soDocNos = [...new Set(refDocNos.filter((d): d is string => !!d))];
     if (soDocNos.length > 0) {
       const { data: soCoRows, error: soCoErr } = await sb
@@ -3812,7 +3826,11 @@ function buildItemRow(
         SO; ref = "Merged from <distinct SO doc_nos>" when the picks span >1 SO.
         One DO line per pick (qty = picked qty, so_item_id = soItemId).
      4. recomputeTotals + deductInventoryForDo (both idempotent). */
-deliveryOrdersMfg.post('/from-sos', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
      The insert stamps the active company, so the id is not caller-supplied.
@@ -3835,10 +3853,26 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   //    yet, so first map picked SO item ids → their doc_no, then derive
   //    remaining scoped to exactly those SOs.
   const pickedIds = [...pickQtyById.keys()];
-  const { data: pickedItemRows, error: pErr } = await sb
+  /* SOURCE LOAD, SCOPED. The picked SO LINES are where every id this handler
+     acts on enters, and they arrive in the request body. Scoping the read is
+     what makes "a conversion never crosses a company" structural: another
+     company's soItemId resolves to NO ROW, so there is no cross-company source
+     for a later comparison to have to catch.
+     REPLACED a crossCompanySourceRefusal on `mfg_sales_orders` that stood right
+     below and can no longer fire — docNos is now derived exclusively from rows
+     this predicate returned.
+
+     THE COST, stated because it is the one thing this shape is worse at: a
+     hand-crafted request naming the other company's line gets `so_item_not_found`
+     (with the id) instead of "that order belongs to 2990, switch company". Same
+     trade-off, and the same reasoning, as the PO's /:id/convert-from-so — naming
+     the other company would require an UNSCOPED read of a document this handler
+     otherwise never touches. The picker only ever offers this company's lines,
+     so no operator reaches it. */
+  const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
     .from('mfg_sales_order_items')
     .select('id, doc_no')
-    .in('id', pickedIds);
+    .in('id', pickedIds), c);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const idToDoc = new Map<string, string>();
   for (const r of (pickedItemRows ?? []) as Array<{ id: string; doc_no: string }>) idToDoc.set(r.id, r.doc_no);
@@ -3846,24 +3880,6 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   if (missing.length > 0) return c.json({ error: 'so_item_not_found', missing }, 404);
 
   const docNos = [...new Set([...idToDoc.values()])];
-
-  /* CROSS-COMPANY GUARD — SO -> DO, the conversion this file exists for, and it
-     had none. The SO-line load above is `.in('id', pickedIds)` with NO company
-     predicate, so a caller naming another company's soItemIds got their lines;
-     everything downstream then stamps the ACTIVE company, minting a DO under
-     this company's doc prefix that ships the OTHER company's order and deducts
-     the OTHER company's stock.
-
-     It is checked HERE, at the first point the source documents are known by
-     name, and BEFORE the status gate below — an out-of-company SO must not be
-     probeable through its status either. Same rule and same refusal as every
-     other conversion (crossCompanySourceRefusal, scm/lib/companyScope.ts);
-     mfg_sales_orders is keyed on doc_no, hence the repeated column. */
-  {
-    const x = await crossCompanySourceRefusal(sb, c, 'mfg_sales_orders', docNos, 'doc_no', 'doc_no');
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x?.blocked) return c.json(x.blocked, 409);
-  }
 
   /* Audit gap #4 — every source SO must be committed (CONFIRMED or beyond) before
      its lines can ship into a DO. Blocks a DRAFT / ON_HOLD / CANCELLED SO. */
@@ -4021,7 +4037,7 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   // Column list + load are SHARED with GET /so-source/:docNo (see the header on
   // loadSoHeaderForConversion) so the form's preview and this commit can never
   // disagree about which SO fields carry across.
-  const loaded = await loadSoHeaderForConversion(sb, firstSoDocNo);
+  const loaded = await loadSoHeaderForConversion(sb, firstSoDocNo, c);
   if (loaded.error) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
   if (!loaded.head) return c.json({ error: 'not_found' }, 404);
   const head = loaded.head;
@@ -4032,11 +4048,16 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   const emPhoneRaw = head.emergency_contact_phone as string | null;
   const today = todayMyt();
 
-  // Mint the DO number under the SOURCE SO's company prefix (2990 SO → "2990-DO-…",
-  // Houzs SO → "HC-DO-…"), matching the company_id stamp below, so a 2990 DO
-  // converted while browsing as Houzs isn't a company-2 row carrying Houzs's
-  // numbering. undefined → nextNum falls back to the active company's prefix
-  // (pre-migration SOs without company_id).
+  // Mint the DO number under the SOURCE SO's company prefix, matching the
+  // company_id stamp below.
+  //
+  // THIS NO LONGER SPANS COMPANIES, and the comment used to say it did. Both
+  // source reads above are scoped to the ACTIVE company now, so `head` is either
+  // an active-company SO — in which case source prefix == active prefix and this
+  // is a no-op — or a pre-migration row with no company_id, where srcPrefix is
+  // undefined and nextNum falls back to the active prefix anyway. It is kept
+  // rather than simplified to companyDocPrefix(c) because it is the DERIVATION
+  // that is right: the DO's numbering follows the document it is cut from.
   //
   // docPrefixForCode, NOT a local copy of the rule: this line used to inline
   // `code !== 'HOUZS' ? code + '-' : ''`, and a second copy of a numbering rule
@@ -4047,11 +4068,14 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
   const { data: doHeader, error: hErr } = await insertWithDocNoRetry<{ id: string; do_number: string }>(
     () => nextNum(sb, c, srcPrefix),
     (doNumber) => sb.from('delivery_orders').insert({
-    /* multi-company: stamp the SOURCE SO's company, NOT the active one. The
-       Delivery Planning board is a SHARED cross-company queue, so a 2990 SO may
-       be converted while browsing as Houzs — the DO must inherit the SO's
-       company (2990) regardless of who converts. Falls back to the active
-       company only when the SO header carries no company_id (pre-migration). */
+    /* multi-company: inherit the SOURCE SO's company. Since the source reads
+       above are scoped, that is the ACTIVE company for every row that can reach
+       here; the `??` covers only a pre-migration SO with a NULL company_id.
+       Reads as an inherit because it IS one — the DO belongs to whichever
+       company's order it ships — but it can no longer differ from the active
+       company, and the DO LINES below are stamped with the active company
+       (stampCompany), so header and lines cannot disagree. They could before:
+       this insert inherited while the lines stamped active. */
     company_id: (head.company_id as number | null) ?? activeCompanyId(c),
     do_number: doNumber,
     /* so_doc_no has a FK to mfg_sales_orders(doc_no) → one valid doc. The full
@@ -4238,7 +4262,8 @@ deliveryOrdersMfg.post('/from-sos', async (c) => {
     movementErrors: movementErrors.length ? movementErrors : undefined,
     emailNotice: emailNotice ?? undefined,
   }, 201);
-});
+};
+deliveryOrdersMfg.post('/from-sos', createDoFromSoLinesHandler);
 
 /* ── Crew assignment (scm.delivery_order_crew, migration 0053) ────────────────
    PUT /:id/crew — assign up to 2 drivers + 2 helpers + 1 lorry to a DO. The body
