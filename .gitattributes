@@ -1,0 +1,18 @@
+# BUG-HISTORY.md is append-at-the-top and MANDATORY (see CLAUDE.md), so with
+# several branches open at once every one of them adds an entry to the same
+# first line of the same file. Git's default merge calls that a conflict; it is
+# not one. Both entries are wanted, always.
+#
+# Measured 2026-08-13 while draining the backlog: of the first five pull
+# requests that turned DIRTY after an unrelated merge, FOUR conflicted on this
+# file alone and none on code. Each one cost a manual resolution against a
+# `main` that was still moving.
+#
+# `union` is a built-in git merge driver: on a conflicting hunk it keeps both
+# sides instead of stopping. That is exactly right for a newest-first ledger
+# where each branch prepends its own block. The failure mode to know about is
+# two branches EDITING the same existing entry — union would keep both copies
+# rather than merging them — which is why this is scoped to the one file that
+# is genuinely append-only, and not applied to `docs/modules/*.md` or anything
+# else people revise in place.
+BUG-HISTORY.md merge=union
