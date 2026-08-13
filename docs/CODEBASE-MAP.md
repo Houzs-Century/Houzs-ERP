@@ -162,13 +162,17 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-> Sizes were typed inline here as `(~N lines)` until 2026-08-14, against this
-> file's own rule three screens up (*"a number typed here is a number that will
-> be wrong"*). They were: four of the six had drifted 12–20% low. They are now
-> removed rather than refreshed — refreshing them would just restart the clock.
-> `docs/generated/codebase-map-facts.md` §3 ranks the top 20 by line count.
-> Note it also lists `backend/src/services/autocount-sofa-corpus.ts`, now among
-> the largest files in the tree and absent from the list below.
+> Sizes were typed inline here until 2026-08-13 and had rotted exactly as this
+> file's header warns: `Projects.tsx` was labelled "~12,400 lines" against a real
+> 14,867, and `mfg-sales-orders.ts` "~10,400" against 12,094. They are gone rather
+> than refreshed — a number typed here is a number that will be wrong again.
+
+**These files may no longer grow.** `scripts/file-size-ceilings.json` records what
+each one already is, and `npm run check:file-size` fails CI if any exceeds its
+recorded ceiling — see [`docs/repo-hygiene.md`](./repo-hygiene.md). Nothing forces
+them to be SPLIT; the ratchet only stops the problem getting worse, and a ceiling
+may only fall. If you are adding to one of these, put the new code in its own
+module: that is now the path of least resistance, by design.
 
 - **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
@@ -412,6 +416,12 @@ re-check the cited file rather than trusting the line.
   sofa decomposition, and `Desc2` as the only place a specification lives); what the
   5-minute drain does automatically and the four cases that will **never** be automatic;
   and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
+  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
+  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
+  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
+  location, the salesperson). Also records what was ruled out, including two theories
+  that were stated and then refuted.
 - `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
   the public internet with **no key** on two routes, one of them ~52 MB of purchase
   history. OPEN, needs an owner action. Do not build on that relay.

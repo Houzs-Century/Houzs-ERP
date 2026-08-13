@@ -516,8 +516,7 @@ materialised; there is no board table.
 
 1. **Sales Orders** (`row_type: 'so'`, `:852`) — live `scm.mfg_sales_orders`
    with `status NOT IN (DRAFT, CANCELLED)` that carry a delivery-date signal
-   (`customer_delivery_date` or the Processing Date `processing_date`),
-   paginated so the
+   (`customer_delivery_date` or `processing_date`), paginated so the
    1000-row PostgREST cap cannot silently truncate (`:442-479`). Their DOs,
    crew, readiness and warehouse labels are joined on.
 2. **Service Cases** (`row_type: 'assr'`, `:1034`) — read from **`public.assr_cases`
@@ -545,23 +544,21 @@ The last three sources are jobs, not orders: a service leg, a manual DP job and
 a PMS project window have no deposit gate, no supplier PO and no edit lock, so
 they have no processing date at all.
 
-> **⚠️ CORRECTED 2026-08-14 — this paragraph described a fix that is NOT in the
-> tree.** It claimed the synthetic rows "send `internal_expected_dd: null` and
-> carry their own leg date as **`job_date`** (2026-08-13)". Verified against
-> `origin/main` `de99056d5`: **`job_date` does not exist anywhere in
-> `backend/src` or `frontend/src`** — a repo-wide grep returns two stale
-> COMMENTS and no field (`shared/so-processing-date.ts:28`,
-> `MobileDeliveryPlanning.tsx:177`). All three synthetic builders still put the
-> leg date straight into the SO's Processing-Date field:
-> `routes/delivery-planning.ts:1169` (ASSR), `:1333` (DP) and `:1470` (project)
-> each write `processing_date: leg.date`.
->
-> The `job_date` field was really added, and then **removed by the squash that
-> shipped it** — the 13-branch integration merge #2121 kept the wrong side of
-> that conflict. So the name still means a third thing on rows that cannot have
-> one, which is exactly the confusion the Processing-Date unification exists to
-> end. Restoring it is a code change, tracked in open PR **#2129**; this guide
-> now describes the code as it is.
+> **CORRECTED 2026-08-14 — the intended fix is NOT on main.** This paragraph said
+> those rows *"send `internal_expected_dd: null` and carry their own leg date as
+> `job_date` (2026-08-13)"*. `job_date` does not exist on `origin/main`
+> `0c2a4e88`: `grep -rn 'job_date' backend/src` returns one comment
+> (`scm/shared/so-processing-date.ts:28`) and no field. Commit `9fa8e0ff` added
+> it to `delivery-planning.ts`; the batch's conflict resolution `e1263558`
+> (squashed into `d33ac743`, #2121) **deleted every one of those lines** — the
+> `git show e1263558 -- backend/src/scm/routes/delivery-planning.ts` diff removes
+> `job_date: null`, `job_date: leg.date` (×2) and `job_date: date`. What ships
+> today is the OLD behaviour this paragraph describes as historical: synthetic
+> rows carry their leg date in `processing_date` (`delivery-planning.ts:1169`
+> ASSR, `:1333` DP, `:1470` project), so the name still means a third thing on
+> rows that cannot have one. `frontend/src/mobile/MobileDeliveryPlanning.tsx:177`
+> also still describes `job_date` as live; that is a source comment and is left
+> alone here on purpose (docs-only diff).
 
 Nothing on the board reads it for those rows: the
 "Internal Est." column was removed in the owner's 2026-08-04 column pass, the HC

@@ -155,6 +155,20 @@ plan 阶段就逐行印出来:
 的地方(数字守卫,#1976)。之前五个脚本各抄一份、抄到互相打架,#1893 才收回来一份。
 **不要在这里再抄第七份。**
 
+### 「这 12 个系列是 owner 定的」也只有一份:`lib/catalogue-series.mjs`
+
+清单本身是**决定**,不是推导出来的结果,所以任何会自己算出 canonical 码或描述的脚本
+都必须先问它。2026-08-14 之前只有 `normalize-fabric-codes.mjs` 知道(而且是自己抄了
+一份放在档案里),`tidy-fabric-descriptions.mjs` 完全不知道 —— 那天的 prod plan 就把
+owner 自己的 249 行(Converter 78、销售库 171)报成
+`code is not canonical (would be DE-01) - fix the CODE first`。一行都没改到,但真正
+的问题从此埋在 249 行噪音里。
+
+现在:`isCatalogueSeries(parsedSeries)`,问的是**解析后的系列**,所以 `DE01` 跟
+`DE-01` 答案一样。`backend/tests/catalogueSeriesOneList.node.mjs` 钉住三件事——两个
+推导脚本都要 import;seed 新加的系列必须在清单里(否则下次 normalize 会把它推翻);
+除了 seed 和这份 lib,没有第三个档案列满 12 个。
+
 ### jsonb 写法有两条,不是一条
 
 **写单一个 key(scalar):`jsonb_set(..., to_jsonb($1::text))`。** 这是这批脚本在用的。
