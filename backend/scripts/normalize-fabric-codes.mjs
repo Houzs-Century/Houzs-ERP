@@ -48,6 +48,7 @@
    MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
+import { isCatalogueSeries } from "./lib/catalogue-series.mjs";
 import { strip, seriesToken, isJunkBucket, parse, canonId, canonLabel, nameFromLabel } from "./lib/fabric-code.mjs";
 import {
   countColour, countSeries, repointColour, repointSeries, arrayShapeCheck, sum, busy,
@@ -76,9 +77,9 @@ const STAMP = process.env.NOTE_DATE || "2026-08-11";
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const bad = (m) => console.log(process.env.GITHUB_ACTIONS ? `::error::${m}` : `ERROR ${m}`);
 
-/* The series seed-owner-fabric-catalogue.mjs owns. It drove these to the
-   owner's own list, colour names included; this script must not re-derive them. */
-const CATALOGUE_SERIES = new Set(["ZL", "MODENZA", "BO315", "NX", "GD2502", "AM275", "CH141", "M2402", "ORION", "TR", "DE", "HR805"]);
+/* The series seed-owner-fabric-catalogue.mjs owns — now from lib/, because a
+   second script (tidy-fabric-descriptions.mjs) needs the same answer and
+   reported 249 of the owner's own rows as problems while it did not have it. */
 
 async function main() {
   const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
@@ -116,7 +117,7 @@ async function main() {
     const p = parse(r.colour_id);
     if (!p) { unparsed.push(r); continue; }
     if (isJunkBucket(r.fabric_id) || isJunkBucket(r.colour_id)) { junk.push(r); continue; }
-    if (CATALOGUE_SERIES.has(p.series)) { skipped.push(r); continue; }
+    if (isCatalogueSeries(p.series)) { skipped.push(r); continue; }
     if (ONLY.length && !ONLY.includes(p.series)) continue;
     const id = canonId(p);
     if (!groups.has(id)) groups.set(id, { id, series: p.series, rows: [], brands: new Set() });
