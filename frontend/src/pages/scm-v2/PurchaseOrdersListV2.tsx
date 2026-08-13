@@ -45,6 +45,7 @@ import {
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -777,22 +778,10 @@ export function PurchaseOrdersListV2() {
   };
 
   /* The rows the TABLE is actually showing — the page rows minus whatever the
-     per-column funnels are hiding (owner 2026-08-12). The funnels are
-     client-side AND persisted per user (`dt:filters:*`), so a filter set once
-     survives every reload and stops looking like a filter; it just looks like
-     the list is wrong.
-
-     What that cost: a stuck DATE funnel on this page left five rows worth
-     RM 9,112.50 on screen under a "Sum on this page" card reading
-     RM 164,349.70 — the full 60. Two contradictory numbers on one screen, and
-     two Purchase Orders (2990-PO-2608-005 / -007) reported as missing when they
-     were three rows below a filter nobody remembered setting. */
-  const [visibleRows, setVisibleRows] = useState<PoHeaderRow[] | null>(null);
-  /* Identity, not length: two different 5-row sets must not compare equal. The
-     table hands us the exact array it renders, so a reference check is enough
-     to tell "no funnel active" from "a funnel that happens to keep everything". */
-  const columnFilterActive = visibleRows !== null && visibleRows.length !== rows.length;
-  const summarised = visibleRows ?? rows;
+     per-column funnels are hiding. This page is where the problem was found
+     (owner 2026-08-12); the rationale, and why the "is a funnel active" test
+     compares LENGTH rather than array identity, now live once in the hook. */
+  const visible = useVisibleRows(rows);
 
   // Money-out KPIs sum the rows ON SCREEN (the paginated contract has no
   // full-set money sums), so the cards and the table can never disagree.
@@ -800,7 +789,7 @@ export function PurchaseOrdersListV2() {
     let committed = 0;
     let outstanding = 0;
     let received = 0;
-    for (const r of summarised) {
+    for (const r of visible.rows) {
       const t = totalOf(r);
       committed += t;
       const b = statusFor(r.status).bucket;
@@ -808,7 +797,7 @@ export function PurchaseOrdersListV2() {
       if (b === "received") received += t;
     }
     return { committed, outstanding, received };
-  }, [summarised]);
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -1289,8 +1278,8 @@ export function PurchaseOrdersListV2() {
           <StatCard
             pending={statsPending}
             label="Total POs"
-            value={(columnFilterActive ? summarised.length : total).toLocaleString("en-MY")}
-            subtitle={columnFilterActive ? "Filtered · shown below" : "All matching POs"}
+            value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+            subtitle={visible.filtered ? "Filtered · shown below" : "All matching POs"}
             rail="bg-primary"
             active
           />
@@ -1298,7 +1287,7 @@ export function PurchaseOrdersListV2() {
             pending={statsPending}
             label="Committed"
             value={fmtRm(money.committed)}
-            subtitle={columnFilterActive ? "Filtered · sum shown below" : "Sum on this page"}
+            subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
             rail="bg-accent"
           />
           <StatCard
@@ -1306,7 +1295,7 @@ export function PurchaseOrdersListV2() {
             label="Outstanding"
             value={fmtRm(money.outstanding)}
             subtitle={
-              columnFilterActive
+              visible.filtered
                 ? "Submitted + partial · filtered"
                 : "Submitted + partial · on this page"
             }
@@ -1318,7 +1307,7 @@ export function PurchaseOrdersListV2() {
             label="Received"
             value={fmtRm(money.received)}
             subtitle={
-              columnFilterActive ? "Fully received · filtered" : "Fully received · on this page"
+              visible.filtered ? "Fully received · filtered" : "Fully received · on this page"
             }
             tone="success"
             rail="bg-synced"
@@ -1410,7 +1399,7 @@ export function PurchaseOrdersListV2() {
                 rows={rows}
                 /* Feeds the stat strip so the tiles describe what is on screen
                    rather than what the server matched (owner 2026-08-12). */
-                onFilteredRowsChange={setVisibleRows}
+                onFilteredRowsChange={visible.onFilteredRowsChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}
