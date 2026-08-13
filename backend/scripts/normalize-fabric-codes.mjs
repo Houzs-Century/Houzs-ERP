@@ -53,6 +53,7 @@ import {
      3 inventory_movements and 3 inventory_lots rows stayed in the other —
      found by the census on 2026-08-13, after the 2026-08-11 pass. */
   repointDescription2, repointVariantKey, repointAllowedOptions, skippedArms,
+  countColoursBulk,
 } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -83,10 +84,21 @@ async function main() {
                            FROM scm.fabric_colours WHERE company_id = ${CO}`;
   note(`library: ${libs.length} series / ${cols.length} colours`);
 
-  const refCache = new Map();
+  /* ONE PASS FOR EVERY COLOUR, not one round trip each. This asks for a
+     reference count per code, and the library holds hundreds of them; when the
+     shared arm list went from 4 tables to 15 that became twelve thousand
+     queries and a plan run that used to take a minute was still going after
+     fifteen. countColoursBulk answers all of them with one query per arm.
+
+     Warmed for every colour up front, and countColour is kept as the fallback
+     for a code the warm-up did not see (a canonical target that no row carries
+     yet), so no path silently reports zero. */
+  const refCache = await countColoursBulk(sql, CO, cols.map((r) => r.colour_id));
+  note(`reference counts warmed for ${refCache.size} colour(s) in one pass per arm`);
   const refs = async (code) => {
-    if (!refCache.has(code)) refCache.set(code, sum(await countColour(sql, CO, code)));
-    return refCache.get(code);
+    const k = String(code).toUpperCase();
+    if (!refCache.has(k)) refCache.set(k, sum(await countColour(sql, CO, code)));
+    return refCache.get(k);
   };
 
   /* Group every ACTIVE colour by the canonical code it should carry. A group
