@@ -614,6 +614,18 @@ is why `create` is composed LAZILY in `composeSoState` / `composePoState` — an
 edit builds the same state object, and eagerly composing a create it will never
 send would refuse the edit for the create's reasons.
 
+**The SO side now refuses at CREATE TIME instead** (owner 2026-08-13, after
+`HC-SO-2608-002`). A `MissingLocationError` is correct but lands in the wrong
+place: hours later, in an outbox row, about an order the salesperson was told
+had saved. So company 1's sales orders are gated where the human is —
+`backend/src/scm/lib/so-location-gate.ts`, run at the two places the SO router
+enqueues a create (create, and `DRAFT -> live`). The composer's refusal stays
+exactly as it is: it is the backstop for every path that is not that gate
+(imports, the 2990 mirror, a future company not yet on the list), and it is
+what proves the gate is not merely advisory. Full rule + company list:
+`docs/modules/sales-order.md`, "Company 1 cannot create an order with no stock
+location".
+
 Both files are generated and CI-guarded — `npm run audit:ac-item-map` and
 `npm run audit:ac-sofa-corpus` run in `backend-typecheck`, so refreshing an
 export without regenerating cannot leave the composer resolving against last

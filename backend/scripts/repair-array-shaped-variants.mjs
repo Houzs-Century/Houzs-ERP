@@ -53,21 +53,56 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 
 /** The object this array was before it was mangled, or null when it cannot be
  *  recovered without guessing. */
-function unwrap(arr) {
-  if (!Array.isArray(arr)) return { ok: false, why: 'not an array' };
-  if (arr.length !== 1) return { ok: false, why: `${arr.length} elements — only a one-element wrap is recoverable` };
-  const el = arr[0];
-  if (el && typeof el === 'object' && !Array.isArray(el)) return { ok: true, obj: el, how: 'object wrapped in an array' };
+/** An element as an object, whether it arrived as one or as a json string. */
+const asObject = (el) => {
+  if (el && typeof el === 'object' && !Array.isArray(el)) return el;
   if (typeof el === 'string') {
     try {
       const parsed = JSON.parse(el);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return { ok: true, obj: parsed, how: 'json STRING inside an array — the double-encoding proper' };
-      }
-      return { ok: false, why: 'the string parses, but not to an object' };
-    } catch { return { ok: false, why: 'the string is not JSON' }; }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch { /* not JSON — falls through to null */ }
   }
-  return { ok: false, why: `element is a ${typeof el}` };
+  return null;
+};
+
+function unwrap(arr) {
+  if (!Array.isArray(arr)) return { ok: false, why: 'not an array' };
+  if (!arr.length) return { ok: false, why: 'empty array — nothing survived' };
+
+  const head = asObject(arr[0]);
+  if (!head) return { ok: false, why: `element 0 is a ${typeof arr[0]}, not an object` };
+  if (arr.length === 1) {
+    return { ok: true, obj: head, how: typeof arr[0] === 'string' ? 'json STRING wrapped in an array' : 'object wrapped in an array' };
+  }
+
+  /* THE REAL PROD SHAPE, from the 2026-08-13 plan — all seven identical:
+
+       [ {colourId, fabricId, fabricCode, seatHeight, specials, …},
+         "{\"seatHeight\":\"35\\\"\"}" ]
+
+     Element 0 is the COMPLETE variants object. Element 1 is the fragment that
+     was being merged in when the bad bind turned `variants || <string>` into
+     an array instead of a merge — and in every one of the seven, its value was
+     ALREADY in element 0 (35" = 35", 32" = 32", 30" = 30", 24" = 24").
+
+     So the tail is redundant, and taking element 0 loses nothing. But that is
+     PROVEN here, not assumed: every key of every later element must exist in
+     element 0 with an equal value. A tail that adds or contradicts anything is
+     refused and the difference is named, because "take the first one" applied
+     blindly is how a merge silently drops a seat height. */
+  const extras = [];
+  for (let i = 1; i < arr.length; i++) {
+    const tail = asObject(arr[i]);
+    if (!tail) return { ok: false, why: `element ${i} is a ${typeof arr[i]} that is not an object` };
+    for (const [k, v] of Object.entries(tail)) {
+      const mine = head[k];
+      if (JSON.stringify(mine) !== JSON.stringify(v)) {
+        extras.push(`element ${i} key "${k}": ${JSON.stringify(v)} vs ${JSON.stringify(mine)} in element 0`);
+      }
+    }
+  }
+  if (extras.length) return { ok: false, why: `the tail is not redundant — ${extras.join('; ')}` };
+  return { ok: true, obj: head, how: `${arr.length} elements, tail proven redundant against element 0` };
 }
 
 async function main() {
@@ -84,10 +119,24 @@ async function main() {
   /* Read them WITH their identity, so a refused row can be opened by a human
      rather than described. The arm list is the shared one, so a table that
      gained a mangled row later is included without editing this file. */
+  /* ASK WHICH COLUMNS EXIST. Not every arm carries item_code —
+     inventory_movements does not — and a hard-coded select fails the WHOLE
+     run on the first arm that lacks it, which is what happened on the first
+     prod plan. The identity column is resolved per arm and degrades to NULL
+     rather than taking the script down. */
+  const cols = await sql`SELECT table_schema || '.' || table_name AS t, column_name
+                           FROM information_schema.columns WHERE table_schema = 'scm'`;
+  const has = new Map();
+  for (const r of cols) {
+    if (!has.has(r.t)) has.set(r.t, new Set());
+    has.get(r.t).add(r.column_name);
+  }
   const rows = [];
   for (const arm of ARMS) {
+    const have = has.get(arm.t) ?? new Set();
+    const idCol = ['item_code', 'sku_code', 'product_code'].find((cName) => have.has(cName));
     const r = await sql.unsafe(
-      `SELECT i.id::text AS id, i.item_code, i.variants::text AS raw
+      `SELECT i.id::text AS id, ${idCol ? `i.${idCol}` : 'NULL'} AS item_code, i.variants::text AS raw
          FROM ${arm.t} i
         WHERE EXISTS (${arm.ex}) AND jsonb_typeof(i.variants) = 'array'`, [CO]);
     for (const x of r) rows.push({ arm: arm.name, t: arm.t, ...x });
