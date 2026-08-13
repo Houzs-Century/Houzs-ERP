@@ -1228,6 +1228,9 @@ so the fixture cannot encode a bug as an expectation.
 
 ## See also
 
+- `docs/autocount-field-alignment-audit.md` — every field, traced ERP column ->
+  composer -> master opened? -> C# assignment, with the BROKEN and AT RISK list
+  and the numbers behind each. Read it before adding a field to a payload
 - `docs/autocount-cutover-ledger.md` — the one-time import that came the other way
 - `backend/scripts/autocount-service/AcSyncService.cs` — the AutoCount half
 - `backend/scripts/autocount-service/sdk-api-reference.txt` — the reflected SDK surface
