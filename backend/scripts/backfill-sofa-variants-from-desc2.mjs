@@ -93,12 +93,18 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group = 'sofa'
      ORDER BY p.po_number`).map((r) => ({ ...r, table: "purchase_order_items", scope: "PO" }));
 
+  /* The owner's scope rule — "如果 proceed 了的单 和 PO 就要尽量补齐" — names the
+     proceed STATE, and that state is "carries a Processing Date", held in
+     internal_expected_dd (what the UI writes, what soProcessingLocked and MRP
+     read). Selecting on proceeded_at, the IN_PRODUCTION-only stamp, skipped
+     proceeded orders that the completeness audits nonetheless hold to the full
+     bar, so the residue they report could never be closed by this sweep. */
   const so = (await sql`
     SELECT i.id, h.doc_no AS doc, i.item_code AS code, i.description2 AS d2, i.variants
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group = 'sofa'
-       AND h.proceeded_at IS NOT NULL
+       AND h.internal_expected_dd IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, table: "mfg_sales_order_items", scope: "SO" }));
 
   const plan = [];
