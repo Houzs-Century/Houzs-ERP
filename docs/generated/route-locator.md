@@ -766,15 +766,15 @@ Total: 991 route registrations across 129 files.
 - L764  DELETE /locks/:id
 
 ## backend/src/scm/routes/fabric-tracking.ts  (9)
-- L142  POST   /
-- L206  POST   /bulk-upsert
-- L307  DELETE /:id
-- L324  GET    /
-- L360  PATCH  /:id/active
-- L393  PATCH  /:id/series
-- L427  PATCH  /:id/supplier-code
-- L483  PATCH  /:id/description
-- L526  PATCH  /:id/tier
+- L147  POST   /
+- L211  POST   /bulk-upsert
+- L312  DELETE /:id
+- L329  GET    /
+- L365  PATCH  /:id/active
+- L398  PATCH  /:id/series
+- L432  PATCH  /:id/supplier-code
+- L488  PATCH  /:id/description
+- L531  PATCH  /:id/tier
 
 ## backend/src/scm/routes/so-amendments.ts  (9)
 - L242  GET    /
