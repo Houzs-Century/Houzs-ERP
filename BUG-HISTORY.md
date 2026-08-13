@@ -421,6 +421,69 @@ invisible in review and obvious the first time the script was executed.
 
 **Ref** - 2026-08-13, this PR. Follows the guard in the entry below.
 
+## Six source files were binary to git, so a production repair tool shipped with no reviewable diff [high]
+
+**Symptom** — `gh pr diff 2082` showed `Binary files differ` for
+`backend/scripts/merge-duplicate-fabric-colours.mjs`; the PR reported **0
+additions** for it. That file is a 280-line tool that repoints fabric colours
+across fifteen line tables and eight stock tables **on production**. It was
+merged with nothing to read. `git grep` answers `Binary file matches` with no
+content, so the file is also invisible to every audit that greps the tree — and
+this repo audits by grep constantly (jsonb binds, swallowed reads, decision
+params, company scope).
+
+**Root cause** — a RAW NUL byte inside a template literal, used as a
+composite-key separator:
+
+```
+const k = `${r.fabric_id}<NUL>${canonId(p)}`;      // the byte itself
+const k = `${r.fabric_id}\0${canonId(p)}`;         // the escape — same value
+```
+
+NUL as a key separator is a fine technique. Writing it as the byte instead of
+the two-character escape is what makes git classify the blob as binary. Both
+spell the same string at runtime; only one is reviewable.
+
+**Measured, not assumed.** Appending one line to the file gave
+`git diff --numstat` → `-  -`. After the fix, the same appended line gave
+`2  0`.
+
+**The class was six files, not one.** Found by the gate written for the first
+one, on its first run:
+
+| file | NULs |
+|---|---|
+| `backend/scripts/merge-duplicate-fabric-colours.mjs` | 1 |
+| `backend/scripts/probe-write-persistence.mjs` | 2 |
+| `backend/scripts/seed-owner-fabric-catalogue.mjs` | 3 |
+| `backend/src/scm/lib/size-variant-description.ts` | 1 |
+| `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` | 2 |
+| `frontend/src/vendor/scm/lib/propose-days.ts` | 1 |
+
+Every one is the same composite-key pattern, and three of them are live
+application source, not scripts — a 76 KB sales-order maintenance page among
+them, whose diffs nobody could read either.
+
+**Fix** — all ten bytes replaced with `\0`. Both typechecks pass
+(`npm run typecheck`, which in the frontend is `tsc -b`; `npx tsc --noEmit`
+there resolves zero inputs and would have proved nothing).
+
+**The check** — `backend/tests/noNulBytesInSource.node.mjs`, in
+`npm run test:scale-contract`. It walks `git ls-files`, refuses to pass if the
+listing returns implausibly few files, and fails on any tracked source file
+carrying a NUL.
+
+**Class** — *a defect that hides the evidence of itself*. The jsonb
+double-encoding class corrupts data you can still query; this one removes the
+diff, so review and audit both silently see nothing.
+
+**The check caught itself first.** Its own `git ls-files -z` split was written
+with the raw separator, so the very first CI run of the gate failed on the gate:
+`backend/tests/noNulBytesInSource.node.mjs (first at byte 1943 of 2878)`. That is
+the strongest evidence it works, and it is why the escape — not the byte — has
+to be the habit: even the person writing the rule reached for the byte.
+
+**Ref** - `fix/nul-byte-in-source`, 2026-08-14
 ## The description tidier called 249 of the owner's own fabric codes broken [medium]
 
 **Symptom** — the 2026-08-14 production plan of `tidy-fabric-descriptions.mjs`
@@ -1633,6 +1696,40 @@ This repair reaches **509 of the 589** the code match could not.
 **Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
 (fix/po-dedication-and-dates).
 
+## A repair that writes four production columns needed one environment variable, and checked its own work on the session that did the writing [high]
+
+**Symptom** — `backend/scripts/repair-migrated-po-lines.mjs` writes
+`so_item_id`, `delivery_date` and `linked_ac_dtlkey` on
+`scm.purchase_order_items` and `expected_at` on `scm.purchase_orders`. Its
+entire apply gate was `APPLY=1`. No confirmation phrase, and no verification
+that re-read the rows afterwards.
+
+**Root cause** — two habits this repo already pays for:
+
+1. **One variable is the same keystroke whether it is meant or mistyped.** Every
+   other gated repair here requires `CONFIRM="I HAVE REVIEWED THE DRY-RUN"`;
+   this one predates that shape and was never brought forward.
+2. **The writing session is the worst witness that a write landed.** The script
+   reported the counts its own UPDATEs returned and stopped there. On
+   2026-08-13 that exact reasoning reported "written: 7 of 7" over seven rows
+   that had been turned into jsonb STRINGS — the count was right and the data
+   was wrong. A count is not a shape.
+
+**Found by** — `scripts/check-release-discipline.mjs`, the gate added in this
+PR, on its first run against the tree. It was not reported by a person.
+
+**Fix** — the apply path now requires the spelled-out CONFIRM phrase and exits
+2 without it; the workflow gained a matching `confirm` input wired to both the
+staging and prod jobs. After the write the script opens a SECOND connection,
+reads the rows back, and asserts the VALUES it intended are the values present
+(and that no header it filled is still blank), failing the run when they are
+not.
+
+**Class** — *a gate that only counts*, docs/bug-classes.md. The check that
+caught it is now in CI, so a new write script cannot land without both halves.
+
+**Ref** - `release-discipline`, PR #2138, 2026-08-14
+
 ## Three bugs in the AutoCount parity checkers, all in OUR queries, none in the data [medium]
 
 **Symptom** — both read-only checks crashed on 2026-08-10, and the section that
@@ -2399,6 +2496,19 @@ the model to copy: a key a legitimate human action can restore - a Super Admin
 removing a Processing Date - is not a key, it is a trap. The two safe shapes are
 a key the write itself destroys (`jsonb_typeof = 'string'` -> NULL; a `-1S` line
 re-coded away) and a value re-derived from an immutable source. Everything else
+either converges by construction or has to refuse. A writing script has to state
+its re-run behaviour in its own header, because "is it safe to run this again"
+was a question nobody could answer without reading the whole file - and three
+times this month somebody answered it wrong.
+
+**Correction, 2026-08-13.** This entry originally claimed that "every script in
+`backend/scripts` that writes now states its re-run behaviour in its own
+header". It did not, and saying so stopped anybody checking. Measured by
+`npm --prefix backend run audit:release-discipline` on the day this was written:
+**162 scripts write, and 67 of them carry no re-run note.** They are listed, one
+by one, in `backend/scripts/release-discipline-grandfathered.json`, and a NEW
+writing script without one now fails CI. The rule is real from here; the claim
+that it was already universal was not.
 either converges by construction or has to refuse. Every script in
 `backend/scripts` that writes now states its re-run behaviour in its own header,
 because "is it safe to run this again" was a question nobody could answer without
