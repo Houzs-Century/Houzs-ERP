@@ -85,7 +85,7 @@ const ALIAS_SOURCES: Map<string, string[]> = (() => {
 })();
 
 export type ItemCodeResolution =
-  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding' }
+  | { ok: true; acItemCode: string; via: 'direct' | 'sofa-model' | 'binding' | 'default-choice' }
   | { ok: false; reason: 'unmapped' | 'ambiguous'; detail: string; candidates: string[] };
 
 /**
@@ -96,6 +96,45 @@ export type ItemCodeResolution =
  * A sales order has none, and the honest consequence is that a handful of its
  * lines are refused rather than guessed at.
  */
+/**
+ * THE STANDING CHOICE for an ERP code the cutover left pointing at several
+ * AutoCount items, used when the document has no creditor to choose with.
+ *
+ * A purchase order names its supplier and resolves on its own. A SALES ORDER
+ * never does, so before this every order containing one of these was refused —
+ * correctly, but permanently, because nothing downstream could supply the
+ * missing fact either. The supplier SKU binding cannot stand in for it: that
+ * column means "what this supplier calls it" and is printed on documents sent
+ * to the supplier, so writing an AutoCount code into it to satisfy the sync
+ * would corrupt purchasing. This is the separate, deliberate answer.
+ *
+ * Owner's rule, 2026-08-13: "一个 item 统一一个" — one ERP item, one AutoCount
+ * item, always the same one, so stock and history stay on a single code instead
+ * of splitting across the brand items the cutover collapsed.
+ *
+ * Each value is checked at test time against the compiled map: it must be a
+ * real AutoCount ItemCode AND one of the candidates for its ERP code. A typo
+ * here would put a phantom item in a licensed account book.
+ */
+export const AC_DEFAULT_ITEM_CHOICE: ReadonlyMap<string, string> = new Map([
+  /* Owner picked DorsettLoft for the two models Armani and DorsettLoft both
+     supply. The remaining two have only one plausible brand each, and the
+     choice matches the supplier the ERP already records as MAIN for the
+     model's compartments. */
+  ['9028-1S', 'DSL-9028 SOFA'],
+  ['9058-1S', 'DSL-9058 SOFA'],
+  ['5152-1S', 'RDS-5152 SOFA'],
+  ['5080-1S', 'TD-SF5080 SOFA'],
+]);
+
+/** The choice for `code`, but only if it really is one of that code's candidates. */
+function defaultChoiceFor(code: string, candidates: AcItemMapEntry[]): string | null {
+  const want = AC_DEFAULT_ITEM_CHOICE.get(code);
+  if (!want) return null;
+  const hit = candidates.find((e) => up(e.ac) === up(want));
+  return hit ? hit.ac : null;
+}
+
 export function resolveAcItemCode(
   erpItemCode: string,
   opts: {
@@ -183,7 +222,12 @@ export function resolveAcItemCode(
     if (candidates.length <= 1 || index.acCodes.has(up(bound))) {
       return { ok: true, acItemCode: bound, via: 'binding' };
     }
-    return {
+    /* A bad binding does not get to refuse a code that HAS a standing choice —
+       it is exactly the wrong data the choice was written to route around. Fall
+       through to the normal path rather than returning the choice here, so a
+       purchase order still narrows by its own creditor first and only a
+       supplier-less document lands on the default. */
+    if (!defaultChoiceFor(code, candidates)) return {
       ok: false,
       reason: 'ambiguous',
       detail: `ERP item code '${erpItemCode}' is bound to '${bound}', which is not an AutoCount `
@@ -224,6 +268,11 @@ export function resolveAcItemCode(
       candidates: candidates.map((e) => e.ac),
     };
   }
+
+  /* NO SUPPLIER TO ASK, SO USE THE STANDING CHOICE — see AC_DEFAULT_ITEM_CHOICE.
+     Last, so a purchase order's own creditor always wins over it. */
+  const chosen = defaultChoiceFor(code, candidates);
+  if (chosen) return { ok: true, acItemCode: chosen, via: 'default-choice' };
 
   return {
     ok: false,

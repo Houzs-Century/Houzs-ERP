@@ -13,6 +13,7 @@
  */
 import { describe, expect, it, test } from 'vitest';
 import {
+  AC_DEFAULT_ITEM_CHOICE,
   AC_ITEM_MAP_ROWS,
   ItemCodeError,
   acItemIndex,
@@ -379,5 +380,67 @@ describe('a binding that is meant to break a tie must name one of the tied items
     expect(r.ok).toBe(true);
     const post = resolveAcItemCode('BRAND-NEW-SKU', { bindings: new Map([['BRAND-NEW-SKU', 'NB-BRANDNEW']]) });
     expect(post.ok).toBe(true);
+  });
+});
+
+/* Owner 2026-08-13, after HC-SO-2608-001 was refused: "一个 item 统一一个" —
+   an ERP code the cutover left pointing at several AutoCount items gets ONE
+   standing answer, so a sales order (which never names a creditor) can send.
+   A purchase order still resolves by its own supplier and must not be touched
+   by this. */
+describe('the standing choice for a code no sales order can disambiguate', () => {
+  test('every entry names a REAL AutoCount item, and one of ITS OWN candidates', () => {
+    /* The whole guard rail. A typo here is not a failed lookup — it is a
+       phantom ItemCode opened in a licensed account book, silently, on the
+       first order that touches the model. */
+    const index = acItemIndex();
+    expect(AC_DEFAULT_ITEM_CHOICE.size).toBeGreaterThan(0);
+    for (const [erp, ac] of AC_DEFAULT_ITEM_CHOICE) {
+      expect(index.acCodes.has(ac.toUpperCase()), `${ac} is not an AutoCount item`).toBe(true);
+      const cands = (index.byErp.get(erp.toUpperCase()) ?? []).map((e) => e.ac);
+      expect(cands, `${ac} is not a candidate for ${erp}`).toContain(ac);
+      /* Only ambiguous codes need one; a 1:1 code resolves already and an entry
+         for it is dead weight that will rot. */
+      expect(cands.length, `${erp} is not ambiguous — remove it`).toBeGreaterThan(1);
+    }
+  });
+
+  test('a sales order (no supplier) now resolves instead of being refused', () => {
+    const r = resolveAcItemCode('9028-1S', {});
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('DSL-9028 SOFA'); expect(r.via).toBe('default-choice'); }
+  });
+
+  test('the sofa compartments a real order carries resolve through it too', () => {
+    /* What the ERP actually stores. The line code is a compartment; D9 collapses
+       it to 9028-1S, which is the code the choice is keyed by. */
+    const r = resolveAcItemCode('9028-1A(LHF)', {});
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.acItemCode).toBe('DSL-9028 SOFA');
+  });
+
+  test('a PURCHASE ORDER still follows its own creditor, not the default', () => {
+    const armani = resolveAcItemCode('9028-1S', { supplierCode: '400-A004' });
+    expect(armani.ok).toBe(true);
+    if (armani.ok) { expect(armani.acItemCode).toBe('AMN-SF9028 SOFA'); expect(armani.via).not.toBe('default-choice'); }
+  });
+
+  test('a wrong binding no longer refuses a code that has a standing choice', () => {
+    /* Production holds exactly this: the MAIN supplier's row for 9028-1S is the
+       ERP's own code. It must neither be sent nor be allowed to block. */
+    const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', '9028-1S']]) });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.acItemCode).toBe('DSL-9028 SOFA');
+  });
+
+  test('a GOOD binding still wins over the default — an operator said so explicitly', () => {
+    const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA']]) });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.acItemCode).toBe('AMN-SF9028 SOFA'); expect(r.via).toBe('binding'); }
+  });
+
+  test('a code with no entry is still refused — nothing is guessed', () => {
+    const r = resolveAcItemCode('SQUARE PILLOW', {});
+    expect(r.ok).toBe(false);
   });
 });
