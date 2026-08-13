@@ -117,6 +117,30 @@ test("ESCAPE 2: appending a blank line to the guide turns the FAIL into a PASS",
   );
 });
 
+test("ESCAPE 2b: DELETING the guide also counts as updating it", () => {
+  const surface = hunk(SO_ROUTES, [
+    `mfgSalesOrders.post('/:docNo/force-unlock', requirePermission('scm.so.force_unlock'), async (c) => {`,
+  ]);
+  // What `git diff` emits for a deletion: the path is still under docs/modules/,
+  // and rule 2 only asks whether the path appears in the diff.
+  const deletion = [
+    "diff --git a/docs/modules/sales-order.md b/docs/modules/sales-order.md",
+    "deleted file mode 100644",
+    "--- a/docs/modules/sales-order.md",
+    "+++ /dev/null",
+    "@@ -1,2 +0,0 @@",
+    "-# Sales order",
+    "-`backend/src/scm/routes/mfg-sales-orders.ts`",
+  ].join("\n");
+  const r = verdict(`${surface}\n${deletion}`);
+  assert.equal(r.ok, true, "KNOWN GAP: deleting the guide satisfies the rule that asks you to update it");
+  assert.match(
+    r.findings.find((f) => f.rule === "module-guide").message,
+    /the owning guide\(s\) were updated/,
+  );
+  // And it compounds with ESCAPE 7: the coverage is gone for every later PR too.
+});
+
 // ---------------------------------------------------------------------------
 // 3. Rule 1 is satisfied by rewording someone else's heading.
 // ---------------------------------------------------------------------------

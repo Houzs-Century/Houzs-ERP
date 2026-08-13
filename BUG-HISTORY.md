@@ -13,9 +13,10 @@ the proxy is narrower than the rule:
    the same endpoint and the same permission and detects as nothing. `main`
    already carries 20 registrations in that shape and 2
    `requirePermission(CONSTANT)` call sites in `tableLayouts.ts`.
-2. Rule 2 passes when the guide is *touched*. One appended blank line to
-   `docs/modules/sales-order.md` turned `FAIL` into
-   `PASS ... the owning guide(s) were updated`.
+2. Rule 2 passes when the guide is *touched*, not updated. One appended blank
+   line to `docs/modules/sales-order.md` turned `FAIL` into
+   `PASS ... the owning guide(s) were updated`. So does DELETING that guide —
+   which also removes the coverage for every later PR, compounding with 7.
 3. `addsBugHistoryEntry` matches any added `## ` line, so rewording an existing
    heading reports it as this PR's new entry — it reported
    "## The AutoCount write-back never told AutoCount which salesperson sold the
