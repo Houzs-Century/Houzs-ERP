@@ -2247,6 +2247,25 @@ app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
 });
 
 // ── Impersonation ────────────────────────────────────────────────────────────
+// THE HANDLER BELOW IS DEAD, AND THIS BLOCK DESCRIBES BEHAVIOUR THAT DOES NOT
+// RUN. `POST /:id/impersonate` is registered TWICE on this same `app` — first at
+// :2031, again at :2272. Hono composes both chains in registration order and the
+// :2031 handler returns on every branch and never continues the chain — no
+// handler in this file calls the Hono continuation at all — so the second
+// registration below is unreachable.
+//
+// What actually runs is :2031: wildcard `*` ONLY, always a 1-hour session. So
+// the staging door described below does not exist at runtime, even though
+// wrangler.toml sets IMPERSONATION_ENABLED="true" for [env.staging.vars] — and
+// `GET /impersonation-enabled` (:2266) is NOT shadowed, so on staging it still
+// answers `enabled: true` to any users.manage admin whose mint call then 403s
+// "Owner only". Probe and mint disagree today.
+//
+// LEFT AS IS on purpose (audit 2026-08-13, ledger K2): which door is correct is
+// a security decision, not a dead-code cleanup. Deleting :2272 hides the intent;
+// deleting :2031 would silently GRANT every users.manage admin a 7-day
+// impersonation session on staging. Owner picks.
+//
 // Two doors, both behind users.manage (Nico approved 2026-07-22):
 //   · Staging flag — IMPERSONATION_ENABLED === "true", set ONLY in
 //     wrangler.toml's [env.staging.vars]: every users.manage admin may hop
