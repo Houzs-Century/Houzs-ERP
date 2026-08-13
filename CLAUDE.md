@@ -249,6 +249,14 @@ Do not open a 5,000+ line file whole. Several pages and route modules run
 past 8,000 lines and one past 12,000. Locate with grep, then read the line
 range. The map lists the offenders and roughly what lives where in each.
 
+**Those files may not get any bigger.** `scripts/file-size-ceilings.json`
+records what each already is and CI fails if one grows past it; every other
+file is capped at 2,000 lines, so a new 3,000-line module fails. Shrinking is
+always free and a ceiling may only FALL — `--update` cannot raise one, so if
+you are over, the fix is a new module, never a bigger number. Nothing requires
+you to SPLIT an existing file. `npm run check:file-size`, rules in
+`docs/repo-hygiene.md`.
+
 ## What this repo is
 
 Internal ERP for Houzs. Cloudflare Workers + Hono backend, React/Vite SPA
@@ -486,6 +494,7 @@ Not generic narrative.
 - **`docs/CODEBASE-MAP.md`** — start here for anything you would otherwise
   go exploring for; `docs/generated/` for the mechanical inventory
 - **`BUG-HISTORY.md`** — read the entries for a subsystem before touching it
+- **`docs/repo-hygiene.md`** — the branch rules and the file-size ratchet
 - `/sync-wiki` — user-scope slash command for the Obsidian refresh; the
   command file is NOT in this repo, so it exists only where the user has it
   installed
