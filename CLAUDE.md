@@ -47,6 +47,45 @@ than no fact: this file is auto-loaded, so every session believes it. It
 described the database as "D1 SQLite" for over a month after the Postgres
 cutover, and pointed at a migration directory that production does not read.
 
+## ⚠️ A number in a comment is a fact with an expiry date — MANDATORY (owner rule)
+
+If you write a measurement into a comment, a doc, or a commit message — a file
+count, a duration, a row count, a "we chose N because" sizing argument — you own
+keeping it true, or you make it self-checking. A stale number is worse than no
+number: the next person does arithmetic on it and inherits your error without
+ever knowing they trusted anything.
+
+This rule was bought at full price. `ci.yml` explains its 4-way test shard with
+a worked calculation over "112 files" and a "334s" suite. By 2026-08-13 the
+suite was **277 files** and one shard alone ran **~380s**. Every later decision
+that reasoned from that comment — including the first plan written to fix the CI
+slowdown — was wrong in the same direction. See `docs/ci-capacity-coe.md`.
+
+So: prefer a generated artifact with an `audit:` gate over a hand-written
+number (`npm run audit:test-schema`, `audit:map`, `audit:routes` are the shape
+to copy). If it must be prose, date it inline — "as of 2026-08-13, 277 files" —
+so the reader can see how much to trust it.
+
+## ⚠️ Measure before you optimise, and put the stopwatch in the PR — MANDATORY (owner rule)
+
+Never ship a performance change justified by arithmetic alone. Run the probe,
+paste the before/after, and name the tool that produced it — same evidential bar
+`BUG-HISTORY.md` sets for root causes, and the COE section above sets for
+incidents.
+
+The cost of skipping it, from the same incident: `tests/setup.ts` replayed 147
+migrations per test file, ~283,000 database round-trips per suite run. It is an
+overwhelming-looking number and it was the wrong target — timed inside the pool,
+those 1020 statements took **391ms**. The real cost was per-file workerd startup,
+which no amount of SQL work would have touched.
+
+Performance work also carries the owner's standing rule that it must not
+destabilise: change only what you can show is behaviour-preserving. When a
+rebuild or fixture is involved, that means proving equivalence against the real
+runtime — see `backend/tests/schemaSnapshotParity.test.ts`, which is what caught
+a `PRAGMA foreign_keys` difference that was silently putting 90 impossible rows
+into every test database.
+
 ## `main` IS protected now — since 2026-07-31
 
 The owner created the `main-protection` **ruleset**. Verify it rather than
@@ -61,7 +100,14 @@ It currently returns `deletion`, `non_fast_forward`, and `required_status_checks
 with contexts `backend-typecheck` + `frontend` and
 **`strict_required_status_checks_policy: true`** — that last flag is *Require
 branches to be up to date before merging*, and it is the one that matters.
-Repository admin is on the bypass list as an emergency escape hatch.
+
+**There is NO emergency escape hatch.** This paragraph used to end "Repository
+admin is on the bypass list as an emergency escape hatch"; checked 2026-08-13,
+the ruleset returns `bypass_actors: null` and `current_user_can_bypass:
+"never"`. Nobody can force a merge, including the owner. That is fine while
+merges are one-at-a-time, and it is the thing to fix FIRST if a merge queue is
+ever switched on — a queue that jams with no bypass blocks `main` for everyone
+until someone edits the ruleset itself.
 
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
@@ -211,6 +257,23 @@ production DSN in front of a human for what is usually a `SELECT`.
 Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
+
+**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
+use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+repo level or in any of its three environments. If your script needs a
+PostgREST-shaped client — because it imports a real service function out of
+`src/` rather than re-implementing it, which is the right instinct — it needs
+the SHAPE, not PostgREST credentials: `backend/scripts/lib/pgrest-shim.mjs`
+gives you `sb.from(...)` over the pg connection. Copy
+`recompute-so-allocation.mjs`, which does exactly this.
+
+**Do NOT copy `recompute-2990-so-allocation.yml`.** It is three characters away
+from that one by name and it is wired to `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY`, which do not exist here — so it has never run and
+cannot. On 2026-08-13 a new workflow was written by copying it and failed on its
+first dispatch with both secrets empty. `SOURCE_SUPABASE_URL` /
+`SOURCE_SERVICE_ROLE_KEY` DO exist and are a third thing again: they point at
+the 2990 SOURCE system, not at Houzs.
 
 Rules for anything in this shape:
 

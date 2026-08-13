@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  companyRequiresStockLocation,
   soStockLocationError,
   LOCATION_REQUIRED_COMPANY_CODES,
 } from "./so-form-validate";
@@ -80,5 +83,89 @@ describe("what the gate never blocks", () => {
 
   it("…but a surface that resolves no location at all is still gated", () => {
     expect(soStockLocationError(input())).not.toBeNull();
+  });
+});
+
+/* ── The predicate, and the ONE surface that reads it directly ──────────────
+   `SalesOrderNewFromProducts` collects no address by design, so under a
+   location-gated company it could never satisfy a CONFIRMED create: PR #2112
+   made every cart on that page a 422 with no field on the screen to fix. Owner
+   approved landing a DRAFT there instead — a draft is never written to
+   AutoCount, so it owes no Location, and the DRAFT -> live transition on the SO
+   detail re-runs the same gate once the address exists.
+
+   The company scope of that behaviour must come from the ONE list, or the day a
+   company is added to LOCATION_REQUIRED_COMPANY_CODES the page silently keeps
+   confirming for it. */
+
+describe("companyRequiresStockLocation", () => {
+  it("answers for company 1 and for nobody else", () => {
+    expect(companyRequiresStockLocation("HOUZS")).toBe(true);
+    expect(companyRequiresStockLocation("2990")).toBe(false);
+    expect(companyRequiresStockLocation("HOOKKA")).toBe(false);
+  });
+
+  it("is case- and whitespace-insensitive, like the backend twin", () => {
+    expect(companyRequiresStockLocation(" houzs ")).toBe(true);
+  });
+
+  it("does NOT gate an unresolved company (branding still loading)", () => {
+    expect(companyRequiresStockLocation(null)).toBe(false);
+    expect(companyRequiresStockLocation(undefined)).toBe(false);
+    expect(companyRequiresStockLocation("")).toBe(false);
+  });
+
+  it("agrees with soStockLocationError on every code it is asked about", () => {
+    for (const code of ["HOUZS", "2990", "HOOKKA", "", null]) {
+      const blocked = soStockLocationError({
+        companyCode: code, salesLocation: "", state: "",
+      }) !== null;
+      expect(blocked, `disagreement on ${String(code)}`)
+        .toBe(companyRequiresStockLocation(code));
+    }
+  });
+});
+
+describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => {
+  /* Source-text: the page's outcome is a body field on a mutation inside a
+     1,100-line screen, and what matters is WHICH predicate decides it. */
+  const source = readFileSync(
+    resolve(process.cwd(), "src/pages/scm-v2/SalesOrderNewFromProducts.tsx"),
+    "utf8",
+  );
+
+  it("derives the draft decision from the shared list, never re-derived", () => {
+    expect(source).toContain(
+      "const landsDraft = companyRequiresStockLocation(branding.companyCode);",
+    );
+    // No second copy of the company scope on this page — no company CODE at all.
+    expect(source).not.toContain('"HOUZS"');
+    expect(source).not.toContain('"2990"');
+  });
+
+  it("sends asDraft only for those companies — everyone else is unchanged", () => {
+    expect(source).toContain("asDraft: landsDraft || undefined,");
+  });
+
+  it("keeps the location guard wired, inert only because the create is a draft", () => {
+    /* Same shape as the guided wizard: the day this flow stops drafting it is
+       gated automatically instead of silently minting locationless orders. */
+    const guard = source.slice(
+      source.indexOf("soStockLocationError({"),
+      source.indexOf("if (preErr) {"),
+    );
+    expect(guard).toContain("asDraft: landsDraft,");
+  });
+
+  it("no longer tells the operator to go and use the Full form", () => {
+    /* The nav link in the header stays — it is a way to a fuller screen, not a
+       workaround for a create this page cannot do. What went is the refusal
+       that sent the operator there after they had built a whole cart. */
+    expect(source).not.toContain('use "Switch to Full form" to enter it');
+  });
+
+  it("says up front what it will produce, and labels the button to match", () => {
+    expect(source).toContain("The order lands as a DRAFT");
+    expect(source).toContain('landsDraft ? "Save draft SO"');
   });
 });
