@@ -354,6 +354,15 @@ lorryCapacity.get('/', async (c) => {
 
 /* ──────────────────────────────────────────────────────────────────────────
    PATCH /lorry-capacity/lorries/:id/in-house — toggle is_internal inline.
+
+   DELIBERATELY NOT COMPANY-SCOPED. scm.lorries is the GLOBAL fleet master —
+   MULTICOMPANY-MODULE-MAP.md classes TMS drivers / helpers / lorries as SHARED,
+   one copy for all companies, and every read on this dashboard (and in
+   lorries.ts, fleet-maintenance.ts) lists the whole fleet. In-house vs
+   Outsourced is a fact about the vehicle, not about a company's books; scoping
+   this write would make the flag settable only by whichever company happened to
+   insert the lorry and stale for the other, while the shared dashboard kept
+   showing it. The gate here is the transportation area guard, not company_id.
    ─────────────────────────────────────────────────────────────────────────*/
 const inHouseSchema = z.object({ isInternal: z.boolean() });
 
@@ -410,7 +419,11 @@ lorryCapacity.put('/lorries/:id/repair-days', async (c) => {
   const user = c.get('user');
 
   /* 1. Remove THIS dashboard's prior managed window(s) overlapping [from,to] for
-        the lorry (leave manually-added maintenance untouched — different reason). */
+        the lorry (leave manually-added maintenance untouched — different reason).
+        No company predicate, for the same reason as the in-house toggle above: a
+        window is an availability fact about a SHARED vehicle. A lorry that is in
+        the workshop is in the workshop for both companies, so both must see (and
+        be able to correct) the same window. */
   await sb.from('lorry_maintenance')
     .delete()
     .eq('lorry_id', id)

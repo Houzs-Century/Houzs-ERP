@@ -3357,7 +3357,11 @@ async function resolveAllocationParent(
   poId: string,
   itemId: string,
 ): Promise<
-  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null }
+  /* companyId travels back with the parent so the allocation writers can put the
+     predicate on their OWN statement rather than trusting this lookup to have
+     covered them — the client is service-role, so nothing re-checks between the
+     two round trips. */
+  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null; companyId: number }
   | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
 > {
   const co = requireActiveCompanyId(c);
@@ -3382,7 +3386,7 @@ async function resolveAllocationParent(
   if (!itemRow || itemRow.purchase_order_id !== poId) {
     return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
   }
-  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number };
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number, companyId: co.companyId };
 }
 
 /* The line's current allocations, seq-ordered — the base every write plans on. */
@@ -3508,8 +3512,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     }
     updates.so_item_id = nextSoItemId;
   }
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) {
     if (/allocation_exceeds_line_qty/.test(error.message ?? '')) {
       return c.json({ error: 'allocation_conflict', message: "The line's allocations changed underneath this edit — reload and try again." }, 409);
@@ -3539,16 +3543,16 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   const doomed = existing.find((a) => a.id === allocationId);
   if (!doomed) return c.json({ error: 'allocation_not_found', message: 'That allocation no longer exists on this line.' }, 404);
 
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* Close the gap: survivors move DOWN in ascending order, so each UPDATE
      lands in a seq the delete (or the previous move) just freed and the
      UNIQUE (item, seq) constraint can never collide mid-resequence. */
   for (const move of resequenceAfterDelete(existing, allocationId)) {
-    const { error: seqErr } = await sb.from('purchase_order_item_allocations')
-      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId);
+    const { error: seqErr } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId), parent.companyId);
     if (seqErr) break; // leave a gap rather than fail the delete — display-only cosmetics
   }
   await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
@@ -4334,10 +4338,10 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
        again after a reopen, is re-entered in the allocation editor. */
     const poItemIds = lineRows.map((l) => l.id).filter(Boolean);
     if (poItemIds.length > 0) {
-      await supabase
+      await scopeToCompanyId(supabase
         .from('purchase_order_item_allocations')
         .delete()
-        .in('purchase_order_item_id', poItemIds);
+        .in('purchase_order_item_id', poItemIds), co.companyId);
     }
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 

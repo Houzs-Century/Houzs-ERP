@@ -2147,7 +2147,11 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (Object.keys(doUpdates).length > 0) {
     if (doId) {
       doUpdates.updated_at = new Date().toISOString();
-      const { error } = await sb.from('delivery_orders').update(doUpdates).eq('id', doId);
+      /* The board is a CROSS-COMPANY view, so the predicate WIDENS to the
+         caller's granted companies rather than pinning the active one — but it
+         is still a predicate. Without it, this service-role write reaches a DO
+         in a company the caller holds no grant for; nothing else re-checks. */
+      const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
         if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
         return c.json({ error: 'update_failed', reason: error.message }, 500);

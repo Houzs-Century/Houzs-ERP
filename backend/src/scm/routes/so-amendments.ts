@@ -433,6 +433,10 @@ soAmendments.get('/:id', async (c) => {
    { ref, note?, attachmentKey? }. Gated to scm.amendment.supplier_confirm.
    Transition REQUESTED → SUPPLIER_PENDING via the shared state machine. */
 soAmendments.patch('/:id/supplier-confirm', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.amendment.supplier_confirm')) {
@@ -482,6 +486,10 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
     supplier_confirmation_attachment_key: body.attachmentKey ?? null,
     updated_at:                           new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
+       the WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, version')
@@ -915,6 +923,10 @@ soAmendments.patch('/:id/approve-po', (c) => {
    performed by the frontend once this gate flips to SENT. Gated to
    scm.amendment.approve_po (same purchasing gate as approve-po). */
 soAmendments.patch('/:id/send', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.amendment.approve_po')) {
@@ -951,6 +963,10 @@ soAmendments.patch('/:id/send', async (c) => {
     sent_at:    new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
+       the WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, version')
@@ -989,6 +1005,10 @@ soAmendments.patch('/:id/send', async (c) => {
    is precisely the competing-documents problem the edit/withdraw work exists to
    end. */
 soAmendments.patch('/:id/reject', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
@@ -1043,6 +1063,7 @@ soAmendments.patch('/:id/reject', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')
@@ -1081,6 +1102,10 @@ soAmendments.patch('/:id/reject', async (c) => {
    immediately. resolution = 'WITHDRAWN' (mig 0149) is what tells a reader the
    two apart. REQUESTED only — see the state machine's note. */
 soAmendments.patch('/:id/withdraw', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
@@ -1135,6 +1160,7 @@ soAmendments.patch('/:id/withdraw', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')

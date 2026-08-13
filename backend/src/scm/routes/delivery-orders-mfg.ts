@@ -4367,10 +4367,20 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   const headerLock = await doHasDownstream(sb, id);
   if (headerLock) return c.json(headerLock, 409);
 
+  /* The header PATCH had no company gate of any kind: `id` comes straight from
+     the path and the SCM client is service-role, so a known id edited another
+     company's delivery order - address, dates, driver, the lot - and mirrored
+     the amend onto that company's SO. Strict flavour, because a DO header edit
+     is a books change: refuse an unresolved company rather than degrade to
+     "every company". */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* The BEFORE half of every from->to pair recorded after the DO write below.
      Read after the guards so a rejected PATCH costs nothing. */
-  const { data: beforeRow } = await sb.from('delivery_orders')
-    .select(DO_AUDIT_SELECT).eq('id', id).maybeSingle();
+  const { data: beforeRow } = await scopeToCompanyId(sb.from('delivery_orders')
+    .select(DO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = (beforeRow ?? {}) as unknown as Record<string, unknown>;
 
   /* DUAL-WRITE NOTE: Supabase REST has no client-side transaction primitive —
@@ -4385,9 +4395,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
   let mirrorSoDocNo: string | null = null;
 
   if (Object.keys(updates).length > 1) {
-    const { data, error } = await sb.from('delivery_orders').update(updates).eq('id', id).select('id, so_doc_no').maybeSingle();
+    const { data, error } = await scopeToCompanyId(sb.from('delivery_orders').update(updates).eq('id', id), co.companyId).select('id, so_doc_no').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-    if (!data) return c.json({ error: 'not_found' }, 404);
+    if (!data) return c.json(NOT_THIS_COMPANY, 404);
     mirrorSoDocNo = (data as { soDocNo?: string | null; so_doc_no?: string | null }).soDocNo
       ?? (data as { so_doc_no?: string | null }).so_doc_no ?? null;
 
@@ -4673,14 +4683,20 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
+  /* A DO line edit moves stock and revenue, so it takes the strict company gate
+     rather than the degrading one: an unresolved company refuses instead of
+     reaching every company's lines. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   /* Tier 2 downstream-lock — line-edit is blocked once a DR / SI exists. */
   const childLock = await doHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
 
-  const { data: prev } = await sb.from('delivery_order_items')
+  const { data: prev } = await scopeToCompanyId(sb.from('delivery_order_items')
     .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, so_item_id, line_total_centi, rack_id, line_delivery_date, committed_po_batch_no, committed_variant_key, committed_batch_strict')
-    .eq('id', itemId).maybeSingle();
-  if (!prev) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId), co.companyId).maybeSingle();
+  if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = it.qty !== undefined ? Number(it.qty) : Number(prev.qty);
   /* Mig 0230 — a qty INCREASE can bind, just like the three create paths. Filled
@@ -4879,7 +4895,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('delivery_order_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('delivery_order_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty
@@ -4948,6 +4964,10 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
 deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
 
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // Per-line downstream guard (PR #24) — block delete only if THIS line's qty
   // has been invoiced or returned. Tier 2's doc-level doHasDownstream is too
   // coarse here (would block deleting any line if any OTHER line had children);
@@ -4966,9 +4986,10 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was on the delivery order, and there is nothing
      left to join back to. */
-  const { data: doomedRow } = await sb.from('delivery_order_items')
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('delivery_order_items')
     .select('item_code, description, qty, unit_price_centi, discount_centi, line_total_centi')
-    .eq('id', itemId).maybeSingle();
+    .eq('id', itemId), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = (doomedRow ?? {}) as Record<string, unknown>;
 
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
@@ -4976,7 +4997,7 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'delivery_order_items', itemId);
 
-  const { error } = await sb.from('delivery_order_items').delete().eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('delivery_order_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the DELIVERY ORDER and it still exists.

@@ -289,6 +289,27 @@ Not generic narrative.
   wiki's *Polling Strategy* note for cadence and rationale.
 - **URL is state.** Filters/tabs/modes go in `useSearchParams`.
   localStorage is fallback for personal prefs only.
+- **Company scope: the predicate is the only isolation — on WRITES too.**
+  The SCM/Houzs supabase client is the **service role**, so it **bypasses
+  RLS** and no policy is ever evaluated on an app request. The
+  `company_id` predicate a statement carries is the entire tenant
+  boundary. Three rules follow:
+  (a) put it on the write itself, not only on the read that preceded it —
+  nothing re-checks between two PostgREST round trips, which is how a
+  scoped-read-then-open-update shipped across the whole system;
+  (b) a parent-ownership predicate (`so_doc_no`, `purchase_invoice_id`,
+  `trip_id`) proves the row is on that document, NOT that the document is
+  in your books — you need both;
+  (c) a cross-company module still takes a predicate, just a wider one
+  (`scopeToAllowedCompanies` = the caller's granted companies); "shared
+  queue" never means "no predicate". Use `scopeToCompany` /
+  `scopeToCompanyId` from `scm/lib/companyScope.ts` (that file's header is
+  the reference), and `maybeSingle` not `single` on any by-id statement
+  carrying one — the predicate can legitimately match zero rows and
+  `single()` reports that honest 404 as a 500. If a route is
+  deliberately cross-company or deliberately shared, say so in a comment
+  naming why, so the next sweep does not "fix" it. Background:
+  `docs/MULTICOMPANY-MODULE-MAP.md`.
 - **Permissions are flat strings**, e.g. `projects.read`. Catalogue
   lives in `backend/src/services/permissions.ts`. New verbs since
   mig 047: `projects.chat`, `projects.checklist.tick` — use

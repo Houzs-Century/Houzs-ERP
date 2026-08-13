@@ -1748,8 +1748,17 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Re-pricing an invoice line moves revenue and margin, so the company gate is
+     strict: refuse an unresolved company rather than fall through to "every
+     company", and pin the status gate, the line read and the UPDATE itself. The
+     `sales_invoice_id` predicate proves the line is on THIS invoice, not that
+     the invoice is in THIS company's books. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
     }
@@ -1769,10 +1778,10 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `do_item_id` are business-logic only and deliberately not in
      SI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('sales_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
     .select(SI_LINE_AUDIT_SELECT + ', variants, do_item_id')
-    .eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern (see SI_AUDIT_SELECT
@@ -1822,7 +1831,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('sales_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -1863,8 +1872,12 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
 
 salesInvoices.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before deleting lines.' }, 409);
     }
@@ -1877,9 +1890,9 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was invoiced, and there is nothing left to join
      back to. */
-  const { data: doomedRow } = await sb.from('sales_invoice_items')
-    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!doomedRow) return c.json({ error: 'not_found' }, 404);
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
+    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = doomedRow as unknown as Record<string, unknown>;
 
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
@@ -1887,7 +1900,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'sales_invoice_items', itemId);
 
-  const { error } = await sb.from('sales_invoice_items').delete().eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the INVOICE and it still exists. DELETE on
@@ -2089,14 +2102,20 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */
-  const { data: row } = await sb.from('sales_invoice_payments')
-    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
+  /* Taking money back off an invoice is a books change, so the company gate is
+     strict — an unresolved company refuses rather than reaching every company's
+     receipts. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: row } = await scopeToCompanyId(sb.from('sales_invoice_payments')
+    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
+  if (!row) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
-  const { data: inv } = await sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id), co.companyId).maybeSingle();
+  if (!inv) return c.json(NOT_THIS_COMPANY, 404);
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
-  const { error } = await sb.from('sales_invoice_payments').delete().eq('id', paymentId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
   try { await reconcileSiOverpay(sb, id); }

@@ -773,6 +773,16 @@ Three masters, one shared fleet across companies. `drivers.ts:31-34` and
 `helpers.ts:23-31` are explicit: the roster is deliberately **not** company-scoped;
 `company_id` on a fleet row is a created-by stamp, not an isolation boundary.
 
+**That ruling covers the MASTERS only — it does not cover `trips` /
+`trip_stops`** (corrected 2026-08-13). Those are the shared QUEUE, and the queue
+has always been read through `scopeToAllowedCompanies` (widen to the caller's
+GRANTED companies). Until the unscoped-write sweep the WRITES carried no
+predicate at all, so a dispatcher granted only one company could patch, cancel,
+hard-delete or re-sequence the other company's trip by id — the service-role
+client bypasses RLS, so nothing else stopped it. Every trip / trip_stop write now
+carries `scopeToAllowedCompanies`, matching its own read. Shared queue means a
+WIDER predicate, never no predicate.
+
 **Assignment happens in two places, and they are not the same mechanism:**
 
 | Path | What it writes | Who calls it |
