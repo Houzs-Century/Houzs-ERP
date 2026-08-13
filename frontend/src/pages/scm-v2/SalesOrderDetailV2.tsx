@@ -63,6 +63,7 @@ import {
   readPaymentRetryHandoff, readPaymentRetryNavigationState,
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -104,9 +105,9 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
-  // The processing-date column the lock reads (PR #140 renamed only the label;
-  // the legacy processing_date snapshot column was dropped in mig 0189).
-  internal_expected_dd?: string | null;
+  // The processing-date column the lock reads. Label, API field and column are
+  // finally the same word (mig 0284 renamed it from internal_expected_dd).
+  processing_date?: string | null;
   proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
@@ -164,6 +165,13 @@ type SoItem = {
      floor, which is why the detail showed no Stock / Incoming PO at all. */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /* R2 object keys for this line's reference photos — the AutoCount
+     Further-Description shots the cutover imported, plus anything uploaded on
+     the edit card. Served by GET /:docNo all along (ITEM_COLS carries
+     photo_urls); this page never rendered them, so the only way to SEE a
+     line's photo was to enter edit mode (owner 2026-08-10: "我在外面的 UI 看
+     不到照片了吗?不能点开照片来看吗?"). */
+  photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -850,6 +858,24 @@ function SalesOrderDetailV2ReadOnly() {
         );
       },
     },
+    /* Photos (owner 2026-08-10) — the line's reference shots, openable. Same
+       resolver as the edit card's tiles (vendor/scm/lib/so-line-photo), so the
+       read page cannot drift into a second, differently-broken loading path.
+       getValue is the COUNT so the column sorts/filters/exports as a number;
+       a `render` with no getValue is invisible to all three. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <SoLinePhotoStrip
+          docNo={docNo ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
+      ),
+    },
     /* Stock + Incoming PO (owner 2026-08-01) — the SAME per-line readiness +
        source-PO trace the SO list drill-down shows, through the ONE shared
        renderer (components/SoSourceChips.tsx). The detail payload has carried
@@ -1174,8 +1200,8 @@ function SalesOrderDetailV2ReadOnly() {
                 />
                 <Field
                   label="Processing date"
-                  value={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  value={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <Field
                   label="Delivery date"
@@ -1345,8 +1371,8 @@ function SalesOrderDetailV2ReadOnly() {
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />
                 <KeyDateRow
                   k="Processing"
-                  v={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  v={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <KeyDateRow
                   k="Delivery"

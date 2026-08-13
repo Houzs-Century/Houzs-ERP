@@ -24,12 +24,16 @@
    a guess: NOVENA-100 + "3" is NOVENA-1003, and nothing else it could be.
 
    Everything else follows the rules the other fabric scripts already keep:
-   live lines are repointed on all four arms through lib/fabric-write, the
+   live lines are repointed on EVERY arm lib/fabric-write declares — the count
+   is that file's ARMS, not a number restated here (it was four until
+   2026-08-13 and is fifteen now, which is exactly why nothing quotes it) — the
    jsonb write is jsonb_set + to_jsonb($1::text), and a row that has to give way
    is deactivated rather than deleted.
 
    MODE=plan (default) prints and writes nothing.
-   MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN". */
+   MODE=apply writes, and needs CONFIRM="I HAVE REVIEWED THE DRY-RUN".
+
+   RE-RUN: inert. A row is only damaged while its label is 'code + digits-only tail'; the repair writes the restored code as the label, which no longer matches. */
 import postgres from "postgres";
 import { normColour } from "./lib/fabric-colour-match.mjs";
 import { repointColour, countColour, arrayShapeCheck, sum, busy } from "./lib/fabric-write.mjs";

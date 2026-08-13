@@ -17,6 +17,22 @@
 // every `bottom...` phrase before specials were collected, so all 53 umbrella
 // fabric instructions were absent from the ERP entirely.
 //
+// RE-RUN: safe only because it now REFUSES the rows it used to corrupt. This
+// writes the legacy `string[]` shape, but scm.*_items.custom_specials is
+// declared `Array<{ description, surchargeSen }>` (mfg-pricing-recompute.ts:117)
+// and the recompute writes that object shape whenever a line is edited. On the
+// first run every migrated line was still NULL or string[], so the union below
+// was harmless. On a SECOND run a recomputed line hands `had` an array of
+// OBJECTS, `push()` does String(o) on each, and the row is rewritten as
+// ["[object Object]"] - the pricing engine's own surcharge breakdown replaced
+// by a placeholder, on a money-bearing column. Those rows are now refused and
+// reported instead. Everything else re-derives the same union and is inert.
+//
+// (census-custom-specials-arrays.mjs, run 31428435434, is the measurement: all
+// 604 array-shaped rows on prod are bare string[] with correct content, so the
+// legacy shape this writes is not itself damage - the object shape is the one
+// that must never be touched by a data script.)
+//
 // DRY-RUN by default; APPLY=1 writes.
 import postgres from "postgres";
 import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
@@ -64,9 +80,21 @@ async function main() {
   const freeCounts = new Map();   // unmatched phrase -> occurrences
   let freeTotal = 0, matchedTotal = 0;
   const updates = { so: [], po: [] };
+  const recomputed = { so: [], po: [] };  // rows the pricing engine owns - see the header
 
   for (const [which, rows] of [["so", soLines], ["po", poLines]]) {
     for (const r of rows) {
+      /* THE PRICING ENGINE'S OWN OUTPUT IS NOT OURS TO MERGE. custom_specials
+         is declared Array<{ description, surchargeSen }> and the recompute
+         emits exactly that; this script speaks the legacy string[] dialect.
+         Unioning the two would run String() over each object and store
+         "[object Object]", losing a surcharge breakdown that carries money.
+         A row holding anything that is not a plain string is left alone and
+         printed. */
+      if (Array.isArray(r.custom_specials) && r.custom_specials.some((x) => typeof x !== "string")) {
+        recomputed[which].push(r);
+        continue;
+      }
       /* {model}-{compartment}; the alias table is what the importers apply, so
          the re-decode sees the same model they did. */
       let model = String(r.code || "").split("-")[0].toUpperCase();
@@ -119,6 +147,11 @@ async function main() {
   log(`phrases with no code, written as free text verbatim: ${freeTotal} (${freeCounts.size} distinct)`);
   for (const [p, n] of [...freeCounts.entries()].sort((a, b) => b[1] - a[1])) log(`   ${String(n).padStart(4)}  ${p}`);
   log("");
+  const skipped = recomputed.so.length + recomputed.po.length;
+  log(`lines REFUSED because the pricing engine already owns their custom_specials: ${skipped} (SO ${recomputed.so.length}, PO ${recomputed.po.length})`);
+  for (const which of ["so", "po"])
+    for (const r of recomputed[which].slice(0, 40))
+      log(`   ${which.toUpperCase()} ${String(r.code ?? "").padEnd(22)} ${JSON.stringify(r.custom_specials)}`);
   log(`lines to update: SO ${updates.so.length}, PO ${updates.po.length}`);
 
   if (!APPLY) { log(""); log("DRY-RUN - set APPLY=1 to write."); await sql.end(); return; }

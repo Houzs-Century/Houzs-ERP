@@ -6,10 +6,18 @@ Owner's call, 2026-08-11: *"不行了，让他们继续用 autocount 先，我�
 
 The ERP is **not** the system of record and nobody has been moved onto it. Company 1
 is frozen (`scm.write_freeze = '1'`, every area, 0 areas lifted), the write-back is
-off (`scm.autocount_writeback = 'off'`), `AC_SYNC_URL` is unset, and
-`scm.autocount_outbox` holds **0 rows** — not zero pending, zero rows, so no ERP
-document has ever been offered to AutoCount. That is the intended state. 2990
-(company 2) is unaffected and trades normally.
+off (`scm.autocount_writeback = 'off'`), and `scm.autocount_outbox` holds **0 rows**
+— not zero pending, zero rows, so no ERP document has ever been offered to
+AutoCount. That is the intended state. 2990 (company 2) is unaffected and trades
+normally.
+
+**`AC_SYNC_URL` IS set** — corrected 2026-08-12. This banner said "unset", which
+contradicted this file's own §"Two gates verified shut" and step 4 below. PR #2030
+set it at `backend/wrangler.toml:42` (`https://autocount.houzscentury.com`).
+Re-verified the same day: an unauthenticated `POST /health` answers
+`401 {"ok":false,"error":"bad key"}` — the tunnel is up and the service is running.
+**The DB toggle is now the only gate holding**, which is why the zero-row outbox
+above is the number that matters.
 
 **Do not lift anything without the owner.** His standing instruction:
 *"解冻我跟你说你才做."*
@@ -263,8 +271,10 @@ Follow that. This is the summary.**
 3. Rebuild the clean service on the office host from the SQL bridge, and run
    runbook 4.1-4.5 against the live book on a throwaway document — cancelled, never
    deleted. Neither has happened yet.
-4. Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY` — **needs IT physically
-   at the office machine**; nothing else blocks it, and everything after it does.
+4. ~~Stand up the tunnel and set `AC_SYNC_URL`~~ — **DONE** (PR #2030; tunnel
+   verified answering 2026-08-12). What remains of this step is `AC_SYNC_KEY`, the
+   Worker secret, which cannot be confirmed from outside the account — check it with
+   `wrangler secret list` before step 5, not by assuming.
 5. Turn on `scm.autocount_writeback` for company 1.
 6. Lift the freeze for `scm.sales.orders`, company 1 only, one pilot cohort,
    and watch a document reach AutoCount.

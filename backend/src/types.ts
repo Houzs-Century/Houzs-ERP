@@ -377,7 +377,11 @@ export interface SalesOrderRow {
   remark2: string | null;
   remark3: string | null;
   remark4: string | null;
-  processing_date: string | null;
+  /* AutoCount's SO.UDF_PDate, mirrored verbatim (mig 0285 renamed this from
+     `processing_date`). NOT the ERP's Processing Date — that is
+     scm.mfg_sales_orders.internal_expected_dd, one column, different table,
+     different document. */
+  ac_udf_pdate: string | null;
   expiry_date: string | null;
   note: string | null;
   po_doc_no: string | null;

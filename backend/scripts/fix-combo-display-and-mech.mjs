@@ -16,6 +16,8 @@
 //      5133/5150: 1A(P) pair; 5152: 1A(P) pair + 1S(P).
 //
 // DRY-RUN default; APPLY=1 writes.
+//
+// RE-RUN: inert. Every write is gated on `changed`, computed against the row as it reads now.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

@@ -509,7 +509,7 @@
             <span class="money">{{doc_no}}</span><span style="opacity:.5;">·</span><span>{{customer_so_no}}</span>
           </div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:#414539;">
-            <span style="color:#9aa093;font-weight:600;">Processing</span><span style="font-weight:600;">{{internal_expected_dd}}</span>
+            <span style="color:#9aa093;font-weight:600;">Processing</span><span style="font-weight:600;">{{processing_date}}</span>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c2c6bd" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
             <span style="color:#9aa093;font-weight:600;">Delivery</span><span style="font-weight:600;">{{customer_delivery_date}}</span>
           </div>
@@ -558,7 +558,7 @@
       <tr><td>{{status}}</td><td>单据状态 · DRAFT/SUBMITTED/CONFIRMED/CANCELLED</td><td>so.status</td></tr>
       <tr><td>{{doc_no}}</td><td>系统单号(只读) · "SO-2406-0231"<span class="flag gen">server-gen</span></td><td>so.doc_no</td></tr>
       <tr><td>{{customer_so_no}}</td><td>顾客自己的SO参考号 · "PO-8891"</td><td>so.customer_so_no</td></tr>
-      <tr><td>{{internal_expected_dd}}</td><td>Processing Date 处理日 · "30062026"</td><td>so.internal_expected_dd</td></tr>
+      <tr><td>{{processing_date}}</td><td>Processing Date 处理日 · "30062026"</td><td>so.processing_date</td></tr>
       <tr><td>{{customer_delivery_date}}</td><td>Delivery Date 送货日 · "12072026"</td><td>so.customer_delivery_date</td></tr>
       <tr><td>{{total_centi}}</td><td>订单总额(分) · 265100 → RM 2,651.00</td><td>so.total_centi</td></tr>
       <tr><td>{{created_at}}</td><td>建单时间戳 · "30062026"<span class="flag gen">server-gen</span></td><td>so.created_at</td></tr>
@@ -626,7 +626,7 @@
           <div class="fld"><span class="fld-l">Venue</span><div class="fld-ro">{{venue_name}}</div></div>
         </div>
         <div class="fld-row">
-          <div class="fld"><span class="fld-l">Processing date</span><div class="fld-ro tnum">{{internal_expected_dd}}</div></div>
+          <div class="fld"><span class="fld-l">Processing date</span><div class="fld-ro tnum">{{processing_date}}</div></div>
           <div class="fld"><span class="fld-l">Delivery date</span><div class="fld-ro tnum">{{customer_delivery_date}}</div></div>
         </div>
         <div class="fld"><span class="fld-l">Sales location</span><div class="fld-ro">{{sales_location}}</div></div>
@@ -827,7 +827,7 @@
       <tr><td>customer_so_no</td><td>顾客SO参考</td><td>so.customer_so_no</td></tr>
       <tr><td>building_type</td><td>楼型(下拉)</td><td>so.building_type</td></tr>
       <tr><td>venue_id</td><td>展销/门店(只读派生)</td><td>so.venue_id</td></tr>
-      <tr><td>internal_expected_dd</td><td>Processing Date</td><td>so.internal_expected_dd</td></tr>
+      <tr><td>processing_date</td><td>Processing Date</td><td>so.processing_date</td></tr>
       <tr><td>customer_delivery_date</td><td>Delivery Date (XOR)</td><td>so.customer_delivery_date</td></tr>
       <tr><td>sales_location</td><td>发货仓库码(只读派生)</td><td>so.sales_location</td></tr>
       <tr><td>note</td><td>内部备注</td><td>so.note</td></tr>

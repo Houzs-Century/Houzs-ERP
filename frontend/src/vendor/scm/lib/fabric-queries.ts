@@ -68,9 +68,16 @@ export function fabricOptionLabel(
   return desc ? `${code} — ${desc}` : code;
 }
 
+/* `includeRetired` DEFAULTS TO TRUE so nothing that already calls this hook
+   changes behaviour — the owner's 2026-06-12 spec is explicit that inactive rows
+   STAY on the converter (they are managed and reactivated there), and only the
+   NEW-entry pickers hide them. Screens that want the tidy view opt in by passing
+   false; the filter lives here rather than in each page so the two fabric
+   surfaces cannot drift on what "retired" means. */
 export function useFabricTrackings(opts?: {
   category?: FabricCategoryValue;
   search?: string;
+  includeRetired?: boolean;
 }) {
   return useQuery({
     queryKey: ['fabric-tracking', opts?.category ?? 'all', opts?.search ?? ''],
@@ -84,6 +91,16 @@ export function useFabricTrackings(opts?: {
       );
       return res.fabrics;
     },
+    /* The API returns every row and has no active filter, so the split happens
+       here. `select` keeps ONE cache entry per (category, search) and derives
+       both views from it — a retired-only refetch would otherwise double the
+       requests for a list of ~830 rows. `is_active` is only ever false when a
+       row has been explicitly retired; null/undefined is a pre-0167 row and
+       counts as live. */
+    select: (fabrics: FabricTrackingRow[]) =>
+      opts?.includeRetired === false
+        ? fabrics.filter((f) => f.is_active !== false)
+        : fabrics,
     staleTime: 30_000,
     retry: retryUnlessClientError,
     retryDelay: 800,

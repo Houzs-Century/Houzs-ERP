@@ -474,8 +474,16 @@ async function verifyGrnLinesNotOverInvoiced(
    CANCELLED is read-only. Returns the blocking JSON response, or null if the PI
    is editable. */
 async function piLocked(sb: any, piId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('purchase_invoices')
+  const { data, error } = await sb.from('purchase_invoices')
     .select('paid_centi, status').eq('id', piId).maybeSingle();
+  /* The error is READ, not dropped. A dropped error made `data` null, `!data`
+     read as "no such invoice", and the guard answered "not locked" — so a PAID
+     or CANCELLED invoice became editable on a transient read failure. A failed
+     read must never read as an absence when the absence is what authorises the
+     write. Distinguish it from the genuine not-found below. */
+  if (error) {
+    return { error: 'pi_lock_check_failed', message: `Could not check whether this invoice is locked, so it is treated as locked — try again (${error.message}).` };
+  }
   if (!data) return null; // not found — let the handler's own load surface 404
   const row = data as { paid_centi: number | null; status: string };
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };
@@ -2156,6 +2164,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
 
+  /* ...and scope it to THIS COMPANY. "Belongs to this PI" is not the same fact
+     as "belongs to my books": the PI id itself arrives from the client, and the
+     SCM client is service-role, so a known id from the other company would
+     otherwise edit that company's invoice line, recompute its totals and resync
+     its GL. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
@@ -2168,10 +2184,10 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `grn_item_id` are business-logic only and deliberately not in
      PI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('purchase_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('purchase_invoice_items')
     .select(PI_LINE_AUDIT_SELECT + ', variants, grn_item_id')
-    .eq('id', itemId).eq('purchase_invoice_id', piId).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('purchase_invoice_id', piId), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern in these routes. */
@@ -2231,7 +2247,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     }
   }
 
-  const { error } = await sb.from('purchase_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -2284,6 +2300,9 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
+  // Same company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
@@ -2293,9 +2312,9 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   // not delete another PI's line while the recompute / GL resync run here.
   /* The audited columns too — after the delete the audit row is the only
      remaining evidence of what the supplier billed on this line. */
-  const { data: lineRow } = await sb.from('purchase_invoice_items')
-    .select(PI_LINE_AUDIT_SELECT + ', grn_item_id').eq('id', itemId).eq('purchase_invoice_id', piId).maybeSingle();
-  if (!lineRow) return c.json({ error: 'not_found' }, 404);
+  const { data: lineRow } = await scopeToCompanyId(sb.from('purchase_invoice_items')
+    .select(PI_LINE_AUDIT_SELECT + ', grn_item_id').eq('id', itemId).eq('purchase_invoice_id', piId), co.companyId).maybeSingle();
+  if (!lineRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const line = lineRow as unknown as Record<string, unknown>;
 
@@ -2304,7 +2323,7 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
      NAME the removal leaves the line live and outstanding in the account book. */
   const retire = await retiredLineOf(sb, 'purchase_invoice_items', itemId);
 
-  const { error } = await sb.from('purchase_invoice_items').delete().eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the PURCHASE INVOICE and it still exists.

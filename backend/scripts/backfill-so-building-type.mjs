@@ -11,6 +11,8 @@
 // either is LEFT BLANK — a wrong building type is worse than an empty one
 // (it drives delivery planning).
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: inert. Keyed on building_type IS NULL, which its own write fills.
 import fs from "node:fs";
 import postgres from "postgres";
 

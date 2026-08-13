@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   getBrandingForCompany,
   resolveCompanyCode,
@@ -173,6 +174,30 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.text("Not found", 404);
+
+  /* Multi-company: getAssrDetail's SQL is `WHERE c.id = ?` with no company
+     predicate, so this route rendered ANY company's service case to anyone
+     holding service_cases.read — the permission alone says nothing about
+     which company's cases you may see.
+
+     The JSON detail route already applies this exact guard (assr.ts, "a case
+     must fall inside the caller's ASSR company scope"); the PRINTABLE one,
+     which emits the same content as a document with letterhead, did not.
+
+     Same semantics, deliberately: an UNRESOLVED scope (undefined —
+     pre-migration / the D1 test mirror) skips the check, while an EMPTY scope
+     means the caller is granted no active company and every company-stamped
+     case must 404. Those two used to share `[]` and the merged state failed
+     open. Out-of-scope answers 404, indistinguishable from a missing id. */
+  const allowedCo = allowedCompanyIds(c as any);
+  if (allowedCo) {
+    const caseCo = Number(
+      (detail.case as any)?.companyId ?? (detail.case as any)?.company_id ?? NaN,
+    );
+    if (Number.isFinite(caseCo) && !allowedCo.includes(caseCo)) {
+      return c.text("Not found", 404);
+    }
+  }
 
   const { case: cs, items, attachments, activity, logistics } = detail;
 
@@ -1013,6 +1038,9 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Delivered Date</div><div class="vc mono">${fmtDate((cs as any).do_date)}</div>
       <div class="lc">PO No</div><div class="vc mono">${esc(cs.po_no || "—")}</div>
       <div class="lc">SO No</div><div class="vc mono">${esc(cs.doc_no || "—")}</div>
+      <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
+      <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
+      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
       <div class="lc">Address</div><div class="vc span5">${esc([cs.addr1, cs.addr2, cs.addr3, cs.addr4].filter(Boolean).join(", ") || "—")}</div>
       <div class="lc">Description of the problem</div><div class="vc span5" style="font-size: 11.8pt;">${esc(cs.complaint_issue || "—")}</div>
     </div>
@@ -1104,6 +1132,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       <div class="lc">Delivery Area</div><div class="vc">${esc(cs.location || (cs as any).addr4 || "—")}</div>
       <div class="lc">Coordinator</div><div class="vc">Service Admin (Purchasing)</div>
       <div class="lc">Warehouse</div><div class="vc">${esc(warehouseLabel || "—")}</div>
+      <div class="lc">Inspection Date</div><div class="vc mono">${fmtDate((cs as any).sched_inspection_date)}</div>
+      <div class="lc">Pickup Date</div><div class="vc mono">${fmtDate((cs as any).sched_pickup_date)}</div>
+      <div class="lc">Delivery Date</div><div class="vc mono">${fmtDate((cs as any).sched_delivery_date)}</div>
+      <div class="lc"></div><div class="vc"></div>
       <div class="lc">Note</div><div class="vc span3" style="font-weight: 400; color: #6a6a6a; font-size: 10.2pt;">Customer's direct phone &amp; full address are shared after dispatch is confirmed.</div>
     </div>
 

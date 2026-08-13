@@ -111,7 +111,7 @@ type ConsignmentHeader = {
   customer_country: string | null;
   customer_so_no: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   email: string | null;
   customer_type: string | null;
   salesperson_id: string | null;
@@ -245,7 +245,7 @@ export const ConsignmentOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    if (header?.internal_expected_dd) {
+    if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),
         ...(addingDraft ? [addingDraft] : []),
@@ -755,7 +755,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: h.emergency_contact_name ?? '',
     emergencyContactPhone: h.emergency_contact_phone ?? '',
     emergencyContactRelationship: h.emergency_contact_relationship ?? '',
-    processingDate: h.internal_expected_dd ?? '',
+    processingDate: h.processing_date ?? '',
     customerDeliveryDate: h.customer_delivery_date ?? '',
     note: h.note ?? '',
     salesLocation: h.sales_location ?? '',
@@ -847,7 +847,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: form.emergencyContactName,
     emergencyContactPhone: form.emergencyContactPhone,
     emergencyContactRelationship: form.emergencyContactRelationship,
-    internalExpectedDd: form.processingDate || null,
+    processingDate: form.processingDate || null,
     customerDeliveryDate: form.customerDeliveryDate || null,
     note: form.note,
     salesLocation: form.salesLocation || null,
@@ -856,7 +856,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const datesXor =
     (form.processingDate.trim() !== '') !== (form.customerDeliveryDate.trim() !== '');
   const today = new Date().toLocaleDateString('en-CA');
-  const originalProcessing = header.internal_expected_dd ?? '';
+  const originalProcessing = header.processing_date ?? '';
   const originalDelivery = header.customer_delivery_date ?? '';
   const processingLocked = originalProcessing !== '' && originalProcessing < today;
 

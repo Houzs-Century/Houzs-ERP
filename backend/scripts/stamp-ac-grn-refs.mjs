@@ -19,6 +19,8 @@
 // look it up; nothing in the ERP can mistake it for stock.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent. Stamps the same AutoCount GRN/PI document lists from the same extract.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

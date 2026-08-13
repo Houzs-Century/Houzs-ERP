@@ -47,11 +47,23 @@ export const FabricTracking = () => {
   const [importPreview, setImportPreview] = useState<ParsedImport | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /* Retired rows are hidden by DEFAULT and one click away, not gone. The
+     2026-06-12 spec says inactive fabrics stay on the converter, and they do —
+     but after the 2026-08-11 merge pass, 88 of ~830 rows are supersede
+     tombstones ("AVANI-01 [merged into AVANI-01 on 2026-08-11]"), which made
+     the master list read as if every code were duplicated. Both views come from
+     ONE cached fetch (see useFabricTrackings' select), so the count costs
+     nothing. */
+  const [showRetired, setShowRetired] = useState(false);
+
   const { data: fabrics, isLoading, error } = useFabricTrackings({
     search: search.trim() || undefined,
+    includeRetired: showRetired,
   });
+  const allRowsForCount = useFabricTrackings({ search: search.trim() || undefined }).data;
 
   const rows = useMemo(() => fabrics ?? [], [fabrics]);
+  const retiredCount = (allRowsForCount ?? []).filter((f) => f.is_active === false).length;
 
   // Export: pull the FULL list (ignoring any active search filter — the user
   // would not expect a search-filtered export to round-trip safely on import).
@@ -110,6 +122,20 @@ export const FabricTracking = () => {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {retiredCount > 0 && (
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-muted">
+            <input
+              type="checkbox"
+              checked={showRetired}
+              onChange={(e) => setShowRetired(e.target.checked)}
+            />
+            <span>
+              {showRetired
+                ? `Showing ${retiredCount} retired`
+                : `${retiredCount} retired hidden`}
+            </span>
+          </label>
+        )}
         <input ref={fileInputRef} type="file" accept=".csv,text/csv"
           style={{ display: 'none' }} onChange={onFileChosen} />
       </div>

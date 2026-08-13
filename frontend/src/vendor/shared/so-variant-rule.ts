@@ -122,7 +122,19 @@ const DIVANLESS_AXES = new Set(['divanHeight', 'legHeight', 'gap']);
 export function missingVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  itemCode?: string | null,
+/** The item code. REQUIRED — not optional — since 2026-08-13.
+ *
+ *  It arrived as an OPTIONAL third parameter with the DIVAN ONLY exemption
+ *  (PR #1763, owner "divan only 不需要 gap"), and optional meant the compiler
+ *  said nothing about the call sites that did not pass it. Two of the three
+ *  confirm-path sites never got it, so the exemption — and the adjustable-bed
+ *  one added on top of it a day later — simply did not apply there: no error,
+ *  no failing test, and a PR message that said "every desktop + mobile call
+ *  site". Required is what makes the compiler enumerate them, so the next
+ *  by-SKU exemption cannot be half-applied.
+ *
+ *  Pass null when a caller genuinely has no code (nothing is exempted then). */
+  itemCode: string | null,
 ): VariantAxis[] {
   const axes = REQUIRED_VARIANT_AXES_BY_CATEGORY[(itemGroup ?? '').toLowerCase()];
   if (!axes) return [];
@@ -149,7 +161,19 @@ export function missingVariantAxes(
 export function missingConfirmVariantAxes(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  itemCode?: string | null,
+/** The item code. REQUIRED — not optional — since 2026-08-13.
+ *
+ *  It arrived as an OPTIONAL third parameter with the DIVAN ONLY exemption
+ *  (PR #1763, owner "divan only 不需要 gap"), and optional meant the compiler
+ *  said nothing about the call sites that did not pass it. Two of the three
+ *  confirm-path sites never got it, so the exemption — and the adjustable-bed
+ *  one added on top of it a day later — simply did not apply there: no error,
+ *  no failing test, and a PR message that said "every desktop + mobile call
+ *  site". Required is what makes the compiler enumerate them, so the next
+ *  by-SKU exemption cannot be half-applied.
+ *
+ *  Pass null when a caller genuinely has no code (nothing is exempted then). */
+  itemCode: string | null,
 ): VariantAxis[] {
   const missing = missingVariantAxes(itemGroup, variants, itemCode);
   if (missing.length === 0) return missing;

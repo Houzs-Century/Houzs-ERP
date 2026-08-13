@@ -29,6 +29,7 @@ import { raisePoFollowUps } from '../lib/amendment-po-followup';
 import { hasHouzsPerm, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
+import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
@@ -433,6 +434,10 @@ soAmendments.get('/:id', async (c) => {
    { ref, note?, attachmentKey? }. Gated to scm.amendment.supplier_confirm.
    Transition REQUESTED → SUPPLIER_PENDING via the shared state machine. */
 soAmendments.patch('/:id/supplier-confirm', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.amendment.supplier_confirm')) {
@@ -482,6 +487,10 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
     supplier_confirmation_attachment_key: body.attachmentKey ?? null,
     updated_at:                           new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
+       the WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, version')
@@ -554,16 +563,16 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      approval: the last write that can still say no. Fail-open on a missing SO
      row — the apply path right below owns that refusal. */
   const headerChanges = amendment.header_changes ?? null;
-  if (headerChanges && ('internalExpectedDd' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
+  if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('internal_expected_dd, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
+      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
-    const cur = (soDates ?? {}) as { internal_expected_dd?: string | null; customer_delivery_date?: string | null };
+    const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: unknown): string => (v == null ? '' : String(v).slice(0, 10));
-    const nextProc = 'internalExpectedDd' in headerChanges
-      ? ymd(headerChanges['internalExpectedDd'])
-      : ymd(cur.internal_expected_dd);
+    const nextProc = 'processingDate' in headerChanges
+      ? ymd(headerChanges['processingDate'])
+      : ymd(cur.processing_date);
     const nextDeliv = 'customerDeliveryDate' in headerChanges
       ? ymd(headerChanges['customerDeliveryDate'])
       : ymd(cur.customer_delivery_date);
@@ -578,7 +587,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }
 
     /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
-       Approving an amendment can SET internal_expected_dd through
+       Approving an amendment can SET processing_date through
        header_changes, and until now the only thing checked here was the date
        ORDER above. So an order could acquire a Processing Date — production's
        go-ahead — with no deposit and no delivery address, simply by routing the
@@ -593,7 +602,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
        Only when the amendment SETS a non-empty date. Clearing it, or an
        amendment that touches only the delivery date, is untouched — a gate that
        blocks REMOVING a date would trap an order it was meant to protect. */
-    if (nextProc !== '' && 'internalExpectedDd' in headerChanges) {
+    if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
         postcode?: string | null; local_total_centi?: number | null;
@@ -915,6 +924,10 @@ soAmendments.patch('/:id/approve-po', (c) => {
    performed by the frontend once this gate flips to SENT. Gated to
    scm.amendment.approve_po (same purchasing gate as approve-po). */
 soAmendments.patch('/:id/send', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   if (!hasHouzsPerm(c, 'scm.amendment.approve_po')) {
@@ -951,6 +964,10 @@ soAmendments.patch('/:id/send', async (c) => {
     sent_at:    new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', id)
+    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
+       the WRITE because nothing re-checks between two PostgREST round trips - the
+       SCM client is service-role, so RLS never sees this statement. */
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, version')
@@ -989,6 +1006,10 @@ soAmendments.patch('/:id/send', async (c) => {
    is precisely the competing-documents problem the edit/withdraw work exists to
    end. */
 soAmendments.patch('/:id/reject', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
@@ -1043,6 +1064,7 @@ soAmendments.patch('/:id/reject', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')
@@ -1081,6 +1103,10 @@ soAmendments.patch('/:id/reject', async (c) => {
    immediately. resolution = 'WITHDRAWN' (mig 0149) is what tells a reader the
    two apart. REQUESTED only — see the state machine's note. */
 soAmendments.patch('/:id/withdraw', async (c) => {
+  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
+  // unresolvable company is a condition to surface, never one to guess past.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
@@ -1135,6 +1161,7 @@ soAmendments.patch('/:id/withdraw', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
+    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')

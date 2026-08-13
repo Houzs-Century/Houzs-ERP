@@ -91,6 +91,8 @@
 // affected SO's timeline would bury real events (the fee repair writes audit
 // rows because it materialises a LINE; this changes no quantity or money).
 // ---------------------------------------------------------------------------
+//
+// RE-RUN: inert. Every UPDATE re-asserts the branding is still blank or the default, so a hand-set branding is never overwritten.
 
 import { readFileSync } from "node:fs";
 import postgres from "postgres";

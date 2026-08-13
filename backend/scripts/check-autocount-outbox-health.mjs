@@ -49,9 +49,21 @@ const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
 /* The reason strings the ERP writes when it declines to send. Each is produced
-   by a named code path, so a bucket that grows tells you WHICH path. */
+   by a named code path, so a bucket that grows tells you WHICH path.
+
+   MATCH ON THE ERROR CLASS NAME, NOT ON "refused, nothing sent". noteReadFailure
+   (autocount-outbox.ts) writes `refused, nothing sent (${e.name}): ${message}`
+   for FOUR different classes, and each has a different remedy — backfill a
+   DtlKey, fix a sofa build, map an item code, set a stock location. Matching the
+   shared prefix labelled all four "line identity missing", which sends an
+   operator to backfill DtlKeys for an item-map problem. Every class sets
+   this.name in its constructor, so the parenthesised name is reliable. */
 const SKIP_KINDS = [
-  ["refused, nothing sent", "line identity missing — backfill linked_ac_dtlkey, then save again"],
+  ["refused, nothing sent (KeylessLineError)", "line identity missing — backfill linked_ac_dtlkey, then save again"],
+  ["refused, nothing sent (SofaCollapseError)", "sofa build cannot be folded into AutoCount's one line without inventing Desc2 text"],
+  ["refused, nothing sent (ItemCodeError)", "an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)"],
+  ["refused, nothing sent (MissingLocationError)", "a line carries no stock location — set the warehouse on the line, or the sales location on the document"],
+  ["compose failed, nothing sent", "the ERP could not read its own document while composing — a read fault, not a refusal"],
   ["masters not opened", "an item or salesperson could not be opened in AutoCount"],
   ["no source document to transfer from", "raised with no parent — cannot exist in AutoCount at all"],
   ["AutoCount has no shape", "merged conversion (N sources -> 1 document) — must be worked by hand"],
@@ -60,7 +72,14 @@ const SKIP_KINDS = [
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [counts, oldest, failed, skipped] = await Promise.all([
+  const [flag, counts, oldest, failed, skipped] = await Promise.all([
+    /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
+       script described `scm.autocount_writeback` in prose and never read it, so
+       "is the write-back on" could only be answered from a document — and the
+       documents were a day stale. It is the first gate `enqueueSoCreate` hits
+       (autocount-outbox.ts) and it decides whether saving an SO queues anything
+       at all, so it belongs at the top of this report. */
+    pg`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`,
     pg`SELECT status, count(*)::int AS n FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
     pg`SELECT doc_type, doc_no, op, attempts,
               (now() - created_at) AS age
@@ -79,22 +98,69 @@ try {
         ORDER BY created_at DESC`,
   ]);
 
+  /* Report the raw value AND what the code makes of it. The parser
+     (autocount-writeback-flag.ts) fails CLOSED: absent, empty, 'off', or
+     anything it cannot parse all mean nothing is queued or sent. Printing the
+     raw string too means a typo like 'On ' is visible rather than hidden behind
+     the word "off". */
+  const raw = flag.length ? flag[0].value : null;
+  const v = (raw ?? '').trim().toLowerCase();
+  const on = v === 'all' || /^[0-9]+(\s*,\s*[0-9]+)*$/.test(v);
+  notice(
+    `WRITE-BACK SWITCH scm.autocount_writeback = ${raw === null ? 'ROW ABSENT' : JSON.stringify(raw)}` +
+      ` -> ${on ? `ON for ${v === 'all' ? 'every company' : 'company ' + v}` : 'OFF'}` +
+      `. ${on
+        ? 'Saving a document in those companies QUEUES it; the 5-min cron sends it.'
+        : 'Saving a document queues NOTHING — every enqueue returns early.'}`,
+  );
+  if (on) {
+    notice(
+      'The switch is not the last gate: the send also needs AC_SYNC_URL (wrangler.toml) ' +
+        'and the AC_SYNC_KEY secret. A missing key reaches the host and comes back 401 ' +
+        "\"bad key\" — that shows up as failed rows below, not as an empty queue. " +
+        'Worker secrets cannot be read from the database; use `wrangler secret list`.',
+    );
+  }
+
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   const total = counts.reduce((a, r) => a + r.n, 0);
 
+  /* A RE-QUEUED skip is history, not backlog.
+     This table is append-only and a skipped row is never deleted, so once the
+     re-queue tool has asked the question again the ORIGINAL refusal would
+     otherwise sit in this report forever, sending an operator to fix something
+     that is already fixed and already queued. requeue-autocount-skipped.mjs
+     prefixes the reason with `[re-queued <when> -> outbox <id>]`
+     (REQUEUE_NOTE_PREFIX in src/scm/lib/autocount-requeue.ts — this script runs
+     under plain node against postgres.js and cannot import it, so the literal
+     lives in both places). The row keeps status 'skipped', because it IS still
+     true that nothing was ever sent for it; what changed is that it is no longer
+     the open question. */
+  const REQUEUED_PREFIX = "[re-queued";
+  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUED_PREFIX));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUED_PREFIX));
+
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
+    /* What empty MEANS depends on the switch read above, so say which. The old
+       text always claimed empty was "correct while the flag is off" — true only
+       while it was off, and actively misleading the moment it was turned on. */
     notice(
       "That is not 'drained'. The table is append-only by design, so an empty " +
-        "table means NOTHING HAS EVER BEEN ENQUEUED — which is the correct " +
-        "state while scm.autocount_writeback is off.",
+        "table means NOTHING HAS EVER BEEN ENQUEUED — " +
+        (on
+          ? "and the switch is ON, so this means no document has been saved yet. " +
+            "Save one and re-run; if it is still empty afterwards, the enqueue " +
+            "itself is not being reached."
+          : "which is the expected state while scm.autocount_writeback is off."),
     );
   } else {
     notice(
       `queue: ${total} row(s) — ` +
         ["pending", "sent", "failed", "skipped"]
           .map((s) => `${s} ${by[s] ?? 0}`)
-          .join(" / "),
+          .join(" / ") +
+        (settled.length ? ` (${settled.length} of the skipped have been re-queued)` : ""),
     );
   }
 
@@ -123,19 +189,39 @@ try {
   /* SKIPPED, classified. Unclassified rows are printed rather than counted
      away: a reason this script does not recognise is a code path that grew a
      new refusal, and rolling it into 'other' is how it stays invisible. */
-  if ((by.skipped ?? 0) > 0) {
+  if (outstanding.length > 0) {
     const seen = new Set();
     for (const [needle, meaning] of SKIP_KINDS) {
-      const hits = skipped.filter((r) => r.last_error.includes(needle));
+      const hits = outstanding.filter((r) => r.last_error.includes(needle));
       hits.forEach((r) => seen.add(r.doc_no + r.op));
-      if (hits.length) notice(`  skipped ${hits.length}: ${meaning}`);
+      if (!hits.length) continue;
+      notice(`  skipped ${hits.length}: ${meaning}`);
+      /* NAME THE DOCUMENTS AND QUOTE THE REASON. A bare count tells an operator
+         that something was refused but not what to open, and the message body
+         carries the specifics the class name cannot — which line, which item
+         code, what the resolver actually found. Without this the only way to
+         act on a skip was to go query the table by hand. */
+      for (const r of hits) {
+        notice(`    - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 400)}`);
+      }
     }
-    const rest = skipped.filter((r) => !seen.has(r.doc_no + r.op));
+    const rest = outstanding.filter((r) => !seen.has(r.doc_no + r.op));
     for (const r of rest) {
       notice(`  skipped (UNRECOGNISED reason): ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 200)}`);
     }
   } else {
-    notice("SKIPPED: 0");
+    notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
+  }
+
+  if (settled.length) {
+    notice(
+      `RE-QUEUED: ${settled.length} skipped row(s) have been asked again by the re-queue workflow. ` +
+        "Each one's document is a PENDING row above (or already sent); these are the record of the " +
+        "refusal, not an open item.",
+    );
+    for (const r of settled) {
+      notice(`  - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 300)}`);
+    }
   }
 } finally {
   await pg.end({ timeout: 5 });
