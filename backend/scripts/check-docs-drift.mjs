@@ -96,16 +96,21 @@ for (const tree of ["migrations-pg", "migrations"]) {
    as string literals shaped like a key rather than by importing the module —
    this script must run without node_modules and without a TS loader.
 
-   BOTH files, learned from a first run that produced 426 false positives. There
-   are two separate namespaces and the docs use them interchangeably:
+   ALL THREE files, learned twice. The first run produced 426 false positives
+   from knowing only one namespace; this list then said "two" for a while and was
+   still short one, so `projects.finances` — a real key `requirePageAccess` reads
+   at five handlers in routes/projects.ts — was reported as unknown and a doc
+   that was RIGHT nearly got "corrected" to match the checker.
+
    permissions.ts holds verbs (`scm.payment_voucher.post`), scm-areas.ts holds
-   AREA keys (`scm.warehouse.inventory`) that the area guard reads. A checker
-   that knows only one of them calls the other one unknown, and 400 findings
-   nobody can act on is worse than no check. */
+   AREA keys (`scm.warehouse.inventory`) the area guard reads, pageAccess.ts
+   holds PAGE keys (`projects.finances`, 79 of them). The docs use all three
+   interchangeably, so the checker has to. */
 const permKeys = new Set();
 for (const p of [
   path.join(repoRoot, "backend", "src", "services", "permissions.ts"),
   path.join(repoRoot, "backend", "src", "scm", "lib", "scm-areas.ts"),
+  path.join(repoRoot, "backend", "src", "services", "pageAccess.ts"),
 ]) {
   if (!fs.existsSync(p)) continue;
   const src = fs.readFileSync(p, "utf8");
@@ -172,7 +177,8 @@ function lineCount(rel) {
    failure. Alternation is first-match-wins, so `ts` before `tsx` made App.tsx
    match as App.ts and package.json as package.js — the checker then reported 72
    present files as missing. Longest alternative first, plus a trailing boundary
-   so a partial extension cannot match at all. */
+   so a partial extension cannot match at all.
+
    COMPRESSED SUFFIXES are part of the name. `ac-fidelity-so-headers.json.gz`
    matched as `.json` and was reported missing while the real file sat right
    there — the extension list stopped one dot short. `(?:\.gz)?` after the
@@ -324,7 +330,11 @@ for (const file of docFiles) {
         const prefix = k.slice(0, k.lastIndexOf(".") + 1);
         if (!permPrefixes.has(prefix)) continue;
         claimsChecked++;
-        if (!permKeys.has(k)) at("unknown-permission", `\`${k}\` is in neither permissions.ts nor scm-areas.ts`, true);
+        if (!permKeys.has(k)) {
+          at("unknown-permission",
+            `\`${k}\` is in none of permissions.ts / scm-areas.ts / pageAccess.ts` +
+            ` — or it is a table.column that shares a prefix with a real key`, true);
+        }
       }
     }
     // 5. npm scripts.

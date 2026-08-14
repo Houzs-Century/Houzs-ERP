@@ -1302,7 +1302,8 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   /* company-scope: this records MONEY PAID. The concurrency loop below guards
      two payments racing on the same PI, never whose PI it is. */
-  const { data: own } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   let body: { amountCenti?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1381,8 +1382,9 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
 
   // Read → guard → release → cancel. Keep the existing PAID guard; a PI with
   // any payment can't be cancelled.
-  const { data: cur } = await scopeToCompanyId(sb.from('purchase_invoices')
+  const { data: cur, error: curErr } = await scopeToCompanyId(sb.from('purchase_invoices')
     .select('id, status, paid_centi, invoice_number, company_id, total_centi').eq('id', id), co.companyId).maybeSingle();
+  if (curErr) return c.json({ error: 'lookup_failed', reason: curErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as {
     id: string; status: string; paid_centi: number | null;
@@ -1399,9 +1401,10 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
      GRN consume, no recost), so cancelling it is a plain status flip: skip the
      accounting reversal + GRN release + recost entirely (nothing to reverse). */
   if (head.status === 'DRAFT') {
-    const { data: d } = await scopeToCompanyId(sb.from('purchase_invoices').update({
+    const { data: d, error: dErr } = await scopeToCompanyId(sb.from('purchase_invoices').update({
       status: 'CANCELLED', updated_at: new Date().toISOString(),
     }).eq('id', id), co.companyId).eq('status', 'DRAFT').select('id, status').maybeSingle();
+    if (dErr) return c.json({ error: 'cancel_failed', reason: dErr.message }, 500);
 
     /* Only the call that actually flipped the row gets one back (the
        .eq('status','DRAFT') gate), so a lost race writes nothing. No REVERSE
@@ -1437,9 +1440,10 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
   if (!data) {
     // Lost the race (a concurrent cancel already flipped it) or it became PAID.
     // Re-read to distinguish: a CANCELLED row → idempotent success echo.
-    const { data: now } = await scopeToCompanyId(
+    const { data: now, error: nowErr } = await scopeToCompanyId(
       sb.from('purchase_invoices').select('id, status').eq('id', id), co.companyId,
     ).maybeSingle();
+    if (nowErr) return c.json({ error: 'lookup_failed', reason: nowErr.message }, 500);
     if ((now as { status: string } | null)?.status === 'CANCELLED') {
       return c.json({ purchaseInvoice: now });
     }
@@ -1994,7 +1998,8 @@ purchaseInvoices.post('/from-grn', createPurchaseInvoiceFromGrnHandler);
 purchaseInvoices.patch('/:id', async (c) => {
   const id = c.req.param('id');
   // company-scope: the header write below keys on the caller's uuid alone.
-  const { data: own } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2103,7 +2108,8 @@ purchaseInvoices.post('/:id/items', async (c) => {
      a predicate — it tags the new line as ours while hanging it off the other
      company's invoice. piLocked below returns null on a miss, so it is not a
      load either. */
-  const { data: own } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
@@ -2231,7 +2237,8 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   /* company-scope: prove the PARENT invoice first. The M10 note below scopes the
      LINE to this PI, which proves the pair belongs together, never whose it is —
      both ids come from the caller. */
-  const { data: own } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2374,7 +2381,8 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   // prove the parent PI.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: own } = await scopeToCompanyId(sb.from('purchase_invoices').select('id').eq('id', piId), co.companyId).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompanyId(sb.from('purchase_invoices').select('id').eq('id', piId), co.companyId).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json(NOT_THIS_COMPANY, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);

@@ -2026,22 +2026,25 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
      doId, both taken from the caller-supplied :id. Resolve the document ONCE,
      scoped, and refuse before any write. */
   if (type === 'so') {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   } else {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('delivery_orders').select('id').eq('id', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
 
   if (type === 'so') {
     soDocNo = id;
     if (Object.keys(doUpdates).length > 0) {
-      const { data: doRows } = await scopeToCompany(sb.from('delivery_orders')
+      const { data: doRows, error: doRowsErr } = await scopeToCompany(sb.from('delivery_orders')
         .select('id, status').eq('so_doc_no', id), c);
+      if (doRowsErr) return c.json({ error: 'lookup_failed', reason: doRowsErr.message }, 500);
       const live = ((doRows ?? []) as Array<{ id: string; status: string | null }>)
         .filter((d) => { const s = (d.status ?? '').toUpperCase(); return s !== 'DRAFT' && s !== 'CANCELLED'; });
       doId = live.length > 0 ? live[live.length - 1]!.id : null;

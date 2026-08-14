@@ -2130,7 +2130,8 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   /* company-scope: through the parent invoice, BEFORE anything is read or
      destroyed. The doc-mismatch check below proves only that the payment belongs
      to the invoice in the URL, never whose invoice that is. */
-  const { data: own } = await scopeToCompany(sb.from('sales_invoices').select('id').eq('id', id), c).maybeSingle();
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('sales_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */

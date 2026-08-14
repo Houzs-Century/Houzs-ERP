@@ -4694,10 +4694,11 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      already carry. Without it company A holding B's DO uuid pushes a line onto
      B's delivery stamped with A's company, and on a shipped DO the resync moves
      B's stock out. The selected company_id feeds the audit row, not a predicate. */
-  const { data: header } = await scopeToCompany(
+  const { data: header, error: headerErr } = await scopeToCompany(
     sb.from('delivery_orders')
       .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id), c,
   ).maybeSingle();
+  if (headerErr) return c.json({ error: 'lookup_failed', reason: headerErr.message }, 500);
   if (!header) return c.json({ error: 'not_found' }, 404);
 
   /* Edge #1+#2 — if the DO is already shipped, an added line ships immediately
@@ -4890,9 +4891,10 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
      together, never whose they are. A line edit re-prices, re-binds its batch
      and re-syncs inventory. */
   {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('delivery_orders').select('id').eq('id', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
   let it: Record<string, unknown>;
@@ -5187,9 +5189,10 @@ deliveryOrdersMfg.delete('/:id/items/:itemId', async (c) => {
   // company-scope: prove the parent DO — same reasoning as the line PATCH above.
   // Deleting a shipped line reverses inventory, so this is a stock write too.
   {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('delivery_orders').select('id').eq('id', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
 
@@ -5284,9 +5287,10 @@ deliveryOrdersMfg.get('/:id/payments', async (c) => {
        holds if the parent read is scoped. The salesperson scope below is a
        different axis: it bounds WHICH PERSON, never which company, and view-all
        passes it untouched. */
-    const { data: hdr } = await scopeToCompany(
+    const { data: hdr, error: hdrErr } = await scopeToCompany(
       sb.from('delivery_orders').select('salesperson_id').eq('id', id), c,
     ).maybeSingle();
+    if (hdrErr) return c.json({ error: 'lookup_failed', reason: hdrErr.message }, 500);
     if (!hdr) return c.json({ error: 'not_found' }, 404);
     const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
     if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
@@ -5331,9 +5335,10 @@ deliveryOrdersMfg.post('/:id/payments', async (c) => {
 
   // company-scope: through the parent DO - the payment row carries no
   // company_id. See the note on GET /:id/payments above.
-  const { data: doc } = await scopeToCompany(
+  const { data: doc, error: docErr } = await scopeToCompany(
     sb.from('delivery_orders').select('id').eq('id', id), c,
   ).maybeSingle();
+  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
   if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
 
   let body: unknown;
@@ -5372,9 +5377,10 @@ deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
   /* company-scope: through the parent DO. The mismatch check below proves the
      payment belongs to the DO in the URL, never whose DO that is. See the note
      on GET /:id/payments above. */
-  const { data: doc } = await scopeToCompany(
+  const { data: doc, error: docErr } = await scopeToCompany(
     sb.from('delivery_orders').select('id').eq('id', id), c,
   ).maybeSingle();
+  if (docErr) return c.json({ error: 'lookup_failed', reason: docErr.message }, 500);
   if (!doc) return c.json({ error: 'delivery_order_not_found' }, 404);
   const { data: row } = await sb.from('delivery_order_payments').select('delivery_order_id').eq('id', paymentId).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);

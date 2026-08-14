@@ -1029,8 +1029,9 @@ deliveryReturns.post('/', async (c) => {
       .map((it) => (it.doItemId as string | undefined) ?? null)
       .filter((x): x is string => !!x))];
     if (doItemIds.length > 0) {
-      const { data: parents } = await sb.from('delivery_order_items')
+      const { data: parents, error: parentsErr } = await sb.from('delivery_order_items')
         .select('delivery_order_id').in('id', doItemIds);
+      if (parentsErr) return c.json({ error: 'lookup_failed', reason: parentsErr.message }, 500);
       for (const r of ((parents ?? []) as Array<{ delivery_order_id: string | null }>)) {
         if (r.delivery_order_id) doIds.push(r.delivery_order_id);
       }

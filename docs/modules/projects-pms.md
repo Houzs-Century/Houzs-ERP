@@ -352,8 +352,16 @@ project the schedule dropped) is flagged as a possible postpone/cancel to check.
 
 The owner's FAIR REPORT is one `.xlsx` worksheet PER EVENT (`<date><BRAND>@<VENUE>`,
 per-order rows). Page `frontend/src/pages/FairReportFill.tsx` (route
-`/fair-report-fill`, nav "Fair Report Fill" under Projects, gated `projects.finances`
-+ finance-viewer) reads it in-browser with SheetJS and calls:
+`/fair-report-fill`, nav "Fair Report Fill" under Projects) reads it in-browser
+with SheetJS and calls:
+
+> The finance gate is on the two ENDPOINTS, not on the page. The route carries
+> only `<PageGuard page="projects">` (`frontend/src/App.tsx:488`) — the plain
+> page key, not `projects.finances`; both handlers then call `denyFinance(c)` on
+> top of their permission, and that is what keeps the money out. This paragraph
+> used to say the page itself was gated `projects.finances`, which would have a
+> reader looking for a frontend gate that is not there.
+
 - `POST /projects/fair-report/match` (`projects.read`) — parses each sheet via the
   **unit-tested pure `backend/src/services/agents/fair-report-parse.ts`** (revenue =
   SELLING, `cogs_matt_sofa` = MATTRESS, `cogs_bedframe` = BEDFRAME, `cogs_accessories`

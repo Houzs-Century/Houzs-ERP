@@ -449,8 +449,9 @@ purchaseConsignmentReturns.post('/', async (c) => {
      company's consigned goods and net down its received_qty. Optional by design
      — a manual return sends no pcReceiveId and is unaffected. */
   if (body.pcReceiveId) {
-    const { data: srcRecv } = await sb.from('purchase_consignment_receives')
+    const { data: srcRecv, error: srcRecvErr } = await sb.from('purchase_consignment_receives')
       .select('receive_number, company_id').eq('id', body.pcReceiveId as string).maybeSingle();
+    if (srcRecvErr) return c.json({ error: 'lookup_failed', reason: srcRecvErr.message }, 500);
     const src = srcRecv as { receive_number?: string | null; company_id?: number | null } | null;
     if (src && isCrossCompanySource(src.company_id, c)) {
       return c.json(crossCompanyConversionBlocked(src.receive_number ?? null, src.company_id, c), 409);

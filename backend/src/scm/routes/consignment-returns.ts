@@ -708,10 +708,24 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
    is the point — a guard that computes "remaining" differently from the list the
    operator picked from is a guard that rejects legitimate work.
 
-   Returns a 409 body naming every offending line, or null to allow. A load
-   failure returns null rather than blocking: the insert will surface real
-   errors, and a guard that fails closed on a transient read turns a hiccup into
-   an outage. */
+   Returns a 409 body naming every offending line, or null to allow. EVERY load
+   here fails CLOSED. This paragraph used to say the opposite — "a load failure
+   returns null rather than blocking: the insert will surface real errors" — and
+   both halves of that were wrong. The insert surfaces nothing: no constraint
+   stops an over-return, which is the entire reason this guard exists. And a
+   discarded read does not merely skip the check, it INVERTS it: empty rows make
+   `remaining` collapse to `delivered`, so a line already fully returned looks
+   untouched and books stock IN a second time. Refusing a retryable operation is
+   the cheaper error. */
+/* The refusal used when the guard could not be COMPUTED, as opposed to when it
+   was computed and failed. `lines: []` because there are no offending lines to
+   name — the check itself did not run. */
+const OVER_REMAINING_UNPROVEN = {
+  error: 'over_remaining_uncheckable',
+  message: 'Could not verify the remaining returnable quantity — the check could not read prior returns. Nothing was changed; please retry.',
+  lines: [] as Array<{ noteItemId: string; requested: number; remaining: number }>,
+};
+
 async function checkCrOverRemaining(
   sb: any,
   items: Array<Record<string, unknown>>,
@@ -730,23 +744,32 @@ async function checkCrOverRemaining(
     .from('consignment_delivery_order_items')
     .select('id, qty')
     .in('id', ids);
-  if (srcErr) return null;
+  if (srcErr) return OVER_REMAINING_UNPROVEN;
   const deliveredById = new Map(
     ((srcRows ?? []) as Array<{ id: string; qty: number }>).map((r) => [r.id, Number(r.qty ?? 0)]),
   );
 
   /* Already-returned, counting NON-CANCELLED returns only — the same filter the
      picker uses, so the two never disagree. */
-  const { data: liveRows } = await sb
+  /* FAIL CLOSED on these two, and the header above is wrong about them. An empty
+     result here is not "nothing has been returned yet" — it makes `liveIds` and
+     `returnedById` empty, so `remaining` collapses to `delivered` and a line that
+     is ALREADY fully returned passes the guard and books stock IN a second time.
+     Returning null does not avoid that; it permits the same double-return, just
+     without an error. Same call as returnLineLock in this file: a read failure is
+     transient and the operator retries, a duplicated stock-in is not. */
+  const { data: liveRows, error: liveErr } = await sb
     .from('consignment_delivery_returns')
     .select('id, status')
     .neq('status', 'CANCELLED');
+  if (liveErr) return OVER_REMAINING_UNPROVEN;
   const liveIds = new Set(((liveRows ?? []) as Array<{ id: string }>).map((r) => r.id));
 
-  const { data: retRows } = await sb
+  const { data: retRows, error: retErr } = await sb
     .from('consignment_delivery_return_items')
     .select('id, consignment_delivery_return_id, consignment_do_item_id, qty_returned')
     .in('consignment_do_item_id', ids);
+  if (retErr) return OVER_REMAINING_UNPROVEN;
   const returnedById = new Map<string, number>();
   for (const r of ((retRows ?? []) as Array<{
     id: string; consignment_delivery_return_id: string; consignment_do_item_id: string | null; qty_returned: number;

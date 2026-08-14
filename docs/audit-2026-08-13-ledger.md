@@ -625,3 +625,44 @@ A refutation is a result. These are the ones that would otherwise be re-chased:
 
 Both are the same class as a checker whose regex cannot match: **a verdict
 computed over nothing must never read as a pass.**
+
+## N. The gates themselves lied on Windows — found 2026-08-14
+
+Three gates in the REQUIRED `backend-typecheck` job returned a different verdict
+on a Windows checkout than on Linux CI. All three compare something built at
+runtime against something committed, and all three were written where the two
+forms coincide.
+
+| gate | what it compared | what Windows gave it |
+| --- | --- | --- |
+| `check-jsonb-binds.mjs:80` | `relative()` path vs an ALLOWLIST of posix keys | `backend\scripts\...` — no key ever matched |
+| `check-swallowed-reads.mjs:55` | `relative()` path vs 126 posix keys in the baseline JSON | every per-file ceiling lookup missed |
+| `gen-test-schema-snapshot.mjs:324` | file text vs generated text, with `!==` | CRLF from git's checkout vs the generator's LF |
+
+The third was the most expensive to believe. It said "regenerate"; regenerating
+produced a byte-identical file; `git diff` reported nothing changed. Nothing
+under `src/db/migrations/` had changed at all — this branch's five migrations are
+in `migrations-pg/`, which does not feed that snapshot (148 collapsed = exactly
+the D1 tree's file count).
+
+**The second one is why this section exists.** A ratchet whose lookups all miss
+reports the entire tree as new — 153 sites — and a gate that unreadable gets
+waved past. Underneath those phantoms sat a real defect this branch had
+introduced: **21 reads of the form `const { data: own } = await <query>` with no
+`error` bound, inside the company-scope guards the branch was adding.**
+supabase-js does not throw, so on a database failure `own` is undefined and the
+guard answers `404 not_found` — an outage reported to the caller as "this
+document does not exist". Repairing the path bug is what made them visible.
+
+One of the 21 was not a status-code problem at all. `grns.ts` re-reads the
+receipt's own `inventory_movements` to price a warehouse relocation at the LANDED
+cost the units actually entered at; a discarded failure leaves that map empty and
+the relocation re-opens at BASE cost, so capitalised freight leaves inventory
+value permanently — on a container GRN, the whole freight bill.
+
+**Fixed** by normalising before comparing (`.split(sep).join('/')`, and an
+`eol()` that strips `\r\n`), then binding `error` at every site and returning
+`500 lookup_failed`. The lesson is the one already in `CLAUDE.md` about the `#!`
+shebang and the CRLF test anchors, and it keeps costing: **a gate that only runs
+green on CI's platform is a gate the person doing the work cannot use — and an
+unusable gate hides real findings rather than merely annoying people.**

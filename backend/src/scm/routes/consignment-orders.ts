@@ -120,8 +120,8 @@ export async function selfScopedConsignmentBlocked(c: any, docNo: string): Promi
   const sb = c.get('supabase');
 
   // 1. Tenancy — every tier, view-all included. Degrading, per the note above.
-  const { data: owned } = await scopeToCompany(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), c).maybeSingle();
-  if (!owned) return true;
+  const { data: owned, error: ownedErr } = await scopeToCompany(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), c).maybeSingle();
+  if (ownedErr || !owned) return true;
 
   // 2. Salesperson — only for the self-scoped tier.
   if (canViewAllSales(c)) return false; // view-all tier (director / office / *)

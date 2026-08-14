@@ -1930,13 +1930,14 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   // Load PO items with outstanding qty (+ variant fields for PR #44). SCOPED —
   // the LINE-level half of the same source document. Redundant after the scoped
   // header read, and kept: an id-keyed read is its own entry point.
-  const { data: items } = await scopeToCompany(sb.from('purchase_order_items')
+  const { data: items, error: itemsErr } = await scopeToCompany(sb.from('purchase_order_items')
     .select('id, purchase_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date, ' +
       // Migration 0180 — revised dates so the GRN line carries the EFFECTIVE date.
       'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
     .in('purchase_order_id', poIds), c);
+  if (itemsErr) return c.json({ error: 'lookup_failed', reason: itemsErr.message }, 500);
   const itemList = ((items ?? []) as unknown as Array<{
     id: string; purchase_order_id: string; material_kind: string; material_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_centi: number;
@@ -2783,9 +2784,10 @@ grns.patch('/:id', async (c) => {
      write keys on the caller-supplied uuid, so the status and downstream guards
      are real but company-blind — and a header write can relocate stock. */
   {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       c.get('supabase').from('grns').select('id').eq('id', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
   let body: Record<string, unknown>;
@@ -2855,11 +2857,12 @@ grns.patch('/:id', async (c) => {
          GRN that is the whole freight bill. Re-reading the movement beats
          recomputing the allocation: it is the basis those units actually entered
          at, and it survives a change to the allocation rule. */
-      const { data: priorIns } = await sb.from('inventory_movements')
+      const { data: priorIns, error: priorInsErr } = await sb.from('inventory_movements')
         .select('product_code, variant_key, unit_cost_sen')
         .eq('source_doc_type', 'GRN')
         .eq('source_doc_id', id)
         .eq('movement_type', 'IN');
+      if (priorInsErr) return c.json({ error: 'lookup_failed', reason: priorInsErr.message }, 500);
       const landedByBucket = new Map<string, number>();
       for (const m of ((priorIns ?? []) as Array<{ product_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
         const cost = Number(m.unit_cost_sen ?? 0);
@@ -3025,9 +3028,10 @@ grns.post('/:id/items', async (c) => {
      cannot be used to ask whether that GRN exists. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const { data: grnOwn } = await scopeToCompanyId(
+  const { data: grnOwn, error: grnOwnErr } = await scopeToCompanyId(
     sb.from('grns').select('id').eq('id', grnId), co.companyId,
   ).maybeSingle();
+  if (grnOwnErr) return c.json({ error: 'lookup_failed', reason: grnOwnErr.message }, 500);
   if (!grnOwn) return c.json(NOT_THIS_COMPANY, 404);
 
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
@@ -3264,9 +3268,10 @@ grns.patch('/:id/items/:itemId', async (c) => {
   // the PO's received_qty back up — both are writes on the other company's data
   // if the parent is not ours.
   {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       c.get('supabase').from('grns').select('id').eq('id', grnId), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
   let it: Record<string, unknown>;
@@ -3558,9 +3563,10 @@ grns.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
   // company-scope: prove the parent GRN — same reasoning as the line PATCH.
   {
-    const { data: own } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToCompany(
       sb.from('grns').select('id').eq('id', grnId), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   }
 

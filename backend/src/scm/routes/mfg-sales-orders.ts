@@ -713,11 +713,11 @@ async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
      companies master could not be read (pre-migration, D1 test mirror,
      Hyperdrive cold start), and refusing there locks every user out of all 18
      handlers. See "THE ALLOW-LIST SENTINEL" in companyScope.ts. */
-  const { data: owned } = await scopeToCompany(
+  const { data: owned, error: ownedErr } = await scopeToCompany(
     sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
     c,
   ).maybeSingle();
-  if (!owned) return true;
+  if (ownedErr || !owned) return true;
 
   // 2. Salesperson - only for the self-scoped tier.
   if (canViewAllSales(c)) return false; // view-all tier (director / office / *)

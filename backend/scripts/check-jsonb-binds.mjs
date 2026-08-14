@@ -29,7 +29,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanSource } from './lib/jsonb-bind-scan.mjs';
 
@@ -77,7 +77,11 @@ function* walk(dir) {
 const findings = [];
 for (const root of ROOTS) {
   for (const file of walk(root)) {
-    const rel = relative(REPO, file);
+    // Forward slashes, always. relative() returns the platform separator, so on
+    // Windows every ALLOWLIST key missed and the one allowed site was reported
+    // as a finding — a red gate on a developer machine and green on Linux CI,
+    // which is the hardest kind to believe.
+    const rel = relative(REPO, file).split(sep).join('/');
     if (ALLOWLIST.has(rel)) continue;
     findings.push(...scanSource(rel, readFileSync(file, 'utf8')));
   }

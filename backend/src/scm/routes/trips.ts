@@ -784,9 +784,10 @@ export const deleteTripHandler = async (c: any) => {
   if (hard) {
     /* Confirm the trip is in scope BEFORE deleting, because a DELETE reports no
        rows-affected here - a silent no-op and a real delete would look alike. */
-    const { data: own } = await scopeToAllowedCompanies(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('trips').select('id').eq('id', id), c,
     ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
     const { error } = await scopeToAllowedCompanies(sb.from('trips').delete().eq('id', id), c);
     if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
