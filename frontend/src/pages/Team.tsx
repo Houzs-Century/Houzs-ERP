@@ -35,6 +35,7 @@ import { RolesTab } from "./Roles";
 import { PositionsTab } from "./Positions";
 import { MailboxesTab } from "./MailboxesTab";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 
 type TeamTabValue =
   | "hub"
@@ -4014,6 +4015,27 @@ function OrgChartTab() {
   const allGroupsExpanded =
     allGroups.length > 0 && allGroups.every((g) => expandedKeys.has(g.key));
 
+  /* Export → Print preview → Print now. Expanding every box FIRST is what makes
+     the printout the whole chart (a collapsed box mounts none of its cards);
+     the two frames let those cards mount before each tree is measured and
+     scaled to a landscape page (see the @media print rule in index.css). */
+  const orgChartPrint = usePrintPreview(() => {
+    expandAllGroups();
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        document
+          .querySelectorAll<HTMLElement>(".org-print-scale")
+          .forEach((el) =>
+            el.style.setProperty(
+              "--print-zoom",
+              String(Math.min(1, 1000 / (el.scrollWidth || 1))),
+            ),
+          );
+        window.print();
+      }),
+    );
+  });
+
   async function reassign(userId: number, managerId: number | null) {
     if (userId === managerId) return;
     const current = byId.get(userId);
@@ -4238,34 +4260,27 @@ function OrgChartTab() {
             )}
             <button
               type="button"
-              onClick={() => {
-                // Expand every box first so the printout has the full chart —
-                // collapsed boxes mount none of their cards. Wait two frames for
-                // the newly-mounted cards before measuring + printing.
-                expandAllGroups();
-                requestAnimationFrame(() =>
-                  requestAnimationFrame(() => {
-                    // Shrink each tree to fit one landscape page so it isn't
-                    // clipped (see the @media print rule in index.css). One
-                    // scale box per company tree, so size them all.
-                    document
-                      .querySelectorAll<HTMLElement>(".org-print-scale")
-                      .forEach((el) =>
-                        el.style.setProperty(
-                          "--print-zoom",
-                          String(Math.min(1, 1000 / (el.scrollWidth || 1))),
-                        ),
-                      );
-                    window.print();
-                  }),
-                );
-              }}
+              onClick={orgChartPrint.openPreview}
               className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-[11px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:text-accent"
               title="Export as PDF or print"
             >
               <Printer size={13} strokeWidth={2} />
               Export
             </button>
+            {/* Same Print preview every printable surface in the app opens. The
+                chart prints from the page itself (.org-print-area), so there is
+                no PDF file to download or open in a tab. */}
+            <PrintPreviewModal
+              open={orgChartPrint.open}
+              onClose={orgChartPrint.close}
+              docTitle="Org Chart"
+              docNo="Team"
+              rows={[
+                { label: "Prints", value: "Every department box, fully expanded" },
+                { label: "Fit", value: "Each company tree is scaled to one landscape page" },
+              ]}
+              onPrint={orgChartPrint.handlers.onPrint}
+            />
             <button
               type="button"
               onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)))}

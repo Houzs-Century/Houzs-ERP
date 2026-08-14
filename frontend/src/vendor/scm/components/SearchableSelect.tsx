@@ -127,9 +127,14 @@ export function SearchableSelect({
         value={open ? search : selectedLabel}
         placeholder={selectedLabel ? undefined : placeholder}
         disabled={disabled}
-        onFocus={() => {
+        /* House rule (owner 2026-08-09): opening a picker must KEEP the
+           current value in view — seed the search with it, select-all so
+           typing replaces. Blur without a pick restores via the value
+           binding. Same non-lossy pattern as Divan/Gap native selects. */
+        onFocus={(e) => {
           setOpen(true);
-          setSearch("");
+          setSearch(selectedLabel ?? "");
+          e.currentTarget.select();
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => {

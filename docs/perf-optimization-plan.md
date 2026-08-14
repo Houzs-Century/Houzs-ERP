@@ -2,7 +2,7 @@
 
 System-wide status doc / work checklist. Built from: (a) live Chrome
 Performance traces on prod (long-task / main-thread profiling, not just network),
-(b) a full mining of HOOKKA's `docs/BUG-HISTORY.md` for caching/version/render
+(b) a full mining of HOOKKA's `BUG-HISTORY.md` for caching/version/render
 pitfalls, and (c) an exhaustive per-module codebase audit (every SCM page, every
 non-SCM page, the whole mobile tree, and the shared shell).
 

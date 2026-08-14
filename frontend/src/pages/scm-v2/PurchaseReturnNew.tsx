@@ -306,7 +306,13 @@ export const PurchaseReturnNew = () => {
         })),
       });
       await post.mutateAsync(createRes.id);
-      await notify({ title: `Purchase Return ${createRes.returnNumber} created + posted`, body: 'Stock OUT recorded.' });
+      /* "Stock OUT recorded." was printed unconditionally, including when the
+         response's own movementErrors said the OUT was refused. The create hook
+         raises that failure now, so say nothing about stock here rather than
+         contradict it with a second dialog. */
+      if (!createRes.movementErrors?.length) {
+        await notify({ title: `Purchase Return ${createRes.returnNumber} created + posted`, body: 'Stock OUT recorded.' });
+      }
       navigate(`/scm/purchase-returns/${createRes.id}`);
     } catch (err) {
       notify({ title: 'Save failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' });

@@ -383,7 +383,7 @@ async function collectAssrFindings(db: D1Database, warnHours: number, nowMs: num
       `SELECT assr_no, doc_no, status, stage, priority, sla_hours, deadline_at,
               escalated_at, customer_name, phone, sales_agent
          FROM assr_cases
-        WHERE stage NOT IN ('completed')
+        WHERE stage NOT IN ('completed', 'voided')
           AND status NOT IN ('Closed')
           AND deadline_at IS NOT NULL`,
     )

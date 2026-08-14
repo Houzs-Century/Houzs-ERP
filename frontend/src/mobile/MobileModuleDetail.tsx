@@ -20,6 +20,8 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import "./mobile.css";
 
 // ---------------------------------------------------------------------------
@@ -661,7 +663,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     status: (h) => h.status,
     meta: (h) => [
       ["Order Date", dmy(h.so_date)],
-      ["Delivery", dmy(h.customer_delivery_date ?? h.internal_expected_dd)],
+      ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.customer_country)],
       ["Reference", firstOf(h.ref, h.po_doc_no)],
@@ -942,10 +944,17 @@ type DocAction = {
   variant: ActVariant;
   /** POST/PATCH/DELETE request, relative to /api/scm. */
   request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
-  /** In-app danger confirm before firing (Cancel / Void / Delete). */
+  /** In-app danger confirm before firing (Cancel / Void). */
   confirm?: { title: string; body?: string; confirmLabel: string };
   /** When true, the record no longer exists after this action → navigate back
-   *  to the list instead of staying on a now-deleted detail. */
+   *  to the list instead of staying on a now-deleted detail.
+   *
+   *  NO action sets this today. The last one that did was the mobile Delete PO
+   *  (removed 2026-08-11 with its endpoint — owner rule 不可以删只可以 cancel).
+   *  Kept because a legitimate `removes` action can still exist — discarding a
+   *  DRAFT that was never confirmed, the shape SO `DELETE /:docNo` has. It is
+   *  NOT the hook for re-adding a document delete; see
+   *  docs/hard-delete-inventory.md. */
   removes?: boolean;
 };
 
@@ -1052,9 +1061,9 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       }
       if (st === "CANCELLED") {
         out.push({ key: "reopen", label: "Reopen", variant: "outline", request: { path: `/mfg-purchase-orders/${enc}/reopen`, method: "PATCH" } });
-        // Desktop parity — a CANCELLED PO offers a hard Delete (DELETE /:id,
-        // CANCELLED-only on the backend). Removes the record → navigate back.
-        out.push({ key: "delete", label: "Delete", variant: "danger", removes: true, request: { path: `/mfg-purchase-orders/${enc}`, method: "DELETE" }, confirm: { title: "Delete this purchase order?", body: "This permanently removes the cancelled PO. This cannot be undone.", confirmLabel: "Delete PO" } });
+        // A hard Delete used to sit here for desktop parity. Both are gone
+        // (owner rule 2026-08-11: 不可以删只可以 cancel) — CANCELLED is the
+        // terminal state and the record stays. Reopen is the only way back.
         return out;
       }
       // SUBMITTED / PARTIALLY_RECEIVED
@@ -1255,8 +1264,10 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
  *  nothing when there is no valid action from the current status. */
 function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }: {
   moduleKey: string; id: string; header: any; invalidate: () => void; onPOD?: () => void;
-  /** Called after a `removes` action (e.g. Delete PO) succeeds — navigate back
-   *  to the list since the detail's record no longer exists. */
+  /** Called after a `removes` action succeeds — navigate back to the list since
+   *  the detail's record no longer exists. No action sets `removes` today (the
+   *  Delete PO that used to be the example is gone, 2026-08-11); this stays
+   *  wired for a future draft-discard. */
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
@@ -1293,8 +1304,9 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       }),
     onSuccess: (_data, action) => {
       setRunningKey(null);
-      // A `removes` action (Delete) drops the record → refresh the list and pop
-      // back to it; every other action stays on the (now-updated) detail.
+      // A `removes` action drops the record → refresh the list and pop back to
+      // it; every other action stays on the (now-updated) detail. Nothing sets
+      // `removes` today — see the field's note on DocAction.
       if (action.removes) {
         void qc.invalidateQueries({ queryKey: ["mobile-module"] });
         invalidateModuleShared(qc, moduleKey);
@@ -1412,22 +1424,36 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         : "We couldn't load the line items for this document. Making the PDF now would produce one with no items on it. Please refresh and try again.",
     });
   };
-  const onPdf =
+  /* One deliver step per printable doc type; the preview dialog picks which of
+     its three exits (view / print / download) runs. Phone and desktop now open
+     the SAME Print preview — see components/scm-v2/PrintPreviewModal. */
+  const printableDocTitle =
     moduleKey === "delivery-orders-mfg"
-      ? !canPdf ? refusePdf : async () => {
-          try {
-            const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-            await generateDeliveryOrderPdf(header as never, items as never);
-          } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-        }
+      ? "Delivery Order"
       : moduleKey === "sales-invoices"
-        ? !canPdf ? refusePdf : async () => {
-            try {
-              const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
-              await generateSalesInvoicePdf(header as never, items as never);
-            } catch (e) { void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." }); }
-          }
-        : undefined;
+        ? "Sales Invoice"
+        : null;
+  const deliverPdf = async (action: PdfAction) => {
+    try {
+      if (moduleKey === "delivery-orders-mfg") {
+        const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
+        await generateDeliveryOrderPdf(header as never, items as never, { action });
+      } else {
+        const { generateSalesInvoicePdf } = await import("../vendor/scm/lib/sales-invoice-pdf");
+        await generateSalesInvoicePdf(header as never, items as never, { action });
+      }
+    } catch (e) {
+      void detailNotify({ title: "Couldn't generate the PDF", body: e instanceof Error ? e.message : "Please try again." });
+    }
+  };
+  const print = usePrintPreview(deliverPdf);
+  /* The refusal path stays AHEAD of the preview: a document whose lines failed
+     to load must not even reach a dialog offering to print it. */
+  const onPdf = !printableDocTitle
+    ? undefined
+    : !canPdf
+      ? refusePdf
+      : print.openPreview;
 
   // Whether a sticky footer will render — used to reserve scroll padding so it
   // never covers the last line item. A POD button (delivery orders) also counts.
@@ -1451,6 +1477,23 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         onPdf={onPdf}
         onMap={mapAnchor && id ? () => setMapOpen(true) : undefined}
       />
+      {printableDocTitle && (
+        /* Summary rows come off the SAME DocMap the screen renders from
+           (eyebrow = doc no, title = party, meta = the KV grid), so the
+           preview can never disagree with the page behind it. */
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle={printableDocTitle}
+          docNo={map.eyebrow(header)}
+          rows={[
+            { label: "Customer", value: map.title(header) },
+            ...meta.slice(0, 4).map(([label, value]) => ({ label, value })),
+            { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
+          ]}
+          {...print.handlers}
+        />
+      )}
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: podEnabled && hasStatusActions ? 150 : 96 } : scrollStyle}>
         {!id && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't identify this record.</div>}
 

@@ -21,7 +21,7 @@ const FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   phone: 'Phone', email: 'Email', soDate: 'SO date', status: 'Status',
   paymentMethod: 'Payment method', depositCenti: 'Deposit',
-  internalExpectedDd: 'Processing date', customerSoNo: 'Customer SO ref',
+  processingDate: 'Processing date', customerSoNo: 'Customer SO ref',
   customerPo: 'Customer PO', customerState: 'State',
   customerDeliveryDate: 'Delivery date', city: 'City', postcode: 'Postcode',
   buildingType: 'Building type', address1: 'Address 1', address2: 'Address 2',
@@ -49,6 +49,9 @@ const FIELDS: Record<string, string> = {
   stockStatus: 'Stock status', photoAdded: 'Photo added', photoRemoved: 'Photo removed',
   photosCleaned: 'Photos removed', tbcVariants: 'Variants updated', sofaBuild: 'Sofa build',
   pwpCode: 'PWP code', pwpRewardsReverted: 'PWP rewards reverted', pwpCodesDeleted: 'PWP codes deleted',
+  /* Emitted by POST /:docNo/payments/:id/slip (2026-08-07) — the after-the-fact
+     proof attach. from=null reads as an attach, from=<key> as a replacement. */
+  slipKey: 'Payment proof',
 };
 
 const MONEY_FIELDS = new Set([

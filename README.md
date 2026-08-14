@@ -4,12 +4,54 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 
 ---
 
+## What a commit owes the documentation
+
+The recurring failure in this repo is not a wrong doc. It is a **change that
+shipped and the doc that described it did not move**. This section is the single
+list, and every row says who enforces it — because a rule nobody enforces is a
+rule that lasts until the next busy afternoon.
+
+Read the **Enforced by** column carefully. Only two contexts can block a merge:
+`backend-typecheck` and `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`).
+Everything else REPORTS. A red `working-agreement` does not stop anyone.
+
+### Always, for every change
+
+| You changed | You owe | Enforced by | Blocks a merge? |
+|---|---|---|---|
+| Fixed a bug of any size | one entry at the top of [`BUG-HISTORY.md`](BUG-HISTORY.md): **Symptom → Root cause (traced, not guessed) → Fix → Ref**, with a severity tag | `working-agreement.yml`, when the title, branch or a body heading reads as a fix and code changed | **No** — it reports. Label `no-bug-history-needed` waives it, and the waiver is printed |
+| A module's SURFACE — a route, a permission string, a status value, a required-field flip, a lock | the matching [`docs/modules/<module>.md`](docs/modules/), in the SAME PR | `working-agreement.yml` | **No** — reports. Label `no-guide-change` |
+| Anything under `backend/src/db/migrations-pg/` | a `-- REVERSAL:` line in the file, plus `Reversal:` and `Verified against:` lines in the PR body | `working-agreement.yml` rule 3 + `audit:release-discipline` for the file itself | the file's note **YES** (release-discipline is inside `backend-typecheck`); the PR-body lines, no |
+| A route added, moved or re-gated | `docs/generated/route-capability-matrix.csv` — regenerate, never hand-edit | `npm run audit:routes` | **YES** |
+| A new/edited script under `backend/scripts` that WRITES | MODE/APPLY gate defaulting to plan, a CONFIRM phrase, a fresh-connection SHAPE verification, and a `RE-RUN:` header line | `npm run audit:release-discipline` | **YES** |
+| A doc that names a path, a `mig NNNN`, a permission key or an `npm run` | that the thing actually exists, or a `[gone]` / `[planned]` / `[external]` marker | `check-docs-drift.mjs --strict` | **YES**, on its CERTAIN half |
+
+### When it applies
+
+| You changed | You owe | Enforced by |
+|---|---|---|
+| An outage, data at risk, a fault that RECURRED, or anything that made the system feel unreliable | `docs/<subject>-coe.md` — date, trigger in staff's words, root cause traced with the tool that proved it, fixes per PR, **what was ruled OUT**, deferred items with their owner, lessons | **Nothing.** An incident is a judgement call, not a diff shape. This one is on you |
+| The shape of the tree — files split, moved, or grown | `npm --prefix backend run audit:map` and `audit:route-locator` | **Nothing runs their `--check` in CI.** Both were found stale on `main` on 2026-08-14. Treat them as hints and regenerate before quoting a line number |
+| A rule module under `backend/src/scm/shared` | the frontend mirror, identically | `check-shared-mirrors.mjs --strict` |
+| A module's surface, an architectural decision, the data model, or the roadmap | the Obsidian wiki under `Houzs ERP/` | **Nothing** — and the MCP is user-scope, so most sessions cannot reach it. If it is absent, say so rather than working around it |
+| Anything at all | that you did not write a NUMBER you now own | **Nothing.** Date it inline ("as of 2026-08-14, 291 files") or make it generated. The banner at the top of this README is what happens otherwise — two of its four figures were stale within a day of being written |
+
+### The order that actually works
+
+1. **Before**: read `docs/modules/<module>.md` and the `BUG-HISTORY.md` entries for that subsystem. Both exist so you do not have to read the whole system.
+2. **While**: pick the migration number at MERGE time by re-listing the tree, not when you branch.
+3. **After the code, before the PR**: the rows above. In the same PR — a follow-up PR is the thing that never comes.
+4. **After merge**: confirm the deploy's `backend` job says **`success`, not `skipped`**. Required checks gate the MERGE; **nothing gates the deploy**. `skipped` on `backend` is a failed deploy, and it has cost this repo two hours once and thirty minutes twice.
+
+
+---
+
 ## Stack
 
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive.** D1 is test-only — prod has no D1 binding | `backend/src/db/` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -25,22 +67,33 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 
 ## Modules
 
-| Module | Route | Perm | What it does |
-|--------|-------|------|--------------|
-| **Overview** | `/` | — | Daily briefing. Inbox (tasks, reviews, blockers, this-week), KPI ribbon, cross-module P&L calendar, pipeline snapshot. |
-| **Sales Orders** | `/orders` | `sales_orders.read` | AutoCount sync target. Editable delivery fields that push back to AutoCount. Tabs: Orders, Balance (expiry collections), Overdue (auto-extension history), Sales P&L. |
-| **Delivery Orders** | `/delivery-orders` | `delivery_orders.read` | Flat delivery-ready view of sales orders with logistics fields (lorry, driver, dates). Auto-hidden for dispatchers who have the richer Trips Queue (`hidePerm: trips.read.all`). |
-| **Purchase Orders** | `/po` | `purchase_orders.read` | Unified procurement surface. Tabs: PO Documents (doc-level with per-status filter + line drill-down panel), Creditors (AutoCount mirror with PO aggregates), PO Cost P&L. PO amounts are read-only (upstream authority). |
-| **Service Cases (ASSR)** | `/assr` | `service_cases.read` | After-sales workflow — stage pipeline, SLA tracking, satisfaction survey. Creditor auto-resolves from `case.item_code` → `stock_items.main_supplier` → `creditors.creditor_code` (no parallel supplier registry). Tabs: Cases, By Creditor, Quality Metrics, Service Cost P&L. |
-| **Projects** | `/projects` | `projects.read` | Event-scoped lifecycle (exhibitions). Tabs: List, Calendar, Analytics, Profitability, Finance ledger, Checklist, Trips. Brand-scoped; payment proof stored in R2. |
-| **Logistics** | `/logistics` | `trips.read.all` or `fleet.read` | Two-level nav. Primary tabs → Trips (Queue, Drafts, Live, Tracking, Events, History) and Fleet (Drivers, Helpers, Lorries, Compliance). Legacy `/trips` and `/fleet` redirect here preserving `?focus=…`. |
-| **Team** | `/team` | `users.read` or `roles.read` | Tabs: Members (user accounts + pending invitations), Roles (grid of role cards with permission editor). Legacy `/roles` redirects to `/team?tab=roles`. |
-| **Settings** | `/settings` | `settings.manage` | Tabs: Connection, Sync (filtered cron + full refresh), Email (Resend channel toggles), Activity Log (execution history across all jobs). |
-| **Profile** | `/profile` | — | Password change, session, display name. |
+**Not listed here on purpose.** This section used to carry a hand-written table of
+every module, its route and its permission. It went stale — it still advertised
+`/orders`, `/po` and `/delivery-orders`, none of which are mounted any more — and
+it was the third place in the repo claiming to know where routes live. A fact with
+three homes is a fact that will disagree with itself.
 
-### Driver sub-app
+The routes live in exactly two places now, both derived from the tree, so neither
+can drift:
 
-Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_orders.read`) are auto-redirected from `/` into the mobile shell at `/driver`. Pages: `DriverHome` (today's trip), `DriverTrip` (stop-by-stop POD capture), `DriverProfile` (clock-in, earnings, salary).
+| Question | Read |
+|---|---|
+| Every desktop route and the page module it renders | [`docs/generated/codebase-map-facts.md`](docs/generated/codebase-map-facts.md) §4 |
+| Every API endpoint with its file, line, mount path and permission gate | [`docs/generated/route-locator.md`](docs/generated/route-locator.md) + [`route-capability-matrix.csv`](docs/generated/route-capability-matrix.csv) |
+| What a module is FOR and how to work in it | [`docs/modules/<module>.md`](docs/modules/) |
+| What each area is for, what is vendored, what is dead | [`docs/CODEBASE-MAP.md`](docs/CODEBASE-MAP.md) |
+
+Regenerate the first two with `node backend/scripts/gen-codebase-map.mjs` and
+`npm --prefix backend run gen:route-locator`.
+
+### Drivers
+
+There is no separate driver sub-app. An earlier section here described a
+`/driver` shell with `DriverHome` / `DriverTrip` / `DriverProfile` pages —
+none of those exist in the tree. Drivers use the same mobile shell as everyone
+else (`frontend/src/mobile/`, mounted by `useIsMobile()`); their field tool is
+`MobilePOD.tsx` (proof-of-delivery capture), which has no desktop twin. See
+`docs/CODEBASE-MAP.md` §7.
 
 ### Public (no login) surfaces
 
@@ -55,7 +108,7 @@ Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_o
 
 ```
 ERP-Houzs/
-├── backend/                        # Cloudflare Worker (Hono + D1 + R2)
+├── backend/                        # Cloudflare Worker (Hono + Postgres/Hyperdrive + R2)
 │   ├── src/
 │   │   ├── index.ts                  # route mounts + scheduled(cron) handler
 │   │   ├── middleware/
@@ -71,11 +124,12 @@ ERP-Houzs/
 │   │   │   ├── permissions.ts        # role → permission expansion
 │   │   │   └── …
 │   │   └── db/
-│   │       ├── schema.sql              # baseline (used by db:reset)
-│   │       └── migrations/             # 001_*.sql … 036_*.sql, applied in order
+│   │       ├── schema.pg.ts            # Drizzle schema
+│   │       ├── migrations-pg/          # THE LIVE TREE — deploy.yml applies these to prod
+│   │       └── migrations/             # D1/SQLite tree, test parity only — never reaches prod
 │   ├── package.json                  # wrangler, hono
 │   ├── tsconfig.json
-│   └── wrangler.toml                 # D1/R2 bindings, crons, vars
+│   └── wrangler.toml                 # Hyperdrive/R2/KV/Queue bindings, crons, vars
 ├── frontend/                       # React SPA on Cloudflare Pages
 │   ├── src/
 │   │   ├── pages/                    # top-level routes
@@ -114,8 +168,8 @@ wrangler secret put GOOGLE_MAPS_API_KEY     # route planner geocoder
 wrangler secret put RESEND_API_KEY          # optional — email no-ops if unset
 cd ..
 
-# Apply schema + migrations to remote D1 (idempotent)
-npm run db:migrate
+# Migrations reach PRODUCTION automatically: deploy.yml runs pg-migrate.mjs on every
+# push to main. There is no manual prod migrate step.
 
 # Dev servers (separate terminals)
 npm run dev:backend     # wrangler dev on :8787
@@ -133,12 +187,14 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 | `npm run dev:backend` | Runs `wrangler dev` inside `backend/` |
 | `npm run dev:frontend` | Runs `vite dev` inside `frontend/` |
 | `npm run typecheck` | `tsc --noEmit` across both sub-apps |
+| `npm run lint` | Type-aware ESLint across both sub-apps, gated by `scripts/lint-ratchet.mjs`. Every rule is a WARNING; the gate is a per-file ceiling in `<app>/eslint-ratchet.json` that may only FALL. A file with no ceiling entry has a ceiling of zero, so a new file — or a rule that is clean tree-wide — fails on its first violation. Rules and the bug-history entry behind each are in `scripts/eslint/houzs-lint-rules.mjs` |
+| `npm run lint:update` | Rewrites the ceilings from the current tree. Run it after fixing findings, and commit the lower numbers. Never run it to make a build pass — raising a ceiling is the one thing it must not be used for |
 | `npm run deploy:backend` | Deploys the Worker (`wrangler deploy`) |
 | `npm run deploy:frontend` | Builds (`vite build`) + deploys the SPA to Cloudflare Pages |
 | `npm run deploy:all` | Both, in order |
-| `npm run db:migrate` | Applies every `backend/src/db/migrations/*.sql` to remote D1 (idempotent — tracks applied files in `d1_migrations`) |
+| `npm run db:migrate` | Legacy D1 tree only. **Production migrations are `backend/src/db/migrations-pg/`, applied by `deploy.yml` via `scripts/pg-migrate.mjs` on every push to main** |
 | `npm run db:reset` | Disabled guard — prints why and exits 1 (it used to wipe the remote D1 cold-backup with no confirmation) |
-| `npm run db:reset:remote:DANGER` | Re-applies `schema.sql` to the **remote** D1 (**destructive — prod data loss**). Explicit name on purpose |
+| `npm run db:reset:remote:DANGER` | Re-applies `schema.sql` to the **remote D1 cold backup** — not to prod Postgres. Still destructive. Explicit name on purpose |
 | `npm run db:reset:local` | Same but against the local D1 sandbox |
 | `npm run install:all` | `npm install` in `backend/` + `frontend/` |
 
@@ -146,164 +202,123 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 
 ## Cron schedule
 
-Configured in `backend/wrangler.toml → [triggers] crons`. Dispatched by `backend/src/index.ts → scheduled(event, env, ctx)`.
+Three triggers, declared in `backend/wrangler.toml` under `[triggers] crons` and
+dispatched by `scheduled(event, env, ctx)` in `backend/src/index.ts`.
 
-| Schedule | Job | Entrypoint |
-|----------|-----|------------|
-| `*/5 * * * *` | Sales-order incremental sync (`/SalesOrder/getSince` + checkpoint) | `services/sync.ts → runPull` |
-| `*/30 * * * *` | Purchase-order sync — `/PurchaseOrder/getAll` (docs) + `/PurchaseOrder/getOutstanding` (lines) | `services/po.ts → runPOPull` + `runPODocsPull` |
-| `0 2 * * *` | Daily batch — overdue auto-extension, ASSR SLA escalation, project due-date reminder emails, `/Creditor/getAll` resync, stock-items refresh (re-resolves `assr_cases.creditor_code` when upstream `MainSupplier` changes) | `services/overdue.ts`, `services/assr.ts`, `services/projects.ts`, `services/creditors.ts`, `services/stockItems.ts` |
+**The per-job list is NOT reproduced here.** It used to be, and it rotted into
+fiction: it advertised a `*/30` purchase-order pull and a daily `/Creditor/getAll`
+resync run by `services/overdue.ts`, `services/po.ts` and `services/creditors.ts`
+— three files that do not exist. `scheduled()` carries a commented branch per
+slot and is the only copy that cannot lie; read it there.
 
-Everything else runs on-demand from user actions (Refresh buttons, panel interactions, manual `Sync All`).
+| Trigger | Where to read what it does |
+|---|---|
+| `*/5 * * * *` | `backend/src/index.ts`, the `event.cron === "*/5 * * * *"` branch |
+| `*/30 * * * *` | same file, the `*/30` branch |
+| `0 2 * * *` | same file, the `0 2` branch |
 
-Every scheduled run writes one row to `execution_logs` (`type`, `status`, `message`, `started_at`, `request_id`). The Activity Log tab in Settings is a paginated view over that table.
+Everything else runs on demand from user actions (Refresh buttons, panel
+interactions, manual `Sync All`).
+
+Every scheduled run writes one row to `execution_logs` (`type`, `status`,
+`message`, `started_at`, `request_id`). The Activity Log tab in Settings is a
+paginated view over that table.
 
 ---
 
 ## AutoCount integration
 
-AutoCount is treated as the **system of record** for anything procurement- or finance-related. The D1 tables `sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`, `creditors`, and `stock_items` are mirrors — refreshed on cron, read-mostly from the SPA.
+Every claim below was verified against the code on 2026-08-12; where a table of
+endpoints used to sit here, most of it described machinery that no longer runs.
 
-| AutoCount endpoint | Used by | Refreshed |
-|-|-|-|
-| `/SalesOrder/getSince` | Orders incremental pull | `*/5` cron |
-| `/SalesOrder/getAll` | Settings → Sync → "Full Refresh" | Manual |
-| `/SalesOrder/update` | Orders delivery-field edits (push back) | On save |
-| `/PurchaseOrder/getAll` | PO documents pull | `*/30` cron |
-| `/PurchaseOrder/getOutstanding` | Outstanding lines (dashboard counts) | `*/30` cron |
-| `/PurchaseOrder/getDetail` | PO side-panel drill-down (on-demand) | Click |
-| `/Creditor/getAll` | Creditors mirror | Daily + manual |
-| `/Creditor/getSingle` | On-demand creditor refresh | Click |
-| `/StockItem/getSingle` | Service cases' `item_code → main_supplier` lookup (cached) | Daily + case save |
+**What is actually live:**
 
-The Worker's client (`backend/src/services/autocount.ts`) prefixes every request with `AUTOCOUNT_API_URL` (`wrangler.toml [vars]`) and authenticates with `AUTOCOUNT_API_KEY` (secret). On failure it writes a `FAILED` row to `execution_logs` and returns a 500; the SPA surfaces the error via toast.
+| Direction | What | Where | Gate |
+|---|---|---|---|
+| Inbound | Sales-order incremental pull (`/SalesOrder/getSince`, full `/getAll` fallback) | `services/pull.ts → runPull`, called from the `*/5` cron branch in `backend/src/index.ts` | `AUTOCOUNT_SYNC_DISABLED` in `wrangler.toml` — currently `"false"` (pull is ON) |
+| Inbound | Delivery-order mirror (`/DeliveryOrder/getSince`, full-refresh fallback) | `services/doMirror.ts → runDoMirrorSync`, daily `0 2` cron branch | same kill switch |
+| Outbound | ERP → AutoCount write-back via the outbox (migration `0277`) | `scm/lib/autocount-outbox.ts → drainAutoCountOutbox`, `*/5` cron | dark: `scm.app_config 'scm.autocount_writeback'` is `off`, and `AC_SYNC_KEY` is unset. See `docs/modules/autocount-writeback.md` |
+
+**What exists in the client but has NO caller** (verified by grep — do not read
+capability off `services/autocount.ts`'s method list): the purchase-order pulls
+(`getOutstandingPOs`, `getAllPODocs`), the creditor pulls, and the stock-item
+cache. The legacy sheet push (`pushSalesOrder` → `/SalesOrder/updateFromSheet`)
+is additionally hard-disabled by `AUTOCOUNT_WRITES_DISABLED = true` in code.
+
+The client (`backend/src/services/autocount.ts`) prefixes requests with
+`AUTOCOUNT_API_URL` and authenticates with the `AUTOCOUNT_API_KEY` secret.
+The modern write-back path does NOT go through it — it posts to `AC_SYNC_URL`
+(the AcSyncService on the AutoCount host) from the outbox drain.
 
 ---
 
 ## Auth & permissions
 
-- **Sessions** — `POST /api/auth/login` returns a `session_token`; the SPA stores it in `localStorage` and sends it as `Authorization: Bearer <token>`. Server resolves the token → `user_id` → role → permission set on every request (`backend/src/middleware/auth.ts`).
-- **Roles** are rows in `roles`; permissions are stored as JSON arrays on the role. `is_system = 1` roles (Owner, Admin, Dispatcher, Driver, …) are immutable — the editor panel is read-only for them.
+- **Sessions** — `POST /api/auth/login` returns `{ token, user_id }` (`backend/src/routes/auth.ts`); the SPA stores it (localStorage with "remember", session-only otherwise — `frontend/src/auth/AuthContext.tsx`) and sends `Authorization: Bearer <token>`. The server resolves token → user → permission set on every request (`backend/src/middleware/auth.ts`), with a 60s KV cache (`services/sessionCache.ts`).
+- **Roles** are rows in `roles`; permissions are a JSON array in the `permissions` text column. System roles are not fully immutable: `routes/roles.ts` allows editing their DESCRIPTION and refuses name/permission changes ("System roles cannot be renamed or have permissions changed").
 - **Wildcard** — the Owner role holds `*`, granting every permission. Other roles list explicit keys like `sales_orders.read`, `trips.manage`, `fleet.read`.
 - **Route guards** — `App.tsx` wraps every protected route in a `<Guard perm="…">` (or `anyPerm={[…]}`) that redirects to `/` when the current user is missing the permission. This is defense-in-depth; the sidebar already hides entries the user can't use.
-- **Driver-only routing** — a user who can read trips (`trips.read.own`) but no office surfaces (`sales_orders.read`, `delivery_orders.read`) is auto-bounced to `/driver` at the root level (see `isDriverOnly` in `App.tsx`).
+- **Driver-only routing** — there is no `isDriverOnly` and no `/driver` route (both were described here and neither exists). Phones mount the mobile shell via `useIsMobile()` in `frontend/src/auth/AuthScreens.tsx`; what a user can reach inside it is decided by the same backend capabilities as desktop.
 - **Public surfaces** (`/track`, `/survey/:token`) — gated by opaque row-scoped tokens in the DB, not session auth. Middleware in `backend/src/middleware/caseTrack.ts`.
 
 ---
 
 ## Configuration
 
-### `backend/wrangler.toml`
+The single source of truth is [`backend/wrangler.toml`](backend/wrangler.toml)
+itself — it is heavily commented, each var carries its history, and a sample
+here WILL rot (the previous sample still showed a `[[d1_databases]]` binding
+that was removed 2026-06-13, and an `EMAIL_FROM` on a domain retired in June).
+Read the file. What you will find there, as of 2026-08-12:
 
-```toml
-[vars]
-AUTOCOUNT_API_URL = "https://it-houzs.dev/"
-PUBLIC_APP_URL    = "https://erp.houzscentury.com"   # canonical domain; used to build email links
-EMAIL_FROM        = "Houzs ERP <no-reply@mail.it-houzs.dev>"
-
-[[d1_databases]]
-binding      = "DB"
-database_name = "autocount-sync"
-
-[[r2_buckets]]
-binding     = "POD_BUCKET"
-bucket_name = "houzs-erp"
-```
-
-### Required secrets (`wrangler secret put`)
-
-| Secret | Who uses it | What happens if unset |
-|-|-|-|
-| `AUTOCOUNT_API_KEY` | Every AutoCount call | Syncs fail, `execution_logs` records `FAILED` |
-| `DASHBOARD_API_KEY` | Internal ops routes | Requests 401 |
-| `GOOGLE_MAPS_API_KEY` | Route planner geocoder | Planner falls back to "unknown", no map render |
-| `RESEND_API_KEY` | Transactional email | Email service silently no-ops (intentional — deploy never breaks) |
+- **Bindings**: Hyperdrive (Supabase Postgres), four R2 bindings on the
+  `houzs-erp` bucket, the `houzs-scan-ocr` queue pair, a `SESSION_CACHE` KV,
+  Analytics Engine. There is NO D1 binding.
+- **Vars**: `AUTOCOUNT_API_URL`, `AUTOCOUNT_SYNC_DISABLED`, `AC_SYNC_URL`,
+  `COSTING_DISPLAY_ENABLED`, `SESSION_FALLBACK_ENABLED` (+ TTL),
+  `HOUZS_OWNS_2990`, `PUBLIC_APP_URL`, `EMAIL_FROM` / `EMAIL_REPLY_TO`,
+  `SO_ITEM_PHOTOS_BUCKET_NAME`.
+- **Secrets** (set with `wrangler secret put`; the full annotated list lives in
+  the toml comments): `AUTOCOUNT_API_KEY`, `DASHBOARD_API_KEY`,
+  `GOOGLE_MAPS_API_KEY`, `RESEND_API_KEY` (email silently no-ops if unset),
+  `AC_SYNC_KEY`, `CONNECT_SERVICE_TOKEN`, `AE_QUERY_TOKEN` + `CF_ACCOUNT_ID`,
+  `SENTRY_DSN` (deliberately unset).
+- **`[env.staging]`**: a full parallel stack — own Supabase, own queues, own KV,
+  `crons = []`. Bindings do not inherit into named envs.
 
 ### `frontend/.env.production`
 
 ```
-VITE_API_URL=https://autocount-sync-api.<account>.workers.dev
+VITE_API_URL=<the Worker origin>
 ```
 
-The SPA prepends this to every API call. In dev the fallback is `http://localhost:8787`.
+The SPA prepends this to every API call. In dev the fallback is
+`http://localhost:8787`.
 
 ---
 
-## Data model highlights
+## Data model
 
-- **`execution_logs`** — every sync / cron / manual job writes a row. Activity Log tab is a paginated view.
-- **`d1_migrations`** — tracks which `0NN_*.sql` files have been applied; `npm run db:migrate` skips already-applied files.
-- **`users`, `roles`, `user_roles`** — auth. System roles are seeded in `001_auth.sql`.
-- **`sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`** — AutoCount mirrors. `purchase_order_docs_raw` holds the untransformed header JSON so the side panel can surface every AutoCount field without another API call.
-- **`creditors`, `stock_items`** — AutoCount mirrors (Phase 5). `assr_cases.creditor_code` is populated from `stock_items.main_supplier` at save time and re-reconciled every daily cron.
-- **`assr_cases`** — service case with stage pipeline (`stage` column), SLA tracking (`sla_deadline`, `sla_breached_at`), and customer-facing `public_token`.
-- **`projects`** — event-scoped, brand-scoped. `payment_proof_r2_key` points at R2. No FK to contractors/suppliers (dropped in migration 036).
-- **`trips`, `trip_stops`, `trip_events`, `trip_drivers`** — dispatch graph. `trip_events` is append-only (clock-ins, status changes, notes).
-- **`finance_ledger`** — double-entry-ish project cost tracking feeding the Projects P&L.
+**The schema's source of truth is `backend/src/db/schema.pg.ts` (Drizzle) plus
+the applied tree `backend/src/db/migrations-pg/`** — not this file. The
+"highlights" list that used to sit here was written before the Postgres cutover
+and had rotted badly: it described `d1_migrations` as the tracking table (the
+live one is `_pg_migrations`; `d1_migrations` has zero references in the tree),
+pointed at `001_auth.sql` for role seeds (a test-tree file; production seeds
+live in `0000_baseline.sql`), and highlighted a `finance_ledger` table that
+exists only in the retired D1 tree, never in Postgres.
 
-All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against SQLite views or ad-hoc queries — no pre-computed aggregates, since D1 handles the data volumes comfortably.
+Three facts worth keeping here because they are structural, verified 2026-08-12:
 
----
+- **Two migration trees, one real.** `migrations-pg/` is applied to production
+  by `deploy.yml` on every push to `main`, tracked by full filename in
+  `_pg_migrations`. `migrations/` is the D1 tree, read only by backend vitest.
+- **`execution_logs`** records cron and sync runs; the Settings → Activity Log
+  tab is a paginated view over it.
+- **Native tables vs `scm.*`.** The native Houzs modules (projects, ASSR, mail,
+  users/roles) live in the public schema and are reached through the d1-compat
+  shim; the vendored supply chain lives in the `scm` schema and is reached
+  through supabase-js. `docs/CODEBASE-MAP.md` §4 carries the traps.
 
-## Architecture notes
-
-- **Single Worker, many routes** — each route file in `backend/src/routes/*.ts` mounts onto the root Hono app at a specific prefix (e.g. `app.route("/api/orders", orders)`). The auth middleware runs before every `/api/*` route.
-- **Scheduled handler** wraps each cron branch in `ctx.waitUntil(...)` with an outer try/catch so one job's failure doesn't kill the rest. Each branch owns its own `execution_logs` row.
-- **Server-side sort** — `DataTable` accepts a `serverSort` prop; `useServerSort` manages state. Paginated endpoints read `sort_by` and `sort_dir` query params, validate against a backend `SORT_MAP` allow-list, and apply a tiebreaker on `id` so pagination is stable across page boundaries.
-- **Tab + title pattern** — every multi-view page renders `<TabStrip>` first, then a `<PageHeader>` whose title/description come from a `TAB_HEADER` map keyed by the active tab. Action buttons (e.g. "Invite Member" on Members tab, "New Role" on Roles tab) are driven by the same map and sit in `PageHeader.actions`.
-- **PWA** — service worker caches the app shell (HTML, JS, CSS, icons, logo, manifest) cache-first; API calls bypass the worker and go network-first over CORS to the Worker. Driver-only users get an offline-tolerant POD capture flow.
-- **Global search** (⌘K / `/`) — `GET /api/search?q=…` fans out to 8 sources (orders, POs, creditors, cases, projects, trips, stock items, users) in parallel, merges, and deep-links into the right module with the right tab.
-
----
-
-## Deploy
-
-```bash
-npm run deploy:all              # frontend build + deploy, then worker deploy
-npm run deploy:backend          # worker only
-npm run deploy:frontend         # SPA only
-```
-
-The Pages deploy picks up the SPA build from `frontend/dist/` (configured in `frontend/wrangler.toml` → `pages_build_output_dir`). DNS / custom domains are managed in the Cloudflare dashboard and not in this repo.
-
-Migrations must be applied before any deploy that depends on new schema. The canonical order is:
-
-```bash
-npm run db:migrate          # apply any new migrations first
-npm run deploy:all          # then ship the code
-```
-
----
-
-## Testing
-
-Playwright specs in `e2e/specs/`. Parametrised by `BASE_URL` — point at localhost for dev, the staging Pages URL for PR previews, or prod as a smoke test.
-
-```bash
-cd e2e
-npm install
-npx playwright install --with-deps
-npm test                                     # hits BASE_URL (default localhost)
-npm test -- --base-url=https://…             # override
-```
-
-No backend/frontend unit tests exist yet — Vitest is the planned pick when a service grows complex enough to warrant them.
-
----
-
-## Migrations discipline
-
-- Every schema change goes through a new numbered file in `backend/src/db/migrations/`.
-- Files are applied in numeric order by `npm run db:migrate`; the script tracks applied files in the `d1_migrations` table and skips them on re-run.
-- Don't edit a migration after it's been applied to prod. Write a new one.
-- SQLite can't `DROP COLUMN` when the column is referenced by an index or a foreign key. Pattern: `DROP INDEX` first, or rebuild the table (see `036_drop_legacy_suppliers.sql` for the projects-table rebuild example).
-- Use `IF EXISTS` and `IF NOT EXISTS` liberally — it keeps the migration idempotent against re-runs on half-applied state.
-
----
-
-## Getting help
-
-- `/help` surface inside the app — in-app tour + keyboard shortcuts (⌘K / `/` for search).
-- `docs/` holds architecture PDFs and module-specific guides. Check there first when something is non-obvious.
-- Cloudflare dashboard → Workers → `autocount-sync-api` → Logs for live request traces.
-- `execution_logs` table in D1 for cron / sync history (also exposed in Settings → Activity Log).
+All financial rollups run against Postgres views or ad-hoc queries — no
+pre-computed aggregates at current data volumes.

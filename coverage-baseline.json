@@ -1,0 +1,73 @@
+{
+  "knownAbsent": [
+    {
+      "file": "backend/src/scm/shared/index.ts",
+      "why": "barrel — `export *` only, so it compiles to no executable statements and istanbul emits no entry for it. Nothing to cover."
+    },
+    {
+      "file": "backend/src/scm/shared/schemas/index.ts",
+      "why": "barrel — same as above."
+    },
+    {
+      "file": "frontend/src/test-setup.ts",
+      "why": "the suite's own vitest setupFile. It runs before every test file, and the v8 provider excludes setup files from the report by design."
+    }
+  ],
+  "areas": {
+    "backend/src/scm/routes": {
+      "pct": 13.98,
+      "zeroCoverageFiles": 0,
+      "lines": {
+        "total": 27004,
+        "covered": 3803
+      },
+      "files": 94
+    },
+    "backend/src/scm/lib": {
+      "pct": 58.07,
+      "zeroCoverageFiles": 10,
+      "lines": {
+        "total": 7628,
+        "covered": 4437
+      },
+      "files": 146
+    },
+    "backend/src/scm/shared": {
+      "pct": 47.17,
+      "zeroCoverageFiles": 4,
+      "lines": {
+        "total": 2401,
+        "covered": 1135
+      },
+      "files": 48
+    },
+    "backend/scripts/lib": {
+      "pct": 53.74,
+      "zeroCoverageFiles": 15,
+      "lines": {
+        "total": 2656,
+        "covered": 1430
+      },
+      "files": 40
+    },
+    "backend/scripts": {
+      "pct": 0,
+      "zeroCoverageFiles": 378,
+      "lines": {
+        "total": 31906,
+        "covered": 15
+      },
+      "files": 379
+    },
+    "frontend/src": {
+      "pct": 12.64,
+      "zeroCoverageFiles": 353,
+      "lines": {
+        "total": 59866,
+        "covered": 7624
+      },
+      "files": 593
+    }
+  },
+  "measuredAt": "2026-08-13"
+}

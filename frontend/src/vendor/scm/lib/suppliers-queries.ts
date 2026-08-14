@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
@@ -409,6 +410,7 @@ export function useCreateSupplier() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+    onError: writeFailed,
   });
 }
 
@@ -505,6 +507,7 @@ export function useDeleteBinding() {
       qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
       qc.invalidateQueries({ queryKey: ['suppliers-for-material'] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -527,6 +530,7 @@ export function useSetCostAnchor() {
       // The initial sync may have rewritten the product's cost.
       qc.invalidateQueries({ queryKey: ['mfg-products'] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -773,6 +777,7 @@ export function useCreateGrnsFromPoItems() {
          (Wei Siang 2026-05-30). */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
+    onError: writeFailed,
   });
 }
 
@@ -837,6 +842,7 @@ export function useCreatePisFromGrnItems() {
       /* Force picker refetch so already-invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailed,
   });
 }
 
@@ -944,6 +950,7 @@ export function useConvertPoFromSo() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', vars.poId] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
     },
+    onError: writeFailedAs('Sales order lines not copied into this PO'),
   });
 }
 
@@ -1061,6 +1068,7 @@ export function useDeletePurchaseOrderItem() {
          'outstanding-so-items']. */
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -1082,12 +1090,24 @@ export type SoLineCandidate = {
   qty: number;
   deliveryDate: string | null;
 };
-export function useSoLineCandidates(code: string | null) {
+// poId+itemId narrow the candidates to the PO line's SPEC (fabric + SEAT/LEG/
+// SPECIAL), not just its item code (owner 2026-08-08). Omitting them falls back
+// to code-only. Keyed on all three so switching lines refetches.
+export function useSoLineCandidates(
+  code: string | null,
+  poId?: string | null,
+  itemId?: string | null,
+) {
   return useQuery({
-    queryKey: ['po-so-line-candidates', code ?? ''],
-    queryFn: () => authedFetch<{ items: SoLineCandidate[] }>(
-      `/mfg-purchase-orders/so-line-candidates?code=${encodeURIComponent(code ?? '')}`,
-    ).then((r) => r.items),
+    queryKey: ['po-so-line-candidates', code ?? '', poId ?? '', itemId ?? ''],
+    queryFn: () => {
+      const qs = new URLSearchParams({ code: code ?? '' });
+      if (poId) qs.set('poId', poId);
+      if (itemId) qs.set('itemId', itemId);
+      return authedFetch<{ items: SoLineCandidate[] }>(
+        `/mfg-purchase-orders/so-line-candidates?${qs.toString()}`,
+      ).then((r) => r.items);
+    },
     enabled: Boolean(code),
     staleTime: 30_000,
     retry: retryUnlessClientError,
@@ -1145,6 +1165,7 @@ export function useSubmitPurchaseOrder() {
         { method: 'PATCH' },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
+    onError: writeFailed,
   });
 }
 
@@ -1204,15 +1225,6 @@ export function useReopenPurchaseOrder() {
   });
 }
 
-/** Hard-delete PO. Only allowed when status is CANCELLED (post-0078). */
-export function useDeletePurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ ok: true; deleted: string }>(
-        `/mfg-purchase-orders/${id}`,
-        { method: 'DELETE' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
-  });
-}
+/* useDeletePurchaseOrder was REMOVED with its endpoint (owner rule 2026-08-11:
+   不可以删只可以 cancel). A PO is cancelled, never purged — see the note where
+   DELETE /:id used to live in backend/src/scm/routes/mfg-purchase-orders.ts. */

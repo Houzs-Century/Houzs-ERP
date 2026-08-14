@@ -112,6 +112,34 @@ export async function applyCustomerCreditToSi(
   if (!args.debtorCode || !args.debtorCode.trim()) return { applied: 0, reason: 'no_debtor' };
   if (!(args.remainingDueCenti > 0)) return { applied: 0, reason: 'no_due' };
 
+  /* MIGRATED PAPERWORK SPENDS NO CREDIT (migration 0280). A migrated SI mirrors
+     an invoice AutoCount already raised and already settled in its own book.
+     Paying it here out of the customer's ERP credit balance would spend a real
+     balance a second time — the customer loses money that is still owed to them,
+     and nothing downstream can tell it from a genuine application.
+
+     Guarded HERE rather than at the call sites for the same reason postSiRevenue
+     is: every caller is then covered by construction. Today the three reachable
+     callers all happen to miss migrated invoices anyway — create refuses a
+     migrated source, and confirm requires DRAFT while the converter writes SENT
+     — but all three are ACCIDENTS of the current shape, not rules. Migration
+     0276 shipped a comment saying "never post movements for it" that nothing
+     enforced; this is that comment's promise, enforced.
+
+     A FAILED READ REFUSES. Fail-closed leaves the credit standing and the
+     invoice merely unpaid, which an operator can see and re-drive; fail-open
+     spends a balance that cannot be un-spent. Same direction the RPC-error
+     branch below already chose, and for the same reason. */
+  const { data: siRow, error: siErr } = await sb
+    .from('sales_invoices')
+    .select('migrated_no_stock')
+    .eq('id', args.siId)
+    .maybeSingle();
+  if (siErr) return { applied: 0, reason: `migrated_check_failed: ${siErr.message}` };
+  if ((siRow as { migrated_no_stock?: boolean | null } | null)?.migrated_no_stock === true) {
+    return { applied: 0, reason: 'migrated_source' };
+  }
+
   // Preferred path: one atomic transaction in the DB.
   const { data, error } = await sb.rpc('apply_customer_credit_to_si', {
     p_debtor_code: args.debtorCode,

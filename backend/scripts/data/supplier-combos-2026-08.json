@@ -1,0 +1,3948 @@
+[
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 155900,
+   "26": 169800,
+   "28": 169800,
+   "30": 174200
+  },
+  "label": "1A+2A",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 260000,
+   "26": 275000,
+   "28": 275000,
+   "30": 286000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 260000,
+   "26": 275000,
+   "28": 275000,
+   "30": 286000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 350000,
+   "26": 370000,
+   "28": 370000,
+   "30": 380000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 210000,
+   "26": 220000,
+   "28": 220000,
+   "30": 230000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9030",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 155200,
+   "30": 161000
+  },
+  "label": "1A+2A",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9030",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 270000,
+   "30": 295000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9030",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 270000,
+   "30": 295000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 330000,
+   "30": 350000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9030",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 220000,
+   "30": 240000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9033",
+  "modules": [
+   [
+    "2B(LHF)",
+    "2B(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "30": 220000
+  },
+  "label": "2B+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9050",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 280000,
+   "26": 295000,
+   "30": 295000,
+   "32": 310000,
+   "35": 323000
+  },
+  "label": "1A+2NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9050",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 280000,
+   "26": 295000,
+   "30": 295000,
+   "32": 310000,
+   "35": 323000
+  },
+  "label": "1NA+2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9050",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 220000,
+   "30": 230000,
+   "32": 240000,
+   "35": 250000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 158000,
+   "30": 167700
+  },
+  "label": "1A+2A",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 264000,
+   "30": 275000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 264000,
+   "30": 275000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 341000,
+   "30": 363000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-A004",
+  "prices_by_height": {
+   "24": 209000,
+   "30": 220000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (AMN)"
+ },
+ {
+  "base_model": "8030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 380000,
+   "25": 380000,
+   "26": 380000,
+   "27": 380000,
+   "28": 380000,
+   "30": 400000,
+   "32": 500000,
+   "35": 500000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 400000,
+   "25": 400000,
+   "26": 400000,
+   "27": 400000,
+   "28": 400000,
+   "30": 420000,
+   "32": 520000,
+   "35": 520000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 420000,
+   "25": 420000,
+   "26": 420000,
+   "27": 420000,
+   "28": 420000,
+   "30": 440000,
+   "32": 540000,
+   "35": 540000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8038",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 385000,
+   "26": 400000,
+   "28": 420000,
+   "30": 420000,
+   "32": 420000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8038",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 405000,
+   "26": 420000,
+   "28": 440000,
+   "30": 440000,
+   "32": 440000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8038",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 425000,
+   "26": 440000,
+   "28": 460000,
+   "30": 460000,
+   "32": 460000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 310000,
+   "24": 310000,
+   "26": 350000,
+   "28": 350000,
+   "30": 380000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 330000,
+   "24": 330000,
+   "26": 370000,
+   "28": 370000,
+   "30": 400000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 350000,
+   "24": 350000,
+   "26": 390000,
+   "28": 390000,
+   "30": 420000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 200000,
+   "24": 200000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 210000,
+   "24": 210000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8050",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 220000,
+   "24": 220000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 375000,
+   "28": 375000,
+   "30": 375000,
+   "32": 375000,
+   "35": 400000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 395000,
+   "28": 395000,
+   "30": 395000,
+   "32": 395000,
+   "35": 420000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 415000,
+   "28": 415000,
+   "30": 415000,
+   "32": 415000,
+   "35": 440000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 220000,
+   "30": 220000,
+   "32": 220000,
+   "35": 230000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 230000,
+   "30": 230000,
+   "32": 230000,
+   "35": 240000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8051",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 240000,
+   "30": 240000,
+   "32": 240000,
+   "35": 250000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 230000
+  },
+  "label": "1A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 240000
+  },
+  "label": "1A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 250000
+  },
+  "label": "1A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 400000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 420000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 440000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 300000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 310000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 320000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8060",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 430000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8060",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 450000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "8060",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "28": 470000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 264000,
+   "24": 260000,
+   "26": 270000,
+   "28": 275000,
+   "30": 280000,
+   "32": 300000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 279000,
+   "24": 275000,
+   "26": 285000,
+   "28": 290000,
+   "30": 295000,
+   "32": 315000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 294000,
+   "24": 290000,
+   "26": 300000,
+   "28": 305000,
+   "30": 310000,
+   "32": 330000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 264000,
+   "24": 260000,
+   "26": 270000,
+   "28": 275000,
+   "30": 280000,
+   "32": 300000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 279000,
+   "24": 275000,
+   "26": 285000,
+   "28": 290000,
+   "30": 295000,
+   "32": 315000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 294000,
+   "24": 290000,
+   "26": 300000,
+   "28": 305000,
+   "30": 310000,
+   "32": 330000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 350000,
+   "24": 350000,
+   "26": 380000,
+   "28": 380000,
+   "30": 400000,
+   "32": 420000,
+   "35": 440000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 370000,
+   "24": 370000,
+   "26": 400000,
+   "28": 400000,
+   "30": 420000,
+   "32": 440000,
+   "35": 460000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 390000,
+   "24": 390000,
+   "26": 420000,
+   "28": 420000,
+   "30": 440000,
+   "32": 460000,
+   "35": 480000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 210000,
+   "24": 210000,
+   "26": 220000,
+   "28": 220000,
+   "30": 230000,
+   "32": 240000,
+   "35": 250000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 220000,
+   "24": 220000,
+   "26": 230000,
+   "28": 230000,
+   "30": 240000,
+   "32": 250000,
+   "35": 260000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9028",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "22": 230000,
+   "24": 230000,
+   "26": 240000,
+   "28": 240000,
+   "30": 250000,
+   "32": 260000,
+   "35": 270000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 265000,
+   "26": 275000,
+   "28": 275000,
+   "30": 275000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 280000,
+   "26": 290000,
+   "28": 290000,
+   "30": 290000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 295000,
+   "26": 305000,
+   "28": 305000,
+   "30": 305000
+  },
+  "label": "1A+2NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 265000,
+   "26": 275000,
+   "28": 275000,
+   "30": 275000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 280000,
+   "26": 290000,
+   "28": 290000,
+   "30": 290000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 295000,
+   "26": 305000,
+   "28": 305000,
+   "30": 305000
+  },
+  "label": "1NA+2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 340000,
+   "26": 360000,
+   "28": 360000,
+   "30": 360000,
+   "32": 380000,
+   "35": 400000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 360000,
+   "26": 380000,
+   "28": 380000,
+   "30": 380000,
+   "32": 400000,
+   "35": 420000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 380000,
+   "26": 400000,
+   "28": 400000,
+   "30": 400000,
+   "32": 420000,
+   "35": 440000
+  },
+  "label": "1S+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 210000,
+   "26": 220000,
+   "28": 220000,
+   "30": 220000,
+   "32": 225000,
+   "35": 230000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 220000,
+   "26": 230000,
+   "28": 230000,
+   "30": 230000,
+   "32": 235000,
+   "35": 240000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "9058",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-D004",
+  "prices_by_height": {
+   "24": 230000,
+   "26": 240000,
+   "28": 240000,
+   "30": 240000,
+   "32": 245000,
+   "35": 250000
+  },
+  "label": "2A+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (DSL)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 257684
+  },
+  "label": "2S+2A(R)",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 281895
+  },
+  "label": "2S+2A(R)",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "1A(LHF)"
+   ],
+   [
+    "1A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 299474
+  },
+  "label": "3S+1A+1A",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "1A(LHF)"
+   ],
+   [
+    "1A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 313368
+  },
+  "label": "3S+1A+1A",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 283684
+  },
+  "label": "3S+2A(R)",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5526",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 297579
+  },
+  "label": "3S+2A(R)",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "28": 259263
+  },
+  "label": "2S+2A(R)",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "28": 284189
+  },
+  "label": "2S+2A(R)",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "1A(LHF)"
+   ],
+   [
+    "1A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 315263
+  },
+  "label": "3S+1A+1A",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "1A(LHF)"
+   ],
+   [
+    "1A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 345789
+  },
+  "label": "3S+1A+1A",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "35": 299474
+  },
+  "label": "3S+2A(R)",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5527",
+  "modules": [
+   [
+    "3S"
+   ],
+   [
+    "2A(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "35": 328421
+  },
+  "label": "3S+2A(R)",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "8133",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "32": 356316
+  },
+  "label": "2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "8133",
+  "modules": [
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "32": 389947
+  },
+  "label": "2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "30": 583263,
+   "22": 583263
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "30": 638589,
+   "22": 614316
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 571211
+  },
+  "label": "2R+3R",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 625832
+  },
+  "label": "2R+3R",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "Console"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 317579
+  },
+  "label": "2R+Console",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "R819",
+  "modules": [
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "Console"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-R001",
+  "prices_by_height": {
+   "STD": 348337
+  },
+  "label": "2R+Console",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (RDS)"
+ },
+ {
+  "base_model": "5015A",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "27": 390000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5015A",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "27": 240000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5030",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "?": 300000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5066",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "?": 310000
+  },
+  "label": "1A+2NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5066",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "?": 310000
+  },
+  "label": "1NA+2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5066",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "?": 430000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5066",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "?": 270000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5071",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 300000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5071",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 200000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5080",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 220000
+  },
+  "label": "1A+2NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5080",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 220000
+  },
+  "label": "1NA+2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5080",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 300000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5080",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 180000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5083",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 240000,
+   "28": 250000
+  },
+  "label": "1A+2NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5083",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 240000,
+   "28": 250000
+  },
+  "label": "1NA+2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5083",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 320000,
+   "28": 340000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5083",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 190000,
+   "28": 200000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5111A",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 320000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "5117A",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 320000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "7006",
+  "modules": [
+   [
+    "1A(LHF)",
+    "1A(RHF)"
+   ],
+   [
+    "2NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 230000,
+   "30": 230000
+  },
+  "label": "1A+2NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "7006",
+  "modules": [
+   [
+    "1NA"
+   ],
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 230000,
+   "30": 230000
+  },
+  "label": "1NA+2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "7006",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 270000,
+   "30": 290000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "7006",
+  "modules": [
+   [
+    "2A(LHF)",
+    "2A(RHF)"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 170000,
+   "30": 180000
+  },
+  "label": "2A+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "BS22",
+  "modules": [
+   [
+    "1S"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T005",
+  "prices_by_height": {
+   "24": 350000
+  },
+  "label": "1S+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (TD)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 330000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 407000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 424000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 485000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 580000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2372",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 595000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1A(R)(LHF)",
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 227000
+  },
+  "label": "1A(R)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1A(R)(LHF)",
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 276000
+  },
+  "label": "1A(R)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1A(R)(LHF)",
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 285000
+  },
+  "label": "1A(R)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 432000,
+   "75cm": 471000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 519000,
+   "75cm": 571000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2376",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 510000,
+   "75cm": 570000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 378000
+  },
+  "label": "1S(R)+2S+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 465000
+  },
+  "label": "1S(R)+2S+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 477000
+  },
+  "label": "1S(R)+2S+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 482000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 586000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2379",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 603000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 330000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 407000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "2S"
+   ],
+   [
+    "3S"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 424000
+  },
+  "label": "1S(R)+2S+3S",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 485000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 580000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "2391",
+  "modules": [
+   [
+    "1S(R)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1A(R)(LHF)"
+   ],
+   [
+    "1A(R)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75cm": 595000
+  },
+  "label": "1S(R)+2rr+3rr",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5133",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 293000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5133",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 351000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5133",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "60cm": 398000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5150",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "80CM": 327000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5150",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "80CM": 354000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5150",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "80CM": 374000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 286000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 312000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 362000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 670000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 715000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5151",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 800000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": false,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 333000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 361000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1A(P)(LHF)",
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ],
+   [
+    "L(LHF)",
+    "L(RHF)"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 401000
+  },
+  "label": "1A(P)+1NA+L",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_1",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 810000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_2",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 855000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ },
+ {
+  "base_model": "5152",
+  "modules": [
+   [
+    "1S(P)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1A(P)(LHF)"
+   ],
+   [
+    "1A(P)(RHF)"
+   ],
+   [
+    "1NA"
+   ]
+  ],
+  "tier": "PRICE_3",
+  "supplier_code": "400-T002",
+  "prices_by_height": {
+   "75CM": 942000
+  },
+  "label": "1S(P)+2pp+3pp",
+  "master": true,
+  "notes": "supplier-price-list-2026-08 set rows (THL)"
+ }
+]

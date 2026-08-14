@@ -67,6 +67,58 @@ afterEach(() => {
   if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight);
 });
 
+describe("DataTable onFilteredRowsChange", () => {
+  /* Owner 2026-08-12 — the per-column funnels are client-side AND persisted, so
+     a page that summarises its rows had no way to know what the operator can
+     actually see. A stuck DATE funnel on Purchase Orders left 5 rows worth
+     RM 9,112.50 under a "Sum on this page" card reading RM 164,349.70, and two
+     POs were reported missing when they were simply filtered out. */
+  it("reports every row when no column filter is set", () => {
+    setViewport(1280);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-unfiltered"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    expect(seen.at(-1)).toHaveLength(rows.length);
+  });
+
+  it("reports only the rows a persisted column filter leaves visible", () => {
+    setViewport(1280);
+    // A restored funnel, exactly as a reload rehydrates it.
+    localStorage.setItem("dt:filters:orders-filtered", JSON.stringify({ status: ["Open"] }));
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-filtered"
+        rows={rows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    const last = seen.at(-1)!;
+    expect(last).toHaveLength(rows.filter((r) => r.status === "Open").length);
+    expect(last.every((r) => r.status === "Open")).toBe(true);
+    // The caller compares against rows.length to decide "is a funnel active" —
+    // so a filtered set MUST NOT be the full length.
+    expect(last.length).not.toBe(rows.length);
+  });
+
+  it("is optional — omitting it renders exactly as before", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="orders-no-cb" rows={rows} columns={columns} getRowKey={(row) => row.id} />,
+    );
+    expect(container.querySelectorAll("tr[data-vrow]").length).toBeGreaterThan(0);
+  });
+});
+
 describe("DataTable responsive rendering", () => {
   it("does not build the hidden mobile-card tree on desktop", () => {
     setViewport(1280);
@@ -862,6 +914,86 @@ describe("DataTable layout presets", () => {
     expect(screen.getByText(/of .* shown/).textContent).toContain("edited");
     expect(screen.getByRole("button", { name: /^Layout/ }).textContent).toContain("Custom");
   });
+
+  /* Owner 2026-08-14, on Purchase Orders under a "PO Outstanding" default: the
+     GRN No checkbox would not tick. Alpha here is the same shape — hidden ONLY
+     because the default layout omits it, carrying no `defaultHidden` flag of its
+     own. The reveal used to write nothing at all (the hidden list was already
+     empty, and the shown list is only written for a flagged column), leaving the
+     baseline in charge and the column hidden. Every hidden column on a list whose
+     defaults live entirely in a saved layout was un-tickable. */
+  it("reveals a column the default layout hides but the column flags don't", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="preset-reveal"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    expect(headerLabels(container)).toEqual(["Bravo", "Charlie"]);
+
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    // Alpha and Delta are both hidden; the drawer lists them in table order.
+    fireEvent.click(screen.getAllByRole("button", { name: "Show column" })[0]!);
+
+    // Alpha lands in the preset's own order (which the toggle also banks, or the
+    // columns would snap back to definition order as the baseline lifts).
+    expect(headerLabels(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
+    expect(JSON.parse(localStorage.getItem("dt:order:preset-reveal")!)).toEqual(["b", "c", "a", "d"]);
+    expect(JSON.parse(localStorage.getItem("dt:hidden:preset-reveal")!)).toEqual(["d"]);
+  });
+
+  /* The other half of banking the baseline: hiding ONE column under a default
+     used to store only that column, and the first stored pref ends the baseline
+     for good — so the next mount read "hid Bravo, arranged nothing else" and
+     brought Alpha and Delta back. Hiding a column is not a request to unhide
+     two, nor to re-sort the table into definition order. */
+  it("hiding one column under a default doesn't unhide the rest on remount", () => {
+    setViewport(1280);
+    render(
+      <DataTable
+        tableId="preset-hide"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
+    cleanup();
+
+    const { container } = render(
+      <DataTable
+        tableId="preset-hide"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    expect(headerLabels(container)).toEqual(["Charlie"]);
+  });
+
+  it("Show all escapes the default layout too", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable
+        tableId="preset-showall"
+        layoutPresets={presets}
+        rows={rows.slice(0, 2)}
+        columns={presetCols}
+        getRowKey={(row) => row.id}
+      />,
+    );
+    fireEvent.click(screen.getByTitle(/^Columns —/));
+    fireEvent.click(screen.getByText("Show all"));
+
+    expect(headerLabels(container)).toEqual(["Bravo", "Charlie", "Alpha", "Delta"]);
+  });
 });
 
 describe("DataTable header filter + sort menu", () => {
@@ -1072,6 +1204,54 @@ describe("DataTable header filter + sort menu", () => {
     fireEvent.click(screen.getByText("Clear"));
     expect(rowCount(second.container)).toBe(6);
     expect(JSON.parse(localStorage.getItem("dt:filters:filter-persist") ?? "null")).toEqual({});
+  });
+
+  /* The sticky funnel is the one filter with no representation outside the
+     header that set it: owner 2026-08-14, a Purchaser reported 5 of 60 POs
+     missing — his own funnel, months old, on a machine whose localStorage the
+     owner's login never touched. So the toolbar Reset must see column filters,
+     on the lists that pass no `resetFilters` of their own too. */
+  it("offers a toolbar Reset for a sticky column filter, and clears it", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="filter-reset" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    // Nothing filtered → no button, so a fresh list carries no extra chrome.
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    fireEvent.scroll(document); // dismiss the funnel popover
+    expect(rowCount(container)).toBe(3);
+
+    const reset = screen.getByTitle("Clear all filters and search");
+    fireEvent.click(reset);
+    expect(rowCount(container)).toBe(6);
+    expect(JSON.parse(localStorage.getItem("dt:filters:filter-reset") ?? "null")).toEqual({});
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+  });
+
+  it("folds column filters into a page-owned Reset instead of shadowing it", () => {
+    setViewport(1280);
+    const onReset = vi.fn();
+    const { container } = render(
+      <DataTable
+        tableId="filter-reset-page"
+        rows={rows.slice(0, 6)}
+        columns={columns}
+        getRowKey={(r) => r.id}
+        resetFilters={{ active: false, onReset, label: "Reset layout" }}
+      />,
+    );
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    fireEvent.scroll(document);
+
+    // The page says "no filters"; the table knows better and still offers the
+    // button — under the page's own label, clearing both sides at once.
+    fireEvent.click(screen.getByText("Reset layout"));
+    expect(rowCount(container)).toBe(6);
+    expect(onReset).toHaveBeenCalledTimes(1);
   });
 
   it("ignores corrupt persisted filters instead of crashing or hiding rows", () => {

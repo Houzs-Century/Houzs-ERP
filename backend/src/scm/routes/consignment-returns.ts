@@ -532,9 +532,20 @@ consignmentReturns.get('/', async (c) => {
 // lib/finance-keys warns that a camelCasing surface must strip in its own.
 consignmentReturns.get('/returnable-note-lines', async (c) => {
   const sb = c.get('supabase');
-  const { data: notes, error: nErr } = await paginateAll<{ id: string; do_number: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => sb
+  // Company scope (owner 2026-08-10 audit): sibling GET / was scoped, this
+  // picker was not — it listed every company's consignment notes.
+  /* STATUS-FILTERED (owner 2026-08-13). This claimed to "mirror the DO→DR
+     /returnable-do-lines endpoint" and did not: that one skips CANCELLED and
+     DRAFT (lib/do-line-remaining.ts:106) and this one took every note. A
+     cancelled consignment note has ALREADY had its stock driven back to zero
+     (consignment-notes.ts:269), yet its lines still showed remaining > 0 — so
+     the same units could be booked IN a second time. A DRAFT note has shipped
+     nothing at all. */
+  const { data: notes, error: nErr } = await paginateAll<{ id: string; do_number: string; debtor_code: string | null; debtor_name: string | null }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_orders')
     .select('id, do_number, debtor_code, debtor_name')
+    .neq('status', 'CANCELLED')
+    .neq('status', 'DRAFT'), c)
     .order('do_number', { ascending: false })
     .range(from, to));
   if (nErr) return c.json({ error: 'load_failed', reason: nErr.message }, 500);
@@ -682,7 +693,116 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
 // loaner is transferred back to the shipping warehouse immediately (idempotent).
 // "no DO, no return" is RELAXED — lines may reference a Consignment Note line
 // (consignmentDoItemId) OR be free-entry.
+/* OVER-RETURN GUARD — owner decision 2026-08-13, asked directly: "加上限,和兄弟
+   单据一致".
+
+   This module shipped WITHOUT one and said so: the comments below read "DROPPED
+   vs DR: ... the over-return remaining guard". Every sibling has it —
+   delivery-returns.ts:653 checkDrOverRemaining, purchase-returns.ts:587,
+   purchase-consignment-returns.ts:451 — so a consignment note was the one
+   document you could return more units from than were ever delivered, as many
+   times as you liked, each one booking stock back IN.
+
+   The arithmetic is the picker's own (/returnable-note-lines): delivered minus
+   the sum of qty_returned across NON-CANCELLED returns. Reusing that definition
+   is the point — a guard that computes "remaining" differently from the list the
+   operator picked from is a guard that rejects legitimate work.
+
+   Returns a 409 body naming every offending line, or null to allow. EVERY load
+   here fails CLOSED. This paragraph used to say the opposite — "a load failure
+   returns null rather than blocking: the insert will surface real errors" — and
+   both halves of that were wrong. The insert surfaces nothing: no constraint
+   stops an over-return, which is the entire reason this guard exists. And a
+   discarded read does not merely skip the check, it INVERTS it: empty rows make
+   `remaining` collapse to `delivered`, so a line already fully returned looks
+   untouched and books stock IN a second time. Refusing a retryable operation is
+   the cheaper error. */
+/* The refusal used when the guard could not be COMPUTED, as opposed to when it
+   was computed and failed. `lines: []` because there are no offending lines to
+   name — the check itself did not run. */
+const OVER_REMAINING_UNPROVEN = {
+  error: 'over_remaining_uncheckable',
+  message: 'Could not verify the remaining returnable quantity — the check could not read prior returns. Nothing was changed; please retry.',
+  lines: [] as Array<{ noteItemId: string; requested: number; remaining: number }>,
+};
+
+async function checkCrOverRemaining(
+  sb: any,
+  items: Array<Record<string, unknown>>,
+  excludeReturnItemId?: string,
+): Promise<{ error: string; message: string; lines: Array<{ noteItemId: string; requested: number; remaining: number }> } | null> {
+  const wanted = new Map<string, number>();
+  for (const it of items) {
+    const noteItemId = ((it.noteItemId ?? it.consignmentDoItemId) as string | undefined) ?? null;
+    if (!noteItemId) continue; // free-entry line, nothing to bound it against
+    wanted.set(noteItemId, (wanted.get(noteItemId) ?? 0) + Number(it.qtyReturned ?? it.qty ?? 0));
+  }
+  if (wanted.size === 0) return null;
+  const ids = [...wanted.keys()];
+
+  const { data: srcRows, error: srcErr } = await sb
+    .from('consignment_delivery_order_items')
+    .select('id, qty')
+    .in('id', ids);
+  if (srcErr) return OVER_REMAINING_UNPROVEN;
+  const deliveredById = new Map(
+    ((srcRows ?? []) as Array<{ id: string; qty: number }>).map((r) => [r.id, Number(r.qty ?? 0)]),
+  );
+
+  /* Already-returned, counting NON-CANCELLED returns only — the same filter the
+     picker uses, so the two never disagree. */
+  /* FAIL CLOSED on these two, and the header above is wrong about them. An empty
+     result here is not "nothing has been returned yet" — it makes `liveIds` and
+     `returnedById` empty, so `remaining` collapses to `delivered` and a line that
+     is ALREADY fully returned passes the guard and books stock IN a second time.
+     Returning null does not avoid that; it permits the same double-return, just
+     without an error. Same call as returnLineLock in this file: a read failure is
+     transient and the operator retries, a duplicated stock-in is not. */
+  const { data: liveRows, error: liveErr } = await sb
+    .from('consignment_delivery_returns')
+    .select('id, status')
+    .neq('status', 'CANCELLED');
+  if (liveErr) return OVER_REMAINING_UNPROVEN;
+  const liveIds = new Set(((liveRows ?? []) as Array<{ id: string }>).map((r) => r.id));
+
+  const { data: retRows, error: retErr } = await sb
+    .from('consignment_delivery_return_items')
+    .select('id, consignment_delivery_return_id, consignment_do_item_id, qty_returned')
+    .in('consignment_do_item_id', ids);
+  if (retErr) return OVER_REMAINING_UNPROVEN;
+  const returnedById = new Map<string, number>();
+  for (const r of ((retRows ?? []) as Array<{
+    id: string; consignment_delivery_return_id: string; consignment_do_item_id: string | null; qty_returned: number;
+  }>)) {
+    if (!r.consignment_do_item_id) continue;
+    if (!liveIds.has(r.consignment_delivery_return_id)) continue;
+    // An EDIT must not count its own current quantity against itself.
+    if (excludeReturnItemId && r.id === excludeReturnItemId) continue;
+    returnedById.set(
+      r.consignment_do_item_id,
+      (returnedById.get(r.consignment_do_item_id) ?? 0) + Number(r.qty_returned ?? 0),
+    );
+  }
+
+  const offenders: Array<{ noteItemId: string; requested: number; remaining: number }> = [];
+  for (const [noteItemId, requested] of wanted) {
+    const remaining = (deliveredById.get(noteItemId) ?? 0) - (returnedById.get(noteItemId) ?? 0);
+    if (requested > remaining) offenders.push({ noteItemId, requested, remaining: Math.max(0, remaining) });
+  }
+  if (offenders.length === 0) return null;
+  return {
+    error: 'over_remaining',
+    message: 'One or more lines return more than the remaining (delivered − already returned) quantity on the consignment note.',
+    lines: offenders,
+  };
+}
+
 consignmentReturns.post('/', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     insertHeader / insertWithDocNoRetry stamp the active company on that row, so
+     the id is not caller-supplied and cannot name another company's document.
+     Verified 2026-08-13 by reading the handler end to end. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
@@ -698,8 +818,14 @@ consignmentReturns.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* DROPPED vs DR: the "no DO, no Return" hard requirement and the over-return
-     remaining guard. A consignment return may be free-entry or note-linked. */
+  /* The "no DO, no Return" hard requirement is still DROPPED vs DR — a
+     consignment return may be free-entry. The over-return guard is NOT: it now
+     bounds every NOTE-LINKED line (owner 2026-08-13). Free-entry lines carry no
+     source to bound them against and pass through, exactly as before. */
+  {
+    const over = await checkCrOverRemaining(sb, items);
+    if (over) return c.json(over, 409);
+  }
 
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -774,7 +900,23 @@ consignmentReturns.patch('/:id', async (c) => {
    terminal return re-runs recomputeTotals + resyncReturnInventory, which would
    rewrite settled totals and (for non-cancelled terminal states) re-book stock. */
 async function returnLineLock(sb: any, id: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('consignment_delivery_returns').select('status').eq('id', id).maybeSingle();
+  /* FAILS CLOSED. `error` was not destructured at all, so a failed read gave
+     data = null, st = undefined, every check fell through, and the guard
+     RETURNED NULL — i.e. it PASSED. A lock whose own comment says editing a
+     terminal return "would rewrite settled totals and re-book stock" opened
+     itself whenever the database hiccupped.
+
+     Closed rather than open because of what is on the other side: this is not a
+     visibility filter, it is the only thing standing between a settled return
+     and a re-run of recomputeTotals + resyncReturnInventory. A read failure is
+     transient and the operator retries; a wrongly-permitted edit is not. */
+  const { data, error } = await sb.from('consignment_delivery_returns').select('status').eq('id', id).maybeSingle();
+  if (error) {
+    return {
+      error: 'return_status_unavailable',
+      message: 'The return\'s status could not be read just now, so its lines are locked until it can be. Please try again in a moment.',
+    };
+  }
   const st = (data as { status: string } | null)?.status;
   if (st === 'CANCELLED') return { error: 'return_cancelled', message: 'This consignment return is cancelled — its lines can no longer be changed.' };
   if (st === 'REFUNDED') return { error: 'return_refunded', message: 'This consignment return is refunded — its lines can no longer be changed.' };
@@ -791,7 +933,11 @@ consignmentReturns.post('/:id/items', async (c) => {
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   { const lock = await returnLineLock(sb, id); if (lock) return c.json(lock, 409); }
 
-  /* DROPPED vs DR: the "no DO, no Return" single-line guard. */
+  /* "no DO, no Return" stays dropped; the over-return bound does not. */
+  {
+    const over = await checkCrOverRemaining(sb, [it]);
+    if (over) return c.json(over, 409);
+  }
 
   /* itemCode catalog guard. */
   {
@@ -812,8 +958,14 @@ consignmentReturns.post('/:id/items', async (c) => {
   gateCrnFinance(c, null, data);
   await recomputeTotals(sb, id);
   /* Adding a return line books its IN too (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, user?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, user?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ item: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) }, 201);
 });
 
 consignmentReturns.patch('/:id/items/:itemId', async (c) => {
@@ -831,11 +983,24 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   }
 
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_delivery_return_items')
-    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition')
+    .select('qty_returned, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, uom, variants, notes, condition, consignment_do_item_id')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = (it.qtyReturned ?? it.qty) !== undefined ? Number(it.qtyReturned ?? it.qty) : Number(prev.qty_returned);
+
+  /* Bound the EDIT too — raising a line's qty is the same over-return by another
+     door. `excludeReturnItemId` keeps this row's own current quantity out of the
+     already-returned tally, or every edit would measure the line against itself
+     and refuse to stay put. The source link comes from the STORED row: a client
+     cannot re-point a line at a different note line to widen its own ceiling. */
+  {
+    const noteItemId = (prev as { consignment_do_item_id?: string | null }).consignment_do_item_id ?? null;
+    if (noteItemId) {
+      const over = await checkCrOverRemaining(sb, [{ noteItemId, qtyReturned: qty }], itemId);
+      if (over) return c.json(over, 409);
+    }
+  }
   const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
   /* A caller who cannot READ the cost must not WRITE it. The detail GET now
@@ -876,8 +1041,14 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   /* Adjust inventory by the qty/variant delta (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 consignmentReturns.delete('/:id/items/:itemId', async (c) => {
@@ -890,8 +1061,14 @@ consignmentReturns.delete('/:id/items/:itemId', async (c) => {
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
   await recomputeTotals(sb, id);
   /* Give the deleted line's stock back OUT (self-healing resync). Best-effort. */
-  try { await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 // ── Status transition ──────────────────────────────────────────────────────
@@ -946,10 +1123,19 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
 
   /* Cancelling a Consignment Return REVERSES the return IN: target net is now 0
      so the resync writes a balancing OUT per bucket. Idempotent + best-effort. */
+  // Hoisted: the response is OUTSIDE this block, so a block-scoped
+  // declaration would leave the cancel path unable to report.
+  let resyncErrs: string[] = [];
   if (body.status === 'CANCELLED') {
-    try { await resyncReturnInventory(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+    movementErrors; these mutations threw it away, so a resync that failed to
+    book or drain stock returned a clean 200. writeMovements never throws, so
+    the catch caught nothing either. */
+    resyncErrs = [];
+    try { resyncErrs = await resyncReturnInventory(sb, id, user.id); }
+    catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   }
 
-  return c.json({ consignmentReturn: data });
+    return c.json({ consignmentReturn: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 };
 consignmentReturns.patch('/:id/status', patchConsignmentReturnStatusHandler);

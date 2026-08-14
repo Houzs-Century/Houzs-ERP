@@ -1,0 +1,327 @@
+[
+ {
+  "erp": "ARTI-(Q)",
+  "base_price_sen": 87480,
+  "source": "bedframe sheet exact 'ARTI' Q"
+ },
+ {
+  "erp": "ARTI-(SS)",
+  "base_price_sen": 82836,
+  "source": "bedframe sheet exact 'ARTI' SS"
+ },
+ {
+  "erp": "ARUNI-(S)",
+  "base_price_sen": 26892,
+  "source": "bedframe sheet exact 'ARUNI' S"
+ },
+ {
+  "erp": "BOAT-(K)",
+  "base_price_sen": 160000,
+  "source": "bedframe sheet exact 'BOAT' K"
+ },
+ {
+  "erp": "BOAT-(Q)",
+  "base_price_sen": 140000,
+  "source": "bedframe sheet exact 'BOAT' Q"
+ },
+ {
+  "erp": "CODYS-(S)",
+  "base_price_sen": 17496,
+  "source": "bedframe sheet exact 'CODYS' S"
+ },
+ {
+  "erp": "DUNLOPILLO DR SLEEP MATT (K)",
+  "base_price_sen": 252400,
+  "source": "mattress sheet exact 'DR SLEEP' K"
+ },
+ {
+  "erp": "DUNLOPILLO DR SLEEP MATT (Q)",
+  "base_price_sen": 200900,
+  "source": "mattress sheet exact 'DR SLEEP' Q"
+ },
+ {
+  "erp": "DUNLOPILLO RELAX SLEEP LUXURY MATT (K)",
+  "base_price_sen": 222000,
+  "source": "mattress sheet exact 'RELAX SLEEP LUXURY' K"
+ },
+ {
+  "erp": "DUNLOPILLO RELAX SLEEP LUXURY MATT (Q)",
+  "base_price_sen": 185000,
+  "source": "mattress sheet exact 'RELAX SLEEP LUXURY' Q"
+ },
+ {
+  "erp": "DUNLOPILLO RELAX SLEEP LUXURY MATT (S)",
+  "base_price_sen": 135000,
+  "source": "mattress sheet exact 'RELAX SLEEP LUXURY' S"
+ },
+ {
+  "erp": "DUNLOPILLO RELAX SLEEP LUXURY MATT (SS)",
+  "base_price_sen": 145000,
+  "source": "mattress sheet exact 'RELAX SLEEP LUXURY' SS"
+ },
+ {
+  "erp": "DUNLOPILLO TENCEL SENSACTION 2.0 MATT (K)",
+  "base_price_sen": 219900,
+  "source": "mattress sheet exact 'TENCEL SENSACTION 2.0' K"
+ },
+ {
+  "erp": "DUNLOPILLO TENCEL SENSACTION 2.0 MATT (Q)",
+  "base_price_sen": 179900,
+  "source": "mattress sheet exact 'TENCEL SENSACTION 2.0' Q"
+ },
+ {
+  "erp": "FENRIRS-(S)",
+  "base_price_sen": 29160,
+  "source": "bedframe sheet exact 'FENRIRS' S"
+ },
+ {
+  "erp": "FENRIRS-(SS)",
+  "base_price_sen": 30348,
+  "source": "bedframe sheet exact 'FENRIRS' SS"
+ },
+ {
+  "erp": "FINKA-(S)",
+  "base_price_sen": 50220,
+  "source": "bedframe sheet exact 'FINKA' S"
+ },
+ {
+  "erp": "FINKA-(SS)",
+  "base_price_sen": 51408,
+  "source": "bedframe sheet exact 'FINKA' SS"
+ },
+ {
+  "erp": "FLORES-(Q)",
+  "base_price_sen": 46656,
+  "source": "bedframe sheet exact 'FLORES' Q"
+ },
+ {
+  "erp": "FLORES-(S)",
+  "base_price_sen": 40824,
+  "source": "bedframe sheet exact 'FLORES' S"
+ },
+ {
+  "erp": "GINA-(K)",
+  "base_price_sen": 94800,
+  "source": "bedframe sheet exact 'GINA' K"
+ },
+ {
+  "erp": "GINA-(Q)",
+  "base_price_sen": 79000,
+  "source": "bedframe sheet exact 'GINA' Q"
+ },
+ {
+  "erp": "GINA-(S)",
+  "base_price_sen": 63200,
+  "source": "bedframe sheet exact 'GINA' S"
+ },
+ {
+  "erp": "GRANDE-(S)",
+  "base_price_sen": 75816,
+  "source": "bedframe sheet exact 'GRANDE' S"
+ },
+ {
+  "erp": "HIBANA-(S)",
+  "base_price_sen": 38556,
+  "source": "bedframe sheet exact 'HIBANA' S"
+ },
+ {
+  "erp": "MARVIS-(S)",
+  "base_price_sen": 61884,
+  "source": "bedframe sheet exact 'MARVIS' S"
+ },
+ {
+  "erp": "MAVERICK-(S)",
+  "base_price_sen": 23328,
+  "source": "bedframe sheet exact 'MAVERICK' S"
+ },
+ {
+  "erp": "MINI-(S)",
+  "base_price_sen": 79272,
+  "source": "bedframe sheet exact 'MINI' S"
+ },
+ {
+  "erp": "MOZZIE-(S)",
+  "base_price_sen": 75816,
+  "source": "bedframe sheet exact 'MOZZIE' S"
+ },
+ {
+  "erp": "PRINCE-(K)",
+  "base_price_sen": 123600,
+  "source": "bedframe sheet exact 'PRINCE' K"
+ },
+ {
+  "erp": "RICARDO-(SK)",
+  "base_price_sen": 80600,
+  "source": "bedframe sheet exact 'RICARDO' SK"
+ },
+ {
+  "erp": "TIFFANI-(K)",
+  "base_price_sen": 94800,
+  "source": "bedframe sheet exact 'TIFFANI' K"
+ },
+ {
+  "erp": "TIFFANI-(Q)",
+  "base_price_sen": 79000,
+  "source": "bedframe sheet exact 'TIFFANI' Q"
+ },
+ {
+  "erp": "TIFFANI-(S)",
+  "base_price_sen": 63200,
+  "source": "bedframe sheet exact 'TIFFANI' S"
+ },
+ {
+  "erp": "TIFFANI-(SS)",
+  "base_price_sen": 67200,
+  "source": "bedframe sheet exact 'TIFFANI' SS"
+ },
+ {
+  "erp": "VALKYRIE-(S)",
+  "base_price_sen": 34992,
+  "source": "bedframe sheet exact 'VALKYRIE' S"
+ },
+ {
+  "erp": "ZOFIA-(S)",
+  "base_price_sen": 38556,
+  "source": "bedframe sheet exact 'ZOFIA' S"
+ },
+ {
+  "erp": "ARIZONA 2.0 (A) (F)-(SK)",
+  "base_price_sen": 115000,
+  "source": "SK=2xQ from ARIZONA 2.0 (A) (F)-(Q)"
+ },
+ {
+  "erp": "CANVAS (A)-(SK)",
+  "base_price_sen": 129000,
+  "source": "SK=2xQ from CANVAS (A)-(Q)"
+ },
+ {
+  "erp": "CELENE 2.0 (A)(F)-(SK)",
+  "base_price_sen": 117000,
+  "source": "SK=2xQ from CELENE 2.0 (A)(F)-(Q)"
+ },
+ {
+  "erp": "CODY 2.0 (F)-(SK)",
+  "base_price_sen": 85000,
+  "source": "SK=2xQ from CODY 2.0 (F)-(Q)"
+ },
+ {
+  "erp": "COTY 2.0 (F)-(SK)",
+  "base_price_sen": 85000,
+  "source": "SK=2xQ from COTY 2.0 (F)-(Q)"
+ },
+ {
+  "erp": "CROWN-(SK)",
+  "base_price_sen": 231000,
+  "source": "SK=2xQ from CROWN-(Q)"
+ },
+ {
+  "erp": "DAISON (A)-(SK)",
+  "base_price_sen": 211000,
+  "source": "SK=2xQ from DAISON (A)-(Q)"
+ },
+ {
+  "erp": "ELEGANT (A)-(SK)",
+  "base_price_sen": 117000,
+  "source": "SK=2xQ from ELEGANT (A)-(Q)"
+ },
+ {
+  "erp": "ESSENCE (A)-(SK)",
+  "base_price_sen": 221000,
+  "source": "SK=2xQ from ESSENCE (A)-(Q)"
+ },
+ {
+  "erp": "FLAT-(SK)",
+  "base_price_sen": 71000,
+  "source": "SK=2xQ from FLAT-(Q)"
+ },
+ {
+  "erp": "FLUFY-(SK)",
+  "base_price_sen": 261000,
+  "source": "SK=2xQ from FLUFY-(Q)"
+ },
+ {
+  "erp": "GOYO (A)-(SK)",
+  "base_price_sen": 155000,
+  "source": "SK=2xQ from GOYO (A)-(Q)"
+ },
+ {
+  "erp": "HIPSTER (A)-(SK)",
+  "base_price_sen": 181000,
+  "source": "SK=2xQ from HIPSTER (A)-(Q)"
+ },
+ {
+  "erp": "JACOB 2.0 (F)-(SK)",
+  "base_price_sen": 145000,
+  "source": "SK=2xQ from JACOB 2.0 (F)-(Q)"
+ },
+ {
+  "erp": "KINGDOM-(SK)",
+  "base_price_sen": 265000,
+  "source": "SK=2xQ from KINGDOM-(Q)"
+ },
+ {
+  "erp": "LEOMAG (A)-(SK)",
+  "base_price_sen": 149000,
+  "source": "SK=2xQ from LEOMAG (A)-(Q)"
+ },
+ {
+  "erp": "MACRO (A)-(SK)",
+  "base_price_sen": 145000,
+  "source": "SK=2xQ from MACRO (A)-(Q)"
+ },
+ {
+  "erp": "MASCO (A)-(SK)",
+  "base_price_sen": 149000,
+  "source": "SK=2xQ from MASCO (A)-(Q)"
+ },
+ {
+  "erp": "MONDEO-(SK)",
+  "base_price_sen": 115000,
+  "source": "SK=2xQ from MONDEO-(Q)"
+ },
+ {
+  "erp": "SIMPLE-(SK)",
+  "base_price_sen": 71000,
+  "source": "SK=2xQ from SIMPLE-(Q)"
+ },
+ {
+  "erp": "SUMO (A)-(SK)",
+  "base_price_sen": 149000,
+  "source": "SK=2xQ from SUMO (A)-(Q)"
+ },
+ {
+  "erp": "TIFANNY 2.0 (F)-(SK)",
+  "base_price_sen": 85000,
+  "source": "SK=2xQ from TIFANNY 2.0 (F)-(Q)"
+ },
+ {
+  "erp": "VALKYRIE (A)-(K)",
+  "base_price_sen": 53800,
+  "source": "hookka quotation VALKRIE(A) [spelling]",
+  "overwrite": true
+ },
+ {
+  "erp": "VALKYRIE (A)-(Q)",
+  "base_price_sen": 40300,
+  "source": "hookka quotation VALKRIE(A) [spelling]",
+  "overwrite": true
+ },
+ {
+  "erp": "VALKYRIE (A)-(S)",
+  "base_price_sen": 39500,
+  "source": "hookka quotation VALKRIE(A) [spelling]",
+  "overwrite": true
+ },
+ {
+  "erp": "VALKYRIE (A)-(SS)",
+  "base_price_sen": 40750,
+  "source": "hookka quotation VALKRIE(A) [spelling]",
+  "overwrite": true
+ },
+ {
+  "erp": "VALKYRIE (A)-(SK)",
+  "base_price_sen": 80600,
+  "source": "SK=2xQ (quotation 403)",
+  "overwrite": true
+ }
+]

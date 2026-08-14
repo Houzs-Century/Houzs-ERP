@@ -95,10 +95,20 @@ export async function raisePoFollowUps(
   const poLinks = (snap?.poLinks ?? {}) as Record<string, string[]>;
 
   // (3) Current (post-apply) SO line ids → live PO links for surviving lines.
+  /* CANCELLED IS REMOVED. `removed = prevLineIds \ currentIdSet` is what
+     orphans the PO line a since-deleted SO line was bound to, and it is the
+     only warning the supplier side ever gets. A retained cancelled row would
+     stay in currentIdSet forever, so the customer's cancellation would never
+     reach the supplier and the factory would keep building the item. The hard
+     delete gives this for free today; the filter is what keeps it true once a
+     removal becomes a soft cancel. Filtered in JS rather than SQL so a NULL —
+     which the column default forbids but a partial row shape does not — reads
+     as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb.from('mfg_sales_order_items')
-    .select('id').eq('doc_no', args.soDocNo);
+    .select('id, cancelled').eq('doc_no', args.soDocNo);
   if (soItemErr) throw new Error(`raisePoFollowUps: SO items load failed: ${soItemErr.message}`);
-  const soItemIds = ((soItemRows ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const soItemIds = ((soItemRows ?? []) as Array<{ id: string; cancelled?: boolean | null }>)
+    .filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
 
   type PoItem = {

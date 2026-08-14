@@ -35,6 +35,10 @@ import {
   DELIVERY_STATE_LABEL,
   dpJobTypeLabel,
   assrJobKindLabel,
+  arrangementStageLabel,
+  dateArrangementOf,
+  DATE_ARRANGEMENT_LABEL,
+  ARRANGEMENT_STAGE_LABEL,
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
@@ -525,10 +529,36 @@ export type DeliveryPlanningBoardProps = {
   onRowDoubleClick?: (order: PlanningOrder) => void;
   contextMenu?: (order: PlanningOrder) => ContextMenuItems;
 
+  /* ── Option B side map (owner 2026-08-08) ─────────────────────────────────
+     Single-click row hook (board row → map pin linkage; fires alongside the
+     grid's own select/multi-select, changing nothing existing). */
+  onRowClick?: (order: PlanningOrder) => void;
+  /* Map pin → board row: bump nonce with a rowIdOf key (`so:<docNo>`) to
+     scroll + highlight that row. Forwarded to the DataGrid. */
+  scrollToRow?: { key: string; nonce: number } | null;
+  /* While the side map is OPEN the board narrows to these column KEYS — a
+     RENDER-TIME overlay over the DataGrid's hidden set. The user's own saved
+     column prefs are never written; pass null/undefined (map closed) and the
+     full set returns exactly as the user left it. */
+  visibleColumnsOverride?: readonly string[] | null;
+  /* Explicit column-visibility choice made by the user (Columns drawer, header
+     context menu, saved layout) — forwarded from the DataGrid so the map pages
+     can switch their compact-columns overlay OFF the moment the user picks
+     columns by hand (the narrowing is a default, never a lock). */
+  onUserAdjustColumns?: () => void;
+
   storageKey?: string;
   exportName?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+
+  /* Default ordering while NO column sort is active — forwarded to the
+     DataGrid. The two arrangement queues pass arrangementQueueCompare
+     (lib/arrangement-sort.ts: delivery date OLDEST first, then state, then
+     postcode — owner 2026-08-07 "跟着 delivery date、state、postcode 去排").
+     A clicked header still overrides as always. Omitted (the main Delivery
+     Planning board), the rows render in the server's order exactly as before. */
+  defaultSort?: (a: PlanningOrder, b: PlanningOrder) => number;
 };
 
 /* Selection keys are prefixed (`so:<docNo>` / `assr:<id>` / `dp:<id>`). The bulk
@@ -557,10 +587,15 @@ export function DeliveryPlanningBoard({
   bulkExtras,
   onRowDoubleClick,
   contextMenu,
+  onRowClick,
+  scrollToRow,
+  visibleColumnsOverride,
+  onUserAdjustColumns,
   storageKey = 'dg-delivery-planning',
   exportName = 'DeliveryPlanning',
   searchPlaceholder = 'Search SO / ref / customer / phone…',
   emptyMessage = 'No orders need delivering in this view.',
+  defaultSort,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -580,6 +615,24 @@ export function DeliveryPlanningBoard({
   );
 
   const selectedSoDocNos = (): string[] => soDocNosFromSelection(selectedKeys);
+
+  /* ── Pending Schedule sub-split (owner pipeline, 2026-08-07) ────────────────
+     Counts of the DERIVED arrangement stages across the Pending Schedule rows in
+     view — shown as a muted line under the tab rail while that tab is active.
+     Read off the server-stamped `arrangement_stage` (never re-derived);
+     dateArrangementOf folds PENDING_TIME + TIME_ARRANGED into "Date arranged". */
+  const pendingSplit = useMemo(() => {
+    const split = { PENDING_DATE: 0, DATE_ARRANGED: 0, PENDING_TIME: 0, TIME_ARRANGED: 0 };
+    for (const o of orders) {
+      if (o.delivery_state !== 'PENDING_SCHEDULE') continue;
+      const side = dateArrangementOf(o);
+      if (side == null) continue;
+      split[side] += 1;
+      if (o.arrangement_stage === 'PENDING_TIME') split.PENDING_TIME += 1;
+      else if (o.arrangement_stage === 'TIME_ARRANGED') split.TIME_ARRANGED += 1;
+    }
+    return split;
+  }, [orders]);
 
   /* ── Bulk-edit bar state ────────────────────────────────────────────────────
      One field at a time: Status | Delivery date | Driver | Lorry. The second
@@ -694,6 +747,10 @@ export function DeliveryPlanningBoard({
             drawer reads as blocks rather than one long alphabet. ──────────── */
       // Delivery detail
       'delivery_substatus',
+      // Arrangement pipeline (derived) — the sub-state within Pending Schedule
+      // and the live trip the order sits on. Default-hidden: the split already
+      // reads off the sub-count row / the Date & Time Arrangement pages.
+      'arrangement_stage', 'trip_no',
       // Amendment trail
       'amend_date_from_customer', 'amend_reason',
       // Execution times — filled in as the day happens, not while planning it
@@ -899,6 +956,33 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
       sortFn: (a, b) => a.delivery_state.localeCompare(b.delivery_state),
     },
+    /* ── Arrangement pipeline (derived server-side, lib/arrangement-stage.ts) —
+       the sub-state WITHIN Pending Schedule (Pending Date Arrangement /
+       Pending Time Arrangement / Time arranged) and the live trip the order
+       sits on. Default-hidden (the Pending Schedule sub-count row and the Date /
+       Time Arrangement pages carry the split); groupable so the board can be
+       grouped by stage from the Columns menu. */
+    {
+      key: 'arrangement_stage', label: 'Arrangement', width: 180, groupable: true, defaultHidden: true,
+      accessor: (o) => {
+        const label = arrangementStageLabel(o);
+        return label ? label : <NotApplicable />;
+      },
+      searchValue: (o) => arrangementStageLabel(o),
+      groupValue: (o) => arrangementStageLabel(o) || '(not in pipeline)',
+      exportValue: (o) => arrangementStageLabel(o),
+    },
+    {
+      /* The live (non-CANCELLED) trip carrying this order's DELIVERY stop —
+         "Time arranged" made concrete. '—' until the order is on a trip. */
+      key: 'trip_no', label: 'Trip No.', width: 130, groupable: true, defaultHidden: true,
+      accessor: (o) => (o.trip_no
+        ? <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{o.trip_no}</span>
+        : <NotApplicable />),
+      searchValue: (o) => o.trip_no ?? '',
+      groupValue: (o) => o.trip_no ?? '(no trip)',
+      exportValue: (o) => o.trip_no ?? '',
+    },
     /* HC DO-execution raw-data fields (migration 0197) — all default-HIDE since
        the owner's 2026-08-04 column pass (delivery_substatus joined them; the
        delivered date was removed outright). The cross-border ones (shipout_date,
@@ -1040,6 +1124,15 @@ export function DeliveryPlanningBoard({
   // deps (a new driver/lorry list must re-render the pickers).
   }, [isEmSg, sched, drivers, lorries, msgStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Map-open column narrowing: everything NOT in the override hides at render
+     time (DataGrid overlayHidden). The user's persisted layout is untouched —
+     closing the map returns their own column set exactly as saved. */
+  const overlayHidden = useMemo<string[] | undefined>(() => {
+    if (!visibleColumnsOverride || visibleColumnsOverride.length === 0) return undefined;
+    const keep = new Set(visibleColumnsOverride);
+    return columns.map((c) => c.key).filter((k) => !keep.has(k));
+  }, [columns, visibleColumnsOverride]);
+
   return (
     <div className="space-y-4">
       {/* 4 STATE TABS (top row) — only on the full board (DeliveryPlanning).
@@ -1083,6 +1176,25 @@ export function DeliveryPlanningBoard({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Pending Schedule sub-split (derived arrangement stages) — visible only
+          on that tab, in the tab-badge idiom: Pending Date Arrangement (needs a
+          date → Delivery Date Arrangement page) vs Date arranged, with the time
+          side's split in brackets. A count line, not a second tab rail. */}
+      {stateTabs && activeState === 'PENDING_SCHEDULE' && (
+        <div className="text-[12px] text-ink-muted">
+          <span className="font-semibold text-ink-secondary">{DATE_ARRANGEMENT_LABEL.PENDING_DATE}</span>
+          {' '}{pendingSplit.PENDING_DATE}
+          <span className="px-1.5">&middot;</span>
+          <span className="font-semibold text-ink-secondary">{DATE_ARRANGEMENT_LABEL.DATE_ARRANGED}</span>
+          {' '}{pendingSplit.DATE_ARRANGED}
+          {' '}
+          <span>
+            ({ARRANGEMENT_STAGE_LABEL.PENDING_TIME} {pendingSplit.PENDING_TIME}
+            {' '}&middot; {ARRANGEMENT_STAGE_LABEL.TIME_ARRANGED} {pendingSplit.TIME_ARRANGED})
+          </span>
         </div>
       )}
 
@@ -1232,6 +1344,11 @@ export function DeliveryPlanningBoard({
         }}
         rowStyle={(o) => (o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined)}
         contextMenu={contextMenu}
+        defaultSort={defaultSort}
+        onRowClick={onRowClick}
+        scrollToRow={scrollToRow}
+        overlayHidden={overlayHidden}
+        onUserAdjustColumns={onUserAdjustColumns}
       />
     </div>
   );

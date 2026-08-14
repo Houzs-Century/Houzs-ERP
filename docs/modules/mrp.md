@@ -1,4 +1,19 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. computeMrp has 3 call sites in mfg-sales-orders.ts (list :1528 added 2026-08-02, detail :2883, :3042), not 2.
+> 2. The Decision section's “provenance influences NO coverage precedence” is false against current code: stored link still outranks MRP floating (po-so-coverage.ts:53-57); the flip is PR-4, owner-gated. The §7 table is the correct current statement.
+
 # Module: MRP (finished-goods demand vs supply)
+
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Per-module technical doc for the MRP engine — `computeMrp` in
 `backend/src/scm/routes/mrp.ts` and everything that reads its allocation.
@@ -72,7 +87,8 @@ invariant (po-so-coverage.ts: "SO->PO and PO->SO can never disagree").
 | Consumer | File | includeUndated | Reads |
 |----------|------|----------------|-------|
 | MRP page `GET /mrp` | `mrp.ts` route | query param, default **false** | `skus[]` + `sofaSets[]` (the plan) |
-| SO drill-down Stock column | `mfg-sales-orders.ts` (2 call sites) | true | `mrpLineCoverage` (SO->PO) |
+| SO drill-down Stock column | `mfg-sales-orders.ts` (`:2916`, `:3075`) | true | `mrpLineCoverage` (SO->PO) |
+| SO LIST ready-chip enrichment | `mfg-sales-orders.ts` (`:1561`) | true | the raw `MrpResult`; fail-soft — a thrown MRP just drops READY chips |
 | PO / GRN / PI "Assigned SO" | `po-so-coverage.ts` (single + list) | true | `mrpReverseCoverage` (PO->SO) |
 | Outstanding-SO shortage cap | `mfg-purchase-orders.ts` | true | per-line `shortageQty` |
 | Reservations assigned/free | `inventory.ts` `/inventory/reservations` | true | `mrpStockAssignment` (stock side) |
@@ -91,10 +107,22 @@ the two-demand-sets divergence the audit caught.
 
 - Source: `mfg_sales_order_items` (non-cancelled) joined `!inner` to its SO
   header. Status filter is pushed into SQL AND re-applied in JS via `SO_DONE`.
-- `SO_DONE = DELIVERED, INVOICED, CLOSED, CANCELLED, DRAFT, SHIPPED` —
-  SHIPPED added 2026-08-01 (audit D4) to match `so-stock-allocation.ts`, the
-  reservations endpoint and the amendment terminal set. ON_HOLD still demands
-  (owner call: a held order still drives purchasing).
+- `SO_DONE` is **`SO_TERMINAL_STATES`** from
+  `backend/src/scm/shared/so-terminal-states.ts` — read it there rather than
+  from this line, which was one of **fourteen** hand-typed copies across ten
+  files until 2026-08-13 (`mrp.ts`, `so-stock-allocation.ts`'s PostgREST
+  `not.in` string, and eight audit scripts — four names, plus inline SQL copies
+  inside four of those same scripts). SHIPPED was added 2026-08-01
+  (audit D4) to match `so-stock-allocation.ts` and the amendment terminal set.
+  ON_HOLD still demands (owner call: a held order still drives purchasing).
+- **The reservations endpoint does NOT agree, despite what this guide (and
+  `mrp.ts`'s own comment) used to say.** `routes/inventory.ts` holds TWO sets of
+  its own: `GET /reservations` has **five** (adds SHIPPED, still no DRAFT) and
+  `GET /products` has **four** (`DELIVERED, INVOICED, CLOSED, CANCELLED`). So a
+  DRAFT order is open demand on both Inventory surfaces and done here, and a
+  SHIPPED order is open demand on one of them. Measured 2026-08-13, left standing
+  deliberately: aligning either moves the Inventory page's
+  committed / available / surplus figures and needs the owner's decision.
 - Effective qty per line = `qty - (delivered net of returns)` via
   `soDeliverableRemaining` (delivery-orders-mfg.ts) — DRAFT and CANCELLED DOs
   never count as delivered. `so-stock-allocation.ts` step 3 follows the same
@@ -193,5 +221,9 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
   string ops (the detector documents the trap).
 - One business rule, one home: `SO_DONE`-vs-allocation-status,
   DRAFT-DO-delivered, and the legacy-pool rule each drifted once already —
-  that is precisely what the 2026-08-01 PR converged. If you change one copy,
-  grep for its siblings (this guide's tables name them all).
+  that is precisely what the 2026-08-01 PR converged. Since 2026-08-13 the
+  status set is an IMPORT (`shared/so-terminal-states.ts` + its
+  `scripts/lib/so-terminal-states.mjs` mirror, pinned by
+  `tests/soTerminalStatesMirror.test.ts`), so there is no longer a sibling copy
+  to grep for — which is the point: "grep for its siblings" is advice that only
+  works on the days someone remembers to follow it.

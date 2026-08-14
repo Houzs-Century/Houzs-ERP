@@ -2,7 +2,9 @@
 
 How staff access is controlled in Houzs ERP. Deployed to prod 2026-06-13.
 Companion docs: [PERMISSION-MATRIX.md](PERMISSION-MATRIX.md) (the agreed grid),
-[DEPLOY-USER-MGMT.md](DEPLOY-USER-MGMT.md) (deploy runbook).
+[archive/DEPLOY-USER-MGMT.md](archive/DEPLOY-USER-MGMT.md) (the one-shot deploy
+runbook, archived — it targets the long-merged `migrate/d1-to-supabase` branch;
+the live release path is [STAGING-RELEASES.md](STAGING-RELEASES.md)).
 
 ## The model: two orthogonal dimensions
 A user has both a **role** and a **position**:
@@ -46,10 +48,10 @@ snapshot + rental are stripped SERVER-SIDE** (`projects.ts GET /:id` sets `finan
 for any position whose role isn't FINANCIAL — never just hidden in the UI. Gated on
 `position_id` so un-migrated users keep legacy access.
 
-## PIC scope + 4-day grace
+## PIC scope + 30-day grace
 PIC = a per-project assignment (`projects.pic_id`), not a job title. A `scope_to_pic` user
 sees projects where the PIC is them or their manager (one-hop) AND the brand is in their
-department's allow-list (`projectAcl.ts`). **PIC visibility expires `PIC_GRACE_DAYS = 4`
+department's allow-list (`projectAcl.ts`). **PIC visibility expires `PIC_GRACE_DAYS = 30`
 days after a project's `end_date`** (owner: "完了的四天之后") — applied in the list query
 and the detail gate; admins/unscoped roles are unaffected; projects with no end_date stay
 visible.
@@ -114,7 +116,7 @@ requires a sales-side position (routes/pos.ts).
 - `backend/src/services/auth.ts` — hydrateAuthUser (position → page_access)
 - `backend/src/routes/positions.ts` — positions CRUD + matrix read/write
 - `backend/src/services/pmsAccess.ts` — project-detail section gating
-- `backend/src/services/projectAcl.ts` — PIC + brand scope + 4-day grace
+- `backend/src/services/projectAcl.ts` — PIC + brand scope + 30-day grace (was 4; widened 2026-07-31, `projectAcl.ts:73-80`)
 - `backend/src/routes/users.ts` — invite/PATCH/list carry dept/position/manager
 - `frontend/src/auth/PageGuard.tsx`, `App.tsx`, `components/Sidebar.tsx` — FE enforcement
 - `frontend/src/pages/Team.tsx`, `Positions.tsx` — the UI

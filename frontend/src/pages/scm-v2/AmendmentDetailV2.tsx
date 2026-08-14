@@ -91,6 +91,8 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
    written in (a scm.staff uuid), so this is what "did I raise this?" compares. */
 import { useAuth as useScmAuth } from "../../vendor/scm/lib/auth";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn, formatDate } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -380,6 +382,14 @@ function DiffCard({ line }: { line: AmendmentLine }) {
                   {oldSummary}
                 </div>
               )}
+              {/* mig 0280 — the line's REMARK before the request. Shown only when
+                  the request touches it, so an untouched instruction does not add
+                  noise to every card. */}
+              {changed.remark && (old.remark ?? "").trim() && (
+                <div className={wasCls(true, "mt-1.5 text-[11px] italic text-ink-secondary")}>
+                  “{old.remark}”
+                </div>
+              )}
             </>
           )}
         </div>
@@ -407,6 +417,16 @@ function DiffCard({ line }: { line: AmendmentLine }) {
               {newSummary && (
                 <div className={nowCls(changed.variants, "mt-1.5 text-[11px]")}>
                   {newSummary}
+                </div>
+              )}
+              {/* mig 0280 — the REQUESTED remark. On a service line this text IS
+                  the request ("Please take back Cody Bedframe (King Size) 2
+                  units"), so an approver who cannot read it is approving a line
+                  with no visible purpose. Empty string = a request to CLEAR the
+                  remark, which must say so rather than render as nothing. */}
+              {changed.remark && (
+                <div className={nowCls(true, "mt-1.5 text-[11px] italic")}>
+                  {(line.new_remark ?? "").trim() ? `“${line.new_remark}”` : "Remark cleared"}
                 </div>
               )}
             </>
@@ -685,7 +705,7 @@ export function AmendmentDetailV2() {
      Status label is the SIMPLIFIED Requested / Approved the owner asked for
      (the multi-step backend states collapse to those two on the document). */
   const soApplied = ["SO_APPROVED", "PO_APPROVED", "SENT", "APPROVED"].includes(status);
-  const handlePrintAmendment = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = soAmendmentToPdfInput({
       amendment: {
@@ -702,10 +722,11 @@ export function AmendmentDetailV2() {
       customerName: (salesOrder as { customer_name?: string | null } | null)?.customer_name ?? null,
       statusLabel: soApplied ? "Approved" : "Requested",
     });
-    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+    return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     );
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   /* Legacy (lane NULL) keys — untouched. */
   const canSupplierConfirm = !lane && can("scm.amendment.supplier_confirm");
@@ -1119,7 +1140,7 @@ export function AmendmentDetailV2() {
                 variant="secondary"
                 className="w-full"
                 icon={<Printer size={14} />}
-                onClick={handlePrintAmendment}
+                onClick={print.openPreview}
               >
                 Print amendment
               </Button>
@@ -1336,6 +1357,24 @@ export function AmendmentDetailV2() {
           onClose={() => setShowSupplierModal(false)}
         />
       )}
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Order Amendment"
+        docNo={amendmentNo ?? "Amendment"}
+        rows={[
+          { label: "Against SO", value: soDocNo || "—" },
+          { label: "Status", value: soApplied ? "Approved" : "Requested" },
+          { label: "Reason", value: reason || "—" },
+          {
+            label: "Changes",
+            value: `${lines.length + headerDiffs.length} change${
+              lines.length + headerDiffs.length === 1 ? "" : "s"
+            }`,
+          },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }

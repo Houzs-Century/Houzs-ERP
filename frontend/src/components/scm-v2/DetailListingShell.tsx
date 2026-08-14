@@ -39,6 +39,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import styles from '../../pages/scm-v2/SalesOrderDetailListing.module.css';
+import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
 import { fmtDate } from '@2990s/shared';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 
@@ -179,10 +180,13 @@ export function DetailListingShell<R extends DetailListingRow>({
     setHasRunQuery(true);
   };
 
+  /* Print now, from the preview. The inquiry has to have run first or there is
+     nothing on the page to print — the 60 ms lets the freshly-set rows paint. */
   const runPrint = () => {
     if (!hasRunQuery) runInquiry();
     setTimeout(() => window.print(), 60);
   };
+  const print = usePrintPreview(runPrint);
 
   // HOUZS VENDOR STUB — the source renders the listing to a PDF via
   // `import('jspdf')` + `import('jspdf-autotable')`. Neither is installed and
@@ -220,7 +224,11 @@ export function DetailListingShell<R extends DetailListingRow>({
   };
 
   return (
-    <div className={`${styles.page} ${optionsVisible ? '' : styles.optionsHidden}`}>
+    /* `print-area` is the app's print opt-in (index.css) — without it the
+       global `body * { visibility: hidden }` swallowed this page and Print
+       produced a blank sheet. The action bar carries `no-print` so the
+       toolbar doesn't land on the paper with the rows. */
+    <div className={`${styles.page} print-area ${optionsVisible ? '' : styles.optionsHidden}`}>
       <div className={styles.headerRow}>
         <div className={styles.titleBlock}>
           <button type="button" className={styles.backBtn} onClick={() => navigate(-1)}>
@@ -352,7 +360,7 @@ export function DetailListingShell<R extends DetailListingRow>({
         </div>
       )}
 
-      <div className={styles.actionBar}>
+      <div className={`${styles.actionBar} no-print`}>
         <Button variant="primary" size="sm" onClick={runInquiry}>
           <FileSearch {...SM_ICON} />
           <span>Inquiry</span>
@@ -361,10 +369,28 @@ export function DetailListingShell<R extends DetailListingRow>({
           <Eye {...SM_ICON} />
           <span>Preview</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={runPrint}>
+        <Button variant="ghost" size="sm" onClick={print.openPreview}>
           <Printer {...SM_ICON} />
           <span>Print</span>
         </Button>
+        {/* The listing prints the page itself (the source's jspdf export is a
+            vendor stub here), so Print is the dialog's only exit. */}
+        <PrintPreviewModal
+          open={print.open}
+          onClose={print.close}
+          docTitle="Detail Listing"
+          docNo={title}
+          rows={[
+            {
+              label: 'Rows',
+              value: hasRunQuery
+                ? `${rows.length}${outstandingOnly ? ` of ${rawRows.length}` : ''} line items`
+                : 'Inquiry has not run yet — it will run first',
+            },
+            ...(outstandingOnly ? [{ label: 'Filter', value: 'Outstanding only' }] : []),
+          ]}
+          onPrint={print.handlers.onPrint}
+        />
         <Button variant="ghost" size="sm" onClick={() => setOptionsVisible((v) => !v)}>
           <span>{optionsVisible ? 'Hide Options' : 'Show Options'}</span>
         </Button>

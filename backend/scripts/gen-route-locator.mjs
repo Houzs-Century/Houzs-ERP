@@ -66,13 +66,23 @@ function stripComments(lines) {
     }
     // Remove any inline /* ... */ on the same line.
     line = line.replace(/\/\*.*?\*\//g, "");
+    /* CUT THE LINE COMMENT FIRST. It used to run last, so a `//` comment that
+       merely MENTIONED a wildcard path — "// Mounted at /api/sync/... above the
+       /api/* wall" — had its `/api/*` read as an OPENING block comment. inBlock
+       then stayed true to end of file and every route below it vanished. Five
+       routers (addons, maintenance-config, pos-cart, public-images, so-mirror)
+       and their registrations were missing from route-locator.md this way.
+
+       That matters more than a wrong count: CLAUDE.md tells every session to
+       grep this artifact for a line number before opening a multi-thousand-line
+       router. A missing router reads as "no such endpoint". */
+    const lineComment = line.indexOf("//");
+    if (lineComment !== -1) line = line.slice(0, lineComment);
     const openBlock = line.indexOf("/*");
     if (openBlock !== -1) {
       inBlock = true;
       line = line.slice(0, openBlock);
     }
-    const lineComment = line.indexOf("//");
-    if (lineComment !== -1) line = line.slice(0, lineComment);
     return line;
   });
 }

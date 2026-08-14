@@ -368,6 +368,40 @@ const SHEET_STATUS: Record<string, string> = {
   voided: "Voided",
 };
 
+// Sub-status detail (Nico 2026-08-07: Delivery triggers were messy on
+// the coarse stage words). Stages with sub-states export the SUB label -
+// the Delivery sheet's trigger map fires INSPECTION/PICKUP only on the
+// actionable halves ("QC Issue Result" / "Pending Supplier Return" have
+// no trigger entry, so they fire nothing). A null sub falls back to the
+// stage's seeded first sub-state, matching transitionStage's seeding.
+// The actionable halves additionally require WHO acts (Nico 2026-08-07:
+// inspection fires only when Own team inspects; pickup fires only when
+// our logistics collects from the customer). The words carry the choice —
+// the Delivery sheet's trigger map keys on the parenthesised variants and
+// the bare words fire nothing until ops picks a side.
+function sheetDetailStatus(
+  stage: string,
+  sub: string | null,
+  inspectionBy: string | null,
+  pickupBy: string | null,
+): string | undefined {
+  if (stage === "under_verification") {
+    const s = sub ?? "pending_inspection";
+    if (s === "qc_issue_result") return "QC Issue Result";
+    if (inspectionBy === "own") return "Pending Inspection (Own Team)";
+    if (inspectionBy === "supplier") return "Pending Inspection (Supplier)";
+    return "Pending Inspection";
+  }
+  if (stage === "pending_supplier_pickup") {
+    const s = sub ?? "pending_supplier_pickup";
+    if (s === "pending_supplier_return") return "Pending Supplier Return";
+    if (pickupBy === "customer") return "Pending Supplier Pickup (Customer Pickup)";
+    if (pickupBy === "supplier") return "Pending Supplier Pickup (Supplier Direct)";
+    return "Pending Supplier Pickup";
+  }
+  return undefined;
+}
+
 app.get("/status-export", async (c) => {
   // Accepts EITHER shared secret: FORM_INTAKE_KEY (the form-intake
   // script's key) or SHEET_SYNC_KEY (issued for the HC Delivery
@@ -383,8 +417,19 @@ app.get("/status-export", async (c) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
+  // Append fields (Nico 2026-08-07): with the Google Form closed, the
+  // sheet's Apps Script now auto-APPENDS rows for ERP cases the sheet
+  // doesn't have — so the export carries the columns a new row needs.
+  // Same trust boundary: key-protected, and the sheet already owns
+  // these customer columns for every existing row.
   const rows = await c.env.DB.prepare(
-    `SELECT assr_no, doc_no, ref_no, complained_date, stage, completion_date, closed_at
+    `SELECT assr_no, doc_no, ref_no, complained_date, stage, sub_status, inspection_by, pickup_by, completion_date, closed_at,
+            customer_name, phone, location, sales_agent, po_no, complaint_issue,
+            addr1, addr2, addr3, addr4,
+            (SELECT group_concat(i.item_code, ', ')
+               FROM assr_items i
+              WHERE i.assr_id = assr_cases.id
+                AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes
        FROM assr_cases
       WHERE archived_at IS NULL`
   ).all<{
@@ -393,8 +438,22 @@ app.get("/status-export", async (c) => {
     ref_no: string | null;
     complained_date: string | null;
     stage: string;
+    sub_status: string | null;
+    inspection_by: string | null;
+    pickup_by: string | null;
     completion_date: string | null;
     closed_at: string | null;
+    customer_name: string | null;
+    phone: string | null;
+    location: string | null;
+    sales_agent: string | null;
+    po_no: string | null;
+    complaint_issue: string | null;
+    addr1: string | null;
+    addr2: string | null;
+    addr3: string | null;
+    addr4: string | null;
+    items_codes: string | null;
   }>();
 
   const cases = (rows.results ?? []).map((r) => ({
@@ -408,12 +467,120 @@ app.get("/status-export", async (c) => {
     // columns and this endpoint never sends them.
     complained_date: r.complained_date,
     status:
+      sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by) ??
       SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
+    customer_name: r.customer_name,
+    phone: r.phone,
+    location: r.location,
+    sales_agent: r.sales_agent,
+    po_no: r.po_no,
+    complaint_issue: r.complaint_issue,
+    addr1: r.addr1,
+    addr2: r.addr2,
+    addr3: r.addr3,
+    addr4: r.addr4,
+    item_codes: r.items_codes,
+    // The sheet's _appendNewAssrRow reads c.item_code (singular) — alias
+    // so the existing script fills its Item column without an edit.
+    item_code: r.items_codes,
   }));
 
   return c.json({ count: cases.length, cases });
+});
+
+// ── Delivery-date write-back (Nico 2026-08-12) ─────────────────
+//
+// The reverse leg of the status export: when dispatch schedules a
+// case's job row in Delivery Details (INSPECTION / PICKUP / SERVICE),
+// the sheet's Apps Script POSTs the scheduled date here so the ERP
+// case carries it — shown on the detail page and the print copies.
+// Same dual-key guard as /status-export. Idempotent: an unchanged
+// date is acknowledged without touching the row or the timeline.
+
+const SCHED_COL: Record<string, "sched_inspection_date" | "sched_pickup_date" | "sched_delivery_date"> = {
+  INSPECTION: "sched_inspection_date",
+  PICKUP: "sched_pickup_date",
+  SERVICE: "sched_delivery_date",
+};
+
+// Sheet dates arrive as display text — "2026/08/15", "15/08/2026", an
+// ISO string, or a Date serialised by Apps Script. Normalise to
+// YYYY-MM-DD; anything unparseable is skipped (never guessed).
+function normSheetDate(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+app.post("/delivery-dates", async (c) => {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
+  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
+  if (!ok) {
+    const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
+    await new Promise((r) => setTimeout(r, 250));
+    if (limited) return limited;
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  const body = await c.req
+    .json<{ updates?: Array<{ assr_no?: string; job?: string; date?: string }> }>()
+    .catch(() => null);
+  const updates = Array.isArray(body?.updates) ? body!.updates! : [];
+  if (!updates.length) return c.json({ error: "updates array is required" }, 400);
+  if (updates.length > 300) return c.json({ error: "too many updates in one call" }, 413);
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const u of updates) {
+    const assrNo = String(u.assr_no ?? "").trim();
+    const col = SCHED_COL[String(u.job ?? "").trim().toUpperCase()];
+    const date = normSheetDate(u.date);
+    if (!assrNo || !col || !date) {
+      results.push({ assr_no: assrNo || null, skipped: "bad_input" });
+      continue;
+    }
+    const row = await c.env.DB.prepare(
+      `SELECT id, ${col} AS cur FROM assr_cases WHERE assr_no = ?`
+    )
+      .bind(assrNo)
+      .first<{ id: number; cur: string | null }>();
+    if (!row) {
+      results.push({ assr_no: assrNo, skipped: "no_case" });
+      continue;
+    }
+    if ((row.cur ?? "").slice(0, 10) === date) {
+      results.push({ assr_no: assrNo, ok: true, unchanged: true });
+      continue;
+    }
+    await c.env.DB.prepare(
+      `UPDATE assr_cases SET ${col} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(date, row.id)
+      .run();
+    const jobWord = String(u.job).trim().toUpperCase();
+    await c.env.DB.prepare(
+      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, category, source_channel)
+       VALUES (?, 'note', ?, ?, ?, 'system', 'sheet_sync')`
+    )
+      .bind(
+        row.id,
+        row.cur,
+        date,
+        `Delivery sheet scheduled ${jobWord} on ${date}${row.cur ? ` (was ${row.cur.slice(0, 10)})` : ""}`
+      )
+      .run();
+    results.push({ assr_no: assrNo, ok: true, [col]: date });
+  }
+
+  return c.json({ ok: true, results });
 });
 
 export default app;

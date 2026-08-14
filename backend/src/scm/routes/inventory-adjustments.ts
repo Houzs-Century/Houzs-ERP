@@ -38,6 +38,7 @@ import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { recordEntityAudit, compactChanges, fieldChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
+import { resolveCallerStaffId } from '../lib/salesScope';
 import type { Env, Variables } from '../env';
 
 export const inventoryAdjustments = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -81,7 +82,7 @@ inventoryAdjustments.post('/', async (c) => {
 
   let variantKey: string;
   if (qtyDelta > 0) {
-    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo);
+    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
     if (errs.length > 0) return c.json({ error: 'adjustment_incomplete', message: errs.join(' ') }, 422);
     variantKey = body.variantKey != null
       ? String(body.variantKey)
@@ -137,6 +138,17 @@ inventoryAdjustments.post('/', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'INVENTORY_ADJUSTMENT', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
+  /* Attribution (same class as the stock-take fix, 2026-08-08): performed_by
+     used to stamp the PINNED system staff uuid (user.id — see
+     scm/middleware/auth.ts), which the company-scoped roster resolves to
+     nobody, so the Stock Adjustments "Performed By" column read "Unknown
+     user" for every row. Stamp the caller's REAL scm.staff uuid (mig-0066
+     bridge); fall back to the system row only when the bridge has no row, so
+     the FK stays satisfied. */
+  let adjusterStaffId: string | null = null;
+  try { adjusterStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id ?? null); } catch { /* fallback below */ }
+  const performedBy = adjusterStaffId ?? user.id;
+
   const { data, error } = await sb.from('inventory_movements').insert({
     company_id: activeCompanyId(c), // multi-company: stamp the active company
     movement_type: 'ADJUSTMENT',
@@ -160,7 +172,7 @@ inventoryAdjustments.post('/', async (c) => {
     source_doc_type: 'ADJUSTMENT',
     reason_code: reasonCode,
     notes: (body.notes as string) ?? null,
-    performed_by: user.id,
+    performed_by: performedBy,
   }).select('id').single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
@@ -176,7 +188,7 @@ inventoryAdjustments.post('/', async (c) => {
     product_code: productCode,
     variant_key: variantKey,
     qty: qtyDelta,
-  }], user.id);
+  }], performedBy);
 
   /* A manual adjustment has no header document — the movement row IS the
      document, so the movement id is the entity id. This is the only path in the

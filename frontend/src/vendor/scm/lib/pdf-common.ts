@@ -75,6 +75,18 @@ export const COMPANY = {
   get website(): string {
     return getBrandingCache().website;
   },
+  /* Customer-service desk (owner 2026-08-07) — deliberately NOT `phone` /
+     `email` above, which are the company's headline contacts. Blank for a
+     company that has not set one, and the document omits the line rather than
+     borrowing another company's. Canonicalised on read like `phone`, so a
+     number saved before that rule existed still prints in the same shape. */
+  get csPhone(): string {
+    const raw = getBrandingCache().csPhone;
+    return raw ? formatPhone(canonicalizeSinglePhone(raw)) : '';
+  },
+  get csEmail(): string {
+    return getBrandingCache().csEmail;
+  },
   // Footer "portal" label. HOUZS keeps the historic literal byte-identical;
   // any other active company renders "<short name> ERP" (e.g. "2990's Home
   // ERP"). Live getter like the fields above, so it flips with the switcher.
@@ -358,6 +370,37 @@ export const fmtDocStamp = (d: Date = new Date()): string => {
   return `${fmtDate(d)}, ${time}`;
 };
 
+/* ── Shared line-item table look (owner 2026-08-07) ──────────────────────────
+   Printed documents carry NO decorative fills: no near-black header band, no
+   zebra striping. Both are ink the reader doesn't need, and both read as
+   smudges once a sheet has been photocopied or faxed — which is what happens
+   to a Delivery Order. Structure comes from rules instead: a hairline between
+   rows, a heavier rule above and below the header.
+
+   Spread these into autoTable rather than copying the values, so the eight
+   documents cannot drift apart again:
+
+     theme: 'plain',
+     styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+     headStyles: DOC_TABLE_HEAD_STYLES,
+
+   Fills that carry MEANING are not covered by this and must stay — the
+   Amendment's red/green added-vs-removed rows are information, not decoration.
+*/
+export const DOC_TABLE_STYLES = {
+  cellPadding: 2,
+  valign: 'top' as const,
+  lineColor: [120, 120, 120] as [number, number, number],
+  lineWidth: 0.1,
+};
+
+export const DOC_TABLE_HEAD_STYLES = {
+  fontStyle: 'bold' as const,
+  // Per-side widths: a rule above and below the header row, nothing at the
+  // sides. autoTable accepts the object form; its published type does not.
+  lineWidth: { top: 0.4, bottom: 0.4 } as never,
+};
+
 // Draw the company header (top-left brand) + doc title + meta block on the right.
 // Returns the y position where the body should continue.
 export function drawHeader(
@@ -382,37 +425,77 @@ export function drawHeader(
      memo not yet warmed) → the historic text-only header, byte-identical.
      The memo is primed by useBranding() at app load and awaited by the SO
      generator, so multi-page / multi-print runs never refetch. */
+  /* Measure the right-hand meta column FIRST. The company block on the left
+     used to be drawn with no width limit at all, so a long address simply ran
+     under the right column — on a 2990 Delivery Order "…Wilayah Persekutuan
+     KL" ended up touching "Date: 06/08/2026". Reserving the right column's
+     real width (plus a gutter) and wrapping the left block into what remains
+     is what keeps the two apart; nothing moves for a letterhead that already
+     fitted. */
+  const gutter = 8;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+  let rightW = doc.getTextWidth(opts.docTitle);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  for (const m of opts.rightMeta) {
+    rightW = Math.max(rightW, doc.getTextWidth(`${m.label}: ${m.value}`));
+  }
+
   let textX = margin;
-  let logoBottomY = 0;
   const logo = opts.logo ?? getBrandingLogoCache();
+  let logoBox: { w: number; h: number } | null = null;
   if (logo) {
     const maxW = 40;   // mm — letterhead-scale, never dominates the header
     const maxH = 16;   // mm — fits beside the 4-line text block
     const scale = Math.min(maxW / logo.width, maxH / logo.height);
-    const w = logo.width * scale;
-    const h = logo.height * scale;
+    logoBox = { w: logo.width * scale, h: logo.height * scale };
+    textX = margin + logoBox.w + 6;
+  }
+
+  // What the left block may occupy before it would collide with the meta
+  // column. Floored so a pathological logo/meta combination still leaves a
+  // usable measure rather than a negative one.
+  const leftMaxW = Math.max(40, pageW - margin - textX - rightW - gutter);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+  const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
+  const addressLines = COMPANY.addressLines.flatMap(
+    (line) => doc.splitTextToSize(line, leftMaxW) as string[],
+  );
+
+  let logoBottomY = 0;
+  if (logo && logoBox) {
     /* Vertical centring (owner 2026-07 — 左上角的中间位置): the company text
        block spans from the name's cap line (margin - 5, the 16pt cap height
-       above the baseline at `margin`) down to the last address-line baseline
-       (margin + 5 for the reg line, then 4mm per address line). Centre the
-       logo's midline on that block's midline; a logo TALLER than the block
-       keeps the historic top alignment so it never floats above the page
-       margin. */
+       above the baseline at `margin`) down to the last address-line baseline.
+       Centre the logo's midline on that block's midline; a logo TALLER than
+       the block keeps the historic top alignment so it never floats above the
+       page margin. Measured from the WRAPPED lines, so a block that grew a
+       line still centres correctly. */
     const blockTop = margin - 5;
-    const blockH = (margin + 5 + 4 * COMPANY.addressLines.length) - blockTop;
-    const topY = h < blockH ? blockTop + (blockH - h) / 2 : blockTop;
+    const lastBaseline =
+      margin + 6 * (nameLines.length - 1) + 5 * regLines.length + 4 * addressLines.length;
+    const blockH = lastBaseline - blockTop;
+    const topY = logoBox.h < blockH ? blockTop + (blockH - logoBox.h) / 2 : blockTop;
     try {
-      doc.addImage(logo.dataUrl, logo.format, margin, topY, w, h);
-      textX = margin + w + 6;
-      logoBottomY = topY + h;
-    } catch { /* fail-soft: draw the text-only header */ }
+      doc.addImage(logo.dataUrl, logo.format, margin, topY, logoBox.w, logoBox.h);
+      logoBottomY = topY + logoBox.h;
+    } catch {
+      textX = margin; // fail-soft: draw the text-only header, full width
+    }
   }
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-  doc.text(COMPANY.name, textX, y);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); y += 5;
-  doc.text(COMPANY.reg, textX, y);
-  for (const line of COMPANY.addressLines) {
+  nameLines.forEach((line, i) => {
+    if (i) y += 6;
+    doc.text(line, textX, y);
+  });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  for (const line of regLines) {
+    y += 5;
+    doc.text(line, textX, y);
+  }
+  for (const line of addressLines) {
     y += 4;
     doc.text(line, textX, y);
   }
@@ -534,6 +617,209 @@ export function drawSignatureBoxes(
   return ty + 28;
 }
 
-// Safe filename: keep alphanum + - and _
-export const safeName = (s: string, maxLen = 32): string =>
-  (s || 'doc').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, maxLen);
+/* Safe filename fragment.
+   This used to keep ONLY `[A-Za-z0-9_-]`, which is fine for a Latin customer and
+   destroys everything else: a Chinese debtor name came out as
+   `2990-DO-2608-006-______.pdf` — the customer's name replaced by a row of
+   underscores, on the file you send that customer (Nico, 2026-08-07).
+
+   Every target that matters handles Unicode filenames: `doc.save()` goes through
+   an <a download> (UTF-8 by definition), Windows/macOS/Linux all accept CJK, and
+   so does every mail client. What is genuinely illegal is a much smaller set —
+   the Windows reserved punctuation, path separators, and control characters — so
+   strip THAT and keep the name.
+
+   Also guarded: a trailing dot or space (Windows silently drops them, turning
+   "Foo ." into a name that round-trips wrong) and an all-punctuation input
+   collapsing to an empty string. */
+// Control characters plus the Windows reserved set. Nothing else is removed.
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_IN_FILENAME = /[\x00-\x1f\x7f<>:"/\\|?*]+/g;
+export const safeName = (s: string, maxLen = 32): string => {
+  const cleaned = (s || '')
+    .replace(ILLEGAL_IN_FILENAME, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+    /* Truncation can leave a dangling separator, and Windows silently drops a
+       trailing space. A trailing DOT is deliberately kept — every caller
+       appends ".pdf", so it never ends the real filename, and stripping it
+       would eat the dot in "Sdn. Bhd.", which is most of our supplier list. */
+    .replace(/[\s-]+$/, '');
+  return cleaned || 'doc';
+};
+
+// ── How a finished PDF reaches the operator ───────────────────────────────────
+//
+// Every document's Print preview offers the same three exits, so the delivery
+// step lives here instead of being re-implemented per generator (it was written
+// once, for the SO, and every other generator only knew doc.save()):
+//
+//   'save'    → download it (the historical default; keep it the fallback so an
+//               un-migrated caller behaves exactly as before)
+//   'print'   → blob → hidden iframe → the browser's print dialog. NOTE this is
+//               the ONLY correct way to print a document from this app: the
+//               global @media print block (index.css) hides `body *` and shows
+//               only `.org-print-area`, so window.print() on a detail page
+//               prints a BLANK sheet. The DO preview's "Print now" did exactly
+//               that until 2026-08-06.
+//   'preview' → blob → new tab, i.e. the "View full PDF" escape hatch from the
+//               summary card when the operator wants to see every line first.
+export type PdfAction = 'save' | 'print' | 'preview';
+
+/* Mount a blob URL in a hidden iframe and (optionally) trigger print.
+   Cleanup is deferred 60 s so the OS print dialog can hold the iframe
+   document until the user closes it. */
+const renderViaIframe = (blobUrl: string, andPrint: boolean): void => {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.src = blobUrl;
+  document.body.appendChild(iframe);
+  if (andPrint) {
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        /* Some browsers throw if the PDF viewer hasn't fully hydrated.
+           Worst case the user sees the iframe content briefly; we still
+           clean up below. */
+      }
+    };
+  }
+  window.setTimeout(() => {
+    try { document.body.removeChild(iframe); } catch { /* already detached */ }
+    URL.revokeObjectURL(blobUrl);
+  }, 60_000);
+};
+
+/** Deliver a rendered doc by the requested route. Defaults to a download. */
+export function deliverPdf(
+  doc: import('jspdf').jsPDF,
+  filename: string,
+  action: PdfAction = 'save',
+): void {
+  if (action === 'save') {
+    doc.save(filename);
+    return;
+  }
+  const blobUrl = URL.createObjectURL(doc.output('blob'));
+  if (action === 'preview') {
+    openPdfPreviewTab(doc, blobUrl, filename);
+    return;
+  }
+  renderViaIframe(blobUrl, true);
+}
+
+/* ── The preview tab ──────────────────────────────────────────────────────────
+ *
+ * Two routes, in order of how good the address bar looks:
+ *
+ *   1. `/print-preview/<filename>.pdf`, served by the service worker out of a
+ *      cache this function writes. A REAL same-origin path, so the address bar
+ *      reads the document — the whole point.
+ *   2. A wrapper page whose <title> is the document, with the PDF in an iframe.
+ *      Used when the worker is not in control: a first visit, a client still on
+ *      an older worker, local dev (the worker deliberately never intercepts), or
+ *      a browser with storage blocked. The tab is still NAMED correctly; only
+ *      the address bar stays a blob.
+ *
+ * Route 1 must be PROVEN, not assumed. Without a worker, `/print-preview/x.pdf`
+ * hits Pages' SPA catch-all and returns 200 + index.html — the operator would
+ * get the ERP app where a document should be, with no error anywhere. So the
+ * worker answers a probe with a sentinel header, and only that header switches
+ * this on.
+ *
+ * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
+ * follows an await has lost the user gesture and is blocked as a popup. */
+function openPdfPreviewTab(doc: import('jspdf').jsPDF, blobUrl: string, filename: string): void {
+  const tab = window.open('', '_blank');
+  if (!tab) {
+    // Popup blocked — the raw blob is still better than nothing.
+    window.open(blobUrl, '_blank');
+    return;
+  }
+  void (async () => {
+    try {
+      const path = await putPrintPreview(doc, filename);
+      if (path) {
+        tab.location.replace(path);
+        return;
+      }
+    } catch {
+      // Any storage/worker failure just means route 2.
+    }
+    writeNamedPdfTab(tab, blobUrl, filename);
+  })();
+}
+
+const PRINT_CACHE = 'houzs-print-preview';
+const PRINT_PREFIX = '/print-preview/';
+/** Newest N previews kept; older entries are dropped on each write. */
+const PRINT_KEEP = 5;
+
+/* Put the PDF where the service worker can serve it, and return the path — or
+   null when the worker is not in control (see openPdfPreviewTab). */
+async function putPrintPreview(
+  doc: import('jspdf').jsPDF,
+  filename: string,
+): Promise<string | null> {
+  if (typeof caches === 'undefined' || !navigator.serviceWorker?.controller) return null;
+  const probe = await fetch(`${PRINT_PREFIX}__probe`, { cache: 'no-store' }).catch(() => null);
+  if (!probe || probe.headers.get('x-houzs-print-preview') !== '1') return null;
+
+  const cache = await caches.open(PRINT_CACHE);
+  /* Trim first, so a failure below cannot leave the cache growing. cache.keys()
+     is insertion-ordered, so the oldest are at the front. */
+  const keys = await cache.keys();
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - (PRINT_KEEP - 1))).map((k) => cache.delete(k)));
+
+  const path = PRINT_PREFIX + encodeURIComponent(filename);
+  await cache.put(
+    path,
+    new Response(doc.output('blob'), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        /* `inline` so the browser RENDERS it rather than downloading; the
+           filename still rides along, so Save from the viewer proposes the
+           document's name. RFC 5987 encoding carries the CJK safely. */
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Cache-Control': 'no-store',
+      },
+    }),
+  );
+  return path;
+}
+
+/* Route 2 — the fallback tab. A blob URL carries no name, so a bare
+   `window.open(blobUrl)` lands the operator on a tab called `8a7f3c2e-1b4d-…`:
+   two documents open side by side are indistinguishable and Save proposes the
+   GUID. This wrapper cannot fix the address bar (only the service-worker route
+   above can) but it does name the tab, the window title and the download. */
+function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
+  const title = filename.replace(/\.pdf$/i, '');
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  tab.document.write(
+    `<!doctype html><html><head><meta charset="utf-8">` +
+      `<title>${esc(title)}</title>` +
+      `<style>html,body{margin:0;height:100%;background:#3a3a3a}` +
+      `iframe{border:0;width:100%;height:100%;display:block}` +
+      `a.dl{position:fixed;right:14px;top:10px;z-index:2;font:600 12px/1 system-ui,sans-serif;` +
+      `background:#0f766e;color:#fff;padding:8px 12px;border-radius:6px;text-decoration:none}</style>` +
+      `</head><body>` +
+      `<a class="dl" href="${esc(blobUrl)}" download="${esc(filename)}">Download PDF</a>` +
+      `<iframe src="${esc(blobUrl)}" title="${esc(title)}"></iframe>` +
+      `</body></html>`,
+  );
+  tab.document.close();
+  /* No revoke timer. The old code revoked after 60 s, which was safe when the
+     tab was the blob itself (already loaded) but would quietly break this page's
+     Download link the moment the operator took longer than a minute to decide.
+     The blob dies with the opener page instead. */
+}

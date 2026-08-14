@@ -78,6 +78,15 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // ResizableDrawer panel widths.
   { id: "assistant-panel-size", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs:assistant-panel-w | houzs:assistant-panel-h", matches: (key) => key === "houzs:assistant-panel-w" || key === "houzs:assistant-panel-h" },
   { id: "data-table-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dt:<part>:<table family>", matches: prefix("dt:") },
+  // Option B delivery side map (2026-08-08): whether the map panel is open or
+  // collapsed on each arrangement page — a per-device layout preference, same
+  // class as the panel- widths. No identity/company data (the value is '0'/'1').
+  { id: "delivery-map-open", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-open.<page>.v1", matches: prefix("dmap-open.") },
+  // Option B compact-columns DEFAULT (2026-08-08 amendment): whether the board
+  // auto-narrows to the essential columns while the side map is open — a
+  // per-device layout preference the user can toggle off (and any explicit
+  // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
+  { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
   {
     id: "grid-and-panel-layout",
     classification: "DEVICE_PREF",
@@ -124,6 +133,11 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // persists ONLY the one shared drawer width under panel-scm-detail-drawer.v1,
   // same DEVICE_PREF layout class as ResizableDrawer above.
   "components/ResizableDetailDrawer.tsx",
+  // Option B delivery side map: persists ONLY its open/collapsed flag and the
+  // compact-columns default per page (dmap-open.<page>.v1 /
+  // dmap-compact.<page>.v1, both DEVICE_PREF) — layout preferences, no
+  // identity or company data, same class as the ResizableDrawer widths.
+  "components/scm-v2/DeliveryMapPanel.tsx",
   "components/RouteFallback.tsx",
   // The banner's local-ack memo moved into the shared hook (desktop + mobile
   // pop-ups answer "have I seen this?" the same way); AnnouncementBanner.tsx is

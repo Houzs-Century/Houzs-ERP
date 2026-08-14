@@ -28,6 +28,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
 import { formatPhone } from '@2990s/shared/phone';
@@ -112,6 +114,10 @@ import {
   citiesInState,
   postcodesInCity,
   countryForState,
+  resolvePostcode,
+  resolveCityState,
+  allCities,
+  allPostcodes,
 } from '../../vendor/scm/lib/localities-queries';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -273,6 +279,10 @@ type SoHeader = {
      go out as an amendment. open_amendment is the light summary of any in-flight
      amendment (status NOT IN SENT/REJECTED). */
   amendment_eligible?: boolean;
+  /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
+     only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
+     below fires with no processing date involved. */
+  po_locked?: boolean;
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
   /* Two-lane rework: up to TWO can be open at once (one per lane). */
@@ -295,7 +305,7 @@ type SoHeader = {
   hub_id: string | null;
   hub_name: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   /* POS "Proceed" timestamp (migration 0110). Auto-stamped server-side when the
      SO first enters IN_PRODUCTION (the POS "Proceed" action). Read-only here —
      surfaced as "Proceed Date" in the Order Info card so the coordinator can
@@ -362,6 +372,9 @@ type SoItem = {
   line_margin_centi: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
+  /* PR-F photos live on the row as R2 keys; the API detail SELECT returns
+     them (mfg-sales-orders.ts items select), the card renders draft.photoUrls. */
+  photo_urls: string[] | null;
   cancelled: boolean;
   /* PR-E — Per-item delivery date with cascade override flag.
      line_delivery_date null + overridden=false → display falls back to
@@ -412,6 +425,11 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   // only this editor seam wasn't.
   variants:       canonicalizeVariants(it.item_group, it.variants as Record<string, unknown> | null),
   remark:         it.remark ?? '',
+  /* Owner 2026-08-10 (AutoCount photo import): saved photos never rendered on
+     the desktop edit card because the draft seed dropped photo_urls — the card
+     defaulted photoUrls to [] and only session uploads showed. Mobile already
+     mapped it (MobileNewSO photoKeys); this closes the desktop seam. */
+  photoUrls:      it.photo_urls ?? [],
   lineDeliveryDate:           it.line_delivery_date ?? null,
   lineDeliveryDateOverridden: it.line_delivery_date_overridden ?? false,
 });
@@ -443,7 +461,7 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
 });
 
 /* Serialised signature of exactly the fields an AMENDMENT LINE can carry — the
-   four the CreateAmendmentLine payload has room for, and no more.
+   five the CreateAmendmentLine payload has room for, and no more.
 
    Owner 2026-07-16 ("完全看不出有什麼變動申請？"): buildAmendmentLines used to test
    dirtiness with lineCommitSig, which covers the 13 fields a line PATCH
@@ -461,12 +479,23 @@ const lineCommitSig = (d: SoLineDraft): string => JSON.stringify({
    Both sides are draftFromItem output for an untouched line — including the
    canonicalizeVariants pass — so normalisation never false-positives. Comparing
    the draft against the raw item instead WOULD: draftFromItem canonicalises
-   POS sofa aliases while the item's stored blob is raw. */
+   POS sofa aliases while the item's stored blob is raw.
+
+   REMARK joined the list on 2026-08-11 (mig 0280). It is one of the nine fields
+   named above as having "no channel" — and that was the whole defect, not a
+   design: an operator amended a locked SO purely to type "Please take back Cody
+   Bedframe (King Size) 2 units" onto a SVC-ADDON line, and BOTH halves of this
+   comment worked against them. The payload had no room for the text, and this
+   signature scored the line as unmoved, so a remark-only edit produced no
+   amendment at all — Save reported success and nothing was requested. The
+   column now exists, so the field belongs in the signature that decides whether
+   there is something to request. The other eight still have no channel. */
 const amendmentLineSig = (d: SoLineDraft): string => JSON.stringify({
   itemCode:       d.itemCode,
   qty:            d.qty,
   unitPriceCenti: d.unitPriceCenti,
   variants:       d.variants ?? null,
+  remark:         d.remark ?? '',
 });
 
 export const SalesOrderDetail = () => {
@@ -565,11 +594,11 @@ export const SalesOrderDetail = () => {
   /* Fix 2 (micro-perf) — Variant-completeness check memoized; derives only
      when items or the processing-date toggle changes. 2026-06-04: delegates
      to the shared so-variant-rule (alias-aware, matches the server 409). */
-  const requireVariants = !!header?.internal_expected_dd;
+  const requireVariants = !!header?.processing_date;
   const incompleteVariantLines = useMemo(() => {
     if (!requireVariants) return [];
     return items
-      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null).length > 0)
+      .filter((it) => missingVariantAxes(it.item_group, it.variants as Record<string, unknown> | null, it.item_code).length > 0)
       .map((it) => ({ code: it.item_code, group: (it.item_group ?? '').toLowerCase() }));
   }, [items, requireVariants]);
 
@@ -614,6 +643,53 @@ export const SalesOrderDetail = () => {
   const [isEditing, setIsEditing] = useState(
     editSearchParams.get('edit') === '1',
   );
+  /* Print preview — the HOOK must live above the isPending / isError early
+     returns (owner 2026-08-07). It arrived at its call site further down
+     (#1665), which sits PAST those returns: a cold page's first render bails
+     out early with N hooks, the render after the query resolves reaches
+     usePrintPreview with N+1, and React throws "Rendered more hooks than during
+     the previous render" — a blank crash page.
+
+     Nobody hit it coming from the SO list, because arriving that way the header
+     is already in the TanStack cache and there is no pending first render. It
+     only bites a COLD load of this route: a pasted or bookmarked link, a
+     refresh while on the editor, a new tab. That is also why it shipped.
+
+     The deliver callback closes over `header` / `items` / query data that only
+     exist after the guards, so it cannot move up here with the hook. The ref is
+     the join: the hook is created once, up here, and reads the CURRENT deliver
+     through the ref at call time. Assigned below, where deliverPrintPdf is
+     defined. */
+  const deliverPrintPdfRef = useRef<(action: PdfAction) => void | Promise<void>>(() => {});
+  const print = usePrintPreview(
+    useCallback((action: PdfAction) => deliverPrintPdfRef.current(action), []),
+  );
+
+  /* Payments edit mode — the money's OWN toggle (owner 2026-08-07). Declared up
+     here with the other page state, NOT beside the `canEditPayments` derivation
+     it feeds: everything below the early returns is conditional, and a hook
+     there throws the exact error described above. See the derivation for what
+     this gates and why. */
+  const [payEditing, setPayEditing] = useState(
+    /* `?payments=1` — arrived through V2's "Collect payment" button, which is
+       the only door into this page on a hard-locked order. Open the ledger
+       straight away rather than making the operator hunt for a second toggle
+       on a page they reached BY asking for payments. */
+    editSearchParams.get('payments') === '1',
+  );
+  /* Page Edit mode already unlocks the ledger, so the toggle hides while it is
+     on — and clears, so leaving page Edit re-locks payments instead of leaving
+     them silently open on a stale `payEditing` from before. */
+  useEffect(() => { if (isEditing) setPayEditing(false); }, [isEditing]);
+  /* Unbooked payment rows currently typed into the Payments card (owner
+     2026-08-07). They live inside PaymentsTable in SAVED mode, so the page has
+     to be told; it needs the count because IT owns the two exits that would
+     throw them away — the header back button and the payments Edit toggle.
+     `setUnsavedPayments` is a stable setState reference, which the prop
+     requires (it is an effect dependency over there).
+     Declared here with the other page state, ABOVE the early returns — same
+     rule as payEditing and the print hook. */
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
   useEffect(() => {
     if (!header) return;
     if (loadedVersionDocRef.current !== header.doc_no) {
@@ -688,6 +764,25 @@ export const SalesOrderDetail = () => {
     setIsEditing(false);
   };
 
+  /* Leaving edit mode has to leave the EDIT ROUTE too, not just flip a flag.
+     SalesOrderDetailV2 is a thin router that renders THIS component whenever
+     `?edit=1` is on the URL, so `setIsEditing(false)` alone left the operator
+     on this legacy ledger — a visibly different page from the V2 detail they
+     pressed Edit on, at the same address, with no way back to it except the
+     browser's own Back (owner 2026-08-10: "按 Cancel 出來不一樣的頁面").
+     Dropping the param hands them back to SalesOrderDetailV2ReadOnly.
+
+     `replace` because the editor URL is a mode, not a place: V2's goEdit
+     PUSHED `?edit=1` onto the history, so replacing it here collapses the pair
+     instead of stacking a second detail entry that Back would have to walk
+     through twice.
+
+     NOT called on the amendment path — a submitted amendment deliberately
+     stays on this page to show its raised-amendment notice. */
+  const returnToDetail = () => {
+    if (docNo) navigate(`/scm/sales-orders/${docNo}`, { replace: true });
+  };
+
   const enterEdit  = () => { setSaveError(null); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
@@ -695,6 +790,7 @@ export const SalesOrderDetail = () => {
     // The seed/clear effect wipes editingDrafts + addingDraft when isEditing
     // flips to false, discarding any uncommitted line edits.
     endEditSession();
+    returnToDetail();
   };
 
   /* Whole-order Save — persists the order in one shot:
@@ -751,13 +847,13 @@ export const SalesOrderDetail = () => {
     // Variants are only mandatory once a processing date is set: with a date
     // the order is committed to production and purchasing needs the full spec.
     // No processing date = still a draft, so allow saving with gaps.
-    if (header?.internal_expected_dd) {
+    if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),
         ...(addingDraft ? [addingDraft] : []),
       ]
         .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants) }))
+        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         setSaveError(
@@ -850,6 +946,9 @@ export const SalesOrderDetail = () => {
       .then(() => {
         setSavingOrder(false);
         endEditSession();
+        // Same exit as Cancel — a completed Save is done with the edit route.
+        // (The amendment path below deliberately stays put.)
+        returnToDetail();
       })
       .catch((e) => {
         setSavingOrder(false);
@@ -916,6 +1015,12 @@ export const SalesOrderDetail = () => {
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
         newUnitPriceSen: draft.unitPriceCenti,
+        /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
+           actually moved: null/absent means "not requested", which is what stops
+           the apply from rewriting a remark this session never touched. */
+        ...(((draft.remark ?? '') !== (orig.remark ?? ''))
+          ? { newRemark: draft.remark ?? '' }
+          : {}),
         // Old snapshot for the before/after diff — the pre-edit line values.
         oldSnapshot: {
           itemCode: it.item_code,
@@ -950,6 +1055,10 @@ export const SalesOrderDetail = () => {
         newVariants: addingDraft.variants ?? undefined,
         newQty: addingDraft.qty,
         newUnitPriceSen: addingDraft.unitPriceCenti,
+        /* mig 0280 — an ADDED line carries whatever remark was typed on it. This
+           is the case that lost the owner's instruction on 2990-SO-2608-016: the
+           added line WAS a SVC-ADDON whose entire purpose lived in the text. */
+        ...((addingDraft.remark ?? '').trim() ? { newRemark: addingDraft.remark } : {}),
       });
     }
     return out;
@@ -1483,7 +1592,46 @@ export const SalesOrderDetail = () => {
      while the detail is in its read-only view. For every other status the
      Payments section stays view-only until the operator clicks Edit. */
   const isDraftSo = (header.status as string) === 'DRAFT';
+  /* Payments edit mode — the money's OWN toggle, deliberately not the page's
+     Edit mode (owner 2026-08-07, mobile parity). Page Edit is gated by
+     `isLocked` (terminal status / downstream DO-SI), which freezes LINES and the
+     HEADER because a child document already quotes them. It has no business
+     freezing the ledger: the balance is collected ON delivery, i.e. precisely
+     when the SO is locked. Only CANCELLED shuts payments — same rule as
+     MobileSODetail's `paymentLocked`.
+     The no-naked-edits rule (owner 2026-07-13) is unchanged: a submitted SO's
+     payments are view-only until the operator opts in here, and a DRAFT skips
+     the toggle because it is never confirmed. Page Edit mode still counts as
+     opting in, so the existing flow on an unlocked SO is untouched. */
   const canCancel = CANCELLABLE_STATUSES.includes(header.status);
+  const canOfferPayEdit  = !isDraftSo && !isCancelled && !isEditing;
+  const canEditPayments  = isDraftSo || (!isCancelled && (isEditing || payEditing));
+
+  /* The two exits this PAGE owns, guarded against discarding typed-but-unbooked
+     payment rows (owner 2026-08-07). PaymentsTable registers the browser-level
+     beforeunload guard itself; these cover the in-app moves react-router 6
+     cannot block for us (no data router — see the `beforeBack` prop doc).
+
+     Named the money, not "unsaved changes": an operator who is told "1 payment
+     row" knows exactly what is at stake and can decide in one read. */
+  const guardUnsavedPayments = async (): Promise<boolean> => {
+    if (unsavedPayments === 0) return true;
+    return askConfirm({
+      title: `Leave ${unsavedPayments} payment row${unsavedPayments === 1 ? '' : 's'} unsaved?`,
+      body: `${unsavedPayments === 1 ? 'It has' : 'They have'} not been recorded against this order — `
+        + 'the balance stays as it is, and any slip attached to the row is discarded. '
+        + 'Press Save on the row to book it.',
+      confirmLabel: 'Discard and leave',
+      danger: true,
+    });
+  };
+
+  /* Closing the card with Done unmounts the rows, so it discards exactly what
+     leaving the page does. Opening it needs no guard. */
+  const togglePayEditing = async () => {
+    if (payEditing && !(await guardUnsavedPayments())) return;
+    setPayEditing((v) => !v);
+  };
 
   const handleCancelSo = async () => {
     if (!(await askConfirm({
@@ -1516,7 +1664,7 @@ export const SalesOrderDetail = () => {
       });
     }
   };
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
        header columns (paid_centi, payment_method, …) are deprecated. If
        the query is still loading we surface a brief notice and bail out
@@ -1561,7 +1709,7 @@ export const SalesOrderDetail = () => {
     /* `pwpCodes` rides on the same GET /:docNo payload — vouchers this SO's
        trigger items issued, so the printed PDF can mark the trigger lines. */
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)?.pwpCodes ?? []) as never;
-    generateSalesOrderPdf(header, items, payments, 'save', pwpCodes).catch((e) => {
+    return generateSalesOrderPdf(header, items, payments, action, pwpCodes).catch((e) => {
       // eslint-disable-next-line no-console
       console.error('PDF generation failed:', e);
       notify({
@@ -1571,6 +1719,11 @@ export const SalesOrderDetail = () => {
       });
     });
   };
+  /* The hook itself lives above the early returns (see its declaration and why).
+     This is the assignment half: every render refreshes the ref with a closure
+     over the CURRENT header / items / payments, so Print behaves exactly as it
+     did when the hook was created here. */
+  deliverPrintPdfRef.current = deliverPrintPdf;
 
   return (
     /* Commander 2026-05-29 — a CANCELLED SO greys the whole page so it reads
@@ -1578,7 +1731,7 @@ export const SalesOrderDetail = () => {
        (a CSS filter doesn't block pointer events). */
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
       {/* ── Header (shared PageHeader — full-bleed, design-system) ── */}
-      <PageHeader back
+      <PageHeader back beforeBack={guardUnsavedPayments}
         eyebrow="Sales Order"
         /* Owner 2026-07-16 — 17px document title (see PageHeader.titleSize).
            Scoped to this page; every other page keeps the default h1. */
@@ -1657,10 +1810,23 @@ export const SalesOrderDetail = () => {
               <Share2 {...ICON} />
               <span>Map</span>
             </Button>
-            <Button variant="ghost" onClick={handlePrint}>
+            <Button variant="ghost" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Sales Order"
+              docNo={header.doc_no}
+              rows={[
+                { label: 'Customer', value: header.debtor_name || '—' },
+                { label: 'Order date', value: fmtDateOrDash(header.so_date) },
+                { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+                { label: 'Order total', value: fmtRm(header.local_total_centi, header.currency) },
+              ]}
+              {...print.handlers}
+            />
             {/* Cancel SO (Commander 2026-05-29) — stops proceeding; final. */}
             {!isCancelled && canCancel && !isEditing ? (
               <Button variant="ghost"
@@ -2220,6 +2386,19 @@ export const SalesOrderDetail = () => {
           the normal case — that is what a Balance figure is FOR. Only CANCELLED
           stays shut (a cancelled order takes no money); the no-naked-edits rule
           is unchanged, so it is still Edit-then-type for everything but DRAFT. */}
+      {/* Owner 2026-08-07 — the paragraph above says what this page MEANT to do,
+          and mobile has done since 7-17 (MobileSODetail `paymentLocked =
+          rawStatus === "CANCELLED"` + its own in-card Edit toggle). Desktop
+          never got there: `locked` dropped `isLocked` but replaced it with
+          `!isEditing`, and PAGE Edit mode is reached through a button that is
+          itself `disabled={isLocked}` (see the header Button). So on a
+          delivered SO — the exact order a balance gets collected on — the
+          operator could not enter Edit, could not Add Payment, and had nowhere
+          to put the balance-payment proof. The lock was simply reached through
+          a second door.
+          Fix mirrors mobile rather than inventing a third rule: payments carry
+          their OWN edit toggle (`payEditing`), independent of the page-level
+          Edit mode that the line/header lock owns. "電話電腦的權限應該一樣的". */}
       {paymentRetryDrafts.length > 0 && (
         <div className={styles.bannerWarn} role="status">
           This order exists, but {paymentRetryDrafts.length} payment row{paymentRetryDrafts.length === 1 ? '' : 's'} were not confirmed saved.
@@ -2231,12 +2410,18 @@ export const SalesOrderDetail = () => {
         docNo={header.doc_no}
         grandTotalCenti={header.local_total_centi}
         currency={header.currency}
-        locked={!isDraftSo && (isCancelled || !isEditing)}
+        locked={!canEditPayments}
         draftUnlocked={isDraftSo}
         slip={{ slipKey: header.slip_key, fetcher: fetchSoSlipUrl }}
         defaultCollectedBy={selfStaffMatch?.id ?? ''}
         initialDrafts={paymentRetryDrafts}
         onDraftCommitted={paymentRetryCommitted}
+        onUnsavedChange={setUnsavedPayments}
+        headerAction={canOfferPayEdit ? (
+          <Button variant="ghost" onClick={() => { void togglePayEditing(); }}>
+            {payEditing ? <span>Done</span> : <><Pencil {...ICON} /><span>Edit payments</span></>}
+          </Button>
+        ) : null}
       />
 
       {/* ── CUSTOMER SIGNATURE — moved directly below Payments (Wei Siang
@@ -2529,9 +2714,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   //   - poDocNo (Customer PO #)   → "customer PO 不需要"
   //   - targetDate                → replaced by Processing + Delivery Date
   // PR #140 — add list:
-  //   - processingDate (= internal_expected_dd column, just renamed for UI)
+  //   - processingDate
   //   - customerDeliveryDate
-  // The DB column `internal_expected_dd` stays — only the label changes.
+  // #140 renamed only the LABEL to "Processing Date"; the column stayed
+  // `internal_expected_dd` for another three months and cost several incidents.
+  // Mig 0284 finished the job: field, payload key and column are one word.
   /* PR-A — initialFormFor() is the single source-of-truth for what the
      local form looks like when reset (Cancel) or when the header reloads
      after a successful Save. Keeps the snapshot + reset paths consistent. */
@@ -2568,7 +2755,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: h.emergency_contact_name ?? '',
     emergencyContactPhone: h.emergency_contact_phone ?? '',
     emergencyContactRelationship: h.emergency_contact_relationship ?? '',
-    processingDate: h.internal_expected_dd ?? '',
+    processingDate: h.processing_date ?? '',
     customerDeliveryDate: h.customer_delivery_date ?? '',
     note: h.note ?? '',
     /* Commander 2026-05-27 cascade — seeded from the persisted value so we
@@ -2611,10 +2798,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: f.emergencyContactName,
     emergencyContactPhone: f.emergencyContactPhone,
     emergencyContactRelationship: f.emergencyContactRelationship,
-    /* PR #140 — Processing Date persists to internal_expected_dd column
-       (renamed in the UI per commander 2026-05-26: "internal expected date
-       是 Hookka 用的"). targetDate field dropped. */
-    internalExpectedDd: f.processingDate || null,
+    /* Processing Date persists to the processing_date column — the same word
+       on the form, in this payload and in Postgres since mig 0284 (commander
+       2026-05-26: "internal expected date 是 Hookka 用的"; #140 changed the
+       label, 0284 changed the name underneath it). targetDate field dropped. */
+    processingDate: f.processingDate || null,
     customerDeliveryDate: f.customerDeliveryDate || null,
     note: f.note,
     /* Commander 2026-05-27 (Fix 5) — persist the auto-resolved sales location
@@ -2624,6 +2812,25 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   });
 
   const [form, setForm] = useState(() => initialFormFor(header));
+  /* Imported-order venue seeding (owner 2026-08-10 "点 edit 的时候它不会不见掉"):
+     AutoCount-migrated rows carry the venue as TEXT but nothing the picker's
+     option values recognise in venue_id, so the picker rendered "—" even though
+     the view header shows the venue — operators read that as the value having
+     vanished. When the venue master loads and the seeded venueId matches no
+     option, adopt the option whose name equals the stored text
+     (case-insensitive). The adoption marks the field dirty, so the operator's
+     next Save persists the master link — self-healing, no data migration. */
+  useEffect(() => {
+    const opts = venuesQ.data ?? [];
+    if (!opts.length) return;
+    setForm((s) => {
+      if (s.venueId && opts.some((v) => v.id === s.venueId)) return s;
+      const name = (s.venue ?? '').trim().toUpperCase();
+      if (!name) return s;
+      const hit = opts.find((v) => (v.name ?? '').trim().toUpperCase() === name);
+      return hit && s.venueId !== hit.id ? { ...s, venueId: hit.id } : s;
+    });
+  }, [venuesQ.data, form.venueId, form.venue]);
   const buildPayload = () => payloadFor(form);
   /* The header payload AS SEEDED (pristine) — trySave diffs the outgoing
      payload against this so an untouched field is never sent (the header mirror
@@ -2719,6 +2926,46 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
     [localityRows, form.state, form.city],
   );
+  /* START ANYWHERE — the same reverse resolution SalesOrderNew and MobileNewSO
+     have had. With no State picked, City and Postcode offer the full
+     cross-state pool so the operator can choose one FIRST and let the State
+     (and through it the Sales Location) resolve back from it. With a State
+     picked these fall through to the state-scoped lists above, so the forward
+     cascade is unchanged.
+
+     This page never had it: City stayed disabled until State and Postcode until
+     City, which on an EDIT means re-deriving an address the operator can already
+     read off the order. The resolvers and their tests already existed — the test
+     file even documents the SO forms as the caller — only this surface was never
+     wired, which is the desktop/mobile split CLAUDE.md warns about. */
+  const cityChoices = useMemo(
+    () => (form.state ? cities : allCities(localityRows)),
+    [form.state, cities, localityRows],
+  );
+  const postcodeChoices = useMemo(
+    () => ((form.state && form.city) ? postcodes : allPostcodes(localityRows)),
+    [form.state, form.city, postcodes, localityRows],
+  );
+  /* Set State from a resolved City, and State + City from a resolved Postcode.
+     Written in ONE setForm each so the value the operator just picked survives —
+     going through the State picker's own handler would clear it, because that
+     handler exists to reset the cascade. Only an UNAMBIGUOUS city resolves;
+     resolvePostcode returns null rather than guessing. */
+  const applyCityReverse = (nextCity: string) => {
+    const st = nextCity ? resolveCityState(localityRows, nextCity) : null;
+    setForm((s) => ({
+      ...s, city: nextCity, postcode: '',
+      state: st && st !== s.state ? st : s.state,
+    }));
+  };
+  const applyPostcodeReverse = (nextPostcode: string) => {
+    const res = nextPostcode ? resolvePostcode(localityRows, nextPostcode) : null;
+    setForm((s) => ({
+      ...s, postcode: nextPostcode,
+      state: res?.state && res.state !== s.state ? res.state : s.state,
+      city: res?.city && res.city !== s.city ? res.city : s.city,
+    }));
+  };
   /* Task #121 — Country auto-derives from the picked state. Read-only on
      the form; the API re-derives + snapshots it on PATCH. Prefer the
      header's stored customer_country (so historic SOs whose locality
@@ -2767,7 +3014,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      lock) applies to the Delivery Date so an SO can still be postponed even if
      its old delivery day has passed — only a freshly-typed past date is
      rejected. */
-  const originalProcessing = header.internal_expected_dd ?? '';
+  const originalProcessing = header.processing_date ?? '';
   const originalDelivery = header.customer_delivery_date ?? '';
   /* ...EXCEPT in amendment mode: an amendment is the sanctioned channel for
      changing exactly these frozen fields, so read-only-ing the input there left
@@ -2835,7 +3082,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      had them. Fed to the SHARED so-amendment-header helpers so desktop + mobile
      agree on what needs approval and what saves directly. */
   const lockedHeaderNow = {
-    internalExpectedDd:   form.processingDate,
+    processingDate:   form.processingDate,
     customerDeliveryDate: form.customerDeliveryDate,
     customerState:        form.state,
     postcode:             form.postcode,
@@ -2854,7 +3101,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     address2:             form.address2,
   };
   const lockedHeaderOriginal = {
-    internalExpectedDd:   header.internal_expected_dd ?? '',
+    processingDate:   header.processing_date ?? '',
     customerDeliveryDate: header.customer_delivery_date ?? '',
     customerState:        header.customer_state ?? '',
     postcode:             header.postcode ?? header.address4 ?? '',
@@ -3214,8 +3461,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Address Line 1</span>
+              {/* KEEP CHROME'S ADDRESS AUTOFILL OFF THIS BLOCK.
+                  Chrome classifies a form by its FIELDS, not one at a time, so
+                  a bare address input here makes it treat the whole group as an
+                  address form and offer its saved-address popup — which renders
+                  above the State list and makes State unpickable, and with it
+                  City and Postcode. StatePicker already sets autoComplete="off"
+                  and it was not enough: Chrome overrides `off` once the form
+                  looks like an address. An UNRECOGNISED token is what actually
+                  stops the heuristic, because it is neither a known field type
+                  nor the `off` it argues with. */}
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
@@ -3223,6 +3481,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Address Line 2</span>
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
@@ -3251,11 +3510,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.city}
-                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
-                  disabled={inputsDisabled || stateLocked || !form.state}
+                  onChange={applyCityReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
-                  placeholder={form.state ? 'Pick city' : '— pick state first'}
-                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                  placeholder={form.state ? 'Pick city' : 'Pick city — State fills in'}
+                  options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
@@ -3266,11 +3525,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.postcode}
-                  onChange={(v) => set('postcode', v)}
-                  disabled={inputsDisabled || stateLocked || !form.city}
+                  onChange={applyPostcodeReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
-                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
-                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                  placeholder={form.city ? 'Pick postcode' : 'Pick postcode — State and City fill in'}
+                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
@@ -3776,6 +4035,11 @@ const AmendmentDiffModal = ({
                             {old.description2 && (
                               <div className={styles.muted} style={strikeIf(chg.variants)}>{old.description2}</div>
                             )}
+                            {/* mig 0280 — the remark this request replaces, shown
+                                only when the request touches it. */}
+                            {chg.remark && (old.remark ?? '').trim() ? (
+                              <div className={styles.muted} style={{ fontStyle: 'italic', ...strikeIf(true) }}>“{old.remark}”</div>
+                            ) : null}
                           </div>
                         )}
                       </td>
@@ -3792,6 +4056,14 @@ const AmendmentDiffModal = ({
                               ) : ''}
                             </div>
                             {summary ? <div className={styles.muted} style={emphasiseIf(chg.variants)}>{summary}</div> : null}
+                            {/* mig 0280 — the REQUESTED remark. On a service line
+                                this text is the entire request, so it must render
+                                here rather than only on the approver's page. */}
+                            {chg.remark ? (
+                              <div className={styles.muted} style={{ fontStyle: 'italic', ...emphasiseIf(true) }}>
+                                {(l.new_remark ?? '').trim() ? `“${l.new_remark}”` : 'Remark cleared'}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </td>

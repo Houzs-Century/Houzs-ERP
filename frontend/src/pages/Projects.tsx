@@ -45,6 +45,7 @@ import {
   ClipboardList,
   DollarSign,
   Wrench,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "../components/Layout";
@@ -118,6 +119,7 @@ import {
 } from "../lib/requestCorrelation";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { ResetFiltersButton } from "../components/ResetFiltersButton";
+import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 
 // ── Types (module-local) ─────────────────────────────────────
@@ -187,6 +189,10 @@ interface ProjectRow {
   active_section_name?: string | null;
   sections_total?: number;
   sections_complete?: number;
+  // Populated only when a real section is picked in the Status filter (owner
+  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
+  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
+  section_tasks_map?: string | null;
 }
 
 interface ProjectDetail {
@@ -433,7 +439,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -554,7 +560,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
@@ -1020,6 +1026,9 @@ const PROJECTS_LIST_FILTER_KEYS = [
   // ON, so the slim bar defaults to their own events). See ProjectsListView.
   "mine",
   "section",
+  // `task` — outstanding-task filter (owner 2026-08-05): show only events where
+  // this checklist task is still not complete. Sticky like the rest.
+  "task",
   "search",
   "brand",
   "year",
@@ -1027,6 +1036,279 @@ const PROJECTS_LIST_FILTER_KEYS = [
   "status",
   "page",
 ] as const;
+
+/** Generic multi-select filter (owner 2026-08-07: "add multiple choice for all
+ *  dropdown also"). A native <select multiple> is unusable in a filter bar
+ *  (ctrl-click, fixed height), so every project-list filter uses this button +
+ *  checkbox popover instead. Closes on outside click / Escape. Options may be
+ *  grouped (the task filter groups by checklist section); pass one group with a
+ *  null name for a flat list. Selection is a string[] the caller comma-joins
+ *  into the URL. */
+// Date-range filter (owner 2026-08-11) — a From/To picker chip that replaces the
+// old year + month dropdowns. Two native date inputs; the list scopes to events
+// overlapping the window (start <= to AND end >= from).
+function DateRangeFilter({
+  from,
+  to,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const fmt = (d: string) => {
+    if (!d) return "…";
+    const [y, m, day] = d.split("-");
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
+    return `${parseInt(day, 10)} ${mon} ${y}`;
+  };
+  const active = !!(from || to);
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-8 max-w-[240px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          active ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <Calendar size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{active ? `${fmt(from)} – ${fmt(to)}` : "All dates"}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-30 w-[250px] rounded-md border border-border bg-surface p-3 shadow-slab">
+          <div className="mb-2 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">Date range</span>
+            {active && (
+              <button type="button" onClick={() => onChange("", "")} className="text-[10.5px] font-semibold text-ink-secondary hover:text-err">
+                Clear
+              </button>
+            )}
+          </div>
+          <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
+            From
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => onChange(e.target.value, to)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+          <label className="block text-[11px] font-semibold text-ink-secondary">
+            To
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => onChange(from, e.target.value)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MultiSelectFilter({
+  placeholder,
+  groups,
+  selected,
+  onChange,
+  title,
+  summary,
+  panelWidth = "w-[280px]",
+}: {
+  placeholder: string;
+  groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  title?: string;
+  /** Label when >1 is ticked, e.g. "3 brands". Defaults to "n selected". */
+  summary?: (n: number) => string;
+  panelWidth?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const toggle = (v: string) =>
+    onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+  const labelFor = (v: string) => {
+    for (const g of groups) {
+      const hit = g.options.find((o) => o.value === v);
+      if (hit) return hit.label;
+    }
+    return v;
+  };
+  const label =
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? labelFor(selected[0])
+        : summary
+          ? summary(selected.length)
+          : `${selected.length} selected`;
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={title ?? placeholder}
+        className={cn(
+          "inline-flex h-8 max-w-[260px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          selected.length ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute left-0 top-9 z-30 max-h-[420px] overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-slab",
+            panelWidth,
+          )}
+        >
+          <div className="mb-1.5 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
+              {placeholder}
+            </span>
+            {/* Untick-all is ALWAYS shown (owner 2026-08-11) so the affordance is
+                visible even before anything is ticked — it just greys out and is
+                disabled while the list is empty, then activates (with a count)
+                once you tick something. */}
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              disabled={selected.length === 0}
+              className={cn(
+                "text-[10.5px] font-semibold",
+                selected.length === 0
+                  ? "cursor-default text-ink-muted/50"
+                  : "text-ink-secondary hover:text-err",
+              )}
+            >
+              {selected.length > 0 ? `Untick all (${selected.length})` : "Untick all"}
+            </button>
+          </div>
+          {groups.map((g, gi) => (
+            <div key={g.name ?? `g${gi}`} className="mb-1.5">
+              {g.name && (
+                <div className="px-1 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-ink-muted">
+                  {g.name}
+                </div>
+              )}
+              {g.options.map((o) => (
+                <label
+                  key={o.value}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] hover:bg-primary-soft/40"
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-accent"
+                    checked={selected.includes(o.value)}
+                    onChange={() => toggle(o.value)}
+                  />
+                  <span className="flex-1 truncate">{o.label}</span>
+                  {typeof o.count === "number" && (
+                    <span className="shrink-0 tabular-nums text-[11px] text-ink-muted">
+                      {o.count}
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-project task badges for the Status (section) filter (owner 2026-08-14).
+// Reads the backend section_tasks_map ("title=status=due" joined by "|") and
+// renders one pill per task in the chosen section: DONE (green), OVERDUE (red,
+// with days late) or PENDING (amber). Overdue first, then pending, then done.
+// Renders nothing unless a real section is picked (the map is absent otherwise),
+// so the default project list is unchanged.
+function SectionTaskBadges({ map }: { map?: string | null }) {
+  if (!map) return null;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+  const tasks = map
+    .split("|")
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split("=");
+      const title = parts[0] ?? "";
+      const status = parts[1] ?? "";
+      const due = parts[2] ?? "";
+      let kind: "done" | "overdue" | "pending";
+      let daysLate = 0;
+      if (status === "done") kind = "done";
+      else if (due && due < today) {
+        kind = "overdue";
+        daysLate = Math.max(1, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000));
+      } else kind = "pending";
+      return { title, kind, daysLate };
+    });
+  if (!tasks.length) return null;
+  const rank = { overdue: 0, pending: 1, done: 2 } as const;
+  tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || b.daysLate - a.daysLate);
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tasks.map((t, i) => (
+        <span
+          key={i}
+          title={t.title}
+          className={cn(
+            "inline-flex max-w-[170px] items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold",
+            t.kind === "done"
+              ? "border border-synced/40 bg-synced/15 text-synced"
+              : t.kind === "overdue"
+                ? "border border-err/40 bg-err/15 text-err"
+                : "border border-amber-500 bg-amber-100 text-amber-800",
+          )}
+        >
+          <span className="truncate">{t.title}</span>
+          {t.kind === "overdue" && <span className="shrink-0 font-mono">{t.daysLate}d</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function ProjectsListView() {
   const { can, user } = useAuth();
@@ -1042,7 +1324,24 @@ function ProjectsListView() {
   const year = params.get("year") || "";
   const month = params.get("month") || "";
   const section = params.get("section") || "";
+  const taskPending = params.get("task") || "";
+  // Multi-select (owner 2026-08-07): EVERY filter param is a comma-joined list
+  // now. csvParam keeps the URL⇄checkbox mapping in one place; a single value
+  // still round-trips unchanged, so old bookmarks keep working.
+  const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
+  const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
+  // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
+  // Ticked values per filter (owner 2026-08-07 multi-select). The raw comma
+  // strings above are what go on the wire; these arrays drive the checkboxes.
+  const sectionList = useMemo(() => csvParam(section), [section]);
+  const brandList = useMemo(() => csvParam(brand), [brand]);
+  const yearList = useMemo(() => csvParam(year), [year]);
+  const monthList = useMemo(() => csvParam(month), [month]);
+  const statusList = useMemo(() => csvParam(status), [status]);
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
   const phase = params.get("phase") || "";
@@ -1060,7 +1359,9 @@ function ProjectsListView() {
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
+  const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
+  const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
   const setPage = (n: number) => patchParams({ page: String(n) });
 
@@ -1133,7 +1434,7 @@ function ProjectsListView() {
   // Skip exclude_done when the user explicitly picked the Completed
   // section pill — otherwise the page would show zero rows.
   const excludeDoneParam =
-    hideCompleted && section !== "__done" ? 1 : undefined;
+    hideCompleted && !sectionList.includes("__done") ? 1 : undefined;
 
   const list = useQuery<Paginated<ProjectRow>>("/api/projects:",
     (signal) =>
@@ -1145,7 +1446,10 @@ function ProjectsListView() {
           brand: restrictedCohort ? undefined : brand || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
+          from: restrictedCohort ? undefined : from || undefined,
+          to: restrictedCohort ? undefined : to || undefined,
           section: restrictedCohort ? undefined : section || undefined,
+          task_pending: restrictedCohort ? undefined : taskPending || undefined,
           phase: restrictedCohort && phase ? phase : undefined,
           assigned_to_me: sendAssignedToMe ? 1 : undefined,
           exclude_done: restrictedCohort ? undefined : excludeDoneParam,
@@ -1162,7 +1466,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, section, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -1203,7 +1507,10 @@ function ProjectsListView() {
             brand: restrictedCohort ? undefined : brand || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
+            from: restrictedCohort ? undefined : from || undefined,
+            to: restrictedCohort ? undefined : to || undefined,
             section: restrictedCohort ? undefined : section || undefined,
+            task_pending: restrictedCohort ? undefined : taskPending || undefined,
             phase: restrictedCohort && phase ? phase : undefined,
             assigned_to_me: sendAssignedToMe ? 1 : undefined,
             exclude_done: restrictedCohort ? undefined : excludeDoneParam,
@@ -1220,6 +1527,28 @@ function ProjectsListView() {
         all.push(...batch);
         if (batch.length === 0 || all.length >= (res.total ?? all.length)) break;
       }
+      // Owner 2026-08-12: cluster same-event rows (same venue + start date)
+      // together so an event's different-brand projects sit side by side in the
+      // export instead of being scattered by the brand/date sort. Overall order
+      // is preserved — each event stays where its FIRST row appeared, and its
+      // other brands are pulled up next to it (stable within the event).
+      {
+        const eventKey = (r: ProjectRow) =>
+          `${(r.venue ?? "").trim().toUpperCase()}||${r.start_date ?? ""}`;
+        const origIdx = new Map<ProjectRow, number>();
+        all.forEach((r, i) => origIdx.set(r, i));
+        const firstSeen = new Map<string, number>();
+        for (const r of all) {
+          const k = eventKey(r);
+          if (!firstSeen.has(k)) firstSeen.set(k, origIdx.get(r)!);
+        }
+        all.sort((a, b) => {
+          const fa = firstSeen.get(eventKey(a))!;
+          const fb = firstSeen.get(eventKey(b))!;
+          if (fa !== fb) return fa - fb;
+          return origIdx.get(a)! - origIdx.get(b)!;
+        });
+      }
       const csvCols = columns
         .filter((c) => typeof c.getValue === "function")
         .map((c) => ({ key: c.key, label: c.label || c.key, getValue: c.getValue! }));
@@ -1229,6 +1558,28 @@ function ProjectsListView() {
       const brandIdx = csvCols.findIndex((c) => c.label === "Brand");
       if (brandIdx >= 0) csvCols.splice(brandIdx + 1, 0, orgCol);
       else csvCols.push(orgCol);
+      // Outstanding-task columns (owner 2026-08-05; multi 2026-08-07: "once
+      // export will export what already tick only"). ONE column per TICKED
+      // task — nothing else is added — so the sheet shows exactly the ticked
+      // tasks and Excel can be filtered per column. Values come from the
+      // row's task_pending_map ("title=status" pairs joined by "|").
+      if (taskPendingList.length) {
+        const statusOf = (r: ProjectRow, title: string): string => {
+          const map = String((r as any).task_pending_map ?? "");
+          for (const pair of map.split("|")) {
+            const i = pair.lastIndexOf("=");
+            if (i > 0 && pair.slice(0, i) === title) return pair.slice(i + 1);
+          }
+          return "not on this event";
+        };
+        for (const title of taskPendingList) {
+          csvCols.push({
+            key: `task:${title}`,
+            label: title,
+            getValue: (r: ProjectRow) => statusOf(r, title),
+          });
+        }
+      }
       if (!csvCols.length || all.length === 0) {
         toast.error(all.length === 0 ? "No projects match the current filter." : "Nothing to export.");
         return;
@@ -1261,6 +1612,21 @@ function ProjectsListView() {
   const sectionsList = useQuery<{ data: string[] }>("/api/projects/sections-distinct", () =>
     api.get("/api/projects/sections-distinct")
   );
+  // Canonical task titles (+ their section) for the outstanding-task filter.
+  const taskTitles = useQuery<{ data: { title: string; section: string | null }[] }>(
+    "/api/projects/task-titles-distinct",
+    () => api.get("/api/projects/task-titles-distinct"),
+  );
+  // Task COUNT per checklist section — shown beside each section in the Status
+  // filter (owner 2026-08-14: "section titles only with task counts").
+  const sectionCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const t of taskTitles.data?.data ?? []) {
+      const s = t.section ?? "Other";
+      c[s] = (c[s] ?? 0) + 1;
+    }
+    return c;
+  }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
     {
@@ -1298,6 +1664,7 @@ function ProjectsListView() {
               )}
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
+            <SectionTaskBadges map={r.section_tasks_map} />
           </div>
         );
       },
@@ -1415,7 +1782,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1593,7 +1960,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -1681,78 +2048,86 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Tasklist-section filter pills — replaces the old draft /
-            setup / dismantle / completed stage filter. Sections are
-            pulled live so any custom workflow shows up here too. */}
-        <FilterPills
-          value={section}
-          onChange={(v) => setSection(v)}
-          options={[
-            { value: "", label: "All" },
-            ...(sectionsList.data?.data ?? []).map((s) => ({
-              value: s,
-              label: s,
-            })),
-            { value: "__done", label: "Completed" },
+        {/* Status filter (owner 2026-08-14: "all section word change to status,
+            remove current status dropdown"). One section-level dropdown; each
+            option carries how many tasks that section holds. The old task-title
+            "Status" dropdown that used to sit beside it is gone. */}
+        <MultiSelectFilter
+          placeholder="Status"
+          title="Filter by tasklist section"
+          summary={(n) => `${n} sections`}
+          selected={sectionList}
+          onChange={(next) => setSection(next.join(","))}
+          groups={[
+            {
+              name: null,
+              options: [
+                ...(sectionsList.data?.data ?? []).map((s) => ({
+                  value: s,
+                  label: s,
+                  count: sectionCounts[s],
+                })),
+                { value: "__done", label: "Completed" },
+              ],
+            },
           ]}
         />
-        <select
-          value={brand}
-          onChange={(e) => setBrand(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All brands</option>
-          {(brands.data?.data ?? []).map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
-        <select
-          value={year}
-          onChange={(e) => setYear(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All years</option>
-          {(() => {
-            const y = new Date().getFullYear();
-            const years: number[] = [];
-            for (let i = y + 1; i >= y - 4; i--) years.push(i);
-            return years.map((yy) => (
-              <option key={yy} value={yy}>
-                {yy}
-              </option>
-            ));
-          })()}
-        </select>
-        <select
-          value={month}
-          onChange={(e) => setMonth(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All months</option>
-          {[
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
-          ].map((label, i) => (
-            <option key={label} value={i + 1}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
+        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
+            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
+            actually filtered by tasks-not-yet-completed, so the owner saw two
+            'status' controls on the toolbar (this + the real "All statuses"
+            one right below) and asked to drop this. Kept the setTaskPending
+            state wiring untouched so a link with ?task_pending=... still works
+            and a future re-introduction under a clearer label is one line away. */}
+        <MultiSelectFilter
+          placeholder="All brands"
+          summary={(n) => `${n} brands`}
+          selected={brandList}
+          onChange={(next) => setBrand(next.join(","))}
+          groups={[
+            { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
+          ]}
+        />
+        <DateRangeFilter from={from} to={to} onChange={setDateRange} />
+        <MultiSelectFilter
+          placeholder="All statuses"
           title="Filter by project status"
-        >
-          <option value="">All statuses</option>
-          {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          summary={(n) => `${n} statuses`}
+          panelWidth="w-[200px]"
+          selected={statusList}
+          onChange={(next) => setStatus(next.join(","))}
+          groups={[
+            { name: null, options: STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })) },
+          ]}
+        />
+        {/* Clear-all (owner 2026-08-10): one click unticks EVERY filter dropdown
+            — section, status/tasks, brand, year, month, project status. Each
+            dropdown keeps its own in-panel "Clear (n)"; this resets them all
+            together so the owner doesn't have to open each one. Shown only when
+            at least one dropdown is active. Search + My-pending are left alone. */}
+        {(section || taskPending || brand || from || to || status) && (
+          <button
+            type="button"
+            onClick={() =>
+              patchParams({
+                section: "",
+                task: "",
+                brand: "",
+                year: "",
+                month: "",
+                from: "",
+                to: "",
+                status: "",
+                page: "1",
+              })
+            }
+            title="Clear every filter"
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
+          >
+            <X size={13} />
+            Clear all
+          </button>
+        )}
         <label
           className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-ink-secondary"
           title="Show only projects with a task pending on your side (your role)"
@@ -1777,8 +2152,8 @@ function ProjectsListView() {
               setHideCompleted(e.target.checked);
             }}
             className="accent-accent"
-            disabled={section === "__done"}
-            title={section === "__done" ? "Disabled while the Completed section pill is active" : undefined}
+            disabled={sectionList.includes("__done")}
+            title={sectionList.includes("__done") ? "Disabled while the Completed section filter is ticked" : undefined}
           />
           Hide completed
         </label>
@@ -1939,10 +2314,10 @@ function ProjectsListView() {
             totalRecords: list.data?.total,
           }}
           resetFilters={{
-            active: !!(search || brand || year || month || section || status),
+            active: !!(search || brand || year || month || section || taskPending || status),
             onReset: () => {
               const next = new URLSearchParams(params);
-              ["search", "brand", "year", "month", "section", "status", "page"].forEach((k) =>
+              ["search", "brand", "year", "month", "section", "task", "status", "page"].forEach((k) =>
                 next.delete(k)
               );
               setParams(next, { replace: true });
@@ -2615,7 +2990,7 @@ function FinanceListView() {
     },
     {
       key: "sales_per_day",
-      label: "Sales / day",
+      label: "Revenue / day",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -2674,7 +3049,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -2778,7 +3153,7 @@ function FinanceListView() {
     },
     {
       key: "income",
-      label: "Income (all)",
+      label: "Revenue (all)",
       align: "right",
       defaultHidden: true,
       render: (r) => (
@@ -3046,9 +3421,12 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
-  // An event that has not started only carries booked rental, so counting it
-  // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "completed";
+  // Owner decision 2026-08-11: default to the full picture. "completed" was
+  // the original default (an unstarted event carries only booked rental, which
+  // reads as a loss that has not happened), but half the year's sales sat on
+  // events staff never marked completed, so the completed-only view kept
+  // understating revenue by ~50% and reading as "the numbers are wrong".
+  const scope = params.get("af_scope") ?? "all";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".
@@ -4021,6 +4399,7 @@ export function buildProjectsCalendarModel({
   brand,
   status,
   organizer,
+  q = "",
   showTasks,
   expandAll,
 }: {
@@ -4033,6 +4412,10 @@ export function buildProjectsCalendarModel({
   brand: string;
   status: string;
   organizer: string;
+  /** Free-text search — matches venue/organizer/brand/project code/name/event
+   *  type. Empty string = no filter. Defaults to "" so callers pre-dating the
+   *  search box (tests) still pass. */
+  q?: string;
   showTasks: boolean;
   expandAll: boolean;
 }) {
@@ -4041,10 +4424,31 @@ export function buildProjectsCalendarModel({
   const matchesStatus = (project: CalendarProject): boolean =>
     !status || (project.status || "").toLowerCase() === status;
 
+  // Free-text search — case-insensitive, matches ANY of the visible/label
+  // fields so someone typing "mid valley" finds every event with that venue
+  // regardless of casing. Owner 2026-07-20.
+  const needle = q.trim().toLowerCase();
+  const matchesQuery = (project: CalendarProject): boolean => {
+    if (!needle) return true;
+    const hay = [
+      project.code,
+      project.name,
+      project.venue ?? "",
+      project.organizer ?? "",
+      project.brand ?? "",
+      project.state ?? "",
+      project.event_type_name ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(needle);
+  };
+
   const projects = allProjects.filter((project) => {
     if (brand && project.brand !== brand) return false;
     if (!matchesStatus(project)) return false;
     if (organizer && (project.organizer || "") !== organizer) return false;
+    if (!matchesQuery(project)) return false;
     return true;
   });
   const projectById = new Map(projects.map((project) => [project.id, project] as const));
@@ -4052,6 +4456,9 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
+        // With a search: only render tasks whose parent project passed the
+        // filter — keeps the view consistent (task chips beside their bar).
+        if (needle && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })
     : [];
@@ -4181,6 +4588,12 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
+  // 2026-07-20 — free-text search (matches venue / organizer / brand /
+  // project code / event title). Owner: "where is search button on calender?".
+  "q",
+  // Also removed the 'Tasks' toggle button from the toolbar the same day
+  // — the personal pref key `projects:cal:showTasks` in localStorage is
+  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -4219,6 +4632,10 @@ function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
+  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
+  // collision with the useQuery result later in this component that already
+  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
+  const search = params.get("q") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
   function patchParams(patch: Record<string, string>) {
@@ -4232,6 +4649,7 @@ function ProjectsCalendarView() {
   const setBrand = (v: string) => patchParams({ brand: v });
   const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
+  const setSearch = (v: string) => patchParams({ q: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
   // on the legend, not data filters), so they stay in localStorage per
@@ -4439,6 +4857,7 @@ function ProjectsCalendarView() {
         brand,
         status,
         organizer,
+        q: search,
         showTasks,
         expandAll,
       }),
@@ -4452,6 +4871,7 @@ function ProjectsCalendarView() {
       brand,
       status,
       organizer,
+      search,
       showTasks,
       expandAll,
     ],
@@ -4593,6 +5013,31 @@ function ProjectsCalendarView() {
 
         {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Owner 2026-07-20 — "where is search button on calender?".
+              Free-text search across venue / organizer / brand / project code
+              / event title. Live-filters both the bars and any task chips
+              beside them. URL-persisted (?q=) so a Ctrl+F5 keeps the search. */}
+          <label className="relative inline-flex h-8 items-center">
+            <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search venue, organizer, brand…"
+              className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
+              title="Search events on the calendar"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
+                title="Clear search"
+              >
+                <X size={11} />
+              </button>
+            )}
+          </label>
           <select
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
@@ -4657,18 +5102,10 @@ function ProjectsCalendarView() {
               );
             }}
           />
-          <button
-            onClick={() => setShowTasks(!showTasks)}
-            className={cn(
-              "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              showTasks
-                ? "border-primary/40 bg-primary-soft text-primary-ink"
-                : "border-border bg-surface text-ink-muted hover:text-ink"
-            )}
-            title="Toggle task chips"
-          >
-            {showTasks ? <Check size={12} /> : <Circle size={12} />} Tasks
-          </button>
+          {/* Tasks toggle button removed 2026-07-20 per owner request
+              ("remove button task"). Task chips still render when the
+              projects:cal:showTasks localStorage pref is true (default false);
+              a one-line re-add of this <button> restores the toggle if needed. */}
           <button
             onClick={() => setShowHolidays(!showHolidays)}
             className={cn(
@@ -5804,6 +6241,15 @@ function ProjectDetailContent({
 }) {
   const { can, user } = useAuth();
   const dialog = useDialog();
+  /* Declared above the loading / error early returns so the hook count is
+     stable; the Print preview it drives renders down in the header row. */
+  const projectPrint = usePrintPreview(async () => {
+    try {
+      await api.openHtml(`/api/projects-print/${id}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to open print view");
+    }
+  });
   const detail = useQuery<ProjectDetail>("/api/projects/:", () => api.get(`/api/projects/${id}`), [id]);
   // Users list — fetched once per open panel, reused for owner pickers
   // in the logistics section, checklist add form, and reassign dropdowns.
@@ -5817,7 +6263,24 @@ function ProjectDetailContent({
   const defectActionsValue = useMemo(
     () => ({
       actions: (((detail.data as any)?.checklist_attachment_actions ?? []) as AttachmentAction[]),
-      canAct:
+      // Two-stage defect triage (owner 2026-08-07):
+      //  - canReview  = the defect reviewer for THIS project's state (owner
+      //    2026-08-11 two-warehouse split): Nancy (Ops Exec role) for the region
+      //    states, Shukor (Storekeeper Supervisor) for every other state; admin
+      //    always. Triages a fresh defect: Done (cleaned) or Replace (escalate).
+      //  - canPurchase = purchaser (Sim / Farra) / BD or admin — closes an
+      //    escalated (Replace) defect with Done once the replacement is ordered.
+      canReview: (() => {
+        if (!user) return false;
+        const perms = user.permissions ?? [];
+        if (perms.includes("*") || perms.includes("projects.manage")) return true;
+        const region = new Set(["pulau pinang", "kelantan", "terengganu", "perak"]);
+        const inRegion = region.has(((detail.data as any)?.project?.state ?? "").trim().toLowerCase());
+        const isShukor = /^storekeeper supervisor$/i.test((user.position_name ?? "").trim());
+        const isNancy = /^ops exec$/i.test((user.role_name ?? "").trim());
+        return (isShukor && !inRegion) || (isNancy && inRegion);
+      })(),
+      canPurchase:
         !!user &&
         (user.permissions?.includes("*") ||
           user.permissions?.includes("projects.manage") ||
@@ -6000,18 +6463,24 @@ function ProjectDetailContent({
                 </>
               )}
             </div>
-            <HeaderButton
-              variant="ghost"
-              onClick={async () => {
-                try {
-                  await api.openHtml(`/api/projects-print/${id}`);
-                } catch (e: any) {
-                  toast.error(e?.message || "Failed to open print view");
-                }
-              }}
-            >
+            <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
+            {/* Same Print preview the rest of the app opens. A project prints
+                from a SERVER-rendered HTML view, so there is no PDF file to
+                download here — Print hands over to that view. */}
+            <PrintPreviewModal
+              open={projectPrint.open}
+              onClose={projectPrint.close}
+              docTitle="Project"
+              docNo={p.code ?? String(id)}
+              rows={[
+                { label: "Project", value: p.name || "—" },
+                { label: "Status", value: p.status || "—" },
+                { value: "Print now opens the print view in a new tab." },
+              ]}
+              onPrint={projectPrint.handlers.onPrint}
+            />
             {!p.archived_at && (
               <ProjectStatusSelect
                 value={p.status}
@@ -6608,7 +7077,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -6887,7 +7356,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -7119,7 +7588,8 @@ interface AttachmentAction {
 }
 const DefectActionsCtx = createContext<{
   actions: AttachmentAction[];
-  canAct: boolean;
+  canReview: boolean;
+  canPurchase: boolean;
   reload: () => void;
 } | null>(null);
 
@@ -7150,7 +7620,16 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  const [actionDraft, setActionDraft] = useState<null | "ongoing" | "done">(null);
+  // Latest timeline entry drives the two-stage state machine: no action (or a
+  // legacy 'ongoing') = fresh, awaiting the Storekeeper Supervisor's triage;
+  // 'replace' = escalated to the purchaser; 'done' = resolved (no buttons).
+  const latestAction = fileActions.length
+    ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
+    : null;
+  const isFreshDefect =
+    !latestAction || (latestAction.status !== "done" && latestAction.status !== "replace");
+  const isEscalatedDefect = latestAction?.status === "replace";
+  const [actionDraft, setActionDraft] = useState<null | "done" | "replace">(null);
   const [actionRemark, setActionRemark] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   async function saveAction() {
@@ -7171,6 +7650,12 @@ function TaskAttachmentRow({
     }
   }
   const isImage = (attachment.content_type ?? "").startsWith("image/");
+  // Owner 2026-07-20: PDFs get an inline first-page preview too, using the
+  // browser's built-in PDF viewer via <embed>. No pdfjs dep needed and no
+  // bundle weight; every modern browser + iOS/Android WebView renders it.
+  const isPdf =
+    (attachment.content_type ?? "").includes("pdf") ||
+    attachment.file_name.toLowerCase().endsWith(".pdf");
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // Per-photo remark (owner 2026-07-16): each attachment carries its own caption.
@@ -7192,12 +7677,18 @@ function TaskAttachmentRow({
     }
   }
 
+  // Fetch a blob URL for anything we can preview inline (images AND PDFs) so
+  // the same effect handles cleanup + revocation on unmount for both.
+  const wantsInlinePreview = isImage || isPdf;
   useEffect(() => {
-    if (!isImage) return;
+    if (!wantsInlinePreview) return;
     let cancelled = false;
     let revoke: string | null = null;
     api
-      .fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`)
+      .fetchBlobUrl(
+        `/api/projects/attachments/${attachment.r2_key}`,
+        isPdf ? "application/pdf" : undefined,
+      )
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url);
@@ -7213,7 +7704,7 @@ function TaskAttachmentRow({
       cancelled = true;
       if (revoke) URL.revokeObjectURL(revoke);
     };
-  }, [attachment.r2_key, isImage]);
+  }, [attachment.r2_key, wantsInlinePreview, isPdf]);
 
   async function download() {
     try {
@@ -7259,6 +7750,29 @@ function TaskAttachmentRow({
               draggable={false}
             />
           </button>
+        ) : isPdf && thumbUrl ? (
+          // Native browser PDF viewer — shows page 1 inline. Wrapped in a
+          // click-through overlay so the PDF's own scrollbars don't swallow
+          // the click; the label + click always opens the full doc in a tab.
+          <div
+            className="relative block max-w-full overflow-hidden rounded border border-border bg-surface"
+            title="Click to open the full document"
+          >
+            <embed
+              src={`${thumbUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+              type="application/pdf"
+              className="pointer-events-none block h-44 w-full"
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); viewInTab(); }}
+              className="absolute inset-0 flex cursor-zoom-in items-end justify-end bg-transparent p-1.5 text-[9px] font-semibold text-ink-muted opacity-0 transition hover:bg-black/5 hover:opacity-100"
+            >
+              <span className="rounded bg-surface/95 px-1.5 py-0.5 shadow-sm">
+                Open PDF
+              </span>
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -7313,25 +7827,42 @@ function TaskAttachmentRow({
             </div>
           )
         )}
-        {/* Defect action timeline — buttons for the purchaser/BD, the stacked
-            history for everyone. Both buttons stay clickable forever; each
-            save APPENDS an entry (owner 2026-07-29). */}
+        {/* Defect action timeline (two-stage, owner 2026-08-07): a FRESH defect
+            shows Done + Replace to the Storekeeper Supervisor (Shukor); once he
+            escalates with Replace it shows Done to the purchaser (Sim / Farra).
+            A resolved (Done) file shows only the stacked history, for everyone. */}
         {isDefectFile && defectCtx && (
           <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-            {defectCtx.canAct && (
+            {isFreshDefect && defectCtx.canReview && (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => { setActionDraft("ongoing"); }}
+                  onClick={() => { setActionDraft("done"); }}
                   className={cn(
                     "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
-                    actionDraft === "ongoing"
-                      ? "border-amber-500 bg-amber-100 text-amber-700"
-                      : "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50",
+                    actionDraft === "done"
+                      ? "border-green-600 bg-green-100 text-green-700"
+                      : "border-green-300 bg-surface text-green-600 hover:bg-green-50",
                   )}
                 >
-                  Ongoing
+                  Done
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setActionDraft("replace"); }}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 text-[10px] font-bold",
+                    actionDraft === "replace"
+                      ? "border-rose-600 bg-rose-100 text-rose-700"
+                      : "border-rose-300 bg-surface text-rose-600 hover:bg-rose-50",
+                  )}
+                >
+                  Replace
+                </button>
+              </div>
+            )}
+            {isEscalatedDefect && defectCtx.canPurchase && (
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => { setActionDraft("done"); }}
@@ -7384,7 +7915,11 @@ function TaskAttachmentRow({
                       <span
                         className={cn(
                           "h-1.5 w-1.5 shrink-0 rounded-full",
-                          a.status === "done" ? "bg-green-600" : "bg-amber-500",
+                          a.status === "done"
+                            ? "bg-green-600"
+                            : a.status === "replace"
+                              ? "bg-rose-600"
+                              : "bg-amber-500",
                         )}
                       />
                       <span
@@ -7392,10 +7927,16 @@ function TaskAttachmentRow({
                           "rounded px-1.5 py-0.5 font-bold",
                           a.status === "done"
                             ? "bg-green-100 text-green-700"
-                            : "bg-amber-100 text-amber-700",
+                            : a.status === "replace"
+                              ? "bg-rose-100 text-rose-700"
+                              : "bg-amber-100 text-amber-700",
                         )}
                       >
-                        {a.status === "done" ? "Done" : "Ongoing"}
+                        {a.status === "done"
+                          ? "Done"
+                          : a.status === "replace"
+                            ? "Replace"
+                            : "Ongoing"}
                       </span>
                       <span className="text-ink-muted">
                         {a.user_name || "—"} · {formatDateTime(a.created_at)}
@@ -8325,6 +8866,15 @@ function DocumentTable({
   onReload: () => void;
   toast?: ReturnType<typeof useToast>;
 }) {
+  const { user } = useAuth();
+  // Owner 2026-08-10: "kris can upload fill in floorplan". A view-only Sales
+  // Director has no projects.write, so canManage is false and the Attach button
+  // was hidden — for this ONE document they get it. Backend enforces the same
+  // narrow rule (salesDirectorMayAttach), this is just the affordance.
+  const isSalesDirectorPos =
+    (user?.position_name ?? "").trim().toLowerCase() === "sales director";
+  const mayAttach = (it: ChecklistItem) =>
+    canManage || (isSalesDirectorPos && /^filled floor\s*plan/i.test((it.title || "").trim()));
   return (
     <div className="p-2 sm:overflow-x-auto">
       <table className="w-full text-[11px]">
@@ -8345,7 +8895,7 @@ function DocumentTable({
               item={it}
               comments={comments.filter((c) => c.item_id === it.id)}
               attachments={attachmentsByItem.get(it.id) ?? []}
-              canManage={canManage}
+              canManage={mayAttach(it)}
               canApprove={canApproveFor(it)}
               onStatus={onStatus}
               onReview={onReview}
@@ -8404,6 +8954,39 @@ function DocRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const reviewable = REVIEWABLE_TITLES.has(item.title);
   const latest = attachments[0];
+  // Per-file decision status (owner 2026-08-10, Part 2): tie each uploaded
+  // VERSION to the approve/reject decision made while it was the newest file, so
+  // the FILES list shows "Approved/Rejected · who · when" per version and greys a
+  // rejected one — instead of only the item-level trail. No schema change:
+  // uploaded_at and comment.created_at are both ISO-Z, so a plain lexical compare
+  // is correct. A decision in [thisUpload, nextUpload) belongs to this version;
+  // the current newest file with no later decision stays unlabelled (still
+  // pending). Batch uploads take the last decision inside their window. Merged
+  // crew photos (id < 0) are excluded — they're not review versions.
+  const versionStatus = useMemo(() => {
+    const decisions = comments
+      .filter((c) => c.kind === "approve" || c.kind === "reject")
+      .slice()
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    const asc = attachments
+      .filter((a) => a.id > 0)
+      .sort((a, b) => ((a.uploaded_at || "") < (b.uploaded_at || "") ? -1 : 1));
+    const m = new Map<number, { kind: "approve" | "reject"; who: string; at: string }>();
+    asc.forEach((att, i) => {
+      const ta = att.uploaded_at || "";
+      const tnext = i + 1 < asc.length ? asc[i + 1].uploaded_at || "" : "￿";
+      const d = decisions
+        .filter((dec) => dec.created_at >= ta && dec.created_at < tnext)
+        .pop();
+      if (d)
+        m.set(att.id, {
+          kind: d.kind as "approve" | "reject",
+          who: d.user_name || "—",
+          at: d.created_at,
+        });
+    });
+    return m;
+  }, [comments, attachments]);
   const rs = item.review_status;
   const awaiting = rs === "pending_review" || rs === "amended";
   const naActive = item.status === "na";
@@ -8490,7 +9073,11 @@ function DocRow({
             // approve/reject *decision trail* stays in the Approval
             // column; the remark text itself belongs here.
             const remarkComments = comments
-              .filter((c) => c.kind !== "submit" && c.body)
+              // Remarks column shows human-typed notes only. Excludes:
+              // - 'submit' (empty ping, always body=null anyway)
+              // - 'upload' / 'remove' (system audit lines, filename is the body
+              //   but belongs in the History column, not Remarks — owner 2026-07-20).
+              .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
               .slice()
               .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
             if (!item.notes && remarkComments.length === 0)
@@ -8537,46 +9124,81 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): the approve/reject
-                  record. 'submit' entries are hidden as noise. */}
+              {/* Chronological history (oldest → newest): every action on this
+                  task — uploads, removes, approves, rejects. 'submit' entries
+                  (the internal "hey reviewer, this is ready" ping) are hidden
+                  as noise; the upload comment right next to it says the same
+                  thing with better context (the filename). Owner 2026-07-20:
+                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
+                  Sim · 06/08 10:33" removes the confusion about why the
+                  Approve button reappeared after a re-upload. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
                     .filter((c) => c.kind !== "submit")
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-                    .map((c) => (
-                      <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
-                        <span className={cn("font-semibold", commentKindColor(c.kind))}>
-                          {commentKindLabel(c.kind)}
-                        </span>{" "}
-                        · {c.user_name || "—"} · {formatDateTime(c.created_at)}
-                      </div>
-                    ))}
+                    .map((c) => {
+                      // Upload/remove comments carry the filename in `body`;
+                      // approve/reject leave body null (the decision itself is
+                      // the whole story).
+                      const showFile = (c.kind === "upload" || c.kind === "remove") && c.body;
+                      return (
+                        <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                          <span className={cn("font-semibold", commentKindColor(c.kind))}>
+                            {commentKindLabel(c.kind)}
+                          </span>
+                          {showFile && (
+                            <>
+                              {" "}
+                              <span className="max-w-[220px] truncate align-baseline text-ink">
+                                {c.body}
+                              </span>
+                            </>
+                          )}
+                          {" · "}
+                          {c.user_name || "—"} · {formatDateTime(c.created_at)}
+                        </div>
+                      );
+                    })}
                 </div>
               )}
-              {/* Approve/Reject visibility. A gated document (required_perm)
-                  offers the buttons to a permission holder whenever it still
-                  needs the decision (owner 2026-07-21); non-gated docs keep the
-                  submit-then-review flow. BUT only once a file is uploaded
-                  (owner 2026-07-27): there is nothing to approve before the
-                  document exists, so an empty row must not show the buttons. */}
-              {attachments.length > 0 && (item.required_perm
-                ? canApprove && rs !== "approved" && item.status !== "done"
-                : awaiting && canApprove) ? (
+              {/* Approve/Reject visibility. The control appears once a file is
+                  uploaded (owner 2026-07-27 — nothing to decide before that) AND
+                  the caller can approve: a gated document (required_perm) offers
+                  it to a permission holder at any time so a decision can be
+                  revisited (owner 2026-07-21/07-31); non-gated docs keep the
+                  submit-then-review flow (only while a submission awaits review).
+                  WHICH of the two buttons shows is the per-decision toggle just
+                  below (owner 2026-08-10). */}
+              {attachments.length > 0 && canApprove && (item.required_perm || awaiting) ? (
                 <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    onClick={() => onReview(item, "approve", {})}
-                    className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => setRejectOpen((x) => !x)}
-                    className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
-                  >
-                    Reject…
-                  </button>
+                  {/* Toggle (owner 2026-08-10): show only the button that
+                      REVERSES the current decision. On upload (no decision) both
+                      show; once Approved the Approve button is HIDDEN and Reject
+                      stays (so an issue found later can still reject it); once
+                      Rejected the Reject button is HIDDEN and Approve stays (so
+                      it can be approved once fixed). Hiding Approve after an
+                      approval also closes the old double-approve bug (owner
+                      2026-08-08) for free. The decision itself stays visible as
+                      the "Approved/Rejected · name · date" trail in this column. */}
+                  {rs !== "approved" && (
+                    <button
+                      onClick={() => onReview(item, "approve", {})}
+                      title="Approve this document"
+                      className="rounded-md bg-synced/90 px-2 py-0.5 text-[9.5px] font-semibold text-white hover:bg-synced"
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {rs !== "rejected" && (
+                    <button
+                      onClick={() => setRejectOpen((x) => !x)}
+                      className="rounded-md border border-err/40 bg-surface px-2 py-0.5 text-[9.5px] font-semibold text-err hover:bg-err/5"
+                    >
+                      Reject…
+                    </button>
+                  )}
                 </div>
               ) : (
                 comments.filter((c) => c.kind !== "submit").length === 0 && (
@@ -8606,22 +9228,24 @@ function DocRow({
                 disabled={uploading}
                 title="Attach file"
                 aria-label="Attach file"
-                className="rounded-md border border-border bg-surface inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"
+                className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               >
-                {uploading ? "…" : <Paperclip size={13} />}
+                <Paperclip size={12} />
+                {uploading ? "…" : "Attach"}
               </button>
             )}
             {canManage && (
               <button
                 onClick={() => setRemarkOpen((x) => !x)}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   remarkNotes.length > 0
                     ? "border-accent/40 bg-accent/5 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
                 title="Add a remark"
               >
+                <MessageSquare size={12} />
                 {remarkNotes.length > 0 ? `Remark (${remarkNotes.length})` : "Remark"}
               </button>
             )}
@@ -8629,12 +9253,14 @@ function DocRow({
               <button
                 onClick={() => onStatus(item, naActive ? "pending" : "na")}
                 className={cn(
-                  "rounded-md border inline-flex items-center justify-center min-w-[42px] whitespace-nowrap px-2 py-1 text-[8.5px] font-semibold",
+                  ACTION_BTN_BASE,
                   naActive
                     ? "border-accent bg-accent/10 text-accent"
                     : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
                 )}
+                title={naActive ? "Mark applicable" : "Mark N/A"}
               >
+                <Ban size={12} />
                 N/A
               </button>
             )}
@@ -8723,18 +9349,36 @@ function DocRow({
         <tr>
           <td colSpan={6} className="px-3 pb-2">
             <div className="overflow-hidden rounded-md border border-border-subtle">
-              {attachments.map((a) => (
-                <TaskAttachmentRow
-                  key={a.id}
-                  attachment={a}
-                  /* id < 0 = merged crew phase photo — view/download only. */
-                  canManage={canManage && a.id > 0}
-                  showRemark={remarkOpen}
-                  itemTitle={item.title}
-                  onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
-                  toast={toast}
-                />
-              ))}
+              {attachments.map((a) => {
+                // Part 2 (owner 2026-08-10): a rejected version stays in the list,
+                // greyed, tagged with who rejected it and when; an approved one is
+                // tagged in green. Undecided current file: no tag.
+                const vs = versionStatus.get(a.id);
+                return (
+                  <div key={a.id} className={vs?.kind === "reject" ? "opacity-60" : undefined}>
+                    <TaskAttachmentRow
+                      attachment={a}
+                      /* id < 0 = merged crew phase photo — view/download only. */
+                      canManage={canManage && a.id > 0}
+                      showRemark={remarkOpen}
+                      itemTitle={item.title}
+                      onDelete={() => { if (a.id > 0) removeAtt(a.id); }}
+                      toast={toast}
+                    />
+                    {vs && (
+                      <div
+                        className={cn(
+                          "px-2 pb-1.5 text-[9px] font-semibold",
+                          vs.kind === "approve" ? "text-synced" : "text-err",
+                        )}
+                      >
+                        {vs.kind === "approve" ? "Approved" : "Rejected"} · {vs.who} ·{" "}
+                        {formatDateTime(vs.at)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </td>
         </tr>
@@ -9035,6 +9679,27 @@ function ChecklistRow({
     fileInputRef.current?.click();
   }
 
+  // Remove a file from a card-section task (owner 2026-08-11: "add remove button
+  // for whoever can edit"). Gated in the UI on the SAME attach capability
+  // (canManage) as the Attach button, so anyone who can add a file can remove it;
+  // the backend DELETE already allows projects.write / tick-for-own-role.
+  async function removeAttachment(att: TaskAttachment) {
+    if (
+      !(await dialog.confirm({
+        message: `Remove "${att.file_name}"?`,
+        danger: true,
+        confirmLabel: "Remove",
+      }))
+    )
+      return;
+    try {
+      await api.del(`/api/projects/checklist/attachments/${att.id}`);
+      onAttachmentsChanged?.();
+    } catch (e: any) {
+      toast?.error(e?.message || "Something went wrong. Please try again.");
+    }
+  }
+
   /** Open one attachment in a new tab (auth-protected R2 goes through
    *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
    *  Used by the per-file chips on pill rows (Rental Payment / Security
@@ -9082,12 +9747,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }
@@ -9219,18 +9884,32 @@ function ChecklistRow({
         {attachments && attachments.length > 0 && (
           <div className="mt-1.5 flex flex-col gap-0.5">
             {attachments.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
-                title={`Open ${a.file_name}`}
-                className="flex items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
-              >
-                <Paperclip size={11} className="shrink-0" />
-                <span className="truncate underline decoration-dotted underline-offset-2">
-                  {a.file_name}
-                </span>
-              </button>
+              <div key={a.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void openAttachment(a); }}
+                  title={`Open ${a.file_name}`}
+                  className="flex min-w-0 items-center gap-1 text-left text-[10px] text-ink-muted hover:text-accent"
+                >
+                  <Paperclip size={11} className="shrink-0" />
+                  <span className="truncate underline decoration-dotted underline-offset-2">
+                    {a.file_name}
+                  </span>
+                </button>
+                {/* Remove file — shown to whoever can attach here (owner
+                    2026-08-11). id < 0 = merged crew photo, never removable. */}
+                {canManage && !readOnlyAttach && a.id > 0 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void removeAttachment(a); }}
+                    title="Remove file"
+                    aria-label={`Remove ${a.file_name}`}
+                    className="shrink-0 text-ink-muted hover:text-err"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -9387,44 +10066,50 @@ function ChecklistRow({
               if (f) uploadAttachment(f, cap);
             }}
           />
+          {/* Attach / Remark / N/A — BOXED style (owner 2026-08-11):
+              "one consistent button style for this action group across the
+              entire desktop PMS". These were an icon-stack (icon over label, no
+              border) while the table sections (Contract, Booth Layout & Setup)
+              used a bordered box, so the same three actions looked like two
+              different controls depending on the section. Now every section
+              uses the DocRow treatment: icon + label inside one bordered pill,
+              accent-filled when active. */}
           {canManage && !readOnlyAttach && (
             <button
               onClick={() => void startAttach()}
               disabled={uploading}
-              className="inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 text-ink-muted hover:text-accent disabled:opacity-50"
+              className={ACTION_BTN_BASE + " border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent disabled:opacity-50"}
               title="Attach file"
             >
-              <Paperclip size={13} />
-              <span className="text-[9px] font-semibold tracking-wide leading-none">
-                {uploading ? "…" : "Attach"}
-              </span>
+              <Paperclip size={12} />
+              {uploading ? "…" : "Attach"}
             </button>
           )}
           <button
             onClick={() => setExpanded((x) => !x)}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:text-accent",
-              expanded ? "text-accent" : "text-ink-muted"
+              ACTION_BTN_BASE,
+              expanded
+                ? "border-accent/40 bg-accent/5 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title="Remark"
           >
-            <MessageSquare size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">
-              Remark
-            </span>
+            <MessageSquare size={12} />
+            Remark
           </button>
           <button
             onClick={() => onStatus(item.status === "na" ? "pending" : "na")}
             className={cn(
-              "inline-flex flex-col items-center gap-0.5 rounded px-1.5 py-1 hover:bg-surface-dim",
+              ACTION_BTN_BASE,
               item.status === "na"
-                ? "text-accent"
-                : "text-ink-muted hover:text-accent"
+                ? "border-accent bg-accent/10 text-accent"
+                : "border-border bg-surface text-ink-muted hover:border-accent/40 hover:text-accent"
             )}
             title={item.status === "na" ? "Mark applicable" : "Mark N/A"}
           >
-            <Ban size={13} />
-            <span className="text-[9px] font-semibold tracking-wide leading-none">N/A</span>
+            <Ban size={12} />
+            N/A
           </button>
         </div>
       </div>
@@ -9434,8 +10119,12 @@ function ChecklistRow({
           (owner 2026-07-21); non-gated reviewable docs keep submit-then-review.
           BUT only once a file is uploaded (owner 2026-07-27): there is nothing
           to approve before the document exists. */}
+      {/* Owner 2026-07-31 (final): on a gated document the approver ALWAYS
+          keeps Approve/Reject once a file exists — approved ones included — so
+          a decision can be reviewed or reversed. Mirrors the mobile
+          checklistReviewVisible gate; the decision stays on the review badge. */}
       {!!attachments && attachments.length > 0 && (item.required_perm
-        ? canApprove && item.review_status !== "approved" && item.status !== "done"
+        ? canApprove
         : reviewable && awaitingReview && canApprove) && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
             <input
@@ -9477,10 +10166,10 @@ function ChecklistRow({
           keeps this simple remark box. Falls away the moment a file is added. */}
       {expanded && (!attachments || attachments.length === 0) && (
         <div className="mt-2 border-t border-border pt-2">
-          {comments.filter((c) => c.kind !== "submit" && c.body).length > 0 && (
+          {comments.filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body).length > 0 && (
             <div className="mb-2 space-y-1">
               {comments
-                .filter((c) => c.kind !== "submit" && c.body)
+                .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
                 .map((c) => (
                   <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
@@ -9530,6 +10219,10 @@ function commentKindLabel(k: string): string {
       return "Marked amended";
     case "approve":
       return "Approved";
+    case "upload":
+      return "Uploaded";
+    case "remove":
+      return "Removed";
     default:
       return "Note";
   }
@@ -9538,11 +10231,13 @@ function commentKindLabel(k: string): string {
 function commentKindColor(k: string): string {
   switch (k) {
     case "reject":
+    case "remove":
       return "text-err";
     case "approve":
       return "text-synced";
     case "submit":
     case "amend":
+    case "upload":
       return "text-accent";
     default:
       return "text-ink";
@@ -10055,6 +10750,16 @@ function roleLabelParts(label: string): string[] {
   return label.split("&").map((s) => s.trim()).filter(Boolean);
 }
 
+/** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
+ *  2026-08-11: "one consistent button style for this action group across the
+ *  entire desktop PMS"). Boxed = icon + label inside a bordered pill, the style
+ *  the Contract / Booth Layout tables already used; the checklist-card sections
+ *  (Operation, Setup & Dismantle Documents, Expo Map) were an unbordered
+ *  icon-stack. Callers append only the colour/state classes, so the geometry can
+ *  never drift between sections again. */
+const ACTION_BTN_BASE =
+  "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[9px] font-semibold leading-none min-w-[46px]";
+
 function roleChipClass(role: string | null | undefined): string {
   switch ((role || "").toUpperCase()) {
     case "SALES PIC":
@@ -10418,6 +11123,13 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
+  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
+  // most lorries run one driver + one helper, so the empty second slots were
+  // noise. A filled slot always shows; an empty one shows only after its
+  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
+  // collapsing back happens by clearing the name (row hides on next open).
+  const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
+  const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -10450,9 +11162,33 @@ function PhaseCrewEditor({
               )}
             </div>
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            )}
+            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+              <div className="flex gap-1.5 pt-0.5">
+                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "d")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add driver
+                  </button>
+                )}
+                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
+                  <button
+                    onClick={() => showSlot2(li, "h")}
+                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                  >
+                    + Add helper
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -10528,6 +11264,92 @@ function PhaseCrewEditor({
             className="w-full resize-y whitespace-pre-wrap break-words rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40 disabled:bg-bg/40"
           />
         </label>
+      )}
+    </div>
+  );
+}
+
+// Service / Exchange as an OPTIONAL, collapsed block (owner 2026-08-10). The
+// crew-per-lorry fields used to sit permanently below Dismantle, which read to
+// Logistic staff as a compulsory third trip. Now it lives in its own divided
+// section: just a "+ Service / Exchange" button until opened, then a bordered
+// card (crew grid + outsourced + "what" remark + read-only service photos) with
+// a close X. It auto-opens only when it ALREADY holds data, so nothing keyed
+// earlier is hidden; closing never deletes — real data resurfaces on reload.
+function ServiceExchangeBlock({
+  serviceCrew,
+  projectId,
+  drivers,
+  helpers,
+  lorryOptions,
+  patch,
+  readOnly,
+}: {
+  serviceCrew: string | null | undefined;
+  projectId: number;
+  drivers: CrewMember[];
+  helpers: CrewMember[];
+  lorryOptions: string[];
+  patch: (body: Record<string, any>) => Promise<void>;
+  readOnly: boolean;
+}) {
+  const hasData = useMemo(() => {
+    const pc = parsePhaseCrew(serviceCrew);
+    return (
+      pc.lorryCrew.length > 0 ||
+      pc.outsourced.entries.length > 0 ||
+      !!pc.remark?.trim()
+    );
+  }, [serviceCrew]);
+  const [open, setOpen] = useState(hasData);
+  // If data arrives while the card is closed (e.g. saved on another device),
+  // reveal it — a filled Service / Exchange must never stay hidden.
+  useEffect(() => {
+    if (hasData) setOpen(true);
+  }, [hasData]);
+
+  // Sales / view-only: show the block only when it actually has content — never
+  // an empty optional section or an add button.
+  if (readOnly && !hasData) return null;
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      {open ? (
+        <div className="relative rounded-lg border border-border bg-surface p-3 pt-4 shadow-stone">
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              title="Close — anything already entered is kept"
+              aria-label="Close Service / Exchange"
+              className="absolute right-2 top-2 rounded p-0.5 text-ink-muted hover:text-err"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <PhaseCrewEditor
+            title="Service / Exchange"
+            field="service_crew"
+            value={serviceCrew}
+            drivers={drivers}
+            helpers={helpers}
+            lorryOptions={lorryOptions}
+            patch={patch}
+            readOnly={readOnly}
+            emptyHint="Optional — a mid-fair service visit or part exchange"
+            showRemark
+            remarkLabel="Service / Exchange — what"
+          />
+          <ServicePhotos projectId={projectId} readOnly />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-md border border-dashed border-border bg-surface px-3 py-1.5 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+        >
+          + Service / Exchange
+        </button>
       )}
     </div>
   );
@@ -10661,27 +11483,21 @@ function LogisticsCrewSection({
           <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
-      <div className="my-3 border-t border-dashed border-border" />
-      {/* Service / Exchange (owner 2026-07-22): a mid-fair trip — same crew grid
-          + outsourced (Lalamove/Grab), plus a "what service/exchange" remark and
-          service photos. Stored in service_crew JSON + phase='service' photos. */}
-      <PhaseCrewEditor
-        title="Service / Exchange"
-        field="service_crew"
-        value={project.service_crew}
+      {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
+          OPTIONAL mid-fair service visit or part exchange. Hidden behind its own
+          "+ Service / Exchange" button under a solid divider — no longer welded
+          below Dismantle's outsourced trips, where the always-on fields read as
+          a compulsory third trip to Logistic. The read-only desktop service
+          gallery moved inside the card (mobile still captures the photos). */}
+      <ServiceExchangeBlock
+        serviceCrew={project.service_crew}
+        projectId={project.id}
         drivers={drivers}
         helpers={helpers}
         lorryOptions={lorryOptions}
         patch={patch}
         readOnly={readOnly}
-        emptyHint="During the fair — a service visit or part exchange"
-        showRemark
-        remarkLabel="Service / Exchange — what"
       />
-      {/* Service photo upload moved to mobile-only (owner 2026-07-29): the
-          desktop keeps a read-only gallery, so force readOnly to drop the
-          "Add service photo" button here. Field staff attach on MobilePMS. */}
-      <ServicePhotos projectId={project.id} readOnly />
     </PanelSection>
   );
 }
@@ -11084,6 +11900,9 @@ function ScheduleRef({
 }) {
   const toast = useToast();
   const [remarkDraft, setRemarkDraft] = useState(remark ?? "");
+  // Owner 2026-08-10: the remark editor is hidden until the Remark button is
+  // pressed (an always-open empty box was just noise on the panel).
+  const [remarkOpen, setRemarkOpen] = useState(false);
   useEffect(() => setRemarkDraft(remark ?? ""), [remark]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Owner 2026-08-03: NO remark step before upload. Clicking Upload opens the
@@ -11131,11 +11950,36 @@ function ScheduleRef({
     }
   };
   return (
-    <div className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3">
+    <div
+      // PASTE-TO-UPLOAD (owner 2026-08-11): a schedule screenshot is normally
+      // on the clipboard (Snipping Tool / PrtSc), not saved as a file, so
+      // click-to-browse alone forced a pointless save-then-pick detour. Click
+      // the box (tabIndex makes it focusable) then Ctrl+V / Cmd+V and the
+      // clipboard image uploads straight away. Both routes stay available.
+      tabIndex={readOnly ? -1 : 0}
+      onPaste={(e) => {
+        if (readOnly || busy) return;
+        const items = Array.from(e.clipboardData?.items ?? []);
+        const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
+        if (!img) return; // let a normal text paste through untouched
+        const blob = img.getAsFile();
+        if (!blob) return;
+        e.preventDefault();
+        const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        // Clipboard blobs are nameless — stamp one so the row reads sensibly.
+        void upload(new File([blob], `schedule-${Date.now()}.${ext}`, { type: blob.type }));
+      }}
+      className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
+    >
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">
           Schedule reference
         </span>
+        {!readOnly && (
+          <span className="text-[9.5px] text-ink-muted">
+            click here, then Ctrl+V to paste a screenshot
+          </span>
+        )}
       </div>
       {items.length > 0 ? (
         <PhotoGroup label="Schedule" photos={items} onChange={() => photos.reload()} />
@@ -11174,31 +12018,49 @@ function ScheduleRef({
         </>
       )}
       {/* Standalone remark (owner 2026-07-23): solo events have no handbook —
-          logistics types the setup/dismantle times here instead. No file
-          needed; saves on blur. Read-only viewers still see the text. */}
-      {onSaveRemark && (readOnly ? (
-        (remark ?? "").trim() !== "" && (
-          <div className="mt-2 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
-            <span className="font-semibold text-ink-muted">Remark:</span> {remark}
-          </div>
-        )
-      ) : (
-        <label className="mt-2 block">
-          <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
-            Remark (no handbook — type setup / dismantle times)
-          </span>
-          <textarea
-            value={remarkDraft}
-            rows={2}
-            onChange={(e) => setRemarkDraft(e.target.value)}
-            onBlur={() => {
-              if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
-            }}
-            placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
-            className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
-          />
-        </label>
-      ))}
+          logistics types the setup/dismantle times here instead.
+          Owner 2026-08-10: the empty box no longer sits open taking space —
+          it hides behind a Remark button and appears only when clicked. A
+          SAVED remark still shows as text (hiding it would hide real data),
+          and the button then reads "Edit remark". */}
+      {onSaveRemark && (
+        <div className="mt-2">
+          {(remark ?? "").trim() !== "" && !remarkOpen && (
+            <div className="mb-1 text-[11px] text-ink-secondary whitespace-pre-wrap break-words">
+              <span className="font-semibold text-ink-muted">Remark:</span> {remark}
+            </div>
+          )}
+          {!readOnly && !remarkOpen && (
+            <button
+              type="button"
+              onClick={() => setRemarkOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+            >
+              <MessageSquare size={12} />
+              {(remark ?? "").trim() ? "Edit remark" : "Remark"}
+            </button>
+          )}
+          {!readOnly && remarkOpen && (
+            <label className="block">
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
+                Remark (no handbook — type setup / dismantle times)
+              </span>
+              <textarea
+                autoFocus
+                value={remarkDraft}
+                rows={2}
+                onChange={(e) => setRemarkDraft(e.target.value)}
+                onBlur={() => {
+                  if (remarkDraft !== (remark ?? "")) onSaveRemark(remarkDraft);
+                  setRemarkOpen(false);
+                }}
+                placeholder="e.g. solo event — setup 15/8 9pm after mall close, dismantle 19/8 10pm"
+                className="w-full resize-y rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary/40"
+              />
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -29,6 +29,8 @@ import {
   RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -42,6 +44,7 @@ import {
 } from "../../components/DocumentLinesExpansion";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -80,9 +83,9 @@ type DoRow = {
   do_date: string;
   expected_delivery_at: string | null;
   customer_delivery_date: string | null;
-  /** Linked SO's Processing date (mfg_sales_orders.internal_expected_dd),
+  /** Linked SO's Processing date (mfg_sales_orders.processing_date),
    *  stamped server-side onto every list row for the quick-view drawer. */
-  so_internal_expected_dd?: string | null;
+  so_processing_date?: string | null;
   debtor_name: string;
   debtor_code: string | null;
   salesperson_id: string | null;
@@ -94,6 +97,10 @@ type DoRow = {
    *  pre-batch) stock. A DO is a sales-side doc, so it shows Source PO, not an
    *  Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -479,8 +486,8 @@ function DetailDrawer({
                 <MetaItem k="From SO" v={soOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
-                    internal_expected_dd) must be visible in every quick view. */}
-                <MetaItem k="Processing" v={fmtDate(row.so_internal_expected_dd ?? null)} />
+                    processing_date) must be visible in every quick view. */}
+                <MetaItem k="Processing" v={fmtDate(row.so_processing_date ?? null)} />
                 <MetaItem k="Delivery date" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem k="Expected at" v={fmtDate(row.expected_delivery_at)} />
                 <MetaItem k="Driver" v={row.driver_name || "—"} />
@@ -747,6 +754,10 @@ type DoDrillItem = {
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
      shows Source PO, not an Assigned SO. */
   source_pos?: string[] | null;
+  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
+     (from-sos copies the first pick's SO), so a merged DO named one source and
+     hid the rest. */
+  source_sos?: string[] | null;
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
@@ -870,14 +881,36 @@ export function MfgDeliveryOrdersListV2() {
     cancelled: 0,
   };
 
-  // Revenue is summed over the CURRENT page's rows only (the paginated contract
-  // returns counts but not full-set money sums), so its card is labelled "on
-  // this page". The In-transit / Delivered cards read the FULL-set statusCounts.
+  /* The rows the TABLE is showing — the server page minus whatever the
+     per-column funnels hide (owner 2026-08-13, following the Purchase Orders
+     fix). See hooks/useVisibleRows for why summarising the server page put two
+     contradictory numbers on one screen. */
+  const visible = useVisibleRows(rows);
+
+  // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
+  // not full-set money sums), so the card and the table can never disagree.
   const revenueCenti = useMemo(() => {
     let sum = 0;
-    for (const r of rows) sum += r.local_total_centi ?? 0;
+    for (const r of visible.rows) sum += r.local_total_centi ?? 0;
     return sum;
-  }, [rows]);
+  }, [visible.rows]);
+
+  /* In-transit / Delivered normally read the server's FULL-set statusCounts —
+     right, and deliberately unaffected by paging. But under an active column
+     funnel they would state a whole-dataset count beside a table showing a
+     handful of rows, which is the exact contradiction this change exists to
+     remove. So while a funnel is narrowing the page, they describe the visible
+     set instead; with no funnel they are byte-identical to before. */
+  const visibleBucketCounts = useMemo(() => {
+    let inTransit = 0;
+    let delivered = 0;
+    for (const r of visible.rows) {
+      const b = statusFor(r.status).bucket;
+      if (b === "in_transit") inTransit += 1;
+      if (b === "delivered") delivered += 1;
+    }
+    return { inTransit, delivered };
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -983,7 +1016,7 @@ export function MfgDeliveryOrdersListV2() {
   // Batch "Export PDF" — one ticked DO downloads straight; several prompt
   // "One combined PDF" vs "Separate files", then fetch each bundle and render
   // into one merged file or one file per DO. Combined filename is date-stamped.
-  const exportSelectedDos = async () => {
+  const deliverSelectedDos = async (action: PdfAction) => {
     if (exporting) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -993,11 +1026,14 @@ export function MfgDeliveryOrdersListV2() {
       if (chosen.length === 1) {
         setExporting(true);
         const bundle = await fetchDoBundle(chosen[0]!);
-        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never);
+        await generateDeliveryOrderPdf(bundle.header as never, bundle.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Download ${chosen.length} delivery orders`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -1011,10 +1047,11 @@ export function MfgDeliveryOrdersListV2() {
       if (how === "one") {
         await generateCombinedDeliveryOrderPdf(bundles as never, {
           fileName: `delivery-orders-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generateDeliveryOrderPdf(b.header as never, b.items as never);
+          await generateDeliveryOrderPdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -1027,6 +1064,7 @@ export function MfgDeliveryOrdersListV2() {
       setExporting(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedDos);
 
   // Table columns
   const columns: Column<DoRow>[] = [
@@ -1076,22 +1114,38 @@ export function MfgDeliveryOrdersListV2() {
       label: "From SO",
       width: "150px",
       disableSort: true,
-      getValue: (r) => r.so_doc_no ?? "",
-      render: (r) =>
-        r.so_doc_no ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/scm/sales-orders/${encodeURIComponent(r.so_doc_no!)}`);
-            }}
-            className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
-          >
-            {r.so_doc_no}
-          </button>
+      /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the
+         header label. so_doc_no is set by from-sos to the FIRST pick's SO, so a
+         DO merging several SOs displayed one and hid the rest — and two DOs
+         then looked like they shipped the same Sales Order while sharing no
+         quantity at all. Owner: "为什么一张SO可以开两张DO？？"; the read-only
+         split check proved that SO was delivered exactly once.
+
+         Falls back to the header label when a DO has no linked lines (an ad-hoc
+         DO legitimately has only the header), so no cell goes blank. */
+      getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
+      render: (r) => {
+        const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
+        return sos.length > 0 ? (
+          <span className="flex flex-wrap gap-1">
+            {sos.map((no: string) => (
+              <button
+                key={no}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/scm/sales-orders/${encodeURIComponent(no)}`);
+                }}
+                className="font-mono text-[12px] font-semibold text-ink-secondary hover:text-accent hover:underline"
+              >
+                {no}
+              </button>
+            ))}
+          </span>
         ) : (
           <span className="text-[12px] text-ink-muted">—</span>
-        ),
+        );
+      },
     },
     {
       // Owner 2026-07-31: which PO the shipped goods actually came from — the
@@ -1680,11 +1734,16 @@ export function MfgDeliveryOrdersListV2() {
           />
 
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {/* Every tile describes the rows ON SCREEN and says so while a
+                column funnel narrows them (owner 2026-08-13). The count tiles
+                switch SOURCE, not just wording: the server's counts are right
+                until a client-side funnel hides part of the page, at which
+                point they contradict the table beneath them. */}
             <StatCard
               pending={statsPending}
               label="Total DOs"
-              value={total.toLocaleString("en-MY")}
-              subtitle="All matching orders"
+              value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+              subtitle={visible.filtered ? "Filtered · shown below" : "All matching orders"}
               rail="bg-primary"
               active
             />
@@ -1692,22 +1751,30 @@ export function MfgDeliveryOrdersListV2() {
               pending={statsPending}
               label="Revenue"
               value={fmtRm(revenueCenti)}
-              subtitle="Sum on this page"
+              subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="In transit"
-              value={counts.in_transit.toLocaleString("en-MY")}
-              subtitle="Dispatched · en route"
+              value={(visible.filtered
+                ? visibleBucketCounts.inTransit
+                : counts.in_transit
+              ).toLocaleString("en-MY")}
+              subtitle={visible.filtered ? "En route · filtered" : "Dispatched · en route"}
               tone="warning"
               rail="bg-accent-bright"
             />
             <StatCard
               pending={statsPending}
               label="Delivered"
-              value={counts.delivered.toLocaleString("en-MY")}
-              subtitle="Signed / delivered / invoiced"
+              value={(visible.filtered
+                ? visibleBucketCounts.delivered
+                : counts.delivered
+              ).toLocaleString("en-MY")}
+              subtitle={
+                visible.filtered ? "Delivered · filtered" : "Signed / delivered / invoiced"
+              }
               tone="success"
               rail="bg-synced"
             />
@@ -1789,10 +1856,17 @@ export function MfgDeliveryOrdersListV2() {
                   variant="primary"
                   icon={<Printer size={14} />}
                   disabled={exporting}
-                  onClick={() => void exportSelectedDos()}
+                  onClick={batchPrint.openPreview}
                 >
                   {exporting ? "Exporting…" : "Export PDF"}
                 </Button>
+                <PrintPreviewBatchModal
+                  open={batchPrint.open}
+                  onClose={batchPrint.close}
+                  docTitle="Delivery Orders"
+                  docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.do_number)}
+                  {...batchPrint.handlers}
+                />
                 <Button
                   variant="ghost"
                   disabled={exporting}
@@ -1805,6 +1879,8 @@ export function MfgDeliveryOrdersListV2() {
             <DataTable<DoRow>
               tableId="delivery-orders-v2"
               rows={rows}
+              /* Feeds the stat strip so the tiles describe what is on screen. */
+              onFilteredRowsChange={visible.onFilteredRowsChange}
               loading={listLoading}
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}

@@ -17,8 +17,8 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -31,6 +31,7 @@ import {
   CircleDot,
   Phone as PhoneIcon,
   MoreHorizontal,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -52,8 +53,17 @@ import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
-import { cn } from "../../lib/utils";
+import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
+import {
+  completePaymentRetryDraft, consumePaymentRetryNavigationState,
+  readPaymentRetryHandoff, readPaymentRetryNavigationState,
+} from "../../lib/paymentRetryHandoff";
+import { cn, formatDate } from "../../lib/utils";
+import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
@@ -65,6 +75,9 @@ import {
 
 type SoHeader = {
   doc_no: string;
+  /* POS handover payment slip (migration 0143) — passed to PaymentsTable's
+     optional Slip column; absent on non-POS orders. */
+  slip_key?: string | null;
   so_date: string;
   debtor_name: string;
   debtor_code: string | null;
@@ -92,9 +105,9 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
-  // The processing-date column the lock reads (PR #140 renamed only the label;
-  // the legacy processing_date snapshot column was dropped in mig 0189).
-  internal_expected_dd?: string | null;
+  // The processing-date column the lock reads. Label, API field and column are
+  // finally the same word (mig 0284 renamed it from internal_expected_dd).
+  processing_date?: string | null;
   proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
@@ -140,12 +153,25 @@ type SoItem = {
   cancelled: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
+  /* The operator's free-text instruction for whoever executes this line — the
+     "Type remarks…" box on the line card, served by GET /:docNo all along and
+     rendered nowhere. Owner 2026-08-11 (2990-SO-2608-016): a SVC-ADDON line
+     added purely to say "Please take back Cody Bedframe (King Size) 2 units"
+     showed as an RM0 line reading only its SKU code. */
+  remark?: string | null;
   /* Per-line stock + source-PO trace (owner 2026-08-01: a READY/SHIPPED/
      DELIVERED line must name the PO its goods came from). All stamped by
      GET /mfg-sales-orders/:docNo — this page previously dropped them on the
      floor, which is why the detail showed no Stock / Incoming PO at all. */
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /* R2 object keys for this line's reference photos — the AutoCount
+     Further-Description shots the cutover imported, plus anything uploaded on
+     the edit card. Served by GET /:docNo all along (ITEM_COLS carries
+     photo_urls); this page never rendered them, so the only way to SEE a
+     line's photo was to enter edit mode (owner 2026-08-10: "我在外面的 UI 看
+     不到照片了吗?不能点开照片来看吗?"). */
+  photo_urls?: string[] | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -487,6 +513,10 @@ const SalesOrderDetailInlineEditor = lazy(() =>
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
+  /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
+     read page hosts the SAME PaymentsTable component (owner: "点选 collect
+     payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
+     the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
     return (
       <Suspense
@@ -569,11 +599,51 @@ function SalesOrderDetailV2ReadOnly() {
   // details page's back button goes to its relevant list, not wherever
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
-  const goBack = () => navigate(scmListReturnTo("/scm/sales-orders"));
+  const goBack = () => {
+    if (unsavedPayments > 0 && !window.confirm(
+      `${unsavedPayments} payment row${unsavedPayments === 1 ? " is" : "s are"} typed but not saved — leave anyway?`,
+    )) return;
+    navigate(scmListReturnTo("/scm/sales-orders"));
+  };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
   // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
+  /* Payments editing now lives ON this page (same PaymentsTable the editor
+     uses) — "Collect payment" just unlocks the card and scrolls to it. */
+  const location = useLocation();
+  const [payEditing, setPayEditing] = useState(params.get("payments") === "1");
+  const [unsavedPayments, setUnsavedPayments] = useState(0);
+  const paymentsRef = useRef<HTMLDivElement>(null);
+  const [paymentRetryState, setPaymentRetryState] = useState<{ documentId: string; drafts: PaymentDraft[] } | null>(null);
+  const paymentRetryDrafts = paymentRetryState && paymentRetryState.documentId === docNo
+    ? paymentRetryState.drafts
+    : [];
+  useEffect(() => {
+    if (!docNo) return;
+    const stored = readPaymentRetryHandoff("so", docNo)?.drafts ?? [];
+    const navigated = readPaymentRetryNavigationState(location.state, "so", docNo);
+    const byKey = new Map([...stored, ...navigated].map((draft) => [draft.idempotencyKey, draft]));
+    setPaymentRetryState({ documentId: docNo, drafts: [...byKey.values()] });
+    if (navigated.length > 0) {
+      navigate(
+        { pathname: location.pathname, search: location.search, hash: location.hash },
+        { replace: true, state: consumePaymentRetryNavigationState(location.state) },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docNo]);
+  const paymentRetryCommitted = (draft: PaymentDraft) => {
+    if (!docNo || !draft.idempotencyKey) return;
+    completePaymentRetryDraft("so", docNo, draft.idempotencyKey);
+    setPaymentRetryState((current) => current?.documentId === docNo
+      ? { ...current, drafts: current.drafts.filter((row) => row.idempotencyKey !== draft.idempotencyKey) }
+      : current);
+  };
+  const goPayments = () => {
+    setPayEditing(true);
+    paymentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const doCancel = () => {
     if (!salesOrder) return;
     if (
@@ -590,7 +660,7 @@ function SalesOrderDetailV2ReadOnly() {
   // Render + download the SO PDF via the shared jspdf generator (client-side),
   // mirroring the V1 SalesOrderDetail handler. The old `?print=1` navigation
   // was dead — nothing consumed that param — so the button did nothing.
-  const goPrintPdf = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!salesOrder) return;
     /* The guard below used to be keyed on `isLoading` alone with a `?? []`
        fallback. On a FAILED payments read react-query leaves `isLoading` false
@@ -622,13 +692,13 @@ function SalesOrderDetailV2ReadOnly() {
     // trigger items issued, so the printed PDF can mark the trigger lines.
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)
       ?.pwpCodes ?? []) as never;
-    import("../../vendor/scm/lib/sales-order-pdf")
+    return import("../../vendor/scm/lib/sales-order-pdf")
       .then(({ generateSalesOrderPdf }) =>
         generateSalesOrderPdf(
           salesOrder as never,
           items as never,
           payments as never,
-          "save",
+          action,
           pwpCodes
         )
       )
@@ -640,6 +710,8 @@ function SalesOrderDetailV2ReadOnly() {
         })
       );
   };
+  const print = usePrintPreview(deliverPrintPdf);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!salesOrder);
 
   // The 5-node document chain + what each node does when clicked now come from
   // the shared hook, so this page and the ?edit=1 editor cannot drift again
@@ -676,6 +748,7 @@ function SalesOrderDetailV2ReadOnly() {
             buildVariantSummary(l.item_group ?? "", l.variants ?? null) ||
             (l.description2 ?? ""),
         });
+        const remark = (l.remark ?? "").trim();
         return (
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold text-ink">
@@ -684,6 +757,20 @@ function SalesOrderDetailV2ReadOnly() {
             {secondary && (
               <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-ink-muted">
                 <span className="truncate text-ink-secondary">{secondary}</span>
+              </div>
+            )}
+            {/* The line's REMARK — the operator's instruction for whoever
+                executes this line. Owner 2026-08-11: a SVC-ADDON line whose whole
+                purpose was "Please take back Cody Bedframe (King Size) 2 units"
+                rendered as an RM0 row showing only its SKU code, so the job was
+                invisible to everyone downstream. It is NOT a duplicate of the
+                identity above (line-identity's rule governs the code / description
+                / variant trio; this is free text that appears nowhere else on the
+                row), and it WRAPS rather than truncating — a half-shown
+                instruction is worse than none. */}
+            {remark && (
+              <div className="mt-1 whitespace-pre-wrap break-words text-[11.5px] italic leading-snug text-ink-secondary">
+                {remark}
               </div>
             )}
           </div>
@@ -749,6 +836,44 @@ function SalesOrderDetailV2ReadOnly() {
         <span className="font-money text-[13px] font-semibold text-ink">
           {fmtMoney(l.total_centi, salesOrder?.currency)}
         </span>
+      ),
+    },
+    /* Remark as its OWN column — hidden by default because the text already
+       renders under the item above, where it is read. This column exists so the
+       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
+       has no getValue, so without it the instruction is invisible to every one
+       of those (the same reason the Stock / Incoming PO pair below carry one). */
+    {
+      key: "remark",
+      label: "Remark",
+      width: "220px",
+      defaultHidden: true,
+      getValue: (l) => (l.remark ?? "").trim(),
+      render: (l) => {
+        const remark = (l.remark ?? "").trim();
+        return remark ? (
+          <span className="whitespace-pre-wrap break-words text-[12px] text-ink-secondary">{remark}</span>
+        ) : (
+          <span className="text-ink-muted">—</span>
+        );
+      },
+    },
+    /* Photos (owner 2026-08-10) — the line's reference shots, openable. Same
+       resolver as the edit card's tiles (vendor/scm/lib/so-line-photo), so the
+       read page cannot drift into a second, differently-broken loading path.
+       getValue is the COUNT so the column sorts/filters/exports as a number;
+       a `render` with no getValue is invisible to all three. */
+    {
+      key: "photos",
+      label: "Photos",
+      width: "110px",
+      getValue: (l) => (l.photo_urls ?? []).length,
+      render: (l) => (
+        <SoLinePhotoStrip
+          docNo={docNo ?? ""}
+          itemId={l.id}
+          photoKeys={l.photo_urls ?? []}
+        />
       ),
     },
     /* Stock + Incoming PO (owner 2026-08-01) — the SAME per-line readiness +
@@ -931,10 +1056,46 @@ function SalesOrderDetailV2ReadOnly() {
             <Button
               variant="secondary"
               icon={<Printer size={14} />}
-              onClick={goPrintPdf}
+              onClick={print.openPreview}
             >
               Print PDF
             </Button>
+            {/* Collect payment (owner 2026-08-07) — the direct door to the
+                payments ledger. The ledger lives on the ?edit=1 editor, so
+                without this the only way to key money is the Edit button
+                below, and Edit answers to the LINE/HEADER lock rather than to
+                anything about money:
+                  · hard-locked (DELIVERED / SHIPPED / has a DO-SI) → disabled,
+                    so a delivered order had NO reachable Payments section at
+                    all — the balance could not be keyed and its proof had
+                    nowhere to go, on the exact order state where a balance is
+                    normally collected;
+                  · amendment-eligible → it becomes "Submit SO Amendment", so
+                    keying a payment means going through the amendment flow;
+                  · otherwise → it opens every field to edit a row of numbers.
+                Hence the gate here is about the MONEY, not the lock: only a
+                CANCELLED order takes none, which is the same rule the payments
+                card, the mobile screen and the server all use. DRAFT is left
+                out on the owner's standing "no payments on drafts" ruling — and
+                a draft is never locked, so Edit reaches it anyway.
+                Owner 2026-08-07, on Houzs (every SO CONFIRMED, several still
+                owing): "houzs也是需要collect payment功能" — the first cut gated
+                this on `hardLocked`, which is a 2990 delivery-flow assumption,
+                not a rule about collecting money.
+                `?payments=1` opens the editor with the Payments card unlocked
+                and NOTHING else: it does not set ?edit=1, so lines, header and
+                addresses stay read-only under their own `isLocked` gate, which
+                is the lock that genuinely belongs to them. */}
+            {!["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
+              <Button
+                variant="secondary"
+                icon={<Wallet size={14} />}
+                onClick={goPayments}
+                title="Record a payment against this order — everything else stays as it is."
+              >
+                Collect payment
+              </Button>
+            )}
             {salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
@@ -1039,8 +1200,8 @@ function SalesOrderDetailV2ReadOnly() {
                 />
                 <Field
                   label="Processing date"
-                  value={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  value={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <Field
                   label="Delivery date"
@@ -1153,6 +1314,39 @@ function SalesOrderDetailV2ReadOnly() {
                 emptyLabel="No line items"
               />
             </Section>
+
+            {/* Payments — the SAME PaymentsTable the editor renders (Task #105
+                one-source rule), mounted here since 2026-08-09 so "Collect
+                payment" no longer swaps the whole page for the legacy editor
+                (owner: unify the SO surfaces). Adding/editing money follows the
+                no-naked-edits rule via the card's own Edit toggle; `?payments=1`
+                deep-links land with the toggle already open. */}
+            {(() => {
+              const soStatus = salesOrder.status?.toLowerCase() ?? "";
+              const canOfferPayEdit = !["cancelled", "draft"].includes(soStatus);
+              const canEditPayments = soStatus === "draft" || (soStatus !== "cancelled" && payEditing);
+              return (
+                <div ref={paymentsRef}>
+                  <PaymentsTable
+                    key={salesOrder.doc_no}
+                    docNo={salesOrder.doc_no}
+                    grandTotalCenti={salesOrder.local_total_centi ?? 0}
+                    currency={salesOrder.currency}
+                    locked={!canEditPayments}
+                    draftUnlocked={soStatus === "draft"}
+                    slip={{ slipKey: salesOrder.slip_key ?? null, fetcher: fetchSoSlipUrl }}
+                    initialDrafts={paymentRetryDrafts}
+                    onDraftCommitted={paymentRetryCommitted}
+                    onUnsavedChange={setUnsavedPayments}
+                    headerAction={canOfferPayEdit ? (
+                      <Button variant="secondary" onClick={() => setPayEditing((v) => !v)} icon={<Wallet size={14} />}>
+                        {payEditing ? "Done" : "Collect payment"}
+                      </Button>
+                    ) : null}
+                  />
+                </div>
+              );
+            })()}
           </DetailMain>
 
           <DetailAside>
@@ -1177,8 +1371,8 @@ function SalesOrderDetailV2ReadOnly() {
                 <KeyDateRow k="SO date" v={fmtDate(salesOrder.so_date)} />
                 <KeyDateRow
                   k="Processing"
-                  v={fmtDate(salesOrder.internal_expected_dd)}
-                  muted={!salesOrder.internal_expected_dd}
+                  v={fmtDate(salesOrder.processing_date)}
+                  muted={!salesOrder.processing_date}
                 />
                 <KeyDateRow
                   k="Delivery"
@@ -1276,7 +1470,7 @@ function SalesOrderDetailV2ReadOnly() {
           </button>
           <button
             type="button"
-            onClick={goPrintPdf}
+            onClick={print.openPreview}
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft"
             aria-label="Print PDF"
           >
@@ -1321,6 +1515,29 @@ function SalesOrderDetailV2ReadOnly() {
           setRelMapOpen(false);
           pickChainChoice(d);
         }}
+      />
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Sales Order"
+        docNo={salesOrder.doc_no}
+        rows={[
+          { label: "Customer", value: salesOrder.debtor_name || "—" },
+          { label: "Order date", value: fmtDate(salesOrder.so_date) },
+          {
+            label: "Items",
+            value: `${items.length} line${items.length === 1 ? "" : "s"}`,
+          },
+          {
+            label: "Order total",
+            value: fmtMoney(salesOrder.local_total_centi, salesOrder.currency),
+          },
+          {
+            label: "Balance",
+            value: fmtMoney(salesOrder.balance_centi, salesOrder.currency),
+          },
+        ]}
+        {...print.handlers}
       />
     </div>
   );

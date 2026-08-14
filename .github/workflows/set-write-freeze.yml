@@ -1,0 +1,82 @@
+name: SCM write freeze (on/off)
+
+# Manual. Pauses/resumes create+edit on /api/scm for normal staff while the
+# AutoCount migration lands (owner 2026-08-10). Reads stay open; owner and
+# scm.admin always bypass. Takes effect within ~30s, no deploy needed.
+#
+# STAGED LIFT: leave `areas` blank to freeze the company outright (today's
+# behaviour). Fill it to reopen those modules while the rest stay paused — the
+# go-live sequence. The value is validated against the real area keys before
+# anything is written, so a typo fails the job instead of reaching the row.
+# Read the current state with "SCM write freeze — status (read-only)".
+# Full runbook, including the one-command rollback:
+# docs/write-freeze-staged-lift.md
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      state:
+        description: "on = freeze writes, off = resume"
+        required: true
+        default: "on"
+        type: choice
+        options: ["on", "off"]
+      companies:
+        description: "Company ids to freeze (1 = Houzs only) or 'all'"
+        required: false
+        default: "1"
+        type: string
+      areas:
+        description: "Modules to REOPEN, comma separated (blank = freeze everything). e.g. scm.sales.orders,scm.procurement.po"
+        required: false
+        default: ""
+        type: string
+      message:
+        description: "Message shown to staff (optional)"
+        required: false
+        type: string
+
+concurrency:
+  group: set-write-freeze-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/set-write-freeze.mjs
+        env:
+          STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
+          AREAS: ${{ inputs.areas }}
+          MESSAGE: ${{ inputs.message }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/set-write-freeze.mjs
+        env:
+          STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
+          AREAS: ${{ inputs.areas }}
+          MESSAGE: ${{ inputs.message }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -129,9 +129,16 @@ function relativeTime(iso: string): string {
 }
 
 export function AnnouncementBanner() {
-  // Unscoped feed (human posts AND the per-user scan / service-case notices) —
-  // the desktop pop-up has always shown both.
-  const { current, ack, dismissSession } = useAnnouncementBanner();
+  // HUMAN posts only (owner 2026-08-08, "为什么一直有这个"). This pop-up used
+  // to take the unscoped feed — human posts AND the machine scan/service-case
+  // notices — so every "New service case ASSR/…" threw a modal card, and under
+  // the two-skips-then-mandatory-ack rule (#1728) that modal eventually
+  // refused to leave. Machine notices are bell material: they surface in
+  // NotificationBell's System-notices section instead, matching the phone
+  // (whose pop-up has been human-only since owner 2026-07-20 B2).
+  const { current, mustAcknowledge, ack, dismissSession } = useAnnouncementBanner({
+    scope: "human",
+  });
 
   if (!current) return null;
 
@@ -180,13 +187,19 @@ export function AnnouncementBanner() {
       aria-live="polite"
     >
       {/* Backdrop — click dismisses for this session (re-surfaces next visit),
-          never acks. A dedicated button keeps it keyboard-reachable. */}
-      <button
-        type="button"
-        aria-label="Dismiss notice"
-        onClick={() => dismissSession(current)}
-        className="absolute inset-0 cursor-default bg-ink/25 backdrop-blur-[1px]"
-      />
+          never acks. A dedicated button keeps it keyboard-reachable. After the
+          second skip (owner 2026-08-08) every dismiss affordance goes away, so
+          the backdrop degrades to inert dimming. */}
+      {mustAcknowledge ? (
+        <div className="absolute inset-0 bg-ink/25 backdrop-blur-[1px]" />
+      ) : (
+        <button
+          type="button"
+          aria-label="Dismiss notice"
+          onClick={() => dismissSession(current)}
+          className="absolute inset-0 cursor-default bg-ink/25 backdrop-blur-[1px]"
+        />
+      )}
       {/* Centred notice card */}
       <div
         className={cn(
@@ -243,15 +256,23 @@ export function AnnouncementBanner() {
               />
             </Suspense>
           )}
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => secondary(current)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3.5 text-[13px] font-semibold text-ink-secondary hover:bg-surface-dim hover:text-ink"
-            >
-              <SecondaryIcon size={14} />
-              {meta.secondaryLabel}
-            </button>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            {/* After the second skip only the acknowledge action remains — the
+                secondary slot turns into the why-line (owner 2026-08-08). */}
+            {mustAcknowledge ? (
+              <span className="mr-auto text-[11px] font-medium text-ink-secondary">
+                This notice requires acknowledgement
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => secondary(current)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3.5 text-[13px] font-semibold text-ink-secondary hover:bg-surface-dim hover:text-ink"
+              >
+                <SecondaryIcon size={14} />
+                {meta.secondaryLabel}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void ack(current)}

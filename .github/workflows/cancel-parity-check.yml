@@ -1,0 +1,84 @@
+name: Cancel parity check (read-only)
+
+# THE OWNER'S THIRD GO-LIVE RULE, MADE TESTABLE.
+#
+#   "不可以一边 cancel 了，另一边还开着."
+#
+# A cancel applied on one side only splits the outstanding set. His acceptance
+# test is that his own outstanding rule — NOT converted to DO and NOT to IV,
+# cancelled excluded — computes IDENTICALLY in the ERP and in AutoCount. This
+# job computes it on both sides and prints EVERY document that is outstanding on
+# one side only, sorted into the reasons it can happen:
+#
+#   · the ERP cancelled it and AutoCount still holds it open   <- the divergence
+#   · AutoCount cancelled it and the ERP still holds it open   <- the reverse
+#   · the ERP converted it and AutoCount did not (or the other way round)
+#   · it exists on one side only, so there is nothing to disagree with
+#
+# It also asks the question the outbox alone can answer: for every sales order
+# CANCELLED in the ERP and linked to AutoCount, was a cancel ever QUEUED? A
+# missing row means the ERP never asked — which is a different fault from an ask
+# that failed, and needs a different fix.
+#
+# The AutoCount half is a COMMITTED SNAPSHOT (backend/scripts/data/
+# ac-cancel-parity.json.gz) because the account book is reachable only over
+# ZeroTier from the shop's network while the production database is reachable
+# only from here. Refresh it on that machine before a run that has to be
+# believed:
+#   AC_CRED_FILE=<cred file> python backend/scripts/export-ac-cancel-parity.py
+# The check prints the snapshot's age on every run and marks it STALE past
+# max_age_days, so a disagreement caused by the days in between can never be
+# mistaken for a cancel divergence.
+#
+# STRICTLY READ-ONLY — SELECT only, no writes, no DDL, no transaction. Manual
+# trigger only: a production read is a question, not a gate.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "Company id to check (1 = Houzs Century, the AED_HOUZS book)"
+        required: false
+        default: "1"
+        type: string
+      max_age_days:
+        description: "Mark the AutoCount snapshot STALE past this many days"
+        required: false
+        default: "2"
+        type: string
+      sample:
+        description: "Documents to print per list (counts are always full)"
+        required: false
+        default: "25"
+        type: string
+
+# Own concurrency group — this touches nothing, and must never queue behind or
+# displace a release.
+concurrency:
+  group: cancel-parity-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-cancel-parity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          AC_SNAPSHOT_MAX_AGE_DAYS: ${{ inputs.max_age_days }}
+          SAMPLE: ${{ inputs.sample }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks (stock-truth-check.yml and friends).
+          NODE_OPTIONS: --dns-result-order=ipv4first

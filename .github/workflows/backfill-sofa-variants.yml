@@ -1,0 +1,74 @@
+name: Backfill sofa variants from AutoCount Desc2
+
+# Sofa is the one item group no variant sweep has ever touched:
+# refresh-po-variants.mjs and refresh-so-variants.mjs are both hard-filtered to
+# item_group='bedframe', so every tidy-up of scm.fabric_colours was invisible to
+# a sofa line. This is the sweep sofa never had.
+#
+# It FILLS ONLY - a key that already carries a value is never overwritten,
+# because staff have been editing these documents for months and an operator's
+# own correction outranks a re-parse of the same old text.
+#
+# DRY-RUN unless apply=1, and apply is a separate deliberate act by a human.
+# fuzzy=1 additionally applies the colours that resolve only through the
+# matcher; leave it off unless the owner has seen the mapping list, because a
+# match is not a copy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to WRITE. Anything else is a dry-run."
+        required: false
+        default: ""
+      fuzzy:
+        description: "1 to also apply matcher-resolved colours (owner must have approved the list)"
+        required: false
+        default: ""
+
+# Deliberately NOT the deploy's concurrency group: a data repair must never
+# queue behind, or displace, a release.
+concurrency:
+  group: backfill-sofa-variants-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-variants-from-desc2.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          FUZZY: ${{ inputs.fuzzy }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-variants-from-desc2.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          FUZZY: ${{ inputs.fuzzy }}
+          # GitHub-hosted runners have no IPv6 egress.
+          NODE_OPTIONS: --dns-result-order=ipv4first

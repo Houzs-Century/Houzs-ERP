@@ -38,6 +38,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { usePageAccess } from "../../auth/PageGuard";
 import { isDirectorUser, isSalesStaff } from "../../auth/salesAccess";
 import { classifyLoadError, errMsg } from "../../components/scm-v2/PhotoGallery";
+import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import { cn } from "../../lib/utils";
 import { ACCESS_RANK, type TeamMember } from "../../types";
 import { fmtCenti } from "@2990s/shared";
@@ -161,6 +162,10 @@ export function MemberOrgPerformance({
     document.documentElement.style.setProperty("--print-zoom", "0.85");
     window.print();
   };
+  /* Same Print preview every printable surface in the app opens. The chart
+     prints from the page itself (.org-print-area), so there is no PDF to
+     download or open in a tab — Print is the only exit. */
+  const print = usePrintPreview(exportOrgChart);
 
   return (
     <div className="space-y-4">
@@ -186,10 +191,21 @@ export function MemberOrgPerformance({
           <Button
             variant="primary"
             icon={<Printer size={14} />}
-            onClick={exportOrgChart}
+            onClick={print.openPreview}
           >
             Export org chart
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Org Chart"
+            docNo="Sales team"
+            rows={[
+              { label: "Prints", value: "The reporting tree only — app chrome is hidden" },
+              { label: "Fit", value: "Scaled to 85% so a wide tree isn't clipped" },
+            ]}
+            onPrint={print.handlers.onPrint}
+          />
         </div>
       </div>
 

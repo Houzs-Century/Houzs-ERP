@@ -71,6 +71,8 @@ import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -109,7 +111,7 @@ type ConsignmentHeader = {
   customer_country: string | null;
   customer_so_no: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   email: string | null;
   customer_type: string | null;
   salesperson_id: string | null;
@@ -243,13 +245,13 @@ export const ConsignmentOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    if (header?.internal_expected_dd) {
+    if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),
         ...(addingDraft ? [addingDraft] : []),
       ]
         .filter((d) => d.itemCode.trim())
-        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants) }))
+        .map((d) => ({ code: d.itemCode, miss: missingRequiredVariants(d.itemGroup, d.variants, d.itemCode) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         setSaveError(
@@ -468,16 +470,17 @@ export const ConsignmentOrderDetail = () => {
     );
   }
 
-  const handlePrint = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     // The raw detail response carries the category-total fields the SO PDF
     // needs (the typed subset above omits them). Consignment has no payments.
-    import('../../vendor/scm/lib/sales-order-pdf')
+    return import('../../vendor/scm/lib/sales-order-pdf')
       .then(({ generateSalesOrderPdf }) =>
-        generateSalesOrderPdf(header as never, items as never, [], 'save', [], {
+        generateSalesOrderPdf(header as never, items as never, [], action, [], {
           docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order',
         }))
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className="space-y-4">
@@ -496,9 +499,22 @@ export const ConsignmentOrderDetail = () => {
             </span>
           </div>
           <RelationshipMapButton type="cso" id={header.doc_no} />
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer {...ICON} /><span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Consignment Order"
+            docNo={header.doc_no}
+            rows={[
+              { label: 'Consignee', value: header.debtor_name || '—' },
+              { label: 'Order date', value: fmtDateOrDash(header.so_date) },
+              { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
+              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+            ]}
+            {...print.handlers}
+          />
           {!isEditing ? (
             <>
               <Button variant="ghost" size="md"
@@ -577,6 +593,11 @@ export const ConsignmentOrderDetail = () => {
                   docNo={header.doc_no}
                   itemId={it.id}
                   isEditing
+                  /* Conditional on the Processing Date, matching this document's
+                     own PATCH gate (consignment-orders.ts:1267 only collects
+                     offenders when processingDate is set). Was defaulting to
+                     true. */
+                  variantsRequired={!!header.processing_date}
                 />
               );
             })}
@@ -588,6 +609,8 @@ export const ConsignmentOrderDetail = () => {
                 onChange={patchAddingDraft}
                 onRemove={cancelAddLine}
                 canRemove
+                // Same rule as the saved lines above.
+                variantsRequired={!!header.processing_date}
               />
             )}
 
@@ -739,7 +762,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: h.emergency_contact_name ?? '',
     emergencyContactPhone: h.emergency_contact_phone ?? '',
     emergencyContactRelationship: h.emergency_contact_relationship ?? '',
-    processingDate: h.internal_expected_dd ?? '',
+    processingDate: h.processing_date ?? '',
     customerDeliveryDate: h.customer_delivery_date ?? '',
     note: h.note ?? '',
     salesLocation: h.sales_location ?? '',
@@ -831,7 +854,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: form.emergencyContactName,
     emergencyContactPhone: form.emergencyContactPhone,
     emergencyContactRelationship: form.emergencyContactRelationship,
-    internalExpectedDd: form.processingDate || null,
+    processingDate: form.processingDate || null,
     customerDeliveryDate: form.customerDeliveryDate || null,
     note: form.note,
     salesLocation: form.salesLocation || null,
@@ -840,7 +863,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const datesXor =
     (form.processingDate.trim() !== '') !== (form.customerDeliveryDate.trim() !== '');
   const today = new Date().toLocaleDateString('en-CA');
-  const originalProcessing = header.internal_expected_dd ?? '';
+  const originalProcessing = header.processing_date ?? '';
   const originalDelivery = header.customer_delivery_date ?? '';
   const processingLocked = originalProcessing !== '' && originalProcessing < today;
 

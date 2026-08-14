@@ -344,6 +344,30 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }
+    /* Zero-cost receipt refusal — a hard stop like the sofa ones, and for the
+       same reason: there is no "post anyway" that makes a zero-cost stock layer
+       correct. Rendered here rather than per page so every caller (the GRN
+       detail's Confirm, the mobile convert wizard, the from-PO batch receive)
+       shows the same thing: WHICH lines, what the item normally costs, and the
+       two ways out. The escape hatch is per line and lives on the receipt
+       screen, so it is deliberately NOT a dialog button here — a blanket
+       "everything on this receipt was free" click is exactly the reflex the
+       gate exists to prevent. */
+    if (text.includes('"zero_cost_receipt"')) {
+      let msg = 'These lines would receive stock at zero cost, but the item has been bought at a real price before.';
+      try {
+        const b = JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as {
+          message?: string; remedy?: string[];
+          lines?: Array<{ materialCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
+        };
+        const lines = (b.lines ?? [])
+          .map((l) => `• ${l.materialCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
+          .join('\n');
+        const how = (b.remedy ?? []).map((r) => `— ${r}`).join('\n');
+        msg = [b.message ?? msg, lines, how].filter(Boolean).join('\n\n');
+      } catch { /* keep fallback */ }
+      throw correlateError(new Error(msg), requestIdFromResponse(res));
+    }
     if (text.includes('"sofa_partial_set"')) {
       let msg = "A sofa set must ship whole from one batch — this delivery leaves part of the set behind. Include the rest of the set, or ship none of it.";
       try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }

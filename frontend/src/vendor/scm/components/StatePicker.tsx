@@ -26,6 +26,12 @@
 // included) so it still matches the sibling City / Country / Postcode fields;
 // the dropdown panel is a bordered paper card (StatePicker.module.css).
 //
+// The panel is PORTALLED to <body> and positioned `fixed` from the input's
+// rect — same idiom as SoLineCard / SearchableSelect. It was `position:
+// absolute` inside the field until 2026-08-13, which meant every address form
+// whose card or drawer clips its overflow cut the list off after two or three
+// states (owner, on SO detail: "我的 state 的那个 UI 也是被直接斩断了").
+//
 // The value MUST live in scm.my_localities. While the seed is loading or empty
 // the control stays DISABLED ("Loading…" / "No states seeded") — never a
 // free-text input, which is the exact pattern this component removes. A stored
@@ -34,7 +40,8 @@
 // seeded state, or add the missing one via the Localities Maintenance UI.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   useLocalities,
   statesInCountry,
@@ -45,6 +52,23 @@ import styles from './StatePicker.module.css';
 
 const PRIMARY_COUNTRY = 'Malaysia' as const;
 const UNGROUPED = 'Other' as const;
+
+/* Panel geometry, in px. PANEL_MAX_H is the ten-row box the operators already
+   know; PANEL_MIN_H stops a cramped viewport shrinking the list to a sliver. */
+const PANEL_GAP = 4;
+const PANEL_MAX_H = 280;
+const PANEL_MIN_H = 120;
+const VIEWPORT_MARGIN = 8;
+
+/** Where the portalled panel sits, in viewport coordinates. Anchored by `top`
+ *  when it hangs below the input, by `bottom` when it is flipped above it. */
+type PanelPos = {
+  left: number;
+  width: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+};
 
 export const StatePicker = ({
   country = '',
@@ -80,6 +104,7 @@ export const StatePicker = ({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const isCountryPinned = country.trim().length > 0;
 
@@ -161,6 +186,40 @@ export const StatePicker = ({
   const isEmpty = !localities.isLoading && rows.length === 0;
   const controlsDisabled = disabled || localities.isLoading || isEmpty;
 
+  /* The panel lives in a <body> portal, so nothing positions it for us: measure
+     the input every time the page can have moved under it. Capture phase,
+     because the field usually sits inside a scrolling card or drawer and those
+     scroll events never reach window on the bubble path. */
+  useLayoutEffect(() => {
+    if (!open || controlsDisabled) {
+      setPanelPos(null);
+      return;
+    }
+    const update = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const below = window.innerHeight - r.bottom - PANEL_GAP - VIEWPORT_MARGIN;
+      const above = r.top - PANEL_GAP - VIEWPORT_MARGIN;
+      // Flip up only when below cannot hold the list AND above holds more of it.
+      const flipUp = below < Math.min(PANEL_MAX_H, above);
+      setPanelPos({
+        left: r.left,
+        width: r.width,
+        top: flipUp ? undefined : r.bottom + PANEL_GAP,
+        bottom: flipUp ? window.innerHeight - r.top + PANEL_GAP : undefined,
+        maxHeight: Math.max(PANEL_MIN_H, Math.min(PANEL_MAX_H, flipUp ? above : below)),
+      });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open, controlsDisabled]);
+
   const wrapCls = className ? `${styles.wrap} ${className}` : styles.wrap;
 
   /* Compact (mobile) keeps the native grouped <select>. */
@@ -237,10 +296,13 @@ export const StatePicker = ({
           }
           disabled={controlsDisabled}
           className={selectClassName ?? styles.select}
-          onFocus={() => {
+          /* House rule (owner 2026-08-09) — opening keeps the current value
+             in view: seed the query with it, select-all so typing replaces. */
+          onFocus={(e) => {
             setOpen(true);
-            setQuery('');
+            setQuery(value ?? '');
             setActive(0);
+            e.currentTarget.select();
           }}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -250,8 +312,23 @@ export const StatePicker = ({
           onKeyDown={onKeyDown}
           onBlur={close}
         />
-        {open && !controlsDisabled && (
-          <div className={styles.panel} role="listbox">
+        {open && !controlsDisabled && panelPos && createPortal(
+          /* Portalled so no ancestor's overflow can clip the list. Events still
+             bubble along the REACT tree, so a host that closes on a click in
+             its own subtree (the Warehouse drawer's backdrop, say) behaves
+             exactly as it did while the panel was rendered in place. */
+          <div
+            className={styles.panel}
+            role="listbox"
+            style={{
+              position: 'fixed',
+              left: panelPos.left,
+              width: panelPos.width,
+              top: panelPos.top,
+              bottom: panelPos.bottom,
+              maxHeight: panelPos.maxHeight,
+            }}
+          >
             {orphanValue && !q && (
               <div
                 className={styles.optOrphan}
@@ -293,7 +370,8 @@ export const StatePicker = ({
                 })}
               </div>
             ))}
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
     </div>

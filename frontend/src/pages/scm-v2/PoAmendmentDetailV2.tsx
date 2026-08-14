@@ -67,6 +67,8 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
    written in (a scm.staff uuid), so this is what "did I raise this?" compares. */
 import { useAuth as useScmAuth } from "../../vendor/scm/lib/auth";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn, formatDate } from "../../lib/utils";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -444,7 +446,7 @@ export function PoAmendmentDetailV2() {
      handles PO via poAmendmentToPdfInput. Status label is the SIMPLIFIED
      Requested / Approved the owner asked for. */
   const applied = status === "APPROVED";
-  const handlePrintAmendment = () => {
+  const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = poAmendmentToPdfInput({
       amendment: {
@@ -461,10 +463,11 @@ export function PoAmendmentDetailV2() {
       supplierName: null,
       statusLabel: applied ? "Approved" : "Requested",
     });
-    Promise.resolve(generateAmendmentPdf(input)).catch((e: unknown) =>
+    return Promise.resolve(generateAmendmentPdf(input, { action })).catch((e: unknown) =>
       notify({ title: "PDF generation failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     );
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   const canApprove = can("scm.po_amendment.approve");
   const canReject = canApprove;
@@ -791,7 +794,7 @@ export function PoAmendmentDetailV2() {
                 variant="secondary"
                 className="w-full"
                 icon={<Printer size={14} />}
-                onClick={handlePrintAmendment}
+                onClick={print.openPreview}
               >
                 Print amendment
               </Button>
@@ -848,6 +851,24 @@ export function PoAmendmentDetailV2() {
           </DetailAside>
         </DetailGrid>
       </div>
+      <PrintPreviewModal
+        open={print.open}
+        onClose={print.close}
+        docTitle="Purchase Order Amendment"
+        docNo={amendmentNo ?? "Amendment"}
+        rows={[
+          { label: "Against PO", value: poNumber || "—" },
+          { label: "Status", value: applied ? "Approved" : "Requested" },
+          { label: "Reason", value: reason || "—" },
+          {
+            label: "Changes",
+            value: `${lines.length + headerDiffs.length} change${
+              lines.length + headerDiffs.length === 1 ? "" : "s"
+            }`,
+          },
+        ]}
+        {...print.handlers}
+      />
     </div>
   );
 }

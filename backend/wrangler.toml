@@ -22,6 +22,24 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 # outbound writes stay OFF (AUTOCOUNT_WRITES_DISABLED, autocount.ts) — this
 # only re-opens reads from AutoCount, not writes back to it.
 AUTOCOUNT_SYNC_DISABLED = "false"
+# ERP -> AutoCount WRITE-BACK (outbound; the opposite direction to the two
+# settings above, which are the legacy inbound pull). Base URL of AcSyncService,
+# the service that runs ON the AutoCount host and drives the licensed 2.2 SDK.
+# SET 2026-08-11. The Cloudflare tunnel's public hostname was repointed from the
+# cutover file server to the service itself, and the service answered:
+#
+#   POST https://autocount.houzscentury.com/health
+#   -> {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}   HTTP 200
+#   GET  /ac-svc-key.txt -> 405 Method Not Allowed  (the file server is gone,
+#                                                    and with it the publicly
+#                                                    downloadable API key)
+#
+# THIS ALONE SENDS NOTHING. The second gate is the DB toggle scm.app_config
+# 'scm.autocount_writeback', seeded 'off' by migration 0277: with the URL set
+# and the toggle off, nothing is enqueued and nothing is drained. BOTH must be
+# on for a document to reach the live account book. The API key beside it is a
+# SECRET (AC_SYNC_KEY), never a var. See docs/modules/autocount-writeback.md.
+AC_SYNC_URL = "https://autocount.houzscentury.com"
 # Cost/margin DISPLAY switch. "true" (or absent) = ON — the current prod state,
 # cost/margin reach finance viewers on SCM sales documents exactly as before.
 # "false" = OFF: canViewScmFinance returns false for EVERYONE, so every
@@ -76,6 +94,14 @@ EMAIL_FROM = "Houzs ERP <no-reply@houzscentury.com>"
 # Reply-to: no-reply@ can't receive, so point customer replies at the real
 # company mailbox (Google Workspace). Applied to every email via deliverViaResend.
 EMAIL_REPLY_TO = "Houzs Century <hello@houzscentury.com>"
+# R2 bucket the SO / PO line photos live in. The signed-URL routes read this to
+# build the SigV4 request; without it soItemPhotoBindings throws and every photo
+# thumbnail renders as "err" — which is exactly what production did until
+# 2026-08-10, when 983 imported AutoCount photos landed in R2 and none of them
+# would display. The BUCKET NAME is not a secret (it is the same bucket the
+# [[r2_buckets]] bindings below name); only R2_ACCESS_KEY_ID /
+# R2_SECRET_ACCESS_KEY / R2_ENDPOINT are, and those stay wrangler secrets.
+SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"
 
 # D1 — REMOVED 2026-06-13 (write lockout). Prod is fully on Supabase/Postgres:
 # every request (dbInject) and every cron (withPgDb) runs through the d1-compat
@@ -202,6 +228,13 @@ dataset = "houzs_erp_metrics"
 #                          and the exact list of fields that leave the building:
 #                          docs/error-tracking-options.md.
 #   AUTOCOUNT_API_KEY
+#   AC_SYNC_KEY          — X-API-KEY for AcSyncService, the ERP -> AutoCount
+#                          write-back service on the AutoCount host. NOT SET.
+#                          Set it with `wrangler secret put AC_SYNC_KEY` when
+#                          the write-back is turned on; the URL beside it
+#                          (AC_SYNC_URL) is config and lives in [vars], this is
+#                          the credential and never does.
+#                          See docs/modules/autocount-writeback.md.
 #   DASHBOARD_API_KEY
 #   CONNECT_SERVICE_TOKEN — dedicated service-tier key for Houzs Connect's org
 #                          sync (middleware/auth.ts). Set with `wrangler secret
@@ -283,6 +316,8 @@ HOUZS_OWNS_2990 = "true"
 PUBLIC_APP_URL = "https://houzs-erp-staging.pages.dev"
 EMAIL_FROM = "Houzs ERP Staging <no-reply@houzscentury.com>"
 EMAIL_REPLY_TO = "Houzs Century <hello@houzscentury.com>"
+# Same bucket as prod (staging shares the R2 bucket); see the prod vars block.
+SO_ITEM_PHOTOS_BUCKET_NAME = "houzs-erp"
 # Environment label stamped on every reported error (services/errorTracking.ts).
 # Inert on its own — nothing is reported until SENTRY_DSN is set. It exists so
 # that if staging ever gets a DSN, its noise lands under environment=staging and

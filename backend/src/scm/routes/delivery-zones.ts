@@ -55,9 +55,12 @@ import { loadDriverLeave } from '../lib/driver-availability';
 export const deliveryZones = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryZones.use('*', supabaseAuth);
 
-const MAP_COLS = 'id, zone, prefix_start, prefix_end, label, is_active, created_at, updated_at';
+/* Exported for the Delivery Planning /geo read (Option B side map), which
+   derives each day-pin's zone through the SAME company map + default fallback
+   this router owns — one zone rule, two readers. */
+export const MAP_COLS = 'id, zone, prefix_start, prefix_end, label, is_active, created_at, updated_at';
 
-type MapRow = {
+export type MapRow = {
   id: string;
   zone?: string | null;
   prefix_start?: number | null; prefixStart?: number | null;
@@ -81,8 +84,9 @@ function mapOut(r: MapRow) {
   };
 }
 
-/** Company map rows -> ZonePrefixRule[]; the in-code default when there are none. */
-function toPrefixMap(rows: MapRow[]): { map: ZonePrefixRule[]; usingDefault: boolean } {
+/** Company map rows -> ZonePrefixRule[]; the in-code default when there are none.
+ *  Exported for the Delivery Planning /geo read (see MAP_COLS above). */
+export function toPrefixMap(rows: MapRow[]): { map: ZonePrefixRule[]; usingDefault: boolean } {
   const active = rows.filter((r) => (r.isActive ?? r.is_active ?? true) !== false);
   if (active.length === 0) return { map: [...DEFAULT_ZONE_PREFIX_MAP], usingDefault: true };
   return {
@@ -150,6 +154,14 @@ deliveryZones.post('/', async (c) => {
   }).select(MAP_COLS).single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_rule', reason: 'That exact zone + prefix range already exists.' }, 409);
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }

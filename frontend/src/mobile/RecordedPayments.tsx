@@ -32,6 +32,7 @@ import { fetchPaymentSlipUrl, uploadSlipFull } from "../vendor/scm/lib/slip";
 import {
   useAddSalesOrderPayment,
   useEditSalesOrderPayment,
+  useAttachSalesOrderPaymentSlip,
   useDeleteSalesOrderPayment,
 } from "../vendor/scm/lib/sales-order-queries";
 import { todayMyt, mytDayOf } from "../vendor/scm/lib/dates";
@@ -247,8 +248,9 @@ function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: st
 
 /* ── Add / Edit Payment sheet ────────────────────────────────────────────────
    Records ONE payment through POST /:docNo/payments — the SAME endpoint + body
-   shape MobileNewSO.recordSlipBackedPayments uses — or PATCHes an existing row
-   (edit mode). Slip is OPTIONAL (owner 2026-07-13). No pricing logic lives here;
+   shape MobileNewSO.recordNewPayments uses — or PATCHes an existing row
+   (edit mode). Slip is OPTIONAL (owner 2026-07-13, and since 2026-08-13 on the
+   new-SO path too, which is what renamed that function). No pricing logic here;
    the backend recomputes the balance and derives the Account Sheet. Design = the
    shared .hz-m bottom sheet + fld / fld-i / fld-l classes. */
 export function AddPaymentSheet({
@@ -359,7 +361,7 @@ export function AddPaymentSheet({
     if (!canSave) return;
     setError(null);
     setBusy(true);
-    /* Same body MobileNewSO.recordSlipBackedPayments POSTs — do NOT reimplement
+    /* Same body MobileNewSO.recordNewPayments POSTs — do NOT reimplement
        pricing; the backend recomputes the balance. In EDIT mode the same fields
        PATCH the existing row (slip untouched). */
     const code = paymentMethodCodeForValue(method) ?? "cash";
@@ -584,10 +586,54 @@ export function RecordedPaymentsList({
 }) {
   const confirm = useConfirm();
   const deletePaymentMut = useDeleteSalesOrderPayment();
+  const attachSlipMut = useAttachSalesOrderPaymentSlip();
   const [editPay, setEditPay] = useState<RecordedPayment | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const disabled = busy || working;
+
+  /* Attach the proof to an ALREADY-RECORDED payment (owner 2026-08-07). One
+     hidden input, re-targeted per row — `attachTarget` holds the row the picker
+     was opened for, `attaching` its id while the upload is in flight.
+
+     Deliberately NOT behind rowMutable, unlike the pencil and the trash beside
+     it: the same-day window guards the MONEY, and this changes none of it. The
+     proof for a balance collected on delivery routinely reaches the office days
+     later — gating it the same way would leave that payment permanently without
+     its slip, which is the gap this exists to close. The server agrees (the
+     /slip route is un-gated where PATCH and DELETE are not). */
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const attachTargetRef = useRef<RecordedPayment | null>(null);
+  const [attaching, setAttaching] = useState<string | null>(null);
+
+  const openAttachPicker = (p: RecordedPayment) => {
+    if (disabled || attaching) return;
+    attachTargetRef.current = p;
+    attachInputRef.current?.click();
+  };
+
+  const onAttachFilePicked = async (file: File | null) => {
+    const target = attachTargetRef.current;
+    attachTargetRef.current = null;
+    if (attachInputRef.current) attachInputRef.current.value = "";
+    if (!file || !target) return;
+    if (slipKeyOf(target) && !(await confirm({
+      title: "Replace the proof on this payment?",
+      body: "The slip currently attached will be swapped for the one you just picked. The change is recorded in the order history.",
+      confirmLabel: "Replace",
+    }))) return;
+    setError(null);
+    setAttaching(target.id);
+    try {
+      const { uploadSessionId } = await uploadSlipFull({ file });
+      await attachSlipMut.mutateAsync({ docNo, id: target.id, uploadSessionId });
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't attach the proof. Please try again.");
+    } finally {
+      setAttaching(null);
+    }
+  };
 
   /* SAME-DAY WINDOW (owner 2026-07-19) — "删除只有在当天才行". A payment row may
      be edited or deleted only on the MY calendar day it was KEYED IN
@@ -641,12 +687,41 @@ export function RecordedPaymentsList({
 
   return (
     <>
+      {/* One picker for every row — `attachTargetRef` says which. Accepts the
+          same mimes as the desktop SlipUploadField; `capture` is deliberately
+          omitted so the phone offers Camera / Photos / Files rather than forcing
+          a live shot (the slip is usually already in the camera roll). */}
+      <input
+        ref={attachInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        style={{ display: "none" }}
+        onChange={(e) => void onAttachFilePicked(e.target.files?.[0] ?? null)}
+      />
       {payments.length ? payments.map((p, i) => (
         <div key={p.id} style={rowStyle(i)}>
           <PaymentInfoBlock payment={p} />
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {slipKeyOf(p) ? <SlipLink docNo={docNo} paymentId={p.id} /> : null}
             <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39" }}>{fmtCenti(p.amount_centi)}</span>
+            {/* Attach / replace the proof — see openAttachPicker: gated by
+                `canEdit` only, never by the same-day window. */}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => openAttachPicker(p)}
+                disabled={disabled || attaching !== null}
+                title={slipKeyOf(p) ? "Replace payment proof" : "Attach payment proof"}
+                aria-label={slipKeyOf(p) ? "Replace payment proof" : "Attach payment proof"}
+                style={{ border: "none", background: "transparent", cursor: "pointer", padding: "0 4px", display: "flex", alignItems: "center", opacity: (disabled || attaching !== null) ? 0.4 : 1 }}
+              >
+                {attaching === p.id ? (
+                  <span style={{ fontSize: 10.5, color: "var(--mut)" }}>…</span>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2f5d4f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                )}
+              </button>
+            )}
             {/* Same-day EDIT (owner 2026-07-13) — the pencil needs edit rights
                 AND, for a submitted SO, that the row was recorded today (after
                 MYT midnight it locks). A DRAFT's rows are never same-day-locked

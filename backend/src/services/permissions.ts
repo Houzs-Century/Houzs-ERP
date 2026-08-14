@@ -21,6 +21,18 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "service_cases.create", resource: "Service Cases", verb: "create", label: "Log service cases",     description: "Create a case (but not edit it afterward — for sales who only log complaints)" },
   { key: "service_cases.write",  resource: "Service Cases", verb: "write",  label: "Edit service cases",   description: "Create and update ASSR cases" },
   { key: "service_cases.manage", resource: "Service Cases", verb: "manage", label: "Manage service cases", description: "Triage, assign, schedule logistics for ASSR cases" },
+  /* DECLARED 2026-08-13. `routes/assr.ts:2773` has gated POST /:id/approve on
+     this key all along, and it was absent from this array — so PERMISSION_KEYS
+     never contained it, it could not appear in the roles matrix, and
+     requirePermission admitted only holders of the literal string or `*`. In
+     practice: cost approval was accidentally Owner/IT-only, and no amount of
+     clicking in Team > Positions could change that.
+
+     Declaring it is a ZERO behaviour change today — everyone who could approve
+     still can — but the gate becomes grantable instead of silently absolute.
+     Its only other declaration was in the dead D1 tree
+     (db/migrations/014_qms_roles.sql:40). */
+  { key: "service_cases.approve", resource: "Service Cases", verb: "manage", label: "Approve service cost", description: "Approve the quoted cost on an ASSR case (POST /api/assr/:id/approve)" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
   // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance
@@ -116,6 +128,17 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.payment_voucher.write",  resource: "Supply Chain", verb: "write",  label: "Edit payment voucher",    description: "Edit a DRAFT Payment Voucher (payee, accounts, lines, PI settlement allocations)" },
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
   { key: "scm.payment_voucher.cancel", resource: "Supply Chain", verb: "manage", label: "Cancel payment voucher",   description: "Cancel a Payment Voucher (reverses the GL entry + any PI settlement)" },
+
+  // Stock take supervision (owner-approved phase 1, 2026-08-08). A stock take
+  // carries an ASSIGNEE (scm.stock_takes.assignee_staff_id — the person
+  // responsible for the count); posting is allowed only for that assignee OR a
+  // holder of this key. The key additionally gates the two supervisor-only
+  // moves: posting a count whose variance exceeds the configured threshold
+  // (|qty delta| or line value — see scm/shared/stock-take-threshold.ts), and
+  // seeing SYSTEM QTY / VARIANCE on a BLIND take while it is still OPEN.
+  // Normal wildcard semantics (NOT in EXPLICIT_APPROVAL_KEYS): Owner + IT
+  // Admin pass via "*"; grant warehouse leads via Team > Positions.
+  { key: "scm.stock_take.supervise", resource: "Supply Chain", verb: "manage", label: "Supervise stock takes", description: "Post any stock take (not only ones assigned to you), post counts whose variance exceeds the threshold, and reveal system quantities on blind counts" },
 
   // Currency master — the owner-maintained list of currencies + each one's
   // rate_to_myr (multi-currency FX, migration 0082). Reading the list is open to

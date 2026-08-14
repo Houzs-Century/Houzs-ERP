@@ -1,0 +1,51 @@
+name: AutoCount item ambiguity — report (read-only)
+
+# Answers "which ERP items will refuse a sales order, and what would fix each"
+# without anyone opening a SQL console.
+#
+# The cutover collapsed supplier-specific AutoCount items onto one ERP code, so
+# some codes resolve to several items. A purchase order names its creditor and
+# resolves; a sales order names none and is REFUSED whole. This lists every
+# such code, what the account book's candidates are, what the ERP already has
+# bound, and — for a sofa — which candidate the ERP's own main supplier points
+# at.
+#
+# Manual trigger only, per the standing rule in CLAUDE.md: a production DB read
+# on a schedule turns a real question into CI noise nobody reads.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company to report on"
+        required: false
+        default: "1"
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: autocount-ambiguous-items
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-autocount-ambiguous-items.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

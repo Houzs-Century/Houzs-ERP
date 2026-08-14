@@ -53,7 +53,8 @@ import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { soDateGuardError, soStockLocationError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../../hooks/useBranding";
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
@@ -148,6 +149,8 @@ export function SalesOrderNewGuided() {
      across a re-press after a stalled submit (the retry replays the first
      order's docNo), fresh on the next mount so a genuinely new order is new. */
   const idemKey = useIdempotencyKey();
+  /* Active company — feeds the shared stock-location guard below. */
+  const branding = useBranding();
 
   const [step, setStep] = useState<number>(0);
   const [showValidation, setShowValidation] = useState<boolean>(false);
@@ -255,19 +258,32 @@ export function SalesOrderNewGuided() {
 
     /* Pre-validate with the SAME shared guards the Full form (SalesOrderNew)
        runs, so a bad build surfaces one plain sentence here instead of a raw
-       server 400/409. The wizard collects no dates or payments (added on the SO
-       detail after save), so soDateGuardError / soSliplessPaymentError operate
-       on empty inputs and pass — kept for single-logic-layer parity so a future
-       date/payment field on this flow is guarded automatically. Every line here
+       server 400/409. The wizard collects no dates (added on the SO detail
+       after save), so soDateGuardError operates on empty inputs and passes —
+       kept for single-logic-layer parity so a future date field on this flow is
+       guarded automatically. Payments are not guarded at all: the slip is
+       optional everywhere (Owner 2026-08-13) and this flow collects no payment.
+       Every line here
        is a sofa module, so hasSofaMixConflict can't fire in practice, but the
        check mirrors the Full form verbatim. Variant completeness
        (missingRequiredVariants) is enforced only once a processing date is set
        (server parity); the guided flow sets none, so it's enforced on the SO
-       detail, not here. */
+       detail, not here.
+
+       The stock-location gate (owner 2026-08-13) is inert here for the same
+       parity reason: this flow lands a DRAFT unconditionally (see `asDraft`
+       below) and a draft is never written to AutoCount, so the guard passes —
+       but it is wired, so the day this flow stops drafting it is gated
+       automatically instead of silently minting locationless orders. */
     const preErr =
       soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
       (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soSliplessPaymentError([]);
+      soStockLocationError({
+        companyCode: branding.companyCode,
+        salesLocation: "",
+        state: "",
+        asDraft: true,
+      });
     if (preErr) {
       setPostError(soErrorText(preErr));
       return;
@@ -280,8 +296,15 @@ export function SalesOrderNewGuided() {
       debtorCode: customer.debtorCode || null,
       note: note.trim() || null,
       items,
-      // Dates intentionally omitted — server permits header-first and
-      // the variant-completeness guard only fires when a processingDate is set.
+      // Dates intentionally omitted — server permits header-first.
+      /* Owner 2026-08-08 — CONFIRMING now requires every sofa line's Seat
+         Height + Fabrics (and a venue + salesperson). The wizard deliberately
+         collects none of those — its model is "assemble the build, enrich on
+         the SO detail" — so it lands a DRAFT the operator completes and
+         confirms there (the detail's DRAFT banner). Without this flag the
+         create would land CONFIRMED and the server confirm gate would refuse
+         every wizard build outright. */
+      asDraft: true,
     };
 
     try {
@@ -1211,7 +1234,7 @@ function SoLiveSummary({
             disabled={submitting}
             icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           >
-            {submitting ? "Saving…" : "Create SO"}
+            {submitting ? "Saving…" : "Save draft SO"}
           </Button>
         ) : (
           <Button variant="primary" onClick={onNext} disabled={submitting}>
@@ -1280,7 +1303,7 @@ function MobileFooter({
             disabled={submitting}
             icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           >
-            {submitting ? "Saving…" : "Create SO"}
+            {submitting ? "Saving…" : "Save draft SO"}
           </Button>
         ) : (
           <Button variant="primary" onClick={onNext} disabled={submitting}>

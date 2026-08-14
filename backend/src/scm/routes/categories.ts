@@ -384,14 +384,18 @@ publicCategoriesApi.patch('/:id', async (c) => {
   return c.json({ category: data });
 });
 
-publicCategoriesApi.delete('/:id', async (c) => {
+/* Exported so the in-use guard below can be driven by a test — same reason
+   mfg-products.ts exports deleteMfgProductHandler. */
+export const deleteCategoryHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden' }, 403);
   }
   const supabase = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const id = c.req.param('id');
+  /* `?? ''` only because this handler is exported (and so has no path generic
+     to prove the param is present); the router only ever calls it on /:id. */
+  const id = c.req.param('id') ?? '';
 
   // Pre-flight: product_models.category is an UPPERCASE Postgres enum
   // (SOFA / BEDFRAME / MATTRESS / ACCESSORY / SERVICE) while categories.id
@@ -404,7 +408,7 @@ publicCategoriesApi.delete('/:id', async (c) => {
   // those the delete proceeds, which is the right semantics — they have
   // no FK protection because there's no enum binding.
   const enumValue = id.toUpperCase();
-  const { data: refs, count } = await scopeToCompany(
+  const { data: refs, count, error: refsErr } = await scopeToCompany(
     supabase
       .from('product_models')
       .select('model_code', { count: 'exact' })
@@ -412,11 +416,27 @@ publicCategoriesApi.delete('/:id', async (c) => {
     c,
   )
     .limit(9);
+  /* `count ?? 0` used to fold a FAILED count into zero, and zero is precisely
+     what lets the delete below run — the category would be dropped (and its R2
+     hero blob with it) on a reference check that never happened. A failed read
+     must never read as an absence when the absence is what authorises the
+     write; see lib/downstream-lock.ts, which states the rule. */
+  if (refsErr) {
+    return c.json({
+      error: 'category_in_use_check_failed',
+      reason:
+        'Could not check whether any product model still uses this category, so it is kept '
+        + `rather than deleted on an answer nobody verified — try again (${refsErr.message}).`,
+    }, 409);
+  }
   if ((count ?? 0) > 0) {
     return c.json({
       error: 'category_in_use',
       count: count ?? 0,
-      sample_models: (refs ?? []).map((r) => (r as { model_code: string }).model_code),
+      // `refs` is an array here: the `if (refsErr) return` above is what makes it
+      // one. A `?? []` would put back the same fold-a-failed-read-into-nothing
+      // shape the comment above says was the bug.
+      sample_models: refs.map((r) => (r as { model_code: string }).model_code),
     }, 409);
   }
 
@@ -438,7 +458,8 @@ publicCategoriesApi.delete('/:id', async (c) => {
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   return c.json({ ok: true });
-});
+};
+publicCategoriesApi.delete('/:id', deleteCategoryHandler);
 
 // PATCH /:id/hero-meta — focal + alt update. Admin-only.
 publicCategoriesApi.patch('/:id/hero-meta', async (c) => {

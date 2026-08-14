@@ -81,6 +81,35 @@ modelFreeGifts.put('/', async (c) => {
   }
 
   const gifts = parseDefaultFreeGifts(parsed.data.gifts);
+  /* `onConflict: 'model_id'` matches the PK, and the PK is RIGHT — checked
+     2026-08-13, recorded because the shape invites the opposite conclusion.
+
+     The tempting reading: scm.model_default_free_gifts is keyed `model_id uuid
+     PRIMARY KEY` (2990s-full-schema.sql:764) and mig 0083:267 added company_id
+     without touching that key, so this upsert should overwrite the other
+     company's row — the pos_carts (0284) / compartment_fabric_tier_overrides
+     (0287) defect exactly.
+
+     It does not, because the PARENT is per-company. product_models carries
+     company_id NOT NULL (mig 0083:216), rows are CREATED with `company_id:
+     activeCompanyId(c)` (routes/product-models.ts POST) and listed through
+     scopeToCompany, its uuids come from gen_random_uuid() per row, and mig
+     0188:36-38 swapped its natural unique to (company_id, model_code, category)
+     precisely so each company keeps its OWN model rows. So a model_id belongs
+     to exactly one company and (model_id) already implies one — two companies
+     can never contend for this key.
+
+     0287 was the opposite case, though NOT for the reason first written here.
+     This comment said "compartment_library carries NO company_id, the catalogue
+     is shared" — mig 0089:74 adds one, NOT NULL. Corrected the same day; the
+     verdict held, the argument did not. The real reason is that
+     `compartment_fabric_tier_overrides.compartment_id` is an UNVALIDATED free
+     string from the request body, never joined to any catalogue, carrying
+     normalized sofa module codes that both companies produce independently.
+
+     Same DDL shape, opposite verdicts, and the lesson is narrower than first
+     stated: counting company_id columns answers nothing, and neither does one
+     glance at a parent — find who actually WRITES the key. */
   const { data: updated, error } = await gate.supabase
     .from('model_default_free_gifts')
     .upsert({ company_id: activeCompanyId(c), model_id: parsed.data.modelId, gifts, updated_at: new Date().toISOString(), updated_by: gate.userId }, { onConflict: 'model_id' }) // multi-company: stamp the active company
@@ -92,9 +121,14 @@ modelFreeGifts.put('/', async (c) => {
 
 // DELETE — drop a Model's gift config.
 modelFreeGifts.delete('/:modelId', async (c) => {
+  /* Company scope. model_default_free_gifts carries company_id NOT NULL + FK
+     since migration 0083, and requireGiftEditor above resolves a permission and
+     a user id only — no tenancy — so an unscoped delete by model_id removed
+     another company's default gift rows. Verified 2026-08-13 by reading the gate
+     and then the table's DDL. */
   const gate = await requireGiftEditor(c);
   if ('error' in gate) return gate.error;
-  const { error } = await gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId'));
+  const { error } = await scopeToCompany(gate.supabase.from('model_default_free_gifts').delete().eq('model_id', c.req.param('modelId')), c);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });

@@ -22,10 +22,34 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { postSiRevenue } from '../lib/post-si-revenue';
+import { MIGRATED_NO_GL_MESSAGE } from '../lib/migrated-chain';
 import { paginateAll } from '../lib/paginate-all';
 import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { nextJeNo, jePrefixForCompany } from '../lib/doc-no';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+
+/* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
+   `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
+   journal entry, its posting, and the SI / PI revenue postings.
+
+   Its only gate was `moneyWriteDenial` in the SCM area guard, and that fails
+   OPEN for a caller with no position (services/positionPolicy.ts: "Unidentifiable
+   caller (no position) -> not denied"). Payment vouchers are double-gated —
+   flat keys on every write verb ON TOP of that policy — and the GL, which is
+   what a voucher posts INTO, was not gated at all. The asymmetry is even named
+   in positionPolicy's own comment: "payment-vouchers additionally checks flat
+   scm.payment_voucher.* perms, so it was already double-gated; accounting was
+   not gated at all."
+
+   Gated on `scm.payment_voucher.post` — owner decision 2026-08-13, asked
+   directly. It reuses a key that already exists and is already granted to the
+   finance positions, so nobody is locked out today; inventing a new
+   `scm.accounting.post` would have taken effect with NOBODY holding it and
+   stopped GL posting until the positions matrix was updated. The semantics are
+   near enough: posting a voucher IS posting to the GL. */
+const requireGlPost = (c: Parameters<typeof hasHouzsPerm>[0]) =>
+  hasHouzsPerm(c, 'scm.payment_voucher.post');
 import {
   scopeToCompany, activeCompanyId, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -117,6 +141,7 @@ accounting.get('/journal-entries/:id', async (c) => {
 });
 
 accounting.post('/journal-entries', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to write to the general ledger." }, 403);
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -193,6 +218,7 @@ accounting.post('/journal-entries', async (c) => {
  * Exported so the route test can drive it without the supabaseAuth bridge,
  * which cannot run in this harness. */
 export const postJournalEntryHandler = async (c: any) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
@@ -241,6 +267,7 @@ accounting.post('/journal-entries/:id/post', postJournalEntryHandler);
    ════════════════════════════════════════════════════════════════════════ */
 
 accounting.post('/post/si/:invoiceNumber', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const invoiceNumber = c.req.param('invoiceNumber');
   const sb = c.get('supabase');
 
@@ -271,6 +298,12 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
   const r = await postSiRevenue(sb, invoiceNumber);
 
   if (r.ok) {
+    /* Nothing to post and nothing wrong: AutoCount already booked this sale.
+       Answered explicitly so the caller is not left inferring it from a missing
+       jeNo. */
+    if (r.status === 'migrated_source') {
+      return c.json({ ok: true, status: 'migrated_source', posted: false, message: MIGRATED_NO_GL_MESSAGE });
+    }
     if (r.status === 'already_posted') {
       // Keep the historical 409 contract for the explicit re-post endpoint.
       return c.json({ error: 'already_posted', existingJe: { id: r.jeId, je_no: r.jeNo } }, 409);
@@ -290,6 +323,10 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
 export type PostPiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
   | { ok: true; status: 'already_posted'; jeNo: string; jeId: string }
+  /* Deliberately not posted, and that is a SUCCESS — see the migrated guard
+     below. It is `ok: true` so the confirm handler does not write its
+     "AP/GL post FAILED" audit row for a thing that was never meant to post. */
+  | { ok: true; status: 'migrated_source' }
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
@@ -318,10 +355,20 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
 
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
-    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, suppliers(code, name)')
+    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !piRaw) return { ok: false, status: 'invoice_not_found' };
+
+  /* MIGRATED PAPERWORK POSTS NO JOURNAL (migration 0280). This invoice mirrors
+     one AutoCount already raised, and AutoCount already booked the payable
+     behind it. Posting Dr 1200 / Cr 2000 here would count the same money in two
+     books. The guard lives in this function rather than at its call sites so
+     every caller — the confirm handler, resyncPiAccounting, any future one — is
+     covered by construction. */
+  if ((piRaw as unknown as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) {
+    return { ok: true, status: 'migrated_source' };
+  }
   // Cast through `unknown` — Supabase JS without generated types returns
   // `GenericStringError` from `.select(string).single()` even when data is
   // populated. Project-wide pattern; see routes/admin.ts L97.
@@ -412,6 +459,7 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
 }
 
 accounting.post('/post/pi/:invoiceNumber', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const invoiceNumber = c.req.param('invoiceNumber');
   const sb = c.get('supabase');
 
@@ -438,6 +486,9 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
   }
 
   const r = await postPiAccounting(sb, invoiceNumber);
+  if (r.ok && r.status === 'migrated_source') {
+    return c.json({ ok: true, status: 'migrated_source', posted: false, message: MIGRATED_NO_GL_MESSAGE });
+  }
   if (r.ok && r.status === 'already_posted') {
     return c.json({ error: 'already_posted', existingJe: { id: r.jeId, je_no: r.jeNo } }, 409);
   }

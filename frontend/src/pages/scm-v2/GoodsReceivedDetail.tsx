@@ -40,6 +40,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { activeOptions, buildVariantSummary, fmtDateOrDash, maintPickerValues } from '@2990s/shared';
 import {
   useGrnDetail,
@@ -134,6 +136,14 @@ type LineDraft = {
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
+  /* migration 0280 — the zero-cost receipt gate's escape hatch. The gate
+     refuses a receipt that would open a zero-cost stock layer for a SKU the
+     company has bought at a real price before; this tick is the operator
+     saying the line genuinely arrived free (GWP, demo, display). It is the
+     ONLY way past the refusal that does not involve inventing a price, so it
+     has to be reachable from the same screen the refusal is read on. */
+  zeroCostAck: boolean;
+  zeroCostReason: string;
 };
 
 type GrnItemRow = Record<string, unknown> & {
@@ -155,6 +165,9 @@ type GrnItemRow = Record<string, unknown> & {
   /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
      Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
+  /* migration 0280 — zero-cost receipt acknowledgement + who set it. */
+  zero_cost_ack?: boolean | null;
+  zero_cost_reason?: string | null;
   /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
      receive date, so each line surfaces "received from which PO" + "receive date". */
   source_po_number?: string | null;
@@ -181,6 +194,8 @@ const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
+  zeroCostAck:    it.zero_cost_ack === true,
+  zeroCostReason: it.zero_cost_reason ?? '',
 });
 
 export const GoodsReceivedDetail = () => {
@@ -350,7 +365,12 @@ export const GoodsReceivedDetail = () => {
           /* T12 — identity/variant edits participate in the dirty check. */
           d.materialName !== snap.materialName ||
           (d.itemGroup ?? '') !== (snap.itemGroup ?? '') ||
-          JSON.stringify(d.variants ?? {}) !== JSON.stringify(snap.variants ?? {});
+          JSON.stringify(d.variants ?? {}) !== JSON.stringify(snap.variants ?? {}) ||
+          /* The zero-cost waiver participates: without this a line ticked and
+             saved on its own would look unchanged and never reach the server,
+             leaving the operator to hit the same refusal again. */
+          d.zeroCostAck !== snap.zeroCostAck ||
+          d.zeroCostReason.trim() !== snap.zeroCostReason.trim();
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
@@ -363,6 +383,10 @@ export const GoodsReceivedDetail = () => {
             description:  d.materialName,
             itemGroup:    d.itemGroup ?? undefined,
             variants:     d.variants ?? {},
+            /* migration 0280 — the server stamps who and when from the session;
+               the client only ever sends the decision and the reason. */
+            zeroCostAck:    d.zeroCostAck,
+            zeroCostReason: d.zeroCostReason.trim() || null,
           });
         }
       }
@@ -376,13 +400,14 @@ export const GoodsReceivedDetail = () => {
     }
   };
 
-  const handlePrint = () => {
-    // GRN PDF (AutoCount layout) — mirrors PO's handlePrint wiring its own
+  const deliverPrintPdf = (action: PdfAction) => {
+    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
     // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
-    import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
-      generateGrnPdf(grn, items as any),
+    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
+      generateGrnPdf(grn, items as any, { action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
+  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className={styles.page}>
@@ -425,10 +450,22 @@ export const GoodsReceivedDetail = () => {
               <span>From Purchase Order</span>
             </Button>
           )}
-          <Button variant="ghost" size="md" onClick={handlePrint}>
+          <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer {...ICON} />
             <span>Print PDF</span>
           </Button>
+          <PrintPreviewModal
+            open={print.open}
+            onClose={print.close}
+            docTitle="Goods Received Note"
+            docNo={grn.grn_number}
+            rows={[
+              { label: 'Supplier', value: grn.supplier?.name ?? grn.supplier?.code ?? '—' },
+              { label: 'Received', value: fmtDateOrDash(grn.received_at) },
+              { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+            ]}
+            {...print.handlers}
+          />
           {/* Cancel — when the GRN is still editable (Draft or Confirmed) AND has
               no downstream PI/PR (unified model). Confirm dialog → cancel mutation.
               For a Confirmed GRN this reverses the receipt; for a Draft the server
@@ -769,6 +806,37 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
+                    {/* Zero-cost acknowledgement (migration 0280). Rendered only
+                        while the line actually carries no price — on a priced
+                        line the gate cannot fire, and a permanent "received
+                        free" tick next to every line is exactly the kind of
+                        control people learn to tick without reading. */}
+                    {(isEditing ? d.unitPriceCenti : it.unit_price_centi) === 0 && (
+                      <label className={styles.field}>
+                        <span className={styles.fieldLabel}>Received free</span>
+                        {isEditing ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input
+                              type="checkbox" checked={d.zeroCostAck} disabled={isLocked}
+                              onChange={(e) => setLine(it, { zeroCostAck: e.target.checked })}
+                            />
+                            <input
+                              type="text" className={styles.fieldInput}
+                              placeholder="Why free? e.g. GWP, demo unit"
+                              value={d.zeroCostReason} disabled={isLocked || !d.zeroCostAck}
+                              onChange={(e) => setLine(it, { zeroCostReason: e.target.value })}
+                            />
+                          </span>
+                        ) : (
+                          <input
+                            type="text" readOnly
+                            value={it.zero_cost_ack ? (it.zero_cost_reason || 'Confirmed received free') : '—'}
+                            className={styles.fieldInput}
+                            style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
+                          />
+                        )}
+                      </label>
+                    )}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (

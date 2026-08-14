@@ -34,8 +34,10 @@
 // Mounted at '/sales-invoices' in scm/index.ts.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -49,12 +51,26 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
+import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { refuseMigratedSources } from '../lib/migrated-chain';
+
+/* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
+   (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
+async function queueAcSiEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docId: id,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+}
 
 export const salesInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesInvoices.use('*', supabaseAuth);
@@ -401,6 +417,46 @@ async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<Map<str
   return doLineRemaining(sb, doIds);
 }
 
+/* The migrated refusal for every path that can attach a DELIVERY to an invoice.
+   `/from-dos` resolves its own delivery ids and calls refuseMigratedSources
+   directly; the rest arrive holding either a do_item_id (POST /, POST
+   /:id/items) or a delivery id (POST /:id/items/from-do/:doId), so the delivery
+   has to be resolved before the rule can be applied. One rule behind all four
+   doors — a caller cannot pick a softer one.
+
+   A FAILED LOOKUP IS NOT A PASS. `ok: false` makes the caller refuse rather
+   than proceed blind; what it would otherwise let through is revenue booked a
+   second time for a sale AutoCount already invoiced. */
+async function migratedRefusalForDeliveries(
+  sb: any,
+  opts: { doItemIds?: Array<string | null | undefined>; doIds?: Array<string | null | undefined> },
+): Promise<
+  | { ok: true; refusal: { error: string; message: string; docNumbers: string[] } | null }
+  | { ok: false; reason: string }
+> {
+  const itemIds = [...new Set((opts.doItemIds ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0))];
+  const headIds = new Set((opts.doIds ?? []).filter((x): x is string => typeof x === 'string' && x.length > 0));
+  if (itemIds.length > 0) {
+    const { data, error } = await sb.from('delivery_order_items')
+      .select('delivery_order_id').in('id', itemIds);
+    if (error) return { ok: false, reason: error.message };
+    for (const r of (data ?? []) as Array<{ delivery_order_id: string | null }>) {
+      if (r.delivery_order_id) headIds.add(r.delivery_order_id);
+    }
+  }
+  if (headIds.size === 0) return { ok: true, refusal: null };
+  const { data, error } = await sb.from('delivery_orders')
+    .select('do_number, migrated_no_stock').in('id', [...headIds]);
+  if (error) return { ok: false, reason: error.message };
+  return {
+    ok: true,
+    refusal: refuseMigratedSources(
+      ((data ?? []) as Array<{ do_number: string; migrated_no_stock: boolean | null }>)
+        .map((r) => ({ docNo: r.do_number, migrated: r.migrated_no_stock === true })),
+    ),
+  };
+}
+
 /* Remaining-to-invoice write guard. */
 async function checkSiOverRemaining(
   sb: any,
@@ -651,9 +707,9 @@ function siTransitionReject(prev: string, next: string): string {
 
 // ── List ────────────────────────────────────────────────────────────────
 /* Stamp the linked SO's dates onto SI list rows for the quick-view drawer:
-   so_internal_expected_dd (the "Processing date" — mfg_sales_orders.
-   internal_expected_dd, the one true user date since the legacy
-   processing_date column was dropped, mig 0189) and so_customer_delivery_date
+   so_processing_date (the "Processing date" — mfg_sales_orders.processing_date,
+   the one true user date, and since mig 0284 under the one name the UI, the API
+   and every human already use) and so_customer_delivery_date
    (fallback for pre-snapshot SIs whose own customer_delivery_date is null).
    One batched read keyed by so_doc_no; mutates rows in place, same style as
    gateSiFinance. Called on BOTH list paths (legacy + paginated). */
@@ -661,17 +717,17 @@ async function stampSoDates(sb: any, rows: unknown): Promise<void> {
   if (!Array.isArray(rows) || rows.length === 0) return;
   const list = rows as Array<Record<string, unknown>>;
   const soDocNos = [...new Set(list.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
-  const byDoc = new Map<string, { internal_expected_dd: string | null; customer_delivery_date: string | null }>();
+  const byDoc = new Map<string, { processing_date: string | null; customer_delivery_date: string | null }>();
   if (soDocNos.length > 0) {
     const { data } = await sb.from('mfg_sales_orders')
-      .select('doc_no, internal_expected_dd, customer_delivery_date').in('doc_no', soDocNos);
-    for (const s of ((data ?? []) as Array<{ doc_no: string | null; internal_expected_dd: string | null; customer_delivery_date: string | null }>)) {
-      if (s.doc_no) byDoc.set(s.doc_no, { internal_expected_dd: s.internal_expected_dd ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
+      .select('doc_no, processing_date, customer_delivery_date').in('doc_no', soDocNos);
+    for (const s of ((data ?? []) as Array<{ doc_no: string | null; processing_date: string | null; customer_delivery_date: string | null }>)) {
+      if (s.doc_no) byDoc.set(s.doc_no, { processing_date: s.processing_date ?? null, customer_delivery_date: s.customer_delivery_date ?? null });
     }
   }
   for (const r of list) {
     const so = byDoc.get((r.so_doc_no as string | null) ?? '');
-    r.so_internal_expected_dd = so?.internal_expected_dd ?? null;
+    r.so_processing_date = so?.processing_date ?? null;
     r.so_customer_delivery_date = so?.customer_delivery_date ?? null;
   }
 }
@@ -833,7 +889,9 @@ salesInvoices.get('/', async (c) => {
 /* STATIC path MUST be registered BEFORE the `/:id` param route below. */
 salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'));
+  // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
+  // enumerated every company's delivery orders into this picker.
+  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
   if (doIds.length === 0) return c.json({ lines: [] });
   const remainingMap = await doInvoiceableRemaining(sb, doIds);
   const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
@@ -844,7 +902,9 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
 salesInvoices.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
-    sb.from('sales_invoices').select(HEADER).eq('id', id).maybeSingle(),
+    // Company-scoped (owner 2026-08-10 audit) — a bare uuid must not read
+    // another company's invoice.
+    scopeToCompany(sb.from('sales_invoices').select(HEADER), c).eq('id', id).maybeSingle(),
     sb.from('sales_invoice_items').select(ITEM).eq('sales_invoice_id', id)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),
@@ -916,6 +976,20 @@ salesInvoices.post('/', async (c) => {
   {
     const over = await checkSiOverRemaining(sb, items);
     if (over) return c.json(over, 409);
+  }
+
+  /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
+     converter, never by hand — see lib/migrated-chain.ts. Checked HERE as well
+     as on /from-dos because this path reaches the same delivery lines through
+     `deliveryOrderId` or a line's `doItemId`, and would otherwise be the open
+     gate beside the fence: AutoCount already booked this revenue. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, {
+      doItemIds: items.map((it) => it.doItemId as string | undefined),
+      doIds: [(body.deliveryOrderId as string | undefined) ?? null],
+    });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
   /* FIX 3 — this SI declares a source DO, so its DO-derived lines must stay
@@ -1031,6 +1105,36 @@ salesInvoices.post('/', async (c) => {
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));
     const { error: iErr } = await sb.from('sales_invoice_items').insert(stampCompany(rows, c));
     if (iErr) { await sb.from('sales_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+
+  /* Race-condition guard — the SI counterpart of "Edge #E" in
+     delivery-orders-mfg.ts. checkSiOverRemaining above is read-before-write, so
+     two invoices raised against the same delivered goods at the same moment can
+     both pass and bill the customer twice for one delivery. After inserting,
+     re-derive remaining for the picked DO lines and ROLL BACK when any has gone
+     negative.
+
+     SO -> DO, PO -> GRN and GRN -> PI all close this already; DO -> SI was the
+     one conversion without it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        // Undo: lines then header. Nothing else has happened yet — revenue is
+        // posted further down, so there is no ledger entry to reverse.
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
     await recomputeTotals(sb, h.id);
   }
 
@@ -1039,6 +1143,23 @@ salesInvoices.post('/', async (c) => {
      header, so from here every exit is a success and this CREATE row is true.
      Written before the DRAFT early-return so both statuses record exactly one. */
   await recordSiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
+
+  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. A standalone invoice
+     with no delivery order behind it has nothing for AutoCount to transfer
+     from, and there is no /create-iv route on AcSyncService to reach for.
+     Recorded rather than dropped, because this invoice will never appear in the
+     account book and the owner's outstanding rule ("not converted to DO and NOT
+     TO IV") reads exactly this document class. Placed BEFORE the DRAFT early
+     return so a draft and a posted invoice each record exactly one row, in step
+     with recordSiCreate directly above. */
+  await recordParentlessCreate(sb, {
+    companyId: activeCompanyId(c),
+    docType: 'IV',
+    docNo: h.invoice_number,
+    docId: h.id,
+    missing: 'no source Delivery Order',
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 
   /* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post AR/GL revenue nor auto-apply
      customer credit. Both happen on confirm (PATCH /:id/status DRAFT→SENT). */
@@ -1050,7 +1171,11 @@ salesInvoices.post('/', async (c) => {
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
   const post = await postSiRevenue(sb, h.invoice_number);
   if (post.ok) {
-    revenue = { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
+    /* 'migrated_source' carries no jeNo and needs none: AutoCount already booked
+       the revenue, so the correct number of journal entries here is zero. */
+    revenue = post.status === 'migrated_source'
+      ? { posted: false, status: post.status }
+      : { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
   } else {
     revenue = { posted: false, status: post.status };
     if (post.status !== 'zero_total' && post.status !== 'invoice_not_found') {
@@ -1087,7 +1212,8 @@ salesInvoices.post('/', async (c) => {
 });
 
 /* ── Convert picked DO LINES (partial qty) → ONE Sales Invoice ───────────── */
-salesInvoices.post('/from-dos', async (c) => {
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
+export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ doItemId?: string; qty?: number }>; asDraft?: unknown };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1106,10 +1232,15 @@ salesInvoices.post('/from-dos', async (c) => {
   if (pickQtyById.size === 0) return c.json({ error: 'picks_required' }, 400);
 
   const pickedIds = [...pickQtyById.keys()];
-  const { data: pickedItemRows, error: pErr } = await sb
+  /* SOURCE LOAD, SCOPED — the caller's doItemIds enter here, so this read plus
+     the scoped DO-header read below decide what the conversion can see: another
+     company's line resolves to NO ROW and falls out at `do_item_not_found`.
+     THE COST is the message, because naming the other company needs an UNSCOPED
+     read this handler otherwise never makes. */
+  const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
     .from('delivery_order_items')
     .select('id, delivery_order_id')
-    .in('id', pickedIds);
+    .in('id', pickedIds), c);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const idToDo = new Map<string, string>();
   for (const r of (pickedItemRows ?? []) as Array<{ id: string; delivery_order_id: string }>) idToDo.set(r.id, r.delivery_order_id);
@@ -1117,6 +1248,21 @@ salesInvoices.post('/from-dos', async (c) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
+
+  /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
+     converter, never here. AutoCount already raised the invoice and already
+     booked its revenue, so this path would mint a second one under an ERP
+     number (breaking the owner's "keep AutoCount's number" rule), post
+     Dr 1100 / Cr 4000 for revenue already recognised, and enqueue a do_to_iv
+     transfer that duplicates the invoice in the live account book. It would
+     also consume the DO line's Pending pool, so the mistake could not be undone
+     without cancelling the invoice. See lib/migrated-chain.ts. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doIds });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
+  }
+
   const remainingMap = await doInvoiceableRemaining(sb, doIds);
 
   const customers = new Set<string>();
@@ -1163,29 +1309,15 @@ salesInvoices.post('/from-dos', async (c) => {
     'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
     'address1, address2, city, state, postcode, phone, currency, ' +
     'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship';
-  const { data: doHeaderRow, error: hLoadErr } = await sb
+  // HEADER half of the same source document — same predicate as the lines.
+  const { data: doHeaderRow, error: hLoadErr } = await scopeToCompany(sb
     .from('delivery_orders')
     .select(DO_HEADER)
-    .eq('id', firstDoId)
+    .eq('id', firstDoId), c)
     .maybeSingle();
   if (hLoadErr) return c.json({ error: 'load_failed', reason: hLoadErr.message }, 500);
   if (!doHeaderRow) return c.json({ error: 'delivery_order_not_found' }, 404);
   const head = doHeaderRow as unknown as Record<string, unknown>;
-
-  /* CROSS-COMPANY GUARD — the insert below stamps the ACTIVE company and
-     nextNum mints under the ACTIVE company's prefix, so a 2990 DO invoiced from
-     the Houzs view would become a Houzs invoice: 2990's revenue and AR on
-     Houzs' books. This is the SECOND hop of the same conversion chain — the DO
-     itself may legitimately be a 2990 document, because POST /from-sos in
-     delivery-orders-mfg.ts correctly inherits the source SO's company. Refuse
-     rather than inherit: unlike the shared Delivery Planning queue, invoicing
-     is a per-company book with its own numbering. */
-  if (isCrossCompanySource(head.company_id, c)) {
-    return c.json(
-      crossCompanyConversionBlocked(head.do_number as string | null, head.company_id, c),
-      409,
-    );
-  }
 
   const nowIso = new Date().toISOString();
   const phoneRaw = head.phone as string | null;
@@ -1266,6 +1398,29 @@ salesInvoices.post('/from-dos', async (c) => {
     return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
   }
 
+  /* Race-condition guard — same as the POST / path above, and the SI
+     counterpart of "Edge #E" in delivery-orders-mfg.ts. This is the picker
+     path, so EVERY line carries a do_item_id and the whole invoice is exposed
+     to the race, not just the linked part of it. */
+  {
+    const pickedDoItemIds = rows
+      .map((r) => (r as { do_item_id?: string | null }).do_item_id)
+      .filter((x): x is string => !!x);
+    if (pickedDoItemIds.length > 0) {
+      const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      if (over.length > 0) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json({
+          error: 'race_conflict',
+          message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.',
+          conflicts: over,
+        }, 409);
+      }
+    }
+  }
+
   await recomputeTotals(sb, h.id);
 
   /* Past the items-insert rollback — the invoice is permanent from here. */
@@ -1273,6 +1428,31 @@ salesInvoices.post('/from-dos', async (c) => {
     sb, c.get('houzsUser'), activeCompanyId(c), h.id, rows.length,
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
+
+  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
+     several DOs has no AutoCount shape and is recorded as skipped instead. */
+  if (doIds.length === 1) {
+    await enqueueConvert(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  } else {
+    await recordConvertSkipped(sb, {
+      companyId: activeCompanyId(c),
+      op: 'do_to_iv',
+      docType: 'IV',
+      docNo: h.invoice_number,
+      docId: h.id,
+      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */
@@ -1283,7 +1463,11 @@ salesInvoices.post('/from-dos', async (c) => {
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
   const post = await postSiRevenue(sb, h.invoice_number);
   if (post.ok) {
-    revenue = { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
+    /* 'migrated_source' carries no jeNo and needs none: AutoCount already booked
+       the revenue, so the correct number of journal entries here is zero. */
+    revenue = post.status === 'migrated_source'
+      ? { posted: false, status: post.status }
+      : { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
   } else {
     revenue = { posted: false, status: post.status };
     if (post.status !== 'zero_total' && post.status !== 'invoice_not_found') {
@@ -1315,13 +1499,20 @@ salesInvoices.post('/from-dos', async (c) => {
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
   return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied }, 201);
-});
+};
+salesInvoices.post('/from-dos', createSalesInvoiceFromDoLinesHandler);
 
 /* ── Append a Delivery Order's lines into an EXISTING invoice ────────────── */
-salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
+export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const doId = c.req.param('doId');
 
-  const { data: si } = await sb.from('sales_invoices').select('id, invoice_number, status').eq('id', id).maybeSingle();
+  /* company-scope: this header read is the gate for the whole handler. Unscoped,
+     company A appended lines to B's invoice — and the insert below stamps the
+     ACTIVE company, so they landed on B's document tagged as A's. */
+  const { data: si } = await scopeToCompany(
+    sb.from('sales_invoices').select('id, invoice_number, status').eq('id', id), c,
+  ).maybeSingle();
   if (!si) return c.json({ error: 'not_found' }, 404);
   if ((si as { status: string }).status === 'CANCELLED') return c.json({ error: 'invoice_cancelled' }, 409);
   /* ISSUED gate — same rule as the other three line paths. The in-place "append
@@ -1333,18 +1524,37 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
     return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
   }
 
-  const { data: doHeader } = await sb.from('delivery_orders').select('id, status').eq('id', doId).maybeSingle();
+  /* SOURCE LOAD, SCOPED — the PARTIAL form of the same DO -> SI conversion as
+     POST /from-dos: a second delivery folded into an existing invoice. doId is a
+     URL param, so this read is where it enters; another company's DO resolves to
+     NO ROW and falls out at `delivery_order_not_found`. With the destination
+     invoice scoped above, both ends are closed by construction. THE COST is the
+     message, as on every other converted source load. */
+  const { data: doHeader } = await scopeToCompany(sb.from('delivery_orders')
+    .select('id, status, do_number, company_id').eq('id', doId), c).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
   if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
 
-  const { data: doItems } = await sb.from('delivery_order_items').select(
+  /* Same refusal as /from-dos: a delivery carried over from AutoCount is
+     invoiced by the migrated-invoice converter, never appended by hand. This
+     endpoint serves API callers only (the UI button was retired), which is
+     exactly why the rule has to be spelled out here rather than assumed to be
+     unreachable. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doIds: [doId] });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
+  }
+
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: doItems } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
     'unit_price_centi, discount_centi, unit_cost_centi, variants, notes, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
     'custom_specials, line_suffix, special_order_price_sen',
   ).eq('delivery_order_id', doId)
     .order('line_no', { ascending: true, nullsFirst: false })
-    .order('created_at');
+    .order('created_at'), c);
 
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
   const remainingMap = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
@@ -1417,8 +1627,20 @@ salesInvoices.post('/:id/items/from-do/:doId', async (c) => {
   if ((si as { status: string }).status !== 'DRAFT') {
     await postSiRevenue(sb, (si as { invoice_number: string }).invoice_number);
   }
+  /* ERP -> AutoCount edit. This is AutoCount's PARTIAL TRANSFER — a second (or
+     third) delivery order folded into an invoice that already exists — and it
+     was the one conversion path that queued nothing at all, not even a skipped
+     row, so the invoice in the account book kept the lines of only the first DO.
+
+     It is queued as an EDIT rather than a second convert on purpose: a convert
+     would make AcSyncService AddNew a whole new Invoice document, which is a
+     different document from the one the ERP just appended to. Where the added
+     lines have no DtlKey the edit is refused with a visible row — see the same
+     note on the PO's convert-from-so. */
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, added: rows.length }, 201);
-});
+};
+salesInvoices.post('/:id/items/from-do/:doId', appendDoLinesToSalesInvoiceHandler);
 
 // ── Header PATCH (editable SO/DO-style fields) ─────────────────────────────
 salesInvoices.patch('/:id', async (c) => {
@@ -1524,6 +1746,7 @@ salesInvoices.patch('/:id', async (c) => {
     fieldChanges: diffFields(before, auditPatch, SI_AUDIT_FIELDS),
   });
 
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true, id });
 });
 
@@ -1554,6 +1777,13 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const over = await checkSiOverRemaining(sb, [it]);
     if (over) return c.json(over, 409);
+  }
+
+  /* Same refusal as every other path that can attach a delivery line. */
+  {
+    const mig = await migratedRefusalForDeliveries(sb, { doItemIds: [it.doItemId as string | undefined] });
+    if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
+    if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
   /* FIX 3 — the invoice was created from a DO, so a manually-added line that
@@ -1614,6 +1844,7 @@ salesInvoices.post('/:id/items', async (c) => {
   try {
     await resyncSiRevenue(sb, (header as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
 });
 
@@ -1622,8 +1853,20 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
+  /* Re-pricing an invoice line moves revenue and margin, so the company gate is
+     strict: refuse an unresolved company rather than fall through to "every
+     company", and pin the status gate, the line read and the UPDATE itself. The
+     `sales_invoice_id` predicate proves the line is on THIS invoice, not that
+     the invoice is in THIS company's books. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    /* The gate for the whole handler: every line write below keys on
+       (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
+       chain. Unscoped, the status gate below read the OTHER company's status. */
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
     }
@@ -1643,10 +1886,10 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
      `variants` and `do_item_id` are business-logic only and deliberately not in
      SI_LINE_AUDIT_FIELDS — variants render into description2, which is
      server-owned and derived, not an operator edit. */
-  const { data: prevRow } = await sb.from('sales_invoice_items')
+  const { data: prevRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
     .select(SI_LINE_AUDIT_SELECT + ', variants, do_item_id')
-    .eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!prevRow) return c.json({ error: 'not_found' }, 404);
+    .eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!prevRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown`: a .select() built from a concatenated string infers
      as GenericStringError on the SupabaseClient<any> the scm client is, so the
      row shape only exists after this. Project-wide pattern (see SI_AUDIT_SELECT
@@ -1696,7 +1939,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  const { error } = await sb.from('sales_invoice_items').update(updates).eq('id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -1731,13 +1974,19 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-edit resync failed:', e); }
+  await queueAcSiEdit(c, id);
   return c.json({ ok: true });
 });
 
 salesInvoices.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
+  // Same strict company gate as the line PATCH — see the note there.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   {
-    const { data: hd } = await sb.from('sales_invoices').select('status').eq('id', id).maybeSingle();
+    // Header read is the gate — same reasoning as the line PATCH above.
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before deleting lines.' }, 409);
     }
@@ -1750,12 +1999,17 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
   /* Read the line BEFORE destroying it — afterwards the audit row is the only
      remaining evidence of what was invoiced, and there is nothing left to join
      back to. */
-  const { data: doomedRow } = await sb.from('sales_invoice_items')
-    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id).maybeSingle();
-  if (!doomedRow) return c.json({ error: 'not_found' }, 404);
+  const { data: doomedRow } = await scopeToCompanyId(sb.from('sales_invoice_items')
+    .select(SI_LINE_AUDIT_SELECT).eq('id', itemId).eq('sales_invoice_id', id), co.companyId).maybeSingle();
+  if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = doomedRow as unknown as Record<string, unknown>;
 
-  const { error } = await sb.from('sales_invoice_items').delete().eq('id', itemId);
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'sales_invoice_items', itemId);
+
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* UPDATE, not DELETE: the entity is the INVOICE and it still exists. DELETE on
@@ -1783,6 +2037,7 @@ salesInvoices.delete('/:id/items/:itemId', async (c) => {
     const { data: h } = await sb.from('sales_invoices').select('invoice_number').eq('id', id).maybeSingle();
     if (h) await resyncSiRevenue(sb, (h as { invoice_number: string }).invoice_number);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-line-delete resync failed:', e); }
+  await queueAcSiEdit(c, id, retire);
   return c.json({ ok: true });
 });
 
@@ -1794,7 +2049,13 @@ salesInvoices.get('/:id/payments', async (c) => {
      salesperson's payment ledger by enumerating ids. Out-of-scope /
      missing → 404. Directors/view-all bypass. */
   {
-    const { data: hdr } = await sb.from('sales_invoices').select('salesperson_id').eq('id', id).maybeSingle();
+    /* company-scope: the salesperson dimension returns false for a view-all tier,
+       so on its own it is not tenancy — a director in company A could read B's
+       payment ledger. Company first, for everyone. The payment rows carry the
+       invoice id only, so the parent is the only place to check. */
+    const { data: hdr } = await scopeToCompany(
+      sb.from('sales_invoices').select('salesperson_id').eq('id', id), c,
+    ).maybeSingle();
     if (!hdr) return c.json({ error: 'not_found' }, 404);
     const sp = (hdr as { salesperson_id?: number | string | null }).salesperson_id;
     if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
@@ -1818,7 +2079,7 @@ salesInvoices.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -1879,11 +2140,17 @@ async function recomputePaid(sb: any, salesInvoiceId: string) {
   }
 }
 
-salesInvoices.post('/:id/payments', async (c) => {
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
+export const postSalesInvoicePaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
-  const { data: doc } = await sb.from('sales_invoices')
-    .select('id, status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  /* company-scope: money IN. Unscoped, a payment against company B's invoice was
+     filed under company A and recomputePaid then moved B's paid_centi and AR
+     status. Selecting company_id is not comparing it. */
+  const { data: doc } = await scopeToCompany(
+    sb.from('sales_invoices')
+      .select('id, status, invoice_number, company_id, paid_centi').eq('id', id), c,
+  ).maybeSingle();
   if (!doc) return c.json({ error: 'sales_invoice_not_found' }, 404);
   if ((doc as { status?: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   /* LEAK GUARD (DRAFT) — a DRAFT invoice is not yet committed; it cannot accept
@@ -1904,7 +2171,8 @@ salesInvoices.post('/:id/payments', async (c) => {
   const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
 
   const { data, error } = await sb.from('sales_invoice_payments').insert({
-    company_id:         activeCompanyId(c), // multi-company: match the SI's company
+    // The ACTIVE company, proven to be the invoice's by the scoped read above.
+    company_id:         activeCompanyId(c),
     sales_invoice_id:   id,
     paid_at:            p.paidAt,
     method:             p.method,
@@ -1950,20 +2218,50 @@ salesInvoices.post('/:id/payments', async (c) => {
   }
 
   return c.json({ payment: data }, 201);
-});
+};
+salesInvoices.post('/:id/payments', postSalesInvoicePaymentHandler);
 
 salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
+  /* company-scope: through the parent invoice, BEFORE anything is read or
+     destroyed. The doc-mismatch check below proves only that the payment belongs
+     to the invoice in the URL, never whose invoice that is. */
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('sales_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+  if (!own) return c.json({ error: 'not_found' }, 404);
   /* The payment's own columns are read BEFORE the delete — once the row is gone
      the audit entry is the only remaining evidence of what was removed. */
-  const { data: row } = await sb.from('sales_invoice_payments')
-    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId).maybeSingle();
-  if (!row) return c.json({ error: 'not_found' }, 404);
+  /* Taking money back off an invoice is a books change, so the company gate is
+     strict — an unresolved company refuses rather than reaching every company's
+     receipts. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: row } = await scopeToCompanyId(sb.from('sales_invoice_payments')
+    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
+  if (!row) return c.json(NOT_THIS_COMPANY, 404);
   const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
-  const { data: inv } = await sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  /* A CREDIT payment cannot be deleted. Applying credit writes TWO rows in one
+     transaction (scm.apply_customer_credit_to_si): this payment row, and a
+     negative APPLIED_TO_SI on the customer's ledger. Nothing in the repo ever
+     reverses APPLIED_TO_SI — reconcileSiOverpay below handles OVERPAY only — so
+     deleting just the payment leaves the invoice unpaid AND the balance still
+     debited, and clears the idempotency guard so the same credit can be spent
+     twice. REFUSE rather than compensate: the transactional undo already exists,
+     and it is cancelling the invoice (creditFromCancelledSi). */
+  if (String(doomed.method ?? '').toLowerCase() === 'credit') {
+    return c.json({
+      error: 'credit_payment_not_deletable',
+      message:
+        'This payment was settled from the customer\'s credit balance, so removing it here would ' +
+        'leave the credit spent and the invoice unpaid. Cancel the invoice instead — that returns ' +
+        'the credit to the customer in one step.',
+    }, 409);
+  }
+  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id), co.companyId).maybeSingle();
+  if (!inv) return c.json(NOT_THIS_COMPANY, 404);
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
-  const { error } = await sb.from('sales_invoice_payments').delete().eq('id', paymentId);
+  const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
   try { await reconcileSiOverpay(sb, id); }
@@ -2237,6 +2535,27 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
         console.error(`[customer-credit] credit-from-cancel failed for ${d.invoice_number}:`, e);
       }
     }
+
+    /* ERP -> AutoCount cancel. THE OWNER'S OUTSTANDING RULE IS WHY THIS EXISTS,
+       not tidiness: his rule is "not converted to DO and NOT TO IV, cancelled
+       excluded". An invoice cancelled here but left live in the account book
+       keeps consuming its Sales Order on the AutoCount side, so the two systems
+       disagree about which orders are still outstanding by exactly the set of
+       invoices the ERP has cancelled. AcSyncService has handled `case "IV"`
+       since it was written (AcSyncService.cs:423); the ERP simply never asked.
+
+       Placed inside the atomic `.neq('status','CANCELLED')` branch, so a losing
+       concurrent cancel returned above and exactly one cancel is ever queued.
+       Never throws — enqueueCancel swallows, and a write-back must not fail a
+       save that has already committed. */
+    await enqueueCancel(sb, {
+      companyId: co.companyId ?? activeCompanyId(c),
+      docType: 'IV',
+      docNo: d.invoice_number ?? id,
+      docId: id,
+      self: { table: 'sales_invoices', keyCol: 'id', key: id },
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   if (isReopen) {
@@ -2295,15 +2614,21 @@ salesInvoices.patch('/:id/payment', async (c) => {
   const amount = Number(body.amountCenti ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
 
-  const { data: cur } = await sb.from('sales_invoices')
-    .select('status, invoice_number, company_id, paid_centi').eq('id', id).maybeSingle();
+  /* company-scope: the same money event as POST /:id/payments through the legacy
+     quick-pay screen, so it gets the same gate. Unscoped it wrote a cash payment
+     onto another company's invoice and rolled that invoice's paid status. */
+  const { data: cur } = await scopeToCompany(
+    sb.from('sales_invoices')
+      .select('status, invoice_number, company_id, paid_centi').eq('id', id), c,
+  ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   if ((cur as { status: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   /* LEAK GUARD (DRAFT) — same as POST /:id/payments: a draft can't be paid. */
   if ((cur as { status: string }).status === 'DRAFT') return c.json({ error: 'not_payable', message: 'SI is a draft — confirm it before recording payments' }, 409);
 
   const { error } = await sb.from('sales_invoice_payments').insert({
-    company_id: activeCompanyId(c), // multi-company: match the SI's company
+    // The ACTIVE company, proven to be the invoice's by the scoped read above.
+    company_id: activeCompanyId(c),
     sales_invoice_id: id,
     paid_at: todayMyt(),
     method: 'cash',

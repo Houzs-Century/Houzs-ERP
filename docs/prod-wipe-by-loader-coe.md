@@ -70,9 +70,19 @@ Times UTC (MYT is +8). The `_pg_migrations` counts are printed by `pg-migrate.mj
 
 | Ref | Date | What | Effect |
 |-----|------|------|--------|
-| `7fef9f65` | 2026-06-17 | Two changes in one commit. (a) **The guard**: `load-d1-dump-to-pg.mjs:15-22` — the target may now come from `process.env.DATABASE_URL` (falling back to `.dev.vars`), and the script **refuses** when the URL contains the production project ref unless `ACK_PROD_WIPE=yes`. (b) **An isolated staging environment**: `wrangler.toml [env.staging]` on its own Hyperdrive → the staging Supabase project `minnapsemfzjmtvnnvdd`, plus a ref-locked `drizzle.config.staging.ts`. | The one-command path from a working checkout to a production wipe is closed. The staging environment is the more durable half: it gives destructive work somewhere legitimate to go, so the reason to point the loader at prod largely disappears. |
+| `7fef9f65` | 2026-06-17 | Two changes in one commit. (a) **The guard** — first cut: the target could come from `DATABASE_URL` *falling back to `.dev.vars`*, and the script refused when the URL contained the production project ref unless `ACK_PROD_WIPE=yes`. (b) **An isolated staging environment**: `wrangler.toml [env.staging]` on its own Hyperdrive → the staging Supabase project `minnapsemfzjmtvnnvdd`, plus a ref-locked `drizzle.config.staging.ts`. | The one-command path from a working checkout to a production wipe is closed. The staging environment is the more durable half: it gives destructive work somewhere legitimate to go, so the reason to point the loader at prod largely disappears. |
+| — | since | **The guard was rewritten and this row described the OLD one until 2026-08-13.** Today `load-d1-dump-to-pg.mjs:26-50` has **no `.dev.vars` fallback at all** (it exits 1 demanding an explicit `DATABASE_URL`) and **no project-ref check**. It is an allow-list, FAIL CLOSED: any target whose hostname is not `localhost` / `127.0.0.1` / `::1` is treated as production and requires `ACK_PROD_WIPE=yes`. The code says why in its own comment — *"A hardcoded prod-ref substring check fails OPEN the moment prod moves projects (it has, twice)."* | Strictly stronger: a NEW production project is protected on day one, where the ref check would have waved it through. |
 
-That is the complete remediation. Nothing else in the repository — no test, no CI check, no documentation, no BUG-HISTORY entry — refers to this incident.
+**Read the code, not this table.** Every line reference in this COE was stale by
+2026-08-13 — the DROP it cites at `:130-134` is at `:160`, and the
+`// PROD GUARD (added after the 2026-06-17 incident where this wiped prod):`
+comment quoted as the Trigger's only evidence no longer exists anywhere in the
+file; the incident is now recorded at `:26-28`. The test it names is
+`backend/tests/scaleTargetGuard.test.mjs`, not `.test.mjs`.
+
+That was the complete remediation at the time. Nothing else in the repository —
+no test, no CI check, no documentation, no BUG-HISTORY entry — refers to this
+incident.
 
 ---
 
@@ -100,12 +110,11 @@ That is the complete remediation. Nothing else in the repository — no test, no
 
 | Item | Owner | Note |
 |------|-------|------|
-| **The guard hardcodes one project ref — a NEW production project is unprotected.** | Owner | `url.includes("anogrigyjbduyzclzjgn")` is a substring test against today's prod. Production has already moved once (`xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → `anogrigyjbduyzclzjgn`, per `DB-REPOINT-RUNBOOK.md` and `wrangler.toml:68-90`), so this **will** go stale, and it fails **open**: an unrecognised URL is treated as safe. **Invert it.** The pattern to copy already exists in this repo: `backend/scripts/scale-target-guard.mjs` refuses every non-local target except an explicit staging allow-list, parses the URL properly instead of substring-matching, checks the *username* as well as the host, and is covered by `backend/tests/scaleTargetGuard.test.mjs`. |
-| **`copy-pg-to-pg.mjs` is equally destructive and has no guard at all.** | Owner | It `TRUNCATE`s every table in the target (`:43`), with the target taken from `argv[2]`. No ref check, no acknowledgement, no dry-run. It is the *documented next step* after the loader (`DB-REPOINT-RUNBOOK.md:28-31`), so an operator running the sequence passes straight from a guarded script to an unguarded one. |
-| **The `.dev.vars` fallback is still the default target.** | Owner | `load-d1-dump-to-pg.mjs:15` still ends in `|| readFileSync(".dev.vars")`. The blast radius is narrower now (one ref is refused) but the ergonomics that caused this are intact: run it with no arguments and it aims at whatever the local file says. Requiring an explicit target is a two-line change. |
+| **All three targeting gaps are CLOSED — re-verify before trusting this line.** | — | Re-checked 2026-08-13 by reading the code. (1) The project-ref substring test is GONE: `load-d1-dump-to-pg.mjs:34-50` fail-closes on any non-loopback host, so a NEW production project is protected on day one — the string `anogrigyjbduyzclzjgn` appears nowhere in the file. (2) `copy-pg-to-pg.mjs:42-49` gained the same guard, plus a same-source-and-target refusal at `:50-53`; its `TRUNCATE` is at `:81`, not `:43`. (3) The `.dev.vars` fallback is removed — the script exits 1 demanding an explicit `DATABASE_URL`. **Still open below:** `ACK_PROD_WIPE` protects against an accident, not against a mistake, and there is still no backup step. |
+| *What these three rows USED to say, kept because the reasoning outlived them.* | — | Until 2026-08-13 this table listed the three gaps as open: the guard substring-matched `anogrigyjbduyzclzjgn` (prod had already moved twice — `xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → `anogrigyjbduyzclzjgn`, per `DB-REPOINT-RUNBOOK.md` and `wrangler.toml:68-90`) and so failed **open**; `copy-pg-to-pg.mjs` was the *documented next step* (`DB-REPOINT-RUNBOOK.md:28-31`) with no guard at all; and `load-d1-dump-to-pg.mjs` still fell back to `.dev.vars`. The prescribed fix was **invert it** — the allow-list shape of `backend/scripts/scale-target-guard.mjs` (parses the URL, checks the *username* as well as the host, covered by `backend/tests/scaleTargetGuard.test.mjs`). Both scripts now carry the inverted, fail-closed form. |
 | **`ACK_PROD_WIPE=yes` protects against an accident, not against a mistake.** | Owner | It stops the wrong-terminal case, which is the case that happened. It does not stop an operator who reads the refusal, sets the variable, and is wrong about which database they are re-cutting over. A dry-run that prints the target host, the table count and the row count it is about to destroy — and a `pg_dump` first, as `restore-owner-data.yml` already does — would. |
 | **This incident is absent from `BUG-HISTORY.md`.** | whoever lands this COE | `CLAUDE.md:6-8` makes the ledger mandatory for **every** bug. A production wipe is the largest entry that has ever been missing from it. |
-| **PR #975 (open) touches this same script.** | reviewer of #975 | It fixes the dropped-DEFAULT half. Worth stating in the review that the file has now caused **two** production incidents by two unrelated mechanisms, and that the targeting half above is still open. |
+| **PR #975 (open) touches this same script.** | reviewer of #975 | It fixes the dropped-DEFAULT half. Worth stating in the review that the file has now caused **two** production incidents by two unrelated mechanisms. (This row ended "and that the targeting half above is still open"; since 2026-08-13 it is not — see row 1. What remains open is the acknowledgement/backup row, not the targeting.) |
 
 ---
 
@@ -124,8 +133,8 @@ That is the complete remediation. Nothing else in the repository — no test, no
 
 - `backend/scripts/load-d1-dump-to-pg.mjs:15-22` (the guard) and `:130-134` (the DROP it guards).
 - `7fef9f65` — the guard plus the isolated staging environment; `git show 7fef9f65` for the one-line target resolution it replaced.
-- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.test.mjs` — the allow-list guard pattern this file should adopt.
-- `backend/scripts/copy-pg-to-pg.mjs:43` — the unguarded `TRUNCATE` on the next step of the same runbook.
+- `backend/scripts/scale-target-guard.mjs` + `backend/tests/scaleTargetGuard.test.mjs` — the allow-list guard pattern this file should adopt. (Corrected 2026-08-14: this citation, and the Deferred row that carried it, both read `scaleTargetGuard.test.mjs`, which does not exist. The `.node.mjs` suffix is load-bearing — it is how the runner picks the file up.)
+- `backend/scripts/copy-pg-to-pg.mjs:81` — the `TRUNCATE` on the next step of the same runbook. (Corrected 2026-08-14: this read `:43` and called it *unguarded*; both were true when written and neither is now — the fail-closed target guard sits at `:42-49` and the TRUNCATE moved to `:81`.)
 - `.github/workflows/restore-owner-data.yml` and PR **#24** — the backup-before-write pattern that already existed here.
 - `docs/DB-REPOINT-RUNBOOK.md:20-24, 28-31` — the procedure that puts a live URL in `.dev.vars` and then runs both scripts.
 - `docs/pg-migration-dropped-defaults-coe.md` — the other production incident caused by this same file.

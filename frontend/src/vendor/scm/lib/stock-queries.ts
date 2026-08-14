@@ -18,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
+import { writeFailed, writeFailedAs, reportInBandFailure } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -335,6 +336,7 @@ export function useUpdateStockTransfer() {
       qc.invalidateQueries({ queryKey: ['stock-transfers'] });
       qc.invalidateQueries({ queryKey: ['stock-transfers', vars.id] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -351,6 +353,7 @@ export function usePostStockTransfer() {
       // Posting moves stock — invalidate inventory views too.
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
+    onError: writeFailedAs('Stock transfer not posted'),
   });
 }
 
@@ -358,10 +361,17 @@ export function useCancelStockTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      authedFetch<{ transfer: StockTransferRow }>(`/stock-transfers/${id}/cancel`, {
+      authedFetch<{ transfer: StockTransferRow; reversalErrors?: string[] }>(`/stock-transfers/${id}/cancel`, {
         method: 'PATCH', body: '{}',
       }),
-    onSuccess: (_data, id) => {
+    onSuccess: (data, id) => {
+      /* IN-BAND FAILURE. The cancel reverses the inter-warehouse movement, and
+         that write is best-effort: its result comes back as `reversalErrors`,
+         not as a rejection, so no `onError` can catch it. Unread until
+         check-inband-failures.mjs counted producers against readers — the field
+         had ZERO on the whole frontend. Without this the transfer shows as
+         cancelled while the stock sits in the destination warehouse. */
+      reportInBandFailure('Transfer cancelled, but the stock was not moved back', data);
       qc.invalidateQueries({ queryKey: ['stock-transfers'] });
       qc.invalidateQueries({ queryKey: ['stock-transfers', id] });
       // Cancel REVERSES the inter-warehouse movement (opposite-direction rows
@@ -377,6 +387,7 @@ export function useDeleteStockTransfer() {
     mutationFn: (id: string) =>
       authedFetch<{ ok: true }>(`/stock-transfers/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['stock-transfers'] }),
+    onError: writeFailedAs('Stock transfer not deleted'),
   });
 }
 
@@ -389,7 +400,8 @@ export function useDeleteStockTransfer() {
 // keep an editable working state because the commander enters counted_qty
 // per line BEFORE posting; "OPEN" makes the intent explicit.
 export type StockTakeStatus = 'OPEN' | 'POSTED' | 'CANCELLED';
-export type StockTakeScopeType = 'ALL' | 'CATEGORY' | 'CODE_PREFIX';
+/* NONZERO (phase 1, mig 0270) — only buckets whose system qty ≠ 0. */
+export type StockTakeScopeType = 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO';
 
 export type StockTakeWarehouse = {
   id: string;
@@ -410,8 +422,13 @@ export type StockTakeRow = {
   cancelled_at: string | null;
   created_at: string;
   created_by: string | null;
+  /* Phase 1 (mig 0270): the person responsible for the count + blind flag. */
+  assignee_staff_id?: string | null;
+  blind?: boolean;
   line_count?: number;
-  variance_total?: number;
+  /* null on a BLIND take that is still OPEN when the viewer is not a
+     supervisor — the server strips it (variance would un-blind the count). */
+  variance_total?: number | null;
   warehouse?: StockTakeWarehouse | null;
 };
 
@@ -422,16 +439,30 @@ export type StockTakeLine = {
   product_name: string | null;
   variant_key: string;
   variant_label: string | null;
-  system_qty: number;
+  /* null while blind is active for this viewer (server-stripped). */
+  system_qty: number | null;
   counted_qty: number | null;
   variance: number | null;
   notes: string | null;
   created_at: string;
+  /* Phase 1 (mig 0270): WHO entered the counted qty (scm.staff uuid) and WHEN. */
+  counted_by?: string | null;
+  counted_at?: string | null;
+};
+
+/* Server-decided viewer facts (one shared logic layer — the frontend must not
+   re-derive permissions): is this caller the assignee, may they supervise, and
+   is the blind stripping active on THIS response's lines. */
+export type StockTakeViewer = {
+  isAssignee: boolean;
+  canSupervise: boolean;
+  blindActive: boolean;
 };
 
 export type StockTakeDetail = {
   take: StockTakeRow;
   lines: StockTakeLine[];
+  viewer?: StockTakeViewer;
 };
 
 export type StockTakeListFilters = {
@@ -472,10 +503,14 @@ export function useStockTakeDetail(id: string | null) {
 
 export type CreateStockTakeInput = {
   warehouseId: string;
+  /* Phase 1: required — the person responsible for this count (scm.staff uuid). */
+  assigneeStaffId: string;
   takeDate?: string;
   scopeType: StockTakeScopeType;
   scopeValue?: string | null;
   notes?: string;
+  /* Blind count: hide system qty / variance from the counter until posted. */
+  blind?: boolean;
 };
 
 /* `idempotencyKey` is OPTIONAL and is destructured OUT of the body — the

@@ -1,4 +1,54 @@
+> # ⚠ DO NOT FOLLOW AS WRITTEN — verified against the code 2026-08-13
+>
+> Every command in this runbook targets the WRONG Hyperdrive config, and the
+> D1→Postgres cutover it describes is already complete. Read before touching it:
+>
+> 1. **Step 3 and the Rollback both update `4e820fcfa4f945929ab77e164060e694`.**
+>    `backend/wrangler.toml:136` records that id as the OLD, ABANDONED config
+>    ("left stuck on 6543; spare"). The live binding is
+>    `f0f9bd0d6b924496981b97b9ebcfe898` (`:137`). Running these steps changes a
+>    config the Worker does not read — **and the rollback would appear to
+>    succeed while doing nothing.**
+> 2. **Its connection string uses port 6543** — the transaction pooler that
+>    caused the 2026-06-13 production outage. `wrangler.toml:127-135` records
+>    that recovery came from moving to the **5432** session pooler. This command
+>    would re-apply the failed configuration.
+> 3. **Neither project id matches.** The runbook names `xxoszhxglfgkqkokvofa`
+>    (interim) and `ctbaifabbzghtsrmpirm` (permanent); `wrangler.toml:126`
+>    records the live config pointing at SG project `anogrigyjbduyzclzjgn`.
+> 4. Steps 1-2 call scripts that REFUSE any non-loopback target without
+>    `ACK_PROD_WIPE=yes` (`load-d1-dump-to-pg.mjs:47-49`,
+>    `copy-pg-to-pg.mjs:42-48`). The runbook never sets it.
+> 5. Both depend on `backend/houzs-d1-full.sql`. That file does not exist in the
+>    tree — it is git-ignored — and the runbook never says how to obtain it.
+> 6. Its final step ("remove the `[[d1_databases]]` block") was done on
+>    2026-06-13 — `wrangler.toml:106`.
+>
+> Owner decision pending (task chip raised): rewrite against the live config,
+> or move to the historical section beside `MIGRATION-D1-TO-SUPABASE.md`.
+
 # Runbook: re-point production to the company Supabase project
+
+> ## ⚠️ THIS RUNBOOK IS HISTORICAL. DO NOT FOLLOW IT AS WRITTEN.
+>
+> **Corrected 2026-08-13.** Production has moved TWICE since this was written:
+> `xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → **`anogrigyjbduyzclzjgn`**,
+> which is what `backend/wrangler.toml:126` binds today (Hyperdrive config
+> `f0f9bd0d`, SG company project). `supavisor-pooler-outage-coe.md:126` already
+> flagged this document as stale and nobody acted on it.
+>
+> Why that matters more here than in any other doc: **§1 below tells the operator
+> to put a LIVE connection string into `.dev.vars` and then run the cutover
+> loader against it.** Following these steps today points a
+> `DROP TABLE … CASCADE` at a project that is no longer production — or, with a
+> pasted-in current DSN, at one that is. The loader now fail-closes on any
+> non-loopback target unless `ACK_PROD_WIPE=yes` (see
+> `prod-wipe-by-loader-coe.md`), which is the only reason this is a stale
+> document and not a live hazard.
+>
+> Keep it for the PROCEDURE — the Hyperdrive-origin-update shape is still
+> correct. Re-derive every project ref from `backend/wrangler.toml` before
+> running anything.
 
 Production currently runs on the interim Supabase project
 `xxoszhxglfgkqkokvofa`. The permanent home is the company-account project

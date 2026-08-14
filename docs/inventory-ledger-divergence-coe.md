@@ -2,7 +2,13 @@
 
 **Date:** 2026-07-25
 **Trigger:** Owner opened the Stock Breakdown drawer for SKU `MAKOTO RC(S)-FVI BRONZE` (2990 SOFA MAKOTO RELAX CHAIR), KL warehouse, and found the movement ledger and the FIFO ledger disagreeing on the same SKU: the MOVEMENTS list ends at running balance **3** (5 IN − 2 OUT), but the FIFO lots sum to **4** and COGS shows only **ONE** consumption. Two OUT movements were recorded on the SAME delivery order (`2990-DO-2607-018`, 23/07 11:47 and 12:22, 35 min apart) but only one lot-consumption exists.
-**Status:** Root cause TRACED against the code (static trace of `origin/main`; no prod query needed to prove the mechanism). A READ-ONLY DETECTOR sized the exposure across all SKUs (PR below). **Go-forward engine fix now built as a DRAFT** (migration 0195 — the OUT-branch batch→plain-FIFO fallback) together with a **historical data-repair backfill** (`backfill-fifo-divergence.mjs`, DRY-RUN by default, staging-first, owner-run) — both DRAFT, STAGING-FIRST, NOT auto-merged; the historical repair is a separate, explicitly owner-triggered step. The specific MAKOTO symptom is also logged in `BUG-HISTORY.md` (HIGH).
+**Status:** Root cause TRACED against the code (static trace of `origin/main`; no prod query needed to prove the mechanism). A READ-ONLY DETECTOR sized the exposure across all SKUs (PR below).
+
+**Go-forward engine fix SHIPPED** — `migrations-pg/0195_scm_fifo_out_short_batch_fallback.sql` (the OUT-branch batch→plain-FIFO fallback) merged 2026-07-25 as `75efc060`, PR #1261: *"stop FIFO OUT discarding its shortfall — sofa batch-key drift no longer diverges the ledgers"*. `deploy.yml` runs `pg-migrate.mjs` on every push to `main`, so it is **applied in production**. This line read "now built as a DRAFT … NOT auto-merged" until 2026-08-13, on a money-path migration that had been live since the day the COE was written — the worst kind of stale, because a reader plans around a fix they think is still pending.
+
+The **historical data-repair backfill** (`backfill-fifo-divergence.mjs`) is the part that remains DRY-RUN by default, staging-first and explicitly owner-triggered.
+
+The specific MAKOTO symptom is also logged in `BUG-HISTORY.md` (HIGH).
 
 ---
 
@@ -20,7 +26,10 @@ So the MOVEMENT ledger (`inventory_movements`, signed sum) says **3 on hand**; t
 
 **The FIFO engine is per-row and correct; the fault is that the OUT branch SILENTLY DISCARDS a short, and a resync delta OUT can produce a FALSE short even when stock is on hand.**
 
-**The write path (all cited, `origin/main`):**
+**The write path as it was on 2026-07-25 (all cited against `origin/main` at the
+time).** Migration 0195 changed the OUT branch two days later and is live in
+production — see §3. Read this section as the diagnosis, not as today's engine;
+the paragraph after the bullets says which part still stands.
 
 - **The only consume path is the AFTER-INSERT trigger.** `writeMovements` does a plain `INSERT` into `inventory_movements` (`backend/src/scm/lib/inventory-movements.ts:116`); there is NO JS-side consumption. Every OUT's COGS is produced solely by `trg_inventory_movement_fifo` → `fn_inventory_movement_fifo` (`backend/scripts/scm-schema/inventory-fifo-trigger.sql:267`, AFTER INSERT FOR EACH ROW).
 - **The OUT branch always consumes — and DISCARDS the shortfall.** The OUT branch calls `fn_consume_fifo` (plain) or `fn_consume_fifo_batch` (sofa/dye-lot) and then only persists `total_cost_sen = v_result.total_cost_sen` onto the movement (`inventory-fifo-trigger.sql:176-198`). The `qty_short` the consumer returns is **thrown away**. `fn_consume_fifo` matches lots on `(warehouse_id, product_code, variant_key, qty_remaining>0)` ORDER BY `received_at, id` (`:55-63`); `fn_consume_fifo_batch` ADDITIONALLY requires `batch_no = p_batch_no` **exactly** (`:118`). If the loop matches ZERO lots, its body never runs: `v_remaining` stays = qty, it returns `total_cost_sen = 0`, `qty_short = qty`, inserts NO `inventory_lot_consumptions` row, and decrements NO lot. Result: the OUT movement is a real row (the signed balance decrements) but the FIFO ledger is untouched — a permanent movement-vs-lot divergence of exactly the shorted qty, with COGS missing for those units.
@@ -31,12 +40,25 @@ So the MOVEMENT ledger (`inventory_movements`, signed sum) says **3 on hand**; t
 
 **Tool that proved it:** static trace of `origin/main` — `writeMovements` is the sole insert path (`inventory-movements.ts:116`) and the trigger is the sole consumer (`inventory-fifo-trigger.sql:267`); the OUT branch discards `qty_short` (`:193-198`); `deductInventoryForDo`'s guard #1 rules out a first-ship double-post (`delivery-orders-mfg.ts:841`); `resyncInventoryForDo` is the only other DO-OUT writer (`:1256-1269`). The runtime SIZE of the exposure (how many SKUs, how many RM) is measured by the detector shipped in §3 — production numbers land when the owner runs it.
 
+**What of the above is still the live engine, re-read 2026-08-13.** The OUT
+branch no longer routes a batch-stamped OUT to `fn_consume_fifo_batch` *or*
+`fn_consume_fifo`: it runs the batch consume, and **when that shorts it falls
+back to plain product+variant `fn_consume_fifo` for the residual**
+(`inventory-fifo-trigger.sql`, the `IF v_short > 0 THEN` block in the OUT branch,
+mirrored from 0195). So the FALSE short this incident is about cannot recur while
+same-SKU stock is on hand. Everything else stands unchanged: `writeMovements` is
+still the only insert path, the AFTER-INSERT trigger still the only consumer,
+the first ship still idempotent, the resync delta OUT still the only other
+DO-OUT writer — and the final `UPDATE inventory_movements` still persists only
+`total_cost_sen` and `unit_cost_sen`, so **`qty_short` is still discarded** and a
+genuine short is still detectable only by joining consumptions against qty.
+
 ## 3. Shipped (2026-07-25) — detection only, NO costing-logic change, NO data repair
 
 | PR | What | Effect |
 |----|------|--------|
 | #1254 (shipped) | `backend/scripts/check-inventory-integrity.mjs` + `.github/workflows/inventory-integrity-check.yml` — a read-only reconciliation detector following the `check-soak-gate.mjs` / `check-uncosted-cogs.mjs` pattern (workflow_dispatch, own concurrency group `inventory-integrity-check`, `secrets.DATABASE_URL`, SELECT-only, exit 0 for every legitimate answer, results as `::notice::` annotations, schema/columns discovered from `information_schema` and re-validated). Two SELECTs: **(1) QUANTITY DRIFT** — buckets where the signed movement sum (byte-identical to the `scm.inventory_balances` convention: IN +qty, OUT −qty, ADJUSTMENT/TRANSFER +qty) ≠ Σ `inventory_lots.qty_remaining` (the MAKOTO 3-vs-4 case), listing SKU / movement-sum / lot-sum / delta; **(2) UNCOSTED OUT** — buckets where Σ(OUT qty) ≠ Σ `qty_consumed` in `inventory_lot_consumptions` (the 2-OUT-vs-1-COGS case), with an ESTIMATED RM exposure at the bucket's current open-lot weighted-average cost. Prints total drift-bucket count, total uncosted-OUT unit count, and total estimated RM exposure. | Sizes the exposure without an owner interruption or the DSN in front of a human. Touches no data and no costing logic. |
-| (fix PR, DRAFT — STAGING-FIRST) | **Go-forward engine fix.** `backend/src/db/migrations-pg/0195_scm_fifo_out_short_batch_fallback.sql` (`CREATE OR REPLACE fn_inventory_movement_fifo`, mirrored in lockstep into the canonical `backend/scripts/scm-schema/inventory-fifo-trigger.sql`): the OUT branch (and the symmetric negative-ADJUSTMENT branch) now FALL BACK from the exact-batch consume (`fn_consume_fifo_batch`) to plain product+variant `fn_consume_fifo` for whatever the batch consume shorted. In-memory FIFO model + tests: `backend/src/scm/lib/fifo-out-consume.{ts,test.ts}`. | A sofa OUT whose `batch_no` drifts from its open lots' batch (the MAKOTO false-short) now consumes present same-SKU stock plain-FIFO, costs it, and decrements the lot — the two ledgers reconcile go-forward. Correctly-matched + plain OUTs unchanged; a genuine short (no stock) still uses the 0154 retro-cost path. Money-critical costing behaviour change → staging-first. |
+| #1261 (`75efc060`, MERGED + APPLIED — this row said "DRAFT — STAGING-FIRST" until 2026-08-13) | **Go-forward engine fix.** `backend/src/db/migrations-pg/0195_scm_fifo_out_short_batch_fallback.sql` (`CREATE OR REPLACE fn_inventory_movement_fifo`, mirrored in lockstep into the canonical `backend/scripts/scm-schema/inventory-fifo-trigger.sql`): the OUT branch (and the symmetric negative-ADJUSTMENT branch) now FALL BACK from the exact-batch consume (`fn_consume_fifo_batch`) to plain product+variant `fn_consume_fifo` for whatever the batch consume shorted. In-memory FIFO model + tests: `backend/src/scm/lib/fifo-out-consume.{ts,test.ts}`. | A sofa OUT whose `batch_no` drifts from its open lots' batch (the MAKOTO false-short) now consumes present same-SKU stock plain-FIFO, costs it, and decrements the lot — the two ledgers reconcile go-forward. Correctly-matched + plain OUTs unchanged; a genuine short (no stock) still uses the 0154 retro-cost path. Money-critical costing behaviour change → staging-first. |
 | (fix PR, DRAFT — STAGING-FIRST, owner-run) | **Historical data repair.** `backend/scripts/backfill-fifo-divergence.mjs` + `.github/workflows/backfill-fifo-divergence.yml`: drives the audited, idempotent `fn_reconcile_uncosted_out` (0154) over EVERY divergent bucket the detector reports. DRY-RUN by default (each bucket's reconcile runs in a transaction and is ROLLED BACK — reports exact qty retro-costed / RM booked / lots decremented / drift closed, writes nothing); `APPLY=true` + a typed confirmation to commit; per-bucket transaction; idempotent (re-run books 0). Reconciliation invariant proven by `backend/src/scm/lib/fifo-divergence-backfill.test.ts`. | Repairs the already-diverged rows across all affected SKUs so Σ movements == Σ lot qty and Σ OUT qty == Σ consumed. Non-DO / drop-ship / cancelled OUTs and uncovered shortfalls are REPORTED for owner review, never silently changed. Writes only under an explicit, staged, owner-triggered APPLY. |
 
 | (ledger-perfection, 2026-08-01) | **Two further modes on the same workflow** — the detector's remaining classes turned out to be TWO shapes `fn_reconcile_uncosted_out` is right not to touch. `MODE=relabel` (W4): the 2990 import copied movements and lots whose variant keys were computed by different writers, so per-bucket sums drift in equal-and-opposite pairs (the XAMMAR family; audit sections 1 + 2b) while every cost is already right — movements in DRIFTED buckets whose own consumptions (or own opened lot, `inventory_lots.movement_id`) all sit under ONE different key are relabelled to that key, consumption rows follow, lots and cost columns untouched, RM0 by construction; per-bucket before/after drift is projected in the dry run (`classifyMovementRelabel` + `projectRelabelledDrift`, `lib/ledger-repair-core.mjs`). `MODE=basis-cost` (W3, NAMED DOs only via the `dos` input): shorts that shipped with NOTHING on hand and no later receipt — the function is right to book nothing, so a REFERENCE-cost lot is seeded (newest same-SKU GRN landed cost in-company, else the product's latest PO line cost; `pickCostBasis`) and THE SAME 0154/0230 function consumes it and restamps the OUT. Refused when open lots exist (retro-cost is truer), when the seeded lot is not FULLY consumed by the named targets, or when any non-target movement draws on it — verified in-transaction, rolled back otherwise. The quantity drift of those buckets deliberately does NOT close (the units really shipped without a receipt) and the output says so. | The paired-drift buckets close at RM0; the named uncosted units carry an owner-approved reference COGS; nothing open-ended can write. |
@@ -64,6 +86,18 @@ Run the detector: Actions → **Inventory integrity check (read-only)** → Run 
 ## 5. DEFERRED — owner decides (intentionally NOT auto-done)
 
 1. **The code fix — owner (money-critical FIFO change).** Candidate directions, each a change to the scm FIFO layer that lives directly in prod and is not fully reproducible from the repo, so per the migration-0154 discipline it MUST be validated on STAGING first and coordinated — do NOT merge blind: (a) stop the OUT branch DISCARDING `qty_short` — persist the shortfall (a column / flag) so an under-consumed OUT is self-evident instead of only detectable via the consumptions-vs-qty join; (b) fix the resync delta OUT's consume-key resolution so a sofa/variant OUT keys to the SAME open lots the first ship consumed (the FALSE-short root); and/or (c) a guard that refuses to record an OUT as costed-complete when it shorted against stock that is physically present. Not attempted in this PR.
+
+   **Status re-read 2026-08-13 — one of the three shipped, two did not.**
+   **(c) is CLOSED** by 0195: an OUT can no longer be recorded costed-complete
+   while same-SKU stock sits under a different batch, because the batch consume
+   now falls back to plain FIFO for its residual. **(a) is still OPEN and
+   deliberately so** — `docs/inventory-costing-oversell-coe.md` §5 item 3
+   records the decision to keep the shortfall LEDGER-DERIVED
+   (`ABS(qty) - SUM(qty_consumed)`), because that is what makes every reconcile
+   idempotent; the trigger's final `UPDATE` still writes only cost columns.
+   **(b) is still OPEN**: 0195 works around the key mismatch, it does not fix
+   the resync path's key resolution, so a batch-stamped OUT can still resolve a
+   `batch_no` its own open lots do not carry — now costed, but still mis-keyed.
 2. **Data repair of already-diverged rows — owner.** Once the detector quantifies the set, the owner decides whether (and at what cost basis) to retro-cost the uncosted OUTs and reconcile the movement-vs-lot deltas — same STAGING-first, coordinated discipline. Repairing money data is never an auto-fix.
 3. **Reconcile MAKOTO specifically — owner.** The single reported SKU is one row in the detector's output; fixing it is part of the (2) data-repair decision, not a one-off hand edit.
 

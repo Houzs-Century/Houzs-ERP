@@ -510,6 +510,20 @@ const BRANDING_FIELDS: {
     placeholder: "houzscentury.com",
     optional: true,
   },
+  {
+    key: "csPhone",
+    label: "Customer service phone",
+    placeholder: "+6011-1110 8855",
+    hint: "Printed on delivery documents so a customer knows who to call. Separate from the company phone above; leave blank to omit the line.",
+    optional: true,
+  },
+  {
+    key: "csEmail",
+    label: "Customer service email",
+    placeholder: "operation@houzscentury.com",
+    hint: "Printed beside the customer service phone. Leave blank to omit it.",
+    optional: true,
+  },
 ];
 
 /**

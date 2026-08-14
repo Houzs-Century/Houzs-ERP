@@ -34,6 +34,8 @@ import {
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
+import { poHasDownstream } from '../lib/downstream-lock';
+import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -46,12 +48,14 @@ import {
   LEAD_TIME_SELECT,
 } from '../lib/lead-time';
 import { groupKeyFor } from '../lib/po-grouping';
-import { findOverConvertOffender } from '../lib/po-over-convert';
+import { findOverConvertOffender, soLineHeadroom, type OverConvertOffender } from '../lib/po-over-convert';
 import {
   planAllocationCreate,
   planAllocationQtyUpdate,
   resequenceAfterDelete,
   allocationSubNumber,
+  specMatches,
+  specSignature,
   type AllocationRow,
 } from '../lib/po-allocations';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -66,6 +70,9 @@ import {
   type PoEmailRow,
 } from '../lib/po-email';
 import { getSupabaseService } from '../../db/supabase';
+import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
+import { baseKeyOf, thumbKeyFor } from '../../services/photoThumbs';
+import { proxyFallbackPayload, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
@@ -231,18 +238,26 @@ mfgPurchaseOrders.use('*', supabaseAuth);
    A PO locks (read-only — no header edit / no line edit / no cancel) once it
    has ANY non-cancelled GRN. The convert-to-GRN path is NOT gated by this:
    partial receiving is still allowed (i.e. the PO can keep emitting GRNs);
-   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream
-   in apps/api/src/routes/grns.ts. Returns the blocking JSON, or null if the
-   PO is free to edit. */
-async function poHasDownstream(sb: any, poId: string): Promise<{ error: string; message: string } | null> {
-  const { count } = await sb.from('grns')
-    .select('id', { head: true, count: 'exact' })
-    .eq('purchase_order_id', poId)
-    .neq('status', 'CANCELLED');
-  if ((count ?? 0) > 0) {
-    return { error: 'po_has_downstream', message: 'PO has a Goods Receipt — delete or cancel it first to edit' };
-  }
-  return null;
+   only header/line MUTATIONS + CANCEL are blocked, mirroring grnHasDownstream.
+   The rule now lives in scm/lib/downstream-lock.ts with its three siblings,
+   which had drifted into four private copies in four route files. Same
+   signature, same JSON, same behaviour — and see that module for why it is
+   also the ERP half of AutoCount's transferred-document rule. */
+
+/* -- ERP -> AutoCount edit --------------------------------------------------
+   Every PO mutation route funnels through this, so exactly one snapshot of the
+   SAVED order is queued per successful save -- header edits and line
+   add/edit/delete alike. Only ever reached for a PO the downstream lock let
+   through, which is the same rule AutoCount enforces on its side. Never
+   throws. */
+async function queueAcPoEdit(c: any, poId: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(c.get('supabase'), {
+    companyId: activeCompanyId(c),
+    docType: 'PO',
+    docId: poId,
+    retire,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
 }
 
 /* ── Drop-ship OUT guard (audit C3, 2026-07-13) ──────────────────────────────
@@ -387,7 +402,12 @@ const ITEM_COLS =
   /* Migration 0098 — source SO line link. The detail route resolves it to a
      per-line so_doc_no for the PO PDF's "For SO" provenance column
      (relabelled from "Transferred SO", owner 2026-08-07). */
-  'so_item_id';
+  'so_item_id, ' +
+  /* Migration 0274 — per-line photo keys, carried from the source SO line on
+     convert. Read like the SO's: the key alone is not viewable, so the client
+     trades it for a short-lived signed URL via
+     GET /:id/items/:itemId/photos/:photoKey/signed. */
+  'photo_urls';
 
 // ── List ──────────────────────────────────────────────────────────────
 mfgPurchaseOrders.get('/', async (c) => {
@@ -594,7 +614,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   /* Commander 2026-05-28 — PO-from-SO redesign. Surface three extra fields
      so the frontend grid can render Processing Date + derive each PO line's
      warehouse (from the SO's sales_location) + delivery date (from the SO
-     LINE's own line_delivery_date). internal_expected_dd + sales_location
+     LINE's own line_delivery_date). processing_date + sales_location
      come off the SO header; line_delivery_date off the item. */
   const { data: items, error } = await scopeToCompany(
     supabase
@@ -602,7 +622,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
       .select(`
       id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_centi,
       variants, line_suffix, cancelled, line_delivery_date,
-      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, internal_expected_dd, sales_location )
+      so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, processing_date, sales_location )
     `),
     c,
   )
@@ -619,7 +639,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     so: {
       doc_no: string; debtor_name: string | null; branding: string | null; status: string;
       so_date: string; customer_delivery_date: string | null;
-      internal_expected_dd: string | null; sales_location: string | null;
+      processing_date: string | null; sales_location: string | null;
     };
   };
 
@@ -692,7 +712,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
         variants:        r.variants,
         lineSuffix:      r.line_suffix,
         // Commander 2026-05-28 — new fields for the redesigned PO-from-SO grid.
-        processingDate:   r.so.internal_expected_dd,
+        processingDate:   r.so.processing_date,
         salesLocation:    r.so.sales_location,
         lineDeliveryDate: r.line_delivery_date,
         mainSupplierCode: mainSupplierByCode.get(r.item_code)?.code ?? null,
@@ -719,11 +739,34 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
   const code = (c.req.query('code') ?? '').trim();
   if (!code) return c.json({ error: 'code_required' }, 400);
   const supabase = c.get('supabase');
+
+  /* SPEC FILTER (owner 2026-08-08). The picker used to offer every same-CODE SO
+     line; a consolidated PO line may only be attributed to the SAME PRODUCT —
+     same code AND same variant summary (fabric + colour + SEAT/LEG/SPECIAL, no
+     dye-lot). When poId+itemId are given we load that PO line's spec and keep
+     only matching candidates. Omitted (older callers) -> code-only, unchanged. */
+  const poId = (c.req.query('poId') ?? '').trim();
+  const poItemId = (c.req.query('itemId') ?? '').trim();
+  let poSpec: { itemGroup: string | null; variants: Record<string, unknown> | null } | null = null;
+  if (poId && poItemId) {
+    /* Bind the error. A NOT-FOUND here legitimately falls back to code-only
+       (the comment above), but a READ FAILURE must not: silently leaving poSpec
+       null on a database blip re-opens the picker to every same-code SO line,
+       which is the exact gate this endpoint was changed to close. Not-found and
+       could-not-tell are different answers and only one of them is safe. */
+    const { data: poLine, error: poLineErr } = await scopeToCompany(
+      supabase.from('purchase_order_items').select('id, item_group, variants').eq('id', poItemId), c,
+    ).maybeSingle();
+    if (poLineErr) return c.json({ error: 'load_failed', reason: poLineErr.message }, 500);
+    const pl = poLine as { item_group: string | null; variants: Record<string, unknown> | null } | null;
+    if (pl) poSpec = { itemGroup: pl.item_group ?? null, variants: pl.variants ?? null };
+  }
+
   const { data, error } = await scopeToCompany(
     supabase
       .from('mfg_sales_order_items')
       .select(`
-        id, doc_no, item_code, qty, po_qty_picked, cancelled,
+        id, doc_no, item_code, item_group, variants, qty, po_qty_picked, cancelled,
         so:mfg_sales_orders!inner ( doc_no, debtor_name, status, customer_delivery_date, amended_delivery_date )
       `),
     c,
@@ -734,7 +777,7 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
     .limit(300);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   type CandRow = {
-    id: string; doc_no: string; item_code: string; qty: number; po_qty_picked: number;
+    id: string; doc_no: string; item_code: string; item_group: string | null; variants: Record<string, unknown> | null; qty: number; po_qty_picked: number;
     so: { doc_no: string; debtor_name: string | null; status: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null };
   };
   const items = ((data ?? []) as unknown as CandRow[])
@@ -742,6 +785,10 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
       const st = (r.so?.status ?? '').toUpperCase();
       return st !== 'CANCELLED' && st !== 'DRAFT';
     })
+    // Spec gate: only lines describing the same product (fabric + spec). When
+    // no PO spec was resolvable (older caller, or the line vanished) leave the
+    // list at code-only rather than hiding everything.
+    .filter((r) => !poSpec || specMatches(poSpec, { itemGroup: r.item_group ?? null, variants: r.variants ?? null }))
     .map((r) => ({
       soItemId: r.id,
       soDocNo: r.doc_no,
@@ -1015,6 +1062,14 @@ mfgPurchaseOrders.get('/:id', async (c) => {
 mfgPurchaseOrders.get('/:id/linked', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
+
+  /* Prove the PO belongs to the active company BEFORE fanning out: unscoped, an
+     id resolved another company's PO to its GRN / invoice / return numbers. All
+     seven /:id/linked endpoints shared this gap. 404 rather than 403 — an
+     unreachable row must not confirm its own existence. */
+  const owner = await scopeToCompany(sb.from('purchase_orders').select('id').eq('id', id), c).maybeSingle();
+  if (owner.error) return c.json({ error: 'load_failed', reason: owner.error.message }, 500);
+  if (!owner.data) return c.json({ error: 'not_found' }, 404);
 
   const [grnRes, piRes, prRes] = await Promise.all([
     sb.from('grns')
@@ -1295,6 +1350,12 @@ mfgPurchaseOrders.post('/', async (c) => {
   );
 
   if (hErr) {
+    /* DEAD BRANCH -- here and at every other 42501 site in this file. 42501 is
+       Postgres permission-denied (RLS), and RLS cannot fire here: mig 0061
+       enabled it on every scm table with NO policies, and the SCM client is the
+       SERVICE-ROLE client, which bypasses RLS. No scm function RAISEs 42501
+       either. Do NOT read this as a permission check or as scoping: the only
+       boundary is this route's own predicate. */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
@@ -1305,7 +1366,30 @@ mfgPurchaseOrders.post('/', async (c) => {
   const header = headerData as unknown as { id: string; po_number: string };
 
   if (itemRows.length > 0) {
-    const itemsToInsert = itemRows.map((r) => ({ ...r, purchase_order_id: header.id }));
+    /* Owner 2026-08-10 (migration 0274) — a line raised from the From-SO picker
+       carries its source SO line's photos, exactly as /from-sos and
+       /:id/convert-from-so do. Derived SERVER-side from so_item_id rather than
+       taken from the request: the client never holds these keys, and trusting a
+       caller-supplied key array would let any PO line reference any R2 object.
+       One extra select, only when a line is SO-sourced; manual lines stay '{}'. */
+    const photoSoItemIds = [...new Set(
+      itemRows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)),
+    )];
+    const photosBySoItem = new Map<string, string[]>();
+    if (photoSoItemIds.length > 0) {
+      const { data: photoRows } = await supabase
+        .from('mfg_sales_order_items')
+        .select('id, photo_urls')
+        .in('id', photoSoItemIds);
+      for (const r of (photoRows ?? []) as Array<{ id: string; photo_urls: string[] | null }>) {
+        photosBySoItem.set(r.id, r.photo_urls ?? []);
+      }
+    }
+    const itemsToInsert = itemRows.map((r) => ({
+      ...r,
+      purchase_order_id: header.id,
+      photo_urls: (r.so_item_id ? photosBySoItem.get(r.so_item_id) : null) ?? [],
+    }));
     const { error: iErr } = await supabase.from('purchase_order_items').insert(stampCompany(itemsToInsert, c));
     if (iErr) {
       // Best-effort rollback of header so we don't leak a no-items PO.
@@ -1331,6 +1415,18 @@ mfgPurchaseOrders.post('/', async (c) => {
   if (!asDraft && pickedQtyBySoItem.size > 0) {
     try { await recomputeSoPicked(supabase, [...pickedQtyBySoItem.keys()]); }
     catch { /* PO already created — don't fail on counter recount */ }
+  }
+
+  /* ERP -> AutoCount write-back. Queued, never pushed inline. No-op while the
+     flag is off, which is how it ships. NOT for a DRAFT PO — it is
+     reference-only until confirmed (the same reason recomputeSoPicked skips
+     it above); PATCH /:id/confirm queues it. */
+  if (!asDraft) {
+    await enqueuePoCreate(supabase, {
+      companyId: activeCompanyId(c),
+      poId: header.id,
+      createdBy: c.get('houzsUser')?.id ?? null,
+    });
   }
 
   return c.json({ id: header.id, poNumber: header.po_number }, 201);
@@ -1566,10 +1662,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // it must flow through to the PO line so a KL SO line never lands stock in
     // PG. The SO header sales_location is only a last-resort fallback now.
     warehouse_id: string | null;
+    /* Owner 2026-08-10 (migration 0274) — the SO line's photos ride along to the
+       PO line. R2 keys, not bytes: the PO points at the SAME objects. */
+    photo_urls: string[] | null;
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, ' +
+    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
+    /* No company_id on this embed: both source reads below are SCOPED, so a
+       cross-company line is never returned and there is nothing to compare. */
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
   // supabase-js returns the embedded parent as an object OR a 1-element array
   // depending on the relationship — normalise to a single object.
@@ -1585,10 +1686,20 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
 
   if (body.picks && body.picks.length > 0) {
     const ids = body.picks.map((p) => p.soItemId);
-    const { data: rows, error } = await supabase
+    /* SOURCE LOAD, SCOPED — the caller's soItemIds enter this core here, so this
+       read decides what the conversion can see: another company's line resolves
+       to NO ROW and falls out at the per-pick `item_not_found` below. THE COST is
+       the message, because naming the other company needs an UNSCOPED read this
+       core otherwise never makes.
+
+       Both call paths carry a usable context: the HTTP route wires the real Hono
+       one, and createDraftPosFromPicks builds a synthetic one carrying companyId
+       + allowedCompanyIds TOGETHER (procurement-execute passes both or neither),
+       so the agent never hits scopeToCompany's fail-closed branch. */
+    const { data: rows, error } = await scopeToCompany(supabase
       .from('mfg_sales_order_items')
       .select(SO_ITEM_SELECT)
-      .in('id', ids);
+      .in('id', ids), c);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const byId = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byId.set(r.id, { ...r, so: normSo(r) });
@@ -1596,6 +1707,20 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     for (const p of body.picks) {
       const row = byId.get(p.soItemId);
       if (!row) return c.json({ error: 'item_not_found', soItemId: p.soItemId }, 400);
+      /* A retired line has no demand to purchase against. The line-level bind
+         (soLinkTargetRefusal) has refused this since it was written and the
+         From-SO picker never lists one, but THIS is the bulk create — reached by
+         POST /from-sos and by the MRP agent, neither of which goes through
+         either — so a cancelled line stayed purchasable here. Inert today
+         (production holds two cancelled lines, both with zero demand) and the
+         gate that has to exist before line retirement can ship. */
+      if ((row as { cancelled?: boolean | null }).cancelled) {
+        return c.json({
+          error: 'so_line_cancelled',
+          reason: `Sales Order line ${row.doc_no ?? ''} (${row.item_code ?? ''}) is cancelled — it has no demand to purchase against.`.trim(),
+          soItemId: p.soItemId,
+        }, 409);
+      }
       const remaining = row.qty - row.po_qty_picked;
       if (p.qty <= 0)         return c.json({ error: 'qty_must_be_positive', soItemId: p.soItemId }, 400);
       // Commander 2026-05-31 — MRP-origin converts skip the remaining cap: the
@@ -1613,11 +1738,16 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // Best-effort match by (doc_no, item_code). Doesn't update po_qty_picked.
     const codes  = [...new Set(soItems.map((it) => it.itemCode))];
     const docNos = [...new Set(soItems.map((it) => it.soDocNo))];
-    const { data: rows } = await supabase
+    /* SOURCE LOAD, SCOPED — same rule as the picks branch, and it matters more
+       here: this legacy branch FABRICATES a minimal row when the (doc_no,
+       item_code) pair does not match, so an unscoped read would have used the
+       other company's line verbatim. Scoped, it falls through to the fabricated
+       row, which carries qty and price from the CALLER. */
+    const { data: rows } = await scopeToCompany(supabase
       .from('mfg_sales_order_items')
       .select(SO_ITEM_SELECT)
       .in('doc_no', docNos)
-      .in('item_code', codes);
+      .in('item_code', codes), c);
     const byKey = new Map<string, SoItem>();
     for (const r of (rows ?? []) as unknown as SoItem[]) byKey.set(`${r.doc_no}|${r.item_code}`, { ...r, so: normSo(r) });
     for (const it of soItems) {
@@ -1630,7 +1760,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           line_delivery_date: null, item_group: null, variants: null,
           // No SO line warehouse on the legacy fabricated row → falls back to
           // the SO header sales_location resolution below.
-          warehouse_id: null, so: null,
+          warehouse_id: null, photo_urls: null, so: null,
         },
         qty: it.qty,
         // Legacy path has no per-pick supplier → effectiveSupplierId falls back
@@ -1697,6 +1827,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Commander 2026-05-29 — the source SO line id, threaded to the PO line so
       // the append-to-existing-PO path can persist so_item_id (release-on-delete).
       soItemId:  row.id || null,
+      // Owner 2026-08-10 — the SO line's photo keys, carried to the PO line.
+      photoUrls: row.photo_urls ?? [],
       // Commander 2026-05-31 — per-pick supplier override (MRP), the highest
       // precedence input to effectiveSupplierId below.
       pickSupplierId,
@@ -2027,6 +2159,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
     soItemId: string | null;
+    photoUrls: string[];
   };
   type Bucket = {
     supplierId: string; warehouseId: string | null; currency: string;
@@ -2103,6 +2236,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       itemGroup: it.itemGroup,
       variants: it.variants,
       soItemId: it.soItemId,
+      photoUrls: it.photoUrls,
     });
     bucket.soDocNos.add(it.soDocNo);
     byGroup.set(groupKey, bucket);
@@ -2160,6 +2294,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       description2: buildVariantSummary(String(l.itemGroup ?? ''), l.variants ?? null) || null,
       // Release-on-delete link (migration 0098).
       so_item_id: l.soItemId,
+      // Owner 2026-08-10 (migration 0274) — the source SO line's photos.
+      photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
     }));
@@ -2295,6 +2431,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       // Release-on-delete link (migration 0098) — every from-SO line carries
       // its source SO line so recomputeSoPicked can release it on delete/cancel.
       so_item_id: l.soItemId,
+      /* Owner 2026-08-10 (migration 0274) — the source SO line's photo keys.
+         The array is copied, the R2 objects are not: SO line and PO line point
+         at the same objects, so a photo deleted on the SO also leaves the PO.
+         PER LINE, never deduplicated across the bucket — one sofa build is many
+         compartment lines that legitimately share the same build photo, and each
+         PO line must carry it or that compartment shows no photo at all. Lines
+         stay 1:1 with their SO line (see the merge note above), so this is
+         simply each line's own array. */
+      photo_urls: l.photoUrls,
       // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
       from_mrp: fromMrp,
     }));
@@ -2311,6 +2456,33 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       supabase, c.get('houzsUser'), c.get('companyId'), header.id, bucket.lines.length,
       `Raised from Sales Order${bucket.soDocNos.size === 1 ? '' : 's'} ${[...bucket.soDocNos].join(', ')}`,
     );
+    /* ERP -> AutoCount PO create. THE LARGEST CREATE-SIDE HOLE IN THE SYSTEM
+       until now: this is the converter behind POST /from-sos and the MRP
+       agent's createDraftPosFromPicks, i.e. every purchase order the ERP raises
+       from a Sales Order — and it queued nothing. It is not covered by the
+       confirm-time hook either, because the status literal above writes
+       'SUBMITTED' directly whenever a warehouse resolved, so PATCH /:id/confirm
+       never runs for these and could not act as a backstop.
+
+       Same DRAFT rule as POST / : a draft PO is inert by design (mrp.ts's
+       PO_DEAD excludes it from supply, recomputeSoPicked ignores its lines), so
+       it does not belong in the account book until a human confirms it — and
+       confirm does queue it. Gated on headerPayload.status, the LITERAL that was
+       inserted, rather than on `asDraft` — because this route has a SECOND way
+       to become a draft that `asDraft` does not describe: a bucket whose SO line
+       resolved no warehouse is forced to DRAFT above (owner 2026-08-02).
+       Re-deriving the condition would have queued exactly those. */
+    if (headerPayload.status !== 'DRAFT') {
+      await enqueuePoCreate(supabase, {
+        companyId: activeCompanyId(c),
+        poId: header.id,
+        /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
+           SCM bridge gives every caller, and created_by here is a bigint staff
+           id. Undefined on the headless MRP-agent path, which degrades to an
+           unattributed row exactly as recordPoCreate does. */
+        createdBy: c.get('houzsUser')?.id ?? null,
+      });
+    }
     created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length });
   }
 
@@ -2475,6 +2647,8 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
       console.error('[mfg-po PATCH] header date cascade failed', { id, col, error: e });
     }
   }
+  await queueAcPoEdit(c, id);
+
   return c.json({ purchaseOrder: data });
 });
 
@@ -2615,6 +2789,17 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
       statusSnapshot: (before.status as string | null) ?? null,
       fieldChanges: diffFields(before, { [`supplierDeliveryDate${slot}`]: date }, PO_AUDIT_FIELDS),
     });
+    /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
+       and after `continue`s, so a PO that was skipped (not found, downstream-
+       locked, or a failed write) queues nothing. A bulk route that queued one
+       edit for the whole batch would be wrong in both directions: it would send
+       POs that did not change and would name only one of the ones that did.
+
+       This matters because `applyToLines` cascades the date down to every line
+       (purchase_order_items.delivery_date), and DeliveryDate is a real AutoCount
+       detail field — so the account book's own promised dates were left behind
+       by every bulk date change the ERP has ever made. */
+    await queueAcPoEdit(c, id);
     updated.push({ id, poNumber });
   }
 
@@ -2755,12 +2940,16 @@ async function soLinkTargetRefusal(
   c: any,
   soItemId: string | null,
   materialCode: string,
+  /* The PO line's spec signature (specSignature of its item_group+variants).
+     When provided, the SO line must match it, not just the item code. Null =
+     spec gate skipped (the code check still applies). */
+  poSpec: string | null = null,
 ): Promise<{ body: Record<string, unknown>; status: 404 | 409 } | null> {
   if (!soItemId) return null;
   const { data } = await scopeToCompany(
-    sb.from('mfg_sales_order_items').select('id, doc_no, item_code, cancelled').eq('id', soItemId), c,
+    sb.from('mfg_sales_order_items').select('id, doc_no, item_code, item_group, variants, cancelled').eq('id', soItemId), c,
   ).maybeSingle();
-  const row = data as { id: string; doc_no: string | null; item_code: string | null; cancelled: boolean | null } | null;
+  const row = data as { id: string; doc_no: string | null; item_code: string | null; item_group: string | null; variants: Record<string, unknown> | null; cancelled: boolean | null } | null;
   if (!row) {
     return {
       body: { error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.' },
@@ -2789,7 +2978,62 @@ async function soLinkTargetRefusal(
       status: 409,
     };
   }
+  /* SPEC GATE (owner 2026-08-08). Same code is not enough — the SO line must be
+     the SAME PRODUCT (fabric + colour + SEAT/LEG/SPECIAL). poSpec is the PO
+     line's summary, resolved by the caller; when absent (forward-compat) the
+     code check above still holds. Dye-lot is deliberately not in the signature. */
+  if (poSpec) {
+    const soSpec = specSignature(row.item_group ?? null, row.variants ?? null);
+    if (soSpec !== poSpec) {
+      return {
+        body: {
+          error: 'so_link_spec_mismatch',
+          reason: `The picked Sales Order line is the same item code but a different spec. Pick a line whose fabric and options match, or leave the source blank.`,
+          soItemCode: row.item_code,
+          materialCode,
+        },
+        status: 409,
+      };
+    }
+  }
   return null;
+}
+
+/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
+   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
+   it says nothing about HOW MUCH that line may order. The batch paths all cap
+   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
+   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
+   the unpicked remainder — but add-line and line-edit did not, so an operator
+   could append (or edit up to) any qty against an SO line that was already
+   fully converted. That is the same double-ordering the F1 audit closed on
+   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
+   accept an operator-supplied qty.
+
+   Repeat conversion stays legal — the business splits one SO across several POs
+   on purpose. The ceiling is what is capped, never the second conversion.
+
+   Overridable with confirmOverConvert, the SAME escape hatch the generic create
+   documents, so a deliberate over-order is still one explicit flag away. */
+export async function soLineOverConvertRefusal(
+  sb: any,
+  soItemId: string | null,
+  requestedQty: number,
+  ownCurrentQty: number,
+): Promise<OverConvertOffender | null> {
+  if (!soItemId) return null;
+  const { data } = await sb
+    .from('mfg_sales_order_items')
+    .select('id, qty, po_qty_picked')
+    .eq('id', soItemId)
+    .maybeSingle();
+  const row = data as { qty: number; po_qty_picked: number } | null;
+  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
+     404 before we get here, so there is nothing left to cap. */
+  if (!row) return null;
+  const remaining = soLineHeadroom(row, ownCurrentQty);
+  const requested = Math.max(0, Number(requestedQty ?? 0));
+  return requested > remaining ? { soItemId, requested, remaining } : null;
 }
 
 mfgPurchaseOrders.post('/:id/items', async (c) => {
@@ -2833,6 +3077,12 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   {
     const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
     if (refusal) return c.json(refusal.body, refusal.status);
+  }
+  /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
+     its own headroom is the raw remainder (ownCurrentQty = 0). */
+  if (it.confirmOverConvert !== true) {
+    const over = await soLineOverConvertRefusal(sb, soItemId, qty, 0);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -2903,6 +3153,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
       ),
     });
   }
+
+  await queueAcPoEdit(c, poId);
 
   return c.json({ item: data }, 201);
 });
@@ -3021,6 +3273,20 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     updates['so_item_id'] = nextSoItemId;
   }
 
+  /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
+     qty on an ALREADY-bound line over-orders just as surely as binding a new
+     one. This line's own stored qty is credited back only while it stays on the
+     SAME SO line (that qty already sits inside po_qty_picked, so without the
+     credit a no-op edit would refuse itself); a REBIND onto a different SO line
+     gets no credit, since the new target's counter holds none of it yet. */
+  if (it.confirmOverConvert !== true) {
+    const ownCurrentQty = nextSoItemId && nextSoItemId === prevSoItemId
+      ? Number(prev.qty ?? 0)
+      : 0;
+    const over = await soLineOverConvertRefusal(sb, nextSoItemId, qty, ownCurrentQty);
+    if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
+  }
+
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
@@ -3063,6 +3329,9 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     try { await recomputeSoPicked(sb, touchedSoItems); }
     catch { /* don't fail the edit on a counter recount */ }
   }
+
+  await queueAcPoEdit(c, poId);
+
   return c.json({ ok: true });
 });
 
@@ -3088,6 +3357,11 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
   if (!doomedRow) return c.json(NOT_THIS_COMPANY, 404);
   /* Cast through `unknown` — see the note on the line PATCH's `prev`. */
   const doomed = (doomedRow ?? null) as unknown as Record<string, unknown> | null;
+
+  /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
+     afterwards the row is gone and its DtlKey with it, and an edit that does not
+     NAME the removal leaves the line live and outstanding in the account book. */
+  const retire = await retiredLineOf(sb, 'purchase_order_items', itemId);
 
   const { error } = await scopeToCompanyId(sb.from('purchase_order_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
@@ -3126,6 +3400,8 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
     catch { /* line already deleted — don't fail on counter recount */ }
   }
 
+  await queueAcPoEdit(c, poId, retire);
+
   return c.body(null, 204);
 });
 
@@ -3163,7 +3439,11 @@ async function resolveAllocationParent(
   poId: string,
   itemId: string,
 ): Promise<
-  | { ok: true; item: { id: string; qty: number; material_code: string }; poNumber: string | null }
+  /* companyId travels back with the parent so the allocation writers can put the
+     predicate on their OWN statement rather than trusting this lookup to have
+     covered them — the client is service-role, so nothing re-checks between the
+     two round trips. */
+  | { ok: true; item: { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null }; poNumber: string | null; companyId: number }
   | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
 > {
   const co = requireActiveCompanyId(c);
@@ -3181,14 +3461,14 @@ async function resolveAllocationParent(
     };
   }
   const { data: item } = await sb.from('purchase_order_items')
-    .select('id, qty, material_code, purchase_order_id')
+    .select('id, qty, material_code, item_group, variants, purchase_order_id')
     .eq('id', itemId)
     .maybeSingle();
-  const itemRow = item as { id: string; qty: number; material_code: string; purchase_order_id: string } | null;
+  const itemRow = item as { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null; purchase_order_id: string } | null;
   if (!itemRow || itemRow.purchase_order_id !== poId) {
     return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
   }
-  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code }, poNumber: poRow.po_number };
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code, item_group: itemRow.item_group ?? null, variants: itemRow.variants ?? null }, poNumber: poRow.po_number, companyId: co.companyId };
 }
 
 /* The line's current allocations, seq-ordered — the base every write plans on. */
@@ -3246,7 +3526,8 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
 
   const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
   if (soItemId) {
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code);
+    const poSpec = specSignature(parent.item.item_group, parent.item.variants);
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code, poSpec);
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   const existing = await currentAllocations(sb, itemId);
@@ -3309,13 +3590,14 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
   if (soItemKeySent) {
     nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
     if (nextSoItemId) {
-      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code);
+      const poSpec = specSignature(parent.item.item_group, parent.item.variants);
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code, poSpec);
       if (refusal) return c.json(refusal.body, refusal.status);
     }
     updates.so_item_id = nextSoItemId;
   }
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .update(updates).eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) {
     if (/allocation_exceeds_line_qty/.test(error.message ?? '')) {
       return c.json({ error: 'allocation_conflict', message: "The line's allocations changed underneath this edit — reload and try again." }, 409);
@@ -3345,16 +3627,16 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   const doomed = existing.find((a) => a.id === allocationId);
   if (!doomed) return c.json({ error: 'allocation_not_found', message: 'That allocation no longer exists on this line.' }, 404);
 
-  const { error } = await sb.from('purchase_order_item_allocations')
-    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+    .delete().eq('id', allocationId).eq('purchase_order_item_id', itemId), parent.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* Close the gap: survivors move DOWN in ascending order, so each UPDATE
      lands in a seq the delete (or the previous move) just freed and the
      UNIQUE (item, seq) constraint can never collide mid-resequence. */
   for (const move of resequenceAfterDelete(existing, allocationId)) {
-    const { error: seqErr } = await sb.from('purchase_order_item_allocations')
-      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId);
+    const { error: seqErr } = await scopeToCompanyId(sb.from('purchase_order_item_allocations')
+      .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId), parent.companyId);
     if (seqErr) break; // leave a gap rather than fail the delete — display-only cosmetics
   }
   await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
@@ -3364,6 +3646,127 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
   const map = await loadAllocationsForItems(sb, [itemId]);
   return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
 });
+
+/* ── Per-line photos — read path (migration 0274) ──────────────────────
+   Owner 2026-08-10: a PO raised from an SO carries the SO line's photos, so the
+   PO detail must be able to SHOW them. The keys ride on the detail row
+   (ITEM_COLS), and this endpoint trades one key for a short-lived signed R2 GET
+   URL — the exact contract the SO side already uses
+   (mfg-sales-orders.ts `/:docNo/items/:itemId/photos/:photoKey/signed`), so a
+   client can drive both surfaces with one code path.
+
+   Deliberately READ-ONLY. Photos are authored elsewhere — the SO upload route
+   (`so-items/...` keys, copied here by the convert) and the AutoCount importer
+   (`po-items/<po_number>/<po item id>/ac-<DtlKey>-<n>.jpg`, appended directly).
+   Both land in the SAME bucket (SO_ITEM_PHOTOS), so this route signs either.
+
+   AUTHZ is MEMBERSHIP, never key shape: the key must be listed in THIS line's
+   photo_urls and the line must belong to THIS PO (and, unlike the SO route, to
+   the active company). A guessed key signs nothing, and no prefix rule exists to
+   lock out a producer — the importer's `po-items/...` keys are served unchanged.
+   The SO endpoint is untouched: it validates against mfg_sales_order_items and
+   would have had to be loosened to serve a PO line. */
+export const poItemPhotoSignedHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const poId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  const { data: item } = await scopeToCompany(sb
+    .from('purchase_order_items')
+    .select('purchase_order_id, photo_urls')
+    .eq('id', itemId), c)
+    .maybeSingle();
+  if (!item) return c.json({ error: 'item_not_found' }, 404);
+  const i = item as { purchase_order_id: string; photo_urls: string[] | null };
+  if (i.purchase_order_id !== poId) return c.json({ error: 'item_doc_mismatch' }, 400);
+  if (!(i.photo_urls ?? []).includes(photoKey)) {
+    return c.json({ error: 'photo_not_in_item' }, 404);
+  }
+
+  try {
+    const bindings = soItemPhotoBindings(c.env);
+    const { signedUrl, expiresAt } = await signSoItemPhotoUrl(bindings, photoKey);
+    // Signed thumb sibling. A photo uploaded before thumbnails existed has no
+    // `.thumb` object — the URL 404s and the client falls back to signedUrl.
+    const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
+  } catch (e) {
+    /* 2026-08-10: R2 S3 creds unset in prod => signing throws for every photo.
+       Fall back to the proxy route below (R2 binding, no creds needed) rather
+       than 500. See scm/lib/photoProxyFallback.ts for why this is not returned
+       as `signedUrl`. */
+    return c.json(
+      proxyFallbackPayload(
+        'po-item-photo',
+        `/mfg-purchase-orders/${poId}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
+  }
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey/signed', poItemPhotoSignedHandler);
+
+/* ── PO photo PROXY — the credential-free read path ────────────────────────
+   Added 2026-08-10 alongside the signing outage. The SO and consignment
+   surfaces already had a proxy; the PO side had ONLY /signed, so when signing
+   broke there was nothing to fall back to.
+
+   Streams the object from the R2 BINDING (c.env.SO_ITEM_PHOTOS), which needs no
+   S3 credential. PO photos live in the same bucket as SO photos — both the
+   convert-carried `so-items/...` keys and the AutoCount importer's
+   `po-items/...` keys — so one binding serves both.
+
+   AUTHZ is a copy of the /signed route's, deliberately including
+   scopeToCompany. The SO proxy does NOT company-scope (its /signed twin does
+   not either), but the PO /signed route DOES, so omitting it here would make
+   this proxy strictly MORE permissive than the route it backs up — a
+   cross-company read leak. Membership, never key shape: the key must be listed
+   in THIS line's photo_urls and the line must belong to THIS PO. A `.thumb`
+   sibling is authorised against its BASE key, because thumbs are never
+   themselves listed in photo_urls.
+
+   NOTE: this sits behind the global auth gate, so it is NOT usable as a bare
+   <img src> — see scm/lib/photoProxyFallback.ts. */
+export const poItemPhotoProxyHandler = async (c: any) => {
+  const sb = c.get('supabase');
+  const poId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  if (!c.env.SO_ITEM_PHOTOS) {
+    return c.json({ error: 'photo_bucket_not_configured' }, 500);
+  }
+
+  const { data: item } = await scopeToCompany(sb
+    .from('purchase_order_items')
+    .select('purchase_order_id, photo_urls')
+    .eq('id', itemId), c)
+    .maybeSingle();
+  if (!item) return c.json({ error: 'item_not_found' }, 404);
+  const i = item as { purchase_order_id: string; photo_urls: string[] | null };
+  if (i.purchase_order_id !== poId) return c.json({ error: 'item_doc_mismatch' }, 400);
+  if (!(i.photo_urls ?? []).includes(baseKeyOf(photoKey))) {
+    return c.json({ error: 'photo_not_in_item' }, 404);
+  }
+
+  const obj = await c.env.SO_ITEM_PHOTOS.get(photoKey);
+  if (!obj) return c.json({ error: 'photo_not_found_in_r2' }, 404);
+
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+      // Keys are immutable per object (uuid / ac-<DtlKey>-<n>), so a replaced
+      // photo is a different key. `private` — PO photos are not public.
+      'cache-control': 'private, max-age=31536000, immutable',
+    },
+  });
+};
+
+mfgPurchaseOrders.get('/:id/items/:itemId/photos/:photoKey', poItemPhotoProxyHandler);
 
 /* ── PR #78 — Convert from Sales Order ─────────────────────────────────
    Commander 2026-05-26 (AutoCount parity): "可以点击 Convert from Sales
@@ -3412,11 +3815,23 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // it used to re-copy full qty on every call → double-ordering).
   const { data: soItems, error: soErr } = await scopeToCompany(sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_centi, discount_centi, unit_cost_centi, variants, uom, remark')
+    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_centi, discount_centi, unit_cost_centi, variants, uom, remark, photo_urls')
     .eq('doc_no', soDocNo)
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
   if (!soItems || soItems.length === 0) {
+    /* THE MODEL for every conversion in this repo: closed by CONSTRUCTION, not by
+       a refusal. The destination PO loads through scopeToCompanyId and the source
+       SO items through scopeToCompany, so another company's SO yields zero rows
+       and lands here — there is no unscoped read for a cross-company source to
+       arrive through.
+
+       THE TRADE-OFF, since it is the one thing this shape is worse at: a refusal
+       could answer "that document belongs to 2990, switch company", and this
+       answers "has no items". Accepted deliberately — naming the other company
+       would need an UNSCOPED read of a document this handler never touches, and
+       widening the read surface to improve a message is the wrong trade on a
+       conversion path. Every converted sibling records the same trade. */
     return c.json({ error: 'so_has_no_items', reason: `Sales Order ${soDocNo} has no items to convert.` }, 404);
   }
 
@@ -3444,6 +3859,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     unit_price_centi: number;
     discount_centi: number | null; unit_cost_centi: number | null;
     variants: unknown; uom: string | null; remark: string | null;
+    photo_urls: string[] | null;
   };
   const notOnPo = (wanted as SoItem[]).filter((r) => !existingSet.has(r.item_code));
   /* F1 audit fix (2026-06-10) — convert ONLY the unpicked remainder. This path
@@ -3557,6 +3973,9 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       // source SO line too, so these lines drop the SO from the picker and get
       // released on delete/cancel, consistent with the From-SO picker paths.
       so_item_id:       it.id,
+      // Owner 2026-08-10 (migration 0274) — carry the SO line's photos, same as
+      // the From-SO picker paths above.
+      photo_urls:       it.photo_urls ?? [],
     };
   });
 
@@ -3570,6 +3989,22 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // Recount po_qty_picked from the live PO lines for every converted SO line.
   try { await recomputeSoPicked(sb, toInsert.map((it) => it.id)); }
   catch { /* lines already inserted — don't fail on counter recount */ }
+
+  /* ERP -> AutoCount edit, NOT a convert. AutoCount has no SO->PO transfer at
+     all (Convert_ targets only DO/IV/GR/PI — AcSyncService.cs:305-353), so this
+     route is not a conversion in AutoCount's sense however it is named here: it
+     APPENDS lines to a purchase order that may already exist in the account
+     book, which is an edit of that document.
+
+     What happens next is deliberately loud rather than clever. A PO still in
+     DRAFT has no AutoCount counterpart, so this folds into the create that
+     confirm will queue. A PO already in the book gets a real edit — and because
+     these lines are brand new they carry no DtlKey, so composeEdit refuses the
+     whole document and writes a visible skipped row naming it. That refusal is
+     correct until IsNewLine is implemented: guessing a key would make
+     AcSyncService rewrite somebody else's line in a live book, and 0273's own
+     header says a wrong key is strictly worse than NULL. */
+  await queueAcPoEdit(c, poId);
 
   return c.json({
     copied: rows.length,
@@ -3713,6 +4148,16 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
     .select('id, status, submitted_at')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* The draft just became a real order — this is the moment it belongs in
+     AutoCount. enqueuePoCreate refuses a PO that already has an AutoCount
+     counterpart, so a re-entered confirm cannot duplicate it. */
+  await enqueuePoCreate(supabase, {
+    companyId: co.companyId,
+    poId: id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 };
 mfgPurchaseOrders.patch('/:id/confirm', confirmMfgPurchaseOrderHandler);
@@ -3989,18 +4434,31 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
        again after a reopen, is re-entered in the allocation editor. */
     const poItemIds = lineRows.map((l) => l.id).filter(Boolean);
     if (poItemIds.length > 0) {
-      await supabase
+      await scopeToCompanyId(supabase
         .from('purchase_order_item_allocations')
         .delete()
-        .in('purchase_order_item_id', poItemIds);
+        .in('purchase_order_item_id', poItemIds), co.companyId);
     }
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, cancelled_at')
+    .select('id, status, cancelled_at, po_number')
     .eq('id', id), co.companyId)
     .maybeSingle();
+
+  /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
+     through (poHasDownstream, checked above) — the same rule AutoCount applies
+     on its side, so this can never ask it to cancel a received PO. */
+  await enqueueCancel(supabase, {
+    companyId: co.companyId,
+    docType: 'PO',
+    docNo: (after as { po_number?: string } | null)?.po_number ?? id,
+    docId: id,
+    self: { table: 'purchase_orders', keyCol: 'id', key: id },
+    createdBy: c.get('houzsUser')?.id ?? null,
+  });
+
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
 });
 
@@ -4019,12 +4477,27 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, po_number, company_id')
+    .select('id, status, po_number, company_id, linked_ac_docno')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
+
+  /* A CANCEL THAT REACHED AUTOCOUNT CANNOT BE TAKEN BACK. The 2.2 SDK has no
+     un-cancel - CancelDocument is a command, not a flag, and a whole-file grep
+     of the reflected surface for uncancel / set_Cancelled returns nothing. A
+     reopen here would leave the PO live in the ERP and cancelled in the account
+     book, with nothing able to close the gap. Raise a new PO instead. */
+  const acDocNo = (cur as { linked_ac_docno?: string | null }).linked_ac_docno;
+  if (curStatus === 'CANCELLED' && acDocNo) {
+    return c.json({
+      error: 'cancel_is_final',
+      message: 'This purchase order was cancelled in AutoCount too, and AutoCount has no '
+        + 'un-cancel. Raise a new purchase order instead.',
+      acDocNo,
+    }, 409);
+  }
   // Idempotent — a live PO is already open, echo back.
   if (curStatus === 'SUBMITTED' || curStatus === 'PARTIALLY_RECEIVED') {
     return c.json({ purchaseOrder: { id, status: curStatus } });
@@ -4033,9 +4506,26 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
     return c.json({ error: 'cannot_reopen', message: `Only a cancelled PO can be reopened (this is ${curStatus})` }, 409);
   }
 
+  /* REOPEN IS A THIRD DOOR TO 'SUBMITTED', and it was the only one with no
+     warehouse gate. Create forces a warehouse-less PO to DRAFT, and /submit and
+     /confirm both run poWarehouseGap; cancel accepts a DRAFT, so cancel-then-
+     reopen (two buttons on the same screen) turned a warehouse-less DRAFT into a
+     live, GRN-receivable PO whose receipt then falls through to the company
+     default warehouse — the AKEMI/TRION-into-C&C-DISPLAY class.
+
+     submitted_at is stamped here for the same reason: reopen left it NULL, so a
+     live PO carried no submission timestamp. */
+  const gap = await poWarehouseGap(supabase, id);
+  if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
+
   const { error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .update({ status: 'SUBMITTED', cancelled_at: null, updated_at: new Date().toISOString() })
+    .update({
+      status: 'SUBMITTED',
+      cancelled_at: null,
+      submitted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id), co.companyId);
   if (updErr) return c.json({ error: 'reopen_failed', reason: updErr.message }, 500);
 
@@ -4076,69 +4566,33 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 });
 
-// ── Delete ────────────────────────────────────────────────────────────
-// Hard-delete a PO + its line items. PR-DRAFT-removal: DRAFT no longer
-// exists. Only CANCELLED POs may be deleted (SUBMITTED+ have downstream
-// docs that reference them — use Cancel first).
-mfgPurchaseOrders.delete('/:id', async (c) => {
-  const id = c.req.param('id');
-  const supabase = c.get('supabase');
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  // Status guard first — get current row.
-  const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, po_number, company_id, supplier_id, total_centi, po_date')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
-  if (readErr) return c.json({ error: 'read_failed', reason: readErr.message }, 500);
-  if (!cur)    return c.json(NOT_THIS_COMPANY, 404);
-  const row = cur as {
-    id: string; status: string; po_number: string;
-    company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; po_date?: string | null;
-  };
-  if (row.status !== 'CANCELLED') {
-    return c.json({
-      error: 'cannot_delete',
-      message: `PO ${row.po_number} is ${row.status}. Only CANCELLED POs can be deleted. Use Cancel first.`,
-    }, 409);
-  }
-  /* Capture the source SO links before the cascade wipes the lines, so we can
-     recount after. Cancel already released them, but this self-heals any legacy
-     CANCELLED PO whose SO lines were never released. */
-  const { data: doomedLines } = await supabase
-    .from('purchase_order_items')
-    .select('so_item_id')
-    .eq('purchase_order_id', id);
+/* ── Delete: REMOVED (owner rule, 2026-08-11) ──────────────────────────────
+   There was a DELETE /:id here that hard-purged a CANCELLED PO, header and
+   lines, from the database. It is gone, and it must not come back.
 
-  // Items cascade via FK ON DELETE CASCADE.
-  const { error: delErr } = await scopeToCompanyId(supabase.from('purchase_orders').delete().eq('id', id), co.companyId);
-  if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);
+   The owner's rule is 不可以删只可以 cancel — nothing is ever deleted, only
+   cancelled. This endpoint was the one place in the purchase chain that broke
+   it, and its own code said so: the audit row it wrote was documented as "the
+   ONLY remaining evidence that the PO existed", with number, supplier and
+   total snapshotted into field_changes precisely because nothing could be
+   joined back to afterwards. An audit row that has to carry a copy of the
+   document is not an audit trail, it is an obituary.
 
-  /* The one action whose subject no longer exists once it is recorded — the
-     purchase_orders row is gone, so this entry is the ONLY remaining evidence
-     that the PO existed. Hence the snapshot of number / supplier / total in
-     field_changes: nothing can be joined back to afterwards. entity_id is kept
-     regardless so a later document cannot silently inherit this history. */
-  await recordEntityAudit(supabase, {
-    entityType: 'PURCHASE_ORDER',
-    entityId: id,
-    entityDocNo: row.po_number,
-    action: 'DELETE',
-    actor: c.get('houzsUser'),
-    companyId: row.company_id ?? activeCompanyId(c),
-    statusSnapshot: 'CANCELLED',
-    fieldChanges: compactChanges([
-      fieldChange('poNumber', row.po_number, null),
-      fieldChange('supplierId', row.supplier_id ?? null, null),
-      fieldChange('totalCenti', Number(row.total_centi ?? 0), null),
-      fieldChange('poDate', row.po_date ?? null, null),
-      fieldChange('status', 'CANCELLED', null),
-    ]),
-  });
+   It is also a cancel-divergence generator the moment AutoCount sync goes
+   live. AutoCount keeps a cancelled PO; a purged one has no row to reconcile
+   against, so the two systems disagree with no way to tell whether the ERP
+   ever had that document. CANCELLED already achieves everything the delete was
+   used for: the PO leaves every working list, releases its SO quota, and
+   clears its allocation sub-lines. The only thing delete added was the loss of
+   the record.
 
-  try { await recomputeSoPicked(supabase, ((doomedLines ?? []) as Array<{ so_item_id: string | null }>).map((l) => l.so_item_id)); }
-  catch { /* PO already deleted — don't fail on counter recount */ }
+   NOT touched, deliberately: the create-time rollback deletes at :1342 and
+   :2351. supabase-js has no transaction, so those compensating deletes are the
+   ONLY thing standing between a failed line insert and a headerless orphan
+   document. They remove a document that never successfully existed; this
+   endpoint removed one that did.
 
-  return c.json({ ok: true, deleted: row.po_number });
-});
+   The SO equivalent (mfg-sales-orders.ts DELETE /:docNo) is DRAFT-only and
+   stays: discarding a draft that was never confirmed is not deleting a
+   business record, and it refuses anything else with so_not_draft ("A
+   confirmed order must be cancelled, not deleted"). */

@@ -277,6 +277,13 @@ export function checkAllowedOptions(
   return null;
 }
 
+/** The (product, model) pair the pure check consumes. */
+export type ProductAndModelPair = { product: ProductForCheck | null; model: ModelForCheck | null };
+
+/** …plus the reason the catalog could not be read. `lookupError !== null` means
+ *  NO VERDICT WAS REACHED — the nulls beside it are ignorance, not permission. */
+export type ProductAndModel = ProductAndModelPair & { lookupError: string | null };
+
 /** Loader paired with the check above. Reads the product → model rows
  *  from Supabase using the line's item_code. Returns nulls when either
  *  side is missing (caller's check shortcircuits to "allowed"). Safe to
@@ -287,34 +294,41 @@ export function checkAllowedOptions(
  *  table builds. */
 /*  `code` is NOT unique — both companies keep their own SKU master and 17 codes
  *  collided on production 2026-08-01. Unscoped, the `.maybeSingle()` below
- *  ERRORS on a duplicated code (PGRST116) and the discarded error becomes
- *  `product = null`, which this gate reads as "allowed" — it stops checking
- *  rather than stops the line. Callers pass `activeCompanyId(c)`;
- *  null/undefined degrades to no predicate, as everywhere else. */
+ *  ERRORS on a duplicated code (PGRST116). That error is now RETURNED as
+ *  `lookupError` (2026-08-13 swallowed-error sweep); it used to be discarded,
+ *  and the resulting `product = null` read to this gate as "allowed" — it
+ *  stopped checking rather than stopping the line, so the exact case the
+ *  company scope was added to fix wrote a line with an unvalidated variant. A
+ *  failed read must never read as an absence when the absence is what
+ *  authorises the write: callers refuse on `lookupError` instead of proceeding.
+ *  Callers pass `activeCompanyId(c)`; null/undefined degrades to no predicate,
+ *  as everywhere else. */
 export async function loadProductAndModel(
   sb:        any,
   itemCode:  string | null | undefined,
-  companyId?: number | null,
-): Promise<{ product: ProductForCheck | null; model: ModelForCheck | null }> {
+  companyId: number | null | undefined,
+): Promise<ProductAndModel> {
   const code = (itemCode ?? '').trim();
-  if (!code) return { product: null, model: null };
+  if (!code) return { product: null, model: null, lookupError: null };
 
   let pq = sb
     .from('mfg_products')
     .select('code, category, model_id, size_code')
     .eq('code', code);
   if (companyId != null) pq = pq.eq('company_id', companyId);
-  const { data: productRow } = await pq.maybeSingle();
+  const { data: productRow, error: pErr } = await pq.maybeSingle();
+  if (pErr) return { product: null, model: null, lookupError: `mfg_products: ${pErr.message}` };
   const product = (productRow ?? null) as ProductForCheck | null;
-  if (!product || !product.model_id) return { product, model: null };
+  if (!product || !product.model_id) return { product, model: null, lookupError: null };
 
-  const { data: modelRow } = await sb
+  const { data: modelRow, error: mErr } = await sb
     .from('product_models')
     .select('id, allowed_options')
     .eq('id', product.model_id)
     .maybeSingle();
+  if (mErr) return { product, model: null, lookupError: `product_models: ${mErr.message}` };
   const model = (modelRow ?? null) as ModelForCheck | null;
-  return { product, model };
+  return { product, model, lookupError: null };
 }
 
 /** Batched mirror of {@link loadProductAndModel} — TWO `in()` queries for a
@@ -322,36 +336,47 @@ export async function loadProductAndModel(
  *  Subrequest diet (Loo 2026-06-06): the per-line loader cost 2 subrequests ×
  *  lines on the SO create path and helped a 6-item order blow the CF Workers
  *  per-request cap. Missing codes simply have no entry (caller treats as
- *  nulls → "allowed"). */
+ *  nulls → "allowed") — which is why `lookupError` is carried out alongside the
+ *  map: an entry missing because the READ FAILED must not be spent as that same
+ *  "allowed". Callers refuse on a non-null `lookupError`. */
 export async function loadProductsAndModels(
   sb:        any,
   itemCodes: Array<string | null | undefined>,
-  companyId?: number | null,
-): Promise<Map<string, { product: ProductForCheck | null; model: ModelForCheck | null }>> {
-  const out = new Map<string, { product: ProductForCheck | null; model: ModelForCheck | null }>();
+  companyId: number | null | undefined,
+): Promise<{ byCode: Map<string, ProductAndModelPair>; lookupError: string | null }> {
+  const out = new Map<string, ProductAndModelPair>();
   const codes = Array.from(new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean)));
-  if (codes.length === 0) return out;
+  if (codes.length === 0) return { byCode: out, lookupError: null };
 
   let pq = sb
     .from('mfg_products')
     .select('code, category, model_id, size_code')
     .in('code', codes);
   if (companyId != null) pq = pq.eq('company_id', companyId);
-  const { data: productRows } = await pq;
+  const { data: productRows, error: pErr } = await pq;
+  if (pErr) return { byCode: out, lookupError: `mfg_products: ${pErr.message}` };
   const products = ((productRows as ProductForCheck[]) ?? []);
 
   const modelIds = Array.from(new Set(products.map((p) => p.model_id).filter(Boolean))) as string[];
   const modelById = new Map<string, ModelForCheck>();
   if (modelIds.length > 0) {
-    const { data: modelRows } = await sb
+    const { data: modelRows, error: mErr } = await sb
       .from('product_models')
       .select('id, allowed_options')
       .in('id', modelIds);
+    if (mErr) return { byCode: out, lookupError: `product_models: ${mErr.message}` };
     for (const m of ((modelRows as ModelForCheck[]) ?? [])) modelById.set(m.id, m);
   }
 
   for (const p of products) {
     out.set(p.code, { product: p, model: p.model_id ? (modelById.get(p.model_id) ?? null) : null });
   }
-  return out;
+  return { byCode: out, lookupError: null };
 }
+
+/** Canonical refusal for "the catalog could not be read, so no variant verdict
+ *  was reached". A 409 the operator can retry, never a silent pass. */
+export const variantCheckUnavailableResponse = (reason: string) => ({
+  error: 'variant_check_failed',
+  message: `Could not check this line's allowed options, so it was not saved — try again (${reason}).`,
+});

@@ -21,6 +21,8 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
+import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -35,6 +37,7 @@ import {
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -650,19 +653,25 @@ export function PurchaseInvoicesListV2() {
     cancelled: 0,
   };
 
-  // Money KPIs are summed over the CURRENT page only (paginated contract has no
-  // full-set money sums), so their cards are labelled "on this page".
+  /* The rows the TABLE is showing — the server page minus whatever the
+     per-column funnels hide (owner 2026-08-13, following the Purchase Orders
+     fix). See hooks/useVisibleRows for why summarising the server page put two
+     contradictory numbers on one screen. */
+  const visible = useVisibleRows(rows);
+
+  // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
+  // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let billed = 0;
     let owed = 0;
     let paid = 0;
-    for (const r of rows) {
+    for (const r of visible.rows) {
       billed += totalOf(r);
       owed += outstandingOf(r);
       paid += paidOf(r);
     }
     return { billed, owed, paid };
-  }, [rows]);
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -750,7 +759,7 @@ export function PurchaseInvoicesListV2() {
 
   // Batch "Print all" — one ticked PI downloads straight; several prompt
   // combined-vs-separate.
-  const printSelectedPis = async () => {
+  const deliverSelectedPis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
     if (chosen.length === 0) return;
@@ -760,11 +769,14 @@ export function PurchaseInvoicesListV2() {
       if (chosen.length === 1) {
         setPrintingDocs(true);
         const b = await fetchPiBundle(chosen[0]!);
-        await generatePurchaseInvoicePdf(b.header as never, b.items as never);
+        await generatePurchaseInvoicePdf(b.header as never, b.items as never, { action });
         clearSelection();
         return;
       }
-      const how = await askChoice({
+      /* View / Print always render ONE document — a preview or a print run
+         is about the stack, not N separate files. Only the download exit
+         still asks combined-vs-separate. */
+      const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase invoices`,
         options: [
           { value: "one", label: "One combined PDF" },
@@ -778,10 +790,11 @@ export function PurchaseInvoicesListV2() {
       if (how === "one") {
         await generateCombinedPurchaseInvoicePdf(bundles as never, {
           fileName: `purchase-invoices-${new Date().toISOString().slice(0, 10)}.pdf`,
+          action,
         });
       } else {
         for (const b of bundles)
-          await generatePurchaseInvoicePdf(b.header as never, b.items as never);
+          await generatePurchaseInvoicePdf(b.header as never, b.items as never, { action });
       }
       clearSelection();
     } catch (e) {
@@ -794,6 +807,7 @@ export function PurchaseInvoicesListV2() {
       setPrintingDocs(false);
     }
   };
+  const batchPrint = usePrintPreview(deliverSelectedPis);
   const goRecordPayment = (r: PiRow) =>
     navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
   const doMarkPaid = (r: PiRow) => {
@@ -996,11 +1010,16 @@ export function PurchaseInvoicesListV2() {
         </div>
 
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
+          {/* Every tile describes the rows ON SCREEN and says so while a column
+              funnel narrows them (owner 2026-08-13). The count tile switches
+              SOURCE, not just wording: `total` is the server's full match count
+              and contradicts the table the moment a client-side funnel hides
+              part of the page. */}
           <StatCard
             pending={statsPending}
             label="Total PIs"
-            value={total.toLocaleString("en-MY")}
-            subtitle="All matching PIs"
+            value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+            subtitle={visible.filtered ? "Filtered · shown below" : "All matching PIs"}
             rail="bg-primary"
             active
           />
@@ -1008,14 +1027,16 @@ export function PurchaseInvoicesListV2() {
             pending={statsPending}
             label="Billed"
             value={fmtRm(money.billed)}
-            subtitle="Sum on this page"
+            subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
             rail="bg-accent"
           />
           <StatCard
             pending={statsPending}
             label="Owed"
             value={fmtRm(money.owed)}
-            subtitle="Balance owed · on this page"
+            subtitle={
+              visible.filtered ? "Balance owed · filtered" : "Balance owed · on this page"
+            }
             tone="error"
             rail="bg-err"
           />
@@ -1023,7 +1044,7 @@ export function PurchaseInvoicesListV2() {
             pending={statsPending}
             label="Paid"
             value={fmtRm(money.paid)}
-            subtitle="Cash out · on this page"
+            subtitle={visible.filtered ? "Cash out · filtered" : "Cash out · on this page"}
             tone="success"
             rail="bg-synced"
           />
@@ -1083,10 +1104,17 @@ export function PurchaseInvoicesListV2() {
                     variant="primary"
                     icon={<Printer size={14} />}
                     disabled={printingDocs}
-                    onClick={() => void printSelectedPis()}
+                    onClick={batchPrint.openPreview}
                   >
                     {printingDocs ? "Printing…" : `Print all (${selectedIds.size})`}
                   </Button>
+                  <PrintPreviewBatchModal
+                    open={batchPrint.open}
+                    onClose={batchPrint.close}
+                    docTitle="Purchase Invoices"
+                    docNos={rows.filter((r) => selectedIds.has(r.id)).map((r) => r.invoice_number)}
+                    {...batchPrint.handlers}
+                  />
                   <Button variant="ghost" disabled={printingDocs} onClick={clearSelection}>
                     Clear
                   </Button>
@@ -1095,6 +1123,8 @@ export function PurchaseInvoicesListV2() {
               <DataTable<PiRow>
                 tableId="purchase-invoices-v2"
                 rows={rows}
+                /* Feeds the stat strip so the tiles describe what is on screen. */
+                onFilteredRowsChange={visible.onFilteredRowsChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}

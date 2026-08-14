@@ -38,6 +38,7 @@ import {
   type DrawerColumn,
 } from "./ColumnsDrawer";
 import { withSingleActive } from "./LayoutSection";
+import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -317,6 +318,21 @@ interface Props<T> {
    * checkbox column, render path byte-identical to before. Desktop table only
    * — the mobile card branch is untouched.
    */
+  /**
+   * The rows that survived the per-column funnels, post-sort (owner 2026-08-12).
+   * Mirrors the DataGrid prop of the same name, deliberately down to the name,
+   * so a page that swaps components does not have to relearn the contract.
+   *
+   * Exists because the column filters are CLIENT-side and were invisible above
+   * this component: a Purchase Orders list with a stuck DATE funnel showed five
+   * rows worth RM 9,112.50 under a "Sum on this page" card reading RM 164,349.70
+   * — two contradictory numbers on one screen, which reads as a broken system
+   * rather than an active filter. A page that summarises its rows needs to know
+   * which rows the operator can actually see.
+   *
+   * Pass a STABLE setter (e.g. a useState dispatch); it fires in an effect.
+   */
+  onFilteredRowsChange?: (rows: T[]) => void;
   selection?: {
     /** Currently-selected row ids (stringified `getRowKey`). */
     selectedIds: Set<string>;
@@ -609,6 +625,7 @@ function DataTableInner<T>({
   contextMenu,
   groupBy,
   selection,
+  onFilteredRowsChange,
 }: Props<T>) {
   const isSmallViewport = useSmallViewport();
   const [searchDraftPending, setSearchDraftPending] = useState(false);
@@ -814,6 +831,13 @@ function DataTableInner<T>({
       else out[colKey] = [...new Set(values)];
       return out;
     });
+  }
+
+  // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
+  const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
+  function handleResetFilters() {
+    if (colFiltersActive) setColFilters({});
+    resetFilters?.onReset();
   }
 
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
@@ -1257,20 +1281,18 @@ function DataTableInner<T>({
     return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
+  /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
+     two lists below are read PAST, so a gesture that edits only them can write
+     nothing at all. `order` comes back set exactly when that baseline was banked. */
+  function writeColumnPrefs(next: ColumnPrefs) {
+    if (next.order) setOrder(next.order);
+    setHiddenList(next.hidden);
+    setShownList(next.shown);
+  }
+
   function toggleColumn(key: string) {
-    const col = allColumns.find((c) => c.key === key);
-    const isHidden = effectiveHidden.has(key);
-    if (isHidden) {
-      // Reveal: drop from userHidden, and (if defaultHidden) add to shown.
-      setHiddenList((prev) => prev.filter((k) => k !== key));
-      if (col?.defaultHidden) {
-        setShownList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      }
-    } else {
-      // Hide: add to userHidden, drop from shown.
-      setHiddenList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      setShownList((prev) => prev.filter((k) => k !== key));
-    }
+    const seen = { hidden: hiddenList, shown: shownList };
+    writeColumnPrefs(toggleColumnPrefs(allColumns, effectiveHidden, key, seen, !!baselineLayout));
   }
 
   function resetVisibility() {
@@ -1441,12 +1463,8 @@ function DataTableInner<T>({
     [allColumns, effectiveHidden, resolveWidth, pinnedSet, pinnedRightSet]
   );
 
-  /** Every column on. Writes the shown-list explicitly so a `defaultHidden`
-   *  column stays on afterwards rather than snapping back on the next mount. */
   function showAllColumns() {
-    const movable = allColumns.filter((c) => !c.alwaysVisible);
-    setHiddenList([]);
-    setShownList(movable.filter((c) => c.defaultHidden).map((c) => c.key));
+    writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
   /** Back to the active layout: its columns, its order, its widths. */
@@ -1923,6 +1941,16 @@ function DataTableInner<T>({
     return copy;
   }, [filteredRows, sort, allColumns, serverSort]);
 
+  /* Report what the operator can actually see (owner 2026-08-12) — see the
+     onFilteredRowsChange prop doc. In an effect, not during render, so a parent
+     that stores these in state cannot re-enter this render pass. `rows` is
+     undefined while loading; skip rather than publish an empty set, or a
+     summary card would blink to zero on every refetch. */
+  useEffect(() => {
+    if (!sortedRows) return;
+    onFilteredRowsChange?.(sortedRows);
+  }, [sortedRows, onFilteredRowsChange]);
+
   // Total column span for full-width body cells (skeleton / error / empty /
   // expansion). The chevron column (when `expandable`) adds one leading
   // column that isn't in `displayColumns`. When no chevron, this equals
@@ -2296,13 +2324,11 @@ function DataTableInner<T>({
               />
             </div>
           )}
-          {resetFilters && (
-            <ResetFiltersButton
-              active={resetFilters.active}
-              onReset={resetFilters.onReset}
-              label={resetFilters.label}
-            />
-          )}
+          <ResetFiltersButton
+            active={colFiltersActive || (resetFilters?.active ?? false)}
+            onReset={handleResetFilters}
+            label={resetFilters?.label}
+          />
           <div className="flex items-center gap-2 text-[11px] font-medium text-ink-secondary">
             {caption && (
               <>

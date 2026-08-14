@@ -75,7 +75,13 @@ export async function loadSofaBatchStock(
     const k = sofaStockKey(r.warehouse_id, r.batch_no, r.product_code, v);
     remaining.set(k, (remaining.get(k) ?? 0) + Number(r.qty_remaining ?? 0));
     batches.add(r.batch_no);
-    const ra = r.received_at ?? '';
+    /* received_at is typed string and is one under PostgREST, but a repair
+       script driving this through the postgres shim gets a Date back, and the
+       FIFO sort below calls .localeCompare on it — which threw and killed a
+       production allocation recompute (BUG-HISTORY 2026-08-10). Normalise HERE,
+       at the boundary, so everything downstream sees the declared type. */
+    const rawRa: unknown = r.received_at;
+    const ra = rawRa instanceof Date ? rawRa.toISOString() : (r.received_at ?? '');
     const prev = receivedAt.get(r.batch_no);
     if (prev === undefined || (ra && ra < prev)) receivedAt.set(r.batch_no, ra);
   }

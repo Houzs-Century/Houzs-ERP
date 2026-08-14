@@ -52,6 +52,8 @@ const fmtDmy = (iso: string | null | undefined): string => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 };
 import { formatPhone } from '@2990s/shared/phone';
+import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import {
   usePurchaseOrderDetail,
   useUpdatePurchaseOrderHeader,
@@ -61,7 +63,6 @@ import {
   useCancelPurchaseOrder,
   useConfirmPurchaseOrder,
   useReopenPurchaseOrder,
-  useDeletePurchaseOrder,
   useSuppliers,
   useSupplierDetail,
   useOutstandingSoItems,
@@ -190,7 +191,6 @@ export const PurchaseOrderDetail = () => {
   const cancel = useCancelPurchaseOrder();
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
-  const deletePo = useDeletePurchaseOrder();
   const addItem = useAddPurchaseOrderItem();
   const updateItem = useUpdatePurchaseOrderItem();
   const deleteItem = useDeletePurchaseOrderItem();
@@ -677,7 +677,7 @@ export const PurchaseOrderDetail = () => {
      optional docTitle so the revised copy prints "Revised Purchase Order". The
      operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
      marks the amendment SENT — mirroring 2990, no server email here). */
-  const generatePoPdf = (docTitle?: string) => {
+  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
     // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
     const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
     const headerForPdf = {
@@ -694,10 +694,10 @@ export const PurchaseOrderDetail = () => {
       source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
     };
     import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
-      generatePurchaseOrderPdf(headerForPdf, items, docTitle ? { docTitle } : undefined),
+      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
   };
-  const handlePrint = () => generatePoPdf();
+  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
 
   /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
      The bound PO detail stamps `open_amendment` when its source SO has an
@@ -865,10 +865,23 @@ export const PurchaseOrderDetail = () => {
               instead of wrapping. Both return in view mode. */}
           {!isEditing && <RelationshipMapButton type="po" id={po.id} />}
           {!isEditing && (
-            <Button variant="ghost" size="md" onClick={handlePrint}>
+            <>
+            <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} />
               <span>Print PDF</span>
             </Button>
+            <PrintPreviewModal
+              open={print.open}
+              onClose={print.close}
+              docTitle="Purchase Order"
+              docNo={poDisplayNumber(po.po_number, (po as unknown as { revision?: number | null }).revision)}
+              rows={[
+                { label: 'Supplier', value: po.supplier?.name ?? po.supplier?.code ?? '—' },
+                { label: 'Items', value: `${items.length} line${items.length === 1 ? '' : 's'}` },
+              ]}
+              {...print.handlers}
+            />
+            </>
           )}
           {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick
@@ -904,7 +917,9 @@ export const PurchaseOrderDetail = () => {
           )}
           {/* PR — Commander 2026-05-27: "Cancel/Delete PO 没反应".
               Cancel: any pre-receipt status (incl. DRAFT). API blocks RECEIVED.
-              Delete: only CANCELLED. */}
+              The Delete half of that report no longer exists: the endpoint and
+              both buttons were removed 2026-08-11 (#1939) under the owner rule
+              不可以删只可以 cancel. Cancel + Reopen are the whole surface. */}
           {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="ghost" size="md"
               onClick={async () => {
@@ -939,20 +954,10 @@ export const PurchaseOrderDetail = () => {
               <span>{reopen.isPending ? 'Reopening…' : 'Reopen'}</span>
             </Button>
           )}
-          {po.status === 'CANCELLED' && (
-            <Button variant="ghost" size="md"
-              onClick={async () => {
-                if (!(await askConfirm({ title: `Permanently delete PO ${po.po_number}?`, body: 'This removes the header + all line items and cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
-                deletePo.mutate(po.id, {
-                  onSuccess: () => navigate('/scm/purchase-orders'),
-                  onError:   (err) => notify({ title: 'Delete failed', body: `${err instanceof Error ? err.message : 'Something went wrong.'}`, tone: 'error' }),
-                });
-              }}
-              disabled={deletePo.isPending}>
-              <Trash2 {...ICON} />
-              <span>{deletePo.isPending ? 'Deleting…' : 'Delete'}</span>
-            </Button>
-          )}
+          {/* A CANCELLED PO used to offer "Permanently delete". Removed with its
+              endpoint (owner rule 2026-08-11: 不可以删只可以 cancel). Cancel is
+              the terminal state; the record stays so AutoCount can be
+              reconciled against it. */}
           {/* PR — Phase 2: "Receive Goods" → /grns/new?poId=X. */}
           {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="primary" size="md"

@@ -21,6 +21,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 /* ── Region master ──────────────────────────────────────────────────────── */
 
@@ -79,6 +80,7 @@ export function useUpdateDeliveryPlanningRegion() {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: REGIONS_KEY }),
+    onError: writeFailed,
   });
 }
 

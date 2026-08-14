@@ -85,7 +85,12 @@ export type PlanningOrder = {
      with the amend dates above. */
   amend_reason: string | null;
   effective_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
+  /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
+     lines, so the SO is soft-locked with no processing date involved. Read by
+     DeliveryFieldsDrawer's procLockActive call to route a replacement_disposal
+     change into an amendment instead of a direct save. */
+  po_locked: boolean | null;
   days_left: number | null;
   /* HC delivery-sheet address columns. */
   address: string | null;
@@ -134,7 +139,74 @@ export type PlanningOrder = {
     lorry_plate: string | null;
   } | null;
   delivery_orders: Array<{ id: string; do_number: string; status: string }>;
+  /* ── Arrangement pipeline (owner spec 2026-08-07) — DERIVED server-side by
+     backend lib/arrangement-stage.ts and stamped on every row; the frontends
+     read the field and never re-derive (one shared logic layer):
+       PENDING_DATE  — in Pending Schedule, delivery date not yet confirmed
+                       (amended_delivery_date null) → Delivery Date Arrangement.
+       PENDING_TIME  — date confirmed, not on a live trip → the Delivery Time
+                       Arrangement inbox. (== "Date arranged" on the date side.)
+       TIME_ARRANGED — assigned onto a non-CANCELLED trip.
+     null outside Pending Schedule. Optional (`?`) so a cached pre-upgrade
+     payload still typechecks; a missing field degrades to the un-split view. */
+  arrangement_stage?: ArrangementStage | null;
+  /* The live trip the order sits on (via its DO's DELIVERY stop; CANCELLED
+     trips excluded). null when not on a trip. */
+  trip_id?: string | null;
+  trip_no?: string | null;
+  trip_date?: string | null;
+  /* Time-of-run keys (2026-08-08) — the stop's sequence and ETA offset on its
+     live trip; null off-trip. The arrangement comparator's TIME key. */
+  trip_stop_no?: number | null;
+  trip_eta_offset_s?: number | null;
 };
+
+/* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).
+   The date-side and time-side views are each a 2-way split per the owner's
+   spec; PENDING_TIME is the SAME order read from both sides of the hand-off
+   (date arranged / awaiting a time). */
+export type ArrangementStage = 'PENDING_DATE' | 'PENDING_TIME' | 'TIME_ARRANGED';
+
+export const ARRANGEMENT_STAGE_LABEL: Record<ArrangementStage, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  PENDING_TIME: 'Pending Time Arrangement',
+  TIME_ARRANGED: 'Time arranged',
+};
+
+export type DateArrangement = 'PENDING_DATE' | 'DATE_ARRANGED';
+export const DATE_ARRANGEMENT_LABEL: Record<DateArrangement, string> = {
+  PENDING_DATE: 'Pending Date Arrangement',
+  DATE_ARRANGED: 'Date arranged',
+};
+
+/* Date-side view of a row's stage. `undefined` stage (a cached pre-upgrade
+   payload) falls back to PENDING_DATE so nothing silently disappears from the
+   Date Arrangement queue; null (out of pipeline) stays null. */
+export function dateArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): DateArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_DATE';
+  if (stage === null) return null;
+  return stage === 'PENDING_DATE' ? 'PENDING_DATE' : 'DATE_ARRANGED';
+}
+
+export type TimeArrangement = 'PENDING_TIME' | 'TIME_ARRANGED';
+/* Time-side view. `undefined` stage falls back to PENDING_TIME — the Trips
+   inbox then degrades to the old show-everything "To schedule" panel rather
+   than blanking. PENDING_DATE / out-of-pipeline rows are not the Time page's
+   yet (null). */
+export function timeArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): TimeArrangement | null {
+  const stage = o.arrangement_stage;
+  if (stage === undefined) return 'PENDING_TIME';
+  if (stage === 'PENDING_TIME' || stage === 'TIME_ARRANGED') return stage;
+  return null;
+}
+
+/* Board-column label for a row's stage — '—' for rows outside the pipeline. */
+export function arrangementStageLabel(o: Pick<PlanningOrder, 'arrangement_stage'>): string {
+  const stage = o.arrangement_stage;
+  if (stage == null) return '';
+  return ARRANGEMENT_STAGE_LABEL[stage] ?? '';
+}
 
 export type PlanningCounts = Record<'ALL' | DeliveryState, number>;
 
@@ -675,6 +747,39 @@ export function useScheduleDelivery() {
       });
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* ── DO crew assignment (Last Mile "Propose crew", owner 2026-08-08) ──────────
+   Writes the FULL crew record — up to 2 drivers + 2 helpers + 1 lorry — via the
+   long-standing PUT /delivery-orders-mfg/:id/crew (mig 0053's
+   scm.delivery_order_crew UPSERT; this is its first UI caller). That row is the
+   snapshot THE BOARD's crew columns display (driver 1/2, helper 1/2, IC,
+   contact, plate), and the handler also syncs the DO header's primary-driver
+   quick-fields and records the audit trail. It is the ONLY store with a second
+   DRIVER seat (scm.trips has one driver + two helpers by schema), which is why
+   no migration accompanies the owner's two-driver rule: the two-driver-capable
+   record already exists and every display reads it — adding trips.driver_2_id
+   would be a second home for the same fact. */
+export type DoCrewVars = {
+  doId: string;
+  driver1Id?: string | null;
+  driver2Id?: string | null;
+  helper1Id?: string | null;
+  helper2Id?: string | null;
+  lorryId?: string | null;
+};
+export function useAssignDoCrew() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ doId, ...body }: DoCrewVars) =>
+      authedFetch<{ ok: true }>(`/delivery-orders-mfg/${doId}/crew`, {
+        method: 'PUT', body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
+    },
   });
 }
 
