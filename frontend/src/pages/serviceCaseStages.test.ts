@@ -8,10 +8,18 @@ describe("service case stage flow", () => {
   test("the advance chain walks the whole pipeline and terminates at completed", () => {
     const seen: string[] = [];
     let stage = "pending_review";
-    while (NEXT_STAGE[stage]) {
+    /* NEXT_STAGE is Record<string, {...}>, so TypeScript believes EVERY key
+       resolves and reads `NEXT_STAGE[stage]` as always-truthy — which is what
+       no-unnecessary-condition flags. The type is the thing that is wrong: the
+       chain terminates precisely BECAUSE NEXT_STAGE["completed"] is undefined at
+       runtime, so that lookup is the loop's exit condition, not a redundant
+       guard. Spell the optionality out rather than delete the check, which would
+       loop forever. */
+    const nextOf = (s: string): (typeof NEXT_STAGE)[string] | undefined => NEXT_STAGE[s];
+    for (let next = nextOf(stage); next; next = nextOf(stage)) {
       expect(seen).not.toContain(stage); // no cycles
       seen.push(stage);
-      stage = NEXT_STAGE[stage].stage;
+      stage = next.stage;
     }
     expect(stage).toBe("completed");
     expect(seen).toEqual([

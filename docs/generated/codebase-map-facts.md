@@ -63,7 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/categories.ts` | 10 | 506 |
+| `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2475 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1141 |
@@ -100,7 +100,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 320 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1218 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
@@ -169,7 +169,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1310 files, 543119 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1310 files, 543135 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
