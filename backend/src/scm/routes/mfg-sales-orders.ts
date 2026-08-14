@@ -11701,8 +11701,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). isShipReady is that, PLUS a refusal to ship an
-  // SO with no stock-bearing lines (bare isMainReady is vacuously true there).
+  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
     .select('item_group, stock_status, cancelled')
