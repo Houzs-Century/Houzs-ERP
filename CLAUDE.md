@@ -363,6 +363,17 @@ never nullish.
 
 - `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
   matrixed over the two apps. NOT a required status check yet.
+- **The FRONTEND leg enforces; the BACKEND leg is `continue-on-error` and only
+  reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
+  ceiling, all of it debt `main` grew while the linter waited to land, and
+  twelve of them are `no-unnecessary-condition` in the money routes where
+  deleting the condition would create a real bug: the rule fires because a
+  hand-written `as {…}` cast promises non-null over a `sb: any` read, so the
+  `??` it calls redundant is the only guard left (worked example in the
+  `lint:` job's own comment in `ci.yml`). The upstream fix needs honest types,
+  and `schema.pg.ts` covers **none** of the SCM money tables — `drizzle-kit
+  pull` first. Remove `continue-on-error` when that is done and the backend
+  leg is green, not before.
 - **It runs `node_modules/eslint/bin/eslint.js` under `process.execPath`, not the
   `.bin/eslint` shim, and that is deliberate.** The shim is a POSIX shell script
   Windows cannot execute (ENOENT, reported as "no ESLint installed" because
