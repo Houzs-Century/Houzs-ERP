@@ -97,6 +97,13 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # And a THIRD since 2026-08-14: the four master-data spelling maps
+      # (agent / location / venue / branding) are compiled from
+      # autocount-so-writeback-mappings.json, so that CONFIRMING a binding is an
+      # edit to the JSON that also carries its reason — never a hand-edit of a
+      # TypeScript object literal. Before this, the JSON and the TS had drifted
+      # apart in all four dimensions.
+      - run: npm run audit:ac-master-maps
       # ── The three defect-class checks (2026-08-13) ────────────────────────
       # Each exists because the same class kept coming back. They are PR gates,
       # NEVER deploy gates: audit:routes as a deploy gate jammed production

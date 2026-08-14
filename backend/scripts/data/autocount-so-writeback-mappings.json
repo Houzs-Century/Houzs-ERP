@@ -6,7 +6,9 @@
     "notes": [
       "AutoCount has NO create-SO endpoint yet; the .NET middleware only exposes updateFromSheet + update-udf-dates. Writeback needs a new AutoCount-SDK create path. This file is the data that path will consume.",
       "Never write AutoCount accounting tables via raw SQL; go through the AutoCount SDK/UI so business logic runs.",
-      "DocNo strategy: AutoCount document is populated directly from what we write, so the ERP doc_no becomes the AutoCount DocNo directly (owner confirmed 2026-08-06)."
+      "DocNo strategy: AutoCount document is populated directly from what we write, so the ERP doc_no becomes the AutoCount DocNo directly (owner confirmed 2026-08-06).",
+      "THE FOUR MAPS BELOW ARE THE SOURCE OF TRUTH AND THE COMPILED ONES ARE GENERATED FROM THEM (2026-08-14). `node scripts/gen-autocount-master-maps.mjs` writes src/services/autocount-master-maps.ts, which autocount-writeback.ts re-exports as AGENT_MAP / LOCATION_MAP / VENUE_MAP / BRANDING_MAP; `npm run audit:ac-master-maps` fails CI if the two disagree. Until that date the maps were hand-written TypeScript and this file was a 2026-08-06 harvest note beside it, and the two had already drifted apart in every dimension — the TS carried ETHAN/WEI PIN (confirmed out of agent_map_fuzzy_to_confirm and never written back here), five identity location entries, and ZANOTTI/NONE/CARRESS/DUNLOP. Confirming a new binding is now an edit to THIS file plus the generator, never an edit to TypeScript.",
+      "KEYS ARE UPPERCASE because `bookSpelling` looks a value up by `norm()` — uppercased, whitespace-collapsed. A mixed-case key can only ever be reached through the value loop, so `\"Shi Ting\": \"Chang Shi Ting\"` matched nothing while `\"SHI TING\"` matches. The generator uppercases and refuses a collision."
     ]
   },
 
@@ -58,22 +60,33 @@
     "DUNLOPILLO": "DUNLOPILLO",
     "ERGOTEX": "ERGOTEX",
     "MYLATEX": "MYLATEX",
-    "Houzs": "HOUZS"
+    "HOUZS": "HOUZS",
+    "ZANOTTI": "ZANOTTI",
+    "NONE": "NONE",
+    "CARRESS": "CARRESS",
+    "DUNLOP": "DUNLOP"
   },
-  "branding_note": "HOUZS was ADDED to the AutoCount BRANDING UDF list on 2026-08-06 (via User Defined List Maintenance UI). AutoCount BRANDING options are now: AKEMI, MYLATEX, DUNLOPILLO, ZANOTTI, ERGOTEX, NONE, HOUZS.",
+  "branding_note": "HOUZS was ADDED to the AutoCount BRANDING UDF list on 2026-08-06 (via User Defined List Maintenance UI). THIS MAP IS AN ALLOW-LIST — the only one of the four — because its ERP source column holds CATEGORIES, not brands: a pass-through would have opened `2990s Sofa`, `Accessories`, `2990s Mattress`, `2990`, `Bedframe` and `Happi.S` as permanent brands in the licensed book (PR #2200, measured). A matcher may PROPOSE an addition here; it may never turn this into a pass-through.",
+  "autocount_branding_options_reference": ["AKEMI", "MYLATEX", "DUNLOPILLO", "ZANOTTI", "ERGOTEX", "NONE", "HOUZS", "CARRESS", "DUNLOP"],
+  "autocount_branding_options_note": "The BRANDING UDF option list. The first seven are the 2026-08-06 harvest from User Defined List Maintenance; CARRESS and DUNLOP were added on 2026-08-14 because the live book's own SO history uses them (7 SOs in the 2026-08-11 export) — they exist as options whether or not the maintenance screen was re-read. Structured rather than prose so the binding report can answer 'is this already a master' for branding the way it does for the other three.",
 
   "location_map": {
     "KL WAREHOUSE": "KL",
     "PG WAREHOUSE": "PG",
     "SLGR WAREHOUSE": "KL",
-    "Kuala Lumpur": "KL",
-    "Petaling Jaya": "KL",
-    "Cheras": "KL",
-    "Shah Alam": "KL",
-    "George Town": "PG",
-    "Kota Kinabalu": "SBH",
-    "Kuantan": "KL",
-    "Johor Bahru": "KL"
+    "KUALA LUMPUR": "KL",
+    "PETALING JAYA": "KL",
+    "CHERAS": "KL",
+    "SHAH ALAM": "KL",
+    "GEORGE TOWN": "PG",
+    "KOTA KINABALU": "SBH",
+    "KUANTAN": "KL",
+    "JOHOR BAHRU": "KL",
+    "KL": "KL",
+    "PG": "PG",
+    "SRW": "SRW",
+    "SBH": "SBH",
+    "HQ": "HQ"
   },
   "location_note": "AutoCount SalesLocation uses SHORT codes; ERP uses long/free-text. JB & Kuantan have no dedicated AutoCount location and fall in the KL/Balakong delivery region per the ERP postcode->zone model (zone-classify.ts); KL warehouse serves central/south/east, PG serves the north, SBH=Sabah.",
   "autocount_locations_reference": {
@@ -98,24 +111,22 @@
   "venue_note": "AutoCount SOUDF_VENUE is a controlled dropdown of ~95 options. ERP venue strings normalise to the AC option (naming differs by SOLO suffix / spelling). Full AC venue list captured in autocount-venue-options.txt if needed.",
 
   "agent_map": {
-    "Anthony": "ANTHONY", "YUNY": "YUNY", "Kris": "KRIS", "Shawn": "SHAWN",
-    "Lawrence": "LAWRENCE", "Kingsley": "KINGSLEY", "Stanley": "STANLEY",
-    "Junie": "JUNIE", "Mei Ting": "MEI TING", "Peter": "PETER", "Wei How": "WEI HOW",
-    "Rachael": "RACHAEL", "Sally": "SALLY", "Zack": "Zack", "Sheldon Tan": "SHELDON",
-    "James Seow": "JAMES SEOW", "Lucas": "LUCAS", "Adrian": "ADRIAN",
-    "Esther Chong": "ESTHER CHONG", "Melvin Chong": "MELVIN CHONG", "Chea Huan": "Chea Huan",
-    "WengGi": "WENGGI", "Kar Jiun": "TAN KAR JIUN", "Hwa Sheng": "Hwasheng",
-    "Shi Ting": "Chang Shi Ting", "Luis Teo": "LUIS", "Pei Fen": "PEIFEN",
-    "Lim Yau Wei": "LIM YAU WEI"
+    "ANTHONY": "ANTHONY", "YUNY": "YUNY", "KRIS": "KRIS", "SHAWN": "SHAWN",
+    "LAWRENCE": "LAWRENCE", "KINGSLEY": "KINGSLEY", "STANLEY": "STANLEY",
+    "JUNIE": "JUNIE", "MEI TING": "MEI TING", "PETER": "PETER", "WEI HOW": "WEI HOW",
+    "RACHAEL": "RACHAEL", "SALLY": "SALLY", "ZACK": "Zack", "SHELDON TAN": "SHELDON",
+    "JAMES SEOW": "JAMES SEOW", "LUCAS": "LUCAS", "ADRIAN": "ADRIAN",
+    "ESTHER CHONG": "ESTHER CHONG", "MELVIN CHONG": "MELVIN CHONG", "CHEA HUAN": "Chea Huan",
+    "WENGGI": "WENGGI", "KAR JIUN": "TAN KAR JIUN", "HWA SHENG": "Hwasheng",
+    "SHI TING": "Chang Shi Ting", "LUIS TEO": "LUIS", "PEI FEN": "PEIFEN",
+    "LIM YAU WEI": "LIM YAU WEI", "ETHAN": "ETHAN SOO", "WEI PIN": "WEIPIN"
   },
-  "agent_map_fuzzy_to_confirm": {
-    "Ethan": "ETHAN SOO (or ETHAN SOO JIA XIAN)",
-    "Wei Pin": "WEIPIN (or WEIPIN NGIAU)"
-  },
+  "agent_map_note": "AGENT and SALESPERSON are ONE AutoCount dimension: `resolveAcAgent` feeds the single `SalesAgent` field from `mfg_sales_orders.agent` through this map, else `scm.staff.name` through this map, else the staff name AS ITSELF for /ensure-masters to open. The raw `agent` text never passes through unmapped (production rows hold bare uuids). The PURCHASE agent is a DIFFERENT AutoCount master table (dbo.PurchaseAgent) and a constant, AC_PURCHASE_AGENT — do not map into it from here. `Ethan` -> `ETHAN SOO` and `Wei Pin` -> `WEIPIN` moved out of agent_map_fuzzy_to_confirm on 2026-08-14 because the compiled map has carried them since PR #2148; this file was simply never told.",
   "agent_excluded": {
     "reason": "2990 staff (out of scope) or non-sales/test accounts — no AutoCount Houzs Century agent needed",
     "reps": ["Bernard", "Frankie Lee Boon ping", "NG PENG CHUEN", "Nijam Houzs Sales Director", "Nijam Sales Person", "nancyhouzs@gmail.com", "yzhe212@gmail.com", "Sales Manager (test)", "Sales Director (test)", "Sales Executive (test)", "Sales Person (test)", "Sales Trainee (test)"]
   },
+  "agent_excluded_note": "This list is NOT a gate — nothing in the composer reads it. It is the record of a decision, and check-autocount-master-bindings.mjs prints any live ERP salesperson that LOOKS like a test account and is not on it, as a decision for the owner rather than a silent addition.",
   "autocount_agents_reference_79": ["KINGSLEY","MK","WW","ALEX","OTHERS","SIANG","IDA","ALVIN","LIANG","JOEY","KRIS","PETER","STANLEY","WEI HOW","SHU HUI","LUIS","YUNY","ANTHONY","NINA","JUNIE","GRACE","YANG","JIA HOU","TERRY","MEI TING","SALLY","JANE","SHAWN","LAWRENCE","YURI","RACHAEL","SIA JONAS","SIA JOSIAH","DS","SHUANG","TAN KAR JIUN","SHELDON","Zanotti Living(Kelana Jaya)","STEPHY","LIM YAU WEI","Chea Huan","Hwasheng","Chang Shi Ting","JAY","Ummu","HOUZS CENTURY","ADRIAN","YEAP MIN HUA","Phoebe","KEN","Kingsley91","TAN HONG YU","Zack","PEIFEN","XUE TING","TAN JIA YEE","ESTHER","EMI","WEI SIANG","JAMES SEOW","ESTHER CHONG","LEE SZE ROU","SOO JIA XIAN","CHONG CHAN YEE","XIAO ROU","JUNO","DEXON","EDWIN","MAYSON","WEIPIN NGIAU","ETHAN SOO JIA XIAN","MELVIN CHONG CHAN YEE","WEIPIN","LUCAS","ETHAN SOO","MELVIN CHONG","WENGGI","LOUIS WONG YONG XING","LOUIS WONG"],
 
   "sofa": {

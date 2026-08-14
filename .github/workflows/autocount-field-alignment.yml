@@ -1,5 +1,20 @@
-name: AutoCount write-back — field alignment (read-only)
+name: AutoCount write-back — field alignment + master bindings (read-only)
 
+# TWO REPORTS, ONE DISPATCH, because they are two halves of one question about
+# the same write-back and they read the same maps out of the same composer:
+#
+#   1. FIELD ALIGNMENT — is every field the write-back sends read from the
+#      column the ERP actually keeps it in?
+#   2. MASTER BINDINGS — of the values it would send, which does the account
+#      book ALREADY hold under a different spelling? (added 2026-08-14)
+#
+# They are deliberately not two workflows. A workflow_dispatch workflow is only
+# dispatchable once its file is on the DEFAULT branch, so a brand-new one cannot
+# be proven against production until after it merges — and CLAUDE.md's rule 5
+# says a workflow that has never run is not shipped. Extending the one that
+# already runs is what let the second report be dispatched, against production,
+# from its own PR branch.
+#
 # Answers "is every field the write-back sends read from the column the ERP
 # actually keeps it in", with a number per field, without anyone opening a SQL
 # console.
@@ -56,3 +71,24 @@ jobs:
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
+      # WHICH OF OUR MASTER VALUES DOES THE BOOK ALREADY HOLD. Proposes, never
+      # binds: confirming a pair is an edit to
+      # backend/scripts/data/autocount-so-writeback-mappings.json followed by
+      # `node scripts/gen-autocount-master-maps.mjs`, and the artifact this step
+      # uploads is the input to that edit.
+      #
+      # `if: always()` so a failure in the first report — which reads different
+      # tables — does not hide the answer to the second.
+      - run: npx tsx scripts/check-autocount-master-bindings.mjs
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id || '1' }}
+          PROPOSALS_OUT: ${{ runner.temp }}/ac-master-binding-proposals.json
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ac-master-binding-proposals
+          path: ${{ runner.temp }}/ac-master-binding-proposals.json
+          if-no-files-found: warn
