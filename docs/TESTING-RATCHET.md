@@ -142,7 +142,7 @@ real violation and GREEN after.
 
 ```
 npm --prefix backend  run test:coverage    # -> backend/coverage/{light,workers}/coverage-final.json
-npm --prefix frontend run test:coverage    # -> frontend/coverage/coverage-final.json
+npm --prefix frontend run test:coverage    # -> its own coverage-final.json, under frontend/
 npm run coverage:check                     # every area against its floor
 npm run coverage:update                    # raise the floors after adding tests
 npm run coverage:test-gate                 # the gate's own unit tests
