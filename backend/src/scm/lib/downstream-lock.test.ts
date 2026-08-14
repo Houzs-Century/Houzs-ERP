@@ -16,6 +16,7 @@ import {
   poHasDownstream,
   doHasDownstream,
   grnHasDownstream,
+  soDocNosWithDownstream,
 } from './downstream-lock';
 
 /* Minimal PostgREST stand-in. The lock only ever does
@@ -189,5 +190,25 @@ describe('a read that failed is not an absence', () => {
     expect((await poHasDownstream(brokenSb(), 'po-1'))?.error).toBe('downstream_check_failed');
     expect((await doHasDownstream(brokenSb(), 'do-1'))?.error).toBe('downstream_check_failed');
     expect((await grnHasDownstream(brokenSb(), 'g1'))?.error).toBe('downstream_check_failed');
+  });
+});
+
+/* The batch form the SO list uses: same verdict as soHasDownstream, but read
+   off rows already in hand. It cannot fail closed the way the single-document
+   form does — the caller's query either returned rows or it threw — so what
+   matters here is that it agrees on WHICH orders are locked. */
+describe('soDocNosWithDownstream', () => {
+  test('an order locks on a DO or an SI, and each is counted once', () => {
+    const locked = soDocNosWithDownstream(
+      [{ so_doc_no: 'SO-1' }, { so_doc_no: 'SO-1' }, { so_doc_no: 'SO-2' }],
+      [{ so_doc_no: 'SO-3' }, { so_doc_no: 'SO-1' }],
+    );
+    expect([...locked].sort()).toEqual(['SO-1', 'SO-2', 'SO-3']);
+  });
+
+  test('rows with no sales order, and an empty page, lock nothing', () => {
+    expect(soDocNosWithDownstream([{ so_doc_no: null }], []).size).toBe(0);
+    expect(soDocNosWithDownstream([], []).size).toBe(0);
+    expect(soDocNosWithDownstream().size).toBe(0);
   });
 });

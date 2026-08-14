@@ -80,6 +80,57 @@ as a real backlog for as long as nobody asked which runner the report came from.
 Second lesson, from the guard that had to move: **a guard that dies with the
 thing it guards is not a guard** — before trusting one, break the thing it
 watches and check that the guard is still alive to complain.
+## A delivery order that lost its link to the sales order made MRP order the goods a second time [high]
+
+**Symptom.** The owner, on the MRP Stock Status Report, 2026-08-14: "all these
+SO already have PO & some done delivered, why still appear at MRP for ordering?"
+Four sales orders he named were fully shipped — one of them on a delivery order
+already marked DELIVERED — and MRP was still asking purchasing to buy the goods.
+
+**Root cause.** Of the three places `delivery-orders-mfg.ts` inserts DO lines,
+the two that build a row from a client-supplied item body go through
+`buildItemRow`, which does `so_item_id: (it.soItemId) ?? null` — taken from the
+request, with no derivation and no guard. The third, `POST /from-sos`, sets it
+from the picks server-side and always has it; that is the shape the other two
+should have had. A client that omits the field writes a delivery the system can
+never attribute, silently and permanently.
+
+Everything that asks "how much of this order is still to fulfil" resolves on
+that column — the remaining-qty guard, the sofa batch guard, the SO header's
+status flip, and MRP's delivered-netting, which does `.in('so_item_id', ...)`
+and skips a null. So a shipped order reads as entirely undelivered. MRP is
+correct about everything it can see; it simply could not see the shipments.
+
+`2990-SO-2606-025` is the clearest tell: its delivery order is DELIVERED while
+the header still says CONFIRMED, because the header only flips when every line
+is covered and no line could be.
+
+**Measured on prod.** 24 unlinked lines on live delivery orders, across 11 open
+sales orders, every one of them over-reporting shortage. None in June; 13
+between 2026-07-02 and 07-30; 11 more between 08-03 and 08-06; none since.
+
+**Why the earlier fix did not end it.** PR #1395 (2026-07-29) fixed the DO-create
+page to send `soItemId` — and lines created on 08-03 and 08-06 are still
+unlinked, from a client path that path did not cover. The reason one client
+regression could write a month of permanently bad data is that the server
+accepts the omission. `backfill-do-line-snapshot.mjs` had even met these rows
+already ("WHERE so_item_id IS NULL there is no parent... leaves the line alone")
+and correctly skipped them; nobody asked why the orphans existed.
+
+**Fix, part one — the data.** `backfill-do-so-item-link.mjs` re-links what can
+be read: only within the sales order the DO already names, only between lines of
+the same item code, and where a code repeats, only on a variant identity unique
+on both sides. `2990-SO-2606-016` carries two `CODY-(K)` lines differing only by
+colour (BF-10 / BF-12) and both documents carry that colour, so that pair is
+read rather than guessed. Two genuinely indistinguishable lines are REFUSED —
+a bijection exists but choosing one is a coin flip, and the two SO lines can
+differ in what is linked to them. A wrong link is worse than none: it credits
+one line's shipment against another and cannot be told from a fact afterwards.
+
+**Fix, part two — the hole.** Still to do: `buildItemRow` should derive the link
+from `(so_doc_no, item_code)` when a client omits it and refuse only when that
+is ambiguous — the same thing `/from-sos` already does — so no future client
+regression can write this again.
 
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
@@ -7612,6 +7663,96 @@ book.
 
 **Ref** — 2026-08-10, PR #1855 (feat/ac-writeback-wiring-v2), found by #1898.
 
+## The AutoCount write-back would have written orders with NO LINES, and no PO at all [critical]
+
+**Symptom** — None yet, and that is the point: the ERP -> AutoCount write-back
+(#1855) ships behind two off switches, so nothing it does can be seen until
+someone turns it on. A contract audit against the AutoCount half found thirteen
+places where the two programs disagree about the same JSON document, four of
+them fatal, and none of them would have announced itself — `AcSyncService.cs`
+reads a field with `Str(p, "X")`, which returns `""` for a field that is not
+there rather than an error.
+
+**Root cause** — Traced per finding, not guessed; all thirteen are listed with
+both sides in `docs/modules/autocount-writeback.md` section 11 and pinned
+mechanically by `backend/src/services/autocount-writeback.contract.test.ts`. The
+four that block:
+
+- **The line select asks for `linked_ac_dtlkey`**, a column PR #1819 has not
+  landed. PostgREST does not ignore an unknown column — it fails the whole query
+  with 42703 — so `items` is null, `items ?? []` is empty, and **every Sales
+  Order would have gone into the account book with no lines at all.** #1855
+  describes this state as "every line is new ... correct-but-degraded".
+- **`enqueuePoCreate` and `composePoState` select `creditor_code`,
+  `creditor_name`, `agent` and `ref` from `scm.purchase_orders`**, which has none
+  of them (it is supplier-keyed). Same 42703, and both functions `return false`
+  inside their own `try/catch`: PO create and PO edit are a silent no-op.
+- **`makeItemCodeResolver` is never called** by anything but its own unit test,
+  so every `ItemCode` on the wire is the raw ERP code, which AutoCount does not
+  have.
+- **A sofa goes over as one AutoCount line per compartment.** The ERP stores a
+  sold sofa as N rows sharing `variants.buildKey`; `toDetails` is a 1:1 map; the
+  resolver points all N at the SAME AutoCount sofa code. One sofa sold would
+  book qty N and take N off AutoCount's stock.
+
+The unit tests in #1855 pass because their fake PostgREST does not know the
+schema — it returns whatever the fixture holds, whatever columns you ask for.
+
+**Fix** — **Two of the thirteen are fixed, in #1855, and struck off the
+register: D11 and D13** — the two above that are plain bugs rather than
+decisions (the entry above this one carries them). **The other eleven stand.**
+Each needs a decision that is not a test author's to make, and the mechanism is
+off. What this PR ships is the means to see them: a contract test that reads
+`AcSyncService.cs` at build time and extracts the keys it actually parses, a
+fake PostgREST that enforces `scm`'s real column lists, and a divergence
+register that fails if a fourteenth appears AND fails if one of these is fixed
+without being struck off. Plus `backend/scripts/ac-trial-dry-run.mjs`, which
+posts the same contract at a TEST book behind four gates and never runs by
+default.
+
+**The class, for next time** — a fake database that accepts any column name will
+green-light a query against a table that does not exist. If a test double stands
+in for a schema, give it the schema.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial. Findings against #1855
+(unmerged); register in `docs/modules/autocount-writeback.md` section 11.
+
+## The write-back wiring test failed on Windows and passed in CI [low]
+
+**Symptom** — `tests/autocountWritebackWiring.test.ts` reported "anchor not
+found after mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update'" on a local
+Windows checkout, while the same commit was green in CI.
+
+**Root cause** — Traced to the bytes, not guessed. `?raw` hands back the WORKING
+TREE contents, and with `core.autocrlf=true` those are CRLF while git stores LF.
+Three of the anchors end in `});
+`, which exists in the blob and not in the
+checked-out file. Every other anchor in the suite is a single line, which is why
+only these three failed.
+
+**Fix** — Normalise the raw imports to LF before matching, in that suite and in
+the new contract suite beside it. A source-anchored test must not mean different
+things on different platforms — and this one runs on the owner's Windows box.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial.
+
+## Two migrations both numbered 0276 [medium]
+
+**Symptom** — `main` carried `0276_scm_migrated_documents.sql` and the open
+#1855 carried `0276_scm_autocount_outbox.sql`. Merged as they stood, `pg-migrate`
+would have two files claiming one number.
+
+**Root cause** — Exactly the case `CLAUDE.md` warns about: #1855 picked its
+number when it branched, not at merge time, and `0276` was taken while it sat
+open. `pg-migrate` tracks by full filename, so gaps and out-of-order merges are
+safe and duplicates are not.
+
+**Fix** — Renamed the unapplied one to `0277_scm_autocount_outbox.sql` and
+updated the four references to it in `docs/modules/autocount-writeback.md`. Safe
+because it has never run anywhere: #1855 is not merged, so no deployment has an
+`APPLIED 0276_scm_autocount_outbox.sql` line to be confused by the rename.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial.
 ## "APPLIED - stamped 146 sofa lines", three times, and it was corrupting them [high]
 
 **Symptom** — `refresh-sofa-colours.mjs` was dispatched against prod with
