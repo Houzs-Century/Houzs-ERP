@@ -5,28 +5,28 @@
 > Drift check: `npm --prefix backend run audit:bug-index`.
 
 **Read this before changing a subsystem, then read the entries it points at.**
-`BUG-HISTORY.md` is 14,167 lines of reverse-chronological
+`BUG-HISTORY.md` is 7,773 lines of reverse-chronological
 entries with no way in; that is why the same bug classes kept being re-derived
 from scratch, differently each time. This is the way in. It carries no facts of
 its own — every row points at the entry, which stays the only copy.
 
-200 entries across 15 areas.
+153 entries across 15 areas.
 
 | Area | Entries |
 |---|---|
-| [AutoCount sync + write-back](#autocount-sync-write-back) | 21 |
-| [Cutover + migrated data](#cutover-migrated-data) | 29 |
-| [Inventory, costing, FIFO](#inventory-costing-fifo) | 10 |
-| [Sales orders + pricing](#sales-orders-pricing) | 44 |
-| [Purchase orders + GRN + PI](#purchase-orders-grn-pi) | 10 |
+| [AutoCount sync + write-back](#autocount-sync-write-back) | 19 |
+| [Cutover + migrated data](#cutover-migrated-data) | 10 |
+| [Inventory, costing, FIFO](#inventory-costing-fifo) | 2 |
+| [Sales orders + pricing](#sales-orders-pricing) | 36 |
+| [Purchase orders + GRN + PI](#purchase-orders-grn-pi) | 6 |
 | [Delivery, DO, returns](#delivery-do-returns) | 10 |
 | [Fleet, trips, TMS](#fleet-trips-tms) | 3 |
-| [Projects + PMS + fair report](#projects-pms-fair-report) | 2 |
+| [Projects + PMS + fair report](#projects-pms-fair-report) | 1 |
 | [Service cases (ASSR)](#service-cases-assr) | 2 |
-| [Sofa, fabric, variants](#sofa-fabric-variants) | 38 |
+| [Sofa, fabric, variants](#sofa-fabric-variants) | 34 |
 | [Auth, permissions, sessions](#auth-permissions-sessions) | 7 |
 | [Deploy, CI, migrations](#deploy-ci-migrations) | 6 |
-| [Database + schema](#database-schema) | 4 |
+| [Database + schema](#database-schema) | 3 |
 | [Frontend + mobile](#frontend-mobile) | 13 |
 | [Mail, search, notifications](#mail-search-notifications) | 1 |
 
@@ -52,9 +52,7 @@ its own — every row points at the entry, which stays the only copy.
 | medium | [A BEL byte in the service's port path, and the escape sequence that would have killed the rebuild](../../BUG-HISTORY.md#a-bel-byte-in-the-services-port-path-and-the-escape-sequence-that-would-have-killed-the-rebuild) <sub>L4850</sub> | fix/ac-host-deploy, 2026-08-11 |
 | medium | [The stock reconciler excluded sofa by AutoCount's ItemGroup, so 85 units of pillows and stools read as a phantom ERP surplus](../../BUG-HISTORY.md#the-stock-reconciler-excluded-sofa-by-autocounts-itemgroup-so-85-units-of-pillows-and-stools-read-as-a-phantom-erp-surplus) <sub>L6813</sub> | 2026-08-11, PR #1942 (fix/stock-criterion-close). Found by an |
 | medium | [Three bugs in the AutoCount parity checkers, all in OUR queries, none in the data](../../BUG-HISTORY.md#three-bugs-in-the-autocount-parity-checkers-all-in-our-queries-none-in-the-data) <sub>L2712</sub> |  |
-| medium | [AutoCount picture extraction silently lost every image whose \pichgoal had three digits](../../BUG-HISTORY.md#autocount-picture-extraction-silently-lost-every-image-whose-pichgoal-had-three-digits) <sub>L7866</sub> |  |
 | unspecified | [The cost-stamping script priced a queen bed from a king's purchase line [high, money]](../../BUG-HISTORY.md#the-cost-stamping-script-priced-a-queen-bed-from-a-kings-purchase-line-high-money) <sub>L1265</sub> |  |
-| unspecified | [2026-07-22](../../BUG-HISTORY.md#2026-07-22) <sub>L10105</sub> |  |
 
 ## Cutover + migrated data
 
@@ -65,30 +63,11 @@ its own — every row points at the entry, which stays the only copy.
 | high | [Seven high-severity findings from the 2026-08-12 whole-system review, still live on main](../../BUG-HISTORY.md#seven-high-severity-findings-from-the-2026-08-12-whole-system-review-still-live-on-main) <sub>L2279</sub> |  |
 | high | [Four repair scripts whose SECOND run destroys what their first run created](../../BUG-HISTORY.md#four-repair-scripts-whose-second-run-destroys-what-their-first-run-created) <sub>L3409</sub> |  |
 | high | [The special-order backfill wrote a field the picker never reads, and recompute erases](../../BUG-HISTORY.md#the-special-order-backfill-wrote-a-field-the-picker-never-reads-and-recompute-erases) <sub>L7349</sub> |  |
-| high | [Every migrated sales-order line was saved without its warehouse](../../BUG-HISTORY.md#every-migrated-sales-order-line-was-saved-without-its-warehouse) <sub>L7799</sub> |  |
 | medium | [Every readiness and cutover number the owner was shown counted a different population than the screens he compared them against](../../BUG-HISTORY.md#every-readiness-and-cutover-number-the-owner-was-shown-counted-a-different-population-than-the-screens-he-compared-them-against) <sub>L3268</sub> | fix/proceeded-at-diagnostics, 2026-08-13 |
 | medium | [A line's special orders printed twice — once as the raw slip phrase, once as the picker code the backfill derived from it](../../BUG-HISTORY.md#a-lines-special-orders-printed-twice-once-as-the-raw-slip-phrase-once-as-the-picker-code-the-backfill-derived-from-it) <sub>L6159</sub> | 2026-08-11, fix/so-list-po-and-specials-display. |
 | medium | [Every migrated sofa line has an EMPTY Leg Height](../../BUG-HISTORY.md#every-migrated-sofa-line-has-an-empty-leg-height) <sub>L7643</sub> |  |
 | low | [One owner ruling, two copies, and the copy the backfill reads had drifted](../../BUG-HISTORY.md#one-owner-ruling-two-copies-and-the-copy-the-backfill-reads-had-drifted) <sub>L6059</sub> | 2026-08-11, PR #1952 (fix/specials-phrase-map-stiching). |
 | unspecified | [2026-08-11](../../BUG-HISTORY.md#2026-08-11) <sub>L5382</sub> |  |
-| unspecified | [2026-08-08](../../BUG-HISTORY.md#2026-08-08) <sub>L8156</sub> |  |
-| unspecified | [2026-08-03](../../BUG-HISTORY.md#2026-08-03) <sub>L8503</sub> |  |
-| unspecified | [2026-08-02](../../BUG-HISTORY.md#2026-08-02) <sub>L8590</sub> |  |
-| unspecified | [2026-08-01](../../BUG-HISTORY.md#2026-08-01) <sub>L8729</sub> |  |
-| unspecified | [2026-07-29](../../BUG-HISTORY.md#2026-07-29) <sub>L9146</sub> |  |
-| unspecified | [2026-07-27](../../BUG-HISTORY.md#2026-07-27) <sub>L9288</sub> |  |
-| unspecified | [2026-07-26](../../BUG-HISTORY.md#2026-07-26) <sub>L9327</sub> |  |
-| unspecified | [2026-07-25](../../BUG-HISTORY.md#2026-07-25) <sub>L9342</sub> |  |
-| unspecified | [2026-07-24](../../BUG-HISTORY.md#2026-07-24) <sub>L9490</sub> |  |
-| unspecified | [2026-07-23](../../BUG-HISTORY.md#2026-07-23) <sub>L9781</sub> |  |
-| unspecified | [2026-07-21](../../BUG-HISTORY.md#2026-07-21) <sub>L10377</sub> |  |
-| unspecified | [2026-07-20](../../BUG-HISTORY.md#2026-07-20) <sub>L10716</sub> |  |
-| unspecified | [2026-07-19](../../BUG-HISTORY.md#2026-07-19) <sub>L11415</sub> |  |
-| unspecified | [2026-07-18](../../BUG-HISTORY.md#2026-07-18) <sub>L12036</sub> |  |
-| unspecified | [2026-07-17](../../BUG-HISTORY.md#2026-07-17) <sub>L12273</sub> |  |
-| unspecified | [2026-07-16](../../BUG-HISTORY.md#2026-07-16) <sub>L13009</sub> |  |
-| unspecified | [2026-07-15](../../BUG-HISTORY.md#2026-07-15) <sub>L13696</sub> |  |
-| unspecified | [Earlier (2026-06 → 07, backfilled 2026-07-14 from memory / COE docs / git)](../../BUG-HISTORY.md#earlier-2026-06-07-backfilled-2026-07-14-from-memory-coe-docs-git) <sub>L14131</sub> |  |
 
 ## Inventory, costing, FIFO
 
@@ -96,14 +75,6 @@ its own — every row points at the entry, which stays the only copy.
 |---|---|---|
 | medium | [The codebase-map generator died 11 hours after it was written, and froze the inventory for three weeks](../../BUG-HISTORY.md#the-codebase-map-generator-died-11-hours-after-it-was-written-and-froze-the-inventory-for-three-weeks) <sub>L4301</sub> | docs/staging-truth-and-map-refresh, 2026-08-12 |
 | unspecified | [MRP and the Inventory page disagree about whether a DRAFT or SHIPPED order still demands stock [med, LEFT OPEN]](../../BUG-HISTORY.md#mrp-and-the-inventory-page-disagree-about-whether-a-draft-or-shipped-order-still-demands-stock-med-left-open) <sub>L3496</sub> | PR sweep/duplicated-list-drift, 2026-08-13. |
-| unspecified | [2026-08-06](../../BUG-HISTORY.md#2026-08-06) <sub>L8303</sub> |  |
-| unspecified | [2026-08-05](../../BUG-HISTORY.md#2026-08-05) <sub>L8350</sub> |  |
-| unspecified | [2026-08-04](../../BUG-HISTORY.md#2026-08-04) <sub>L8456</sub> |  |
-| unspecified | [2026-07-31](../../BUG-HISTORY.md#2026-07-31) <sub>L9002</sub> |  |
-| unspecified | [2026-07-30](../../BUG-HISTORY.md#2026-07-30) <sub>L9130</sub> |  |
-| unspecified | [2026-07-19](../../BUG-HISTORY.md#2026-07-19) <sub>L11246</sub> |  |
-| unspecified | [2026-07-19 — Mining HOOKKA's incident history for defects still open here](../../BUG-HISTORY.md#2026-07-19-mining-hookkas-incident-history-for-defects-still-open-here) <sub>L11958</sub> |  |
-| unspecified | [2026-07-14 — Multi-company + performance campaign](../../BUG-HISTORY.md#2026-07-14-multi-company-performance-campaign) <sub>L13920</sub> |  |
 
 ## Sales orders + pricing
 
@@ -131,7 +102,7 @@ its own — every row points at the entry, which stays the only copy.
 | high | [The confirm gate demanded a spec the customer had not chosen yet, so real orders could not be booked](../../BUG-HISTORY.md#the-confirm-gate-demanded-a-spec-the-customer-had-not-chosen-yet-so-real-orders-could-not-be-booked) <sub>L1986</sub> |  |
 | high | [A guard that says "all clear" because it could not look](../../BUG-HISTORY.md#a-guard-that-says-all-clear-because-it-could-not-look) <sub>L3309</sub> |  |
 | high | [Every SO line photo rendered the literal text "err" while the photos were fine](../../BUG-HISTORY.md#every-so-line-photo-rendered-the-literal-text-err-while-the-photos-were-fine) <sub>L7448</sub> |  |
-| high | [Every SO line photo rendered as "err" — the bucket name was never configured](../../BUG-HISTORY.md#every-so-line-photo-rendered-as-err-the-bucket-name-was-never-configured) <sub>L7938</sub> |  |
+| high | [A bare "C" (corner) was filtered as noise, so 49 sofa builds lost their corner](../../BUG-HISTORY.md#a-bare-c-corner-was-filtered-as-noise-so-49-sofa-builds-lost-their-corner) <sub>L7773</sub> |  |
 | medium | [The server enforced "both dates or neither" in one direction only](../../BUG-HISTORY.md#the-server-enforced-both-dates-or-neither-in-one-direction-only) <sub>L3236</sub> | fix/date-pair-server-side, 2026-08-13 |
 | medium | [The codebase-map generator had been crashing for three weeks, so the map quietly rotted](../../BUG-HISTORY.md#the-codebase-map-generator-had-been-crashing-for-three-weeks-so-the-map-quietly-rotted) <sub>L4531</sub> | fix/converter-hide-retired, 2026-08-12 |
 | medium | [Combo Pricing 500'd on every load, for a table that was never created here](../../BUG-HISTORY.md#combo-pricing-500d-on-every-load-for-a-table-that-was-never-created-here) <sub>L4611</sub> | docs/sofa-combo-anchor, 2026-08-12 |
@@ -140,17 +111,9 @@ its own — every row points at the entry, which stays the only copy.
 | medium | [The apply that hit the corrupted rows from the other side, and rolled back](../../BUG-HISTORY.md#the-apply-that-hit-the-corrupted-rows-from-the-other-side-and-rolled-back) <sub>L7078</sub> | 2026-08-11, PR #1940 (fix/specials-variants-not-object), after run |
 | medium | [The integration merge landed on red, and the migration it renumbered still called itself 0284](../../BUG-HISTORY.md#the-integration-merge-landed-on-red-and-the-migration-it-renumbered-still-called-itself-0284) <sub>L1507</sub> |  |
 | medium | [The word "processingDate" meant three different facts in the scan payloads, and an audit had already been fooled by it](../../BUG-HISTORY.md#the-word-processingdate-meant-three-different-facts-in-the-scan-payloads-and-an-audit-had-already-been-fooled-by-it) <sub>L3832</sub> |  |
-| medium | [SO to PO convert silently dropped the line photos](../../BUG-HISTORY.md#so-to-po-convert-silently-dropped-the-line-photos) <sub>L7966</sub> |  |
-| medium | [DIVAN ONLY lines demanded a mattress Gap](../../BUG-HISTORY.md#divan-only-lines-demanded-a-mattress-gap) <sub>L8127</sub> |  |
 | low | [A shebang made a test suite unparseable on Windows only, and one error was counted as two failing files](../../BUG-HISTORY.md#a-shebang-made-a-test-suite-unparseable-on-windows-only-and-one-error-was-counted-as-two-failing-files) <sub>L4371</sub> | #2062, fix/vitest-shebang-parse-0812, 2026-08-12 |
 | low | [A probe copied the SO join onto the PO table and crashed on a column that is not there](../../BUG-HISTORY.md#a-probe-copied-the-so-join-onto-the-po-table-and-crashed-on-a-column-that-is-not-there) <sub>L7323</sub> |  |
-| unspecified | [2026-08-04](../../BUG-HISTORY.md#2026-08-04) <sub>L8208</sub> |  |
-| unspecified | [2026-08-07](../../BUG-HISTORY.md#2026-08-07) <sub>L8246</sub> |  |
-| unspecified | [2026-08-02](../../BUG-HISTORY.md#2026-08-02) <sub>L8717</sub> |  |
-| unspecified | [2026-07-28](../../BUG-HISTORY.md#2026-07-28) <sub>L9245</sub> |  |
-| unspecified | [2026-07-16](../../BUG-HISTORY.md#2026-07-16) <sub>L13641</sub> |  |
-| unspecified | [2026-07-14 — Go-live review batch (4-agent adversarial + FE/BE sweep)](../../BUG-HISTORY.md#2026-07-14-go-live-review-batch-4-agent-adversarial-febe-sweep) <sub>L14042</sub> |  |
-| unspecified | [2026-07-14 — Sales access model + SO-form FE/BE (earlier same night, all SHIPPED)](../../BUG-HISTORY.md#2026-07-14-sales-access-model-so-form-febe-earlier-same-night-all-shipped) <sub>L14112</sub> |  |
+| unspecified | [2026-08-08](../../BUG-HISTORY.md#2026-08-08) <sub>L7760</sub> |  |
 | med | [The array-shaped custom_specials are NOT the same damage, and NULLing them would have deleted correct data](../../BUG-HISTORY.md#the-array-shaped-custom_specials-are-not-the-same-damage-and-nulling-them-would-have-deleted-correct-data) <sub>L5528</sub> | 2026-08-11, census tool PR #1953, finding + refusal PR #1960 |
 | med | [11 sales orders read as over-delivered against delivery lines that never moved stock](../../BUG-HISTORY.md#11-sales-orders-read-as-over-delivered-against-delivery-lines-that-never-moved-stock) <sub>L5758</sub> | 2026-08-11, PR #1971 (fix/do-duplicates-and-fabric-merge). Prod |
 
@@ -161,12 +124,8 @@ its own — every row points at the entry, which stays the only copy.
 | high | [PO -> GRN convert died on `there is no row at position -1`](../../BUG-HISTORY.md#po---grn-convert-died-on-there-is-no-row-at-position--1) <sub>L2810</sub> | fix/ac-convert-headless, 2026-08-12. Compiles clean locally (48,128 |
 | high | [A CANCELLED purchase order could be hard-purged from the database](../../BUG-HISTORY.md#a-cancelled-purchase-order-could-be-hard-purged-from-the-database) <sub>L6496</sub> | fix/po-no-hard-delete, 2026-08-11 |
 | high | [The sofa purchase orders were never dedicated, and the delivery dates were lost to a renamed key](../../BUG-HISTORY.md#the-sofa-purchase-orders-were-never-dedicated-and-the-delivery-dates-were-lost-to-a-renamed-key) <sub>L2457</sub> |  |
-| high | [Seven more cross-company read leaks, same class as the GRN picker](../../BUG-HISTORY.md#seven-more-cross-company-read-leaks-same-class-as-the-grn-picker) <sub>L8072</sub> |  |
-| high | [GRN pick-PO picker listed EVERY company's PO lines](../../BUG-HISTORY.md#grn-pick-po-picker-listed-every-companys-po-lines) <sub>L8101</sub> |  |
 | medium | [Section 4 of the parity check compared a PO number against a GR number](../../BUG-HISTORY.md#section-4-of-the-parity-check-compared-a-po-number-against-a-gr-number) <sub>L2775</sub> |  |
-| medium | [PO photo export was scoped narrower than the PO import, so 15 pictures were never pulled](../../BUG-HISTORY.md#po-photo-export-was-scoped-narrower-than-the-po-import-so-15-pictures-were-never-pulled) <sub>L7895</sub> |  |
 | unspecified | [A zero-priced purchase order opens a zero-cost stock layer [high, money]](../../BUG-HISTORY.md#a-zero-priced-purchase-order-opens-a-zero-cost-stock-layer-high-money) <sub>L5394</sub> | PR (feat/ac-writeback-sofa-collapse), 2026-08-11. Closes contract |
-| unspecified | [2026-07-30](../../BUG-HISTORY.md#2026-07-30) <sub>L9121</sub> |  |
 | med | [The GRN variant snapshot is written once and swept by nothing](../../BUG-HISTORY.md#the-grn-variant-snapshot-is-written-once-and-swept-by-nothing) <sub>L5917</sub> | 2026-08-11, PR #1964. Prod evidence: diagnostic run 31431814091. |
 
 ## Delivery, DO, returns
@@ -197,7 +156,6 @@ its own — every row points at the entry, which stays the only copy.
 | Sev | Entry | Ref |
 |---|---|---|
 | high | [Defect Done/Replace buttons never showed for Nancy — state-routing read the wrong payload path](../../BUG-HISTORY.md#defect-donereplace-buttons-never-showed-for-nancy-state-routing-read-the-wrong-payload-path) <sub>L4599</sub> | fix/defect-review-state-path 2026-08-11. |
-| unspecified | [2026-08-08](../../BUG-HISTORY.md#2026-08-08) <sub>L8238</sub> |  |
 
 ## Service cases (ASSR)
 
@@ -225,8 +183,6 @@ its own — every row points at the entry, which stays the only copy.
 | high | [The sofa decoder DELETED every special order that mentioned the bottom](../../BUG-HISTORY.md#the-sofa-decoder-deleted-every-special-order-that-mentioned-the-bottom) <sub>L7596</sub> |  |
 | high | [A first-pass NAME match made RDS-5526 into someone else's sofa](../../BUG-HISTORY.md#a-first-pass-name-match-made-rds-5526-into-someone-elses-sofa) <sub>L7681</sub> |  |
 | high | [Deleting a compartment row offered to RENAME it across all history](../../BUG-HISTORY.md#deleting-a-compartment-row-offered-to-rename-it-across-all-history) <sub>L7726</sub> |  |
-| high | [A bare "C" (corner) was filtered as noise, so 49 sofa builds lost their corner](../../BUG-HISTORY.md#a-bare-c-corner-was-filtered-as-noise-so-49-sofa-builds-lost-their-corner) <sub>L7760</sub> |  |
-| high | [Sofa stock was excluded from the AutoCount opening, and sofa lots carry no batch](../../BUG-HISTORY.md#sofa-stock-was-excluded-from-the-autocount-opening-and-sofa-lots-carry-no-batch) <sub>L7835</sub> |  |
 | medium | [The description tidier called 249 of the owner's own fabric codes broken](../../BUG-HISTORY.md#the-description-tidier-called-249-of-the-owners-own-fabric-codes-broken) <sub>L1466</sub> | fix/catalogue-series-one-list, 2026-08-14 |
 | medium | [Fabric-tier overrides: one company can delete the other's, and overwrite it](../../BUG-HISTORY.md#fabric-tier-overrides-one-company-can-delete-the-others-and-overwrite-it) <sub>L705</sub> | fix/company-scope-sweep, 2026-08-13. |
 | medium | [Shutting the door on the product rows left them sitting in the fabric master, and a retire tool that could not prove they were unused would have been worse than none](../../BUG-HISTORY.md#shutting-the-door-on-the-product-rows-left-them-sitting-in-the-fabric-master-and-a-retire-tool-that-could-not-prove-they-were-unused-would-have-been-worse-than-none) <sub>L1353</sub> | 2026-08-13, this PR. Follows the guard in the entry below. |
@@ -238,13 +194,11 @@ its own — every row points at the entry, which stays the only copy.
 | medium | [The array repair refused the only shape production actually had](../../BUG-HISTORY.md#the-array-repair-refused-the-only-shape-production-actually-had) <sub>L1624</sub> |  |
 | medium | [Editing a fabric description saved, and reached no picker in the system](../../BUG-HISTORY.md#editing-a-fabric-description-saved-and-reached-no-picker-in-the-system) <sub>L1883</sub> |  |
 | medium | [A destructive production merge tool shipped as an unreviewable binary blob](../../BUG-HISTORY.md#a-destructive-production-merge-tool-shipped-as-an-unreviewable-binary-blob) <sub>L1930</sub> |  |
-| medium | [PO variant refresh died on "parseBedframe is not a function"](../../BUG-HISTORY.md#po-variant-refresh-died-on-parsebedframe-is-not-a-function) <sub>L8030</sub> |  |
 | low | [The Fabric Converter listed 88 supersede tombstones as if they were fabrics](../../BUG-HISTORY.md#the-fabric-converter-listed-88-supersede-tombstones-as-if-they-were-fabrics) <sub>L4570</sub> | fix/converter-hide-retired, 2026-08-12 |
 | low | [A console was reported missing a seat height, which it cannot have](../../BUG-HISTORY.md#a-console-was-reported-missing-a-seat-height-which-it-cannot-have) <sub>L5073</sub> | fix/console-has-no-seat, 2026-08-11. |
 | low | [Both duplicate detectors reported their own repair back as a fresh defect](../../BUG-HISTORY.md#both-duplicate-detectors-reported-their-own-repair-back-as-a-fresh-defect) <sub>L5605</sub> | 2026-08-11, PR #1980 (fix/detectors-stop-crying-wolf). Prod evidence: |
 | low | [The 7 variant mismatches that were never the collision: a colour left unresolved](../../BUG-HISTORY.md#the-7-variant-mismatches-that-were-never-the-collision-a-colour-left-unresolved) <sub>L5940</sub> | 2026-08-11, PR #1964. Prod evidence: diagnostic run 31431814091, |
 | low | [Duplicate-series detection paired five unrelated fabrics through "BR0WN"](../../BUG-HISTORY.md#duplicate-series-detection-paired-five-unrelated-fabrics-through-br0wn) <sub>L7294</sub> | fix/dup-fabric-series-detection, 2026-08-10 |
-| low | [Sofa-named ACCESSORIES never got their photo attached](../../BUG-HISTORY.md#sofa-named-accessories-never-got-their-photo-attached) <sub>L7917</sub> |  |
 | med | [The sofa completeness checks failed a whole build on one line's remark, and over-reported by a third](../../BUG-HISTORY.md#the-sofa-completeness-checks-failed-a-whole-build-on-one-lines-remark-and-over-reported-by-a-third) <sub>L5101</sub> | fix/sofa-unparsed-false-positive, 2026-08-11. |
 | med | [One physical fabric series, two library rows, and a merge that would have deleted the better half](../../BUG-HISTORY.md#one-physical-fabric-series-two-library-rows-and-a-merge-that-would-have-deleted-the-better-half) <sub>L5697</sub> | 2026-08-11, PR #1972 (fix/fabric-series-merge). Prod evidence: |
 | med | [A priced SOFA special add-on is costed but never charged](../../BUG-HISTORY.md#a-priced-sofa-special-add-on-is-costed-but-never-charged) <sub>L7207</sub> | fix/special-addon-prices-from-autocount, 2026-08-11 |
@@ -278,7 +232,6 @@ its own — every row points at the entry, which stays the only copy.
 |---|---|---|
 | high | [Saving Specials 500'd on a constraint migration 0087 had already replaced](../../BUG-HISTORY.md#saving-specials-500d-on-a-constraint-migration-0087-had-already-replaced) <sub>L4689</sub> | fix/special-addons-save-sort-categories, 2026-08-12 |
 | high | [The script written to undo a double-encoded jsonb re-encoded it, and only its own verification noticed](../../BUG-HISTORY.md#the-script-written-to-undo-a-double-encoded-jsonb-re-encoded-it-and-only-its-own-verification-noticed) <sub>L1570</sub> |  |
-| high | [Allocation recompute died on a Date where a string was declared](../../BUG-HISTORY.md#allocation-recompute-died-on-a-date-where-a-string-was-declared) <sub>L8002</sub> |  |
 | medium | [Three gates gave a different verdict on Windows than on Linux, and one of them hid a real defect](../../BUG-HISTORY.md#three-gates-gave-a-different-verdict-on-windows-than-on-linux-and-one-of-them-hid-a-real-defect) <sub>L134</sub> |  |
 
 ## Frontend + mobile

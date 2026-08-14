@@ -247,31 +247,31 @@ Total: 1020 route registrations across 135 files.
 - L1225  GET    /${base}/brief
 
 ## backend/src/scm/routes/mfg-purchase-orders.ts  (25)
-- L411  GET    /
-- L608  GET    /outstanding-so-items
-- L736  GET    /so-line-candidates
-- L856  GET    /:id
-- L1033  GET    /:id/linked
-- L1078  GET    /:id/revisions
-- L1093  POST   /
-- L2475  POST   /from-sos
-- L2555  PATCH  /:id
-- L2711  POST   /bulk-supplier-date
-- L2988  POST   /:id/items
-- L3111  PATCH  /:id/items/:itemId
-- L3287  DELETE /:id/items/:itemId
-- L3457  GET    /:id/items/:itemId/allocations
-- L3467  POST   /:id/items/:itemId/allocations
-- L3519  PATCH  /:id/items/:itemId/allocations/:allocationId
-- L3567  DELETE /:id/items/:itemId/allocations/:allocationId
-- L3658  GET    /:id/items/:itemId/photos/:photoKey/signed
-- L3716  GET    /:id/items/:itemId/photos/:photoKey
-- L3730  POST   /:id/convert-from-so
-- L3999  PATCH  /:id/submit
-- L4110  PATCH  /:id/confirm
-- L4131  POST   /:id/send-to-supplier
-- L4294  PATCH  /:id/cancel
-- L4419  PATCH  /:id/reopen
+- L413  GET    /
+- L610  GET    /outstanding-so-items
+- L738  GET    /so-line-candidates
+- L885  GET    /:id
+- L1062  GET    /:id/linked
+- L1107  GET    /:id/revisions
+- L1122  POST   /
+- L2504  POST   /from-sos
+- L2584  PATCH  /:id
+- L2740  POST   /bulk-supplier-date
+- L3039  POST   /:id/items
+- L3162  PATCH  /:id/items/:itemId
+- L3338  DELETE /:id/items/:itemId
+- L3508  GET    /:id/items/:itemId/allocations
+- L3518  POST   /:id/items/:itemId/allocations
+- L3571  PATCH  /:id/items/:itemId/allocations/:allocationId
+- L3620  DELETE /:id/items/:itemId/allocations/:allocationId
+- L3711  GET    /:id/items/:itemId/photos/:photoKey/signed
+- L3769  GET    /:id/items/:itemId/photos/:photoKey
+- L3783  POST   /:id/convert-from-so
+- L4052  PATCH  /:id/submit
+- L4163  PATCH  /:id/confirm
+- L4184  POST   /:id/send-to-supplier
+- L4347  PATCH  /:id/cancel
+- L4472  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
 - L616  GET    /dashboard
@@ -1239,7 +1239,7 @@ Total: 1020 route registrations across 135 files.
 - L56  GET    /
 
 ## backend/src/routes/projects_print.ts  (1)
-- L207  GET    /:id
+- L189  GET    /:id
 
 ## backend/src/routes/search.ts  (1)
 - L268  GET    /
