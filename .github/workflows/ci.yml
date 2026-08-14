@@ -246,7 +246,15 @@ jobs:
             exit 0
           fi
           [ -n "$base" ] || echo "Could not resolve a merge base; replaying anyway."
-          echo "Replaying $(ls src/db/migrations-pg/*.sql | wc -l) migrations into houzs_replay."
+          # 0000_baseline.sql goes in BY HAND first, because pg-migrate skips it
+          # on purpose: "the 0000 baseline, which the loader owns — tables are
+          # built by load-d1-dump-to-pg, not replayed here" (pg-migrate.mjs:63).
+          # Production is therefore baseline + migrations, and so is this. The
+          # first version of this step assumed the tree was self-contained and
+          # died on 0001 with `relation "sales_orders" does not exist` — the
+          # gate's own first real run is what corrected that.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f src/db/migrations-pg/0000_baseline.sql
+          echo "Baseline in. Replaying $(( $(ls src/db/migrations-pg/*.sql | wc -l) - 1 )) migrations on top."
           time node scripts/pg-migrate.mjs
       # The no-growth half. Separate step so a git-plumbing failure is
       # obviously not a discipline failure, and so the gate above still stands
