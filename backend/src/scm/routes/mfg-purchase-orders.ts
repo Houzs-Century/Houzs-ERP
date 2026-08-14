@@ -749,9 +749,15 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
   const poItemId = (c.req.query('itemId') ?? '').trim();
   let poSpec: { itemGroup: string | null; variants: Record<string, unknown> | null } | null = null;
   if (poId && poItemId) {
-    const { data: poLine } = await scopeToCompany(
+    /* Bind the error. A NOT-FOUND here legitimately falls back to code-only
+       (the comment above), but a READ FAILURE must not: silently leaving poSpec
+       null on a database blip re-opens the picker to every same-code SO line,
+       which is the exact gate this endpoint was changed to close. Not-found and
+       could-not-tell are different answers and only one of them is safe. */
+    const { data: poLine, error: poLineErr } = await scopeToCompany(
       supabase.from('purchase_order_items').select('id, item_group, variants').eq('id', poItemId), c,
     ).maybeSingle();
+    if (poLineErr) return c.json({ error: 'load_failed', reason: poLineErr.message }, 500);
     const pl = poLine as { item_group: string | null; variants: Record<string, unknown> | null } | null;
     if (pl) poSpec = { itemGroup: pl.item_group ?? null, variants: pl.variants ?? null };
   }
