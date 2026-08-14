@@ -423,9 +423,16 @@ passes CI, merges — and the database never changes.
 - `pg-migrate` tracks applied files by FULL FILENAME, so number gaps and
   out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the
   number at MERGE time by re-listing the tree, not when you branch.
-- Don't edit a migration after it has been applied to prod — and note that
-  RENAMING one counts as editing: the tracker keys on the filename, so a renamed
-  applied file runs a second time against a schema it already changed.
+- Don't edit an applied migration's BODY. **Renaming one is safe, and this
+  bullet used to say the opposite.** Since #914 `pg-migrate` tracks filename AND
+  checksum: a rename whose SQL is byte-identical is detected as a rename, the
+  tracker row is REPOINTED to the new name, and the SQL is explicitly not re-run
+  — `pg-migrate.mjs:181` prints "will NOT be re-run" and `:221` says "Repoint,
+  never re-run". The old wording mattered because the line above tells you to
+  take the migration number at MERGE time, which you cannot do without renaming;
+  the file frightened readers out of the one action it had just prescribed. A
+  rename whose CONTENT also changed is a different thing and DOES block the
+  deploy, reported as `DRIFT ... probable_renumber`.
 - SQLite can't `DROP COLUMN` when the column is referenced by an index or a foreign key. Pattern: `DROP INDEX` first, or rebuild the table (see `036_drop_legacy_suppliers.sql` for the projects-table rebuild example).
 - Use `IF EXISTS` and `IF NOT EXISTS` liberally — it keeps the migration idempotent against re-runs on half-applied state.
 
@@ -439,7 +446,7 @@ passes CI, merges — and the database never changes.
 - **A schema change that must reach production goes in `backend/src/db/migrations-pg/`.** `deploy.yml` runs `node scripts/pg-migrate.mjs` on every push to `main`, so a merged file is applied to prod automatically — and a file that fails there blocks every later migration until it is fixed.
 - `backend/src/db/migrations/` is the older D1/test tree. It is NOT dead and must not be deleted (backend vitest builds an in-process D1 from it), but nothing applies it to production.
 - `pg-migrate` tracks applied files by **full filename**, so number gaps and out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the number at MERGE time by re-listing the tree, not when you branch.
-- Don't edit a migration after it's been applied to prod. Write a new one. **Renaming an applied file re-runs it**, because tracking is by filename.
+- Don't edit an applied migration's BODY — write a new one. **Renaming is safe**: identical SQL is detected by checksum, the tracker row is repointed, and nothing re-runs (`pg-migrate.mjs:181`, `:221`). Renumbering at merge time is the prescribed fix for a collision and requires exactly this.
 - Use `IF EXISTS` / `IF NOT EXISTS` and catalog guards liberally — it keeps the migration idempotent against re-runs on half-applied state.
 - Demo/seed data does not belong in a numbered migration; put it in a one-shot `backend/scripts/seed-*.mjs`.
 

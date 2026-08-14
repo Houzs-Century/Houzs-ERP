@@ -89,8 +89,13 @@ set by run 31353906110). **`'1'` is a company id list, not a boolean.** Houzs (c
 is frozen; 2990 (company 2) trades normally through the same deployment.
 
 The task framing said BYPASS_PERMS = `['*','scm.admin']`. **Verified correct**
-(`write-freeze.ts:84`), with one addition the framing omitted: `hu?.is_owner` also
-bypasses (`write-freeze.ts:106`), independently of the permission list.
+(`write-freeze.ts:84`). **This paragraph used to claim `hu?.is_owner` bypasses
+independently of the permission list. There is no such flag.**
+`backend/src/scm/lib/write-freeze.ts:266` says so in the file itself — "there is
+deliberately no `is_owner` flag — no identity in this codebase carries one" —
+and `callerBypasses` checks `grants(...)` and nothing else. A go-live document
+asserting an owner-level bypass that does not exist is the kind of claim someone
+plans a cutover around.
 
 ### 3.2 Exactly what it blocks, and what it does not
 

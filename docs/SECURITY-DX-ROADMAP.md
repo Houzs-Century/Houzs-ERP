@@ -50,7 +50,7 @@ background, and daily ERP use is unchanged.
 |---|---|---|---|---|
 | 0 | **MFA on Supabase (then GitHub, Cloudflare)** | Owner | free | Highest value. Stops stolen-password logins. Phone, ~3 min. Supabase first. |
 | 0 | **R2 object versioning** on `houzs-erp` bucket | Owner (the Cloudflare acct holding the bucket) | ~free | Files have zero recovery today. |
-| 0 | **Branch protection on `main`** | Owner (GitHub org admin) | free | Puts a gate before prod deploys. |
+| ~~0~~ | ~~**Branch protection on `main`**~~ **DONE 2026-07-31** — `main-protection` ruleset; verify with `gh api .../rules/branches/main`, not `/branches/main/protection` (404 for rulesets) | — | free | Puts a gate before prod deploys. |
 | 1 | **Professional penetration test** | Hire a firm | paid | The gold standard for a system with customer + payment data. An AI scan does not replace it. |
 | 2 | **Finish the staging safety net** | Owner + AI | small | Staging exists (`houzs-erp-staging`); split its R2 bucket off prod (audit M4) and start testing there before prod. Unlocks safe splitting. |
 | 3 | **Persistent access-audit** (sensitive downloads/exports) | AI + owner (migration review) | medium | Design first; needs a prod migration, so do it supervised. |
