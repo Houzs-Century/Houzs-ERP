@@ -20,6 +20,12 @@ name: AutoCount write-back — field alignment (read-only)
 # recompute-so-allocation.yml, which imports a real service function the same way.
 on:
   workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company to measure. The write-back is per company; 1 is Houzs"
+        required: false
+        default: "1"
+        type: string
 
 # Deliberately NOT in the deploy concurrency group: this touches nothing and
 # must never queue behind — or displace — a release.
@@ -46,6 +52,7 @@ jobs:
       - run: npx tsx scripts/check-autocount-field-alignment.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id || '1' }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first

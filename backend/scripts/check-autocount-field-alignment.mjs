@@ -81,6 +81,18 @@ if (!url) {
   process.exit(1);
 }
 
+/* THE WRITE-BACK IS PER COMPANY, SO THE MEASUREMENT MUST BE TOO.
+ *
+ * `scm.autocount_writeback` names the companies that sync — "1" today — and
+ * enqueueSoCreate returns early for any other. Counting every row in
+ * scm.mfg_sales_orders therefore mixes in 2990's documents, which will never be
+ * written back, and every figure this script prints comes out inflated. The
+ * first version did exactly that; the owner caught it ("我们应该是把 House 的
+ * 资料送进去而已啊"). CLAUDE.md's rule is the same one: the company_id predicate
+ * is the entire tenant boundary, on reads as much as on writes.
+ */
+const COMPANY_ID = Number(process.env.COMPANY_ID ?? 1);
+
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const blank = (v) => v == null || String(v).trim() === "";
 
@@ -240,7 +252,7 @@ try {
   if (missing.length) notice(`  NOT PRESENT on the table (so not read): ${missing.join(", ")}`);
 
   const sel = have.map((c) => `"${c}"`).join(", ");
-  const sos = await pg.unsafe(`SELECT ${sel} FROM scm.mfg_sales_orders`);
+  const sos = await pg.unsafe(`SELECT ${sel} FROM scm.mfg_sales_orders WHERE company_id = $1`, [COMPANY_ID]);
   const staff = soCols.has("salesperson_id")
     ? await pg`SELECT id, name FROM scm.staff`
     : [];
@@ -265,7 +277,8 @@ try {
         SELECT s.doc_no, min(i.branding) AS branding
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
-         WHERE s.linked_ac_docno IS NULL AND i.branding IS NOT NULL AND i.branding <> ''
+         WHERE s.company_id = ${COMPANY_ID}
+           AND s.linked_ac_docno IS NULL AND i.branding IS NOT NULL AND i.branding <> ''
            ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
          GROUP BY s.doc_no`
     : [];
@@ -281,7 +294,7 @@ try {
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
           JOIN scm.warehouses w ON w.id = i.warehouse_id
-         WHERE s.linked_ac_docno IS NULL
+         WHERE s.company_id = ${COMPANY_ID} AND s.linked_ac_docno IS NULL
            ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
          GROUP BY s.doc_no`
     : [];
@@ -342,7 +355,7 @@ try {
         FROM scm.mfg_sales_orders s
         LEFT JOIN scm.mfg_sales_order_items i
           ON i.doc_no = s.doc_no ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
-       WHERE s.linked_ac_docno IS NULL
+       WHERE s.company_id = ${COMPANY_ID} AND s.linked_ac_docno IS NULL
        GROUP BY s.doc_no`;
     const liveLines = new Map(liveLineRows.map((r) => [r.doc_no, r.n]));
     const noLines = stuck.filter((r) => !liveLines.get(r.doc_no));
@@ -499,7 +512,8 @@ try {
       SELECT s.doc_no, count(*)::int AS n
         FROM scm.mfg_sales_order_items i
         JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
-       WHERE i.warehouse_id IS NULL
+       WHERE s.company_id = ${COMPANY_ID}
+         AND i.warehouse_id IS NULL
          AND s.linked_ac_docno IS NULL ${cancelled}
        GROUP BY s.doc_no`;
     const byDoc = new Map(rows.map((r) => [r.doc_no, r.n]));
@@ -526,7 +540,7 @@ try {
 
   // ── 8. PURCHASE ORDERS ────────────────────────────────────────────────────
   const poHave = ["id", "po_number", "supplier_id", "linked_ac_docno", "notes"].filter((c) => poCols.has(c));
-  const pos = await pg.unsafe(`SELECT ${poHave.map((c) => `"${c}"`).join(", ")} FROM scm.purchase_orders`);
+  const pos = await pg.unsafe(`SELECT ${poHave.map((c) => `"${c}"`).join(", ")} FROM scm.purchase_orders WHERE company_id = $1`, [COMPANY_ID]);
   const poUnlinked = pos.filter((r) => blank(r.linked_ac_docno));
   notice(`${pos.length} purchase order(s); ${poUnlinked.length} carry no linked_ac_docno.`);
   notice(
@@ -574,7 +588,7 @@ try {
      than the behaviour, because the owner asked for "开everything" on
      2026-08-11 and the module guide records it. This number is what that
      decision costs, printed every run so it stays visible. */
-  const wh = await pg`SELECT code, name FROM scm.warehouses`;
+  const wh = await pg`SELECT code, name FROM scm.warehouses WHERE company_id = ${COMPANY_ID}`;
   const unknown = wh
     .map((w) => (w.code ?? w.name ?? "").trim())
     .filter(Boolean)
