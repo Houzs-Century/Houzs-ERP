@@ -434,7 +434,14 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  /* "upload" / "remove" are written by PUT /checklist/:itemId/attachments and its
+     delete sibling, as RAW SQL — `INSERT INTO project_checklist_comments (…)
+     VALUES (?, 'upload', ?, ?)` — which never passes through addChecklistComment,
+     the one typed helper for this column. So the backend compiled while emitting
+     two values no type here admitted, and the filters that deliberately EXCLUDE
+     them from the Remarks column read to tsc as comparisons that can never be
+     true. Widen both together or this drifts again: backend/src/services/projects.ts. */
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove";
   body: string | null;
   user_name: string | null;
   created_at: string;
