@@ -1133,7 +1133,7 @@ function MultiSelectFilter({
   panelWidth = "w-[280px]",
 }: {
   placeholder: string;
-  groups: { name: string | null; options: { value: string; label: string }[] }[];
+  groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[];
   selected: string[];
   onChange: (next: string[]) => void;
   title?: string;
@@ -1234,7 +1234,12 @@ function MultiSelectFilter({
                     checked={selected.includes(o.value)}
                     onChange={() => toggle(o.value)}
                   />
-                  <span className="truncate">{o.label}</span>
+                  <span className="flex-1 truncate">{o.label}</span>
+                  {typeof o.count === "number" && (
+                    <span className="shrink-0 tabular-nums text-[11px] text-ink-muted">
+                      {o.count}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
@@ -1552,13 +1557,15 @@ function ProjectsListView() {
     "/api/projects/task-titles-distinct",
     () => api.get("/api/projects/task-titles-distinct"),
   );
-  // Task options grouped by checklist section, for the multi-select popover.
-  const taskGroups = useMemo(() => {
-    const g: Record<string, { value: string; label: string }[]> = {};
+  // Task COUNT per checklist section — shown beside each section in the Status
+  // filter (owner 2026-08-14: "section titles only with task counts").
+  const sectionCounts = useMemo(() => {
+    const c: Record<string, number> = {};
     for (const t of taskTitles.data?.data ?? []) {
-      (g[t.section ?? "Other"] ||= []).push({ value: t.title, label: t.title });
+      const s = t.section ?? "Other";
+      c[s] = (c[s] ?? 0) + 1;
     }
-    return Object.entries(g).map(([name, options]) => ({ name, options }));
+    return c;
   }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
@@ -1980,12 +1987,13 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Section filter — a DROPDOWN since 2026-08-05 (owner: "need to add
-            drop down for pc"). The pill row spanned the full width and left no
-            room for the task filter beside it; the options are identical. */}
+        {/* Status filter (owner 2026-08-14: "all section word change to status,
+            remove current status dropdown"). One section-level dropdown; each
+            option carries how many tasks that section holds. The old task-title
+            "Status" dropdown that used to sit beside it is gone. */}
         <MultiSelectFilter
-          placeholder="All sections"
-          title="Filter by the tasklist section an event is currently in"
+          placeholder="Status"
+          title="Filter by tasklist section"
           summary={(n) => `${n} sections`}
           selected={sectionList}
           onChange={(next) => setSection(next.join(","))}
@@ -1993,25 +2001,15 @@ function ProjectsListView() {
             {
               name: null,
               options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({ value: s, label: s })),
+                ...(sectionsList.data?.data ?? []).map((s) => ({
+                  value: s,
+                  label: s,
+                  count: sectionCounts[s],
+                })),
                 { value: "__done", label: "Completed" },
               ],
             },
           ]}
-        />
-        {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
-            "make it can click multiple choice. and once export will export what
-            already tick only"). Tick any number of tasks; the list keeps events
-            where AT LEAST ONE ticked task is still open, and the export gains
-            one column per ticked task. */}
-        <MultiSelectFilter
-          placeholder="Status"
-          title="Tick the tasks that are still not completed"
-          summary={(n) => `${n} tasks not completed`}
-          panelWidth="w-[320px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskGroups}
         />
         <MultiSelectFilter
           placeholder="All brands"
