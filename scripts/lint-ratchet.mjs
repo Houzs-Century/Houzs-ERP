@@ -49,11 +49,23 @@ const committed = existsSync(ratchetPath)
   ? JSON.parse(readFileSync(ratchetPath, 'utf8'))
   : { totals: {}, files: {} };
 
-const eslintBin = resolve(cwd, 'node_modules', '.bin', 'eslint');
-if (!existsSync(eslintBin)) {
+/* Run ESLint's OWN JS entry under this node, never the .bin shim.
+   `.bin/eslint` is a POSIX shell script and is not executable on Windows;
+   `.bin/eslint.cmd` exists there but Node refuses to spawn a .cmd without a
+   shell (CVE-2024-27980), so the two obvious spellings fail with a bare ENOENT
+   and then EINVAL. existsSync is happy with both, which is what made this look
+   like a missing install rather than a spawn problem — the linter was simply
+   unrunnable on Windows while CI (Linux) stayed green. Same shape as the
+   shebang trap in CLAUDE.md: a failure only the developer's machine sees, on
+   the OS this repo is actually developed on.
+
+   Going through bin/eslint.js needs no shell, so nothing is quoted and nothing
+   is interpreted. */
+const eslintEntry = resolve(cwd, 'node_modules', 'eslint', 'bin', 'eslint.js');
+if (!existsSync(eslintEntry)) {
   fail(
     `No ESLint in ${appName}/node_modules. Run \`npm ci\` in ${appName}/ first.\n` +
-      `(Looked for ${eslintBin})`,
+      `(Looked for ${eslintEntry})`,
   );
 }
 
@@ -78,11 +90,11 @@ let report;
 try {
   console.log(`[lint] ${appName}: eslint ${targets.join(' ')}`);
   const started = Date.now();
-  const run = spawnSync(eslintBin, [...targets, '-f', 'json', '-o', outFile], {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const run = spawnSync(
+    process.execPath,
+    [eslintEntry, ...targets, '-f', 'json', '-o', outFile],
+    { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
   // 0 = clean, 1 = lint errors present, 2 = ESLint itself failed (bad config,
   // unreadable tsconfig, no matching files). Only 2 is unrecoverable here —
   // severity-2 messages are handled below, from the report.
