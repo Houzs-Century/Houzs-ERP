@@ -1,3 +1,87 @@
+## The new linter could not start on Windows, and said "no ESLint installed" while ESLint was installed [medium]
+
+**Symptom.** `npm --prefix backend run lint` on a Windows checkout: first
+`[lint] No ESLint in backend/node_modules. Run npm ci in backend/ first.` after a
+`npm ci` that had just succeeded, then — once the obvious fix was tried —
+`spawnSync ...\.bin\eslint.cmd EINVAL`. Linux CI was green throughout, so the
+linter this repo had just gained was unrunnable on the OS the repo is developed
+on, and no finding could be checked locally before pushing.
+
+**Root cause, traced through the spawn.** `scripts/lint-ratchet.mjs` resolved
+`node_modules/.bin/eslint` and guarded it with `existsSync`. On Windows npm
+writes THREE shims — `eslint`, `eslint.cmd`, `eslint.ps1`. The extensionless one
+is the POSIX shell script; it exists, so `existsSync` was satisfied and the
+error message blamed a missing install, but it is not executable on Windows and
+`spawnSync` returned ENOENT. Reaching for `.cmd` instead moves the failure, not
+fixes it: since CVE-2024-27980 Node refuses to spawn a `.cmd` without a shell,
+which is EINVAL.
+
+**Fix.** Skip the shims. Run ESLint's own entry — `node_modules/eslint/bin/eslint.js`
+— under `process.execPath`. No shell, so nothing is quoted or interpreted, and
+the same code path serves both platforms.
+
+**Why it is the same class as the shebang trap** (see CLAUDE.md, "Anything a TEST
+imports lives in `backend/scripts/lib/`"): a defect that only the developer's
+machine sees, invisible to CI by construction, where the symptom names the wrong
+cause. A gate nobody can run locally is a gate that gets pushed blind.
+
+**Verified.** 734 frontend files and the whole backend tree now lint locally,
+where neither could previously start; both then reported real ratchet findings,
+which is the proof the run was genuine and not a silent no-op.
+
+**Ref** — 2026-08-14, PR #2137 `eslint-layer`. No migration.
+## A delivery order that lost its link to the sales order made MRP order the goods a second time [high]
+
+**Symptom.** The owner, on the MRP Stock Status Report, 2026-08-14: "all these
+SO already have PO & some done delivered, why still appear at MRP for ordering?"
+Four sales orders he named were fully shipped — one of them on a delivery order
+already marked DELIVERED — and MRP was still asking purchasing to buy the goods.
+
+**Root cause.** Of the three places `delivery-orders-mfg.ts` inserts DO lines,
+the two that build a row from a client-supplied item body go through
+`buildItemRow`, which does `so_item_id: (it.soItemId) ?? null` — taken from the
+request, with no derivation and no guard. The third, `POST /from-sos`, sets it
+from the picks server-side and always has it; that is the shape the other two
+should have had. A client that omits the field writes a delivery the system can
+never attribute, silently and permanently.
+
+Everything that asks "how much of this order is still to fulfil" resolves on
+that column — the remaining-qty guard, the sofa batch guard, the SO header's
+status flip, and MRP's delivered-netting, which does `.in('so_item_id', ...)`
+and skips a null. So a shipped order reads as entirely undelivered. MRP is
+correct about everything it can see; it simply could not see the shipments.
+
+`2990-SO-2606-025` is the clearest tell: its delivery order is DELIVERED while
+the header still says CONFIRMED, because the header only flips when every line
+is covered and no line could be.
+
+**Measured on prod.** 24 unlinked lines on live delivery orders, across 11 open
+sales orders, every one of them over-reporting shortage. None in June; 13
+between 2026-07-02 and 07-30; 11 more between 08-03 and 08-06; none since.
+
+**Why the earlier fix did not end it.** PR #1395 (2026-07-29) fixed the DO-create
+page to send `soItemId` — and lines created on 08-03 and 08-06 are still
+unlinked, from a client path that path did not cover. The reason one client
+regression could write a month of permanently bad data is that the server
+accepts the omission. `backfill-do-line-snapshot.mjs` had even met these rows
+already ("WHERE so_item_id IS NULL there is no parent... leaves the line alone")
+and correctly skipped them; nobody asked why the orphans existed.
+
+**Fix, part one — the data.** `backfill-do-so-item-link.mjs` re-links what can
+be read: only within the sales order the DO already names, only between lines of
+the same item code, and where a code repeats, only on a variant identity unique
+on both sides. `2990-SO-2606-016` carries two `CODY-(K)` lines differing only by
+colour (BF-10 / BF-12) and both documents carry that colour, so that pair is
+read rather than guessed. Two genuinely indistinguishable lines are REFUSED —
+a bijection exists but choosing one is a coin flip, and the two SO lines can
+differ in what is linked to them. A wrong link is worse than none: it credits
+one line's shipment against another and cannot be told from a fact afterwards.
+
+**Fix, part two — the hole.** Still to do: `buildItemRow` should derive the link
+from `(so_doc_no, item_code)` when a client omits it and refuse only when that
+is ambiguous — the same thing `/from-sos` already does — so no future client
+regression can write this again.
+
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
 **Symptom.** `node scripts/coverage-ratchet.mjs --check --report <file>` on a
@@ -2923,6 +3007,78 @@ This repair reaches **509 of the 589** the code match could not.
 **Ref** — 2026-08-10 / re-verified 2026-08-11, PR #1905
 (fix/po-dedication-and-dates).
 
+## The repository had no linter at all, and 514 `eslint-disable` comments addressed to one that was never there [high]
+
+**Symptom** — not a single incident; a whole family of them. Eleven entries in
+this file are defects a type-aware linter reports for free: a floating promise
+that leaked a timer and skipped a production frontend release, an `as never`
+that silenced a real type error, a condition that could never be false because
+the value was already non-nullable. Each was found by a person, after it shipped.
+
+**Root cause** — `git ls-tree origin/main | grep -cE "eslint\\.config|\\.eslintrc"`
+returned **0**. There was no ESLint configuration anywhere in the repo, in
+either app. Meanwhile `git grep -c eslint-disable` over `backend/src` and
+`frontend/src` returns **514 comments across 159 files** — written over months,
+addressed to a linter that has never run. They were pure decoration, and worse
+than nothing: they read as evidence that a check exists.
+
+**Fix** — type-aware ESLint 9 in both apps (`backend/eslint.config.mjs`,
+`frontend/eslint.config.mjs`), sharing one rule set in
+`scripts/eslint/houzs-lint-rules.mjs`, where every rule cites the BUG-HISTORY
+entry it answers. Wired to CI as `lint (backend)` and `lint (frontend)`.
+
+Every rule is `warn`, deliberately: the gate is `scripts/lint-ratchet.mjs`,
+which holds a PER-FILE CEILING that may only fall. The tree starts at
+`no-unnecessary-condition` 2,617 / `no-explicit-any` 989 /
+`no-floating-promises` 1 / `no-restricted-syntax` 166 in the backend and
+1,807 / 538 / 799 / 140 in the frontend, across 309 and 344 files. Failing the
+build on 7,046 pre-existing warnings on day one is how a lint layer gets
+deleted in week two; pinning them and refusing growth is how it survives. A
+file absent from the manifest has a ceiling of ZERO, so a NEW file is held to
+the clean standard immediately.
+
+**Proved, not assumed** — each rule was mutation-tested: the defect from its
+cited BUG-HISTORY entry was re-introduced and the rule had to fire on it.
+
+**Class** — *a rule that lives only in prose*, docs/bug-classes.md. The
+`eslint-disable` comments are the sharpest instance this repo has produced: 514
+suppressions of a check that did not exist.
+
+**Two defects in the gate itself, found while landing it** (2026-08-14) —
+
+*The linter's own gate was a binary file.* `scripts/lint-ratchet.mjs` carried two
+RAW NUL bytes, at offsets 5023 and 8650, as the separator in its
+`` `${file}<NUL>${rule}` `` map keys — the exact shape
+`merge-duplicate-fabric-colours.mjs` was fixed for. Git therefore classified it
+binary: `git diff --numstat` answered `-` `-` for it, so the PR that introduces
+this repo's first linter showed **no reviewable diff for the linter**. Caught by
+`backend/tests/noNulBytesInSource.node.mjs`, which is why `backend-typecheck` was
+red at 132 of 133 rather than for anything about types. Fixed by writing the
+two-character escape `\0`; `` `${rel}\0${rule}` `` is the identical string at
+runtime, and the file is text again.
+
+*`--update` wrote ceilings UP.* The block wrote the current `counts` wholesale,
+so re-baselining against a moved main raised every ceiling main had grown past —
+measured on the merge that brought #2127 in: `categories.ts`
+no-unnecessary-condition 5 -> 6, `mfg-products.ts` no-explicit-any 3 -> 4,
+`sku-usage.ts` no-unnecessary-condition 1 -> 2, in a run that printed only
+"wrote 319 file ceilings" and exited 0. CLAUDE.md, this file's own `_readme` and
+the previous re-baseline's commit message all state that it refuses to do that;
+none of them was code. It is now: `--update` names every pair that would rise,
+writes nothing and exits 1. Mutation-proved — `grns.ts` forced to a ceiling of 10
+against an actual 74 gives exit 1 and an unchanged file (same md5). A pair with
+**no** committed ceiling still gets a starting number, and every one is now
+printed by name, because that is the only direction a number may move up.
+
+The three growths above were then fixed at source rather than absorbed. All
+three were folds left over *above* an error early-return #2127 had just added —
+`(refs ?? [])`, `(skus ?? [])`, `dup && dup.length` — i.e. the very
+absence-reads-as-empty shape that PR removed, re-entering one line below its own
+fix. The fourth was `patchMfgProductHandler = async (c: any)`, in a file that
+already defines `AppContext` and already uses it; typing it surfaced the `dup &&`
+fold that the `any` had been hiding from the type-aware rules.
+
+**Ref** - `eslint-layer`, PR #2137, 2026-08-14
 ## A repair that writes four production columns needed one environment variable, and checked its own work on the session that did the writing [high]
 
 **Symptom** — `backend/scripts/repair-migrated-po-lines.mjs` writes
@@ -7529,6 +7685,96 @@ book.
 
 **Ref** — 2026-08-10, PR #1855 (feat/ac-writeback-wiring-v2), found by #1898.
 
+## The AutoCount write-back would have written orders with NO LINES, and no PO at all [critical]
+
+**Symptom** — None yet, and that is the point: the ERP -> AutoCount write-back
+(#1855) ships behind two off switches, so nothing it does can be seen until
+someone turns it on. A contract audit against the AutoCount half found thirteen
+places where the two programs disagree about the same JSON document, four of
+them fatal, and none of them would have announced itself — `AcSyncService.cs`
+reads a field with `Str(p, "X")`, which returns `""` for a field that is not
+there rather than an error.
+
+**Root cause** — Traced per finding, not guessed; all thirteen are listed with
+both sides in `docs/modules/autocount-writeback.md` section 11 and pinned
+mechanically by `backend/src/services/autocount-writeback.contract.test.ts`. The
+four that block:
+
+- **The line select asks for `linked_ac_dtlkey`**, a column PR #1819 has not
+  landed. PostgREST does not ignore an unknown column — it fails the whole query
+  with 42703 — so `items` is null, `items ?? []` is empty, and **every Sales
+  Order would have gone into the account book with no lines at all.** #1855
+  describes this state as "every line is new ... correct-but-degraded".
+- **`enqueuePoCreate` and `composePoState` select `creditor_code`,
+  `creditor_name`, `agent` and `ref` from `scm.purchase_orders`**, which has none
+  of them (it is supplier-keyed). Same 42703, and both functions `return false`
+  inside their own `try/catch`: PO create and PO edit are a silent no-op.
+- **`makeItemCodeResolver` is never called** by anything but its own unit test,
+  so every `ItemCode` on the wire is the raw ERP code, which AutoCount does not
+  have.
+- **A sofa goes over as one AutoCount line per compartment.** The ERP stores a
+  sold sofa as N rows sharing `variants.buildKey`; `toDetails` is a 1:1 map; the
+  resolver points all N at the SAME AutoCount sofa code. One sofa sold would
+  book qty N and take N off AutoCount's stock.
+
+The unit tests in #1855 pass because their fake PostgREST does not know the
+schema — it returns whatever the fixture holds, whatever columns you ask for.
+
+**Fix** — **Two of the thirteen are fixed, in #1855, and struck off the
+register: D11 and D13** — the two above that are plain bugs rather than
+decisions (the entry above this one carries them). **The other eleven stand.**
+Each needs a decision that is not a test author's to make, and the mechanism is
+off. What this PR ships is the means to see them: a contract test that reads
+`AcSyncService.cs` at build time and extracts the keys it actually parses, a
+fake PostgREST that enforces `scm`'s real column lists, and a divergence
+register that fails if a fourteenth appears AND fails if one of these is fixed
+without being struck off. Plus `backend/scripts/ac-trial-dry-run.mjs`, which
+posts the same contract at a TEST book behind four gates and never runs by
+default.
+
+**The class, for next time** — a fake database that accepts any column name will
+green-light a query against a table that does not exist. If a test double stands
+in for a schema, give it the schema.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial. Findings against #1855
+(unmerged); register in `docs/modules/autocount-writeback.md` section 11.
+
+## The write-back wiring test failed on Windows and passed in CI [low]
+
+**Symptom** — `tests/autocountWritebackWiring.test.ts` reported "anchor not
+found after mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update'" on a local
+Windows checkout, while the same commit was green in CI.
+
+**Root cause** — Traced to the bytes, not guessed. `?raw` hands back the WORKING
+TREE contents, and with `core.autocrlf=true` those are CRLF while git stores LF.
+Three of the anchors end in `});
+`, which exists in the blob and not in the
+checked-out file. Every other anchor in the suite is a single line, which is why
+only these three failed.
+
+**Fix** — Normalise the raw imports to LF before matching, in that suite and in
+the new contract suite beside it. A source-anchored test must not mean different
+things on different platforms — and this one runs on the owner's Windows box.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial.
+
+## Two migrations both numbered 0276 [medium]
+
+**Symptom** — `main` carried `0276_scm_migrated_documents.sql` and the open
+#1855 carried `0276_scm_autocount_outbox.sql`. Merged as they stood, `pg-migrate`
+would have two files claiming one number.
+
+**Root cause** — Exactly the case `CLAUDE.md` warns about: #1855 picked its
+number when it branched, not at merge time, and `0276` was taken while it sat
+open. `pg-migrate` tracks by full filename, so gaps and out-of-order merges are
+safe and duplicates are not.
+
+**Fix** — Renamed the unapplied one to `0277_scm_autocount_outbox.sql` and
+updated the four references to it in `docs/modules/autocount-writeback.md`. Safe
+because it has never run anywhere: #1855 is not merged, so no deployment has an
+`APPLIED 0276_scm_autocount_outbox.sql` line to be confused by the rename.
+
+**Ref** — 2026-08-10, PR test/ac-writeback-trial.
 ## "APPLIED - stamped 146 sofa lines", three times, and it was corrupting them [high]
 
 **Symptom** — `refresh-sofa-colours.mjs` was dispatched against prod with

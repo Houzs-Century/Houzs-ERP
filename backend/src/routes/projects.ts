@@ -4225,6 +4225,17 @@ app.put(
     )
       .bind(itemId, key, fileName, contentType, body.byteLength, user?.id ?? null, caption)
       .run();
+    // Per-item history — record the upload as a comment so the task history
+    // panel shows "Uploaded X.pdf · Sim · 06/08 10:34" alongside approve/reject.
+    // Owner 2026-07-20: without this, the reviewer sees the Approve button reappear
+    // after a re-upload with no explanation of WHY, then wonders "no new file
+    // was uploaded but why approval reappear?". The comment closes that gap.
+    await c.env.DB.prepare(
+      `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
+       VALUES (?, 'upload', ?, ?)`
+    )
+      .bind(itemId, fileName, user?.id ?? null)
+      .run();
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`
@@ -4285,6 +4296,13 @@ app.delete(
         );
       }
     }
+    // Fetch item_id + filename BEFORE archiving so we can log the removal to
+    // the per-item history panel (owner 2026-07-20 — see the upload sibling).
+    const rmMeta = await c.env.DB.prepare(
+      `SELECT item_id, file_name FROM project_checklist_attachments WHERE id = ?`
+    )
+      .bind(attId)
+      .first<{ item_id: number; file_name: string }>();
     // Soft archive — keep the row + R2 object so an accidental delete
     // can be reversed if anyone notices in time.
     await c.env.DB.prepare(
@@ -4294,6 +4312,14 @@ app.delete(
     )
       .bind(attId)
       .run();
+    if (rmMeta) {
+      await c.env.DB.prepare(
+        `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
+         VALUES (?, 'remove', ?, ?)`
+      )
+        .bind(rmMeta.item_id, rmMeta.file_name, user?.id ?? null)
+        .run();
+    }
     return c.json({ ok: true });
   }
 );

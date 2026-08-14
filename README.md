@@ -145,6 +145,8 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 | `npm run dev:backend` | Runs `wrangler dev` inside `backend/` |
 | `npm run dev:frontend` | Runs `vite dev` inside `frontend/` |
 | `npm run typecheck` | `tsc --noEmit` across both sub-apps |
+| `npm run lint` | Type-aware ESLint across both sub-apps, gated by `scripts/lint-ratchet.mjs`. Every rule is a WARNING; the gate is a per-file ceiling in `<app>/eslint-ratchet.json` that may only FALL. A file with no ceiling entry has a ceiling of zero, so a new file — or a rule that is clean tree-wide — fails on its first violation. Rules and the bug-history entry behind each are in `scripts/eslint/houzs-lint-rules.mjs` |
+| `npm run lint:update` | Rewrites the ceilings from the current tree. Run it after fixing findings, and commit the lower numbers. Never run it to make a build pass — raising a ceiling is the one thing it must not be used for |
 | `npm run deploy:backend` | Deploys the Worker (`wrangler deploy`) |
 | `npm run deploy:frontend` | Builds (`vite build`) + deploys the SPA to Cloudflare Pages |
 | `npm run deploy:all` | Both, in order |

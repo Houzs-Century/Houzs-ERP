@@ -1,0 +1,222 @@
+{
+  "_meta": {
+    "purpose": "The payload set for a DRY-RUN trial of the ERP -> AutoCount write-back against a TEST book (AED_TESTING). Posted by backend/scripts/ac-trial-dry-run.mjs; never posted automatically and never by CI.",
+    "derived_from": "backend/scripts/autocount-service/AcSyncService.cs — every key below is a key that file actually reads. backend/src/services/autocount-writeback.contract.test.ts asserts that, mechanically, so this file cannot drift from the service.",
+    "chaining": "A string value of the form \"@<step id>.docNo\" is replaced at run time by the docNo that step returned. That is how a conversion finds the document the previous step created.",
+    "cleanup": "Every document uses a TRIAL- document number so it can be found and cancelled in the test book afterwards. Nothing here is safe to post at a production book; the harness refuses to.",
+    "not_covered": "UDF FIELD NAMES. The service writes whatever key it is handed (AcSyncService.cs:413-420) and swallows a bad one silently (Set(), :436), so no amount of source reading settles them. The udf-probe step exists to settle it against the book in one look."
+  },
+
+  "steps": [
+    {
+      "id": "create-so",
+      "route": "/create-so",
+      "why": "SO create. Every header field CreateSo reads (AcSyncService.cs:154-191), a mattress line, a three-module sofa build sharing one AutoCount item code, and a service line.",
+      "payload": {
+        "DocNo": "TRIAL-SO-0001",
+        "DocDate": "2026-08-11",
+        "DebtorCode": "300-C002",
+        "DebtorName": "TRIAL CUSTOMER (write-back trial)",
+        "Agent": "TAN KAR JIUN",
+        "SalesLocation": "KL",
+        "Ref": "AC write-back trial",
+        "Phone": "0123456789",
+        "Attention": "TRIAL CUSTOMER (write-back trial)",
+        "InvAddr1": "No 1 Jalan Trial",
+        "InvAddr2": "Taman Trial",
+        "InvAddr3": "47800 Petaling Jaya",
+        "InvAddr4": "Selangor",
+        "UDF": {
+          "SOUDF_BRANDING": "AKEMI",
+          "SOUDF_VENUE": "KSL CITY MALL JOHOR SOLO",
+          "SOUDF_ToPONo": "TRIAL-CUSTPO-1"
+        },
+        "Details": [
+          {
+            "ItemCode": "AKEMI SOLITUDE MATT (Q)",
+            "Description": "AKEMI SOLITUDE MATTRESS QUEEN",
+            "Desc2": "KING 6x7",
+            "Qty": 1,
+            "UnitPrice": 1999.0,
+            "Location": "KL",
+            "DeliveryDate": "2026-09-01"
+          },
+          {
+            "ItemCode": "SOFA ANNSA",
+            "Description": "SOFA ANNSA",
+            "Desc2": "1B(LHF) + CNR + 2A(RHF) / Col: HR805-30 / Fabric: Linen",
+            "Qty": 1,
+            "UnitPrice": 4500.0,
+            "Location": "KL",
+            "DeliveryDate": "2026-09-15"
+          },
+          {
+            "ItemCode": "TRANSPORTATION CHARGES",
+            "Description": "Delivery",
+            "Qty": 1,
+            "UnitPrice": 150.0
+          }
+        ]
+      }
+    },
+
+    {
+      "id": "udf-probe",
+      "why": "Settles the ONE thing the C# source cannot: what the AutoCount UDF fields are actually called. Sends both spellings with distinguishable values. AcSyncService.cs:436 swallows the key that does not exist, so exactly one of these lands. Open TRIAL-SO-0002 in AutoCount and read Branding / Venue: 'PREFIXED' means SOUDF_*, 'BARE' means the unprefixed name the composer sends today.",
+      "route": "/create-so",
+      "payload": {
+        "DocNo": "TRIAL-SO-0002",
+        "DocDate": "2026-08-11",
+        "DebtorCode": "300-C002",
+        "DebtorName": "TRIAL UDF PROBE",
+        "Ref": "UDF key-name probe",
+        "InvAddr1": "No 1 Jalan Trial",
+        "UDF": {
+          "SOUDF_BRANDING": "AKEMI",
+          "BRANDING": "DUNLOPILLO",
+          "SOUDF_ToPONo": "PREFIXED",
+          "ToPONo": "BARE"
+        },
+        "Details": [
+          {
+            "ItemCode": "AKEMI SOLITUDE MATT (Q)",
+            "Description": "UDF probe line",
+            "Qty": 1,
+            "UnitPrice": 1.0
+          }
+        ]
+      }
+    },
+
+    {
+      "id": "so-to-do",
+      "route": "/so-to-do",
+      "why": "SO -> Delivery Order. AcSyncService.cs:231-239. No DtlKeys, so the service transfers every still-outstanding line on the source (:300-329) — the book, not the ERP, decides what is still outstanding.",
+      "payload": {
+        "FromDocNo": "@create-so.docNo",
+        "DocNo": "TRIAL-DO-0001",
+        "DocDate": "2026-08-11",
+        "Ref": "AC write-back trial"
+      }
+    },
+
+    {
+      "id": "do-to-iv",
+      "route": "/do-to-iv",
+      "why": "Delivery Order -> Sales Invoice. AcSyncService.cs:240-248.",
+      "payload": {
+        "FromDocNo": "@so-to-do.docNo",
+        "DocNo": "TRIAL-IV-0001",
+        "DocDate": "2026-08-11",
+        "Ref": "AC write-back trial"
+      }
+    },
+
+    {
+      "id": "create-po",
+      "route": "/create-po",
+      "why": "PO create. AcSyncService.cs:193-218. CreditorCode must be a creditor that exists in the TEST book — override it with AC_TRIAL_CREDITOR if it does not.",
+      "payload": {
+        "DocNo": "TRIAL-PO-0001",
+        "DocDate": "2026-08-11",
+        "CreditorCode": "400-H004",
+        "CreditorName": "TRIAL SUPPLIER SDN BHD",
+        "Agent": "TAN KAR JIUN",
+        "Ref": "AC write-back trial",
+        "Description": "Write-back trial purchase order",
+        "UDF": {},
+        "Details": [
+          {
+            "ItemCode": "AKEMI SOLITUDE MATT (Q)",
+            "Description": "AKEMI SOLITUDE MATTRESS QUEEN",
+            "Qty": 2,
+            "UnitPrice": 900.0,
+            "Location": "KL",
+            "DeliveryDate": "2026-09-20"
+          }
+        ]
+      }
+    },
+
+    {
+      "id": "po-to-gr",
+      "route": "/po-to-gr",
+      "why": "PO -> Goods Received Note. AcSyncService.cs:249-258. SupplierDONo is the one extra header field this route reads.",
+      "payload": {
+        "FromDocNo": "@create-po.docNo",
+        "DocNo": "TRIAL-GR-0001",
+        "DocDate": "2026-08-11",
+        "Ref": "AC write-back trial",
+        "SupplierDONo": "TRIAL-SUPP-DO-1"
+      }
+    },
+
+    {
+      "id": "gr-to-pi",
+      "route": "/gr-to-pi",
+      "why": "Goods Received Note -> Purchase Invoice. AcSyncService.cs:259-268. SupplierInvoiceNo is the one extra header field this route reads.",
+      "payload": {
+        "FromDocNo": "@po-to-gr.docNo",
+        "DocNo": "TRIAL-PI-0001",
+        "DocDate": "2026-08-11",
+        "Ref": "AC write-back trial",
+        "SupplierInvoiceNo": "TRIAL-SUPP-INV-1"
+      }
+    },
+
+    {
+      "id": "edit",
+      "route": "/edit",
+      "why": "Header + line edit on the SO created above. Two lines: one addressed by DtlKey (an UPDATE) and one without (an APPEND). Set AC_TRIAL_DTLKEY to a real DtlKey read out of the test book's SODTL, or the harness skips this step rather than appending a line that looks like an update. The DtlKey line deliberately carries a DIFFERENT ItemCode from the line it addresses (a mattress line handed the sofa code): AcSyncService applies ItemCode only on the APPEND branch (:395-401), so if that line is still a mattress afterwards, divergence D6 is confirmed against the book.",
+      "needs": ["AC_TRIAL_DTLKEY"],
+      "payload": {
+        "DocType": "SO",
+        "DocNo": "@create-so.docNo",
+        "Header": {
+          "DebtorName": "TRIAL CUSTOMER (edited)",
+          "Attention": "TRIAL CUSTOMER (edited)",
+          "Ref": "AC write-back trial - edited",
+          "Phone1": "0129999999",
+          "InvAddr1": "No 2 Jalan Trial (edited)"
+        },
+        "Lines": [
+          {
+            "DtlKey": "@env.AC_TRIAL_DTLKEY",
+            "ItemCode": "SOFA ANNSA",
+            "Description": "AKEMI SOLITUDE MATTRESS QUEEN (edited)",
+            "Desc2": "KING 6x7 (edited)",
+            "Qty": 3,
+            "UnitPrice": 2099.0
+          },
+          {
+            "ItemCode": "TRANSPORTATION CHARGES",
+            "Description": "Delivery (added by the edit)",
+            "Qty": 1,
+            "UnitPrice": 200.0
+          }
+        ]
+      }
+    },
+
+    {
+      "id": "cancel",
+      "route": "/cancel",
+      "why": "Cancel. AcSyncService.cs:332-349. Runs LAST and targets the UDF probe, which has no downstream document — cancelling TRIAL-SO-0001 would be refused, correctly, because a DO was transferred out of it.",
+      "payload": {
+        "DocType": "SO",
+        "DocNo": "@udf-probe.docNo"
+      }
+    },
+
+    {
+      "id": "cancel-refusal",
+      "route": "/cancel",
+      "why": "The refusal path, on purpose: TRIAL-SO-0001 HAS a downstream DO, so AutoCount must say no (CancelDocument returns false -> AcSyncService.cs:347 throws -> HTTP 500). A 500 here is the PASS. It is the mirror of the ERP's own downstream lock, and the trial should see it work.",
+      "expect": "refusal",
+      "payload": {
+        "DocType": "SO",
+        "DocNo": "@create-so.docNo"
+      }
+    }
+  ]
+}

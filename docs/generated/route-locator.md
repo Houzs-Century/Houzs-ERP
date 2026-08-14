@@ -168,7 +168,7 @@ Total: 1020 route registrations across 135 files.
 - L3283  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
-- L1168  GET    /
+- L1170  GET    /
 - L1896  GET    /customers
 - L1971  GET    /my-mtd
 - L2012  GET    /mine
@@ -681,12 +681,12 @@ Total: 1020 route registrations across 135 files.
 - L293  POST   /batch-import
 - L492  DELETE /:id
 - L495  GET    /:id
-- L913  PATCH  /:id
-- L920  POST   /:id/activate-one-shot
-- L963  GET    /:id/price-history
-- L998  GET    /:id/suppliers
-- L1171  POST   /:id/price-changes
-- L1218  GET    /:id/price-changes
+- L915  PATCH  /:id
+- L922  POST   /:id/activate-one-shot
+- L965  GET    /:id/price-history
+- L1000  GET    /:id/suppliers
+- L1173  POST   /:id/price-changes
+- L1220  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2273  GET    /salespeople
@@ -710,8 +710,8 @@ Total: 1020 route registrations across 135 files.
 - L234  GET    /:id/hero-meta
 - L277  POST   /
 - L335  PATCH  /:id
-- L459  DELETE /:id
-- L462  PATCH  /:id/hero-meta
+- L462  DELETE /:id
+- L465  PATCH  /:id/hero-meta
 
 ## backend/src/scm/routes/pos-pools.ts  (10)
 - L108  GET    /mfg-catalog
@@ -1239,7 +1239,7 @@ Total: 1020 route registrations across 135 files.
 - L56  GET    /
 
 ## backend/src/routes/projects_print.ts  (1)
-- L189  GET    /:id
+- L336  GET    /:id
 
 ## backend/src/routes/search.ts  (1)
 - L268  GET    /
