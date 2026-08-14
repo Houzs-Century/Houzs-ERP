@@ -434,7 +434,15 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  /* "upload" and "remove" are written by the backend on file attach/detach
+     (routes/projects.ts:4235 and :4318) so the per-item history panel can show
+     "Uploaded X.pdf - Sim - 06/08 10:34" beside approve/reject. They went into
+     the INSERTs in #2184 and not into this union, which made every
+     `c.kind === "upload"` in this file a no-overlap comparison: 8 TS2367 errors,
+     and `frontend` is BOTH a required check and a deploy gate, so main could not
+     deploy until this was widened. Keep this equal to the set of kinds the
+     backend actually inserts. */
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove";
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -9938,7 +9946,10 @@ function ChecklistRow({
               const f = e.target.files?.[0];
               const cap = pendingCaptionRef.current;
               pendingCaptionRef.current = undefined;
-              if (f) uploadAttachment(f, cap);
+              /* void: fire-and-forget by intent. uploadAttachment is async but owns its
+                 whole error path (try/catch + toast, :9603), so this one is deliberately
+                 not awaited; the sibling at :9759 awaits because it loops over files. */
+              if (f) void uploadAttachment(f, cap);
             }}
           />
           {/* Attach / Remark / N/A — BOXED style (owner 2026-08-11):
