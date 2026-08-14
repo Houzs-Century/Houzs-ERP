@@ -298,6 +298,55 @@ CREATE VIEW scm.mfg_sales_orders_with_payment_totals AS SELECT 1;
   assert.deepEqual(r.failed, []);
 });
 
+// The rule reads what a migration DOES, so it reads SQL, not prose. A file that
+// uses CREATE OR REPLACE precisely so that no ACL is lost, and says so, was
+// failed for naming the hazard it had avoided — under a message telling it to
+// go and do that hazard. This is the real mig 0290, reduced.
+test('GREEN: DROP VIEW named only in a comment is not a drop', () => {
+  const r = scanMigration({
+    name: '0290_gl_view.sql',
+    source: `-- REVERSAL: re-run mig 0106's CREATE OR REPLACE block, this view's full prior text.
+--   A view holds no data, so nothing is lost either way.
+--
+-- The tempting repair is DROP VIEW + CREATE VIEW, and it is the wrong one: a
+-- recreated view is a NEW object with an EMPTY ACL, which is how 0189 took the
+-- Sales Order list down for every user. Matching the live column list keeps
+-- this a REPLACE, so no privilege is ever dropped.
+CREATE OR REPLACE VIEW scm.v_gl_entries AS SELECT 1;
+`,
+  });
+  assert.deepEqual(r.failed, []);
+});
+
+// ...and the guard is still armed. Same file, same prose, one real statement
+// added. If this ever goes green, blanking comments has gone too far.
+test('RED: a real DROP VIEW still fails even when a comment discusses one', () => {
+  const r = scanMigration({
+    name: '0290_gl_view.sql',
+    source: `-- REVERSAL: re-run mig 0106's block. A view holds no data.
+--
+-- The tempting repair is DROP VIEW + CREATE VIEW, and it is the wrong one.
+DROP VIEW IF EXISTS scm.v_gl_entries;
+CREATE VIEW scm.v_gl_entries AS SELECT 1;
+`,
+  });
+  assert.deepEqual(r.failed, ['reversal-note-grants']);
+});
+
+// A block comment hides it just as well as a line comment, and the two are
+// stripped by different branches.
+test('GREEN: DROP VIEW inside a /* block */ comment is not a drop either', () => {
+  const r = scanMigration({
+    name: '0290_gl_view.sql',
+    source: `-- REVERSAL: re-run mig 0106's block. A view holds no data.
+/* Considered and rejected: DROP VIEW scm.v_gl_entries; CREATE VIEW ... —
+   it would discard the ACL. */
+CREATE OR REPLACE VIEW scm.v_gl_entries AS SELECT 1;
+`,
+  });
+  assert.deepEqual(r.failed, []);
+});
+
 // ── the ratchet ────────────────────────────────────────────────────────────
 
 test('a shrinking list is the only allowed direction', () => {

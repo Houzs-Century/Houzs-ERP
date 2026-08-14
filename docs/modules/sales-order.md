@@ -1,5 +1,15 @@
 # Module: Sales Order (SCM)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — the data flow from the screen down to the database,
 plus the performance characteristics. First of the per-module set; the same
 structure applies to PO / DO / SI / GRN (they are near-identical clones).
@@ -16,6 +26,51 @@ structure applies to PO / DO / SI / GRN (they are near-identical clones).
 | Desktop detail | `frontend/src/pages/scm-v2/SalesOrderDetail*.tsx` | Bounded to one doc's lines. |
 | Mobile list | `frontend/src/mobile/MobileSalesOrders.tsx` | Card list (bottom "Orders" tab). |
 | Mobile new/edit | `frontend/src/mobile/MobileNewSO.tsx` | 2600-line screen, **lazy-loaded** (PR #426). |
+
+#### Mobile New / Edit SO is ONE single scrolling form
+
+`MobileNewSO.tsx` renders new **and** edit as one single scrolling form — the
+owner rejected the 5-step wizard on 2026-07-03. Every section (Customer, Order
+info, Items, Payment) stacks in a single scroll with ONE primary action at the
+bottom: Save draft / Create Sales Order / Save Changes.
+
+It is wired to the real backend on the **unchanged** contract:
+
+| Purpose | Call |
+|---|---|
+| CREATE (new / edit-draft) | `POST /mfg-sales-orders` → `{ docNo }` |
+| EDIT (header fields only) | `PATCH /mfg-sales-orders/:docNo` |
+| ITEMS | `POST` / `PATCH` / `DELETE /mfg-sales-orders/:docNo/items` |
+| PHOTOS (per line) | `POST /mfg-sales-orders/:docNo/items/:id/photos` |
+| PREFILL | `GET /mfg-sales-orders/:docNo` (header + items), `GET /mfg-sales-orders/:docNo/payments` |
+| PAY (slip-backed rows) | `POST /mfg-sales-orders/:docNo/payments` |
+| VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
+
+The backend recomputes honest pricing and mints the `doc_no` server-side, so the
+client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
+
+**CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
+`SoLineCard` uses, never hardcoded arrays:**
+
+- **Fabrics** ← `useFabricColoursActive()` + `fabric_library` series via
+  `useFabricLibrary()`. The Fabric picker is a SEARCHABLE modal (700+ colours),
+  not a native `<select>`.
+- **Sofa** — Seat height ← `maintenanceConfig.sofaSizes`; Leg height ←
+  `maintenanceConfig.sofaLegHeights`.
+- **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
+  `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
+  `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
+  backend, but no longer shown (owner: hide it).
+
+Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
+`useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
+per category are the shared `so-variant-rule`; Save is blocked when any line is
+missing a required axis.
+
+**Sofa follower-line inherit** mirrors desktop `SoLineCard`'s
+`inheritVariantsByCategory` + `overriddenKeys`: follower sofa / bedframe lines
+inherit the FIRST same-category line's variants, BUT a manually-changed follower
+value WINS.
 
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
@@ -619,9 +674,12 @@ from three — and every unit test over the logic passed the whole time.
 
 **ONE gate, one name (owner 2026-07-31).** *"不要又 Processing Date,又 Proceed,
 全系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
-`meetsProceedGate` in `order-rules` is the single rule behind ALL of it: setting
+`meetsProceedGate` in `order-rules` states the rule behind ALL of it: setting
 `processing_date`, the create's auto-proceed, and both manual proceed paths
-(`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`). Net
+(`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`).
+**It is not the single FUNCTION behind all of it** — setting the date is
+enforced separately in `so-save-problems.ts`, which never calls it; see *WHAT
+WAS UNIFIED IS THE RULE, NOT THE FUNCTION* below before editing either. Net
 effect of the unification: the proceed paths LOOSENED by one condition (email),
 the processing-date path TIGHTENED by four (name / address / postcode / delivery
 date), and the threshold became per-company. The money half is one predicate,
@@ -679,6 +737,32 @@ day with nothing to show it was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
 lock and the gate table. `proceeded_at` is still written and still read (the
 stock allocator sorts by it), but it is no longer what makes an order proceeded.
+Net effect: the proceed paths LOOSENED by one condition (email), the
+processing-date path TIGHTENED by four (name / address / postcode / delivery
+date), and the threshold became per-company.
+
+**WHAT WAS UNIFIED IS THE RULE, NOT THE FUNCTION — there are TWO enforcement
+sites, and changing one does not change the other.** This paragraph read
+"`meetsProceedGate` is the single rule behind ALL of it" until 2026-08-13, and
+that is not what the code does:
+
+| path | enforced by |
+|---|---|
+| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts:71`), called at `mfg-sales-orders.ts:624` and `:5110` — its ONLY two call sites |
+| setting the processing date | `so-save-problems.ts` — the four completeness checks written out INLINE, plus `meetsDepositGate` for the money (imported at `:20`, called at `:187`). It contains **zero** references to `meetsProceedGate` |
+
+Both sites read the same per-company threshold through the shared
+`processingDateThresholdFor` and demand the same four facts, so the rule is one
+rule TODAY. It is one rule by agreement, not by construction — edit either and
+re-check the other. Believing the two shared a function is how a rule change
+would land on half the system.
+
+> A note on the money predicate, because the name is a trap: there is no
+> `meetsProcessingDatePaymentGate` any more. `order-rules.ts:82-87` records it
+> as one of the two functions that were COLLAPSED into `meetsDepositGate` on
+> 2026-07-31 — *"a second copy could only ever drift into a second threshold,
+> which is exactly what happened"*. In SOURCE, that comment is the only place
+> the old name still appears; everything else is `BUG-HISTORY.md`.
 
 **And then the STORAGE too (owner 2026-08-13).** *"把 internal expected date、
 processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2079 moved
@@ -692,6 +776,27 @@ also contradicted the registry row below. It is a live, separate column on
 `routes/mfg-sales-orders.ts` maps `proceededAt → proceeded_at`, and
 `routes/delivery-planning.ts` selects it. Only the CONSIGNMENT twin was
 dropped (mig 0284), because that one had zero readers and zero writers.
+
+#### The client-side address marks — all three surfaces now say the same thing (2026-08-13)
+
+The delivery address is **optional by default** (name + phone are the only
+required customer fields). A **PROCESSING DATE makes it required**: that date is
+the proceed signal, and a proceeding order has to be deliverable. Owner, in his
+own words: *"只要是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。
+就是 processing date。电话、电脑都一样的."*
+
+Before 2026-08-13 the three surfaces disagreed:
+
+| Surface | Rule it applied | Effect |
+|---|---|---|
+| Server (`so-save-problems.ts`, since 2026-07-31) | `if (facts.procDate && facts.completeness)` — required on `procDate` alone, and it demands the DELIVERY DATE in the same breath | the authority |
+| `MobileNewSO.tsx` | `procDate && delivDate` (owner 2026-07-03) | a Processing Date with no Delivery Date showed **no required-field marks**, then the save was refused |
+| `SalesOrderNew.tsx` (desktop) | no rule at all | a blank address (or "Fill in address later" still ticked, which BLANKS the address out of the payload) produced a bare `validation_failed` from the round trip with no idea which field |
+
+The mobile `AND` was not merely stricter or looser — it **disagreed with the
+server**. All three now key on the Processing Date alone, and the desktop page
+names the missing fields (customer name, address line 1, postcode, delivery
+date) before it sends, with an explicit hint to untick "Fill in address later".
 
 #### The surfaces that read this date by NAME, not by binding
 
@@ -838,7 +943,10 @@ become a `special_addons` row). The two are **complementary, not alternatives**:
 
 45 of the 49 lines that say HYDRAULIC carry both and must keep carrying both;
 dropping the height in favour of the tick would discard a measurement someone
-took. The chain — slip Desc2 to parser phrase to picker code, *and* the height
+took. (The count disagrees with this section's own later figures — 49 lines
+minus the 3 with no `divanHeight` is 46, which is also what the re-run below
+reports. 45 vs 46 is UNVERIFIED as of 2026-08-13: settling it needs production
+data, not the tree.) The chain — slip Desc2 to parser phrase to picker code, *and* the height
 surviving — is pinned end-to-end in `backend/tests/parseBedframeHydraulic.test.ts`.
 The code is created **at price 0** (`seed-hydraulic-special-addon.mjs`); the
 owner sets the price when he is ready, and it must stay 0 while the 49 migrated
@@ -876,7 +984,12 @@ third is a real HILTON line whose entire Desc2 is the word `hydraulic`.
 
 A sweep MERGES its patch (`variants = variants || patch`) and never rebuilds the
 object; rebuilding deletes every key it has not heard of. `custom_specials` is a
-DERIVED output of the pricing recompute and is written by no script at all.
+DERIVED output of the pricing recompute (`mfg-pricing-recompute.ts:90`), which is
+why picker codes belong in `variants.specials` and not there — but it is **not**
+script-free: `backfill-sofa-special-orders.mjs:132` and
+`apply-variant-patch.mjs:56,:82` both write the column (union / `COALESCE`, never
+wholesale replace, DRY-RUN by default). Anything written there is still liable to
+be rewritten by the next recompute.
 
 Drafts stay freely saveable — the scan pipeline still lands imperfect drafts;
 what changed is that they can no longer BECOME orders until resolved.
@@ -1144,7 +1257,7 @@ Flow:
    downline, or all for directors / `scm.so.view_all`). Feeds the main query's `.in()`.
 2. **Main query** — reads the VIEW `mfg_sales_orders_with_payment_totals` (so the
    Balance column is live = total − Σpayments), `order by so_date desc limit 500`.
-   ⚠️ **VIEW-TRAP** (`docs/scm-view-trap-coe.md`): the view's column set is frozen at
+   ⚠️ **VIEW-TRAP** (`backend/docs/scm-view-trap-coe.md`): the view's column set is frozen at
    CREATE VIEW; a base-table column added to `HEADER` that the view lacks 500s the
    whole page. Post-view columns (delivery_state, amended_delivery_date) are read
    separately off the base table.

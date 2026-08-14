@@ -1501,6 +1501,12 @@ const reopenSchema = z.object({
  * stays readable forever; a later re-close appends revision+1 beside it.
  */
 hr.post('/payout/reopen', async (c) => {
+  /* company-scope: scoped INDIRECTLY, which is why an automated check flags it.
+     The row is never addressed by a caller-supplied id - loadClosedPeriod
+     (hr.ts:1178) resolves it from (company_id, period_from, period_to) with
+     `.eq('company_id', companyId)` on the line, and the UPDATE below targets
+     `existing.period.id`, an id that only exists because it was already found
+     inside this company. Verified 2026-08-13 by reading that function. */
   if (!hasHouzsPerm(c, 'scm.hr.reopen')) return forbidden(c, 'scm.hr.reopen');
   const co = requireCompany(c);
   if (!co.ok) return co.res;

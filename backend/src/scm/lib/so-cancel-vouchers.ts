@@ -1,3 +1,15 @@
+/* company-scope-file: the two updates below match on `source_doc_no` /
+ * `redeemed_doc_no`, which hold a Sales Order's doc_no. doc_no is
+ * mfg_sales_orders' PRIMARY KEY and is prefix-partitioned per company, so only
+ * the cancelling company's own vouchers can match.
+ *
+ * This is NOT true of `.eq('code', ...)` on the same table: mig 0188 re-keyed
+ * pwp_codes (company_id, code), and that is exactly what made
+ * lib/pwp-claim-single.ts a real cross-company write. Same table, different
+ * column, opposite answer — which is why each statement gets read rather than
+ * the file getting a blanket exemption.
+ */
+
 /* PWP (换购) voucher settlement for a CANCELLED Sales Order.
  *
  * `pwp_codes.source_doc_no` / `.redeemed_doc_no` are plain `text` with NO

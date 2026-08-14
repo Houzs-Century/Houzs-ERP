@@ -54,10 +54,23 @@ that is itself part of the finding. What is established:
 
 ## Why this is the second time
 
-`docs/autocount-writeback-exposure-coe.md` records the API key for the write
-service being downloadable over a file server on **the same host**. That was
-closed. This is the same class on the same machine: *something stood up for
-internal convenience, published to the internet, and remembered by nobody.*
+The API key for the write service was previously downloadable over a file server
+on **the same host**. That was closed.
+
+> **`docs/autocount-writeback-exposure-coe.md` DOES NOT EXIST** — corrected
+> 2026-08-13. It is not in `docs/`, not anywhere in the tree, and no other
+> document or `BUG-HISTORY.md` entry records that exposure; searching for the
+> key, "downloadable", "file server" and every `autocount-*` doc turns up only
+> `docs/autocount-migration-record.md:621` ("an orphaned listener registration
+> from the cutover file server").
+>
+> **The missing COE is itself the finding.** This section is titled "why this is
+> the second time" and its whole argument rests on a document nobody wrote — so
+> the first incident is remembered only as a sentence inside the second one's
+> write-up, which is exactly the failure both incidents are about.
+
+This is the same class on the same machine: *something stood up for internal
+convenience, published to the internet, and remembered by nobody.*
 
 **The pattern to take from both: a host that fronts anything publicly needs its
 whole surface enumerated, not just the part being worked on.** Both were found
@@ -81,9 +94,20 @@ master as publicly readable** and do not add anything else to that relay.
 - **It is not the write path.** `autocount.houzscentury.com` is a different
   hostname fronting `AcSyncService`, whose every route requires `X-API-KEY` and
   which refuses everything with 503 if the key file is missing (fail-closed,
-  `#2025`). `/health` there is deliberately open and returns only
-  `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}` — it names the book
-  and nothing else.
+  `#2025`).
+
+  > **Corrected 2026-08-13: `/health` is NOT open, and this document said it
+  > was.** The original text read *"`/health` there is deliberately open and
+  > returns only `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}`."*
+  > Read the source: `backend/scripts/autocount-service/AcSyncService.cs:160-168`
+  > runs the empty-key 503 and the `X-API-KEY` comparison **before** the
+  > `/health` dispatch, with its own comment — *"AFTER the key, deliberately:
+  > which account book this is connected to is not something to hand an
+  > anonymous caller on a public hostname."* That gating landed in `54769163`,
+  > **the same PR #2025 this bullet cites for the fail-closed 503**, on
+  > 2026-08-11 — the day before this COE was written. The service has no
+  > unauthenticated surface at all, which strengthens the bullet's conclusion
+  > and refutes its stated fact.
 - **It is not new.** No recent change opened it; it has been up since before the
   cutover.
 - **It is not a Cloudflare misconfiguration.** The relay itself answers — the

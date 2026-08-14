@@ -14,6 +14,28 @@ import { authedFetch } from './authed-fetch';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
+/* EVERY fabric write in this file used to fail SILENTLY. All nine mutations had
+   an onSuccess and not one had an onError, so a refused PATCH — the area guard
+   requiring `edit` on scm.procurement.products where the grid's GET only needs
+   `view` (scm/middleware/area-guard.ts:16), a 409 when the active company has
+   not resolved, a 404 when the row belongs to the other company — produced no
+   toast, no inline message and no console line. The row simply stayed as it was.
+   Reported by the owner as "I press Deactivate and nothing happens", which is
+   exactly what the code does.
+
+   serviceNotify was already imported here and used for ONE success toast on the
+   tier update, so the mechanism was present the whole time; only the failure
+   half was missing. authedFetch throws Errors carrying the server's own
+   sentence, so surfacing err.message names the real cause instead of a generic
+   "something went wrong" that would send the next person hunting again. */
+const fabricWriteFailed = (err: unknown) => {
+  void serviceNotify({
+    title: 'That change was not saved',
+    body: err instanceof Error ? err.message : 'Something went wrong. Please try again.',
+    tone: 'error',
+  });
+};
+
 export type FabricCategoryValue = 'B.M-FABR' | 'S-FABR' | 'S.M-FABR' | 'LINING' | 'WEBBING';
 export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';
 export type FabricTierField = 'sofaPriceTier' | 'bedframePriceTier';
@@ -142,6 +164,10 @@ export function useUpdateFabricTier() {
         });
       }
     },
+    /* The one mutation that already had a serviceNotify — for SUCCESS only. A
+       tier change that the server refuses is exactly as invisible as a refused
+       Deactivate was. */
+    onError: fabricWriteFailed,
   });
 }
 
@@ -158,6 +184,7 @@ export function useUpdateFabricSupplierCode() {
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -175,6 +202,7 @@ export function useUpdateFabricSeries() {
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -195,6 +223,7 @@ export function useUpdateFabricActive() {
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -212,6 +241,7 @@ export function useUpdateFabricDescription() {
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -238,6 +268,7 @@ export function useCreateFabric() {
         method: 'POST', body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -257,6 +288,7 @@ export function useBulkUpsertFabrics() {
         body: JSON.stringify({ rows }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 
@@ -266,6 +298,7 @@ export function useDeleteFabric() {
     mutationFn: (id: string) =>
       authedFetch<void>(`/fabric-tracking/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fabric-tracking'] }),
+    onError: fabricWriteFailed,
   });
 }
 

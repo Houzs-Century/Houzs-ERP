@@ -10,6 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type MrpAllocSource = 'stock' | 'po' | 'shortage';
 
@@ -160,5 +161,6 @@ export function useUpdateCategoryLeadTime() {
       qc.invalidateQueries({ queryKey: ['mrp-lead-times'] });
       qc.invalidateQueries({ queryKey: ['mrp'] }); // order-by dates recompute
     },
+    onError: writeFailed,
   });
 }

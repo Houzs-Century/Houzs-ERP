@@ -25,6 +25,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
+import { writeFailed, writeFailedAs } from './mutation-error';
 
 export type VenueRow = {
   id: string;
@@ -130,6 +131,7 @@ export function useCreateVenue() {
         { name: body.name, notes: body.address ?? null },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+    onError: writeFailedAs('Venue not created'),
   });
 }
 
@@ -142,6 +144,7 @@ export function useUpdateVenue() {
         ...(address !== undefined ? { notes: address } : {}),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+    onError: writeFailed,
   });
 }
 
@@ -150,5 +153,6 @@ export function useDeactivateVenue() {
   return useMutation({
     mutationFn: (id: string) => api.del<{ ok: true }>(`/api/projects/venues/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['venues'] }),
+    onError: writeFailedAs('Venue not deactivated'),
   });
 }

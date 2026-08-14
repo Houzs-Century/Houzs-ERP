@@ -8,7 +8,15 @@ ledger, `recomputeTotals`) with one thing the SO does not have: **it moves stock
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **SO → DO → SI**, with **DO → DR** (Delivery Return) as the
 reversal branch. The DO is the OUT half of the inventory ledger.
@@ -305,6 +313,31 @@ the ledger did not move. Measured on production 2026-08-11: **ZERO** movements
 carried the function's own notes marker, so it had never landed one row. The
 function now stamps `correction_seq = max_for_bucket + 1`, and the corrections
 insert.
+
+**A qty REDUCTION no longer takes that path at all (0286).** Once the deltas
+could land, the second question became what the returning stock is WORTH, and
+the answer was a weighted average — `round(out_total_cost / out_qty)` — which
+blends units that have a cost with units that do not, then MINTS A LOT at the
+invented figure. `fn_return_do_units_at_cost` replaces it: the partial form of
+`fn_reverse_do_out`, unwinding the bucket's `inventory_lot_consumptions`
+newest-first so each unit goes back to the lot that paid for it, restamping the
+OUT's COGS from the consumptions that survive, and writing its own balancing IN
+at cost 0 with the minted lot closed. Uncosted units — the "ship anyway"
+oversell — return at nothing and are reported in `qty_uncosted`.
+
+Three consequences worth knowing before touching this path:
+
+- **LIFO is a decision, not a derivation.** Nothing in the data says which
+  physical units came back. The migration header states the rule and the reason
+  (a reduction is an undo; what an operator undoes is the most recent shipment).
+- **A handled reduction contributes NO row to `writes`.** The function writes its
+  own IN, so the route tracks those buckets separately — they still have to reach
+  `reconcileUncostedAfterIn` (a restored lot can retro-cost an earlier oversell)
+  and still count as "the ledger changed" for the restamp and allocation steps.
+  Gating those on `writes.length` alone silently skips every reduction.
+- **The old blended row still exists**, solely as a fallback for a database
+  without 0286. A reduction that posts nothing leaves shipped stock permanently
+  deducted, which is worse than an imprecise cost.
 
 The rows stay `source_doc_type='DO'` **on purpose** — see the rejected
 alternatives in `BUG-HISTORY.md`. Short version: `restampDoActualCost`,
