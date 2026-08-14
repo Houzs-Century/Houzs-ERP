@@ -26,8 +26,9 @@
 //   - DELIVERED        — the SO's goods are fully handed over (status DELIVERED,
 //                        or every deliverable line remaining == 0 once any qty
 //                        has shipped).
-//   - PENDING_SCHEDULE — ready to ship (summariseReadiness.isMainReady — every
-//                        MAIN line READY) but not yet fully delivered.
+//   - PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady — every
+//                        MAIN line READY, and the SO actually HAS lines) but not
+//                        yet fully delivered.
 //   - OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days
 //                        (owner rule: "3 days before delivery and goods still
 //                        not ready").
@@ -291,8 +292,8 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
    of the 4 enum values; else derive live:
      · DELIVERED        — status DELIVERED, or every deliverable line remaining
                           == 0 once any qty has shipped.
-     · PENDING_SCHEDULE — ready to ship (isMainReady when there IS a main line,
-                          else isFullyReady) but not yet fully delivered.
+     · PENDING_SCHEDULE — ready to ship (summariseReadiness.isShipReady) but not
+                          yet fully delivered.
      · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days.
      · PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
 
@@ -302,7 +303,7 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
-  readiness: { mainCount: number; isMainReady: boolean; isFullyReady: boolean };
+  readiness: { mainCount: number; isMainReady: boolean; isFullyReady: boolean; isShipReady: boolean };
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
@@ -315,11 +316,11 @@ export function derivePlanningState(input: {
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
 
-  /* "Ready to ship" gate. isMainReady is VACUOUSLY true when mainCount === 0
-     (an accessory-only / service-only SO has no MAIN line), so use it only when
-     there IS a main; otherwise require isFullyReady (every line READY). */
-  const readyToShip = readiness.mainCount > 0 ? readiness.isMainReady : readiness.isFullyReady;
-  if (readyToShip) return 'PENDING_SCHEDULE';
+  /* "Ready to ship" gate — see summariseReadiness.isShipReady for why bare
+     isMainReady must never be used here. This module derived the rule inline
+     first; it now lives in so-readiness so the auto-allocation sweep and the
+     manual stock toggle share it. */
+  if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
   // NOT ready. OVERDUE once we're within 3 days of (or past) the EFFECTIVE
   // delivery date (amended ?? original) and the goods still aren't ready.
@@ -894,11 +895,8 @@ deliveryPlanning.get('/', async (c) => {
     const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
     const effectiveDD = amendedDD ?? customerDD;
 
-    /* "Ready to ship" gate. summariseReadiness.isMainReady is VACUOUSLY true when
-       mainCount === 0 (an accessory-only / service-only SO has no MAIN line), so
-       it must NOT be used directly. Use isMainReady only when there IS a main;
-       otherwise require isFullyReady (every line READY). */
-    const readyToShip = readiness.mainCount > 0 ? readiness.isMainReady : readiness.isFullyReady;
+    /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
+    const readyToShip = readiness.isShipReady;
 
     /* delivery_state derivation (the core rule) — shared with the SO list via
        derivePlanningState(). A manual override stored on the SO header wins; else
