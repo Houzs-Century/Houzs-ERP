@@ -43,8 +43,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/pos.ts` | 8 | 332 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5290 |
-| `backend/src/routes/projects_print.ts` | 1 | 1212 |
+| `backend/src/routes/projects.ts` | 109 | 5320 |
+| `backend/src/routes/projects_print.ts` | 1 | 1367 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
 | `backend/src/routes/sales.ts` | 13 | 1217 |
@@ -63,7 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/categories.ts` | 10 | 506 |
+| `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2475 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1141 |
@@ -100,7 +100,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 320 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1218 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
@@ -169,19 +169,19 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1301 files, 541246 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1310 files, 543227 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 14875 |
+| `frontend/src/pages/Projects.tsx` | 15003 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
-| `frontend/src/pages/ServiceCases.tsx` | 8855 |
+| `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5679 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
-| `backend/src/routes/projects.ts` | 5290 |
+| `backend/src/routes/projects.ts` | 5320 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
@@ -192,7 +192,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
-| `backend/src/services/projects.ts` | 3173 |
+| `backend/src/services/projects.ts` | 3189 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3016 |
 
 ## 4. Frontend desktop routes
