@@ -41,8 +41,7 @@ import {
   ceilingFor,
   verdict,
   lowerCeilings,
-  findRaisedCeilings,
-} from './lib/file-size-ratchet.mjs';
+  findRaisedCeilings, uncommittedSourcePaths } from './lib/file-size-ratchet.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
@@ -140,6 +139,17 @@ function readManifest() {
 /** The files THIS change touches, against the merge base, or null when the base
  *  cannot be resolved — in which case every violation is charged, because a
  *  gate that cannot tell whose fault it is must not let anything through. */
+/** Source files modified in the WORKING TREE — staged or not. The gate reads
+ *  the committed tree, so anything here is a file it cannot see. Empty in CI,
+ *  and empty on a clean checkout. */
+function uncommittedSourceFiles() {
+  try {
+    return uncommittedSourcePaths(git(['status', '--porcelain', '-z'], { quiet: true }), SOURCE_EXTENSIONS);
+  } catch {
+    return [];                                  // not a git tree: nothing to warn about
+  }
+}
+
 function changedFilesAgainstBase() {
   try {
     git(['rev-parse', '--verify', '--quiet', 'origin/main'], { quiet: true });
@@ -322,6 +332,27 @@ function main() {
      full, with its numbers — silence would let the tree drift — but only the
      files in this diff can fail the run. */
   const touched = changedFilesAgainstBase();
+  /* REFUSE rather than answer about a tree the caller is not looking at.
+     `changedFilesAgainstBase` diffs base...HEAD — the COMMITTED tree. Run this
+     with source edits still in the working tree and it measures HEAD, prints
+     "file-size ratchet OK", and the author reads that as a verdict on the code
+     in front of them. That happened on 2026-08-14: a change that grew an
+     over-ceiling file by one line was told OK, and turned red the instant it
+     was committed. Never fires in CI, where the tree is clean by construction —
+     it exists to stop a LOCAL run answering a question it cannot see.
+     Same rule as the two refusals above, and the reason CLAUDE.md gives for
+     them: a verdict computed over nothing must never read as a pass. */
+  const dirty = uncommittedSourceFiles();
+  if (touched !== null && dirty.length) {
+    console.error('FILE-SIZE GATE: refusing to answer — this compares the COMMITTED');
+    console.error('tree against the merge base, and these source files are modified but');
+    console.error('not committed, so they are invisible to it:');
+    for (const p of dirty.slice(0, 12)) console.error(`  ${p}`);
+    if (dirty.length > 12) console.error(`  ... and ${dirty.length - 12} more`);
+    console.error('\nCommit, then re-run. A pass measured against the wrong tree is worse');
+    console.error('than no answer: it is the shape that gets believed.');
+    process.exit(2);
+  }
   /* A file already over its ceiling may be TOUCHED without being charged, as
      long as this change makes it smaller. The ratchet's subject is GROWTH: a PR
      that opens a 3,591-line file and leaves it at 3,586 has moved it in the
