@@ -36,9 +36,50 @@ runners still named the old files: `check-docs-drift --strict` found the docs,
 and `test:release-discipline` + two steps in `stamp-real-po-costs.yml` failed in
 CI. A rename is exactly the change those gates exist for.
 
+**What the rename broke a second time: the classifier classified itself wrong.**
+`classifyTests.node.mjs` became `classifyTests.test.mjs`, so the widened walk
+collected it — and sent it to the WORKERS pool. `classify-tests.mjs` decides by
+regex over raw text, and that file is the classifier's own test: its fixtures
+contain `cloudflare:test` and `env.DB` because that is what it tests. It also
+needs a real filesystem (`fs.mkdtemp`), which workerd has none of, so the pool
+did not fail the file — it died. `Worker cloudflare-pool emitted error`, and the
+run read **`Test Files 15 passed (16)`**: all seven of its tests reported as
+neither passed nor failed. Two assertions inside it were stale from the same
+rename (`assert.match(p, /\.test\.ts$/)` against a tree that now holds `.mjs`)
+and nobody saw them, because a file that never loads cannot go red.
+
+Being exiled to workerd is a KNOWN, accepted cost for a pure-logic file — slower,
+still correct, and pinned by its own test. For a file that touches `node:fs` it
+is fatal. That distinction did not exist before this rename.
+
+**Fix.** An explicit `// @vitest-project light|workers` overrides the text scan,
+honoured only ABOVE the first import — a file's directive block, never its body,
+so a declaration inside a fixture cannot declare on the real file's behalf. That
+hole is not hypothetical: this classifier's own test is made of such fixtures.
+Necessary rather than convenient — a content rule cannot judge a file whose
+content is ABOUT the content rule. Overrides are returned and printed, and pinned
+at exactly one file, so a second cannot arrive unnoticed.
+
+**And the guard for it was in the wrong place first.** "Every suite on disk is
+collected by some project" was written as a test in
+`tests/scaleRealSchemaContract.test.mjs`, replacing the `pretest` assertion whose
+arrangement this change deleted. Narrowing the walk back to `.test.ts` to prove
+it red returned `No test files found` — the guard was itself one of the 18 files
+that stop being collected. It would have vanished with the suites it protects and
+CI would have gone green on 267 files instead of 285. It is
+`backend/scripts/audit-test-projects.mjs` now, its own CI step, with a
+deliberately duplicated walk so that narrowing the classifier's produces a
+MISMATCH instead of two views that agree because they are the same code. It
+replaces `audit:test-projects`, which had been pointing at a script deleted
+weeks earlier (`gen-test-projects.mjs`, MODULE_NOT_FOUND) and was wired into no
+workflow, so nothing noticed. Both failure branches proven red, exit 1.
+
 **Ref.** 2026-08-14. Lesson, and it generalises past this gate: **a measurement
 can be wrong in the direction of looking rigorous.** "17 files have no test" read
 as a real backlog for as long as nobody asked which runner the report came from.
+Second lesson, from the guard that had to move: **a guard that dies with the
+thing it guards is not a guard** — before trusting one, break the thing it
+watches and check that the guard is still alive to complain.
 
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 

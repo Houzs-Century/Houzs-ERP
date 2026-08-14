@@ -66,6 +66,12 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # Does every test suite on disk actually get RUN? A suite collected by no
+      # vitest project does not fail — it is absent, and CI reports fewer files
+      # and goes green. Deliberately a script step and not a test: written as a
+      # test first, it turned out to be one of the files that stops being
+      # collected, so it would have vanished with the 17 suites it guards.
+      - run: npm run audit:test-projects
       # Bug index drift. PR-only on purpose: it is NOT in deploy.yml, because a
       # stale doc must never block a release (audit:routes as a deploy gate jammed
       # prod twice in one day). But it IS gated here, because the ungated

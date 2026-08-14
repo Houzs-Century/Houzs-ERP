@@ -148,5 +148,25 @@ test("the sharded command reaches the workerd vitest project, not the light one"
       "half would run unsharded on every runner.",
   );
 
-  assert.equal(pkg.scripts.pretest, "npm run test:scale-contract");
 });
+
+/* WHERE `pretest` WENT, and why its replacement is not in this file.
+   The test above used to end with
+     assert.equal(pkg.scripts.pretest, "npm run test:scale-contract")
+   The hook it pinned existed for one reason: these contract suites were
+   `node --test` files, collected by NEITHER vitest project, so without a
+   lifecycle hook dragging them along nothing would have run them. They are vitest
+   files now (BUG-HISTORY #2180 — a node:test file contributes nothing to the
+   merged coverage report, so twelve tested modules read as untested), the
+   projects collect them directly, and the hook went with the script it called.
+
+   The hook's PROTECTION had to survive, so it was rewritten as "no suite is on
+   disk yet claimed by nobody" — and put HERE first, which was wrong. Narrow the
+   walk in scripts/lib/classify-tests.mjs back to `.test.ts` and vitest answers
+   "No test files found" for this very file: the guard is itself one of the 18
+   suites that stop being collected, so it would have disappeared alongside them
+   and the run would have gone green with 267 files instead of 285.
+
+   It lives in backend/scripts/audit-test-projects.mjs instead, as its own CI
+   step, where no vitest include list can reach it. Both of its branches are
+   proven red. Nothing is asserted here so that the two cannot drift. */
