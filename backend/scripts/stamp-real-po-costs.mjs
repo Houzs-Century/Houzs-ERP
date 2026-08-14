@@ -41,6 +41,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //   · DRY-RUN by default. APPLY=1 writes.
 //   · Fills blanks only — never overwrites a hand-entered price.
+//   · RE-RUN: inert. The UPDATE re-asserts COALESCE(unit_price_centi,0)=0 in its
+//     own WHERE, so a line this run priced is no longer a candidate and a second
+//     run plans and writes nothing for it.
 //   · Idempotent: once written, the line is no longer a candidate.
 //   · AMBIGUOUS keys (several distinct invoice prices) are LEFT BLANK and listed.
 //   · The dry-run prints ONE LINE PER PLANNED WRITE, each naming the PI document
@@ -61,6 +64,15 @@ import {
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* This writes a PRICE onto purchase and GRN lines, and a purchase invoice built
+   from a priced line books AP against it — reverting the commit does not take
+   the number back out. stamp-real-po-costs.yml already passes CONFIRM through;
+   until now nothing read it. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}" — refusing to write.`);
+  process.exit(2);
+}
 const CO = Number(process.env.COMPANY_ID ?? 1);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -217,6 +229,9 @@ async function main() {
   }
 
   let done = 0;
+  /* What was actually written, so the verification below re-reads exactly those
+     rows rather than re-deriving the plan on the fresh connection. */
+  const written = [];
   for (const [kind, table, schema] of [
     ["po", "purchase_order_items", sPoI],
     ["grn", "grn_items", sGrnI],
@@ -227,12 +242,46 @@ async function main() {
       const res = await sql.unsafe(
         `UPDATE "${schema}"."${table}" SET unit_price_centi = $1
           WHERE id = $2 AND COALESCE(unit_price_centi, 0) = 0`, [w.centi, w.id]);
-      if (res.count > 0) done++;
+      if (res.count > 0) { done++; written.push({ schema, table, id: w.id, centi: w.centi, doc: w.doc, code: w.code }); }
       else log(`SKIPPED AT WRITE (no longer blank) ${kind} ${w.doc} ${w.code}`);
     }
   }
   log(`DONE. lines priced: ${done} of ${plan.po.length + plan.grn.length} planned.`);
   await sql.end();
+
+  /* Verify on a SECOND connection. The session that wrote is the worst witness
+     that the write landed, and a count would not catch what is actually at risk
+     here: a price is money, so the question is not "did N rows change" but "is
+     the number on the row the number the invoice said". Asserting the VALUE and
+     its type is the only answer to that. */
+  if (!written.length) return;
+  const check = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    const wrong = [];
+    for (const [schema, table] of [[sPoI, "purchase_order_items"], [sGrnI, "grn_items"]]) {
+      const mine = written.filter((w) => w.schema === schema && w.table === table);
+      if (!mine.length) continue;
+      const back = await check.unsafe(
+        `SELECT id::text AS id, unit_price_centi, pg_typeof(unit_price_centi)::text AS t
+           FROM "${schema}"."${table}" WHERE id = ANY($1::uuid[])`, [mine.map((w) => w.id)]);
+      const seen = new Map(back.map((r) => [r.id, r]));
+      log(`VERIFY (fresh connection) ${schema}.${table}: read back ${back.length}/${mine.length}; unit_price_centi type ${back[0]?.t ?? "n/a"}`);
+      for (const w of mine) {
+        const r = seen.get(String(w.id));
+        if (!r) { wrong.push(`${w.doc} ${w.code}: row not readable on a fresh connection`); continue; }
+        if (!Number.isInteger(Number(r.unit_price_centi))) { wrong.push(`${w.doc} ${w.code}: unit_price_centi=${r.unit_price_centi} is not an integer`); continue; }
+        if (Number(r.unit_price_centi) !== Number(w.centi)) wrong.push(`${w.doc} ${w.code}: wrote ${w.centi} but the row now reads ${r.unit_price_centi}`);
+      }
+    }
+    if (wrong.length) {
+      for (const m of wrong.slice(0, 20)) console.error(`VERIFY FAILED: ${m}`);
+      console.error(`VERIFY FAILED: ${wrong.length} of ${written.length} priced line(s) do not read back as written.`);
+      process.exit(1);
+    }
+    log(`VERIFY OK - all ${written.length} priced lines read back with the exact price written.`);
+  } finally {
+    await check.end();
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
