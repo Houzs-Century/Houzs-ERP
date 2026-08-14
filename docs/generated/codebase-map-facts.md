@@ -71,7 +71,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 223 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5679 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5678 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2952 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -105,7 +105,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 1 | 1419 |
+| `backend/src/scm/routes/mrp.ts` | 1 | 1285 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-audit-log.ts` | 1 | 427 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1143 |
@@ -169,7 +169,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1314 files, 543859 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1316 files, 545334 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -179,7 +179,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5679 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5678 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
 | `backend/src/routes/projects.ts` | 5119 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
