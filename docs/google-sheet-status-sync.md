@@ -45,7 +45,7 @@ the same thing.
 | Google | matching helpers + `assrDriftReport()` | `ASSRStatusSync.gs` |
 | Google | `ASSRDeliverySync.gs` (pre-existing) — its `ASSR_DELIVERY_TRIGGERS` map drives the ASSR → Delivery Details linkage | unchanged |
 
-The endpoint returns no customer PII — the sheet already owns those columns.
+**CORRECTION: it DOES return customer PII.** `backend/src/routes/assrFormIntake.ts:427` selects `customer_name, phone, location, sales_agent, po_no, complaint_issue` and `:474-484` maps `addr1`-`addr4` and `item_codes` into the response — 15 fields, not the 6 this doc lists. The change is annotated in the route at `:420-424` (2026-08-07): with the Google Form closed, the sheet's Apps Script auto-APPENDS rows for ERP cases, so the export was widened deliberately to carry the columns a new row needs. There is a stale in-code comment repeating the old claim four lines above the fields that refute it.
 
 ## Matching (sheet row → ERP case)
 
