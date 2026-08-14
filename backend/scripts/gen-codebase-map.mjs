@@ -421,12 +421,36 @@ const body = [
 const comparable = (text) => text.split(/\r?\n/).join("\n");
 
 if (checkOnly) {
-  if (!fs.existsSync(outputPath) || comparable(read(outputPath)) !== comparable(body)) {
-    console.error("Codebase map facts are stale. Run: node backend/scripts/gen-codebase-map.mjs");
-    console.error("(This is an on-demand check. It is deliberately NOT a CI or deploy gate.)");
-    process.exit(1);
+  /* This file said, in its own failure message, "deliberately NOT a CI or
+     deploy gate" — while ci.yml ran it inside backend-typecheck, where a
+     non-zero exit is exactly a gate. On 2026-08-14 it blocked a one-line fix
+     for a BROKEN PRODUCTION DEPLOY. Two things were being conflated:
+
+       the generator DYING   — the failure docs/staging-bench-rot-coe.md is
+                               about, three weeks unnoticed. Worth gating.
+       the output DRIFTING   — this file embeds LINE NUMBERS, so essentially
+                               every backend merge staled it for every other
+                               open PR. No signal, and with serial merges it
+                               never converges.
+
+     Drift now reports and returns 0; a generator that produces nothing fails
+     with exit 2. `--strict` restores the hard failure on drift. */
+  const stale = !fs.existsSync(outputPath) || comparable(read(outputPath)) !== comparable(body);
+  if (stale) {
+    const msg =
+      "Codebase map facts are stale. Run: node backend/scripts/gen-codebase-map.mjs\n" +
+      "NOT failing the run: this file embeds line numbers, so it drifts on every " +
+      "backend merge, on every open PR, through no act of the author. Pass --strict to fail on it.";
+    if (process.argv.includes("--strict")) { console.error(msg); process.exit(1); }
+    console.warn(msg);
+  } else {
+    console.log(`Codebase map facts are current (${routeTotals.modules} route modules, ${desktopRoutes.length} desktop routes).`);
   }
-  console.log(`Codebase map facts are current (${routeTotals.modules} route modules, ${desktopRoutes.length} desktop routes).`);
+  /* The failure this check exists for: a scan that found nothing. */
+  if (!routeTotals.modules || !desktopRoutes.length) {
+    console.error(`CODEBASE MAP: scanned ${routeTotals.modules} route module(s) and ${desktopRoutes.length} desktop route(s) — that is a broken generator, not an empty repo.`);
+    process.exit(2);
+  }
 } else {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, body);
