@@ -74,9 +74,34 @@ replaces `audit:test-projects`, which had been pointing at a script deleted
 weeks earlier (`gen-test-projects.mjs`, MODULE_NOT_FOUND) and was wired into no
 workflow, so nothing noticed. Both failure branches proven red, exit 1.
 
+**The conversion also imposed a 5-second budget on files that never had one.**
+`node --test` has NO default timeout. vitest's is 5,000ms — a UNIT-test budget —
+and moving the runner applied it silently to all seventeen.
+`tests/noNulBytesInSource.test.mjs` reads EVERY tracked source file (~2,000
+synchronous reads) looking for a raw NUL byte; measured on Windows it takes 3.47s
+alone, 70% of the default before any contention, and in a full 288-file run it
+returned `Test timed out in 5000ms` in two of six runs.
+
+It presented as a flake in the worst possible place: a whole-tree gate that
+intermittently reads as "the tree is dirty". The first hypothesis — a concurrent
+write leaving a file momentarily zero-filled — was tested (10 consecutive
+regenerations of the one candidate, checking `indexOf(0)` immediately after each)
+and REFUTED; the failure text, once captured rather than summarised, said
+`timed out` and never named an offending file. Two full runs were spent grepping
+only the summary lines, which is why the wrong theory survived as long as it did.
+
+Fixed with an explicit 60s timeout on that one test, with the reason in the file.
+Raising vitest's global `testTimeout` was the wrong lever: it hands the same
+slack to 288 files and hides a genuinely hung unit test. The other converted
+suites were measured too — the next slowest walks the script tree at 1.65s and
+the rest are under 1s, so none carries a declared timeout it does not need.
+
 **Ref.** 2026-08-14. Lesson, and it generalises past this gate: **a measurement
 can be wrong in the direction of looking rigorous.** "17 files have no test" read
 as a real backlog for as long as nobody asked which runner the report came from.
+Third lesson, from the timeout: **changing a runner changes the defaults the old
+runner never had** — and the failure surfaced as a flake, in a gate about
+something else entirely, five hours after the change that caused it.
 Second lesson, from the guard that had to move: **a guard that dies with the
 thing it guards is not a guard** — before trusting one, break the thing it
 watches and check that the guard is still alive to complain.

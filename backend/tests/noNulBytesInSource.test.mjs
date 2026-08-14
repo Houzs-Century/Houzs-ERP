@@ -45,6 +45,23 @@ test("git ls-files answers, so this check cannot pass by scanning nothing", () =
   assert.ok(files.length > 500, `only ${files.length} tracked files — the scan is broken, not the tree`);
 });
 
+/* TIMEOUT IS DECLARED, and it is not padding a slow test.
+   This reads EVERY tracked source file — ~2,000 synchronous reads whose cost
+   scales with the repo and with whatever else is competing for the disk, not
+   with any logic here. It ran under `node --test`, which has NO default timeout,
+   until BUG-HISTORY #2180 made it a vitest file; vitest's default is 5,000ms,
+   a UNIT-test budget, and the conversion imposed it silently.
+
+   Measured on Windows 2026-08-14: 3.47s alone — 70% of the default before any
+   contention — and `Test timed out in 5000ms` in two of six full-suite runs,
+   where 287 other files are reading at the same time. It failed as a flake, and
+   a flake on a whole-tree gate reads as "the tree is dirty", which is the one
+   thing it must never say by accident.
+
+   Raising vitest's global testTimeout was the wrong lever: it would hand the
+   same slack to 288 files and hide a genuinely hung unit test. The budget
+   belongs on the test that legitimately needs it. 60s leaves room for heavy
+   contention while still failing a real hang. */
 test("no tracked source file contains a raw NUL byte", () => {
   const offenders = [];
   for (const rel of tracked()) {
@@ -61,4 +78,4 @@ test("no tracked source file contains a raw NUL byte", () => {
     `these are binary to git, so their diffs are unreviewable and git grep cannot read them.\n` +
       `Write the escape (\\0) instead of the byte:\n  ${offenders.join("\n  ")}`,
   );
-});
+}, 60_000);
