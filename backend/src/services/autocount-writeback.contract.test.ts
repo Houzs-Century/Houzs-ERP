@@ -79,7 +79,11 @@ const keysRead = (body: string, bag: string): string[] => {
 
 const CS_CREATE_SO = slice('static string CreateSo(', 'static string CreatePo(');
 const CS_CREATE_PO = slice('static string CreatePo(', '// ── conversions');
-const CS_CONVERT = slice('static string Convert_(', "/* The SDK's over-transfer dialog");
+/* Anchor updated 2026-08-14: main renamed this comment from "The SDK's
+   over-transfer dialog" to "OVER-TRANSFER: unreachable by construction" in
+   #2041/#2043. The slice boundary is unchanged — Convert_ still ends on the
+   line before it. */
+const CS_CONVERT = slice('static string Convert_(', '/* OVER-TRANSFER:');
 const CS_SALES_HEADER = slice('static void SalesHeader(', 'static void PurchaseHeader(');
 const CS_PURCHASE_HEADER = slice('static void PurchaseHeader(', '/* Source line keys');
 const CS_DTLKEYS = slice('static long[] DtlKeys(', '// ── cancel');
