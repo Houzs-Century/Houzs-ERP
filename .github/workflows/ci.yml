@@ -409,7 +409,13 @@ jobs:
     # REMOVE continue-on-error WHEN schema.pg.ts covers the SCM tables from
     # `drizzle-kit pull`, the money routes are typed off it, and
     # `npm --prefix backend run lint` is green. Not before.
-    continue-on-error: ${{ matrix.app == 'backend' }}
+    #
+    # The suppression is `--advisory` ON THE SCRIPT, not `continue-on-error` on
+    # the job. Measured 2026-08-14: continue-on-error stops the workflow failing
+    # but GitHub still publishes the job's check run as FAILURE, so the red X
+    # survives and the wallpaper problem is not solved. --advisory makes the
+    # verdict where the verdict is made. Hard errors — ESLint missing, config
+    # broken — are NEVER advisory, so a gate that did not execute still fails.
     strategy:
       # Both legs always run: seeing which app moved is the whole point, and a
       # cancelled sibling would report as neither pass nor fail.
@@ -427,7 +433,10 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
       - run: npm ci
-      - run: npm run lint
+      # Backend reports, frontend enforces. A developer running
+      # `npm --prefix backend run lint` locally still gets exit 1 and the truth;
+      # only this leg, in CI, is told to report instead of fail.
+      - run: npm run lint ${{ matrix.app == 'backend' && '-- --advisory' || '' }}
 
   # EVERY area against its floor, from ONE merged report.
   #

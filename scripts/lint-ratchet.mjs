@@ -289,7 +289,32 @@ if (over.length) {
   );
 }
 
-if (hardErrors.length || over.length) process.exit(1);
+/* --advisory: REPORT the findings above, then exit 0.
+
+   Why this and not the job-level `continue-on-error` it replaces: measured
+   2026-08-14, `continue-on-error` stops the workflow failing but GitHub still
+   publishes the job's check run as FAILURE, so the red X stays. A permanently
+   red check is one everyone learns to ignore — the exact outcome a ratchet is
+   built to prevent — so the suppression has to happen where the verdict is
+   made, not around it.
+
+   HARD ERRORS ARE NEVER ADVISORY. If ESLint could not run, or the config is
+   broken, that is not "debt we are carrying", it is a gate that did not
+   execute, and a gate that cannot run must never report a pass.
+
+   Passed ONLY by ci.yml, only for the backend leg. A developer running
+   `npm --prefix backend run lint` locally still gets exit 1 and the truth. */
+const advisory = process.argv.includes('--advisory');
+if (hardErrors.length) process.exit(1);
+if (over.length) {
+  if (!advisory) process.exit(1);
+  console.error(
+    `[lint] ${appName}: ADVISORY — ${over.length} pair(s) above ceiling, reported and NOT failed.\n` +
+      '  This leg is advisory because its debt is inherited, not introduced here.\n' +
+      '  See the `lint:` job comment in ci.yml for the condition that removes it.\n',
+  );
+  process.exit(0);
+}
 console.log(`\n[lint] ${appName}: OK — ${totalWarnings} warning(s), all at or under ceiling.`);
 
 // ── helpers ─────────────────────────────────────────────────────────────────

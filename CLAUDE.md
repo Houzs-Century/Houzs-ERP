@@ -481,7 +481,7 @@ never nullish.
 
 - `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
   matrixed over the two apps. NOT a required status check yet.
-- **The FRONTEND leg enforces; the BACKEND leg is `continue-on-error` and only
+- **The FRONTEND leg enforces; the BACKEND leg runs `-- --advisory` and only
   reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
   ceiling, all of it debt `main` grew while the linter waited to land, and
   twelve of them are `no-unnecessary-condition` in the money routes where
@@ -490,8 +490,14 @@ never nullish.
   `??` it calls redundant is the only guard left (worked example in the
   `lint:` job's own comment in `ci.yml`). The upstream fix needs honest types,
   and `schema.pg.ts` covers **none** of the SCM money tables — `drizzle-kit
-  pull` first. Remove `continue-on-error` when that is done and the backend
-  leg is green, not before.
+  pull` first. Drop the `--advisory` flag when that is done and the backend leg
+  is green, not before. **Locally it is still strict** — `npm --prefix backend
+  run lint` exits 1 and shows you the findings; only CI's backend leg is told to
+  report. And a HARD error (ESLint missing, config broken) is never advisory,
+  because a gate that did not execute must not report a pass. `--advisory` sits
+  on the script rather than `continue-on-error` on the job because the latter
+  stops the workflow failing but still publishes the check run as FAILURE —
+  measured 2026-08-14 — so the red X survives and the wallpaper stays.
 - **It runs `node_modules/eslint/bin/eslint.js` under `process.execPath`, not the
   `.bin/eslint` shim, and that is deliberate.** The shim is a POSIX shell script
   Windows cannot execute (ENOENT, reported as "no ESLint installed" because
