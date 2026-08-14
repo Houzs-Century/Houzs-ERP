@@ -1239,7 +1239,7 @@ Total: 1020 route registrations across 135 files.
 - L56  GET    /
 
 ## backend/src/routes/projects_print.ts  (1)
-- L189  GET    /:id
+- L336  GET    /:id
 
 ## backend/src/routes/search.ts  (1)
 - L268  GET    /
