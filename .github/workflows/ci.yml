@@ -41,6 +41,25 @@ jobs:
   # for no reason — it does not depend on them.
   backend-typecheck:
     runs-on: ubuntu-latest
+    # A throwaway PostgreSQL, here and not in backend-postgres, for one reason:
+    # this is a REQUIRED context and that one is not. On 2026-08-13 a colliding
+    # migration merged four minutes into the test that caught it, because the
+    # test lived in a job nothing gated on. A migration gate that does not block
+    # the merge is a gate that watches the deploy break.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: houzs_replay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d houzs_replay"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -192,6 +211,37 @@ jobs:
       # checker.
       - run: npm run test:release-discipline
       - run: npm run audit:release-discipline
+      # THE MIGRATION TREE MUST APPLY, and only a real PostgreSQL can say so.
+      #
+      # This is the gate that did not exist on 2026-08-14, when mig 0290 renamed
+      # a view column, CREATE OR REPLACE VIEW refused it, and the FIRST time that
+      # SQL ever met a real database was the run against PRODUCTION. Nothing
+      # could have caught it: SQL is not typechecked, tests/setup.ts replays the
+      # D1 mirror (a different tree, and SQLite does not enforce the rule), and
+      # the pg suite applies only the migrations a test names.
+      # See docs/migration-gate-coe.md.
+      #
+      # It runs the DEPLOY'S OWN TOOL against a throwaway database, so fidelity
+      # is exact rather than approximate: scripts/pg-migrate.mjs, the same file
+      # deploy.yml runs, over migrations-pg/, which is self-contained from
+      # 0000_baseline.sql.
+      #
+      # SKIPPED when the PR touches no migration, because 291 files is not free.
+      # If the diff cannot be computed the replay RUNS — a gate that cannot see
+      # its input must not report a pass, which is the same rule the ratchet
+      # above follows.
+      - name: Replay every migration in order against an empty database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/houzs_replay
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || true)
+          if [ -n "$base" ] && git diff --quiet "$base" HEAD -- src/db/migrations-pg; then
+            echo "No migration changed against $base — replay skipped."
+            exit 0
+          fi
+          [ -n "$base" ] || echo "Could not resolve a merge base; replaying anyway."
+          echo "Replaying $(ls src/db/migrations-pg/*.sql | wc -l) migrations into houzs_replay."
+          time node scripts/pg-migrate.mjs
       # The no-growth half. Separate step so a git-plumbing failure is
       # obviously not a discipline failure, and so the gate above still stands
       # if this one ever has to be looked at.
