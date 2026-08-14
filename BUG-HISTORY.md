@@ -81,8 +81,11 @@ function scope. `:4563` is the SEARCH STRING (`params.get("q")`, read at `:4785`
 each reaching for the shortest name in a 15,000-line file. The second
 declaration wins for the type checker, so `q.data` resolves against a `string`.
 
-**Fix** — the query object is `eventsQ`; the search string keeps `q`, because
-that is what the URL parameter is called and four readers say so.
+**Fix** — landed as #2198, which renamed the SEARCH variable `q -> search` and
+left the query object as `q`. I had prepared the opposite rename (query object
+to `eventsQ`) and dropped it when theirs merged first: both are correct, and
+re-naming it a second time would be churn in a file that is already the most
+collided-on in the repo. This entry is the write-up that fix did not carry.
 
 **A near miss worth recording.** I first read `:4765` through a 120-column
 truncation, concluded the call was missing a comma before its fetcher, and wrote
