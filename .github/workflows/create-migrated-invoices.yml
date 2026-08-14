@@ -1,0 +1,84 @@
+name: Migrated invoices — GR to PI, DO to Invoice (DRY-RUN by default)
+
+# Manual. Completes the ERP's own document chain for the paperwork carried over
+# from AutoCount: our migrated goods receipts become the purchase invoices
+# AutoCount already raised from them, our migrated delivery orders become the
+# sales invoices. Owner 2026-08-11, narrowed twice to "我们ERP的GR to PI" and
+# "我们ERP 的DO to Invoice" — this converts OUR documents and does NOT import
+# AutoCount's invoice history.
+#
+# DRY-RUN IS THE DEFAULT AND IT PRINTS EXACTLY WHAT APPLY WOULD WRITE — one line
+# per invoice, with its AutoCount number and its value, plus every refusal with
+# the reason and both totals. Read that output before choosing apply.
+#
+# The invoices carry AutoCount's numbering, are flagged migrated_no_stock
+# (migration 0280), post NO journal entry, and are never enqueued to the
+# AutoCount write-back — the invoice each one mirrors already exists in the live
+# account book. No inventory movement is written in either mode; an invoice never
+# moves stock in this ERP.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run prints the plan; apply writes it"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      kind:
+        description: "Which half to run"
+        required: true
+        default: "both"
+        type: choice
+        options: [both, pi, si]
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      confirm:
+        description: "For mode=apply, type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: create-migrated-invoices-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # tsx so the gate logic is IMPORTED from src/scm/lib/migrated-chain.ts —
+      # the same module the convert routes use — never re-implemented here.
+      - run: npx tsx scripts/create-migrated-invoices.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
+          CONFIRM: ${{ inputs.confirm }}
+          KIND: ${{ inputs.kind }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/create-migrated-invoices.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
+          CONFIRM: ${{ inputs.confirm }}
+          KIND: ${{ inputs.kind }}

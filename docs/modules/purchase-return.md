@@ -158,6 +158,8 @@ lines (no grnItemId) stay uncapped."*
 | item is NOT on the named GRN | allowed — genuinely ad-hoc |
 | item IS on the named GRN but the line does not link to it | **REFUSED** — link it |
 
+> Scope note (2026-08-12): this matrix runs on `POST /` CREATE only (`findUnlinkedPrLines` at `:552-565`). `POST /:id/items` never calls it — after create, an unlinked line whose material IS on the header GRN is accepted (only the linked-line qty cap runs).
+
 A production scan on 2026-08-04 found **zero** rows of this shape, so the guard
 is preventative (UNVERIFIED as of 2026-08-13: needs production data). It was
 added anyway because the cost is one query on a path already doing several, and
@@ -178,10 +180,16 @@ reachable and `grn_item_id` NULL rows really do get written.
 | `scm.purchase_returns` | Header — `return_number`, `status`, `grn_id`, `posted_at`, `company_id` |
 | `scm.purchase_return_items` | Lines — `grn_item_id` (nullable, §5), item, qty, cost |
 
-Every read is company-scoped through `requireActiveCompanyId(c)` +
-`scopeToCompanyId(...)`, returning `NOT_THIS_COMPANY` (404) rather than leaking
-that the row exists elsewhere. Unlike Delivery Return, there is **no sales-scope
-row filter** here — procurement is not scoped own+downline.
+Every read is company-scoped — but by TWO different mechanisms, and one of them
+was missing until 2026-08-13. The write and status paths use the strict
+`requireActiveCompanyId(c)` + `scopeToCompanyId(...)` pair, returning
+`NOT_THIS_COMPANY` (404). The reads use the softer `scopeToCompany(q, c)` and
+404 `not_found`. `GET /:id/linked` used neither: it was a bare `.eq('id', id)`,
+so it resolved ANY company's document to its linked document numbers. All seven
+`/:id/linked` endpoints across the SCM routers shared that gap and were scoped
+on 2026-08-13 (BUG-HISTORY). Verified by reading each handler, not by grep.
+
+Unlike Delivery Return, there is **no sales-scope row filter** here — procurement is not scoped own+downline.
 
 ---
 

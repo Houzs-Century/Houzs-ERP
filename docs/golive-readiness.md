@@ -1,3 +1,30 @@
+> # ⚠ PARTLY SUPERSEDED — re-verified against the code 2026-08-13
+>
+> Written against `origin/main @ 0cbf0415`; the tree moved. Thirteen claims were
+> refuted by reading the source. **The pattern matters more than the list: this
+> document scores things NOT BUILT that are built**, so planning from its
+> blocker list understates readiness. The load-bearing ones:
+>
+> | This doc says | The code says (read 2026-08-13) |
+> |---|---|
+> | B3 / §5.4: the write-back is a one-shot program — no ERP caller, no queue, no retry | Built: migration `0277` creates `scm.autocount_outbox`; `autocount-outbox.ts` carries enqueue/dispatch/drain with `MAX_ATTEMPTS = 6`; `index.ts:525` drains it on the `*/5` cron; enqueue hooks exist on all six document routers |
+> | B9 / step 16: per-module freeze NOT built | Built: `write-freeze.ts:124-183` parses `'<companies> - <area>'` and lifts per area; mapping in `scm-areas.ts`; `set-write-freeze.mjs` takes an `AREAS` input |
+> | §3.1: `hu?.is_owner` bypasses the freeze independently | No such flag exists, and `write-freeze.ts:266` says so explicitly. Owner bypass arrives as `'*'` |
+> | S1: the 503 body's `reason` is never read by the client | Both sides fixed: backend sends `reason` AND `message` (`write-freeze.ts:310-311`), client reads both (`api/client.ts:206,:212`) |
+> | B7: `mfgPurchaseOrders.delete('/:id')` violates never-delete | The endpoint does not exist. The only DELETEs on that router are line-item and allocation |
+> | S2 / U2: the UNIQUE index on `inventory_movements` does not exist | `0279_scm_inv_mov_correction_seq.sql:115-118` creates `uq_inv_mov_do_source_v2`, plus three sibling partial uniques |
+> | S5: `linked_ac_docno` on `purchase_orders` has no migration | `0277:99` adds it, with the index at `:105` |
+> | B8 / U1: there is no marker distinguishing an imported document | `linked_ac_docno` IS the marker — `so-revision.ts:325-326` derives `trustOperatorSelling: 'including-zero'` from it. **Partial**: covers the amendment-approve path only, not the direct save path |
+>
+> **One item got WORSE, not better, and is now a live risk.** S7 said the cron
+> bypassing the write freeze was "correct today, wrong once a sync queue
+> exists". The queue now exists. Verified 2026-08-13: `autocount-outbox.ts` has
+> ZERO freeze references, the freeze is Hono middleware (`scm/index.ts:113`),
+> and the drain runs from `scheduled()` where middleware never executes. Only
+> the write-back toggle holds it. Task chip raised.
+>
+> Every `write-freeze.ts` line cite below is stale — the file was rewritten.
+
 # Houzs ERP — AutoCount Go-Live Readiness
 
 **Date:** 2026-08-11

@@ -52,7 +52,7 @@ without `allowSales` for new / from-so.
 - `useMfgDeliveryOrders(status?)` (`:198`) — legacy unpaginated,
   `['mfg-delivery-orders', status ?? 'all']`.
 - `useMfgDeliveryOrderDetail(id)` (`:233`) — `['mfg-delivery-order-detail', id]`.
-- `useMfgDeliveryOrderPayments(id)` (`:370`) — `['mfg-delivery-orders', id, 'payments']`,
+- `useDeliveryOrderPayments(id)` (`:370`) — `['mfg-delivery-orders', id, 'payments']`,
   `staleTime: 2 * 60_000` (longer than the rest).
 - `useDeliverableSoLines*` (`:54`, `:116`) and `useSoConvertHeader` (`:101`) feed
   the SO→DO pickers.
@@ -665,3 +665,18 @@ What that means for anyone reading or writing this module:
   rediscovered as a bug.
 - When the line-retirement work lands for real, these rows are still present
   and can be flipped to `cancelled = true` in one statement.
+
+
+## Coverage note (2026-08-12 verification sweep)
+
+Two things the code carries that this guide did not mention, recorded so the
+absence is a known gap rather than a silent one:
+
+- `doHasDownstream` moved from the route file into
+  `backend/src/scm/lib/downstream-lock.ts:129-143` — same behavior (any
+  non-cancelled DR/SI blocks).
+- The DO-time live allocator `backend/src/scm/lib/do-live-allocator.ts` runs
+  **SHADOW-ONLY** inside `resolveShipCommitments`
+  (`delivery-orders-mfg.ts:640-768`): it logs divergences to
+  `entity_audit_log` and binds nothing — stored-link resolution still decides.
+  (PR #1681 to flip it live is DRAFT, owner-gated.)

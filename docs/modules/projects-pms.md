@@ -1,3 +1,17 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. PIC_GRACE_DAYS is 30, not 4 (projectAcl.ts:90, widened 2026-07-31).
+> 2. isFinanceViewer admits projects.finance.view holders before the director test (pmsAccess.ts:335-344); financeHiddenForUser inherits that.
+> 3. stock_transfer.approve/agreement.approve are NOT dead: pmsAccess.ts:260-261 grants WF_SENSITIVE visibility; permissions.ts:216-232 EXPLICIT_APPROVAL_KEYS gate checklist tick/status/review (projects.ts:3815,:3845,:3878).
+> 4. The catalogue also carries stock_in.approve and projects.finance.view (permissions.ts:34-49).
+> 5. For the four EXPLICIT_APPROVAL_KEYS, * does NOT confer the key (permissions.ts:223-232) — a bare-* admin cannot tick an approval-gated item.
+> 6. denyFinance (403) sits on /api/finance/pnl and every projects money read (finance.ts:234,:404; projects.ts:591…:2897) — projects.read alone no longer reads P&L.
+> 7. POST /:id/read (a write) is gated by requirePageAccess only (projects.ts:2576).
+> 8. Fair Report has FOUR stages — pnl added, management-only (fair-report.ts:25-26); management = isFinanceViewer && !salesDirector (:58).
+> 9. Defect review is region-split since 2026-08-11: Ops Exec for {Pulau Pinang, Kelantan, Terengganu, Perak} (projects.ts:1072-1087,:3709), Shukor the complement; both lanes time-boxed to events ended within 30 days.
+> 10. CREW_SCOPED_POSITIONS = {helper, storekeeper, storekeeper supervisor} — Driver is NOT list-crew-scoped (projects.ts:3703); drivers are caged only on the calendar (:4863-4869).
+> 11. idx_pfl_occurred is mig 0221/133, not 0213/132.
+
 # Module: Projects / PMS
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
@@ -401,8 +415,10 @@ Related routes elsewhere:
   all**, deliberately (`:45-55`: a Sales user who lacks the `projects.read`
   matrix permission still needs a bell). Scoped by `getProjectScope` at `:63`
   with an early empty return at `:64-71`.
-- `backend/src/routes/events.ts` — the manual setup/dismantle calendar, gated on
-  `trips.read.all` / `trips.manage`. **Not** the PMS calendar (`events.ts:13-24`).
+- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+  ungrantable permissions, PMS covers it). It was the manual setup/dismantle
+  calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
+  calendar. Kept here because the absence is the fact worth knowing.
 - `backend/src/scm/routes/reports.ts:1112`, `:1199` — the Fair / Sales Report.
 
 ---

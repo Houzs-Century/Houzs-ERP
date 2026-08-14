@@ -14,8 +14,30 @@
 // missing field never nulls an existing value. DRY-RUN by default; APPLY=1 writes.
 //
 // RE-RUN: convergent. A hand-written patch list, re-applied verbatim; the rows land on the same values. Not keyed on anything, so it also overwrites a human edit made since - check the list before a second run.
+//
+// THE MERGE HAPPENS IN THE DATABASE, and this script was the last of its family
+// where it did not. It used to SELECT `variants`, spread it in JavaScript
+// (`{...row.variants, ...p.variants}`) and assign the whole column back. That
+// preserved keys, which is why it never showed up as the "refresh scripts
+// REPLACE the whole variants jsonb" bug - but it carried the two failures
+// docs/jsonb-double-encoding-coe.md is about:
+//
+//   1. NO SHAPE GUARD. Spreading a `variants` that is an ARRAY - the shape the
+//      double-encoding defect left behind, and which #1938's repair owns - gives
+//      `{"0":..,"1":..}`, a valid object. The write would have turned a
+//      detectably damaged row into an undetectably damaged one.
+//   2. NO READ-BACK, AND NO RETURNING. `nItems++` counted attempts. The colour
+//      sweep reported three successful applies a day while destroying the column,
+//      because a command tag answers "did a row change", never "does the row hold
+//      what I meant".
+//
+// Both are closed: the write is `variants || patch` guarded on
+// jsonb_typeof(...) = 'object' (lib/variant-merge.mjs mergeReviewedVariantPatch),
+// counted from RETURNING, and every patched key is re-read on a FRESH CONNECTION
+// before the script reports success.
 import zlib from "node:zlib";
 import postgres from "postgres";
+import { mergeReviewedVariantPatch } from "./lib/variant-merge.mjs";
 
 const DST = process.env.DATABASE_URL;
 const PATCH = process.env.PATCH_B64;
@@ -38,7 +60,10 @@ async function main() {
   for (const p of poItems.slice(0, 15)) log(`  po ${p.po_number} ${p.code}: ${JSON.stringify({ ...p, po_number: undefined, code: undefined })}`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
 
-  let nItems = 0, nHdr = 0;
+  /* Every merged row, with the patch it was given, so the read-back at the end
+     can assert the VALUE landed rather than that a statement ran. */
+  const applied = [];
+  let nItems = 0, nHdr = 0, refused = 0;
   for (const p of items) {
     // address by uuid OR by (doc_no + item code) — the metrics report speaks
     // doc+code, so hand-parse patches shouldn't need an id lookup round-trip
@@ -50,16 +75,16 @@ async function main() {
       if (!hit) { log(`  !! item ${p.doc_no} ${p.code} not found, skipped`); continue; }
       p.id = hit.id;
     }
-    const [row] = await sql`SELECT variants FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
-    if (!row) { log(`  !! item ${p.id} not found, skipped`); continue; }
-    const v = { ...(row.variants || {}), ...(p.variants || {}) };
-    await sql`UPDATE scm.mfg_sales_order_items SET
-        variants = ${sql.json(v)},
-        custom_specials = COALESCE(${p.specials ? sql.json(p.specials) : null}, custom_specials),
-        gap_inches = COALESCE(${p.gap ?? null}, gap_inches),
-        divan_height_inches = COALESCE(${p.divan ?? null}, divan_height_inches),
-        leg_height_inches = COALESCE(${p.leg ?? null}, leg_height_inches)
-      WHERE id = ${p.id}`;
+    const n = await mergeReviewedVariantPatch(sql, {
+      table: "mfg_sales_order_items", id: p.id, patch: p.variants || {},
+      geometry: { gap: p.gap ?? null, divan: p.divan ?? null, leg: p.leg ?? null },
+    });
+    if (!n) { refused++; log(`  !! item ${p.id} not merged - row missing, or its variants is not a jsonb object (#1938 owns that shape)`); continue; }
+    /* custom_specials is a plain column, not jsonb-merged, and stays a separate
+       statement so a specials-only patch cannot be mistaken for a variant one. */
+    if (p.specials) await sql`UPDATE scm.mfg_sales_order_items
+        SET custom_specials = ${sql.json(p.specials)} WHERE id = ${p.id}`;
+    applied.push({ table: "mfg_sales_order_items", id: String(p.id), label: `item ${p.id}`, patch: p.variants || {} });
     nItems++;
   }
   for (const p of headers) {
@@ -73,22 +98,54 @@ async function main() {
   }
   let nPo = 0;
   for (const p of poItems) {
-    const [row] = await sql`SELECT i.id, i.variants FROM scm.purchase_order_items i
+    // id lookup only - `variants` is never read into JavaScript any more
+    const [row] = await sql`SELECT i.id FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
       WHERE h.company_id = 1 AND (h.po_number = ${p.po_number} OR h.linked_ac_docno = ${p.po_number})
         AND upper(i.material_code) = ${(p.code || "").toUpperCase()} LIMIT 1`;
     if (!row) { log(`  !! po item ${p.po_number} ${p.code} not found, skipped`); continue; }
-    const v = { ...(row.variants || {}), ...(p.variants || {}) };
-    await sql`UPDATE scm.purchase_order_items SET
-        variants = ${sql.json(v)},
-        custom_specials = COALESCE(${p.specials ? sql.json(p.specials) : null}, custom_specials),
-        gap_inches = COALESCE(${p.gap ?? null}, gap_inches),
-        divan_height_inches = COALESCE(${p.divan ?? null}, divan_height_inches),
-        leg_height_inches = COALESCE(${p.leg ?? null}, leg_height_inches)
-      WHERE id = ${row.id}`;
+    const n = await mergeReviewedVariantPatch(sql, {
+      table: "purchase_order_items", id: row.id, patch: p.variants || {},
+      geometry: { gap: p.gap ?? null, divan: p.divan ?? null, leg: p.leg ?? null },
+    });
+    if (!n) { refused++; log(`  !! po item ${p.po_number} ${p.code} not merged - its variants is not a jsonb object (#1938 owns that shape)`); continue; }
+    if (p.specials) await sql`UPDATE scm.purchase_order_items
+        SET custom_specials = ${sql.json(p.specials)} WHERE id = ${row.id}`;
+    applied.push({ table: "purchase_order_items", id: String(row.id), label: `po ${p.po_number} ${p.code}`, patch: p.variants || {} });
     nPo++;
   }
-  log(`DONE. item patches applied ${nItems}; header patches applied ${nHdr}; po item patches applied ${nPo}`);
+  log(`merged (counted from RETURNING, not the command tag): items ${nItems}, po items ${nPo}; header patches applied ${nHdr}; refused by the shape guard ${refused}`);
   await sql.end();
+
+  /* ---- READ-BACK ON A FRESH CONNECTION -------------------------------------
+     The session that just wrote is the worst available witness for what the rows
+     now hold - that is the whole lesson of the colour sweep, which reported
+     "APPLIED - stamped 146 sofa lines" three times while appending a string to
+     an array. Re-open, re-read, and assert the intended VALUE. */
+  const verify = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  let failed = 0;
+  try {
+    let ok = 0; const bad = [];
+    for (const table of ["mfg_sales_order_items", "purchase_order_items"]) {
+      const mine = applied.filter((a) => a.table === table);
+      if (!mine.length) continue;
+      const rows = await verify.unsafe(
+        `SELECT id::text AS id, variants FROM scm.${table} WHERE id::text = ANY($1::text[])`,
+        [mine.map((a) => a.id)]);
+      const seen = new Map(rows.map((r) => [r.id, r.variants]));
+      for (const a of mine) {
+        const v = seen.get(a.id);
+        if (!v || typeof v !== "object" || Array.isArray(v)) { bad.push(`${a.label}: row missing, or variants is not an object`); continue; }
+        const wrong = Object.entries(a.patch).filter(([k, want]) => JSON.stringify(v[k] ?? null) !== JSON.stringify(want ?? null));
+        if (wrong.length) bad.push(`${a.label}: holds ${JSON.stringify(Object.fromEntries(wrong.map(([k]) => [k, v[k] ?? null])))}, wanted ${JSON.stringify(Object.fromEntries(wrong))}`);
+        else ok++;
+      }
+    }
+    log(`READ-BACK on a fresh connection: ${ok}/${applied.length} patched rows hold the value that was written`);
+    for (const b of bad) console.log(process.env.GITHUB_ACTIONS ? `::error::READ-BACK FAILED - ${b}` : `ERROR: READ-BACK FAILED - ${b}`);
+    failed = bad.length;
+  } finally { await verify.end(); }
+  if (failed) process.exit(1);
+  log(`DONE. item patches applied ${nItems}; header patches applied ${nHdr}; po item patches applied ${nPo}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

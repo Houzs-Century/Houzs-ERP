@@ -1,0 +1,66 @@
+name: Completeness claim
+
+# A PR that says it covered a whole population — "every desktop + mobile call
+# site", "all four arms", "system-wide" — must paste the command that
+# ENUMERATES that population plus the command's output, in a ```enumeration
+# block. This job RE-RUNS the command against the PR head and fails if the
+# output differs.
+#
+# PR #1763 is why. Its body said itemCode was threaded through "every desktop +
+# mobile call site"; five of thirteen call sites never got it, and the DIVAN
+# ONLY exemption was half-applied for four days. Nothing in CI could see that,
+# because the only wrong artifact was the CLAIM, and nothing read claims.
+#
+# WHY THIS IS ITS OWN WORKFLOW AND NOT A JOB IN ci.yml
+# ----------------------------------------------------
+# Its inputs are the PR TITLE, BODY and LABELS, and ci.yml cannot watch those.
+# `on: pull_request` defaults to [opened, synchronize, reopened] — no `edited`,
+# no `labeled`. So an author who fixed a stale enumeration by editing the body
+# would get no re-run and would sit on a red check with no way to turn it green
+# except an empty commit. Adding `edited`/`labeled` to ci.yml instead would
+# re-run FOUR test shards, Playwright and two Postgres services on every typo
+# in a PR description. This job costs one checkout and one node process, so it
+# can afford the triggers that make it usable.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+concurrency:
+  group: completeness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# The check EXECUTES a command written in the PR body. It is handed no write
+# scope and no secrets, and the script additionally runs that command with a
+# scrubbed environment, so this token never reaches it.
+permissions:
+  contents: read
+
+jobs:
+  completeness-claim:
+    runs-on: ubuntu-latest
+    steps:
+      # The PR HEAD, not the merge commit. The author enumerated their own tree
+      # and that is what they can control; measuring the merge would fail an
+      # honest PR whenever main happened to add a member of the population —
+      # the same false-failure shape that took out the bundle gate for four
+      # PRs in eight days (see ci.yml, "Measure the merge base").
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # git grep only sees the working tree, and depth 1 is the whole tree.
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # No `npm ci`: the gate and its tests are zero-dependency by design, so
+      # they run on a bare checkout. Running the tests HERE means the checker's
+      # own logic is checked on every PR that touches it — a checker nobody
+      # runs is not a checker.
+      - name: Test the checker itself
+        run: node --test scripts/check-completeness-claim.test.mjs
+
+      - name: Reproduce every completeness claim in this PR
+        run: node scripts/check-completeness-claim.mjs
