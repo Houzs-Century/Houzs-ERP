@@ -182,10 +182,16 @@ isolates) and the module map:
   a `target_company_ids` dimension, mig 0113).
 
 ### HOUZS-ONLY — pinned to the base company
-- **Service Cases / ASSR.** A Houzs-exclusive concept (2990 has 0% service
-  overlap). Its reads pin to HOUZS via `houzsCompanySql(c)` / `houzsCompanyIds(c)`
-  — *not* the caller's allowed set — so a both-company user never sees 2990 data
-  under Service Cases (`companyScope.ts:207-261`; see `routes/assr.ts`).
+- **Service Cases / ASSR.** ~~Pinned to HOUZS.~~ **NO LONGER TRUE — the pin was
+  removed on 2026-07-20, and this paragraph described the opposite for weeks.**
+  `assrCompanySql` (`backend/src/routes/assr.ts:145-147`) returns
+  `allowedCompaniesSql(c, col)` — it IS the caller's allowed set, so a
+  both-company user DOES see 2990 service cases. `houzsCompanySql` /
+  `houzsCompanyIds` have no caller left anywhere in `backend/src`,
+  `frontend/src` or the tests (`scm/lib/companyScope.ts:24-34` says so), and
+  `backend/tests/assrCompanyScope.test.ts` pins the widened behaviour. A doc
+  asserting a tenant pin that is not there is the worst shape this file can
+  take: it reads as a guarantee.
 
 **Implication for a fresh company:** it inherits the SHARED and UNIFIED modules
 for free (Delivery Planning / Service Cases / fleet / staff need **nothing** —
