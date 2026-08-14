@@ -832,6 +832,24 @@ function DataTableInner<T>({
     });
   }
 
+  /* Column funnels are sticky and INVISIBLE from anywhere but the header that
+     carries them: a colleague who ticked one value months ago sees a short list
+     for good, reads it as missing records, and reports a data bug (owner
+     2026-08-14, a Purchaser seeing 5 of 60 POs — the same account showed all 60
+     on another machine, because the funnel lives in localStorage). So the toolbar
+     Reset counts them as filters too, and clearing drops them. Pages keep owning
+     their own pills/params via `resetFilters`; this is the part only the table
+     can see. */
+  const colFiltersActive = useMemo(
+    () => Object.values(colFilters).some((values) => values.length > 0),
+    [colFilters]
+  );
+  const resetActive = colFiltersActive || (resetFilters?.active ?? false);
+  function handleResetFilters() {
+    if (colFiltersActive) setColFilters({});
+    resetFilters?.onReset();
+  }
+
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -1273,9 +1291,47 @@ function DataTableInner<T>({
     return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
+  /* The prefs that reproduce what is on screen right now, for the moment a
+     gesture has to end the baseline. Order comes along or the columns would snap
+     from the preset's arrangement back to definition order the instant the
+     baseline lifts. */
+  function materializeBaseline() {
+    const movable = allColumns.filter((c) => !c.alwaysVisible);
+    return {
+      order: movable.map((c) => c.key),
+      hidden: new Set(movable.filter((c) => effectiveHidden.has(c.key)).map((c) => c.key)),
+      shown: new Set(
+        movable.filter((c) => c.defaultHidden && !effectiveHidden.has(c.key)).map((c) => c.key)
+      ),
+    };
+  }
+
   function toggleColumn(key: string) {
     const col = allColumns.find((c) => c.key === key);
     const isHidden = effectiveHidden.has(key);
+    /* While a default layout is in play the user's lists are empty and READ PAST
+       — effectiveHidden consults the baseline instead — so writing to them below
+       would be a no-op the baseline immediately overrules. Worse, the reveal path
+       writes nothing at all for a column the preset hides that carries no
+       `defaultHidden` flag: the tick simply never lands, which is every hidden
+       column on a list whose defaults live entirely in a saved layout (owner
+       2026-08-14, GRN No un-tickable on Purchase Orders under "PO Outstanding").
+       Bake the baseline into real prefs first — exactly what applying a layout
+       does — then land the toggle on top, so there is no preset mode to escape. */
+    if (baselineLayout) {
+      const base = materializeBaseline();
+      if (isHidden) {
+        base.hidden.delete(key);
+        if (col?.defaultHidden) base.shown.add(key);
+      } else {
+        base.hidden.add(key);
+        base.shown.delete(key);
+      }
+      setOrder(base.order);
+      setHiddenList([...base.hidden]);
+      setShownList([...base.shown]);
+      return;
+    }
     if (isHidden) {
       // Reveal: drop from userHidden, and (if defaultHidden) add to shown.
       setHiddenList((prev) => prev.filter((k) => k !== key));
@@ -1461,6 +1517,11 @@ function DataTableInner<T>({
    *  column stays on afterwards rather than snapping back on the next mount. */
   function showAllColumns() {
     const movable = allColumns.filter((c) => !c.alwaysVisible);
+    /* Same baseline trap as toggleColumn: on a list whose hidden columns come
+       only from the default layout, both writes below are no-ops and Show all
+       does nothing. Writing the order ends the baseline (and keeps the preset's
+       arrangement) so the empty hidden-list is the one that counts. */
+    if (baselineLayout) setOrder(materializeBaseline().order);
     setHiddenList([]);
     setShownList(movable.filter((c) => c.defaultHidden).map((c) => c.key));
   }
@@ -2322,13 +2383,14 @@ function DataTableInner<T>({
               />
             </div>
           )}
-          {resetFilters && (
-            <ResetFiltersButton
-              active={resetFilters.active}
-              onReset={resetFilters.onReset}
-              label={resetFilters.label}
-            />
-          )}
+          {/* Rendered unconditionally: a sticky column funnel is reason enough
+              to offer a Reset, on the ~23 lists that pass no `resetFilters` too.
+              The button hides itself while nothing is active. */}
+          <ResetFiltersButton
+            active={resetActive}
+            onReset={handleResetFilters}
+            label={resetFilters?.label}
+          />
           <div className="flex items-center gap-2 text-[11px] font-medium text-ink-secondary">
             {caption && (
               <>
