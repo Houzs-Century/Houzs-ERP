@@ -464,6 +464,21 @@ const REVERSAL_NOTE = /^\s*--\s*REVERSAL\s*[:\-–—]\s*(\S[^\n]*(?:\n\s*--\s{2
 const VIEW_RECREATE = /\bDROP\s+VIEW\b/i;
 const GRANT_WORDS = /grant|acl|privileg|owner/i;
 
+/**
+ * SQL with comments blanked, for rules that ask what a migration DOES. A
+ * `DROP VIEW` inside a comment executes nothing, and matching it there inverts
+ * the rule: mig 0290 uses CREATE OR REPLACE precisely SO THAT no ACL is lost,
+ * says so in its header — and was failed for naming the hazard it avoided,
+ * under a message recommending the very thing it had rejected. A checker that
+ * punishes the safe choice for explaining itself teaches people to stop
+ * explaining. Newlines are preserved so nothing downstream shifts.
+ */
+function sqlOnly(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/--[^\n]*/g, (m) => ' '.repeat(m.length));
+}
+
 export const MIGRATION_RULES = [
   {
     id: 'reversal-note',
@@ -490,7 +505,7 @@ export function scanMigration({ name, source }) {
     detail['reversal-note'] = note
       ? 'the REVERSAL note is present but says nothing'
       : 'no `-- REVERSAL:` note — this file is immutable the moment it reaches prod';
-  } else if (VIEW_RECREATE.test(source) && !GRANT_WORDS.test(note[1])) {
+  } else if (VIEW_RECREATE.test(sqlOnly(source)) && !GRANT_WORDS.test(note[1])) {
     failed.push('reversal-note-grants');
     detail['reversal-note-grants'] = 'this migration drops a view, and the reversal note never mentions grants — that is exactly what 0189 missed';
   }

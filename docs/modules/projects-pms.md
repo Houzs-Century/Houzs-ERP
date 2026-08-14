@@ -121,7 +121,7 @@ its existing-by-name upsert to the caller's company so it can't hijack another
 company's same-named row. `PATCH`/`DELETE /venues/:id` carry the same
 `activeCompanySql(c)` guard on their WHERE; PATCH returns **404** on a scoped miss.
 
-**Checklist TEMPLATES carry that same lock since PG mig 0288** (owner decision
+**Checklist TEMPLATES carry that same lock since PG mig 0292** (owner decision
 2026-08-13: *应该按公司分开*). They were the odd ones out — company-BLIND on the
 read *and* the write side, i.e. one shared master both companies edited — while
 `project_brands` and `project_venues`, in the same router and stamped by the same
