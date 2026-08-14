@@ -295,3 +295,72 @@ describe('scope', () => {
     expect(out.map((r) => r.outcome).sort()).toEqual(['document-gone', 'would-requeue']);
   });
 });
+
+/* HC-SO-2608-001 and -002, 2026-08-13: both were re-queued, both then FAILED
+   six times on `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`, and the
+   tool could not touch them again — it only ever selected `skipped`. That
+   default is right (a failed row was SENT, and the C# create has no duplicate
+   guard on the ERP number), so the answer is an explicit opt-in, not a wider
+   default. */
+describe('a document AutoCount refused is out of scope unless asked for', () => {
+  /** The order with the cause fixed, so the composer accepts it. */
+  const sendable = () => ({ ...soWithoutLocation(), sales_location: 'KL WAREHOUSE' });
+  const failedRow = (extra: Row = {}) => skippedRow({
+    id: 'failed-1',
+    status: 'failed',
+    attempts: 6,
+    last_error: 'Gave up after 6 attempts. Last error: Foreign Key Error (Constraint Name=FK_SO_SalesAgent)',
+    ...extra,
+  });
+
+  test('by default a failed row is not even looked at', async () => {
+    const sb = world(sendable(), [failedRow()]);
+    const results = await requeueSkipped(sb as never, { apply: true });
+    expect(results).toEqual([]);
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('with includeFailed it is re-composed and queued', async () => {
+    const sb = world(sendable(), [failedRow()]);
+    const [r] = await requeueSkipped(sb as never, { apply: true, includeFailed: true });
+    expect(r.outcome).toBe('requeued');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('a dry run with includeFailed still writes nothing', async () => {
+    const sb = world(sendable(), [failedRow()]);
+    const [r] = await requeueSkipped(sb as never, { includeFailed: true });
+    expect(r.outcome).toBe('would-requeue');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('a document already SENT is never re-sent, even with includeFailed', async () => {
+    /* The case the option must not break: the failure was transient, the retry
+       landed, and the book already holds the document. */
+    const sb = world(sendable(), [
+      failedRow(),
+      skippedRow({ id: 'sent-1', status: 'sent', attempts: 1, last_error: null }),
+    ]);
+    const [r] = await requeueSkipped(sb as never, { apply: true, includeFailed: true });
+    expect(r.outcome).toBe('already-queued');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('a PENDING row also vetoes — the drain is already going to send it', async () => {
+    const sb = world(sendable(), [
+      failedRow(),
+      skippedRow({ id: 'pending-1', status: 'pending', attempts: 1, last_error: null }),
+    ]);
+    const [r] = await requeueSkipped(sb as never, { apply: true, includeFailed: true });
+    expect(r.outcome).toBe('already-queued');
+  });
+
+  test('another FAILED row does not veto — dead history is not a live send', async () => {
+    const sb = world(sendable(), [failedRow(), failedRow({ id: 'failed-2' })]);
+    const results = await requeueSkipped(sb as never, { apply: true, includeFailed: true });
+    expect(results.map((r) => r.outcome)).toEqual(['requeued', 'already-queued']);
+    /* The first one queues; the second then sees that live pending row and stands down,
+       so one document cannot be queued twice in a single pass. */
+    expect(pending(sb)).toHaveLength(1);
+  });
+});
