@@ -188,6 +188,10 @@ interface ProjectRow {
   active_section_name?: string | null;
   sections_total?: number;
   sections_complete?: number;
+  // Populated only when a real section is picked in the Status filter (owner
+  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
+  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
+  section_tasks_map?: string | null;
 }
 
 interface ProjectDetail {
@@ -1250,6 +1254,61 @@ function MultiSelectFilter({
   );
 }
 
+// Per-project task badges for the Status (section) filter (owner 2026-08-14).
+// Reads the backend section_tasks_map ("title=status=due" joined by "|") and
+// renders one pill per task in the chosen section: DONE (green), OVERDUE (red,
+// with days late) or PENDING (amber). Overdue first, then pending, then done.
+// Renders nothing unless a real section is picked (the map is absent otherwise),
+// so the default project list is unchanged.
+function SectionTaskBadges({ map }: { map?: string | null }) {
+  if (!map) return null;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+  const tasks = map
+    .split("|")
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split("=");
+      const title = parts[0] ?? "";
+      const status = parts[1] ?? "";
+      const due = parts[2] ?? "";
+      let kind: "done" | "overdue" | "pending";
+      let daysLate = 0;
+      if (status === "done") kind = "done";
+      else if (due && due < today) {
+        kind = "overdue";
+        daysLate = Math.max(1, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000));
+      } else kind = "pending";
+      return { title, kind, daysLate };
+    });
+  if (!tasks.length) return null;
+  const rank = { overdue: 0, pending: 1, done: 2 } as const;
+  tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || b.daysLate - a.daysLate);
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tasks.map((t, i) => (
+        <span
+          key={i}
+          title={t.title}
+          className={cn(
+            "inline-flex max-w-[170px] items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold",
+            t.kind === "done"
+              ? "border border-synced/40 bg-synced/15 text-synced"
+              : t.kind === "overdue"
+                ? "border border-err/40 bg-err/15 text-err"
+                : "border border-amber-500 bg-amber-100 text-amber-800",
+          )}
+        >
+          <span className="truncate">{t.title}</span>
+          {t.kind === "overdue" && <span className="shrink-0 font-mono">{t.daysLate}d</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ProjectsListView() {
   const { can, user } = useAuth();
   const toast = useToast();
@@ -1604,6 +1663,7 @@ function ProjectsListView() {
               )}
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
+            <SectionTaskBadges map={r.section_tasks_map} />
           </div>
         );
       },
