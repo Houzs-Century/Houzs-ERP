@@ -88,16 +88,58 @@ is shown armed rather than assumed to be.
 ## 5. Deferred — and this is the one that matters
 
 **No in-order replay of `migrations-pg/` against a real PostgreSQL exists.**
-Owner decision, because it is not free: 291 files, and it belongs in the
-`backend-postgres` job, whose runtime the CI-capacity COE already treats as a
-budget. The options, cheapest first:
 
-1. **Replay only what a PR touches, plus its dependencies.** Catches this class
-   for edited objects; misses ordering hazards between unrelated migrations.
-2. **Full in-order replay into a scratch database per PR.** Catches everything
-   of this shape. Costs a job.
-3. **Nothing, and rely on per-migration pg tests.** The status quo, which is what
-   let this through — two of five migrations had one.
+This section first listed three options, "full in-order replay into a scratch
+database" among them, and recommended it. **That option was then built, run, and
+disproved.** It is recorded here as ruled out rather than deleted, because it is
+the obvious idea and the next person will have it too.
+
+### RULED OUT: replay from an empty database — PR #2164, 2026-08-14
+
+Four CI runs, each refuting a different assumption. The first three were fixable
+and two of the fixes are worth keeping; the fourth is disqualifying.
+
+| run | result | what it refuted |
+| --- | --- | --- |
+| 1 | step ran **0s and skipped itself** | a gate whose trigger is a diff can ship having never executed its own main path. Fix: put `ci.yml` in its own trigger set |
+| 2 | died in **0.059s** on TLS | `pg-migrate.mjs` hardcoded `ssl: "require"`. Fixed loopback-only and fail-closed in `scripts/lib/pg-ssl-mode.mjs`; production connections byte-identical |
+| 3 | `290 migration(s)`, then `FAILED 0001: relation "sales_orders" does not exist` | the claim that the tree is self-contained. `pg-migrate.mjs:63` EXCLUDES the baseline by design — *"the 0000 baseline, which the loader owns"* |
+| 4 | baseline applied first, then `FAILED 0001_search_trgm.sql: column "organizer" does not exist` | **the design.** The FIRST migration needs a column the baseline does not have |
+
+**Why run 4 cannot be fixed by trying harder.** Production is **110 tables**
+built by `load-d1-dump-to-pg.mjs` from a one-shot D1 export.
+`0000_baseline.sql` is a Drizzle approximation of **57**, and
+`docs/pg-migration-dropped-defaults-coe.md` already recorded that the loader
+`DROP TABLE … CASCADE`s every table in `public` and rebuilds from pragma
+metadata — *"the good baseline was dropped by the lossy loader that ran after
+it."* The migration tree was written against the loader's output, so it does not
+apply to the baseline, and the first migration is where that shows.
+
+The loader cannot close the gap either. Its own header: *"This is a ONE-SHOT
+environment builder. It is NOT run by deploy.yml or by any CI workflow and must
+never become part of one: it DROPs every table in `public`."* It also needs the
+authoritative D1 export, which is not in this repository.
+
+**So there is no reproducible path from an empty database to production's
+schema.** That is a fact about this repo worth more than the gate would have
+been, and it removes option 2 permanently.
+
+### What remains
+
+1. **A committed schema SNAPSHOT of production, with migrations replayed on top.**
+   A read-only `workflow_dispatch` dumps production's structure (no rows) using
+   `secrets.DATABASE_URL` — the pattern CLAUDE.md already prescribes for facts
+   that live only in production — the snapshot is committed, and CI loads it into
+   a scratch container before running `pg-migrate`. Fidelity is exact at snapshot
+   time, which is the question a migration gate must answer: *will this apply to
+   the database it is about to meet?* With the real `v_gl_entries` in the
+   snapshot, mig 0290 fails in CI instead of in the deploy. **Owner calls:
+   committing a production schema dump, and how it gets refreshed.**
+2. **Require a `tests-pg` case for every new migration.** Statically checkable, no
+   container, enforceable in the required job. Weaker, and the weakness is
+   precisely this incident: the author builds the fixture, and the author is the
+   person who already has the wrong idea of the current schema.
+3. **Nothing** — the status quo that let this through.
 
 Until one is chosen, the working rule is the one in §6.
 
