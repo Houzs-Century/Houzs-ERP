@@ -40,6 +40,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -132,7 +133,7 @@ type SoRow = {
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
-  current_doc_no: string | null;
+  do_nos?: string[] | null;
   stock_remark?: string;
   /** System Purchase Order numbers this SO was converted into (empty when
    *  none). Server-derived via the SO-line→PO-item→PO chain. LEGACY raise-link
@@ -1645,16 +1646,15 @@ export function MfgSalesOrdersListV2() {
     //    column existed. All default-hidden + disableSort (server-sorted list;
     //    these keys aren't in the backend sort whitelist). Safe for everyone.
     {
-      key: "current_doc_no",
-      group: "Basic",
-      label: "Current Doc No.",
-      width: "140px",
+      // Was "Current Doc No." until 2026-08-14 — why it changed: SoListDoCell.
+      key: "do_no",
+      group: "Logistics",
+      label: "DO No.",
+      width: "150px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.current_doc_no ?? "",
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">{r.current_doc_no || "—"}</span>
-      ),
+      getValue: (r) => (r.do_nos ?? []).join(", "),
+      render: (r) => <SoListDoCell doNos={r.do_nos} />,
     },
     {
       key: "venue",
