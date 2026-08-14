@@ -176,17 +176,36 @@ describe("sales agents", () => {
     expect(matchValue("Test Sales Director", agents).bucket).toBe("none");
   });
 
+  /* Pairs the matcher CANNOT derive, because the evidence is outside the text.
+     "Lim" is the owner's own shorthand for Lim Wei Siang, whom the book calls
+     WEI SIANG; on spelling alone LIM YAU WEI is the better candidate and the
+     matcher says so. That is the whole reason this runs as a report a human
+     rules on, and the reason a human ruling must never be regressed to fit the
+     algorithm. Listed here, with the ruling, rather than quietly filtered. */
+  const HUMAN_ONLY = new Map([
+    ["Lim", "owner 2026-08-15: 'Lim 是 lim wei siang' — the book's WEI SIANG, not LIM YAU WEI"],
+  ]);
+
   it("reproduces every differently-spelled pair a human already confirmed", () => {
-    /* GROUND TRUTH. Each of these was bound by hand before this matcher
-       existed, so they are the only pairs known to be RIGHT. The matcher must
-       reach the same answer — as a proposal, never as an automatic bind. */
+    /* GROUND TRUTH. Each of these was bound by hand, so they are the only pairs
+       known to be RIGHT. The matcher must reach the same answer — as a
+       proposal, never as an automatic bind. */
     const confirmed = Object.entries(book.agent_map).filter(
-      ([erp, ac]) => normalise(erp) !== normalise(ac),
+      ([erp, ac]) => normalise(erp) !== normalise(ac) && !HUMAN_ONLY.has(erp),
     );
     expect(confirmed.length).toBeGreaterThan(5);
     for (const [erp, ac] of confirmed) {
       const m = matchValue(erp, agents);
       expect(`${erp} -> ${m.target}`).toBe(`${erp} -> ${ac}`);
+    }
+  });
+
+  it("says so out loud when it disagrees with a human ruling", () => {
+    /* If the matcher ever starts agreeing, this fails and HUMAN_ONLY should
+       shrink — the exemption must not outlive the reason for it. */
+    for (const [erp] of HUMAN_ONLY) {
+      const m = matchValue(erp, agents);
+      expect(m.target).not.toBe(book.agent_map[erp]);
     }
   });
 });

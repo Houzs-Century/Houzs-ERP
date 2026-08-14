@@ -114,7 +114,12 @@ describe('bookSpellingOrOwn — the maps are spelling corrections, not an allow-
      options with OrdinalIgnoreCase, so an existing option is matched, not
      duplicated. */
   test('a kept value is whitespace-collapsed, because two spaces would open two masters', () => {
-    expect(bookSpellingOrOwn('  AEON  BIG   KEPONG ', VENUE_MAP)).toBe('AEON BIG KEPONG');
+    /* Deliberately a venue the map does NOT hold: this is about whitespace, and
+       a mapped value would exercise the lookup instead. AEON BIG KEPONG used to
+       be the example and stopped being one the day it was bound to
+       AEON BIG KEPONG SOLO. */
+    expect(bookSpellingOrOwn('  AEON  BIG   PUCHONG ', VENUE_MAP)).toBe('AEON BIG PUCHONG');
+    expect(Object.keys(VENUE_MAP)).not.toContain('AEON BIG PUCHONG');
   });
 
   test('null still means null — but ONLY when the ERP has no value at all', () => {
