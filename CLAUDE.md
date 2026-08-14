@@ -363,6 +363,13 @@ never nullish.
 
 - `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
   matrixed over the two apps. NOT a required status check yet.
+- **It runs `node_modules/eslint/bin/eslint.js` under `process.execPath`, not the
+  `.bin/eslint` shim, and that is deliberate.** The shim is a POSIX shell script
+  Windows cannot execute (ENOENT, reported as "no ESLint installed" because
+  `existsSync` finds it), and `.bin/eslint.cmd` cannot be spawned without a shell
+  since CVE-2024-27980 (EINVAL). Do not "simplify" it back to the shim: CI is
+  Linux and will not notice, and the linter becomes unrunnable on the OS this
+  repo is developed on. `BUG-HISTORY.md` 2026-08-14 has the trace.
 - **Every rule is a WARNING.** The gate is `scripts/lint-ratchet.mjs`: a
   **per-file ceiling** in `<app>/eslint-ratchet.json` that may only **FALL**.
   A file with no entry has a ceiling of **zero**, so a new file — or a rule that
