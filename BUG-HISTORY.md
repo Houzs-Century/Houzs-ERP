@@ -1,3 +1,43 @@
+## The file-size gate told you to "re-baseline", and there is no such operation [low]
+
+**Symptom.** The inherited-debt block ends *"Whoever grows a file owns its
+ceiling. Fix these where they were grown, or re-baseline."* Every reader who
+took the second option went looking for a command that does not exist.
+
+**Root cause.** `--update` calls `lowerCeilings`, which is
+`Math.min(current, lines)` — it can only LOWER a ceiling, and only for a file
+that already got smaller. Editing a number upward by hand is caught by
+`findRaisedCeilings` and fails CI. Both behaviours are correct and both are unit
+tested (`--update lowers a ceiling but will NOT raise one to clear a violation`,
+`scripts/check-file-size-ratchet.mjs`). So there is exactly ONE way to clear this
+debt — shrink the file — and the message named a second one that cannot be done.
+
+**Measured, and it is why this is worth fixing rather than shrugging at.** As of
+2026-08-15 there are **14 files over their ceilings, 1,430 lines in total**, and
+every crossing happened between 2026-08-12 and 2026-08-14 — the ceilings were
+baselined by #2139 on 2026-08-12. The debt is three days old and still growing:
+`Projects.tsx` went 14,996 -> 15,053 in the hours between two measurements taken
+for this entry. `file-size` is not a required status check, so a PR that trips it
+merges, and the next author inherits it.
+
+Attribution to a specific PR was ATTEMPTED and is not reliable: 8 of the 14
+first-crossings land on MERGE commits (one `merge: take origin/main (7 commits)`
+crosses five files at once), which is where two histories joined, not where the
+lines were written. Recorded as UNKNOWN rather than dressed up.
+
+**Fix.** The message now names the real remedy and prints the aggregate, so the
+debt carries a number every time the gate runs instead of being a list you scroll
+past.
+
+**NOT fixed here, and it is the owner's call.** Whether `file-size` should become
+a required status check. It is the only thing that would stop this accumulating —
+and it would also block merges on a ratchet that 14 files currently fail, so it
+is a judgement about cost, not a defect to fix unilaterally.
+
+**Ref.** 2026-08-15. Lesson: **an error message is part of the tool.** This one
+sent readers to an escape hatch that the same repo's own unit test proves cannot
+exist.
+
 ## The write-back opens a DUPLICATE master for a value the book already holds under another spelling [high]
 
 **Symptom.** No error, and that is the point. The owner asked why so much has to

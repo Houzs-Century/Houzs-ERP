@@ -377,7 +377,15 @@ function main() {
     for (const x of inherited.sort((a, b) => b.over - a.over)) {
       console.log(`  ${x.path}: ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over})`);
     }
-    console.log('  Whoever grows a file owns its ceiling. Fix these where they were grown, or re-baseline.');
+    /* "or re-baseline" used to end this line, and there is no such operation.
+       `--update` calls lowerCeilings, which is Math.min(current, lines) — it can
+       only LOWER, and `findRaisedCeilings` fails CI on a hand-edited number. So
+       the reader was being sent to an escape hatch that does not exist, and the
+       only real remedy went unnamed. Say the true one. */
+    const debt = inherited.reduce((n, x) => n + x.over, 0);
+    console.log(`  ${debt} line(s) of ceiling debt in ${inherited.length} file(s), carried from earlier merges.`);
+    console.log('  These must SHRINK. `--update` cannot clear them — it only lowers a ceiling to');
+    console.log('  match a file that already got smaller, and raising a number by hand fails CI.');
   }
 
   if (mine.length) {
