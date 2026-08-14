@@ -453,16 +453,26 @@ export const ConsignmentNoteDetail = () => {
                   onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                   onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
                   canRemove={!isLocked}
-                />
-              );
-            })}
-            {addingDraft && (
-              <SoLineCard
-                index={items.length}
-                draft={addingDraft}
-                onChange={patchAddingDraft}
-                onRemove={cancelAddLine}
-                canRemove={true}
+                              /* Downstream document: the items were already specified on the
+                              originating order and their variants ride in with them, so they
+                              are NOT re-required here. Same rule DeliveryOrderNewV2 states
+                              for the DO. Verified 2026-08-13: this document's server does no
+                              variant enforcement at all (findIncompleteVariantLines appears
+                              0 times in its route), so the default `= true` was pure
+                              client-side invention - a red ring and a ` *` for a field the
+                              backend never asked for. */
+                              variantsRequired={false}
+                              />
+                              );
+                              })}
+                              {addingDraft && (
+                              <SoLineCard
+                              index={items.length}
+                              draft={addingDraft}
+                              onChange={patchAddingDraft}
+                              onRemove={cancelAddLine}
+                              canRemove={true}
+                              variantsRequired={false}
               />
             )}
             {items.length === 0 && !addingDraft && (

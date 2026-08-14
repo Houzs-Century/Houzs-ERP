@@ -1,0 +1,73 @@
+name: Stamp supplier cost on imported PO lines
+
+# Manual. Houzs suppliers price the GOODS RECEIVED document, not the purchase
+# order, so the cutover imported 565 of 579 SO-linked PO lines at zero. Left
+# alone, the next receipt turns that zero into a zero-cost FIFO lot, RM0 COGS
+# and a 100% margin. This puts the supplier's real price back on the lines that
+# can be priced ACCURATELY -- matched on the Desc2 compartment/colour signature,
+# never MAX or last-cost, which a backtest over 11,239 priced AutoCount lines
+# measured at 112.5% and 32.2% mean error. Lines with no defensible price stay
+# at zero and are listed; the receipt gate refuses them at the GRN.
+# DRY-RUN by default; apply=1 writes.
+#
+# NOT DISPATCHABLE UNTIL THIS FILE IS ON main. workflow_dispatch resolves the
+# workflow from the DEFAULT branch, so `gh workflow run stamp-po-line-costs.yml
+# --ref fix/zero-cost-po-exposure` answers `HTTP 404: workflow ... not found on
+# the default branch` even though the file exists on the branch. The production
+# DRY-RUN is therefore the FIRST thing to run after merge and BEFORE apply=1 —
+# read its "planned writes" list, which is exactly the set apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: "apply only — type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: stamp-po-line-costs-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/stamp-po-line-costs.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/stamp-po-line-costs.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

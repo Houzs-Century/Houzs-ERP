@@ -11,8 +11,10 @@ import {
   composeDetails,
   composeEdit,
   KeylessLineError,
+  MissingAgentError,
   MissingLocationError,
   SofaCollapseError,
+  resolveAcAgent,
   parseCreatedLines,
   composeDescription2,
   ItemCodeError,
@@ -52,6 +54,12 @@ const line = (over: Partial<ErpLine> = {}): ErpLine => ({
   item_code: 'SKU-1', description: 'Mattress', qty: 2, unit_price_centi: 199_900, ...over,
 });
 
+/* The name behind mfg_sales_orders.salesperson_id, which composeCreateSo now
+   REQUIRES. `header` above carries a mappable `agent`, so these cases are the
+   ones where the fallback does not fire; the fallback itself, and the refusal
+   when neither source answers, have their own describe block below. */
+const SALESPERSON: string | null = null;
+
 describe('master mapping', () => {
   test('normalises case and spacing before mapping (a salesperson types freely)', () => {
     expect(mapOrPassthrough('kar jiun', AGENT_MAP)).toBe('TAN KAR JIUN');
@@ -71,7 +79,7 @@ describe('master mapping', () => {
 });
 
 describe('composeCreateSo', () => {
-  const payload = composeCreateSo(header, [line()], opts);
+  const payload = composeCreateSo(header, [line()], SALESPERSON, opts);
 
   test('writes the fixed debtor account with the real customer name over it', () => {
     expect(payload.DebtorCode).toBe(AC_DEBTOR_CODE);
@@ -95,7 +103,7 @@ describe('composeCreateSo', () => {
   });
 
   test('a blank UDF is dropped, not sent as an empty option', () => {
-    const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()], opts);
+    const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()], SALESPERSON, opts);
     expect(p.UDF).toEqual({});
   });
 
@@ -103,19 +111,91 @@ describe('composeCreateSo', () => {
      Its storage is processing_date — one column (0189) under one name (0284),
      so this label has exactly one source. */
   test('the Processing date goes out as the PDate UDF', () => {
-    const p = composeCreateSo({ ...header, processing_date: '2026-09-01' }, [line()], opts);
+    const p = composeCreateSo({ ...header, processing_date: '2026-09-01' }, [line()], SALESPERSON, opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('a Processing date that arrives as a timestamp is trimmed to the date', () => {
-    const p = composeCreateSo({ ...header, processing_date: '2026-09-01T00:00:00' }, [line()], opts);
+    const p = composeCreateSo({ ...header, processing_date: '2026-09-01T00:00:00' }, [line()], SALESPERSON, opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('no Processing date sends no PDate at all', () => {
-    expect(composeCreateSo(header, [line()], opts).UDF.PDate).toBeUndefined();
-    expect(composeCreateSo({ ...header, processing_date: null }, [line()], opts).UDF.PDate)
+    expect(composeCreateSo(header, [line()], SALESPERSON, opts).UDF.PDate).toBeUndefined();
+    expect(composeCreateSo({ ...header, processing_date: null }, [line()], SALESPERSON, opts).UDF.PDate)
       .toBeUndefined();
+  });
+});
+
+/* THE GO-LIVE FAILURE, 2026-08-13. Two re-queued sales orders retried four
+   times each and AED_HOUZS answered `Foreign Key Error (Constraint
+   Name=FK_SO_SalesAgent)`. Both carried an empty `agent`, because no SO form
+   sends `body.agent` — and an empty Agent reaches AcSyncService as "", which is
+   not a row in dbo.SalesAgent. `mastersOf` could not save them either: it only
+   asks for an agent when the payload names one. */
+describe('the salesperson AutoCount is given (FK_SO_SalesAgent)', () => {
+  const noAgent: ErpSoHeader = { ...header, agent: null };
+
+  test('an empty agent falls back to the salesperson behind salesperson_id', () => {
+    const p = composeCreateSo(noAgent, [line()], 'Chang Shi Ting', opts);
+    expect(p.Agent).toBe('Chang Shi Ting');
+  });
+
+  /* AGENT_MAP is a record of how the book already spells the reps it has, not
+     an allow-list of who may sell. A name it knows goes out in the book's
+     spelling so the fallback cannot open a second agent beside an existing
+     one. */
+  test('a salesperson the book already spells goes out in ITS spelling', () => {
+    expect(composeCreateSo(noAgent, [line()], 'shi ting', opts).Agent)
+      .toBe('Chang Shi Ting');
+    expect(composeCreateSo(noAgent, [line()], 'zack', opts).Agent).toBe('Zack');
+  });
+
+  /* D10's rule, applied to people (owner 2026-08-13): an unmapped value is no
+     longer a refusal, it is opened. Whatever string is sent is exactly what
+     /ensure-masters creates the agent under, so a rep hired since the map was
+     built is writable instead of blocked. */
+  test('a salesperson the map has never heard of is sent as themselves', () => {
+    expect(composeCreateSo(noAgent, [line()], 'Nurul Hidayah', opts).Agent)
+      .toBe('Nurul Hidayah');
+  });
+
+  test('an agent the ERP does hold still wins over the salesperson link', () => {
+    expect(composeCreateSo(header, [line()], 'Nurul Hidayah', opts).Agent)
+      .toBe('TAN KAR JIUN');
+  });
+
+  /* THE BOTH-EMPTY CASE. Sending "" is what produced the go-live failure, and
+     the document cannot land either way — the foreign key is deterministic. So
+     the create is REFUSED, which costs nothing that sending would have gained
+     and turns a 500 in the AutoCount host's log into a `skipped` outbox row an
+     operator can read and a re-queue can retry. */
+  test('neither source REFUSES the create, naming the remedy', () => {
+    let err: unknown;
+    try { composeCreateSo(noAgent, [line()], null, opts); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(MissingAgentError);
+    expect((err as Error).message).toContain('FK_SO_SalesAgent');
+    expect((err as Error).message).toContain('Assign a salesperson');
+  });
+
+  /* The free-text column has no writer that keeps it honest: production rows
+     hold bare scm.staff UUIDs (useStaffLookup carries a UUID_RE for exactly
+     that) and placeholder text like "Unassigned", the order that produced the
+     confirm gate's salesperson rule. /ensure-masters opens an agent under
+     EXACTLY the string it is given, so neither may pass through. */
+  test('junk in `agent` is never opened as a sales agent', () => {
+    const junk = ['c115a11d-5a53-a0c1-020a-c64cc4d9b4fb', 'Unassigned'];
+    for (const text of junk) {
+      expect(resolveAcAgent(text, null), text).toBeNull();
+      /* ...but a real salesperson link rescues the document rather than
+         letting the junk decide it. */
+      expect(resolveAcAgent(text, 'Nurul Hidayah'), text).toBe('Nurul Hidayah');
+    }
+  });
+
+  test('the refusal quotes what it saw, so the row says which case this is', () => {
+    expect(new MissingAgentError(null).message).toContain('names no salesperson at all');
+    expect(new MissingAgentError('Unassigned').message).toContain('"Unassigned"');
   });
 });
 
@@ -162,7 +242,7 @@ describe('Description 2 — where a variant goes, because AutoCount has no varia
 
 describe('ItemCode resolution (D10) — no silent fallback to material_code', () => {
   test('a mapped code is replaced by its AutoCount ItemCode', () => {
-    expect(composeCreateSo(header, [line()], opts).Details[0].ItemCode).toBe('AC-CODE-1');
+    expect(composeCreateSo(header, [line()], SALESPERSON, opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
 
   /* THE DEFECT THIS REPLACED, and the assertion that still guards it. The
@@ -171,7 +251,7 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
      That must never happen: if the book knows this item, we send the book's
      name for it. */
   test('a mapped code is NEVER sent as itself', () => {
-    const d = composeCreateSo(header, [line()], opts).Details[0];
+    const d = composeCreateSo(header, [line()], SALESPERSON, opts).Details[0];
     expect(d.ItemCode).toBe('AC-CODE-1');
     expect(d.ItemCode).not.toBe(line().item_code);
   });
@@ -183,7 +263,7 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
      product ranges are in no cutover row, so every order containing one was
      blocked with no way forward. */
   test('an unmapped code goes out under its own name instead of sinking the order', () => {
-    const d = composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], opts).Details[0];
+    const d = composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], SALESPERSON, opts).Details[0];
     expect(d.ItemCode).toBe('SKU-NOT-IN-THE-BOOK');
   });
 
@@ -192,7 +272,7 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
       line(),
       line({ item_code: 'SKU-NOT-IN-THE-BOOK' }),
       line({ item_code: 'SKU-2' }),
-    ], opts);
+    ], SALESPERSON, opts);
     expect(p.Details.map((d) => d.ItemCode)).toEqual(['AC-CODE-1', 'SKU-NOT-IN-THE-BOOK', 'AC-CODE-2']);
   });
 
@@ -203,7 +283,7 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
   test('a blank code still refuses, and the refusal names every failing line', () => {
     let msg = '';
     try {
-      composeCreateSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], opts);
+      composeCreateSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], SALESPERSON, opts);
     } catch (e) { msg = (e as Error).message; }
     expect(msg).toContain('2 line(s)');
   });
@@ -427,19 +507,19 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   const soHeader: ErpSoHeader = { ...header, sales_location: 'PETALING JAYA' };
 
   test("the line's own warehouse wins, mapped to the code AutoCount knows", () => {
-    const p = composeCreateSo(soHeader, [line({ location: 'PG WAREHOUSE' })], opts);
+    const p = composeCreateSo(soHeader, [line({ location: 'PG WAREHOUSE' })], SALESPERSON, opts);
     expect(p.Details[0].Location).toBe('PG');
   });
 
   test('a line with no warehouse inherits the document, because an order sells from somewhere', () => {
-    const p = composeCreateSo(soHeader, [line()], opts);
+    const p = composeCreateSo(soHeader, [line()], SALESPERSON, opts);
     expect(p.Details[0].Location).toBe('KL');
   });
 
   test('neither one is REFUSED, naming the line — sending "" would fail FK_SODTL_Location', () => {
     let err: unknown;
     try {
-      composeCreateSo({ ...header, sales_location: null }, [line()], opts);
+      composeCreateSo({ ...header, sales_location: null }, [line()], SALESPERSON, opts);
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MissingLocationError);
     expect((err as Error).message).toContain('AC-CODE-1');

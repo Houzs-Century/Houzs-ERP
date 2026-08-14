@@ -9,6 +9,7 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 import { serviceNotify } from './dialog-service';
 import { verifiedSave, readbackGet, friendlySaveMessage } from './verified-save';
 import type { MaintPoolEntry } from '@2990s/shared';
@@ -799,6 +800,7 @@ export function useSaveMaintenanceConfig() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenance-config'] });
     },
+    onError: writeFailed,
   });
 }
 
@@ -834,6 +836,7 @@ export function useDeleteSofaCompartmentPhoto() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['maintenance-config'] });
     },
+    onError: writeFailed,
   });
 }
 

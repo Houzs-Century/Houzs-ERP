@@ -8,7 +8,15 @@ of them has: **GL revenue posting** and a hard **ISSUED = FROZEN** rule.
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **SO → DO → SI**. The SI is the end of the sell chain and the
 only document in it that leaves the building as a customer's own copy.
@@ -116,15 +124,23 @@ posting.
      so_doc_no, debtor_name, debtor_code, ref, branding, sales_location` plus
      normalized phone parts (`:706-710`); `from`/`to` on `invoice_date`.
    - `statusCounts` = five `head:true count:'exact'` in one `Promise.all` (`:728-734`).
-3. **Enrichment — one batched read** (`stampSoDates`, defined above the list
-   handler). Pulls `mfg_sales_orders.processing_date` +
+3. **Enrichment — THREE batched, row-mutating passes**, all called on BOTH list
+   paths: `stampSoDates`, `stampDoNumber` and `stampSourcePos` (:675, :699,
+   :725). None is per-row. `stampDoNumber` exists because the SI stores its
+   Delivery Order only as `delivery_order_id` (there is no `do_doc_no` column),
+   so the list cannot show a readable "From DO" without resolving the ids.
+   `stampSoDates` pulls `mfg_sales_orders.processing_date` +
+
    `customer_delivery_date` for the distinct `so_doc_no` set and stamps
    **`so_processing_date`** (the linked SO's "Processing date") and
    **`so_customer_delivery_date`** (delivery-date fallback for pre-snapshot SIs)
    on each row — both list paths. Feeds the SI quick-view drawer (desktop
    `SalesInvoicesListV2` + mobile `MobileModuleList`). **Both are DERIVED
-   response keys read as strings** (mobile via `pick(r, "soInternalExpectedDd",
-   "so_internal_expected_dd")`), so a rename of the SO column must move this key
+   response keys read as strings** (mobile via `pick(r, "soProcessingDate",
+   "so_processing_date")` — `MobileModuleList.tsx:1147,1198`; corrected
+   2026-08-14, this line named `soInternalExpectedDd` /
+   `so_internal_expected_dd`, which mig 0286 retired on both ends), so a rename
+   of the SO column must move this key
    on BOTH ends or neither — a backend-only rename blanks the column with no
    error. See docs/modules/sales-order.md, "surfaces that read this date by
    NAME". There is still no `has_children` on an SI because nothing hangs off it.
@@ -223,9 +239,10 @@ includes DRAFT.
 
 **A Sales Invoice moves NO inventory, in either direction, at any status.**
 
-Verified: `backend/src/scm/routes/sales-invoices.ts` contains **zero** references
-to `inventory_movements`, `writeMovements`, or any movement table (grep over the
-whole 2,242-line file returns nothing). The goods left at the **Delivery Order**
+Verified 2026-08-13: `backend/src/scm/routes/sales-invoices.ts` contains **zero**
+references to `inventory_movements`, `writeMovements`, or any movement table
+(grep over the whole 2,547-line file returns nothing). The goods left at the
+**Delivery Order**
 (`docs/modules/delivery-order.md` §5); by the time an SI exists the stock has
 already moved.
 
@@ -333,8 +350,10 @@ helper (`salesAccess.ts:187-196`).
 ## 9. Performance summary
 
 Optimized:
-- List does **zero** per-row enrichment reads (`:743-744`) — it is the cheapest of
-  the four sibling lists.
+- List does **zero** per-row enrichment reads — its three enrichment passes
+  (`stampSoDates` / `stampDoNumber` / `stampSourcePos`) are each ONE batched read
+  keyed by the page's ids, and there is still no `has_children` to compute
+  because nothing hangs off an SI.
 - Detail loads header + items in one `Promise.all` (`:761-766`).
 - Desktop list is server-paginated (50/page) with server-side search, sort and
   status counts.

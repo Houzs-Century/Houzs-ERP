@@ -58,6 +58,7 @@ import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
    2026-07-18) — mirrors the SO path. Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+import { soDatePairCascadeColumns, soDatePairRefusal } from '../shared/so-processing-date';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -95,6 +96,43 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
     return { error: 'co_has_downstream', message: 'Consignment Order has a Consignment Note — cancel it first to edit' };
   }
   return null;
+}
+
+/* ── Write-side own/downline guard (owner 2026-08-13: "要,和销售订单一致") ──────
+   The direct mirror of mfg-sales-orders' selfScopedSalesBlocked; the two must
+   keep reading alike, so a difference here is a bug, not a style.
+
+   TWO DIMENSIONS, and neither replaces the other. Company is checked FIRST and
+   for EVERYONE: the salesperson dimension answers "is this MY order" and returns
+   false straight away for a view-all tier, which is useless for tenancy.
+
+   The company half DEGRADES on an UNRESOLVED company rather than failing closed
+   — the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
+   SENTINEL"). Failing closed would lock every user out of every CO write during
+   a Hyperdrive cold start, and it costs no strictness: every caller also runs
+   requireActiveCompanyId + scopeToCompanyId, which refuse an unresolved company.
+
+   Identity comes off the context as houzsUser.id, NOT the bridge-pinned scm.staff
+   uuid on user.id, so it matches the reads. Returns TRUE => block, and the caller
+   answers 404, indistinguishable from a nonexistent doc_no. A missing CO also
+   returns TRUE (fail closed). Exported so a test can drive it directly. */
+export async function selfScopedConsignmentBlocked(c: any, docNo: string): Promise<boolean> {
+  const sb = c.get('supabase');
+
+  // 1. Tenancy — every tier, view-all included. Degrading, per the note above.
+  const { data: owned, error: ownedErr } = await scopeToCompany(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), c).maybeSingle();
+  if (ownedErr || !owned) return true;
+
+  // 2. Salesperson — only for the self-scoped tier.
+  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
+  const { data, error } = await sb
+    .from('consignment_sales_orders')
+    .select('salesperson_id')
+    .eq('doc_no', docNo)
+    .maybeSingle();
+  if (error || !data) return true; // fail closed — unknown/unreadable doc is out of scope
+  const sp = (data as { salesperson_id?: number | string | null }).salesperson_id;
+  return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
 }
 
 /* Identity + value columns a downstream DO / SI snapshots. Frozen on the CO
@@ -139,45 +177,14 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
   }));
 }
 
-/* NOTE — there is no `processing_date` here, on purpose, and it must not come
-   back. The CO's Processing Date is `internal_expected_dd` (below), the SAME one
-   name the rest of the system uses; the CO create/PATCH paths already read and
-   write only that, and ConsignmentOrderDetail/New bind their "Processing date"
-   input to it. scm.consignment_sales_orders.processing_date (mig 0153) exists
-   only because this module was cloned from mfg_sales_orders wholesale — it has
-   NEVER had a writer (the create INSERT omits it; the header PATCH builds its
-   update from the closed `map` below, which does not contain it; the status
-   PATCH writes only status+updated_at; recomputeTotals writes only money), so
-   every row's value is NULL and selecting it only tempted the next reader to
-   bind a UI field to a permanently-blank column. That already happened once on
-   the mfg twin — see BUG-HISTORY "SO read views showed a blank Processing date".
-
-   THE COLUMN IS STILL IN THE DATABASE. Dropping it is a SEPARATE, LATER deploy,
-   not this one: deploy.yml runs pg-migrate BEFORE `wrangler deploy`, so a column
-   dropped in the same release that stops selecting it leaves the still-live old
-   Worker doing a PostgREST select on a missing column — which 500s the whole
-   Consignment Orders list AND detail for the length of the deploy. (That class
-   of mistake is what blocked prod for hours in #1191/0189.) Once THIS commit is
-   live, nothing reads the column and the follow-up migration is a one-liner:
-
-     ALTER TABLE scm.consignment_sales_orders DROP COLUMN IF EXISTS processing_date;
-
-   Its sibling scm.consignment_sales_orders.proceeded_at needed no such wait —
-   nothing read it even before this commit — and was dropped in mig 0284. */
+/* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
-  /* No `processing_date` in this line any more, and it is NOT an omission: the
-     consignment header carried TWO columns, a dead legacy `processing_date`
-     that nothing has ever written and the live date under the old name
-     `internal_expected_dd`. Mig 0284 dropped the dead one and renamed the live
-     one onto the freed name — it is selected two lines down, next to
-     customer_delivery_date, where the date it partners with lives. Selecting a
-     dropped column is a hard PostgREST error (the 0189 lesson), so this had to
-     go in the same commit as the migration. */
+  /* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
@@ -260,18 +267,24 @@ const deriveCountryFromState = async (
 };
 
 /* Sales/shipping Location (warehouse) follows the customer's State. Returns the
-   warehouse code for the state, or null when unmapped. */
+   warehouse code for the state, or null when unmapped.
+
+   COMPANY-SCOPED, like the mfg-SO twin. `state` stopped being a global key at
+   mig 0092, which made scm.state_warehouse_mappings UNIQUE on
+   `(company_id, state)`. Unscoped, this either stamps the OTHER company's
+   warehouse onto Sales Location, or — once both companies map the same state —
+   matches two rows, so `.maybeSingle()` errors (PGRST116) into the discarded
+   `error` and the field silently stops deriving at all. */
 const deriveSalesLocationFromState = async (
   sb: any,
   state: string | null | undefined,
+  c: any,
 ): Promise<string | null> => {
   if (!state) return null;
   const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await sb
-    .from('state_warehouse_mappings')
-    .select('warehouse_id')
-    .eq('state', key)
-    .maybeSingle();
+  const { data: m } = await scopeToCompany(
+    sb.from('state_warehouse_mappings').select('warehouse_id').eq('state', key), c,
+  ).maybeSingle();
   const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
   if (!whId) return null;
   const { data: w } = await sb
@@ -682,6 +695,15 @@ consignmentOrders.get('/:docNo', async (c) => {
   return c.json({ salesOrder, items });
 });
 
+/* NO selfScopedConsignmentBlocked HERE, deliberately — the phrase the exemption
+   test greps for. The guard answers "is this EXISTING doc mine", and a create
+   has no target row, so calling it would refuse every create.
+
+   OPEN, for the owner: mfg-sales-orders gates `salesperson_id` on
+   `scm.so.attribute_other` and OVERRIDES a self-scoped caller's chosen
+   salespersonId; this path takes `body.salespersonId` verbatim, so a scoped rep
+   can book a NEW consignment order under someone else's name. That changes who
+   gets paid and is a different control from the row scope ruled on above. */
 consignmentOrders.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -704,20 +726,17 @@ consignmentOrders.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* CO composition rules (mirror the SO create path):
-       1. Processing Date + Delivery Date are all-or-nothing.
-       2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
-       3. All MATTRESS lines must share ONE brand. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
   {
     const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
-    /* must-pair stays a short-circuit (structurally-incomplete date pair). */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+    /* must-pair stays a short-circuit (structurally-incomplete date pair), and
+       the predicate is shared/so-processing-date's so the CO paths cannot drift
+       from the SO paths. Every date on a create is new — no originals. */
+    const coCreatePairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (coCreatePairRefusal) return c.json(coCreatePairRefusal, 400);
     /* Aggregate the rest (variants / past-date / processing-≤-delivery) into ONE
        response — mirrors the SO create path. No deposit gate on the consignment
        mirror, so `deposit` is omitted. All dates are new on create. */
@@ -960,6 +979,7 @@ consignmentOrders.post('/', async (c) => {
     (await deriveSalesLocationFromState(
       sb,
       (body.customerState as string | null | undefined) ?? null,
+      c,
     ));
 
   const { error: hErr } = await insertWithDocNoRetry<{ doc_no: string }>(
@@ -1088,6 +1108,10 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only CANCEL / re-status their OWN CO. Ahead of the
+     downstream lock below, so an out-of-scope caller gets 404 rather than being
+     told the order has a Consignment Note: a refusal must not leak existence. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { status?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -1162,6 +1186,8 @@ consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only re-price a line on their OWN CO. This verb WRITES MONEY.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { overridePriceSen?: number; reason?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const newPrice = Number(body.overridePriceSen ?? 0);
@@ -1213,6 +1239,10 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only amend their OWN CO. `salespersonId` is in the map
+     below, so without this a rep could REASSIGN another rep's order to
+     themselves; `depositCenti` is money. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -1295,6 +1325,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
       const derived = await deriveSalesLocationFromState(
         sb,
         body['customerState'] as string | null,
+        c,
       );
       if (derived) updates['sales_location'] = derived;
     }
@@ -1325,10 +1356,10 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const beforeCols = map.map(([, snake]) => snake).concat(['status']).join(', ');
   const { data: before } = await scopeToCompanyId(sb.from('consignment_sales_orders').select(beforeCols).eq('doc_no', docNo), co.companyId).maybeSingle();
 
-  /* Processing & Delivery Date may only be today or a future date, BUT an
-     already-past value the edit does NOT change is grandfathered through. The
-     helper re-derives past-date + processing-≤-delivery from the effective +
-     original dates and folds in the variant offenders collected above. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
+  /* Set when clearing the Processing Date also clears a Delivery Date the
+     request never named — read by the line-level cascade after the write. */
+  let coCascadedDeliveryClear = false;
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1338,9 +1369,22 @@ consignmentOrders.patch('/:docNo', async (c) => {
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts. */
+    const coCascadeCols = soDatePairCascadeColumns({
+      procCleared: typeof proc === 'string' && (proc || null) === null && !!origProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of coCascadeCols) updates[col] = null;
+    coCascadedDeliveryClear = coCascadeCols.length > 0;
+    const effDelivAfterCascade = coCascadedDeliveryClear ? null : effDeliv;
+    const coPairRefusal = soDatePairRefusal({
+      nextProc: effProc, nextDeliv: effDelivAfterCascade, origProc, origDeliv,
+    });
+    if (coPairRefusal) return c.json(coPairRefusal, 400);
     const coProblems = collectProcessingGateProblems({
       procDate: effProc,
-      delivDate: effDeliv,
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -1375,8 +1419,11 @@ consignmentOrders.patch('/:docNo', async (c) => {
 
   /* Master-follower cascade. When the header's customer_delivery_date changes,
      every non-overridden line picks up the new date. Best-effort. */
-  if (body['customerDeliveryDate'] !== undefined) {
-    const newDate = body['customerDeliveryDate'] as string | null;
+  if (body['customerDeliveryDate'] !== undefined || coCascadedDeliveryClear) {
+    /* A cascaded clear has no body value to read — the header column was set to
+       null above, so the lines must follow it, or MRP keeps ordering by a line
+       date the header no longer holds. */
+    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)
@@ -1583,6 +1630,8 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only add a line to their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
@@ -1734,6 +1783,8 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only edit a line on their OWN CO. This verb WRITES MONEY.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -1922,6 +1973,8 @@ consignmentOrders.delete('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only delete a line from their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   /* Tier 2 downstream-lock — line-delete is blocked once a DO / SI exists. */
   const childLock = await coHasDownstream(sb, docNo);
@@ -2004,6 +2057,8 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
   }
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only attach a photo to a line on their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: item, error: itemErr } = await scopeToCompanyId(sb
     .from('consignment_sales_order_items')
@@ -2107,7 +2162,13 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
   }
 });
 
-// Refresh a signed GET URL for an existing key.
+/* Refresh a signed GET URL for an existing key.
+   NO selfScopedConsignmentBlocked HERE, nor on the proxy GET below: both are
+   READS and the owner's ruling covered the WRITE verbs. They keep their company
+   scope. The residual is a same-company rep reading another rep's line photo,
+   which needs BOTH the line uuid and the exact crypto.randomUUID() photo key —
+   handed out only by GET /:docNo, which IS salesperson-scoped. The SO's proxy
+   read DOES carry the guard, so this asymmetry is known, not overlooked. */
 export const consignmentItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
@@ -2152,7 +2213,9 @@ export const consignmentItemPhotoSignedHandler = async (c: any) => {
 
 consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', consignmentItemPhotoSignedHandler);
 
-// Proxy GET (fallback for clients holding proxy URLs).
+/* Proxy GET (fallback for clients holding proxy URLs).
+   NO selfScopedConsignmentBlocked HERE — see the note on the /signed handler
+   above, which this route backs up and whose authorization it must match. */
 consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
@@ -2204,6 +2267,8 @@ consignmentOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => 
   }
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only remove a photo from a line on their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: item } = await scopeToCompanyId(sb
     .from('consignment_sales_order_items')
@@ -2299,6 +2364,9 @@ consignmentOrders.post('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only record a payment against their OWN CO. This verb
+     WRITES MONEY into the ledger GET /:docNo/payments already scopes on read. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: so } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), co.companyId).maybeSingle();
   if (!so) return c.json(NOT_THIS_COMPANY, 404);
@@ -2358,6 +2426,8 @@ consignmentOrders.delete('/:docNo/payments/:id', async (c) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Own CO only. Deleting a receipt re-opens the balance, so this writes money.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: row } = await scopeToCompanyId(sb.from('consignment_sales_order_payments').select('*').eq('id', id), co.companyId).maybeSingle();
   if (!row) return c.json(NOT_THIS_COMPANY, 404);

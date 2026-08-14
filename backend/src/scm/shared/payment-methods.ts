@@ -81,9 +81,37 @@ export const PAYMENT_METHOD_DEFAULT_LABELS: Readonly<Record<PaymentMethodCode, s
 export const paymentMethodCodeForValue = (value: string): PaymentMethodCode | null =>
   PAYMENT_METHOD_VALUE_TO_CODE[value] ?? null;
 
-/** True when this (category, value) pair is one of the three locked core
- *  payment-method rows (Merchant / Online / Cash) — the API refuses to
- *  delete/deactivate these and the maintenance UIs render them with the lock
- *  affordance. 'Installment' is NOT core, so it returns false. */
+/* THE LOCKED SET, declared on its own.
+ *
+ * It used to be inferred from PAYMENT_METHOD_VALUE_TO_CODE, and that made ONE
+ * constant answer two different questions with opposite needs:
+ *
+ *   · paymentMethodCodeForValue — deliberately EXCLUDES 'Installment' (see its
+ *     comment: legacy installment ledger rows persist the code directly, so the
+ *     lookup must not resolve it).
+ *   · isCorePaymentMethodRow    — must INCLUDE 'Installment', which is wired
+ *     into order logic (the DO payment schema is
+ *     z.enum(['merchant','transfer','cash','installment']), and both
+ *     PAYMENT_METHOD_CODE_TO_VALUE and PAYMENT_METHOD_DEFAULT_LABELS carry it).
+ *
+ * One map cannot be both, so the two sides disagreed in production: the
+ * maintenance UI rendered Installment LOCKED and told the operator "it can't be
+ * removed or turned off" (SalesOrderMaintenance.tsx:1293 — its comment even
+ * claims "the API mirrors this with a 409"), while this function returned false
+ * for it, so the API would have allowed deleting the row the order logic
+ * depends on. The comments contradicted each other outright: FOUR core rows on
+ * the frontend, THREE here.
+ *
+ * Locking is the safe direction and the one the operator was already promised.
+ * Found 2026-08-13 by backend/scripts/check-shared-mirrors.mjs, which compares
+ * every vendored rule copy against its backend original. */
+export const PAYMENT_METHOD_CORE_VALUES: readonly string[] = [
+  'Merchant', 'Online', 'Cash', 'Installment',
+];
+
+/** True when this (category, value) pair is one of the four locked core
+ *  payment-method rows (Merchant / Online / Cash / Installment) — the API
+ *  refuses to delete/deactivate these and the maintenance UIs render them with
+ *  the lock affordance. */
 export const isCorePaymentMethodRow = (category: string, value: string): boolean =>
-  category === 'payment_method' && value in PAYMENT_METHOD_VALUE_TO_CODE;
+  category === 'payment_method' && PAYMENT_METHOD_CORE_VALUES.includes(value);

@@ -384,6 +384,80 @@ export class MissingLocationError extends Error {
   }
 }
 
+/**
+ * A CREATE with no salesperson is refused, because AutoCount refuses it too.
+ *
+ * MEASURED ON THE LIVE BOOK, 2026-08-13 — the day the write-back went live. Two
+ * re-queued sales orders retried four times each and AED_HOUZS answered
+ * `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`. Both carried an empty
+ * `mfg_sales_orders.agent`, because no SO form has ever sent `body.agent` and
+ * that column was the composer's only source. AcSyncService's create applies
+ * the key unconditionally (`Set(() => so.Agent = Str(p, "Agent"))`) and `Str`
+ * turns an absent key into `""` — and `""` is not a row in `dbo.SalesAgent`.
+ *
+ * Nothing was written: the foreign key rejects the document before it lands, so
+ * a refusal here loses no successful write. It only converts a 500 buried in
+ * `C:\Temp\ac-sync-service.log` into a `skipped` outbox row naming the remedy.
+ *
+ * Same shape and same reason as MissingLocationError, one level up: the
+ * document as a whole is refused, never sent with a blank the book will reject.
+ */
+export class MissingAgentError extends Error {
+  /** What `mfg_sales_orders.agent` held, for the operator reading the row. */
+  readonly agentText: string | null;
+  constructor(agentText: string | null) {
+    const saw = agentText && agentText.trim()
+      ? `\`agent\` holds "${agentText.trim()}", which is neither an AutoCount sales agent nor a `
+        + 'name this ERP can vouch for, and no salesperson is linked to the order'
+      : 'the order names no salesperson at all — `agent` is blank and `salesperson_id` is empty';
+    super(
+      `This sales order cannot name an AutoCount sales agent: ${saw}. AutoCount rejects a sales `
+      + 'order whose Agent is not in dbo.SalesAgent, and an absent Agent reaches it as the empty '
+      + 'string — so this create would fail on FK_SO_SalesAgent, which is exactly what the live '
+      + 'book answered on 2026-08-13. Assign a salesperson on the order, then re-queue it.',
+    );
+    this.name = 'MissingAgentError';
+    this.agentText = agentText;
+  }
+}
+
+/**
+ * The AutoCount Sales Agent a sales order names, from the ERP's two sources.
+ *
+ * They are not equally trustworthy, and the order below says so:
+ *
+ *   1. `agent` THROUGH AGENT_MAP. A hit means the account book already spells
+ *      this rep, under its own spelling (`ZACK` -> `Zack`, `KAR JIUN` ->
+ *      `TAN KAR JIUN`). Nothing to open, nothing to guess.
+ *   2. the SALESPERSON's name, through the same map. Same certainty; it just
+ *      arrived by the id rather than the text.
+ *   3. the salesperson's name AS ITSELF, opened by `/ensure-masters`. This is
+ *      the D10 rule applied to people: an unmapped item code no longer refuses
+ *      a document, it resolves to the ERP's own code and the item is opened
+ *      (owner 2026-08-13). AGENT_MAP is a snapshot of the book's spellings, not
+ *      an allow-list, so every rep hired since would otherwise be unwritable.
+ *   4. nothing -> MissingAgentError.
+ *
+ * WHAT DELIBERATELY NEVER PASSES THROUGH IS THE RAW `agent` TEXT. That column
+ * is free text with no writer that keeps it honest: production rows hold bare
+ * `scm.staff` UUIDs (`useStaffLookup` carries a UUID_RE for exactly that) and
+ * placeholder text like "Unassigned" (HC-SO-2607-008, the order that produced
+ * the confirm gate's salesperson rule). `/ensure-masters` opens a sales agent
+ * under EXACTLY the string it is given, so passing that through would write
+ * permanent garbage master data into a licensed book. `scm.staff.name` is a
+ * real person by construction, which is why only IT is trusted unmapped.
+ */
+export function resolveAcAgent(
+  agent: string | null | undefined,
+  salespersonName: string | null,
+): string | null {
+  const mapped = mapOrPassthrough(agent, AGENT_MAP);
+  if (mapped) return mapped;
+  const name = (salespersonName ?? '').trim();
+  if (!name) return null;
+  return mapOrPassthrough(name, AGENT_MAP) ?? name;
+}
+
 export { ItemCodeError };
 
 /**
@@ -518,14 +592,30 @@ export function acUdfDate(v: string | null | undefined): string | null {
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
+  /**
+   * The name behind `mfg_sales_orders.salesperson_id`, resolved by the caller —
+   * REQUIRED, never optional. It DECIDES whether this document can be sent at
+   * all, so an omitted argument must be a compile error rather than a silent
+   * fallback to the empty agent that caused FK_SO_SalesAgent (CLAUDE.md, "a
+   * parameter that DECIDES something is required, never optional"). Pass an
+   * explicit `null` to state that the order has no salesperson link; that is a
+   * REFUSAL when `agent` cannot answer either.
+   *
+   * The composer stays pure: the `scm.staff` read lives beside the other header
+   * reads in scm/lib/autocount-outbox.ts, the same division `withLocations`
+   * uses for the line-level warehouse.
+   */
+  salespersonName: string | null,
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
+  const agent = resolveAcAgent(header.agent, salespersonName);
+  if (!agent) throw new MissingAgentError(header.agent ?? null);
   return {
     DocNo: header.doc_no,
     DocDate: header.so_date,
     DebtorCode: AC_DEBTOR_CODE,
     DebtorName: header.debtor_name,
-    Agent: mapOrPassthrough(header.agent, AGENT_MAP),
+    Agent: agent,
     SalesLocation: mapOrPassthrough(header.sales_location, LOCATION_MAP),
     Ref: header.ref,
     Phone: header.phone,

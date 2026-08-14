@@ -17,6 +17,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 // Host retry policy — the vendor auth/transport boundary already reaches into
 // the host for readAuthToken (see authed-fetch.ts); retry semantics belong to
 // the host's QueryClient for the same reason.
@@ -231,6 +232,7 @@ export function useCreateWarehouse() {
     mutationFn: (body: { code: string; name: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+    onError: writeFailed,
   });
 }
 
@@ -240,6 +242,7 @@ export function useUpdateWarehouse() {
     mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isActive?: boolean; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
+    onError: writeFailed,
   });
 }
 

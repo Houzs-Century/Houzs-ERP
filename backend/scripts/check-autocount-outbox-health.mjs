@@ -81,12 +81,19 @@ try {
        at all, so it belongs at the top of this report. */
     pg`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`,
     pg`SELECT status, count(*)::int AS n FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
-    pg`SELECT doc_type, doc_no, op, attempts,
+    /* EVERY pending row, WITH last_error. A retrying row carries the reason its
+       last attempt failed, and that reason is the whole diagnosis — 4xx fails
+       immediately, so a row that is still RETRYING means the request reached
+       AutoCount and AutoCount threw (AcSyncService turns every exception into a
+       500). Reporting only age and attempt count said "something is wrong" and
+       withheld the one field that says what, so the only way to read it was to
+       wait ~30 minutes for the row to dead-letter into 'failed', which this
+       script does print. */
+    pg`SELECT doc_type, doc_no, op, attempts, last_error,
               (now() - created_at) AS age
          FROM scm.autocount_outbox
         WHERE status = 'pending'
-        ORDER BY created_at ASC
-        LIMIT 1`,
+        ORDER BY created_at ASC`,
     pg`SELECT doc_type, doc_no, op, attempts, last_error, created_at
          FROM scm.autocount_outbox
         WHERE status = 'failed'
@@ -176,12 +183,26 @@ try {
 
   if (oldest.length) {
     const o = oldest[0];
-    notice(`oldest PENDING: ${o.doc_type} ${o.doc_no} (${o.op}), waiting ${o.age}, ${o.attempts} attempt(s)`);
+    notice(`PENDING: ${oldest.length} row(s). Oldest ${o.doc_type} ${o.doc_no} (${o.op}), waiting ${o.age}, ${o.attempts} attempt(s)`);
     notice(
       "A pending row is not an error by itself — it is only one if the age keeps " +
         "climbing. MAX_ATTEMPTS is 6 on a 5-minute cron, so a row dead-letters " +
         "after roughly 30 minutes of the service being unreachable.",
     );
+    /* The reason each one is still going round. A first attempt has none. */
+    for (const r of oldest) {
+      const why = String(r.last_error ?? "").trim();
+      if (!why) continue;
+      notice(`  ${r.doc_type} ${r.doc_no} (attempt ${r.attempts}) last error: ${why.slice(0, 400)}`);
+    }
+    if (oldest.some((r) => String(r.last_error ?? "").trim())) {
+      notice(
+        "A RETRYING row means the send was not a 4xx: configuration and bad-payload " +
+          "errors are refused on the first attempt and land in 'failed' straight away. " +
+          "So the request reached the host and AutoCount itself threw — AcSyncService " +
+          "turns every exception into a 500, and the text above is AutoCount's own words.",
+      );
+    }
   } else {
     notice("oldest PENDING: none");
   }

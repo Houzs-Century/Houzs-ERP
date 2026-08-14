@@ -18,11 +18,29 @@ Read this once. Then you will know where to look, and where to write.
 |---|---|---|---|
 | Agent entry point | `CLAUDE.md` | Rules, conventions, traps. Auto-loaded into every session. | **Yes — keep it thin** |
 | Navigation, judgement | `docs/CODEBASE-MAP.md` | What each area is FOR. Which trees are dead. What must change in pairs. | Yes — hand-written |
-| Navigation, facts | `docs/generated/` | Route inventory, migration trees, largest files, desktop/mobile pairing. | **No — generated** |
+| Navigation, facts | `docs/generated/` | Route inventory, migration trees, largest files, desktop/mobile pairing. | **Yes, except `route-capability-matrix`** — only that one is CI-gated, see §6 |
 | Per-module guide | `docs/modules/<module>.md` | Everything needed to work in ONE module without reading the others. | Yes — hand-written |
 | Bug ledger | `BUG-HISTORY.md` | Symptom → root cause → fix, per bug. Mandatory, owner rule. | No — append-only |
 | Incident post-mortem | `docs/*-coe.md` | A serious outage: what broke, why, what changed. | No — append-only |
 | Human knowledge base | Obsidian vault (`Houzs ERP/`) | Architecture and business reasoning **for people**. | Outside this repo |
+
+Three of these layers stopped depending purely on goodwill on 2026-08-13:
+`.github/workflows/working-agreement.yml` reports a PR that reads as a fix and
+adds no `BUG-HISTORY.md` entry, one that moves a module SURFACE without touching
+the guide that quotes the file, and one that changes `migrations-pg` without
+saying in the body how the migration is reversed and what it was verified
+against. The escapes are the labels `no-bug-history-needed` and
+`no-guide-change`, and the check prints what each one waived. The COE layer is
+still prose-only — an incident is a judgement call, not a diff shape.
+
+**"Reports", not "fails the PR" — this paragraph overstated it.** The workflow
+is deliberately NOT a required status check: its own header says *"It reports;
+the owner decides. Adding it to the `main-protection` ruleset is a separate,
+deliberate act."* Verified 2026-08-14 —
+`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main` lists exactly two
+required contexts, `backend-typecheck` and `frontend`. A red *Working agreement*
+check is a visible red X that does not block merge. It also does not run on
+`merge_group` (no `pull_request` payload there, so it could never report).
 
 ### Current state, honestly
 
@@ -126,9 +144,54 @@ None of this is invented here. The industry names, so you can search them:
 
 ## 6. Keeping this true
 
-- `npm --prefix backend run audit:map` regenerates `docs/generated/`. Run it when
-  you add routes, migrations or mobile screens. It is deliberately **not** a CI
-  merge gate — a stale navigation doc must never block a deploy.
+- **`audit:*` CHECKS. `gen-*` WRITES.** Corrected 2026-08-13: this line said
+  `audit:map` "regenerates `docs/generated/`", and it does neither of those
+  things — `backend/package.json:19` is
+  `node scripts/gen-codebase-map.mjs --check`, which writes nothing and covers
+  one file. `docs/CODEBASE-MAP.md:21-22` had it right, so the two documents
+  contradicted each other about the same command.
+
+  Each artifact has a generate/check pair:
+
+  ```bash
+  node backend/scripts/gen-codebase-map.mjs          # writes codebase-map-facts.md
+  npm --prefix backend run audit:map                 # checks it for drift
+  npm --prefix backend run gen:route-locator         # writes route-locator.md
+  npm --prefix backend run audit:route-locator       # checks it
+  node backend/scripts/generate-route-capability-matrix.mjs
+  npm --prefix backend run audit:routes              # checks it
+  ```
+
+  Run the `gen:*` half when you add routes, migrations or mobile screens.
+
+- **`audit:routes` IS a gate; the other two are not.** Corrected 2026-08-13:
+  this section used to say all three checks were "deliberately not CI merge
+  gates". `audit:routes` is both — it runs inside the `backend-typecheck` job
+  (`ci.yml:55`), which the `main-protection` ruleset lists as a REQUIRED
+  status check, and again in the deploy job (`deploy.yml:197`), whose own
+  comment says "this deploy job is its required backend gate ... so a direct
+  main push cannot deploy an undeclared/stale authorization surface". The
+  authorization surface is gated on purpose; only the NAVIGATION docs are not.
+
+  `audit:map` and `audit:route-locator` appear in no workflow at all, so
+  `codebase-map-facts.md` and `route-locator.md` drift silently and currently
+  DO — as of 2026-08-13 the map facts record `consignment-returns.ts` at 957
+  lines against an actual 1118. Generated is not the same as current: it means
+  a generator exists, not that anything runs it.
+
+  (The "jammed production twice" story that used to sit here is about why the
+  three defect-class checks in `ci.yml:70-73` are PR-only. It was never a
+  statement that `audit:routes` stopped being a gate.)
+
+- **`audit:map` CHECKS; it does not regenerate.** It is
+  `gen-codebase-map.mjs --check`, which exits 1 on drift and writes nothing. To
+  actually rewrite the artifact run the generator bare:
+  `node backend/scripts/gen-codebase-map.mjs` (and
+  `node backend/scripts/gen-route-locator.mjs` for the locator). There is no
+  `gen:map` script. Run them when you add routes, migrations or mobile screens.
+  Neither `--check` is a CI merge gate — a stale navigation doc must never block
+  a deploy — which is exactly why both artifacts were found STALE on `main` on
+  2026-08-14.
 - The hand-written layers have no automation. They stay true only because the rule
   in §2 keeps them small enough to be worth re-reading. **If a hand-written doc
   starts filling up with numbers, that is the signal to teach the generator

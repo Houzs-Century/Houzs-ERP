@@ -40,8 +40,31 @@
 // (desktop banner / list Confirm / mobile Create Sales Order) renders the full
 // reason list through the existing humanApiError / SaveProblemsList path with
 // no new client contract.
+//
+// A GATE THAT COULD NOT LOOK DOES NOT SAY "ALL CLEAR". soConfirmProblemsForDoc's
+// three reads dropped their PostgREST error. The lines read was the dangerous
+// one: `items ?? []` turned a failed query into an order with no lines, so every
+// per-line rule above had nothing to object to and the gate returned an EMPTY
+// problem list — which the caller spends as permission to confirm and to enqueue
+// the order to AutoCount. A failed read must never read as an absence when the
+// absence is what authorises the write (lib/downstream-lock.ts states the rule).
+// An unreadable gate now returns a problem of its own instead, and the caller's
+// existing `problems.length > 0 → 422` refuses without any change at the call
+// site.
 // ----------------------------------------------------------------------------
 import type { SaveProblem } from '../shared/so-save-problems';
+
+/** The gate's own third state: not "confirmable" and not "these things are
+ *  wrong", but "we could not check". Rendered by the same SaveProblemsList as
+ *  every other confirm problem, so no client contract changes. */
+export const SO_CONFIRM_CHECK_FAILED = 'so_confirm_check_failed';
+
+const checkFailedProblem = (reason: string): SaveProblem => ({
+  code: SO_CONFIRM_CHECK_FAILED,
+  message:
+    'Could not check this order against the confirm rules, so it is left as a draft rather '
+    + `than confirmed on a check that never ran — try again (${reason}).`,
+});
 
 export type SoConfirmLineFacts = {
   itemCode: string | null | undefined;
@@ -128,19 +151,29 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
  *  unique per company); a company-less legacy header degrades to an unscoped
  *  read, matching validateItemCodes. */
 export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<SaveProblem[]> {
-  const { data: head } = await sb
+  const { data: head, error: headErr } = await sb
     .from('mfg_sales_orders')
     .select('salesperson_id, agent, venue, venue_id, company_id')
     .eq('doc_no', docNo)
     .maybeSingle();
+  if (headErr) return [checkFailedProblem(`header: ${headErr.message}`)];
   const h = (head ?? {}) as {
     salesperson_id?: string | number | null; agent?: string | null;
     venue?: string | null; venue_id?: string | null; company_id?: number | null;
   };
-  const { data: items } = await sb
+  const { data: items, error: itemsErr } = await sb
     .from('mfg_sales_order_items')
     .select('item_code, item_group, description, line_no, cancelled')
     .eq('doc_no', docNo);
+  /* THE ONE THAT LET THE ORDER THROUGH. `items ?? []` folded a failed read into
+     an order with NO lines, every per-line rule then had nothing to object to,
+     the gate returned zero problems, and the DRAFT was confirmed — and enqueued
+     to AutoCount — carrying the placeholder and free-text lines this gate exists
+     to stop. The header and catalog reads below already refused by accident
+     (an empty header reads as "no salesperson", an empty catalog reads as "every
+     code is non-catalog"), but they refused with a sentence that named the wrong
+     problem. All three now say what actually happened. */
+  if (itemsErr) return [checkFailedProblem(`lines: ${itemsErr.message}`)];
   const lines = ((items ?? []) as Array<{
     item_code: string | null; item_group: string | null;
     description: string | null;
@@ -152,7 +185,8 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string): Promise<S
   if (codes.length > 0) {
     let q = sb.from('mfg_products').select('code').in('code', codes);
     if (h.company_id != null) q = q.eq('company_id', h.company_id);
-    const { data: prods } = await q;
+    const { data: prods, error: prodsErr } = await q;
+    if (prodsErr) return [checkFailedProblem(`catalog: ${prodsErr.message}`)];
     const known = new Set(((prods ?? []) as Array<{ code: string }>).map((r) => r.code));
     nonCatalogCodes = codes.filter((c) => !known.has(c));
   }

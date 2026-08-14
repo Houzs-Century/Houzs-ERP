@@ -1,3 +1,11 @@
+/* company-scope-file: every write here targets
+   scm.stock_allocation_recompute_queue by `job_key` / `locked_by` /
+   `request_token`. That table carries NO company_id — mig 0083 stamped 116
+   tables and left it alone, deliberately — because it is global infrastructure:
+   one recompute at a time across the whole system. There is no company to scope
+   to. `job_key` is the queue's own identity, not a business key two companies
+   could each hold. */
+
 /* ══════════════════════════════════════════════════════════════════════════════
    SCOPE — READ THIS BEFORE RELYING ON "DURABLE".
 
