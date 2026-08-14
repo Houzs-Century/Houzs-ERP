@@ -26,6 +26,8 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
    recompute sites (create + cross-category re-detect). */
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
+import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
+import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
@@ -1423,8 +1425,10 @@ mfgSalesOrders.get('/', async (c) => {
         .from('mfg_sales_order_payments')
         .select('so_doc_no, method, online_type')
         .in('so_doc_no', docNos)).data ?? [])();
+    // DO No. rides this read rather than a query of its own — the list's cost
+    // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
-      sb.from('delivery_orders').select('so_doc_no').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
+      sb.from('delivery_orders').select('so_doc_no, do_number, do_date, created_at').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
       sb.from('sales_invoices').select('so_doc_no').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
     ]);
     const deliverableProm = soDeliverableRemaining(sb, docNos);
@@ -1636,14 +1640,9 @@ mfgSalesOrders.get('/', async (c) => {
        non-cancelled DO/SI that points back to a listed SO and mark has_children
        on the row. The list grid uses this to hide Edit / Cancel from SOs that
        are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
-    const downstreamDocNos = new Set<string>();
     const [doRowsRes, siRowsRes] = await downstreamProm;
-    for (const d of ((doRowsRes.data ?? []) as Array<{ so_doc_no: string | null }>)) {
-      if (d.so_doc_no) downstreamDocNos.add(d.so_doc_no);
-    }
-    for (const s of ((siRowsRes.data ?? []) as Array<{ so_doc_no: string | null }>)) {
-      if (s.so_doc_no) downstreamDocNos.add(s.so_doc_no);
-    }
+    const doNosBySo = doNosBySalesOrder((doRowsRes.data ?? []) as DeliveryOrderNoRow[]);
+    const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data ?? [], siRowsRes.data ?? []);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
        "Stock Remark" the operator's existing ERP shows: READY when everything
@@ -1771,6 +1770,7 @@ mfgSalesOrders.get('/', async (c) => {
         dDelivered <= 0 ? 'none' : dRemaining > 0 ? 'partial' : 'full';
       (r as Record<string, unknown>).lifecycle_state = lifecycleByDoc.get(docNo) ?? 'none';
       (r as Record<string, unknown>).current_doc_no = currentByDoc.get(docNo) ?? (docNo || null);
+      (r as Record<string, unknown>).do_nos = doNosBySo.get(docNo) ?? [];
       (r as Record<string, unknown>).has_undelivered = hasUndelivered.has(docNo);
       const readiness = readinessByDoc.get(docNo);
       (r as Record<string, unknown>).stock_remark = readiness?.stockRemark ?? '';

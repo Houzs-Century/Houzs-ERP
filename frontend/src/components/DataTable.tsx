@@ -38,6 +38,7 @@ import {
   type DrawerColumn,
 } from "./ColumnsDrawer";
 import { withSingleActive } from "./LayoutSection";
+import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -832,6 +833,13 @@ function DataTableInner<T>({
     });
   }
 
+  // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
+  const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
+  function handleResetFilters() {
+    if (colFiltersActive) setColFilters({});
+    resetFilters?.onReset();
+  }
+
   // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
   // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -1273,20 +1281,18 @@ function DataTableInner<T>({
     return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
+  /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
+     two lists below are read PAST, so a gesture that edits only them can write
+     nothing at all. `order` comes back set exactly when that baseline was banked. */
+  function writeColumnPrefs(next: ColumnPrefs) {
+    if (next.order) setOrder(next.order);
+    setHiddenList(next.hidden);
+    setShownList(next.shown);
+  }
+
   function toggleColumn(key: string) {
-    const col = allColumns.find((c) => c.key === key);
-    const isHidden = effectiveHidden.has(key);
-    if (isHidden) {
-      // Reveal: drop from userHidden, and (if defaultHidden) add to shown.
-      setHiddenList((prev) => prev.filter((k) => k !== key));
-      if (col?.defaultHidden) {
-        setShownList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      }
-    } else {
-      // Hide: add to userHidden, drop from shown.
-      setHiddenList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      setShownList((prev) => prev.filter((k) => k !== key));
-    }
+    const seen = { hidden: hiddenList, shown: shownList };
+    writeColumnPrefs(toggleColumnPrefs(allColumns, effectiveHidden, key, seen, !!baselineLayout));
   }
 
   function resetVisibility() {
@@ -1457,12 +1463,8 @@ function DataTableInner<T>({
     [allColumns, effectiveHidden, resolveWidth, pinnedSet, pinnedRightSet]
   );
 
-  /** Every column on. Writes the shown-list explicitly so a `defaultHidden`
-   *  column stays on afterwards rather than snapping back on the next mount. */
   function showAllColumns() {
-    const movable = allColumns.filter((c) => !c.alwaysVisible);
-    setHiddenList([]);
-    setShownList(movable.filter((c) => c.defaultHidden).map((c) => c.key));
+    writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
   /** Back to the active layout: its columns, its order, its widths. */
@@ -2322,13 +2324,11 @@ function DataTableInner<T>({
               />
             </div>
           )}
-          {resetFilters && (
-            <ResetFiltersButton
-              active={resetFilters.active}
-              onReset={resetFilters.onReset}
-              label={resetFilters.label}
-            />
-          )}
+          <ResetFiltersButton
+            active={colFiltersActive || (resetFilters?.active ?? false)}
+            onReset={handleResetFilters}
+            label={resetFilters?.label}
+          />
           <div className="flex items-center gap-2 text-[11px] font-medium text-ink-secondary">
             {caption && (
               <>

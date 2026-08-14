@@ -146,6 +146,19 @@ function verdictFromReads(
   return downstreamVerdict(docType, counts);
 }
 
+/** The same SO question as `soHasDownstream`, asked for a whole page at once and
+ *  answered from rows the caller has already read — the SO list needs the
+ *  verdict for 100 orders and cannot afford 200 round-trips to get it. Pass the
+ *  live (non-cancelled) DO and SI rows; a row's existence IS the lock, so only
+ *  `so_doc_no` is read and rows without one are ignored. */
+export function soDocNosWithDownstream(
+  ...rowSets: Array<Array<{ so_doc_no: string | null }>>
+): Set<string> {
+  const out = new Set<string>();
+  for (const rows of rowSets) for (const r of rows) if (r.so_doc_no) out.add(r.so_doc_no);
+  return out;
+}
+
 /** An SO locks on any live Delivery Order or Sales Invoice against it. */
 export async function soHasDownstream(sb: Sb, soDocNo: string): Promise<DownstreamRefusal | null> {
   const [deliveryOrders, salesInvoices] = await Promise.all([

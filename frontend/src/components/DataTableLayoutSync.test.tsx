@@ -167,9 +167,21 @@ describe("DataTable with server layouts", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
     await vi.runAllTimersAsync();
 
+    /* The FULL arrangement goes up, not just the one column touched. The first
+       stored pref of any kind ends the baseline for good, so a lone `hidden:
+       ["b"]` would be read back as "hid Bravo, arranged nothing else" — and
+       Alpha and Delta, hidden only by the 2990 default, would reappear the next
+       time the table mounted. Hiding one column is not a request to unhide two.
+       Same reason applyPreset writes the hidden list in full. */
     expect(mockApi.put).toHaveBeenCalledWith(
       "/api/table-layouts/push",
-      expect.objectContaining({ layout: expect.objectContaining({ hidden: ["b"] }) }),
+      expect.objectContaining({
+        layout: expect.objectContaining({
+          hidden: ["a", "d", "b"],
+          shown: ["c"],
+          order: ["b", "c", "a", "d"],
+        }),
+      }),
     );
 
     mockApi.put.mockClear();

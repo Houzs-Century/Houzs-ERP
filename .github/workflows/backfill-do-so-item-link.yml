@@ -1,0 +1,63 @@
+name: Re-link DO lines to their SO lines (PLAN gated)
+
+# delivery_order_items.so_item_id is written from the request body and nowhere
+# else — all three insert paths do `so_item_id: (it.soItemId) ?? null`, with no
+# derivation and no guard. A client that omits it writes a delivery the system
+# can never attribute. PR #1395 fixed the DO-create page on 2026-07-29; lines
+# created as late as 2026-08-06 are still unlinked.
+#
+# The cost is not cosmetic: MRP's delivered-netting resolves on so_item_id, so a
+# shipped order reads as entirely undelivered and purchasing is told to buy the
+# goods a second time. Measured 2026-08-14: 24 lines, 11 open sales orders.
+#
+# Pairs only within the sales order the DO already names, only on the same item
+# code, and — where a code repeats — only on a variant identity unique on both
+# sides. Anything it cannot read one-to-one is reported and LEFT ALONE.
+#
+# Writes one column, only where it IS NULL. PLAN unless mode=apply, which also
+# needs the confirm phrase. Re-running is inert.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply only — type: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id, or blank for every company"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-do-so-item-link
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-do-so-item-link.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
