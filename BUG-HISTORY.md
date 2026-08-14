@@ -1,3 +1,84 @@
+## The sofa engine billed a part-ringgit price rounded to the nearest ringgit [high]
+
+**Symptom.** Nobody reported it, because the amount is cents and the invoice
+looks right. A sofa whose combo is priced RM3152.63 bills **RM3153.00**; one
+priced RM5712.11 bills **RM5712.00**. Over-charging on one row, under-charging
+on the next, and margin computed against the rounded revenue while cost stays
+exact.
+
+**How big, measured not guessed.** Actions -> **Sofa price rounding check
+(read-only)**, run 2026-08-14 against production: module SKU flat prices **0**
+part-ringgit, seat-height selling overrides **0**, and combo charged prices
+**23 of 163**. So the question the ledger held open as B4 — *should a sofa module
+ever be priced in cents?* — was already answered by the data: the business
+prices in cents, and the engine was rounding it away.
+
+**Root cause.** `SofaProductPricing` carried whole MYR. Inputs arrive in sen,
+`sofaCompartmentsFromModulePrices` did `Math.round(sen / 100)` on the way in,
+the combo total did `Math.round(comboPriceCenti / 100)`, and
+`computeSofaSellingSen` did `Math.round(total * 100)` on the way out. That round
+trip is pure loss — up to 50 sen per module and per combo.
+
+**Fix.** The engine carries SEN end to end. Its arithmetic is addition,
+subtraction and one integer multiply, so integer sen is strictly better than
+fractional MYR: no rounding, and no float either. The public boundary is
+unchanged — `computeSofaSellingSen` already took sen and returned sen, so its
+one live caller (`mfg-pricing-recompute.ts:613`) needed no change.
+
+**The field was RENAMED, not just re-interpreted.** `price` -> `priceSen`,
+`reclinerUpgradePrice` -> `reclinerUpgradeSen`. Changing a unit silently is how a
+missed call site becomes 100x wrong with nothing to catch it; renaming makes the
+compiler enumerate every site. It found them all — backend and frontend
+typecheck both clean on the first run after the change.
+
+**Test.** `backend/src/scm/shared/sofa-price-sen.test.ts` — the engine had NO
+arithmetic test before this (`sofa-combo-pricing.test.ts` covers combo
+normalisation only). Written as CHARACTERISATION first: three whole-ringgit
+cases that must not move, because 140 of the 163 production combos are whole
+ringgit and a change there would be a live pricing change; then the three
+part-ringgit cases, which reproduced the production deltas exactly (+37 sen on
+RM3152.63, -11 sen on RM5712.11) before the fix and are exact after it.
+
+**Ref.** 2026-08-14, ledger B4. **Not covered by this fix:** documents already
+priced from those 23 rows carry the rounded figure. Sizing that is a separate
+pass and it is recorded in the ledger, not assumed to be nil.
+
+## The migration tool could only ever reach production [medium]
+
+**Symptom.** None visible, and that is the point. `pg-migrate.mjs` appeared to
+work, because the only database anyone ever pointed it at was the one it could
+reach.
+
+**Root cause.** `pg-migrate.mjs:48` opened its connection with `ssl: "require"`
+hardcoded. Correct for production — Supabase through Hyperdrive — and fatal
+against any local PostgreSQL, which serves no TLS: the script dies in **0.059s**
+with `Client network socket disconnected before secure TLS connection was
+established`, inside `loadAppliedMigrationRows`, before reading a single
+migration file.
+
+**Why it matters more than a developer-convenience bug.** It means a migration
+could not be applied anywhere except production, so the first real database any
+migration ever met was the production one, during a deploy. That is exactly how
+mig 0290 stopped the backend release on 2026-08-14
+(`docs/migration-gate-coe.md`).
+
+**Fix.** `backend/scripts/lib/pg-ssl-mode.mjs` — TLS required for everything
+except the two loopback names spelled exactly, failing CLOSED on an unparseable
+URL, an empty string, `undefined`, or a number. Keyed on the hostname rather than
+an env var on purpose: a hostname comes from the target itself, so it cannot be
+switched on by ambient configuration, whereas a stray `PGSSL=disable` in the
+wrong environment file would silently downgrade a production connection. Against
+the real DSN the value is `'require'` — byte-identical to the old behaviour.
+
+**Test.** `backend/tests/pgSslMode.node.mjs`, wired into `test:scale-contract`.
+The cases that carry the weight are the near-misses, all of which must still
+require TLS: `localhost.evil.com`, `notlocalhost`, `127.0.0.1.evil.com`,
+`127.0.0.2`, and a production host carrying `?host=localhost`. A hostname is
+compared whole, never by prefix or suffix.
+
+**Ref.** 2026-08-14. Found by building a CI gate that turned out not to work; the
+gate is ruled out in the COE, this fix outlived it.
+
 ## A view migration written against the wrong baseline stopped the production deploy [high]
 
 **Symptom.** PR #2140 merged green and the backend never shipped. The Deploy run
