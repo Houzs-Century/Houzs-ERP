@@ -434,7 +434,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // upload/remove are server-written: routes/projects.ts:4235,:4318
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -555,7 +555,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
