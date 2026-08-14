@@ -273,20 +273,36 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # Let every shard finish. If the pool-collapse signature above ever
-      # returns it shows up as ALL FOUR shards red with no AssertionError,
+      # returns it shows up as EVERY shard red with no AssertionError,
       # which is instantly distinguishable from one shard with a real failing
       # test. fail-fast would hide that. It does NOT weaken the gate — the
       # `backend` roll-up below still fails if any shard fails.
       fail-fast: false
       matrix:
-        # 2, not 4. This job now runs ONLY the files that need the Workers
-        # runtime — 44 of the 265 that used to be here, ~99s in total — because
-        # the other 221 moved to `test:light` in backend-typecheck above. Two
-        # shards put each at ~50s, which is already below the fixed
-        # checkout+install overhead; a third would buy seconds and cost a slot
-        # the account does not have (see docs/ci-capacity-coe.md on the 20-job
-        # ceiling).
-        shard: [1, 2]
+        # 3, raised from 2 on 2026-08-14. This job runs ONLY the files that need
+        # the Workers runtime; the rest are in `test:light` under
+        # backend-typecheck above.
+        #
+        # THE PREVIOUS COMMENT'S ARITHMETIC WAS RIGHT AND ITS INPUTS WERE STALE.
+        # It said each shard sat at "~50s, already below the fixed
+        # checkout+install overhead", so a third would buy seconds. Measured on
+        # run 31779735023: the two shards ran 139s and 124s, of which ~29s is
+        # fixed (checkout + setup-node + cached npm ci). So the test work is
+        # ~110s per shard, not 50s — the suite grew, and the sizing argument
+        # never did. Three shards put the test work near ~73s, i.e. ~102s a
+        # shard including overhead.
+        #
+        # The other half of that comment — "costs a slot the account does not
+        # have" — was also re-measured: per-job QUEUE time on the same run was
+        # 3 SECONDS. The 20-job ceiling in docs/ci-capacity-coe.md was not
+        # binding, so the third runner is free today. It will stop being free if
+        # concurrent PRs rise; re-measure queue time before adding a fourth.
+        #
+        # Do NOT instead raise in-pool concurrency. vitest.config.mts sets
+        # fileParallelism:false / maxWorkers:1 deliberately — the pool collapses
+        # above that, with 50-65 files "failing" and zero AssertionErrors. More
+        # runners is the only safe direction.
+        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: backend
@@ -505,8 +521,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run check:test-focus
-      - run: npm run typecheck
       # `test:coverage` and not `test`: the SAME suite with the v8 provider on.
       # Measured 2026-08-13 on this machine: 18s bare, 20s instrumented. Running
       # both would pay for the suite twice for 2s of information.
@@ -534,9 +548,44 @@ jobs:
       # Zero-dependency node:test checks for the gate scripts' own logic.
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.
-      - run: node --test scripts/check-bundle-verdict.mjs
       - run: node --test ../scripts/check-coverage-verdict.mjs
 
+  # The typecheck half of what used to be one `frontend-checks` job.
+  #
+  # WHY IT IS ITS OWN JOB. Measured 2026-08-14 on run 31779735023, when the two
+  # halves were one job: `npm run typecheck` 60s and `npm run test:coverage` 63s,
+  # run one after the other, making frontend-checks 149s and the SLOWEST job in
+  # the run — so it, alone, decided how long a PR waited. Neither half needs the
+  # other: tsc reads the tree, vitest runs the suite. In parallel the frontend
+  # gate costs the LONGER of the two instead of their sum.
+  #
+  # The queue was measured at the same time and is 3s, so the extra runner is
+  # free here; docs/ci-capacity-coe.md reasons from a 20-job ceiling that was NOT
+  # binding on that run. Re-measure before assuming it still is not.
+  #
+  # The coverage half keeps the name `frontend-checks` on purpose: the
+  # `coverage-ratchet` job declares `needs: [..., frontend-checks]` and downloads
+  # the `coverage-frontend` artifact it uploads. Splitting the other half out
+  # leaves both of those untouched.
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:test-focus
+      - run: npm run typecheck
+      # Zero-dependency node:test checks for the gate scripts' own logic.
+      # Not part of `npm test` (vitest only collects src/**), so they are run
+      # explicitly — a checker nobody runs is not a checker.
+      - run: node --test scripts/check-bundle-verdict.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
       # script above was exactly that until 2026-08-01. Pin the shape.
@@ -680,16 +729,23 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-build, frontend-perf]
+    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # frontend-typecheck was split out of frontend-checks on 2026-08-14 and is
+      # asserted here for the reason this roll-up exists at all: `frontend` is a
+      # REQUIRED context, so a job missing from this list is a job that cannot
+      # block a merge. Adding the job without adding the assertion would have
+      # made the typecheck advisory and nothing would have said so.
       - name: Assert all frontend jobs succeeded
         run: |
-          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
-          echo "frontend-build:  ${{ needs.frontend-build.result }}"
-          echo "frontend-perf:   ${{ needs.frontend-perf.result }}"
+          echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
+          echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
+          echo "frontend-build:     ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
           [ "${{ needs.frontend-checks.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-typecheck.result }}" = "success" ] || exit 1
           [ "${{ needs.frontend-build.result }}" = "success" ] || exit 1
           [ "${{ needs.frontend-perf.result }}" = "success" ] || exit 1
 
