@@ -7025,7 +7025,7 @@ function DetectSizeButton({
 
 /** POST the detect-size call. Shared by the manual button and the automatic
  *  post-upload run so both behave identically. */
-async function detectFloorplanSize(projectId: number, overwrite = false) {
+async function detectFloorplanSize(projectId: number, overwrite: boolean | "auto" = false) {
   return api.post<{
     detected_sqm: number | null;
     applied: boolean;
@@ -7034,7 +7034,12 @@ async function detectFloorplanSize(projectId: number, overwrite = false) {
     evidence: string | null;
     confidence: string;
     source_file: string;
-  }>(`/api/projects/${projectId}/floorplan/detect-size${overwrite ? "?overwrite=1" : ""}`, {});
+  }>(
+    `/api/projects/${projectId}/floorplan/detect-size${
+      overwrite === "auto" ? "?overwrite=auto" : overwrite ? "?overwrite=1" : ""
+    }`,
+    {},
+  );
 }
 
 function ProjectSpecStrip({
@@ -9669,7 +9674,9 @@ function ChecklistRow({
       // any failure here must never make a successful upload look failed.
       if (/^(display floor\s*plan|blank floorplan)/i.test((item.title || "").trim())) {
         try {
-          const r = await detectFloorplanSize(projectId);
+          // "auto": an empty box fills, a stale auto-read refreshes, a size
+          // someone typed by hand is left alone (owner 2026-08-14).
+          const r = await detectFloorplanSize(projectId, "auto");
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
               `Size read from the floorplan: ${r.detected_sqm} sqm${

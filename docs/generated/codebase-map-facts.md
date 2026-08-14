@@ -43,7 +43,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/pos.ts` | 8 | 332 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5098 |
+| `backend/src/routes/projects.ts` | 109 | 5119 |
 | `backend/src/routes/projects_print.ts` | 1 | 1367 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
@@ -169,22 +169,22 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1312 files, 543506 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1312 files, 543586 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15053 |
+| `frontend/src/pages/Projects.tsx` | 15069 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5679 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
-| `backend/src/routes/projects.ts` | 5098 |
+| `backend/src/routes/projects.ts` | 5119 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4498 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `backend/src/scm/routes/grns.ts` | 3724 |
@@ -381,7 +381,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3721 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4491 |
+| `frontend/src/mobile/MobilePMS.tsx` | 4498 |
 | `frontend/src/mobile/MobilePOD.tsx` | 536 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |

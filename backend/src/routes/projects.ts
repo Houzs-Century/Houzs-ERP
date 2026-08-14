@@ -13,7 +13,7 @@ import {
   roleLabelAdmits,
   salesDirectorMayAttach,
 } from "../services/projectGates";
-import { detectFloorplanSize } from "../services/floorplanSize";
+import { detectFloorplanSize, isFloorplanTitle } from "../services/floorplanSize";
 import {
   createProject,
   patchProject,
@@ -3394,8 +3394,11 @@ app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), asyn
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
+  // ?overwrite=1 forces (the manual "Auto" button); ?overwrite=auto refreshes a
+  // value a previous read wrote but leaves a hand-typed one alone.
+  const ow = c.req.query("overwrite");
   const result = await detectFloorplanSize(c.env, id, {
-    overwrite: c.req.query("overwrite") === "1",
+    overwrite: ow === "auto" ? "auto" : ow === "1",
     userId: user?.id ?? null,
   });
   if (!result.ok) return c.json({ error: result.error }, result.status);
@@ -4007,6 +4010,24 @@ app.put(
         owner.title,
         user?.id,
       );
+      // Floorplan uploaded → read the m² and fill the Size box, server-side
+      // (owner 2026-08-14: "button auto beside size i need to click manually?
+      // once display floorplan uploaded make sure auto read the measurement and
+      // fill in size box"). It ran in the DESKTOP upload handler only, so a
+      // mobile upload never triggered it. Doing it here covers every client —
+      // desktop, mobile, paste — and any future one.
+      //
+      // waitUntil: the model call takes seconds and must not hold the upload
+      // response. "auto" leaves a hand-typed size alone but refreshes one a
+      // previous read wrote, so re-uploading a corrected plan updates the box.
+      if (isFloorplanTitle(owner.title)) {
+        const uid = user?.id ?? null;
+        const pid = owner.project_id;
+        const run = detectFloorplanSize(c.env, pid, { overwrite: "auto", userId: uid }).catch((e) =>
+          console.warn("[floorplan-size] auto-read failed", pid, e),
+        );
+        c.executionCtx?.waitUntil?.(run);
+      }
     }
     return c.json(
       {
