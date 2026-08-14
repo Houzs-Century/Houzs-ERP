@@ -1,3 +1,45 @@
+## Seventeen test files ran, passed, and counted as no test at all [medium]
+
+**Symptom.** The coverage ratchet failed a docs-only PR with
+`backend/scripts/lib: 17 files have NO test executing them, up from 15`. That PR
+touched no file in that directory. Three other PRs were blocked behind the same
+red, none of which had touched it either.
+
+**Root cause.** The merged coverage report is built from `test:coverage:light` +
+`test:coverage:workers`, both vitest. Seventeen test files ran under
+`node --test` (`tests/*.node.mjs`, via `test:scale-contract` and its `pretest`),
+and a `node --test` run contributes NOTHING to that report. Twelve modules in
+`backend/scripts/lib` are covered only by those files — `ac-line-key-audit`,
+`ac-po-line`, `ac-po-line-match`, `catalogue-series`, `classify-tests`,
+`invoice-price-core`, `jsonb-bind-scan`, `po-cost-plan`, `release-discipline`,
+`route-matrix-diff`, `so-line-dedication`, `swallowed-read-scan` — so the
+no-test floor for that area was a number about the RUNNER, not about testing.
+
+The gate was right and the tests were right. The measurement did not reach them.
+
+**Fix.** The seventeen are ordinary vitest files now: `*.node.mjs` ->
+`*.test.mjs`, `import test from 'node:test'` -> `import { test } from 'vitest'`,
+bodies untouched — vitest runs `node:assert` unchanged, so nothing else moved.
+`classify-tests.mjs`'s walk collects `*.test.mjs` alongside `*.test.ts`, which
+keeps them out of TypeScript entirely. `test:scale-contract` and its `pretest`
+are deleted.
+
+**Measured.** The light suite goes 4102 -> 4361 tests. Those 259 were always
+running; nothing that reads coverage could see them.
+
+**Not re-baselined, deliberately.** Raising the floor to 17 accepts the debt and
+turns a ratchet into a suggestion; exempting the area gives up on it. Both were
+cheaper than the conversion and both would have left the number lying.
+
+**What the rename then broke, and what caught it.** Nine documents and three
+runners still named the old files: `check-docs-drift --strict` found the docs,
+and `test:release-discipline` + two steps in `stamp-real-po-costs.yml` failed in
+CI. A rename is exactly the change those gates exist for.
+
+**Ref.** 2026-08-14. Lesson, and it generalises past this gate: **a measurement
+can be wrong in the direction of looking rigorous.** "17 files have no test" read
+as a real backlog for as long as nobody asked which runner the report came from.
+
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
 **Symptom.** `node scripts/coverage-ratchet.mjs --check --report <file>` on a
