@@ -31,11 +31,20 @@ invisible until an UNRELATED expression happened to compare against a missing
 value. Had the PR not also added that filter, the two kinds would be undeclared
 today and no gate would have said a word — the build error was luck, not a check.
 
-**Fix.** Both unions widened, each carrying a comment naming the other and the
-raw-SQL writer, plus `backend/tests/checklistCommentKinds.test.ts`: it extracts
-every kind literal written into that table and asserts both declarations admit
-all of them AND agree with each other. Proven red by reverting the frontend union
-— exit 1, naming both `remove` and `upload`.
+**Fix, in two parts by two people.** The FRONTEND union was widened directly on
+`main` while this branch was in flight — that is what un-blocked the deploy, and
+this entry does not claim it. What landed here is the half that was still
+missing: the BACKEND union on `addChecklistComment`, which was still
+`"note" | "submit" | "reject" | "amend" | "approve"` after the outage was over,
+and `backend/tests/checklistCommentKinds.test.ts`, which extracts every kind
+literal written into that table and asserts both declarations admit all of them
+AND agree with each other. Proven red by reverting the frontend union — exit 1,
+naming both `remove` and `upload`.
+
+That split is worth recording rather than tidying away: the visible symptom was
+fixed in one file, and the other declaration — plus the thing that stops it
+recurring — was still open afterwards. Un-blocking the build and fixing the
+defect were not the same job.
 
 The guard is ANCHORED on the declaring construct (`interface ChecklistComment`,
 `export async function addChecklistComment(`), not on the first `kind:` union in

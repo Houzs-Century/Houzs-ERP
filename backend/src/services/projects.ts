@@ -2370,12 +2370,7 @@ export async function setChecklistStatus(
 export async function addChecklistComment(
   env: Env,
   itemId: number,
-  /* "upload" / "remove" are real kinds in this column — routes/projects.ts writes
-     them on attachment add and delete. It does so with raw SQL rather than through
-     here, which is exactly why this union could go stale without failing: the one
-     place that types the column is the one place those writes do not touch. Kept
-     in step with the frontend's copy in pages/Projects.tsx. */
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove",
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove", // upload/remove written as raw SQL by routes/projects.ts, bypassing here; mirror in pages/Projects.tsx, guarded by tests/checklistCommentKinds.test.ts
   body: string | null,
   userId: number
 ) {
