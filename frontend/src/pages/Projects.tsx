@@ -45,6 +45,7 @@ import {
   ClipboardList,
   DollarSign,
   Wrench,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "../components/Layout";
@@ -434,7 +435,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // upload/remove are server-written: routes/projects.ts:4235,:4318
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -4326,6 +4327,7 @@ export function buildProjectsCalendarModel({
   brand,
   status,
   organizer,
+  q = "",
   showTasks,
   expandAll,
 }: {
@@ -4338,6 +4340,10 @@ export function buildProjectsCalendarModel({
   brand: string;
   status: string;
   organizer: string;
+  /** Free-text search — matches venue/organizer/brand/project code/name/event
+   *  type. Empty string = no filter. Defaults to "" so callers pre-dating the
+   *  search box (tests) still pass. */
+  q?: string;
   showTasks: boolean;
   expandAll: boolean;
 }) {
@@ -4346,10 +4352,31 @@ export function buildProjectsCalendarModel({
   const matchesStatus = (project: CalendarProject): boolean =>
     !status || (project.status || "").toLowerCase() === status;
 
+  // Free-text search — case-insensitive, matches ANY of the visible/label
+  // fields so someone typing "mid valley" finds every event with that venue
+  // regardless of casing. Owner 2026-07-20.
+  const needle = q.trim().toLowerCase();
+  const matchesQuery = (project: CalendarProject): boolean => {
+    if (!needle) return true;
+    const hay = [
+      project.code,
+      project.name,
+      project.venue ?? "",
+      project.organizer ?? "",
+      project.brand ?? "",
+      project.state ?? "",
+      project.event_type_name ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(needle);
+  };
+
   const projects = allProjects.filter((project) => {
     if (brand && project.brand !== brand) return false;
     if (!matchesStatus(project)) return false;
     if (organizer && (project.organizer || "") !== organizer) return false;
+    if (!matchesQuery(project)) return false;
     return true;
   });
   const projectById = new Map(projects.map((project) => [project.id, project] as const));
@@ -4357,6 +4384,9 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
+        // With a search: only render tasks whose parent project passed the
+        // filter — keeps the view consistent (task chips beside their bar).
+        if (needle && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })
     : [];
@@ -4486,6 +4516,12 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
+  // 2026-07-20 — free-text search (matches venue / organizer / brand /
+  // project code / event title). Owner: "where is search button on calender?".
+  "q",
+  // Also removed the 'Tasks' toggle button from the toolbar the same day
+  // — the personal pref key `projects:cal:showTasks` in localStorage is
+  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -4524,6 +4560,7 @@ function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
+  const q = params.get("q") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
   function patchParams(patch: Record<string, string>) {
@@ -4537,6 +4574,7 @@ function ProjectsCalendarView() {
   const setBrand = (v: string) => patchParams({ brand: v });
   const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
+  const setQ = (v: string) => patchParams({ q: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
   // on the legend, not data filters), so they stay in localStorage per
@@ -4744,6 +4782,7 @@ function ProjectsCalendarView() {
         brand,
         status,
         organizer,
+        q,
         showTasks,
         expandAll,
       }),
@@ -4757,6 +4796,7 @@ function ProjectsCalendarView() {
       brand,
       status,
       organizer,
+      q,
       showTasks,
       expandAll,
     ],
@@ -4898,6 +4938,31 @@ function ProjectsCalendarView() {
 
         {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Owner 2026-07-20 — "where is search button on calender?".
+              Free-text search across venue / organizer / brand / project code
+              / event title. Live-filters both the bars and any task chips
+              beside them. URL-persisted (?q=) so a Ctrl+F5 keeps the search. */}
+          <label className="relative inline-flex h-8 items-center">
+            <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search venue, organizer, brand…"
+              className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
+              title="Search events on the calendar"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
+                title="Clear search"
+              >
+                <X size={11} />
+              </button>
+            )}
+          </label>
           <select
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
@@ -4962,18 +5027,10 @@ function ProjectsCalendarView() {
               );
             }}
           />
-          <button
-            onClick={() => setShowTasks(!showTasks)}
-            className={cn(
-              "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              showTasks
-                ? "border-primary/40 bg-primary-soft text-primary-ink"
-                : "border-border bg-surface text-ink-muted hover:text-ink"
-            )}
-            title="Toggle task chips"
-          >
-            {showTasks ? <Check size={12} /> : <Circle size={12} />} Tasks
-          </button>
+          {/* Tasks toggle button removed 2026-07-20 per owner request
+              ("remove button task"). Task chips still render when the
+              projects:cal:showTasks localStorage pref is true (default false);
+              a one-line re-add of this <button> restores the toggle if needed. */}
           <button
             onClick={() => setShowHolidays(!showHolidays)}
             className={cn(

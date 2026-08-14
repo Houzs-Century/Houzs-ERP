@@ -101,17 +101,40 @@ test("only .test.ts is collected; helpers and node:test files are not", async ()
   assert.deepEqual([...workers, ...light], ["tests/a.test.ts"]);
 });
 
-/* RECORDED, NOT ENDORSED. The rule reads raw text, so a comment counts. This is
-   a real cost — the serial workerd pool is the expensive one — and the fix is to
-   strip comments before matching. Pinned so that fix has to change this test on
-   purpose rather than silently reclassifying files. */
-test("a comment mentioning env.DB is enough to exile a pure-logic file (known cost)", async () => {
+/* FIXED 2026-08-14 — this test previously RECORDED the opposite, and the fix
+   changed it on purpose, which is what it was pinned for.
+
+   The rule used to run over raw text, so `// Fake env.DB.` in a comment exiled a
+   pure-logic file to the serial workers pool. Five of the 46 files in that pool
+   were there for that reason alone. classify-tests now blanks comments first. */
+test("a comment mentioning env.DB no longer exiles a pure-logic file", async () => {
   const root = await fixture({
-    "tests/a.test.ts": `import { describe } from "vitest";\n// Fake env.DB. Nothing here needs workerd.\n`,
+    "tests/a.test.ts": `import { describe } from "vitest";
+// Fake env.DB. Nothing here needs workerd.
+`,
+    "tests/b.test.ts": `import { describe } from "vitest";
+/* env.DB in a block comment too. */
+`,
   });
   const { workers, light } = await classifyTests(root);
-  assert.deepEqual(workers, ["tests/a.test.ts"], "today the comment decides");
-  assert.deepEqual(light, []);
+  assert.deepEqual(workers, [], "a comment must not decide the pool");
+  assert.deepEqual(light, ["tests/a.test.ts", "tests/b.test.ts"]);
+});
+
+/* The stripper is string-aware, and that is the part that could eat a file.
+   A naive strip breaks on "http://x" and on the mount paths this repo really
+   writes, like "/products/*" — check-docs-drift declined to strip for exactly
+   that reason. Real CODE must still count. */
+test("a binding inside a STRING still counts, and comment-looking strings do not break it", async () => {
+  const root = await fixture({
+    "tests/a.test.ts": `const url = "http://x//y"; await env.DB.prepare("select 1");
+`,
+    "tests/b.test.ts": `const p = "/products/*"; import { describe } from "vitest";
+`,
+  });
+  const { workers, light } = await classifyTests(root);
+  assert.deepEqual(workers, ["tests/a.test.ts"], "real env.DB use still needs workerd");
+  assert.deepEqual(light, ["tests/b.test.ts"], "a string containing /* must not eat the file");
 });
 
 /* THE SELF-REFERENCE, and why an override exists at all. A content rule cannot
