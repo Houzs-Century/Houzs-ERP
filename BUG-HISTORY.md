@@ -1,3 +1,43 @@
+## The coverage gate never ran on Windows and reported success without reading a report [high]
+
+**Symptom.** `node scripts/coverage-ratchet.mjs --check --report <file>` on a
+Windows checkout: no output at all, exit 0. Not "every area held its floor" — no
+table, no area list, nothing. The same command on Linux CI prints a six-area
+table and fails correctly.
+
+**Root cause, traced to one line.** The entry-point guard was
+
+```js
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) main();
+```
+
+On Windows `process.argv[1]` is `C:\…\coverage-ratchet.mjs`, so the template
+builds `file://C:\…` — two slashes, backslash separators. `import.meta.url` is
+`file:///C:/…` — three slashes, forward slashes. They can never be equal, so
+`main()` was never called and the module fell off the end having done nothing.
+On POSIX the path already starts with `/`, so the concatenation happens to
+produce the three-slash form and the comparison matches **by luck**.
+
+**Why it is worse than a papercut.** This is the gate that holds line coverage
+and the no-test-file floor. Locally it answered every question with a silent
+success — `npm run coverage:check` was indistinguishable from a pass — so a
+developer on Windows could not check a floor before pushing, and would be told
+everything was fine. The repo's own rule names this exact shape: *"A verdict
+computed over nothing must never read as a pass."*
+
+**Fix.** `import.meta.url === pathToFileURL(process.argv[1]).href`. Same
+comparison, done by the API that knows about drive letters and separators.
+Verified by running the gate on Windows afterwards: it now reads the report
+(733 files), prints all six areas, and fails on the areas that are genuinely
+below their floor.
+
+**The class, for next time.** Second instance in one day of *a gate that is
+silently a no-op on the OS this repo is developed on, while Linux CI stays
+green* — the first was `lint-ratchet.mjs` spawning `.bin/eslint`
+(BUG-HISTORY 2026-08-14). Both were invisible to CI by construction. When a
+check is added, run it on Windows once and confirm it PRINTS something.
+
+**Ref** — 2026-08-14, PR `fix/coverage-lib-tests`. No migration.
 ## A saved default layout made its own hidden columns un-tickable, and a sticky funnel had nothing to clear it [medium]
 
 **Symptom.** A Purchaser reported 5 of 60 purchase orders missing. The owner
@@ -100,6 +140,40 @@ required check partly because of it. Expect a recurrence on the next
 **Ref** — #2143. Gate under test: itself.
 
 =======
+## The printed Event Summary read the crew off columns nothing writes, and printed the setup call 8 hours late [med]
+
+**Symptom.** Owner, looking at the live sheet for `2026-07-MYHOME-KL-SPCC-AKEMI`:
+the Logistics block showed `—` for lorry, driver and both helpers, and a setup
+call entered as **11:00** printed as **19:00**.
+
+**Root cause, two independent faults.**
+
+1. *Crew.* The sheet read `projects.setup_driver_user_id` / `setup_lorry_id` /
+   `setup_helper_*_id`. Measured on production: 903 projects, 224 with a setup
+   driver, 211 with a lorry, and **0 with `setup_helper_1_id`** — because the
+   logistics form does not write those columns. It writes a JSON blob into
+   `projects.setup_crew` / `dismantle_crew`, and that blob has been through three
+   shapes: crew nested per lorry under `lorry_crew`, an older flat
+   `drivers`/`helpers`/`lorries`, and `outsourced` as either `{enabled,
+   entries[]}` or a single `{name, phone, plate}`.
+2. *Times.* `setup_start_at` comes from an `<input type="datetime-local">` and is
+   stored naive (`2026-07-30T11:00`) — already MYT wall clock. `fmtDateTime` was
+   adding the +8h that true instants (`created_at`, which carry `Z`) need, so
+   every crew time printed 8 hours late.
+
+**Fix.** `parseCrew()` normalises all three blob shapes, prints the
+Grab/Lalamove outsource rows and both remark fields, and treats
+`outsourced.enabled === false` as "the user removed this". The old columns stay
+as a fallback for the ~220 projects that only have them. `fmtDateTime` shifts
+only values carrying a zone marker; naive local strings print exactly as typed.
+
+**The class, for next time.** A column that exists is not a column that is
+written. Before reading one on a report, count how many rows are non-null — the
+helper columns were dead on arrival and the sheet said `—` for months without
+anyone being able to tell the difference between "no crew" and "wrong source".
+
+**Ref** — 2026-08-14, `fix/print-crew-json` and `fix/print-crew-times-stage`.
+
 ## Migrated purchase lines were priced by inference, and 318 item codes have a price that varies by PO [high]
 
 **Symptom.** 10,372 migrated purchase-order lines carried no unit price. The
