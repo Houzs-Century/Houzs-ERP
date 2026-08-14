@@ -434,7 +434,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // upload/remove are server-written: routes/projects.ts:4235,:4318
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
   body: string | null;
   user_name: string | null;
   created_at: string;
