@@ -1999,20 +1999,13 @@ function ProjectsListView() {
             },
           ]}
         />
-        {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
-            "make it can click multiple choice. and once export will export what
-            already tick only"). Tick any number of tasks; the list keeps events
-            where AT LEAST ONE ticked task is still open, and the export gains
-            one column per ticked task. */}
-        <MultiSelectFilter
-          placeholder="Status"
-          title="Tick the tasks that are still not completed"
-          summary={(n) => `${n} tasks not completed`}
-          panelWidth="w-[320px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskGroups}
-        />
+        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
+            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
+            actually filtered by tasks-not-yet-completed, so the owner saw two
+            'status' controls on the toolbar (this + the real "All statuses"
+            one right below) and asked to drop this. Kept the setTaskPending
+            state wiring untouched so a link with ?task_pending=... still works
+            and a future re-introduction under a clearer label is one line away. */}
         <MultiSelectFilter
           placeholder="All brands"
           summary={(n) => `${n} brands`}
