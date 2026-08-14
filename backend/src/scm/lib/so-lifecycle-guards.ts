@@ -127,8 +127,15 @@ export async function soDiscardBlocked(
      with an instruction rather than a rule that a draft may never have one.
      FAILS CLOSED: an unreadable ledger is not an empty one, and "no payments"
      is precisely what would authorise the delete. */
+  /* `so_doc_no`, not `doc_no`. That table has no `doc_no` column — the FK is
+     `mfg_sales_order_payments_so_doc_no_...` and every other reader in the tree
+     (ar-reconciliation.ts:102, mfg-sales-orders.ts:494) uses `so_doc_no`. With
+     the wrong name PostgREST answers 42703, `payErr` is set, and this guard —
+     correctly failing closed — turned EVERY draft discard into a 500. The
+     documented `409 so_has_payments` below was unreachable. TypeScript cannot
+     see a column name inside a string, so nothing caught it. */
   const { data: payRows, error: payErr } = await sb
-    .from('mfg_sales_order_payments').select('id').eq('doc_no', docNo).limit(1);
+    .from('mfg_sales_order_payments').select('id').eq('so_doc_no', docNo).limit(1);
   if (payErr) {
     return { body: { error: 'delete_failed', reason: `Could not check this order's payments: ${payErr.message}` }, code: 500 };
   }
