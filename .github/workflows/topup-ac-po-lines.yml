@@ -7,7 +7,8 @@ name: Top up missing AutoCount PO lines (line level)
 # This diffs the AutoCount exports against scm.purchase_order_items LINE BY LINE
 # and inserts only what is missing. It never creates a document, never changes a
 # status, and never posts an inventory movement. DRY-RUN by default; apply=1
-# writes.
+# writes, and only together with confirm="I HAVE REVIEWED THE DRY-RUN" — the
+# script exits 2 on apply without it, so the phrase is not optional in practice.
 on:
   workflow_dispatch:
     inputs:
@@ -24,6 +25,11 @@ on:
         type: string
       doc:
         description: "Optional single AutoCount PO number, e.g. PO-009435"
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "For apply=1, type: I HAVE REVIEWED THE DRY-RUN"
         required: false
         default: ""
         type: string
@@ -46,6 +52,7 @@ jobs:
       - run: node scripts/topup-ac-po-lines.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DOC: ${{ inputs.doc }}
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
@@ -61,5 +68,6 @@ jobs:
       - run: node scripts/topup-ac-po-lines.mjs
         env:
           APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
           DOC: ${{ inputs.doc }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
