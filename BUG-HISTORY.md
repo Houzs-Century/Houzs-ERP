@@ -5640,6 +5640,123 @@ the refusal class explicitly.
 **Ref** - PR (feat/ac-writeback-sofa-collapse), 2026-08-11. Closes contract
 divergences D9 and D10.
 
+## Migration 0294 promised migrated invoices spend no customer credit, and nothing enforced it [medium]
+
+**Symptom** - a migrated Sales Invoice mirrors an invoice AutoCount already
+raised and already settled in its own book. Migration 0280's column COMMENT
+promised "apply NO customer credit", because paying one out of the customer's ERP
+credit balance spends a real balance a second time - the customer silently loses
+money still owed to them, and the applied credit is indistinguishable from a
+genuine one afterwards. No code enforced that promise.
+
+**Root cause (traced, not guessed)** - the guard was written for the two money
+paths that were obvious (`postSiRevenue`, `postPiAccounting`) and the credit path
+was described in the migration comment but never coded. It looked safe because
+all three reachable callers of `applyCustomerCreditToSi` happen to miss migrated
+invoices today - and every one of those is an ACCIDENT of the current shape, not
+a rule:
+
+```
+sales-invoices.ts:1164  POST /            create refuses a migrated source
+sales-invoices.ts:1462  POST /from-dos    create refuses a migrated source
+sales-invoices.ts:2295  PATCH status      requires prevStatus DRAFT; converter writes SENT
+```
+
+This is the same shape as migration 0276, which shipped a COMMENT saying "never
+post movements for it" that nothing in the running system honoured. A promise
+living only in a comment is the thing this ledger exists to stop.
+
+**Fix** - the guard now lives INSIDE `applyCustomerCreditToSi`
+(`backend/src/scm/lib/customer-credits.ts`), which re-reads the header, so every
+caller is covered by construction rather than every call site being remembered. A
+failed read REFUSES (`migrated_check_failed`) rather than proceeding blind:
+fail-closed leaves the credit standing and the invoice merely unpaid, which an
+operator can see and re-drive, while fail-open spends a balance that cannot be
+un-spent. Migration 0280's comment now names the enforcement point, and states
+what is deliberately NOT stopped - a payment recorded against a migrated invoice
+behaves normally, and cancelling it still turns the paid amount into credit,
+because that money moved in THIS book.
+
+Counterfactual, both numbers: with the fix `customer-credits.test.ts` is
+**35 pass / 0 fail**; strip the guard block and it is **33 pass / 2 fail**
+(`migrated SI -> applies nothing`, `a failed migrated read REFUSES`). The third
+test in the group - an ordinary SI still applies credit - passes BOTH ways on
+purpose: it is the control proving the guard is not a blanket off switch.
+
+**Ref** - PR #1975 `feat/migrated-chain-invoices`, 2026-08-11.
+
+## The migrated-invoice refusal guarded three convert paths and there are eight [high]
+
+**Symptom** - a goods receipt or delivery order carried over from AutoCount could
+still be turned into an invoice by hand, even after `refuseMigratedSources` was
+added. Nothing about it would be visible afterwards: the invoice would carry an
+ERP number instead of AutoCount's, post a journal entry for money AutoCount had
+already booked, and enqueue a write-back that creates a SECOND invoice in the
+live AED_HOUZS book. It would also consume the source line's invoiceable
+quantity, so the mistake could not be corrected without cancelling the invoice.
+
+**Root cause (traced, not guessed)** - the refusal was written on the three paths
+that take a WHOLE document (`POST /from-grn`, `POST /from-grn-items`,
+`POST /from-dos`). Five more paths reach the same lines holding only a line id or
+a delivery id, and each one bypassed the rule entirely:
+
+```
+purchase-invoices.ts  POST /                        lines carry grnItemId
+purchase-invoices.ts  POST /:id/items               line carries grnItemId
+sales-invoices.ts     POST /                        lines carry doItemId, body carries deliveryOrderId
+sales-invoices.ts     POST /:id/items               line carries doItemId
+sales-invoices.ts     POST /:id/items/from-do/:doId takes a whole delivery id
+```
+
+A fence with an open gate beside it is not a fence.
+
+**Fix** - both routers resolve the source document from the line id first, then
+apply the SAME `refuseMigratedSources` rule, so a caller cannot pick a softer
+door. A FAILED lookup refuses rather than proceeds (`ok: false` -> 500): a guard
+that fails open is not a guard. `backend/tests/migratedConvertGuard.node.mjs`
+pins all eight paths, asserts the refusal comes BEFORE the AutoCount enqueue (a
+refusal after it is no refusal at all), and asserts the GL suppression lives
+inside `postPiAccounting` / `postSiRevenue` rather than at their call sites, so
+every caller is covered by construction. It runs in `test:scale-contract`, which
+is `pretest`.
+
+Counterfactuals, both numbers: with the fix **4 pass / 0 fail**; strip the SI
+guards **1 pass / 3 fail**; strip the PI guards **2 pass / 2 fail**; strip the
+`postSiRevenue` suppression **3 pass / 1 fail**.
+
+**Ref** - PR for `feat/migrated-chain-invoices`, 2026-08-11.
+
+## A merged migrated invoice took its supplier / debtor from whichever source document sorted first [high]
+
+**Symptom** - one AutoCount invoice routinely spans several of our documents, and
+the mirrored ERP invoice merges them. The merged header carries exactly ONE
+supplier / debtor, and the writer took it from `plan.sourceDocNos[0]` - i.e. from
+document-number sort order. If the sources disagreed, the invoice would be
+billed to the wrong party with a total that reconciles perfectly, which is the
+worst shape a wrong value can have.
+
+**Root cause (traced, not guessed)** - this is not an edge case. Measured
+read-only against live AED_HOUZS on 2026-08-11:
+
+```
+grToPi: invoices covering >1 source document = 309 of 4789
+doToIv: invoices covering >1 source document = 568 of 9245
+```
+
+`planMigratedInvoices` grouped purely by AutoCount invoice number and never
+compared the parties behind the group.
+
+**Fix** - rule 5 in `backend/src/scm/lib/migrated-chain.ts`: each source carries a
+`partyKey` (supplier on a receipt, debtor on a delivery) and a group whose
+sources disagree is refused as `party_disagrees_across_sources`, checked BEFORE
+the total gate and not buyable with the `allowTotalMismatch` override. A source
+with no recorded party does not manufacture a disagreement. On today's
+production data the rule fires on 0 documents - it is a guard against a shape the
+data can take, not a repair of one it already has.
+
+Counterfactual: **32 pass / 0 fail** with the rule, **29 pass / 3 fail** without.
+
+**Ref** - PR for `feat/migrated-chain-invoices`, 2026-08-11.
 ## The cutover stock import dropped every NEGATIVE AutoCount balance row, leaving the ERP permanently higher [low]
 
 **Symptom** - the stock truth check reported `VERDICT BALANCE: DIVERGES` on 35

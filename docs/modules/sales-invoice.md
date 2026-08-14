@@ -264,6 +264,43 @@ The **quantity** an SI consumes is the DO line's remaining invoiceable pool
 
 ---
 
+## 5a. Carried-over deliveries cannot be invoiced by hand
+
+A delivery order flagged `migrated_no_stock` (migration 0276) was carried over
+from AutoCount at the 2026-08 cutover, and AutoCount already raised its sales
+invoice. Every path that can attach one to an invoice refuses it with **409
+`migrated_source_document`**:
+
+| path | how it reaches the delivery |
+|---|---|
+| `POST /from-dos` | delivery ids from the picks |
+| `POST /` | `body.deliveryOrderId`, or a line's `doItemId` |
+| `POST /:id/items` | the line's `doItemId` |
+| `POST /:id/items/from-do/:doId` | the delivery id in the path |
+
+One migrated document anywhere in the pick refuses the WHOLE invoice — a partial
+invoice cannot carry AutoCount's number, so the pick is never silently narrowed
+to the ordinary rows. A failed source lookup returns 500 rather than proceeding:
+a guard that fails open is not a guard.
+
+The invoices for those deliveries are written by
+`backend/scripts/create-migrated-invoices.mjs`, numbered
+`HC-<AutoCount's invoice number>`, flagged `migrated_no_stock` on
+`scm.sales_invoices` (migration 0280). Such an invoice posts **no** revenue
+journal — `postSiRevenue` reads the flag on its own header and returns
+`{ ok: true, status: 'migrated_source' }` before writing anything, so every
+caller is covered rather than every call site. `revenue.posted` is `false` and
+there is no `jeNo`; that is success, not failure.
+
+It also spends **no customer credit**. `applyCustomerCreditToSi` re-reads the
+header and returns `{ applied: 0, reason: 'migrated_source' }` — paying a
+carried-over invoice out of the customer's ERP balance would spend a real
+balance a second time, on paperwork AutoCount already settled. A failed read
+refuses (`migrated_check_failed`) rather than proceeding. What is deliberately
+NOT blocked: a payment an operator records against a migrated invoice behaves
+normally, and cancelling it still turns the paid amount into credit — that money
+moved in THIS book and is ours to account for.
+
 ## 6. What locks and when
 
 The governing rule is in the file header (`:16-27`) and implemented as
