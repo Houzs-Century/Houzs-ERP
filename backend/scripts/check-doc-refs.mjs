@@ -35,16 +35,16 @@ const DATED = new Set(["BUG-HISTORY.md"]);
 // went another way the cited file never existed, and that is the document doing
 // its job. Guidance documents are not allowed in this set.
 const PLANS = new Set([
-  "docs/mail-center-port-plan.md",
-  "docs/mail-center-admin-plan.md",
+  "docs/archive/mail-center-port-plan.md",
+  "docs/archive/mail-center-admin-plan.md",
   "docs/add-company-design.md",
   "docs/2990-mirror-full-design.md",
-  "docs/scm-clone/PLAN.md",
+  "docs/archive/scm-clone/PLAN.md",
   "docs/scm-scaling-audit.md",
   "docs/UPGRADE-PLAN.md",
-  "docs/USER-MANAGEMENT-PLAN.md",
+  "docs/archive/USER-MANAGEMENT-PLAN.md",
   "docs/agents/agent-platform-buildout.md",
-  "docs/pms-fair-pnl-seed-plan.md",
+  "docs/archive/pms-fair-pnl-seed-plan.md",
   "docs/delivery-planning-jobtypes-spec.md",
   "docs/ocr-prompt-audit.md",
   "docs/server-snapshot-playbook.md",
@@ -53,8 +53,8 @@ const PLANS = new Set([
 ]);
 
 const HISTORICAL = new Set([
-  "MIGRATION-D1-TO-SUPABASE.md",
-  "HANDOFF-supabase-cutover.md",
+  "docs/archive/MIGRATION-D1-TO-SUPABASE.md",
+  "docs/archive/HANDOFF-supabase-cutover.md",
   "docs/autocount-cutover-ledger.md",
   "docs/autocount-migration-record.md",
   "docs/MIGRATION-RETIREMENTS.md",

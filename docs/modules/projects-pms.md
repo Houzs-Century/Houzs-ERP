@@ -415,8 +415,10 @@ Related routes elsewhere:
   all**, deliberately (`:45-55`: a Sales user who lacks the `projects.read`
   matrix permission still needs a bell). Scoped by `getProjectScope` at `:63`
   with an early empty return at `:64-71`.
-- `backend/src/routes/events.ts` — the manual setup/dismantle calendar, gated on
-  `trips.read.all` / `trips.manage`. **Not** the PMS calendar (`events.ts:13-24`).
+- `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
+  ungrantable permissions, PMS covers it). It was the manual setup/dismantle
+  calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
+  calendar. Kept here because the absence is the fact worth knowing.
 - `backend/src/scm/routes/reports.ts:1112`, `:1199` — the Fair / Sales Report.
 
 ---
