@@ -1,3 +1,102 @@
+## Two new comment kinds were written by raw SQL that bypassed the only typed entry point, and `main` stopped deploying [high]
+
+**Symptom.** `main` red on `frontend` — a REQUIRED status check — and the Deploy
+run reporting `frontend: failure` with `backend: skipped`, which CLAUDE.md says
+to treat as a failed deploy. Nothing reached production from #2184 merging until
+this fix. Two Deploy runs failed the same way (the second for an innocent PR that
+merely inherited the tree). Eight errors, all one shape:
+
+```
+src/pages/Projects.tsx(8955,53): error TS2367: This comparison appears to be
+unintentional because the types '"note" | "approve" | "reject" | "amend"'
+and '"upload"' have no overlap.
+```
+
+**Root cause.** PR #2184 added two per-task history kinds, `upload` and `remove`,
+and wrote them from `backend/src/routes/projects.ts` as raw SQL —
+`INSERT INTO project_checklist_comments (item_id, kind, body, user_id) VALUES (?, 'upload', ?, ?)`.
+That statement never passes through `addChecklistComment`, which is the ONE typed
+entry point for that column, so the backend compiled while emitting two values no
+type in the repo admitted. Neither union was widened:
+`backend/src/services/projects.ts` (the helper's parameter) nor
+`frontend/src/pages/Projects.tsx` (`interface ChecklistComment`).
+
+The frontend half of the same PR then filtered those kinds OUT of the Remarks
+column — correct, and at the owner's instruction — and `tsc -b` read those filters
+as comparisons that can never be true.
+
+**The shape worth remembering.** The type is declared in two files and written
+from a third that consults neither. Nothing connected them, so the drift was
+invisible until an UNRELATED expression happened to compare against a missing
+value. Had the PR not also added that filter, the two kinds would be undeclared
+today and no gate would have said a word — the build error was luck, not a check.
+
+**Fix, in two parts by two people.** The FRONTEND union was widened directly on
+`main` while this branch was in flight — that is what un-blocked the deploy, and
+this entry does not claim it. What landed here is the half that was still
+missing: the BACKEND union on `addChecklistComment`, which was still
+`"note" | "submit" | "reject" | "amend" | "approve"` after the outage was over,
+and `backend/tests/checklistCommentKinds.test.ts`, which extracts every kind
+literal written into that table and asserts both declarations admit all of them
+AND agree with each other. Proven red by reverting the frontend union — exit 1,
+naming both `remove` and `upload`.
+
+That split is worth recording rather than tidying away: the visible symptom was
+fixed in one file, and the other declaration — plus the thing that stops it
+recurring — was still open afterwards. Un-blocking the build and fixing the
+defect were not the same job.
+
+The guard is ANCHORED on the declaring construct (`interface ChecklistComment`,
+`export async function addChecklistComment(`), not on the first `kind:` union in
+the file. Its first draft was not, and read `kind: "income" | "cost"` 56 lines
+earlier in the same file — it refused with "only 2 kinds parsed" rather than
+reporting a pass, which is the property CLAUDE.md demands of a checker that
+cannot match, but the anchor is what makes it correct.
+
+**Ref.** 2026-08-14, PR #2184 introduced it. Deploy runs 31802261895 and the one
+before it, both `frontend: failure` / `backend: skipped`. Lesson: **a typed helper
+is not a boundary if another file can write the same column directly** — and
+CLAUDE.md's own rule, "a BUG-HISTORY entry with no test attached is unfixed", is
+why this one ships with a guard rather than a paragraph.
+## A comment mentioning `env.DB` sent five pure-logic tests to the serial workerd pool [low]
+
+**Symptom.** Not a failure — a cost, which is why it sat unnoticed. The backend
+test suite is split in two: `test:light` runs on a plain node runner, and
+`test:workers` runs in the Cloudflare pool with `fileParallelism: false` and
+`maxWorkers: 1`, i.e. strictly serial. Five files that import nothing but vitest
+and plain source modules were being paid for in the serial pool.
+
+**Root cause.** `backend/scripts/lib/classify-tests.mjs` decided the pool with
+
+```js
+const NEEDS_WORKERS = /\bcloudflare:test\b|\benv\.DB\b|\benv\.DB_PARITY\b/;
+… NEEDS_WORKERS.test(source)
+```
+
+applied to the file's RAW text. So prose counted. `tests/companyScopeFailClosed.test.ts`
+says `// Fake env.DB.` in a comment — it BUILDS a fake — and that comment alone
+routed it to workerd. Same for `adminResetLink`, `reviewHighFindings`,
+`fairPnl.route` and `fairReport.route`, each matching inside a `/* */` block.
+
+**Fix.** Blank comments before matching, with a string-aware scanner. Naive
+stripping was not an option and the repo already knew it: `check-docs-drift.mjs`
+deliberately does NOT strip, because `"http://x"` contains `//` and this codebase
+writes mount paths like `"/products/*"` that contain the block-comment opener.
+Tracking the four states (code / '…' / "…" / \`…\`) is what makes it safe, and two
+tests pin exactly those two traps.
+
+**Verified.** Workers pool 46 -> 41 files. All five relocated files pass in the
+light pool (71 tests). Both suites whole afterwards: light 276 files / 4284
+passed, workers 41 files / 335 passed — no test lost, none broken.
+
+**The class, for next time.** A regex over source text cannot tell code from
+prose, and a classifier is not a linter: being wrong costs time rather than
+correctness, so nothing goes red and nobody looks. The behaviour had in fact been
+PINNED as a known cost by `tests/classifyTests.node.mjs` a few hours earlier; that
+test now pins the fix instead, which is what a pin is for.
+
+**Ref** — 2026-08-14, PR `chore/classify-strip-comments`. No migration.
+
 ## The new linter could not start on Windows, and said "no ESLint installed" while ESLint was installed [medium]
 
 **Symptom.** `npm --prefix backend run lint` on a Windows checkout: first
@@ -30,6 +129,55 @@ where neither could previously start; both then reported real ratchet findings,
 which is the proof the run was genuine and not a silent no-op.
 
 **Ref** — 2026-08-14, PR #2137 `eslint-layer`. No migration.
+
+
+## Two derived docs were merge gates for a thing every PR is required to change [high]
+
+**Symptom** — on 2026-08-14, five open pull requests failed `backend-typecheck`
+simultaneously, all on the same line:
+
+```
+docs/generated/bug-index.md is out of date (175 entries in BUG-HISTORY.md).
+```
+
+None of them had touched the index. They were regenerated one at a time, and
+were stale again after the very next merge. Separately, `audit:map` failed a
+one-line fix for a **broken production deploy** while printing, in its own
+message, *"This is an on-demand check. It is deliberately NOT a CI or deploy
+gate."* — from inside `backend-typecheck`, where a non-zero exit is precisely a
+gate.
+
+**Root cause** — both files mirror something every pull request is *required* to
+move:
+
+- `bug-index.md` mirrors `BUG-HISTORY.md`, and the working agreement (#2135)
+  makes every code PR append an entry to it;
+- `codebase-map-facts.md` embeds LINE NUMBERS, which shift on essentially every
+  backend merge.
+
+`main-protection` sets `strict_required_status_checks_policy`, so merges are
+strictly serial. The instant any PR merges, both files are stale on every other
+open PR — through no act of their authors. Every author is charged for what the
+previous author did, and the queue cannot converge.
+
+**What the gate is actually for, and is kept** — `docs/staging-bench-rot-coe.md`
+records `audit:map` crashing unnoticed for three weeks. That is a generator
+DYING, not output drifting, and it is worth failing on. The two are now
+separated: a generator that parses zero entries or scans zero route modules
+exits **2**; drift prints both counts and the fix and returns **0**. `--strict`
+restores the hard failure for a local run or a job that wants it.
+
+**Pinned by** `backend/tests/derivedDocsDoNotDeadlock.node.mjs` (in
+`test:scale-contract`): it fails 3 of 3 on the previous scripts, and asserts
+that the only `process.exit(1)` left in either check path is guarded by
+`--strict`.
+
+**Class** — *a gate whose blast radius is wider than its subject.* Fourth
+instance in two days, after the fabric census counting deliberate tombstones and
+the file-size ratchet twice. The tell is the same every time: the failure
+message asks the author for something only somebody else can do.
+
+**Ref** - `fix/derived-docs-deadlock`, 2026-08-14
 
 ## The frontend deploy has been failing since 12:02 — a union that was never told about two kinds the server emits [high]
 

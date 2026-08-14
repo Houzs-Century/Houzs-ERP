@@ -2391,7 +2391,7 @@ export async function setChecklistStatus(
 export async function addChecklistComment(
   env: Env,
   itemId: number,
-  kind: "note" | "submit" | "reject" | "amend" | "approve",
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove", // upload/remove written as raw SQL by routes/projects.ts, bypassing here; mirror in pages/Projects.tsx, guarded by tests/checklistCommentKinds.test.ts
   body: string | null,
   userId: number
 ) {

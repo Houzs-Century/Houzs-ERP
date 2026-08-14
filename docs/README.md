@@ -20,6 +20,19 @@ lists the disagreements already found.
 
 ---
 
+## 0. What a commit owes these documents
+
+Before anything below: the root [`README.md`](../README.md) carries **"What a
+commit owes the documentation"** — one table of what each kind of change must
+update, and for every row, who enforces it and whether it can block a merge.
+Read it once. The recurring failure here is never a wrong document; it is a
+change that shipped while the document describing it stayed still.
+
+The short version, because two of these surprise people: only
+`backend-typecheck` and `frontend` can block a merge, so a red
+`working-agreement` stops nobody — and **nothing at all** gates a COE, the
+regenerated `route-locator` / `codebase-map-facts`, or the Obsidian wiki.
+
 ## 1. Start here
 
 | File | Authoritative for |

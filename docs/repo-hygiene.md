@@ -264,7 +264,7 @@ this gate is for. The gate only stops the problem GROWING:
 - a file already over 2,000 lines carries its **own ceiling**, recorded in
   `scripts/file-size-ceilings.json` from the tree as it stood on 2026-08-13;
 - it may **shrink** freely — that never fails, and never needs a manifest edit;
-- it may **not grow** past what it already was;
+- it may **not grow** past what it already was **in a diff that touches it** — the gate charges only files this change touched AND grew (`check-file-size.mjs:315-364`). A file already over its ceiling that this diff does not touch is REPORTED and does not fail the run. Observed 2026-08-14: eight files over their ceilings on `main`, `--require-base` exit 0;
 - every other file is capped at **2,000 lines**, so a new 3,000-line file fails;
 - **a ceiling may only fall.** Raising one by hand fails CI, checked against the
   manifest as it exists on the merge base. Otherwise the cheapest way past a red

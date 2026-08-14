@@ -1737,7 +1737,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (0286), not through
+  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (mig 0291, file says 0286), not through
      `writes`: the function writes its own balancing IN, and restoring the lots
      and writing that row must be one transaction. Collected here so a failure
      can fall back to the legacy blended row. */
@@ -1784,7 +1784,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
       });
     } else {
       /* delta < 0 — a line qty was reduced or the line deleted. Give the stock
-         back AT ORIGINAL COST: fn_return_do_units_at_cost (0286) returns each
+         back AT ORIGINAL COST: fn_return_do_units_at_cost (mig 0291) returns each
          unit to the lot that paid for it and writes its own balancing IN at
          cost 0, so a priced row here would double-count the value.
          The fallback is the old blended-average IN, which mixes costed with
