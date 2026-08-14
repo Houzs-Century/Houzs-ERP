@@ -126,6 +126,24 @@ describe("venues", () => {
     expect(m.target).toBe("KSL CITY MALL JOHOR SOLO");
   });
 
+  it("sees the word the book writes as one and the ERP as two — but only as LIKELY", () => {
+    /* `MID VALLEY` is 254 company-1 orders, the largest venue in the ERP, and
+       the first run reported it as no-match because it shares no TOKEN with
+       `MIDVALLEY EXHIBITION CENTRE`. Gluing is a real spelling variant, so it
+       earns a proposal — and it stops there, because the book has TWO
+       MIDVALLEY masters and only a person knows which roadshow this was. */
+    const m = matchValue("MID VALLEY", venues);
+    expect(m.bucket).toBe("likely");
+    expect(m.target).toMatch(/^MIDVALLEY /);
+    expect([m.target, ...m.alternatives.map((a) => a.value)].sort())
+      .toEqual(['MIDVALLEY EXHIBITION CENTRE', 'MIDVALLEY SOUTHKEY JB']);
+  });
+
+  it("never lets a glued word alone make a pair confident", () => {
+    expect(matchValue("MID VALLEY", venues).bucket).not.toBe("confident");
+    expect(matchValue("Pei Fen", agents).bucket).not.toBe("confident");
+  });
+
   it("leaves an acronym to a human rather than guessing", () => {
     /* `KLCC CONVENTION CENTRE` IS `KUALA LUMPUR CONVENTION CENTRE` and no
        normalisation can know that — a person put it in VENUE_MAP. Reporting it

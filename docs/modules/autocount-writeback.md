@@ -864,6 +864,88 @@ This is finding 1's rule arriving from the other direction: **a value with a
 trustworthy writer may pass through, a column with none may not.** Before adding
 a fifth caller of `bookSpellingOrOwn`, look at what the column actually holds.
 
+## 7p. The maps are GENERATED, and a matcher proposes what goes in them
+
+*Added 2026-08-14, on the owner's question: "Branding、venue、sales、location、
+agent，你都可以做 binding 吧？…很多其实都已经有了。"*
+
+**A pass-through does not fail on a value the book spells differently — it opens
+a DUPLICATE.** `/ensure-masters` opens a master under exactly the string it is
+given, so `SUNWAY SHOWROOM` becomes a second stock location beside the book's
+own `SUNWAY`, and one physical showroom's stock lands in two rows of a licensed
+book. That is the cost §7e's "it DOES create a LOCATION" row was already
+printing a number for; this section is what turns the number into an answer.
+
+**Eleven of the twelve unknown warehouse codes already exist.** Measured against
+production on 2026-08-14 (field-alignment run `31815502403` on `main`, then the
+binding report on the PR branch, run `31817727846`):
+
+| ERP warehouse code | the book's short code | the book's long name |
+|---|---|---|
+| `SUNWAY SHOWROOM` | `SUNWAY` | DUNLOPILLO SUITE SUNWAY |
+| `KELANA.J SHOWROOM` | `KELANA.J` | AKEMI SLEEP STUDIO KELANA JAYA |
+| `C&C DISPLAY` | `C&C DISP` | CASH & CARRY - FAIR |
+| `EM DISPLAY` | `EM DISP` | SARAWAK BEDDING DISPLAY |
+| `KL` / `PG` / `SBH DISPLAY` | `KL DISP` / `PG DISP` / `SBH DISP` | ... BEDDING DISPLAY |
+| `KL SERVICE` / `PG SERVICE` | `SERV KL` / `SERV PG` | ... RETURNED TO SUPPLIER |
+| `SBH WAREHOUSE` | `SBH` | SABAH |
+| `SRW WAREHOUSE` | `SRW` | SARAWAK VENUE |
+| `CHINA WAREHOUSE` | — | genuinely new; opening it is correct |
+
+### The loop, and why no step of it edits TypeScript
+
+| step | what | where |
+|---|---|---|
+| 1 | the report PROPOSES a pair, with its reason and its production row count | `backend/scripts/check-autocount-master-bindings.mjs`, run by the read-only `autocount-field-alignment.yml` dispatch |
+| 2 | a human CONFIRMS it by moving the pair into the map | `backend/scripts/data/autocount-so-writeback-mappings.json` |
+| 3 | the generator writes the compiled map | `node scripts/gen-autocount-master-maps.mjs` -> `backend/src/services/autocount-master-maps.ts`, which `autocount-writeback.ts` re-exports |
+
+`npm run audit:ac-master-maps` (in `ci.yml`) fails if step 3 was skipped, and
+`backend/tests/acMasterMaps.test.ts` pins every pair the composer carried on
+2026-08-14 so a binding can be ADDED but never silently removed or re-pointed.
+
+**Why generated at all.** The maps used to be object literals in
+`autocount-writeback.ts` while the record of WHY each binding is right lived in
+the JSON beside it — and the two had drifted in all four dimensions: the TS
+carried `ETHAN` and `WEI PIN`, confirmed out of the JSON's own
+`agent_map_fuzzy_to_confirm` and never written back; five identity location
+entries; and `ZANOTTI` / `NONE` / `CARRESS` / `DUNLOP`. One source, generated
+into the other, is the same answer `gen:ac-item-map` already gives.
+
+### What the matcher will and will not claim
+
+`backend/scripts/lib/ac-master-matcher.mjs`. It normalises, then scores on
+IDF-weighted token overlap and edit distance, and every proposal carries the
+reason — a bare score is not reviewable.
+
+| bucket | means |
+|---|---|
+| **already mapped** | `bookSpelling` resolves it, or the book already holds the value verbatim and the field passes through. Nothing to do |
+| **confident** | NORMALISATION ALONE explains the difference: case, punctuation, spacing, word order, a `SOLO` suffix, `DISP`/`DISPLAY`, `SERV`/`SERVICE`, a dropped `WAREHOUSE`/`SHOWROOM`. Nothing is inferred |
+| **ambiguous** | the same normalisation lands on TWO masters (`AEON BIG SUBANG` and `AEON BIG SUBANG SOLO`). A person picks |
+| **likely** | a shared DISTINCTIVE word — one naming at most two masters in the whole book — or a near-typo of the whole string. A person decides |
+| **no match** | nothing distinctive is shared. Opening a new master is correct |
+
+**`DISPLAY` is aliased, never dropped.** The book holds `KL` and `KL DISP` as
+two separate stock locations; treating the word as noise would bind a showroom's
+display stock onto the main warehouse, which is the same damage in the opposite
+direction.
+
+**The matcher runs its own worked examples before it reports anything**
+(`selfTest`, and `backend/tests/acMasterMatcher.test.mjs`). A matcher whose rules
+rotted would bucket everything as no-match, which reads exactly like a book that
+holds nothing — and acting on that opens duplicates.
+
+**Two things it deliberately refuses to decide.** `BRANDING_MAP` stays an
+allow-list: matching may propose an addition, never a pass-through (§7o). And
+`agent_excluded` is a record of a decision, not a gate — the report NAMES a
+staff name that reads as a test account and is not on that list (`Test Sales
+Director`, on a live writable order as of 2026-08-14) instead of adding it.
+
+**One caveat the report prints about itself:** `scm.staff` has no `company_id`,
+so a staff name that no company-1 document has ever named cannot be attributed
+to this company. Those are counted and listed, never bucketed as work.
+
 ## 7e. The masters a document names are opened first
 
 A document naming a master AutoCount does not have does not fail politely: it
@@ -1391,6 +1473,8 @@ never be mistaken for a cancel divergence.
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened. Plus §7o's composer half: `bookSpelling` vs `bookSpellingOrOwn`, the address packing, the customer-reference chain, branding off the lines with no `BEDFRAME` pseudo-brand, the sales-location fallback, and the two new refusals (`MissingSalesLocationError`, `MissingCreditorError`) |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |
 | `src/services/autocount-item-code.test.ts` | **D10**, driven by the real 1561-row cutover map. No corpus line resolves to the WRONG item; a collapsed code refuses without a supplier and resolves with one; an unmapped line throws rather than falling back to `material_code`; one bad line refuses the whole document |
+| `tests/acMasterMatcher.test.mjs` | **§7p.** The master-data matcher, on the real book vocabularies out of `scripts/data/`: all eleven warehouse codes the book already holds land as CONFIDENT with the right short code, `CHINA WAREHOUSE` as NO MATCH, `AEON BIG PUCHONG` never confident against the three `AEON BIG` venues it is not, `KL DISPLAY` kept off `KL`, and every differently-spelled `agent_map` pair a human already confirmed reproduced as a PROPOSAL |
+| `tests/acMasterMaps.test.ts` | **§7p.** Every pair the four maps carried at HEAD on 2026-08-14, pinned — the proof that generating them changed nothing, and the ratchet that lets a binding be added but never silently removed or re-pointed. Plus that every key is in the shape `bookSpelling` looks up |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
 | `tests/soAgentStampWiring.test.ts` | That no SO write puts `body.agent` into the column raw — every stamp site is the resolved value, and a reassigned salesperson carries the agent with it |
 | `tests/autocountWritebackCells.test.ts` | That the ERP can reach EVERY document type `AcSyncService` handles — the expected set is read out of the C# `switch` rather than hand-listed — plus the DO/GRN/SI/PI edit hooks, the SO/PO paths the anchor test missed (price override, both amendment applies, `bulk-supplier-date`, `convert-from-so`, the SI partial transfer), the SO->PO create hole, the four parentless-create records, and that no route expresses an edit as cancel-then-create |

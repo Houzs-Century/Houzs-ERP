@@ -191,13 +191,26 @@ async function columnsOf(table) {
 const tableExists = async (t) => (await columnsOf(t)).size > 0;
 
 /** One ERP value, and what naming it would cost. */
-function bucketOf(value, dim, index) {
+function bucketOf(value, dim, index, bookHolds) {
   const already = bookSpelling(value, dim.map);
   if (already) {
     return {
       bucket: "mapped",
       target: already,
       reason: `${dim.mapName} already resolves it`,
+      alternatives: [],
+    };
+  }
+  /* A value that IS the book's own spelling needs no map entry ON A FIELD THAT
+     PASSES THROUGH: `bookSpellingOrOwn` sends it verbatim and `/ensure-masters`
+     finds it, so nothing is opened and there is nothing to confirm. On an
+     ALLOW-LIST field the same value is DROPPED instead, so it still has to be
+     added — which is why this is asked per dimension and not once. */
+  if (dim.passesThrough && bookHolds.has(value.toUpperCase().replace(/\s+/g, " "))) {
+    return {
+      bucket: "mapped",
+      target: value,
+      reason: "already a master in the book, sent verbatim",
       alternatives: [],
     };
   }
@@ -234,13 +247,20 @@ try {
   );
 
   const erp = { location: new Map(), venue: new Map(), agent: new Map(), branding: new Map() };
-  const add = (dim, value, orders, writable, source) => {
+  /* `scoped` says whether the row this value came from could be attributed to
+     company ${COMPANY_ID} at all. It is not a detail: `scm.staff` has NO
+     company_id, so reading it whole pulls 2990's people into a report about
+     Houzs — and on the first run that put 71 names into NO MATCH that no
+     company-1 document has ever named. An unscoped value with zero orders is
+     COUNTED and named, never bucketed as work. */
+  const add = (dim, value, orders, writable, source, scoped) => {
     const v = String(value ?? "").replace(/\s+/g, " ").trim();
     if (!v) return;
-    const cur = erp[dim].get(v) ?? { value: v, orders: 0, writable: 0, sources: new Set() };
+    const cur = erp[dim].get(v) ?? { value: v, orders: 0, writable: 0, sources: new Set(), scoped: false };
     cur.orders += orders;
     cur.writable += writable;
     cur.sources.add(source);
+    cur.scoped = cur.scoped || scoped;
     erp[dim].set(v, cur);
   };
 
@@ -258,21 +278,21 @@ try {
                ON s.doc_no = i.doc_no AND s.company_id = ${COMPANY_ID}
        WHERE w.company_id = ${COMPANY_ID}
        GROUP BY 1`;
-    for (const r of rows) add("location", r.v, r.orders, r.writable, "scm.warehouses");
+    for (const r of rows) add("location", r.v, r.orders, r.writable, "scm.warehouses", true);
   }
   if (soCols.has("sales_location")) {
     for (const r of await countSql('"sales_location"')) {
-      add("location", r.v, r.orders, r.writable, "mfg_sales_orders.sales_location");
+      add("location", r.v, r.orders, r.writable, "mfg_sales_orders.sales_location", true);
     }
   }
 
   // ── VENUE ─────────────────────────────────────────────────────────────────
   if (soCols.has("venue")) {
-    for (const r of await countSql('"venue"')) add("venue", r.v, r.orders, r.writable, "mfg_sales_orders.venue");
+    for (const r of await countSql('"venue"')) add("venue", r.v, r.orders, r.writable, "mfg_sales_orders.venue", true);
   }
   if (hasVenuesTable) {
     const rows = await pg`SELECT name FROM scm.venues WHERE company_id = ${COMPANY_ID}`;
-    for (const r of rows) add("venue", r.name, 0, 0, "scm.venues (picker)");
+    for (const r of rows) add("venue", r.name, 0, 0, "scm.venues (picker)", true);
   }
 
   // ── SALESPERSON / AGENT ───────────────────────────────────────────────────
@@ -291,13 +311,13 @@ try {
         JOIN scm.staff st ON st.id = s.salesperson_id
        WHERE s.company_id = ${COMPANY_ID}
        GROUP BY 1`;
-    for (const r of rows) add("agent", r.v, r.orders, r.writable, "salesperson_id -> scm.staff");
+    for (const r of rows) add("agent", r.v, r.orders, r.writable, "salesperson_id -> scm.staff", true);
   }
   if (staffCols.has("name")) {
     const rows = scopedStaff
       ? await pg`SELECT name FROM scm.staff WHERE company_id = ${COMPANY_ID}`
       : await pg`SELECT name FROM scm.staff`;
-    for (const r of rows) add("agent", r.name, 0, 0, scopedStaff ? "scm.staff" : "scm.staff (table is NOT company-scoped)");
+    for (const r of rows) add("agent", r.name, 0, 0, scopedStaff ? "scm.staff" : "scm.staff (NOT company-scoped)", scopedStaff);
   }
   /* The raw `agent` column is reported but never proposed: it is free text with
      no writer that keeps it honest — production rows hold bare uuids — and
@@ -324,16 +344,16 @@ try {
        WHERE s.company_id = ${COMPANY_ID} AND i.branding IS NOT NULL AND btrim(i.branding) <> ''
          ${cancelled}
        GROUP BY 1`;
-    for (const r of rows) add("branding", r.v, r.orders, r.writable, "mfg_sales_order_items.branding");
+    for (const r of rows) add("branding", r.v, r.orders, r.writable, "mfg_sales_order_items.branding", true);
   }
   if (soCols.has("branding")) {
-    for (const r of await countSql('"branding"')) add("branding", r.v, r.orders, r.writable, "mfg_sales_orders.branding");
+    for (const r of await countSql('"branding"')) add("branding", r.v, r.orders, r.writable, "mfg_sales_orders.branding", true);
   }
   if (prodCols.has("branding")) {
     const rows = scopedProducts
       ? await pg`SELECT DISTINCT btrim(branding) AS v FROM scm.mfg_products WHERE company_id = ${COMPANY_ID} AND branding IS NOT NULL AND btrim(branding) <> ''`
       : await pg`SELECT DISTINCT btrim(branding) AS v FROM scm.mfg_products WHERE branding IS NOT NULL AND btrim(branding) <> ''`;
-    for (const r of rows) add("branding", r.v, 0, 0, "mfg_products.branding (catalog)");
+    for (const r of rows) add("branding", r.v, 0, 0, "mfg_products.branding (catalog)", scopedProducts);
   }
 
   // ── THE REPORT ────────────────────────────────────────────────────────────
@@ -347,10 +367,19 @@ try {
 
   for (const dim of DIMENSIONS) {
     const index = buildIndex(dim.candidates, dim.key);
-    const values = [...erp[dim.key].values()].sort((a, b) => b.orders - a.orders || a.value.localeCompare(b.value));
+    const bookHolds = new Set(
+      index.entries.flatMap((e) => e.spellings.map((s) => s.toUpperCase().replace(/\s+/g, " ").trim())),
+    );
+    const all = [...erp[dim.key].values()].sort((a, b) => b.orders - a.orders || a.value.localeCompare(b.value));
+    /* NOT WORK, AND SAYING SO. A value that no company-${COMPANY_ID} document
+       names AND that came only from a table with no company_id cannot be
+       attributed to this company at all — bucketing it would make 2990's people
+       look like Houzs bindings nobody had done. */
+    const unattributable = all.filter((v) => !v.scoped && v.orders === 0);
+    const values = all.filter((v) => v.scoped || v.orders > 0);
     const buckets = { mapped: [], confident: [], ambiguous: [], likely: [], none: [] };
     for (const v of values) {
-      const m = bucketOf(v.value, dim, index);
+      const m = bucketOf(v.value, dim, index, bookHolds);
       buckets[m.bucket].push({ ...v, ...m, sources: [...v.sources] });
     }
     const rows = (b) => b.reduce((a, x) => a + x.orders, 0);
@@ -363,6 +392,14 @@ try {
         `LIKELY ${buckets.likely.length} (${rows(buckets.likely)}), ` +
         `NO MATCH ${buckets.none.length} (${rows(buckets.none)}).`,
     );
+    if (unattributable.length) {
+      notice(
+        `  plus ${unattributable.length} value(s) NOT COUNTED above: they come only from a table with no ` +
+          `company_id and no company-${COMPANY_ID} document names one, so this report cannot say they are ` +
+          `ours. They reach the book only if one becomes a live salesperson. First few: ` +
+          `${unattributable.slice(0, 8).map((v) => v.value).join(", ")}`,
+      );
+    }
     /* MASTERS AVOIDED is the owner's actual question — "很多其实都已经有了". A
        confident or confirmed-likely pair is one master NOT opened in a licensed
        book. `mapped` is not counted: those were never going to open one. */
@@ -437,13 +474,15 @@ try {
      NOT on that list would be OPENED as a sales agent in the licensed book, so
      it is surfaced as a decision rather than silently added to the list. */
   const excluded = new Set(book.agent_excluded.reps.map((r) => r.toUpperCase()));
-  const suspicious = [...erp.agent.values()].filter(
-    (v) => /\b(TEST|DEMO|DUMMY|SAMPLE)\b/i.test(v.value) && !excluded.has(v.value.toUpperCase()),
-  );
+  const suspicious = [...erp.agent.values()]
+    .filter((v) => /\b(TEST|DEMO|DUMMY|SAMPLE)\b/i.test(v.value) && !excluded.has(v.value.toUpperCase()))
+    .sort((a, b) => b.orders - a.orders || a.value.localeCompare(b.value));
+  const onLiveOrders = suspicious.filter((v) => v.orders > 0);
   notice(
-    `AGENT_EXCLUDED holds ${excluded.size} rep(s) already decided against. ${suspicious.length} live ERP ` +
-      `salesperson(s) read as a test account and are NOT on it — /ensure-masters would open each as a real ` +
-      `sales agent in the licensed book. THIS IS A DECISION, not a match: ` +
+    `AGENT_EXCLUDED holds ${excluded.size} rep(s) already decided against. ${suspicious.length} ERP staff ` +
+      `name(s) read as a test account and are NOT on it, ${onLiveOrders.length} of them ON A LIVE ORDER — ` +
+      `/ensure-masters would open each as a real sales agent in the licensed book. THIS IS A DECISION, not a ` +
+      `match, so none of them is proposed: ` +
       `${suspicious.map((v) => `${v.value} (${v.orders} order(s), ${v.writable} writable)`).join(", ") || "none"}.`,
   );
   proposals.agent_excluded_decisions = suspicious.map((v) => ({ erp: v.value, orders: v.orders, writable: v.writable }));

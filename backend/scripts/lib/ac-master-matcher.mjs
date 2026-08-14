@@ -152,6 +152,7 @@ export function buildIndex(candidates, dimension) {
       spellings,
       keys: new Set(spellings.map((s) => canonicalKey(s, dimension))),
       tokens: new Set(spellings.flatMap((s) => canonicalTokens(s, dimension))),
+      tokenLists: spellings.map((s) => canonicalTokens(s, dimension)),
       normals: spellings.map((s) => normalise(s)),
     };
   });
@@ -174,15 +175,50 @@ function idf(df, size, token) {
   return Math.log((size + 1) / ((df.get(token) ?? 0) + 1)) + 1;
 }
 
-function overlapScore(index, erpTokens, entry) {
+/**
+ * One side writes as two words what the other writes as one.
+ *
+ * `MID VALLEY` is the book's `MIDVALLEY`; `Pei Fen` is its `PEIFEN`; `Weng Gi`
+ * is its `WENGGI`. Only a concatenation the OTHER side actually holds is added,
+ * so this can never invent a token — and it is added for SCORING only, never to
+ * the canonical key, because one-word-versus-two is a spelling variant a person
+ * should confirm (`MID VALLEY` could be either MIDVALLEY master) and not a
+ * normalisation that makes a pair confident on its own.
+ */
+function withGlue(tokenList, otherTokens) {
+  if (tokenList.length < 2) return new Set(tokenList);
+  /* The glued form REPLACES its parts — `MID` and `VALLEY` carry no information
+     the book's `MIDVALLEY` does not. Leaving them in would make the ERP value
+     look two-thirds unexplained and put it below the coverage floor, which is
+     exactly what happened to `MID VALLEY` (254 orders) on the first run. */
+  const whole = tokenList.join("");
+  if (otherTokens.has(whole)) return new Set([whole]);
+  const out = [];
+  for (let i = 0; i < tokenList.length; i += 1) {
+    const glued = i + 1 < tokenList.length ? tokenList[i] + tokenList[i + 1] : null;
+    if (glued && otherTokens.has(glued)) {
+      out.push(glued);
+      i += 1;
+    } else {
+      out.push(tokenList[i]);
+    }
+  }
+  return new Set(out);
+}
+
+function overlapScore(index, erpTokenList, entry) {
+  const erpTokens = withGlue(erpTokenList, entry.tokens);
+  const entryTokens = new Set(entry.tokens);
+  const erpSet = new Set(erpTokenList);
+  for (const list of entry.tokenLists) for (const t of withGlue(list, erpSet)) entryTokens.add(t);
   const shared = [];
-  const union = new Set([...erpTokens, ...entry.tokens]);
+  const union = new Set([...erpTokens, ...entryTokens]);
   let sharedWeight = 0;
   let unionWeight = 0;
   for (const t of union) {
     const w = idf(index.df, index.size, t);
     unionWeight += w;
-    if (erpTokens.has(t) && entry.tokens.has(t)) {
+    if (erpTokens.has(t) && entryTokens.has(t)) {
       sharedWeight += w;
       shared.push(t);
     }
@@ -241,7 +277,8 @@ function explainSameness(erpValue, spelling, dimension) {
 export function matchValue(erpValue, index, { likelyFloor = 0.2 } = {}) {
   const { dimension } = index;
   const key = canonicalKey(erpValue, dimension);
-  const erpTokens = new Set(canonicalTokens(erpValue, dimension));
+  const erpTokenList = canonicalTokens(erpValue, dimension);
+  const erpTokens = new Set(erpTokenList);
   const erpNormal = normalise(erpValue);
 
   const exact = index.entries.filter((e) => e.keys.has(key));
@@ -270,7 +307,7 @@ export function matchValue(erpValue, index, { likelyFloor = 0.2 } = {}) {
 
   const scored = index.entries
     .map((e) => {
-      const { shared, score, coverage } = overlapScore(index, erpTokens, e);
+      const { shared, score, coverage } = overlapScore(index, erpTokenList, e);
       const sim = Math.max(...e.normals.map((n) => editSimilarity(erpNormal, n)));
       const distinctive = shared.filter((t) => (index.df.get(t) ?? 0) <= DISTINCTIVE_DF);
       return { entry: e, shared, distinctive, coverage, score: 0.65 * score + 0.35 * sim, sim };
