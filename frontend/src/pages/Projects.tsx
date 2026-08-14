@@ -7463,6 +7463,12 @@ function TaskAttachmentRow({
     }
   }
   const isImage = (attachment.content_type ?? "").startsWith("image/");
+  // Owner 2026-07-20: PDFs get an inline first-page preview too, using the
+  // browser's built-in PDF viewer via <embed>. No pdfjs dep needed and no
+  // bundle weight; every modern browser + iOS/Android WebView renders it.
+  const isPdf =
+    (attachment.content_type ?? "").includes("pdf") ||
+    attachment.file_name.toLowerCase().endsWith(".pdf");
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // Per-photo remark (owner 2026-07-16): each attachment carries its own caption.
@@ -7484,12 +7490,18 @@ function TaskAttachmentRow({
     }
   }
 
+  // Fetch a blob URL for anything we can preview inline (images AND PDFs) so
+  // the same effect handles cleanup + revocation on unmount for both.
+  const wantsInlinePreview = isImage || isPdf;
   useEffect(() => {
-    if (!isImage) return;
+    if (!wantsInlinePreview) return;
     let cancelled = false;
     let revoke: string | null = null;
     api
-      .fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`)
+      .fetchBlobUrl(
+        `/api/projects/attachments/${attachment.r2_key}`,
+        isPdf ? "application/pdf" : undefined,
+      )
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url);
@@ -7505,7 +7517,7 @@ function TaskAttachmentRow({
       cancelled = true;
       if (revoke) URL.revokeObjectURL(revoke);
     };
-  }, [attachment.r2_key, isImage]);
+  }, [attachment.r2_key, wantsInlinePreview, isPdf]);
 
   async function download() {
     try {
@@ -7551,6 +7563,29 @@ function TaskAttachmentRow({
               draggable={false}
             />
           </button>
+        ) : isPdf && thumbUrl ? (
+          // Native browser PDF viewer — shows page 1 inline. Wrapped in a
+          // click-through overlay so the PDF's own scrollbars don't swallow
+          // the click; the label + click always opens the full doc in a tab.
+          <div
+            className="relative block max-w-full overflow-hidden rounded border border-border bg-surface"
+            title="Click to open the full document"
+          >
+            <embed
+              src={`${thumbUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+              type="application/pdf"
+              className="pointer-events-none block h-44 w-full"
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); viewInTab(); }}
+              className="absolute inset-0 flex cursor-zoom-in items-end justify-end bg-transparent p-1.5 text-[9px] font-semibold text-ink-muted opacity-0 transition hover:bg-black/5 hover:opacity-100"
+            >
+              <span className="rounded bg-surface/95 px-1.5 py-0.5 shadow-sm">
+                Open PDF
+              </span>
+            </button>
+          </div>
         ) : (
           <button
             type="button"
