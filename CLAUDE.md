@@ -113,16 +113,24 @@ remembering it. Per AREA, line coverage may only go **up** and the count of file
 with **no test at all** may only go **down**. Floors live in
 `coverage-baseline.json`; the gate is `scripts/coverage-ratchet.mjs`.
 
-All six areas are checked on every PR, from one merged report built out of the
-three suites (`backend-typecheck` runs the light project, the four
-`backend-tests` shards run the workers project, `frontend-checks` runs the
-frontend).
+**The two halves run in different places, and that split is deliberate.**
 
-- **`frontend/src` hard-blocks**: it is checked inline in `frontend-checks`,
+- **`frontend/src` hard-blocks, per PR.** Checked inline in `frontend-checks`,
   which the required `frontend` roll-up covers. Add a `.tsx` with no test and
-  the merge is blocked.
-- **The five backend areas** are checked in the `coverage-ratchet` job, which is
-  a visible red X but not (yet) a required context — that list is the owner's.
+  the merge is blocked. It stays on the PR path because instrumenting the
+  frontend suite costs 2 seconds (18s → 20s) and `frontend/src` is 594 files.
+- **The five backend areas are measured ON MAIN**, by
+  `.github/workflows/coverage.yml`, once per merge — not per PR. Moved there
+  2026-08-14 after measuring what it cost on the PR path: the workers suite is
+  **217s of test work bare and 746s instrumented**, so coverage was adding
+  **529 seconds to the critical path of every pull request**. A floor is a
+  statement about what is on `main`; measuring it when something lands on `main`
+  is the same statement for a fraction of the money.
+
+  **What that gives up, plainly:** a PR that lowers backend coverage is caught
+  at the merge, not before it. The fix becomes a follow-up rather than a block.
+  If that trade ever stops being worth 529s per PR, the job is one file and
+  moves back.
 - `backend/scripts` (the one-shot ops scripts, NOT `scripts/lib`) has its
   no-test floor turned off on purpose — a new ops script with no test is normal
   there. Everything else is held to both floors.
