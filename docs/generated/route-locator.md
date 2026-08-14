@@ -85,24 +85,24 @@ Total: 1020 route registrations across 135 files.
 - L4076  PATCH  /sections/:sectionId
 - L4111  DELETE /sections/:sectionId
 - L4128  PUT    /:id/sections/reorder
-- L4557  POST   /:id/defects
-- L4593  PATCH  /defects/:defectId
-- L4603  DELETE /defects/:defectId
-- L4613  PUT    /:id/defects/photo
-- L4629  POST   /:id/sales-reports
-- L4661  DELETE /sales-reports/:reportId
-- L4670  PUT    /:id/sales-reports/upload
-- L4687  POST   /:id/sales-reports/resync
-- L4694  DELETE /checklist/:itemId
-- L4705  POST   /:id/team
-- L4724  DELETE /team/:teamId
-- L4739  POST   /:id/sales-attendees
-- L4826  PUT    /:id/attachments
-- L4872  GET    /attachments/:key{.+}
-- L4884  POST   /attachments/:attId/archive
-- L4898  PATCH  /attachments/:attId
-- L4938  GET    /calendar/events
-- L5118  POST   /import/csv
+- L4583  POST   /:id/defects
+- L4619  PATCH  /defects/:defectId
+- L4629  DELETE /defects/:defectId
+- L4639  PUT    /:id/defects/photo
+- L4655  POST   /:id/sales-reports
+- L4687  DELETE /sales-reports/:reportId
+- L4696  PUT    /:id/sales-reports/upload
+- L4713  POST   /:id/sales-reports/resync
+- L4720  DELETE /checklist/:itemId
+- L4731  POST   /:id/team
+- L4750  DELETE /team/:teamId
+- L4765  POST   /:id/sales-attendees
+- L4852  PUT    /:id/attachments
+- L4898  GET    /attachments/:key{.+}
+- L4910  POST   /attachments/:attId/archive
+- L4924  PATCH  /attachments/:attId
+- L4964  GET    /calendar/events
+- L5144  POST   /import/csv
 
 ## backend/src/routes/assr.ts  (61)
 - L300  GET    /settings
@@ -681,12 +681,12 @@ Total: 1020 route registrations across 135 files.
 - L293  POST   /batch-import
 - L492  DELETE /:id
 - L495  GET    /:id
-- L913  PATCH  /:id
-- L920  POST   /:id/activate-one-shot
-- L963  GET    /:id/price-history
-- L998  GET    /:id/suppliers
-- L1171  POST   /:id/price-changes
-- L1218  GET    /:id/price-changes
+- L915  PATCH  /:id
+- L922  POST   /:id/activate-one-shot
+- L965  GET    /:id/price-history
+- L1000  GET    /:id/suppliers
+- L1173  POST   /:id/price-changes
+- L1220  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2273  GET    /salespeople
@@ -710,8 +710,8 @@ Total: 1020 route registrations across 135 files.
 - L234  GET    /:id/hero-meta
 - L277  POST   /
 - L335  PATCH  /:id
-- L459  DELETE /:id
-- L462  PATCH  /:id/hero-meta
+- L462  DELETE /:id
+- L465  PATCH  /:id/hero-meta
 
 ## backend/src/scm/routes/pos-pools.ts  (10)
 - L108  GET    /mfg-catalog
