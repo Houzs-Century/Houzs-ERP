@@ -1,14 +1,45 @@
 # AutoCount write-back — field alignment audit
 
+> **EVERY ROW COUNT BELOW IS WRONG, AND WRONG THE SAME WAY — 2026-08-15.**
+>
+> The script that produced them read `scm.mfg_sales_orders`, `scm.purchase_orders`
+> and `scm.warehouses` with **no company predicate**, so every figure counts
+> Houzs together with 2990. The write-back is per company —
+> `scm.autocount_writeback` names them, `"1"` today, and `enqueueSoCreate`
+> returns early for any other — so 2990's documents can never be written back and
+> should never have been counted. Fixed in PR #2201.
+>
+> The owner caught it: *"我们应该是把 House 的资料送进去而已啊，而且我记得我们
+> 没那么多 SKU 的"*. The second half is the tell — the numbers did not match a
+> business he knows the size of.
+>
+> **Scoped to company 1, the whole picture is two orders.**
+>
+> | | said here | Houzs only |
+> |---|---|---|
+> | sales orders that can still be written | 112, then 115 | **2** |
+> | of them missing an agent | 112 | 0 — every one now carries a value |
+> | of them losing their venue | 112 | 0 |
+> | of them with a blank stock location | 21 | 0 |
+> | of them with address 3/4 empty | 94 | 0 — both now filled |
+> | purchase orders not yet pushed | 60 | **0** |
+> | warehouse codes the book does not hold | 19 of 25 | 12 of 16, and 11 of those exist under a SHORT code |
+>
+> `scm.mfg_sales_orders` holds 2,725 Houzs orders and 2,723 already carry a
+> `linked_ac_docno`. The two that do not are `HC-SO-2608-001` and `-002`, the
+> owner's own test orders.
+>
+> **The findings and their traces are still correct** — each one is a real
+> mismatch between an ERP column and what the composer reads, established from
+> source and unaffected by how many rows it touched. It is the SIZING that was
+> inflated, roughly fifty-fold, and sizing is what an audit is read for. Re-run
+> `autocount-field-alignment.yml` for a current count rather than trusting any
+> number below.
+>
 > **STATUS, 2026-08-14 (second pass).** Every BROKEN finding below is now
 > FIXED, plus AT-RISK findings 9, 10, 11, 12 and half of 13. Each section keeps
-> its original trace and carries what was done and the production number it was
-> measured against. **What remains open is listed in [Still open](#still-open),
-> and it is three items, all of them owner decisions.** The numbers in the
-> original text were taken over 112 writable sales orders on 2026-08-13; the
-> re-run on 2026-08-14 (workflow run 31808445421) found **115**, and where the
-> two disagree the 115-row figure is the one quoted, because it was re-run at
-> the moment of writing rather than recalled.
+> its original trace and carries what was done. **What remains open is listed in
+> [Still open](#still-open).**
 
 **2026-08-14. Read-only audit, no source changed.** Every field the ERP sends to
 AcSyncService on every operation (`create_so`, `create_po`, the four

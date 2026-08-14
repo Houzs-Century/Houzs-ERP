@@ -71,7 +71,7 @@ In all three the ERP was right, the screen was right, and the write-back read th
 
 | Item | Owner |
 |---|---|
-| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | in progress, `docs/autocount-field-alignment-audit.md` [planned] |
+| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | DONE. `docs/autocount-field-alignment-audit.md` found 8 BROKEN, all fixed by #2200. Its row counts were inflated about fiftyfold by a missing company predicate (#2201): scoped to Houzs the whole picture is TWO orders, and the audit now carries that correction at the top |
 | `recompute-2990-so-allocation.yml` is wired to secrets that do not exist and has never run; it is also what the re-queue was copied from | flagged with a header, own task |
 | `wrangler secret list` cannot be run here — the authenticated account does not match `account_id` in `wrangler.toml` | unassigned |
 | The C# create has no guard against a duplicate ERP document number, so a lost response on a retry could create a second document | unassigned; narrow, needs a mid-flight failure |
