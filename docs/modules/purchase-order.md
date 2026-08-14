@@ -89,7 +89,20 @@ visibly live — including the Relationship Map, which "会跳动" by design.
 | Desktop from-SO | `frontend/src/pages/scm-v2/PurchaseOrderFromSo.tsx` | Multi-select picker over `/outstanding-so-items`. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | Generic screen; the PO config is `MODULE_CONFIGS["mfg-purchase-orders"]` (`:1198-1237`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Generic; PO config `:354`, PO status actions `:515-532`. |
-| Mobile convert (SO→PO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "po"` (`:75`). |
+| Mobile convert (SO→PO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "po"`. Offered only to a caller who passes `canOperatePurchaseOrders` — see below. |
+
+**The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
+`+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
+no auth of its own — so withholding `onNew` is the only thing that keeps the wizard
+away from a caller who may not write. `MobileApp.tsx` gated the DO and SI convert
+targets and then fell through to a literal `: true`, which covered this one: a
+`view`-level holder of `scm.procurement.po` was offered the `+`, filled in the whole wizard, and
+met the area guard's 403 at the end of it. The gate is now
+`canOperatePurchaseOrders(can, pageAccess)` (`frontend/src/auth/salesAccess.ts`), which mirrors
+`scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
+`*` always passing. The target chain has no default arm, so a new ConvertTarget
+that forgets its gate will not typecheck.
+
 
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.

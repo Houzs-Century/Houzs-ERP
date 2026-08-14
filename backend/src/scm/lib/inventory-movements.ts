@@ -190,7 +190,7 @@ export async function writeMovements(
   rows: MovementInput[],
   /** Multi-company: stamp this company_id on every row that doesn't already
    *  carry one. Undefined (single-company Houzs / unresolved) leaves rows as-is. */
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<{ ok: boolean; reason?: string }> {
   if (rows.length === 0) return { ok: true };
   if (companyId != null) {
@@ -570,7 +570,12 @@ export async function reverseMovements(
       };
       // Insert individually so a single collision (DO/DR same-key unique index)
       // doesn't abort the whole reversal.
-      const res = await writeMovements(sb, [row]);
+      /* undefined = leave the rows as they are, which is correct here and only
+         here: `row` above already carries `company_id: r.company_id`, copied
+         from the movement being reversed, because a reversal belongs to the
+         same company as the row it undoes. Stamping an ambient company over
+         that would be the bug. Typed out rather than omitted. */
+      const res = await writeMovements(sb, [row], undefined);
       if (res.ok) {
         reversed += 1;
         if (opposite === 'IN') openedLotRows.push(row);

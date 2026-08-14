@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { canOperateDeliveryOrders, canOperateSalesInvoices, canViewFairReport } from "../auth/salesAccess";
+import { canOperateDeliveryOrders, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport } from "../auth/salesAccess";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -719,12 +719,23 @@ function MobileAppInner() {
        `onNew` alone and MobileConvertWizard imports no auth at all. Withholding
        `onNew` is what makes the control ABSENT (off, not hide), and it resolves
        through the SAME helper the desktop uses — one decision, both platforms. */
+    /* `: true` used to be the fourth arm, and it covered BOTH remaining targets
+       — "grn" and "po". So the rule the two sentences above describe was applied
+       to exactly half the wizard: a `view`-level holder of Purchase Orders or
+       Goods Receipts was still handed the "+", and MobileConvertWizard imports
+       no auth of its own, so nothing downstream stopped them either. There is no
+       default arm now: every ConvertTarget names its gate, and a new target that
+       forgets to will not typecheck. */
     const mayConvert =
       convertTarget === "do"
         ? canOperateDeliveryOrders(user, can, pageAccess)
         : convertTarget === "si"
           ? canOperateSalesInvoices(user, can, pageAccess)
-          : true;
+          : convertTarget === "grn"
+            ? canOperateGoodsReceipts(can, pageAccess)
+            : convertTarget === "po"
+              ? canOperatePurchaseOrders(can, pageAccess)
+              : true;
     const onNew = convertTarget
       ? mayConvert
         ? () => setScreen({ t: "convert", key: k, title: screen.title, target: convertTarget })

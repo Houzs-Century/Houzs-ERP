@@ -65,7 +65,12 @@ const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
    dictated on 2026-08-11.
 
    REFUSING IS NOT DELETING. PATCH /:id/active and DELETE /:id are untouched, so
-   the two rows already in the table stay fixable by the people who own them. */
+   the two rows already in the table stay fixable by the people who own them.
+   The rows that were already there are retired by
+   backend/scripts/retire-non-fabric-rows.mjs, which applies THIS rule (via
+   scripts/lib/non-fabric-code.mjs, held identical to NON_FABRIC_HEAD by
+   backend/tests/nonFabricCodeParity.test.ts) and refuses any row a live
+   document still names. It deactivates and stamps; it never deletes. */
 const NON_FABRIC_HEAD =
   /^(SOFA|SQUARE\s*PILLOW|LONG\s*PILLOW|BOLSTER|STOOL|CONSOLE|MATTRESS|BEDFRAME|DIVAN|DELIVERY|TRANSPORT|SERVICE|SVC)\b/i;
 

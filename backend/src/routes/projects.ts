@@ -2705,18 +2705,18 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   // Company scope (owner audit 2026-07-22): the PIC check + patchFinance
   // both loaded by id alone, so a user granted BOTH companies could — while
   // active on A — be PIC on a B project and edit B's finance from within A.
-  // Scope the PIC load to the caller's active company; the update path is
-  // in services/projects.ts:patchFinance and needs the same treatment there
-  // to be fully airtight (deferred, tracked separately).
-  if (isScopedProjectUser(user)) {
+  //
+  // 2026-08-14: this load used to sit INSIDE the isScopedProjectUser branch, so
+  // for a caller who is NOT scope-to-PIC no company predicate was evaluated at
+  // all — and patchFinance CREATES the row when missing, so a cross-company id
+  // got a snapshot written and recomputeAutoCostLines ran on it. Resolved in the
+  // active company FIRST, for everyone; the PIC rule applies to THAT row.
+  {
     const row = await c.env.DB.prepare(
       `SELECT pic_id, created_by FROM projects WHERE id = ?${activeCompanySql(c)}`
-    )
-      .bind(id)
-      .first<{ pic_id: number | null; created_by: number | null }>();
+    ).bind(id).first<{ pic_id: number | null; created_by: number | null }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    const effectivePic = row.pic_id ?? row.created_by ?? null;
-    if (effectivePic !== user.id) {
+    if (isScopedProjectUser(user) && (row.pic_id ?? row.created_by ?? null) !== user.id) {
       return c.json({ error: "You don't have permission to view this project's financial information." }, 403);
     }
   }

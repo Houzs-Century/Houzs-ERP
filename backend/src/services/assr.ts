@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { todayMyt } from "../scm/lib/my-time";
+import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
@@ -695,7 +696,7 @@ export async function getAssrDetail(env: Env, id: number) {
             co.code as company_code,
             CAST((julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER) as hours_to_deadline,
             CASE
-              WHEN c.stage = 'completed' THEN 0
+              WHEN NOT ${assrOpenStageSql("c")} THEN 0
               WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
               ELSE 0
             END as is_breached
@@ -1928,7 +1929,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
              (julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER
            ) as hours_to_deadline,
            CASE
-             WHEN c.stage = 'completed' THEN 0
+             WHEN NOT ${assrOpenStageSql("c")} THEN 0
              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
              ELSE 0
            END as is_breached
@@ -2166,11 +2167,8 @@ export async function exportAssrCases(
             c.creditor_code as creditor_code,
             cr.company_name as creditor_name,
             co.code as company_code,
-            CASE
-              WHEN c.stage = 'completed' THEN 0
-              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
-              ELSE 0
-            END as is_breached
+            CASE WHEN NOT ${assrOpenStageSql("c")} THEN 0
+              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1 ELSE 0 END as is_breached
        FROM assr_cases c
        LEFT JOIN users u ON u.id = c.assigned_to
        LEFT JOIN users u2 ON u2.id = c.created_by

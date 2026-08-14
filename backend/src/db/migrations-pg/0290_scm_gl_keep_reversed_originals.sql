@@ -1,4 +1,8 @@
--- 0285_scm_gl_keep_reversed_originals.sql
+-- 0290_scm_gl_keep_reversed_originals.sql
+--
+-- REVERSAL: CREATE OR REPLACE VIEW scm.v_gl_entries AS <the previous definition,
+--           preserved verbatim in the migration that last created it>. A view
+--           holds no data, so nothing is lost either way.
 --
 -- THE GENERAL LEDGER WAS HIDING HALF OF EVERY REVERSAL.
 --

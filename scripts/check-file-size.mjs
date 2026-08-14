@@ -137,6 +137,45 @@ function readManifest() {
  * Collapsing the middle case into the first is how a brand-new gate fails its
  * own introducing PR, which is the fastest way to get a gate deleted.
  */
+/** The files THIS change touches, against the merge base, or null when the base
+ *  cannot be resolved — in which case every violation is charged, because a
+ *  gate that cannot tell whose fault it is must not let anything through. */
+function changedFilesAgainstBase() {
+  try {
+    git(['rev-parse', '--verify', '--quiet', 'origin/main'], { quiet: true });
+    const base = git(['merge-base', 'HEAD', 'origin/main'], { quiet: true }).trim();
+    if (!base) return null;
+    const out = git(['diff', '--name-only', '-z', `${base}...HEAD`], { quiet: true });
+    return new Set(out.split('\0').filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+
+/** Line counts at the merge base, so a touched file can be asked whether THIS
+ *  change grew it. null when the base cannot be resolved — the caller then
+ *  charges every touched violation, because a gate that cannot tell must not
+ *  let anything through. */
+function fileLinesAtBase(wanted) {
+  try {
+    git(['rev-parse', '--verify', '--quiet', 'origin/main'], { quiet: true });
+    const base = git(['merge-base', 'HEAD', 'origin/main'], { quiet: true }).trim();
+    if (!base) return null;
+    const out = git(['ls-tree', '-r', '--name-only', '-z', base], { quiet: true });
+    const names = new Set(out.split('\0').filter(Boolean));
+    const lines = new Map();
+    for (const p of names) {
+      /* Only the files a violation could name — reading the whole tree would
+         cost thousands of `git show` calls for nothing. */
+      if (!wanted.has(p)) continue;
+      try { lines.set(p, git(['show', `${base}:${p}`], { quiet: true }).split('\n').length - 1); } catch { /* gone at base */ }
+    }
+    return lines;
+  } catch {
+    return null;
+  }
+}
+
 function readBaseManifest() {
   let base;
   try {
@@ -273,9 +312,46 @@ function main() {
   }
 
   // ---- the ceilings themselves ---------------------------------------------
-  if (v.violations.length) {
+  /* BLAME THE PR THAT GREW THE FILE, not whichever PR runs next.
+     This gate is not one of the ruleset's required checks, so a PR can and does
+     merge with it red — and then EVERY open branch inherits the violation and
+     cannot merge until someone else's file shrinks. That happened on
+     2026-08-14: `grns.ts` went 109 lines over on main and blocked a production
+     fix that never opened the file.
+     A violation in a file this change does not touch is still REPORTED, in
+     full, with its numbers — silence would let the tree drift — but only the
+     files in this diff can fail the run. */
+  const touched = changedFilesAgainstBase();
+  /* A file already over its ceiling may be TOUCHED without being charged, as
+     long as this change makes it smaller. The ratchet's subject is GROWTH: a PR
+     that opens a 3,591-line file and leaves it at 3,586 has moved it in the
+     only direction the ratchet asks for, and failing it there tells the author
+     to abandon the improvement or to pay off 104 lines of someone else's debt
+     before they may fix a bug. Measured 2026-08-14 on PR #2127, which did
+     exactly that and was blocked for it.
+     Growth is still charged from the FIRST line: a touched file may not exceed
+     its ceiling, nor its own size at the merge base, whichever is larger. */
+  const baseLines = fileLinesAtBase(new Set(v.violations.map((x) => x.path)));
+  const charged = (x) => {
+    if (touched === null || !touched.has(x.path)) return false;
+    const was = baseLines?.get(x.path);
+    if (was === undefined) return true;              // new here, or no base to compare
+    return x.lines > was;                            // only if THIS change grew it
+  };
+  const mine = touched === null ? v.violations : v.violations.filter(charged);
+  const inherited = v.violations.filter((x) => !mine.includes(x));
+
+  if (inherited.length) {
+    console.log(`\nOVER CEILING, but not touched by this change (${inherited.length}) — reported, not charged to this PR:`);
+    for (const x of inherited.sort((a, b) => b.over - a.over)) {
+      console.log(`  ${x.path}: ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over})`);
+    }
+    console.log('  Whoever grows a file owns its ceiling. Fix these where they were grown, or re-baseline.');
+  }
+
+  if (mine.length) {
     console.error('\nFILE-SIZE GATE FAILED\n');
-    for (const x of v.violations.sort((a, b) => b.over - a.over)) {
+    for (const x of mine.sort((a, b) => b.over - a.over)) {
       console.error(
         x.grandfathered
           ? `  ${x.path}\n      ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over}). This file may only SHRINK.`

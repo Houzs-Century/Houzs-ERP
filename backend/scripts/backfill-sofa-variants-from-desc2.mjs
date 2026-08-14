@@ -51,6 +51,7 @@ import postgres from "postgres";
 import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour, normColour } from "./lib/fabric-colour-match.mjs";
 import { buildSofaVariantPatch, mergeVariantPatch, OWNED_SOFA_KEYS } from "./lib/variant-merge.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -58,6 +59,9 @@ const CO = Number(process.env.COMPANY || 1);
 const APPLY = process.env.APPLY === "1";
 const FUZZY = process.env.FUZZY === "1";
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 const modelOf = (code) => {
@@ -106,7 +110,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group = 'sofa'
-       AND h.internal_expected_dd IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, table: "mfg_sales_order_items", scope: "SO" }));
 
   const plan = [];

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-134 route modules (40 in `backend/src/routes`, 94 in `backend/src/scm/routes`), 1034 endpoint registrations.
+134 route modules (40 in `backend/src/routes`, 94 in `backend/src/scm/routes`), 1037 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -22,17 +22,17 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/agent-console.ts` | 33 | 1304 |
 | `backend/src/routes/announcements.ts` | 11 | 1402 |
 | `backend/src/routes/assistant.ts` | 4 | 225 |
-| `backend/src/routes/assr.ts` | 62 | 3414 |
+| `backend/src/routes/assr.ts` | 62 | 3314 |
 | `backend/src/routes/assrFormIntake.ts` | 5 | 586 |
 | `backend/src/routes/assrPortal.ts` | 14 | 540 |
-| `backend/src/routes/assr_print.ts` | 1 | 1224 |
+| `backend/src/routes/assr_print.ts` | 1 | 1247 |
 | `backend/src/routes/audit.ts` | 1 | 74 |
 | `backend/src/routes/auth.ts` | 13 | 840 |
 | `backend/src/routes/branding.ts` | 5 | 294 |
 | `backend/src/routes/clientErrors.ts` | 2 | 232 |
 | `backend/src/routes/companies.ts` | 1 | 48 |
 | `backend/src/routes/departments.ts` | 4 | 195 |
-| `backend/src/routes/finance.ts` | 2 | 416 |
+| `backend/src/routes/finance.ts` | 2 | 444 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
 | `backend/src/routes/logs.ts` | 1 | 66 |
@@ -40,10 +40,10 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
 | `backend/src/routes/notifications.ts` | 1 | 241 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos.ts` | 8 | 316 |
+| `backend/src/routes/pos.ts` | 8 | 332 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5326 |
+| `backend/src/routes/projects.ts` | 109 | 5290 |
 | `backend/src/routes/projects_print.ts` | 1 | 1247 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
@@ -53,27 +53,27 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/stockItems.ts` | 1 | 28 |
 | `backend/src/routes/supplierPortal.ts` | 9 | 417 |
 | `backend/src/routes/survey.ts` | 2 | 146 |
-| `backend/src/routes/systemHealth.ts` | 3 | 323 |
+| `backend/src/routes/systemHealth.ts` | 6 | 425 |
 | `backend/src/routes/tableLayouts.ts` | 11 | 553 |
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
-| `backend/src/routes/users.ts` | 22 | 2325 |
+| `backend/src/routes/users.ts` | 22 | 2282 |
 | `backend/src/scm/routes/accounting.ts` | 11 | 733 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/categories.ts` | 10 | 488 |
+| `backend/src/scm/routes/categories.ts` | 10 | 506 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2527 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2475 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1118 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 223 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5740 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5673 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2958 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2949 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1738 |
@@ -86,23 +86,23 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-colours.ts` | 1 | 71 |
 | `backend/src/scm/routes/fabric-library.ts` | 2 | 99 |
 | `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 309 |
-| `backend/src/scm/routes/fabric-tracking.ts` | 9 | 597 |
-| `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2178 |
+| `backend/src/scm/routes/fabric-tracking.ts` | 9 | 602 |
+| `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2144 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 114 |
-| `backend/src/scm/routes/grns.ts` | 13 | 3676 |
+| `backend/src/scm/routes/grns.ts` | 13 | 3718 |
 | `backend/src/scm/routes/helpers.ts` | 3 | 188 |
 | `backend/src/scm/routes/hr.ts` | 19 | 1542 |
 | `backend/src/scm/routes/inventory-adjustments.ts` | 1 | 222 |
-| `backend/src/scm/routes/inventory.ts` | 16 | 1688 |
+| `backend/src/scm/routes/inventory.ts` | 16 | 1698 |
 | `backend/src/scm/routes/localities.ts` | 4 | 265 |
 | `backend/src/scm/routes/lorries.ts` | 3 | 329 |
 | `backend/src/scm/routes/lorry-capacity.ts` | 3 | 493 |
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 320 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1192 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4577 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12244 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1218 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4545 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1419 |
@@ -114,27 +114,27 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1093 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 144 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 365 |
-| `backend/src/scm/routes/product-models.ts` | 16 | 1462 |
+| `backend/src/scm/routes/product-models.ts` | 16 | 1464 |
 | `backend/src/scm/routes/products.ts` | 2 | 86 |
 | `backend/src/scm/routes/public-images.ts` | 2 | 47 |
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 709 |
-| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1328 |
-| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1125 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2532 |
-| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1612 |
-| `backend/src/scm/routes/pwp-codes.ts` | 5 | 484 |
+| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1323 |
+| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1124 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2452 |
+| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1611 |
+| `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1252 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 522 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2624 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2575 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
-| `backend/src/scm/routes/scan-so.ts` | 11 | 4910 |
+| `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
-| `backend/src/scm/routes/so-amendments.ts` | 9 | 1183 |
+| `backend/src/scm/routes/so-amendments.ts` | 9 | 1215 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 302 |
-| `backend/src/scm/routes/so-mirror.ts` | 1 | 119 |
+| `backend/src/scm/routes/so-mirror.ts` | 1 | 139 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 788 |
 | `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 308 |
@@ -162,36 +162,36 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 147 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 289 | `0291_scm_return_do_units_at_cost.sql` (0291) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 291 | `0293_scm_compartment_tier_override_company_key.sql` (0293) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1279 files, 535812 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1294 files, 539220 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 14875 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12244 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
 | `frontend/src/pages/ServiceCases.tsx` | 8855 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5740 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5673 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
-| `backend/src/routes/projects.ts` | 5326 |
-| `backend/src/scm/routes/scan-so.ts` | 4910 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4577 |
+| `backend/src/routes/projects.ts` | 5290 |
+| `backend/src/scm/routes/scan-so.ts` | 4865 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4545 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3757 |
-| `backend/src/scm/routes/grns.ts` | 3676 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3721 |
+| `backend/src/scm/routes/grns.ts` | 3718 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
-| `backend/src/routes/assr.ts` | 3414 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
+| `backend/src/routes/assr.ts` | 3314 |
 | `backend/src/services/projects.ts` | 3173 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3016 |
 
@@ -365,11 +365,11 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 153 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1071 |
-| `frontend/src/mobile/MobileApp.tsx` | 1016 |
+| `frontend/src/mobile/MobileApp.tsx` | 1027 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1029 |
-| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2459 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1033 |
+| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2427 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 735 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
 | `frontend/src/mobile/MobileInbox.tsx` | 241 |
@@ -380,9 +380,9 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleDetail.tsx` | 1932 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3757 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3721 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
-| `frontend/src/mobile/MobilePOD.tsx` | 518 |
+| `frontend/src/mobile/MobilePOD.tsx` | 536 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
 | `frontend/src/mobile/MobilePoAmendments.tsx` | 137 |
 | `frontend/src/mobile/MobileProfile.tsx` | 972 |

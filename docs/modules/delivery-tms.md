@@ -765,6 +765,27 @@ so such an order cannot read as Time arranged — it stays Pending Time even
 though a trip row exists. Honest by construction: with no stop, no lorry's run
 sheet carries the job. Cut the DO first and the stop — and the stage — follow.
 
+The mechanism, for anyone tempted to "fix" the insert: it is guarded
+`if (!already && (doId || soId))`, and on the SO-direct path BOTH operands are
+always null — `doId` because there is no DO, `soId` because it is set to `null`
+a few lines above, since `scm.mfg_sales_orders` has a TEXT `doc_no` primary key
+and no uuid while `trip_stops.so_id` is a uuid. The insert is unreachable, not
+flaky.
+
+**Since 2026-08-13 the RETURN SHAPE says so** (PR #2086). `TripWiring`'s `WIRED`
+arm gained `stopCreated?: boolean` and, when false, `stopSkippedReason` — a plain
+sentence saying the date is saved but the job will not appear on a driver sheet
+until the DO exists. Additive: every existing field is untouched, so no caller
+breaks. **No caller reads them yet either** — `git grep stopCreated` at
+`origin/main` returns hits only inside `delivery-planning.ts`, so the dispatcher
+still sees a plain success and the operator is still not told. Wiring a surface
+to `stopSkippedReason` is the open half. The stop is deliberately NOT invented:
+there is genuinely no key to file it under, and guessing one would put a job on a
+route that cannot be traced back to its order. The orphan-TRIP half — a trip is
+still found-or-created with no stop for it, and `/lorry-capacity` counts it in
+`total_trips` and in utilisation regardless — remains open and is recorded in
+BUG-HISTORY under the stale-stop sweep entry.
+
 ### Region is derived from the customer STATE — verified
 
 Confirmed at this commit. `stateToRegionsFromConfig()`

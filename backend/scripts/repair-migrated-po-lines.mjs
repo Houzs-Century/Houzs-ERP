@@ -54,6 +54,15 @@ import { codeMatchGapReason, compareStoredKey, isCompartmentSku } from "./lib/ac
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* APPLY=1 alone used to be the whole gate on a script that writes four columns
+   across two production tables. One environment variable is the same keystroke
+   whether it is meant or mistyped, so the apply path now also needs the phrase
+   spelled out — the shape every other gated repair in this directory uses. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}"`);
+  process.exit(2);
+}
 const CO = 1;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -527,5 +536,44 @@ async function main() {
   }
   log("no inventory movements written — this repair is paperwork on rows that already exist.");
   await sql.end();
+
+  /* VERIFY ON A SECOND CONNECTION, and assert the VALUES rather than the
+     counts. The session that did the writing is the worst possible witness
+     that they landed: it can report "written: N of N" while the rows read back
+     wrong — that is exactly how seven variants blocks were reported repaired
+     on 2026-08-13 while they had actually been turned into jsonb strings.
+     A count is not a shape. */
+  const check = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    log("");
+    log("VERIFY (fresh connection) — reading the rows back, not the counters:");
+    const ids = plan.filter((p) => p.soItemId || p.deliveryDate || (has_dtlkey && p.dtlKey != null)).slice(0, 200).map((p) => p.id);
+    if (!ids.length) { log("  nothing was planned, so there is nothing to read back."); return; }
+    const seen = await check`SELECT id::text AS id, so_item_id::text AS so_item_id, delivery_date::text AS delivery_date
+                               FROM scm.purchase_order_items WHERE id = ANY(${ids})`;
+    const by = new Map(seen.map((r) => [r.id, r]));
+    let ok = 0, wrong = 0;
+    for (const p of plan.slice(0, 200)) {
+      const r = by.get(String(p.id));
+      if (!r) continue;
+      const soOk = !p.soItemId || r.so_item_id === String(p.soItemId);
+      const dtOk = !p.deliveryDate || isoDate(r.delivery_date) === isoDate(p.deliveryDate);
+      if (soOk && dtOk) ok++;
+      else { wrong++; log(`  MISMATCH ${p.id}: so_item_id=${r.so_item_id} (wanted ${p.soItemId ?? "-"}), delivery_date=${r.delivery_date} (wanted ${p.deliveryDate ?? "-"})`); }
+    }
+    log(`  read back ${ok + wrong} row(s): ${ok} hold the intended values, ${wrong} do not.`);
+    /* A header the repair filled must actually carry a date now. */
+    if (headerFill.length) {
+      const hids = headerFill.slice(0, 200).map((f) => f.id);
+      const [{ blank }] = await check`SELECT count(*)::int AS blank FROM scm.purchase_orders
+                                       WHERE id = ANY(${hids}) AND expected_at IS NULL`;
+      log(`  headers still blank among the ${hids.length} this run filled: ${blank}`);
+      if (blank) wrong += blank;
+    }
+    if (wrong) { console.error("VERIFY FAILED — the rows do not read back as intended."); process.exitCode = 1; }
+    else log("  VERIFY PASS");
+  } finally {
+    await check.end();
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

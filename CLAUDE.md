@@ -45,7 +45,12 @@ DB, not migration files") is worth more than the fix was.
 `.github/workflows/working-agreement.yml` runs
 `scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
 directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
-the migration discipline described under *Migrations* below. Before it existed
+the migration discipline described under *Migrations* below. It REPORTS: it is
+deliberately not in the `main-protection` required checks (those are
+`backend-typecheck` and `frontend`), so a red run does not block a merge and the
+owner decides. And what it measures is narrower than what these rules say — the
+seven known gaps are pinned in `scripts/lib/working-agreement.escapes.test.mjs`
+and written up in `BUG-HISTORY.md`; read them before trusting a green run. Before it existed
 they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
 as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
 said a word. (The COE rule is not checked: an incident is a judgement call, not
@@ -136,6 +141,20 @@ PR: five rounds.
 The `pull_request` rule is why a direct push to `main` is refused at all, and it
 carries `required_approving_review_count: 0` — a PR is required, an approval is
 not.
+
+Checked 2026-08-14, it returns FOUR rule types — `deletion`,
+`non_fast_forward`, `required_status_checks` and **`pull_request`** — with
+contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`**. That last flag is *Require
+branches to be up to date before merging*, and it is the one that matters.
+
+The `pull_request` rule is the newer one and this paragraph listed only three
+until it was re-checked. Its parameters are worth knowing before you plan a
+merge: `required_approving_review_count: 0`, `require_code_owner_review: false`,
+`require_last_push_approval: false`, `allowed_merge_methods: [squash, rebase,
+merge]`. So it forces work through a PR — a direct push to `main` is refused —
+but it asks for no approvals, which is why one-person merges still land. Do not
+read "0 approvals" as "no PR needed".
 
 **There is NO emergency escape hatch.** This paragraph used to end "Repository
 admin is on the bypass list as an emergency escape hatch". Two independent
@@ -349,6 +368,17 @@ in the route.
   `consignment-returns.ts` at 957 lines against an actual 1118. Run
   `npm --prefix backend run audit:map` / `audit:route-locator` before trusting
   a number from either.
+
+  largest files), regenerated from the tree. **"Cannot drift" is only true of
+  the CI-gated half, and this bullet used to claim it of all four.** CI runs
+  `audit:routes` (the capability matrix) on every PR; it does NOT run
+  `audit:route-locator` or `audit:map`, and both of those artifacts were found
+  STALE on `main` on 2026-08-14. That is deliberate, not an oversight — both
+  generators say so in their own headers ("a navigation doc going stale must
+  never block a deploy"). The practical rule: **treat `route-locator.md` and
+  `codebase-map-facts.md` as hints and re-run the generator before trusting a
+  line number**, and do not "fix" the gap by adding a CI gate without the owner,
+  because the absence is a decision.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -403,6 +433,44 @@ test-only now — which matters most for migrations, below.
   number at MERGE time by re-listing the tree, not when you branch — parallel
   PRs otherwise pick the same one.
 
+## Release discipline — the two things a revert cannot undo (ENFORCED)
+
+Reverting a commit un-ships a route. It does not un-ship a **migration** (the
+file is applied to prod on the next push to main and is immutable from that
+moment) and it does not un-ship a **repair script that has already run**. For
+those two, the discipline IS the rollback plan, so it is a CI gate and not a
+paragraph: `npm --prefix backend run audit:release-discipline`, wired into the
+required `backend-typecheck` check.
+
+**A migration carries a `-- REVERSAL:` note.** What undoes it, or `IRREVERSIBLE
+— <why>`. If it does `DROP VIEW`, the note has to name the GRANTS the recreate
+must put back: a recreated view is a NEW object with an empty ACL, which is how
+0189 took prod's Sales Order list down for every user and needed both 0190 and
+0191 to repair — nobody had written down what the view's grants were.
+
+**A script in `backend/scripts` that opens a database and WRITES carries all
+four of:**
+
+1. a `MODE` / `APPLY` gate whose DEFAULT is plan (any non-`apply` default —
+   `'plan'`, `'dry-run'` — counts; an opt-OUT like `DRY=1` does not, because
+   unset it writes);
+2. a `CONFIRM` phrase on the apply path, refused with an exit (a value you must
+   repeat, like `delete-test-so.mjs`'s `CONFIRM_DOC`, is stronger and also counts);
+3. a verification that re-reads on a **FRESH connection** and asserts the
+   **SHAPE**. A row count is not a shape: on 2026-08-13 a repair written to undo
+   the jsonb double-encoding COE reproduced that exact bug on 7 production rows,
+   and its row count reported 7 of 7 while only its shape check saw it;
+4. a `RE-RUN:` line in the header saying what a SECOND run does.
+
+Copy `repair-array-shaped-variants.mjs` or `unify-processing-date.mjs` — both
+pass all four today.
+
+**It is a ratchet.** Today's tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`, and that list may only
+SHRINK: fix a rule and the check makes you delete it from the ledger in the same
+PR, and the count is printed on every run so the debt stays visible. A NEW
+script complies or CI fails.
+
 ## ⚠️ Never ask the owner to run a query — build the check instead (owner rule)
 
 The owner is not a database console. If you need a fact that lives only in
@@ -415,8 +483,10 @@ Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
 
-**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
-use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+**`DATABASE_URL` is the credential. There is no other one.** Nearly every
+workflow here uses `secrets.DATABASE_URL` (289 of 300 as of 2026-08-14 —
+`grep -rl secrets.DATABASE_URL .github/workflows | wc -l`, which is the number
+to re-run rather than trust); it is the only database secret this repo holds, at
 repo level or in any of its three environments. If your script needs a
 PostgREST-shaped client — because it imports a real service function out of
 `src/` rather than re-implementing it, which is the right instinct — it needs

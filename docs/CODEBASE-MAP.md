@@ -38,10 +38,17 @@ Two independently deployed apps in one repo, plus two small side services.
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |
 
 `deploy.yml` splits by changed path, so a frontend-only push does not redeploy the
-Worker. The backend job runs `audit:routes`, `typecheck`, `test`, then
-`pg-migrate.mjs` against production, then deploys, then smoke-checks. **Migrations
-run before the Worker goes live and on every deploy** — which is why a single broken
-migration file blocks all deploys, not just its own.
+Worker. The backend job runs `audit:routes`, `audit:job-types`,
+`audit:work-order-states`, `typecheck`, then `pg-migrate.mjs` against production,
+then deploys, then smoke-checks. **Migrations run before the Worker goes live and
+on every deploy** — which is why a single broken migration file blocks all
+deploys, not just its own.
+
+`npm test` is NOT in that list any more — it moved out to the separate
+`backend-tests` matrix job, and `deploy.yml` says so in its own comment beside
+the gap. This sentence still named `test` between `typecheck` and `pg-migrate`
+until 2026-08-14; the assertion at the top of the backend job is what keeps the
+suite a gate now, not its presence in this sequence.
 
 ## 2. Backend — what each area is for
 
@@ -106,8 +113,8 @@ migration file blocks all deploys, not just its own.
 **Two migration trees; only one reaches production.** `migrations-pg/` is applied to
 prod by `deploy.yml` on every deploy. `migrations/` is the D1/SQLite tree — it is
 NOT dead and must not be deleted, but nothing applies it to production: it exists so
-backend vitest can build an in-process D1 with the same shape (`vitest.config.ts`
-reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
+backend vitest can build an in-process D1 with the same shape
+(`vitest.config.mts` reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
 that must hold in prod goes in `migrations-pg/`; a mirror in `migrations/` only
 buys test parity. The generated facts file states which is which, derived from the
 workflow and the runner scripts rather than from anyone's memory.
@@ -117,6 +124,17 @@ workflow and the runner scripts rather than from anyone's memory.
 exist. `backend/tests/migrationNumbers.test.ts` freezes those and fails on any NEW
 duplicate — including against a `.TEMPLATE` file, which owns its number from the day
 it lands. Pick the number at merge time, not at branch time.
+
+**A migration and a run repair script are the two things a revert cannot undo,
+and both are gated.** `npm --prefix backend run audit:release-discipline` (a step
+of the required `backend-typecheck` check) fails a migration at or above the
+recorded floor with no `-- REVERSAL:` note, and a `backend/scripts` script that
+opens a database and writes without a plan-default MODE gate, a CONFIRM phrase, a
+fresh-connection re-read that asserts the SHAPE, and a `RE-RUN:` header line. The
+existing tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`; that list may only
+shrink, and the gate prints its size on every run. Rules and rationale live in
+`CLAUDE.md`; the counts live in the gate's own output, never here.
 
 **`frontend/src/vendor/scm`, `frontend/src/vendor/shared`,
 `frontend/src/pages/scm-v2` and `backend/src/scm` are VENDORED.** They were copied
@@ -375,9 +393,13 @@ re-check the cited file rather than trusting the line.
   Off means the code path is not taken: with the var off, neither the fallback
   lookup nor the liveness recording runs at all (pinned by
   `backend/tests/sessionFallback.test.ts`).
-- **`HOUZS_OWNS_2990`** is the cutover flip. While false, Houzs holds a read-only
+- **`HOUZS_OWNS_2990` = `"true"`** in BOTH prod and staging (`backend/wrangler.toml`
+  `:82` and `:315`, checked 2026-08-14). The cutover has flipped. This bullet used
+  to describe only the `false` branch — *"while false, Houzs holds a read-only
   mirror of the `2990-` document namespace and the mirror guards refuse Houzs-side
-  creates/edits of those documents.
+  creates/edits"* — and never stated the live value, so a reader landed on the half
+  that no longer applies. Every sibling bullet in this section states its value;
+  this one now does too.
 - **Staging is not a copy of prod**: its own Supabase project, its own queues and KV,
   no Analytics Engine binding, and `crons = []`. Bindings do not inherit into named
   wrangler envs — adding one to prod does not add it to staging.

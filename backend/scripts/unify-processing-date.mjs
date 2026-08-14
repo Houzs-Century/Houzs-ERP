@@ -299,9 +299,18 @@ async function main() {
                WHERE company_id = ${CO} AND doc_no = ${r.doc_no}
                  AND processing_date IS NULL AND customer_delivery_date IS NULL
               RETURNING doc_no`
+          /* No delivery date to supply — then the row must ALREADY have one, or
+             this write would create the very half-pair the owner's rule forbids
+             ("processing date 和 delivery date 必须同时有或者同时没有"). The
+             predicate makes the script REFUSE rather than write it: the
+             row-count check below turns a miss into "expected N, wrote M —
+             refusing" and rolls the whole transaction back. A repair script is
+             a write path like any other, and the one place where no HTTP gate
+             stands between it and the table. */
           : await tx`
               UPDATE scm.mfg_sales_orders SET processing_date = ${r.value}::date
                WHERE company_id = ${CO} AND doc_no = ${r.doc_no} AND processing_date IS NULL
+                 AND customer_delivery_date IS NOT NULL
               RETURNING doc_no`;
         wrote += back.length;
       }

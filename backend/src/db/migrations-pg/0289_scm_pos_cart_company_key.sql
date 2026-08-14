@@ -1,4 +1,12 @@
--- 0284_scm_pos_cart_company_key.sql — make the POS cart key (staff_id, company_id).
+-- 0289_scm_pos_cart_company_key.sql — make the POS cart key (staff_id, company_id).
+--
+-- REVERSAL: ALTER TABLE scm.pos_carts DROP CONSTRAINT pos_carts_pkey;
+--           ALTER TABLE scm.pos_carts ADD CONSTRAINT pos_carts_pkey PRIMARY KEY (staff_id);
+--           ALTER TABLE scm.pos_carts ALTER COLUMN company_id DROP NOT NULL;
+--           PARTIAL: the single-column key only accepts the rows back while no
+--           staff id holds a cart in both companies - which is the very thing
+--           this migration makes possible, so after either company has written
+--           one, reversing needs a human decision about which cart survives.
 --
 -- THE BUG. scm.pos_carts was imported from 2990 keyed `staff_id uuid PRIMARY KEY`
 -- (scripts/scm-schema/2990s-full-schema.sql:930). Migration 0100 then added

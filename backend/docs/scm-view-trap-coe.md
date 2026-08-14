@@ -69,6 +69,22 @@ HEADER is fatal for the list read unless the view is recreated in the same PR.
 If a third route grows a view-backed select, copy the comment block from the
 first call site and grep for it on review.
 
+> **This rule is still enforced by prose, and that is a known gap — not a
+> claim of coverage.** As of 2026-08-13 there are 10 `VIEW-TRAP` comment sites
+> in the tree and zero automated checks, and this COE's own family bit twice
+> more afterwards (2026-07-24, "Sales Orders list down on prod — permission
+> denied for view `mfg_sales_orders_with_payment_totals`", then again after
+> 0190). `docs/jsonb-double-encoding-coe.md` Lesson 4 is the general finding:
+> a documented trap catches the next reader anyway.
+>
+> The executable form would be a `test:pg` case (that CI job already runs a real
+> postgres:16) that builds the view family from the migrations and asserts every
+> column named in the shared HEADER select resolves through the VIEW, not only
+> through the base table — Postgres freezes a view's output column set at
+> `CREATE VIEW` time even when the body says `SELECT so.*`, which is this whole
+> COE. Until that exists, "copy the comment and grep on review" is what there
+> is. Tracked in `docs/bug-classes.md` under *Classes with no check yet*.
+
 ---
 
 ## 4. Prevention rules (Houzs-flavoured P-1..P-5)
@@ -101,8 +117,19 @@ definition against prod.
 
 **P-6 — RENAMING a base column does not break the view, it makes the view LIE.
 Rename the view's output column too, and do NOT drop the view to do it.**
-Added by mig 0284 (`internal_expected_dd` → `processing_date`), verified on a
+Added by mig **0286** (`internal_expected_dd` → `processing_date`), verified on a
 PGlite replica of the base table + view + both grantee roles:
+
+> **This section said "0284" in four places until 2026-08-14, and 0284 is a
+> different migration** — it drops `scm.consignment_sales_orders.proceeded_at`
+> and touches no view at all. The behaviour described below was always 0286's
+> (`0286_scm_processing_date_one_name.sql`, applied to prod
+> 2026-08-13T13:46:59Z). Worth recording rather than silently correcting,
+> because the wrong number propagated into code: `probe-rename-preconditions.mjs`
+> still pins `const MIGRATION = "0284_scm_processing_date_one_name.sql"`, a
+> filename that does not exist in `migrations-pg/`, so the pre-flight this COE
+> tells you to run names a file nobody can open. Fixing that constant is a code
+> change and is not part of this doc pass.
 
 * `ALTER TABLE scm.mfg_sales_orders RENAME COLUMN a TO b` **succeeds** with the
   view in place — Postgres stores the rewrite rule by attribute number, so
@@ -114,14 +141,14 @@ PGlite replica of the base table + view + both grantee roles:
   trap, arrived at from the opposite direction.
 * The fix is `ALTER VIEW scm.… RENAME COLUMN a TO b` — a catalog rename, no
   DROP, so it does **not** re-run the 0189 → 0190 → 0191 grant-loss incident.
-  0284 does this as a `pg_class` sweep over `relkind IN ('v','m')` rather than
+  0286 does this as a `pg_class` sweep over `relkind IN ('v','m')` rather than
   naming the one view, because the whole lesson of this COE is that the one view
   gets missed.
 * Never reach for DROP VIEW → rename → CREATE VIEW here. That path is P-1's, it
   costs the ACL and the owner, and a rename does not need it.
 * **A replica is not prod, and P-5 applies to a rename too.** Everything above
   was established on a PGlite replica built from this repo's own SQL, which
-  proves 0284 is consistent with the source tree and nothing more. The sweep
+  proves 0286 is consistent with the source tree and nothing more. The sweep
   filters `nspname = 'scm'`, so a view in another schema is renamed by nobody and
   caught by nobody; every step is catalog-guarded, so a mismatched prod turns the
   migration into a silent no-op rather than a red run. Read the live catalog
@@ -162,7 +189,7 @@ PGlite replica of the base table + view + both grantee roles:
   origin of the current Houzs view definition)
 - `backend/scripts/probe-rename-preconditions.mjs` +
   `.github/workflows/probe-rename-preconditions.yml` — read-only pre-flight that
-  asks the LIVE catalog whether 0284's assumptions hold (P-5 / P-6)
+  asks the LIVE catalog whether 0286's assumptions hold (P-5 / P-6)
 - `backend/src/db/migrations-pg/0033_so_scan_slip_image.sql` — added slip_image_key (detail-only)
 - `backend/src/db/migrations-pg/0034_so_scan_receipt_image.sql` — added receipt_image_key (detail-only)
 - `backend/src/db/migrations-pg/0053_scm_delivery_planning_tms.sql` — added 8 cols (all detail-only, has its own VIEW-TRAP note at lines 8-16)

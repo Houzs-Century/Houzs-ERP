@@ -78,7 +78,7 @@ const RELEASE_TO = 'READY_TO_SHIP';
 export async function syncSoDeliveredFromDo(
   sb: SupabaseClient,
   soDocNos: Array<string | null | undefined>,
-  actorId?: string | null,
+  actorId: string | null | undefined,
 ): Promise<void> {
   const docs = [...new Set(soDocNos.filter((d): d is string => !!d))];
   for (const docNo of docs) {

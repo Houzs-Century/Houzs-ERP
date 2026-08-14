@@ -242,6 +242,27 @@ here, and it is highly regular:**
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
+**`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
+caller (2026-08-14).** The `activeCompanySql` predicate used to sit inside the
+`isScopedProjectUser` branch, with a comment recording the rest as "deferred,
+tracked separately" — which meant that for the majority of `projects.write`
+holders (anyone not scope-to-PIC) no company predicate was evaluated anywhere on
+the path, and `patchFinance`'s `UPDATE project_finance … WHERE project_id = ?`
+reached the other company. `patchFinance` also CREATES the row when it is
+missing, so a cross-company id with no snapshot got one written rather than
+falling through to "No changes", and `recomputeAutoCostLines` then ran on it.
+The project is now loaded scoped first, for everyone, and the PIC rule is applied
+to the row that load returned; out of company answers `404 Not found`, the same
+as a nonexistent id.
+
+**The P&L drill-down applies the same filters as its total (2026-08-14).**
+`backend/src/routes/finance.ts` builds one `FROM … WHERE` fragment per source
+(`projectCostFrom`, `serviceCostFrom`) and both `GET /pnl` and
+`GET /pnl/bucket` interpolate it. The drill-down previously re-typed the
+predicate and dropped both `company_id` and the `projects.archived_at IS NULL`
+join, so the row list you get by clicking a cost bucket could not sum to the
+bucket. If you add a filter, add it to the fragment.
+
 **`GET /finance/by-project` date semantics** (owner decision 2026-08-13): the
 `date_from`/`date_to` range filters the SUMs *and* the rows — a project with no
 non-archived line inside the window is dropped from the result, not rendered as
