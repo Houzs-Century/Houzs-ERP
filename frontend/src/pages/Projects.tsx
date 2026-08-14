@@ -434,7 +434,15 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  /* "upload" and "remove" are written by the BACKEND, not by any form here:
+     routes/projects.ts inserts them into project_checklist_comments at :4235
+     and :4318 so the task history can show "Uploaded X.pdf · Sim · 06/08 10:34"
+     beside approve/reject. They were added to the reader (#2184) and to the
+     writer, and never to this union — which made every `c.kind === "upload"`
+     comparison a TS2367 "no overlap" error and blocked the FRONTEND DEPLOY,
+     not merely CI. The union is the contract between the two halves; a kind
+     the server can emit must be spellable here. */
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove";
   body: string | null;
   user_name: string | null;
   created_at: string;
