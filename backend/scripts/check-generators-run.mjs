@@ -44,6 +44,7 @@ const GENERATORS = [
   { name: 'codebase map', script: 'gen-codebase-map.mjs' },
   { name: 'route locator', script: 'gen-route-locator.mjs' },
   { name: 'AutoCount item map', script: 'gen-autocount-item-map.mjs' },
+  { name: 'AutoCount master maps', script: 'gen-autocount-master-maps.mjs' },
   { name: 'sofa Desc2 corpus', script: 'gen-sofa-desc2-corpus.mjs' },
 ];
 

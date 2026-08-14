@@ -1,0 +1,74 @@
+name: AutoCount write-back — master bindings (read-only)
+
+# Answers "which of our brandings / venues / salespeople / stock locations does
+# the account book ALREADY hold, under a different spelling" — with a row count
+# per value, without anyone opening a SQL console.
+#
+# The owner's question, 2026-08-14: "很多其实都已经有了". He is right: measured
+# that day, ELEVEN of the twelve scm.warehouses codes the field-alignment report
+# calls unknown are the book's own locations spelled differently. `SUNWAY
+# SHOWROOM` is the book's `SUNWAY`; `KL SERVICE` is its `SERV KL`. Opening those
+# does not fail — it opens a DUPLICATE stock location in a licensed book.
+#
+# THIS PROPOSES, IT NEVER BINDS. Confirming a pair is an edit to
+# backend/scripts/data/autocount-so-writeback-mappings.json followed by
+# `node scripts/gen-autocount-master-maps.mjs`; the proposals artifact this run
+# uploads is the input to that edit.
+#
+# Manual trigger only. A production DB read on a schedule turns a real question
+# into CI noise nobody reads (CLAUDE.md), and this one answers a question that
+# changes only when the ERP's master data does.
+#
+# Runs under tsx, NOT plain node: the script imports AGENT_MAP / LOCATION_MAP /
+# VENUE_MAP / BRANDING_MAP and `bookSpelling` from the composer itself, so
+# "already mapped" is the composer's own decision and cannot drift from it. Same
+# shape as autocount-field-alignment.yml, which is a workflow that RUNS (its
+# latest run at the time of writing is 31815502403, conclusion success) — the
+# precedent was taken by evidence, not by name similarity.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: "Company to measure. The write-back is per company; 1 is Houzs"
+        required: false
+        default: "1"
+        type: string
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind — or displace — a release.
+concurrency:
+  group: autocount-master-bindings
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-autocount-master-bindings.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id || '1' }}
+          PROPOSALS_OUT: ${{ runner.temp }}/ac-master-binding-proposals.json
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        # The proposals are the deliverable, so they are kept even when the read
+        # itself failed part-way — a partial answer is still an answer here.
+        if: always()
+        with:
+          name: ac-master-binding-proposals
+          path: ${{ runner.temp }}/ac-master-binding-proposals.json
+          if-no-files-found: warn
