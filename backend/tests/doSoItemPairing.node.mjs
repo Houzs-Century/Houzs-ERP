@@ -75,6 +75,22 @@ test("never pairs across sales orders", () => {
   assert.equal(unresolved.length, 1);
 });
 
+test("an item code containing spaces groups and reports intact", () => {
+  // Real codes look like this. A key joined on a single character cannot be
+  // taken apart again, so the group carries its own fields instead.
+  const code = "2990 ARRUS-FIRM MATT (Q)";
+  const { pairs, unresolved } = pairDoLinesToSoLines([doLine("d1", code)], [so("s1", code)]);
+  assert.equal(unresolved.length, 0);
+  assert.equal(pairs[0].item_code, code);
+  assert.equal(pairs[0].so_doc_no, "SO-1");
+
+  // …and the same on the refusal path, which is where a mangled code would be
+  // printed at a human and quietly believed.
+  const miss = pairDoLinesToSoLines([doLine("d1", code)], []);
+  assert.equal(miss.unresolved[0].item_code, code);
+  assert.equal(miss.unresolved[0].so_doc_no, "SO-1");
+});
+
 test("variantIdentity prefers the most specific field available", () => {
   assert.equal(variantIdentity({ variants: { pwpCode: "P1", colourId: "C1" } }), "pwp:P1");
   assert.equal(variantIdentity({ variants: { colourId: "C1" } }), "colour:C1");

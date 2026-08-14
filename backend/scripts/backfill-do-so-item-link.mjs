@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /* Re-link Delivery Order lines to the Sales Order lines they shipped.
    ---------------------------------------------------------------------------
-   THE DEFECT. delivery_order_items.so_item_id is written from the request body
-   and nowhere else — all three insert paths in delivery-orders-mfg.ts do
-   `so_item_id: (it.soItemId) ?? null`, with no derivation and no guard. A
-   client that omits the field writes a delivery the system can never attribute,
-   silently and permanently. PR #1395 (2026-07-29) fixed the DO-create page to
-   send it; lines created as late as 2026-08-06 are still unlinked, so the fix
-   was not the whole leak.
+   THE DEFECT. Of the three places delivery-orders-mfg.ts inserts DO lines, the
+   two that build a row from a client-supplied item body go through
+   buildItemRow, which does `so_item_id: (it.soItemId) ?? null` — taken from the
+   request, with no derivation and no guard. (The third, POST /from-sos, sets it
+   from the picks server-side and always has it, which is the shape the other
+   two should have.) A client that omits the field writes a delivery the system
+   can never attribute, silently and permanently. PR #1395 (2026-07-29) fixed
+   the DO-create page to send it; lines created as late as 2026-08-06 are still
+   unlinked, so the fix was not the whole leak.
 
    WHAT IT COSTS. Everything that asks "how much of this order is still to
    fulfil" resolves on so_item_id — the remaining-qty guard, the sofa batch

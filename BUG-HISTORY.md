@@ -5,11 +5,13 @@ SO already have PO & some done delivered, why still appear at MRP for ordering?"
 Four sales orders he named were fully shipped — one of them on a delivery order
 already marked DELIVERED — and MRP was still asking purchasing to buy the goods.
 
-**Root cause.** `delivery_order_items.so_item_id` is written from the request
-body and nowhere else: all three insert paths in `delivery-orders-mfg.ts` do
-`so_item_id: (it.soItemId) ?? null`, with no derivation and no guard. A client
-that omits the field writes a delivery the system can never attribute, silently
-and permanently.
+**Root cause.** Of the three places `delivery-orders-mfg.ts` inserts DO lines,
+the two that build a row from a client-supplied item body go through
+`buildItemRow`, which does `so_item_id: (it.soItemId) ?? null` — taken from the
+request, with no derivation and no guard. The third, `POST /from-sos`, sets it
+from the picks server-side and always has it; that is the shape the other two
+should have had. A client that omits the field writes a delivery the system can
+never attribute, silently and permanently.
 
 Everything that asks "how much of this order is still to fulfil" resolves on
 that column — the remaining-qty guard, the sofa batch guard, the SO header's
@@ -43,9 +45,10 @@ a bijection exists but choosing one is a coin flip, and the two SO lines can
 differ in what is linked to them. A wrong link is worse than none: it credits
 one line's shipment against another and cannot be told from a fact afterwards.
 
-**Fix, part two — the hole.** Still to do: the server should derive the link
+**Fix, part two — the hole.** Still to do: `buildItemRow` should derive the link
 from `(so_doc_no, item_code)` when a client omits it and refuse only when that
-is ambiguous, so no future client regression can write this again.
+is ambiguous — the same thing `/from-sos` already does — so no future client
+regression can write this again.
 
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
