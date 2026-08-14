@@ -1737,9 +1737,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (mig 0291 — the file still opens `-- 0286`,
-     its number before upstream took that one, and it is APPLIED so its body is
-     immutable), not through
+  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (mig 0291, file says 0286), not through
      `writes`: the function writes its own balancing IN, and restoring the lots
      and writing that row must be one transaction. Collected here so a failure
      can fall back to the legacy blended row. */
