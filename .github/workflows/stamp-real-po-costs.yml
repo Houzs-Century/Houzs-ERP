@@ -1,0 +1,82 @@
+name: Stamp real PO costs from the purchase invoice
+
+# Fills the unit price on purchase lines that carry NO price, using the price on
+# the actual AutoCount PURCHASE INVOICE (backend/scripts/data/ac-invoice-prices.json.gz),
+# not an inferred one. Every price names the PI document it came from.
+#
+# DRY-RUN BY DEFAULT. The dry run prints ONE LINE PER PLANNED WRITE, each with its
+# PI number, so APPLY can hold no surprises. Set apply=1 only after reading that list.
+#
+# Deliberately does NOT touch inventory_lots.unit_cost_sen. Almost every zero-cost
+# cutover layer has a receipt whose invoice also says 0.00, so there is no truthful
+# number to write. The run PRINTS that split, measured from the committed extracts
+# rather than quoted, and lists the handful that do resolve. Reported, not guessed at.
+#
+# Manual trigger only — a production write is never a schedule.
+# Shape follows the closest precedent, backfill-zero-cost-lots.yml: an explicit
+# target choice, and NO `environment:` on the prod job, because DATABASE_URL is a
+# REPOSITORY secret (the Production environment holds only the Cloudflare keys).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: '1 to WRITE. Anything else is a DRY RUN.'
+        required: false
+        default: "0"
+        type: string
+      company_id:
+        description: "Company scope (default 1 = Houzs)"
+        required: false
+        default: "1"
+        type: string
+
+# Own concurrency group — must never queue behind or displace a release.
+concurrency:
+  group: stamp-real-po-costs-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # The refusal rules (never overwrite, ambiguous is a refusal, idempotent)
+      # are unit-tested. Never let a write run against a tree where they fail.
+      - run: node --test tests/invoiceRealCost.node.mjs
+      - run: node scripts/stamp-real-po-costs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs and
+          # the sibling read-only checks.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node --test tests/invoiceRealCost.node.mjs
+      - run: node scripts/stamp-real-po-costs.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
