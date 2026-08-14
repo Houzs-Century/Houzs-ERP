@@ -73,7 +73,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5679 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2952 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2950 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1739 |
@@ -102,7 +102,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12125 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1419 |
@@ -169,13 +169,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1314 files, 543859 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1315 files, 544869 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15128 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12125 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |

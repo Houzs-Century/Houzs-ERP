@@ -199,6 +199,97 @@ OPEN, by name and count.
 `docs/autocount-field-alignment-audit.md` carries the per-finding trace and what
 is still open.
 
+
+
+## Two fabric tools would have undone each other forever, and the loop had no fixed point [medium]
+
+**Symptom** — `normalize-fabric-codes` merged six LAMB VELVET colours into the
+HYPHEN form on production on 2026-08-14 (`VERIFY PASS`). The very next plan from
+`merge-duplicate-fabric-series` proposed moving the same series back to the
+SPACE form:
+
+```
+KEEP  "LAMB VELVET"  0 live lines, 7 colours
+DROP  "LAMB-VELVET"  0 live lines, 6 colours
+  LAMB2002: "LAMB-VELVET-2002" -> "LAMB VELVET-2002"   (0 live lines move)
+```
+
+Applying it would have undone the colour merge, and the next colour run would
+have undone that. Two tools, one library, **no fixed point**.
+
+**Root cause — and NOT a bug in either tool.** The series merger picks the side
+production references more, which is the owner's ruling of 2026-08-11:
+*合并，按引用数多的那边*. Both sides of this pair carry **zero** live lines, so
+the rule ties, and the tie-break below it — *the series holding more colours* —
+answered a question the owner's rule never addressed. Colour count is a
+heuristic; it happened to point away from the one thing that IS defined, which
+is what `lib/fabric-code.mjs` says the series is called. Asked directly, the
+parser is unambiguous: **both spellings parse to series `LAMB-VELVET`**, and
+`seriesToken("LAMB VELVET")` returns `"LAMB-VELVET"`.
+
+**Fix** — one tie-break inserted, and the owner's rule untouched above it: most
+live references first, **then the side already spelled the way the parser spells
+it**, then colour count, then shorter id. This is the rule the COLOUR merger has
+always carried — *"the row already carrying the canonical id wins outright"* —
+which the series merger never got.
+
+**A near miss.** The first version asked `parse(seriesId)`, which wants a full
+code (series + number) and answers `null` for a bare series id — so the
+tie-break would have been dead on every pair and the script would have kept
+behaving exactly as before. Nothing would have looked wrong. Caught by running
+it against the real ids rather than reading it.
+
+**Pinned by** `backend/tests/seriesMergeCanonicalTiebreak.test.mjs`: the owner's
+reference rule still wins when references differ, the canonical side wins on a
+tie either way round, colour count still decides when neither side is canonical,
+and — the property that matters — whatever the merger keeps on a tie is what the
+canonicaliser would have written.
+
+**Class** — *the same rule in two places, disagreeing quietly.* Same family as
+the twelve catalogue series that only one of two derivers knew about, fixed the
+same day.
+
+**Ref** - `fix/series-merge-canonical-tiebreak`, 2026-08-14
+
+## An empty sales order was "ready to ship", because a gate over zero lines is vacuously true [high]
+
+**Symptom** — 16 live sales orders sat in `READY_TO_SHIP` with nothing shippable
+in them: no lines at all, or every line cancelled, or service-only. Delivery
+Planning offered them for scheduling.
+
+**Root cause** — the auto-advance gate asked `isMainReady`, which is "every MAIN
+line is READY". Over an SO with no main lines that is a fold over an empty set:
+**vacuously true**. So the emptier the order, the more certainly it passed.
+
+Delivery Planning had already worked out the correct predicate and written it
+INLINE, TWICE (`routes/delivery-planning.ts`). The two writers that actually
+advance the header had neither copy:
+
+- `recomputeSoStockAllocation` — the sweep that produced the 16;
+- `PATCH /:docNo/items/:itemId/stock-status` — the manual READY toggle.
+
+Three places, two of them right, and the two that decide were the wrong ones.
+
+**Fix** — one home for the rule: `summariseReadiness.isShipReady`
+(`lib/so-readiness.ts:123`) — `mainCount > 0 ? isMainReady : isFullyReady`,
+where `isFullyReady` already requires at least one live line. All four consumers
+read it; the two inline copies in `delivery-planning.ts` collapse into it, so
+the change is a net simplification there.
+
+**Self-healing, no data repair** — the regress arm reads the same predicate
+(`lib/so-stock-allocation.ts:765`), so the 16 husks fall back to `CONFIRMED` on
+the next sweep on their own. Their audit line now says *the order has no
+stock-bearing lines — not ship-able* instead of a stock-re-allocation note that
+described nothing that happened.
+
+**Class** — *a fold over an empty set answering "yes"*. Same shape as a `.every()`
+guard on an empty array, and the reason the file-size and coverage gates in this
+repo refuse an empty scan rather than reporting it clean. Worth grepping for:
+a readiness/completeness predicate that never asks whether the population is
+non-empty.
+
+**Ref** - `fix/ship-gate-empty-so-0814`, PR #2186, 2026-08-14
+
 ## PR-4 (owner-gated flip): ship commitments bind via the live allocator; the stored PO→SO link stops deciding the batch [high]- **What was wrong with the old model.** `resolveShipCommitments` derived `expectedBatchNo` from the STORED raise-link (`resolveExpectedBatchBySoItem` over `purchase_order_items.so_item_id`, 'block' on multi-PO). Under the Decision (owner 2026-08-06, `docs/modules/purchase-order.md` §Decision — soft until DO, hard from DO) that is the retired pre-2026-08 model: the stored link is procurement provenance, and letting it pick the committed batch made a stale raise-link bind execution — a hand-typed line (67 of 101 live PO lines carried no link, prod 2026-07-31) could never bind at all, a multi-PO link refused instead of picking, and the pick ignored the pooled supply picture entirely.
 - **The flip.** `expectedBatchNo` now comes from `allocateExpectedBatches` (`lib/do-live-allocator.ts`): pooled open-PO supply for the DO's codes and warehouse, walked in the owner's DEMAND order (delivery date nulls-last, then doc number — "SO1 比 SO2 优先"), supply ordered earliest effective ETA nulls-last then smaller PO number, SOFA sets picked WHOLE (one dye lot; a received `allocated_batch_no` on part of a set anchors the preference via `pickIncomingForSofaSet`'s `preferPoNumber`; no single covering PO -> no pick, the existing sofa guards take over — never a per-module split), every pick drawing down the pool before the next line looks. Ties auto-pick + the operator confirms in the existing short-stock dialog — no new refusal. `planSofaSetPoConflicts` stays armed as the backstop.
 - **The fold (double-commitment made impossible).** The shadow deliberately omitted outstanding ship-before-arrival commitments; the flip subtracts them from the pool BEFORE picking (`subtractOutstanding` over `loadCommittedShipments` — moved VERBATIM from mrp.ts into `lib/committed-shipments.ts` so MRP and the DO path share ONE definition of "still committed": `ABS(qty) - SUM(consumed)` on a claimable OUT, the same test the SQL reconcile recomputes). A unit an earlier shipment already owns can no longer be committed to a second one; when the receipt nets the first, the subtraction falls away by itself.
