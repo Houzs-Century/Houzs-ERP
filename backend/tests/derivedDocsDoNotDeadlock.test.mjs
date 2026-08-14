@@ -16,7 +16,7 @@
    produces nothing must still fail, loudly, and these tests pin that it does.
 
    node:test, no dependencies — run by `npm run test:scale-contract`. */
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
