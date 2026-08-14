@@ -72,9 +72,11 @@ export function PoLineAllocationsModal({
   const lineQty = Number(line?.qty ?? 0);
   const remaining = Math.max(0, lineQty - allocated);
 
-  // Same item code, same company — including already-picked / delivered lines
-  // (historical consolidated POs are the point; the shortage picker hides them).
-  const candidates = useSoLineCandidates(line?.material_code ?? null);
+  // Same item code, same company AND same SPEC (fabric + SEAT/LEG/SPECIAL) —
+  // passing poId+lineId lets the server narrow to the PO line's variant, not
+  // just its bare code (owner 2026-08-08). Still includes already-picked /
+  // delivered lines (historical consolidated POs are the point).
+  const candidates = useSoLineCandidates(line?.material_code ?? null, poId, lineId);
 
   const addAlloc = useAddPoLineAllocation();
   const updateAlloc = useUpdatePoLineAllocation();

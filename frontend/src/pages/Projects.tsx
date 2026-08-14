@@ -1039,6 +1039,90 @@ const PROJECTS_LIST_FILTER_KEYS = [
  *  grouped (the task filter groups by checklist section); pass one group with a
  *  null name for a flat list. Selection is a string[] the caller comma-joins
  *  into the URL. */
+// Date-range filter (owner 2026-08-11) — a From/To picker chip that replaces the
+// old year + month dropdowns. Two native date inputs; the list scopes to events
+// overlapping the window (start <= to AND end >= from).
+function DateRangeFilter({
+  from,
+  to,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const fmt = (d: string) => {
+    if (!d) return "…";
+    const [y, m, day] = d.split("-");
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
+    return `${parseInt(day, 10)} ${mon} ${y}`;
+  };
+  const active = !!(from || to);
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-8 max-w-[240px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          active ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <Calendar size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{active ? `${fmt(from)} – ${fmt(to)}` : "All dates"}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-30 w-[250px] rounded-md border border-border bg-surface p-3 shadow-slab">
+          <div className="mb-2 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">Date range</span>
+            {active && (
+              <button type="button" onClick={() => onChange("", "")} className="text-[10.5px] font-semibold text-ink-secondary hover:text-err">
+                Clear
+              </button>
+            )}
+          </div>
+          <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
+            From
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => onChange(e.target.value, to)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+          <label className="block text-[11px] font-semibold text-ink-secondary">
+            To
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => onChange(from, e.target.value)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MultiSelectFilter({
   placeholder,
   groups,
@@ -1182,6 +1266,10 @@ function ProjectsListView() {
   const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
   const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
+  // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
   // Ticked values per filter (owner 2026-08-07 multi-select). The raw comma
   // strings above are what go on the wire; these arrays drive the checkboxes.
   const sectionList = useMemo(() => csvParam(section), [section]);
@@ -1208,6 +1296,7 @@ function ProjectsListView() {
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
   const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
+  const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
   const setPage = (n: number) => patchParams({ page: String(n) });
 
@@ -1292,6 +1381,8 @@ function ProjectsListView() {
           brand: restrictedCohort ? undefined : brand || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
+          from: restrictedCohort ? undefined : from || undefined,
+          to: restrictedCohort ? undefined : to || undefined,
           section: restrictedCohort ? undefined : section || undefined,
           task_pending: restrictedCohort ? undefined : taskPending || undefined,
           phase: restrictedCohort && phase ? phase : undefined,
@@ -1310,7 +1401,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -1351,6 +1442,8 @@ function ProjectsListView() {
             brand: restrictedCohort ? undefined : brand || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
+            from: restrictedCohort ? undefined : from || undefined,
+            to: restrictedCohort ? undefined : to || undefined,
             section: restrictedCohort ? undefined : section || undefined,
             task_pending: restrictedCohort ? undefined : taskPending || undefined,
             phase: restrictedCohort && phase ? phase : undefined,
@@ -1929,40 +2022,7 @@ function ProjectsListView() {
             { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
           ]}
         />
-        <MultiSelectFilter
-          placeholder="All years"
-          summary={(n) => `${n} years`}
-          panelWidth="w-[160px]"
-          selected={yearList}
-          onChange={(next) => setYear(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: (() => {
-                const y = new Date().getFullYear();
-                const out: { value: string; label: string }[] = [];
-                for (let i = y + 1; i >= y - 4; i--) out.push({ value: String(i), label: String(i) });
-                return out;
-              })(),
-            },
-          ]}
-        />
-        <MultiSelectFilter
-          placeholder="All months"
-          summary={(n) => `${n} months`}
-          panelWidth="w-[180px]"
-          selected={monthList}
-          onChange={(next) => setMonth(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December",
-              ].map((label, i) => ({ value: String(i + 1), label })),
-            },
-          ]}
-        />
+        <DateRangeFilter from={from} to={to} onChange={setDateRange} />
         <MultiSelectFilter
           placeholder="All statuses"
           title="Filter by project status"
@@ -1979,7 +2039,7 @@ function ProjectsListView() {
             dropdown keeps its own in-panel "Clear (n)"; this resets them all
             together so the owner doesn't have to open each one. Shown only when
             at least one dropdown is active. Search + My-pending are left alone. */}
-        {(section || taskPending || brand || year || month || status) && (
+        {(section || taskPending || brand || from || to || status) && (
           <button
             type="button"
             onClick={() =>
@@ -1989,11 +2049,13 @@ function ProjectsListView() {
                 brand: "",
                 year: "",
                 month: "",
+                from: "",
+                to: "",
                 status: "",
                 page: "1",
               })
             }
-            title="Untick every filter dropdown"
+            title="Clear every filter"
             className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
           >
             <X size={13} />

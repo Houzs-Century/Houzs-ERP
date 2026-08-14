@@ -110,13 +110,160 @@ function fmtRange(a: string | null | undefined, b: string | null | undefined): s
   return `${s.d} - ${e.d} ${MONTHS[e.m - 1]} ${e.y}`;
 }
 
-// One crew slot: "NAME · +60…", the phone dimmed. Empty slots print an em dash
-// so the setup and dismantle columns keep the same four rows.
-function crew(name: string | null | undefined, phone?: string | null): string {
-  const n = (name || "").trim();
-  if (!n) return "—";
-  const tel = (phone || "").trim();
-  return `${esc(n)}${tel ? ` <span class="tel">${esc(tel)}</span>` : ""}`;
+// ── Crew (projects.setup_crew / dismantle_crew) ─────────────────────
+// The logistics form writes a JSON blob, not columns, and it has been through
+// three shapes: the current one nests crew under `lorry_crew` (one entry per
+// lorry, each with its own drivers/helpers), an older one keeps flat
+// drivers/helpers/lorries arrays, and `outsourced` is sometimes {enabled,
+// entries[]} and sometimes a single {name, phone, plate}. Parse all of them and
+// normalise, or the printed sheet shows an empty crew for most projects (which
+// is what it did — owner 2026-08-14).
+type CrewPerson = { name: string; phone?: string };
+type CrewLorry = { plate?: string; provider?: string; drivers: CrewPerson[]; helpers: CrewPerson[] };
+type Crew = {
+  lorries: CrewLorry[];
+  outsourced: Array<{ name?: string; phone?: string; plate?: string }>;
+  remark?: string;
+  outsourcedRemark?: string;
+};
+
+function asPerson(v: any): CrewPerson | null {
+  if (!v) return null;
+  if (typeof v === "string") return v.trim() ? { name: v.trim() } : null;
+  const name = String(v.name ?? "").trim();
+  if (!name) return null;
+  const phone = String(v.phone ?? "").trim();
+  return phone ? { name, phone } : { name };
+}
+
+function asPeople(v: any): CrewPerson[] {
+  return (Array.isArray(v) ? v : []).map(asPerson).filter((x): x is CrewPerson => !!x);
+}
+
+function parseCrew(raw: unknown): Crew {
+  const empty: Crew = { lorries: [], outsourced: [] };
+  if (!raw) return empty;
+  let data: any = raw;
+  if (typeof raw === "string") {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return empty;
+    }
+  }
+  if (!data || typeof data !== "object") return empty;
+
+  const lorries: CrewLorry[] = [];
+  const nested = Array.isArray(data.lorry_crew) ? data.lorry_crew : [];
+  for (const entry of nested) {
+    if (!entry || typeof entry !== "object") continue;
+    lorries.push({
+      plate: String(entry.plate ?? "").trim() || undefined,
+      provider: String(entry.provider ?? "").trim() || undefined,
+      drivers: asPeople(entry.drivers),
+      helpers: asPeople(entry.helpers),
+    });
+  }
+  if (!lorries.length) {
+    // Flat shape: one lorry carrying every driver / helper, then any extra
+    // plates as their own row so nothing is dropped.
+    const plates = (Array.isArray(data.lorries) ? data.lorries : [])
+      .map((l: any) => String(typeof l === "string" ? l : (l?.plate ?? "")).trim())
+      .filter(Boolean);
+    const drivers = asPeople(data.drivers);
+    const helpers = asPeople(data.helpers);
+    if (plates.length || drivers.length || helpers.length) {
+      lorries.push({ plate: plates[0], drivers, helpers });
+      for (const plate of plates.slice(1)) lorries.push({ plate, drivers: [], helpers: [] });
+    }
+  }
+
+  const outsourced: Crew["outsourced"] = [];
+  const o = data.outsourced;
+  if (o && typeof o === "object") {
+    const rows = Array.isArray(o.entries) ? o.entries : o.name || o.phone || o.plate ? [o] : [];
+    // `enabled: false` with rows still present means the user turned the block
+    // off — respect that rather than printing crew they removed.
+    if (o.enabled !== false) {
+      for (const r of rows) {
+        const name = String(r?.name ?? "").trim();
+        const phone = String(r?.phone ?? "").trim();
+        const plate = String(r?.plate ?? "").trim();
+        if (name || phone || plate) outsourced.push({ name, phone, plate });
+      }
+    }
+  }
+
+  return {
+    lorries,
+    outsourced,
+    remark: String(data.remark ?? "").trim() || undefined,
+    outsourcedRemark: String(data.outsourced_remark ?? "").trim() || undefined,
+  };
+}
+
+// Legacy fallback: the projects.* crew columns, still the only source on ~220
+// older projects.
+function legacyCrew(
+  plate: unknown,
+  driver: unknown,
+  driverPhone: unknown,
+  h1: unknown,
+  h1Phone: unknown,
+  h2: unknown,
+  h2Phone: unknown,
+): Crew {
+  const drivers = [asPerson({ name: driver, phone: driverPhone })].filter(
+    (x): x is CrewPerson => !!x,
+  );
+  const helpers = [asPerson({ name: h1, phone: h1Phone }), asPerson({ name: h2, phone: h2Phone })].filter(
+    (x): x is CrewPerson => !!x,
+  );
+  const p = String(plate ?? "").trim();
+  if (!p && !drivers.length && !helpers.length) return { lorries: [], outsourced: [] };
+  return { lorries: [{ plate: p || undefined, drivers, helpers }], outsourced: [] };
+}
+
+// One crew column: the phase header, then a row per lorry / driver / helper.
+function crewColumn(crew: Crew): string {
+  const rows: string[] = [];
+  const row = (k: string, v: string) =>
+    `<div class="lr"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`;
+  const person = (x: CrewPerson) =>
+    `${esc(x.name)}${x.phone ? ` <span class="tel">${esc(x.phone)}</span>` : ""}`;
+
+  crew.lorries.forEach((l, i) => {
+    const label = crew.lorries.length > 1 ? `Lorry ${i + 1}` : "Lorry";
+    rows.push(
+      row(
+        label,
+        `<span class="mono">${esc(l.plate || "—")}</span>${l.provider ? ` <span class="tel">${esc(l.provider)}</span>` : ""}`,
+      ),
+    );
+    if (!l.drivers.length) rows.push(row("Driver", "—"));
+    l.drivers.forEach((d, n) =>
+      rows.push(row(l.drivers.length > 1 ? `Driver ${n + 1}` : "Driver", person(d))),
+    );
+    l.helpers.forEach((h, n) => rows.push(row(`Helper ${n + 1}`, person(h))));
+  });
+
+  crew.outsourced.forEach((o, i) => {
+    const parts = [o.name, o.phone ? `<span class="tel">${esc(o.phone)}</span>` : null]
+      .filter(Boolean)
+      .map((s) => (s === o.name ? esc(String(s)) : String(s)));
+    rows.push(
+      row(
+        crew.outsourced.length > 1 ? `Outsource ${i + 1}` : "Outsource",
+        `${parts.join(" ") || "—"}${o.plate ? ` <span class="mono">${esc(o.plate)}</span>` : ""}`,
+      ),
+    );
+  });
+
+  if (crew.remark) rows.push(row("Remark", esc(crew.remark)));
+  if (crew.outsourcedRemark) rows.push(row("Outsource Remark", esc(crew.outsourcedRemark)));
+
+  if (!rows.length) rows.push(row("Crew", "Not assigned"));
+  return rows.join("");
 }
 
 // Ledger category → printed label. cogs_matt_sofa reads "COGS · Matt Sofa".
@@ -148,24 +295,6 @@ function fmtMoney0(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return `RM ${Math.round(n).toLocaleString("en-MY")}`;
 }
-
-const STAGE_LABEL: Record<string, string> = {
-  draft: "Draft",
-  planning: "Planning",
-  build: "Build",
-  live: "Live",
-  teardown: "Teardown",
-  closed: "Closed",
-  cancelled: "Cancelled",
-};
-
-const PAYMENT_LABEL: Record<string, string> = {
-  not_started: "Not started",
-  deposit_paid: "Deposit paid",
-  paid: "Paid in full",
-  refund_pending: "Refund pending",
-  refunded: "Refunded",
-};
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -235,7 +364,6 @@ app.get("/:id", async (c) => {
   // to match the detail-GET rollout rule (un-migrated users keep legacy access).
   const pmsPrint = getPmsAccess(user, detail.project as any);
   const hideMoney = !!user && user.position_id != null && !pmsPrint.canFinancial;
-  const hidePayment = !!user && user.position_id != null && !pmsPrint.canPayment;
   // Quotation / Agreement (WF_SENSITIVE) are DIRECTOR-only (rule 5) — strip
   // those checklist rows from the debrief for a non-director position, the
   // same server-side backstop as the detail JSON.
@@ -422,6 +550,33 @@ app.get("/:id", async (c) => {
     "Other",
     checklist.filter((ci) => !ci.section_id || !knownSectionIds.has(ci.section_id)),
   );
+
+  // Crew for both phases: the JSON blob the logistics form writes, falling back
+  // to the older projects.* columns when it is empty.
+  const setupCrewJson = parseCrew(p.setup_crew);
+  const dismantleCrewJson = parseCrew(p.dismantle_crew);
+  const setupCrew = setupCrewJson.lorries.length || setupCrewJson.outsourced.length
+    ? setupCrewJson
+    : legacyCrew(
+        p.setup_lorry_plate,
+        p.setup_driver_name,
+        p.setup_driver_phone,
+        p.setup_helper_1_name,
+        p.setup_helper_1_phone,
+        p.setup_helper_2_name,
+        p.setup_helper_2_phone,
+      );
+  const dismantleCrew = dismantleCrewJson.lorries.length || dismantleCrewJson.outsourced.length
+    ? dismantleCrewJson
+    : legacyCrew(
+        p.dismantle_lorry_plate,
+        p.dismantle_driver_name,
+        p.dismantle_driver_phone,
+        p.dismantle_helper_1_name,
+        p.dismantle_helper_1_phone,
+        p.dismantle_helper_2_name,
+        p.dismantle_helper_2_phone,
+      );
 
   // ── Setup / dismantle photos (owner's reference sheet, 2026-08-12) ──
   // One picture per phase, taken from the first image attached to the phase's
@@ -802,17 +957,9 @@ app.get("/:id", async (c) => {
           <div class="hero">
             <div>
               <div class="h-name">${esc(p.name)}</div>
-              <div class="h-meta">${esc(
-                [
-                  fmtRange(p.start_date, p.end_date),
-                  p.booth_no ? `Booth ${p.booth_no}` : null,
-                  p.brand || null,
-                  p.event_type_name || null,
-                  p.code,
-                ]
-                  .filter(Boolean)
-                  .join(" · "),
-              )}</div>
+              <!-- Title + dates only (owner 2026-08-14) — booth, brand, event
+                   type and the code all repeat further down the sheet. -->
+              <div class="h-meta">${esc(fmtRange(p.start_date, p.end_date))}</div>
             </div>
             ${p.pic_name ? `<div class="h-pic">PIC · ${esc(p.pic_name)}</div>` : ""}
           </div>
@@ -849,17 +996,9 @@ app.get("/:id", async (c) => {
             <div class="cell"><div class="k">Venue</div><div class="v">${esc(p.venue || "—")}</div></div>
             <div class="cell"><div class="k">Duration</div><div class="v">${p.duration_days ?? "—"} day(s)</div></div>
             <div class="cell"><div class="k">Size (m²)</div><div class="v mono">${p.size_sqm ?? "—"}</div></div>
-            <div class="cell"><div class="k">Status</div><div class="v">${nice(p.status)}</div></div>
-            <!-- STAGE_LABEL predates the setup / dismantle stages, so fall back
-                 to title-casing whatever the row carries rather than printing
-                 the raw enum. -->
-            <div class="cell"><div class="k">Stage</div><div class="v">${esc(STAGE_LABEL[p.stage] || nice(p.stage))}</div></div>
-            ${
-              hidePayment
-                ? `<div class="cell blank"></div>`
-                : `<div class="cell"><div class="k">Payment</div><div class="v">${esc(PAYMENT_LABEL[p.payment_status || "not_started"])}</div></div>`
-            }
-            <div class="cell blank"></div>
+            <!-- Status / Stage / Payment removed from the sheet (owner
+                 2026-08-14) — workflow state belongs on screen, not on the
+                 printed debrief. -->
           </div>
         </section>`
             : ""
@@ -906,19 +1045,6 @@ app.get("/:id", async (c) => {
                 <td>Total Cost</td>
                 <td class="amt">${fmtMoney(totalCost)}</td>
               </tr>
-              ${
-                incomeByCategory.size
-                  ? [...incomeByCategory.entries()]
-                      .map(
-                        ([cat, amt]) => `
-                        <tr>
-                          <td>${esc(catLabel(cat))} <span class="muted">(income)</span></td>
-                          <td class="amt">${fmtMoney(amt)}</td>
-                        </tr>`
-                      )
-                      .join("")
-                  : ""
-              }
             </tbody>
           </table>
         </section>`}
@@ -934,17 +1060,11 @@ app.get("/:id", async (c) => {
                 <div class="logi">
                   <div class="col">
                     <div class="col-head">SETUP · ${fmtDateTime(p.setup_start_at)}${p.setup_end_at ? ` → ${fmtDateTime(p.setup_end_at)}` : ""}</div>
-                    <div class="lr"><span class="k">Lorry</span><span class="v mono">${esc(p.setup_lorry_plate || "—")}</span></div>
-                    <div class="lr"><span class="k">Driver</span><span class="v">${crew(p.setup_driver_name, p.setup_driver_phone)}</span></div>
-                    <div class="lr"><span class="k">Helper 1</span><span class="v">${crew(p.setup_helper_1_name, p.setup_helper_1_phone)}</span></div>
-                    <div class="lr"><span class="k">Helper 2</span><span class="v">${crew(p.setup_helper_2_name, p.setup_helper_2_phone)}</span></div>
+                    ${crewColumn(setupCrew)}
                   </div>
                   <div class="col right">
                     <div class="col-head">DISMANTLE · ${fmtDateTime(p.dismantle_start_at)}${p.dismantle_end_at ? ` → ${fmtDateTime(p.dismantle_end_at)}` : ""}</div>
-                    <div class="lr"><span class="k">Lorry</span><span class="v mono">${esc(p.dismantle_lorry_plate || "—")}</span></div>
-                    <div class="lr"><span class="k">Driver</span><span class="v">${crew(p.dismantle_driver_name, p.dismantle_driver_phone)}</span></div>
-                    <div class="lr"><span class="k">Helper 1</span><span class="v">${crew(p.dismantle_helper_1_name, p.dismantle_helper_1_phone)}</span></div>
-                    <div class="lr"><span class="k">Helper 2</span><span class="v">${crew(p.dismantle_helper_2_name, p.dismantle_helper_2_phone)}</span></div>
+                    ${crewColumn(dismantleCrew)}
                   </div>
                 </div>
               </section>`

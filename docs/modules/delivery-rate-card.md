@@ -1,3 +1,12 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. OUTSTATION_TRIP now prices INSIDE computeDeliveryCost via CostOptions.perTrip (delivery-rate-card.ts:239-253,:360-372; both callers pass perTrip:true) so min/cap/rounding cover it — “added afterwards” let a capped card bill above its own cap and is retired.
+> 2. Rule-type table omits SUPPLIER_PICKUP (mig 0243 CHECK + rate-rule-taxonomy.ts:64-70). REAL CODE DRIFT flagged separately: the route zod and calculator union still exclude it.
+> 3. 3PL reconcile matches by COMPANY card first (trip.lorry_id → lorries.threepl_company_id → card.carrier_company_id, routes:519-532); per-lorry card is the fallback.
+> 4. Nav is Transportation › Maintenance › “Carriers & Rates”, icon Handshake (Sidebar.tsx:571).
+> 5. The test file holds 43 cases now, not 18.
+> 6. Sofas ARE tier-counted on the reconcile path: derived setCount = max(frames,mattresses)+sofas (set-count.ts, fed at routes:621,637); §3's exclusion holds for the calculator contract only.
+
 # Module: Delivery Rate-Card & Cost Reconciliation (Fleet Module C)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

@@ -1290,6 +1290,10 @@ export interface ListProjectsFilters {
   year?: number | string;
   /** Month(s) 1-12 on start_date. Single number or comma-separated list. */
   month?: number | string;
+  /** Date range (owner 2026-08-11, ISO YYYY-MM-DD) — keep events overlapping
+   *  [from, to]. Replaces the year/month dropdowns in the UI. Either may be blank. */
+  from?: string;
+  to?: string;
   state?: string;
   /** Active tasklist section name (mig 050). When set, the list only
    *  returns projects whose lowest-sort_order section with open tasks
@@ -1509,6 +1513,18 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   if (monthList.length) {
     where.push(`strftime('%m', p.start_date) IN (${monthList.map(() => "?").join(",")})`);
     binds.push(...monthList);
+  }
+  // Date range (owner 2026-08-11) — keep events that OVERLAP [from, to]. Either
+  // bound may be blank; hand-edited URLs that aren't ISO YYYY-MM-DD are ignored.
+  const rangeFrom = typeof f.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.from) ? f.from : "";
+  const rangeTo = typeof f.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.to) ? f.to : "";
+  if (rangeFrom) {
+    where.push(`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`);
+    binds.push(rangeFrom);
+  }
+  if (rangeTo) {
+    where.push(`substr(p.start_date, 1, 10) <= ?`);
+    binds.push(rangeTo);
   }
   if (f.state) {
     where.push("p.state = ?");

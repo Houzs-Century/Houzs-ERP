@@ -28,7 +28,7 @@ are its labels, not disjoint sets.
 |---|---|---|
 | cross-company scope | 56 (27 high) | **CLOSED** — reopened once when the scanner turned out too loose (§I), then finished: every WRITE finding either fixed or opened and annotated. Four of the last eleven were false positives for four DIFFERENT reasons, one of which would have become a bug if "fixed" |
 | permission / access gate | 11 (4 high) | **CLOSED** (§C) — 6 gated, 1 left open by owner decision |
-| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. **B4 is the only one left**, and it is now a workflow click rather than an open question |
+| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. B4 **DONE** — the workflow was clicked on 2026-08-14, the data answered it, and the engine now carries sen |
 | silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
 | old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
 | dead code | 12 claimed — **at least 184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2291`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
@@ -42,7 +42,7 @@ are its labels, not disjoint sets.
 | B1 | **A discounted sofa build was invoiced for MORE than it was ordered.** Discount validated against the whole build, then dumped on module 0 whose price is one share; `senOrZero` guards NaN not sign; DO/SI clamp the negative away. RM8,000 build − RM3,000 → ordered RM5,000, invoiced RM6,000. | **DONE** — `distributeBuildDiscount` at all 3 split sites + 6 tests |
 | B2 | `POST /purchase-invoices/from-grn` summed line totals UNCLAMPED while writing them CLAMPED, so `total_centi` ≠ Σ lines. Its sibling `/from-grn-items` already clamps inside the reduce and says why. GRN stores an unbounded `discount_centi` (grns.ts:1695), so the premise is real. | **DONE** |
 | B3 | Three SO paths lower the unit price and keep the stored discount: variant edit, product swap, sofa exchange. Negative total → clamped downstream → over-billing again. | **DONE** — all three now 422 `discount_exceeds_new_price`, following this file's own "reject-don't-normalize" rule (`:6199`, audit 2026-06-11 C-2) |
-| B4 | The **persisted** sofa selling price is quantised to whole ringgit per module and per combo (`sofa-build.ts:503/533/1260`), so RM1,299.50 × 4 bills RM5,200 instead of RM5,198. Only bites when a module price is not a whole ringgit; every writer of those columns is operator-entered. | **CHECK BUILT** — `check-sofa-price-rounding.mjs` + `sofa-price-rounding-check.yml` (Actions → Run workflow). Counts the part-ringgit values in the THREE inputs the engine actually reads, traced in source because the column names mislead: `seat_height_prices` carries both a cost (`priceSen`) and a selling (`sellingPriceSen`) figure, and the combo charged price is neither column alone but `comboChargedPrices`' merge of `selling_prices_by_height` over `prices_by_height`. Zero ⇒ a guard at data entry; non-zero ⇒ the engine has to carry sen. Nobody has to open a SQL console to find out |
+| B4 | The **persisted** sofa selling price is quantised to whole ringgit per module and per combo (`backend/src/scm/shared/sofa-build.ts:503/533/1260`), so RM1,299.50 × 4 bills RM5,200 instead of RM5,198. Only bites when a module price is not a whole ringgit; every writer of those columns is operator-entered. | **CHECK BUILT** — `check-sofa-price-rounding.mjs` + `sofa-price-rounding-check.yml` (Actions → Run workflow). Counts the part-ringgit values in the THREE inputs the engine actually reads, traced in source because the column names mislead: `seat_height_prices` carries both a cost (`priceSen`) and a selling (`sellingPriceSen`) figure, and the combo charged price is neither column alone but `comboChargedPrices`' merge of `selling_prices_by_height` over `prices_by_height`. Zero ⇒ a guard at data entry; non-zero ⇒ the engine has to carry sen. Nobody has to open a SQL console to find out |
 | B5 | Landed-freight per-unit rounding doubled a sub-sen allocation: 50 sen over 100 units → `round(0.5)` = 1 sen/unit → 100 sen capitalised, once per source. | **DONE** — the charge is added as a TOTAL and the aggregate divides once, so `allocateLandedCharges`' exactness survives to the lot |
 | B6 | A shipped-DO line reduction returns stock at a cost blended over costed and uncosted units, and mints a lot at that invented figure. | **DONE** — owner chose "按原成本退回". Mig 0286 `fn_return_do_units_at_cost` is the PARTIAL form of `fn_reverse_do_out` (0198): it unwinds `inventory_lot_consumptions` newest-first, returns each unit to the lot that paid for it at that lot's cost, restamps the OUT's COGS from what survives, and writes one balancing IN at cost 0 with its minted lot closed. Uncosted units return at nothing and are REPORTED, never smeared. LIFO is stated as a choice in the migration header because nothing in the data implies it. 9 pg tests, the first asserting the OLD arithmetic is wrong so the suite cannot pass vacuously |
 
@@ -171,7 +171,18 @@ and the three checkers print their own buckets.
 | rule mirrors | 0 DIVERGED |
 | dead code (§K) | **listed at last** — at least 184 sites, not the 12 that were claimed and never enumerated. 28 files annotated, 4 orphans deleted, the rest LEFT with a stated reason; 2 of those were already on record as deliberate keeps, so a naive sweep would have reversed two written decisions |
 
-**Still owner decisions — ONE, and it is not a bug waiting on a fix.**
+**Still owner decisions — NONE in this table.** B4 was the last, and it closed
+on 2026-08-14 the way it was designed to: the check ran, the data answered the
+question, and what looked like a business judgement turned out to be a defect.
+Production carries **23 part-ringgit combo prices out of 163**, so the business
+already prices in cents; the engine was rounding it away. Fixed by carrying sen
+end to end. The row below is kept for the reasoning, not as an open item.
+
+**What is NOT closed by that fix:** documents already priced from those 23 rows
+carry the rounded figure. Sizing that impact is a separate pass, deliberately not
+folded into the code change.
+
+**The original wording follows.**
 Each is a question about how the business should work, which is not this
 audit's to answer:
 
@@ -247,8 +258,8 @@ name. Three separate leads were refuted by this one mechanism:
 | lead | verdict | proof |
 |---|---|---|
 | `components/DetailLayout.tsx:326` `DefinitionList` | **NOT DEAD** | 5 preview files import it; `config.json:71`-style entry maps it |
-| `components/Breadcrumbs.tsx` `Breadcrumbs`, `BreadcrumbItem` | **NOT DEAD** | `entry.tsx:33` `export * from '../src/components/Breadcrumbs'`; `config.json` maps `"Breadcrumbs": "src/components/Breadcrumbs.tsx"`; `previews/Breadcrumbs.tsx` exists |
-| `components/Gate.tsx:25` `Gate` | **NOT DEAD** | `entry.tsx:45` `export * from '../src/components/Gate'`; `config.json` maps `"Gate": "src/components/Gate.tsx"`; `previews/Gate.tsx` exists |
+| `frontend/src/components/Breadcrumbs.tsx` `Breadcrumbs`, `BreadcrumbItem` | **NOT DEAD** | `entry.tsx:33` `export * from '../src/components/Breadcrumbs'`; `config.json` maps `"Breadcrumbs": "src/components/Breadcrumbs.tsx"`; `frontend/.design-sync/previews/Breadcrumbs.tsx` exists |
+| `frontend/src/components/Gate.tsx:25` `Gate` | **NOT DEAD** | `entry.tsx:45` `export * from '../src/components/Gate'`; `config.json` maps `"Gate": "src/components/Gate.tsx"`; `frontend/.design-sync/previews/Gate.tsx` exists |
 
 My scan reported 109 and `DefinitionList` was the one false positive, so the true
 figure is **108**. The other two were reported by a second, independent sweep and
@@ -289,7 +300,7 @@ them. If that class is ever pruned, re-verify each first — do not trust this r
    `getSupabaseService(c.env)`, which `db/supabase.ts:68` builds with
    `SUPABASE_SERVICE_ROLE_KEY`. service_role bypasses RLS. The handful of routes
    that build their own client (`categories.ts:145`, `mfg-products.ts:896`,
-   `product-models.ts:61/116/574`, `mfg-sales-orders.ts:2158/5445`,
+   `backend/src/scm/routes/product-models.ts:61/116/574`, `backend/src/scm/routes/mfg-sales-orders.ts:2158/5445`,
    `sofa-compartment-photos.ts:108`) all pass the **same service-role key**.
 4. 42501 could also arrive from a `RAISE ... USING ERRCODE`. Searched every
    `.sql` under `backend/` and `scripts/`: the live tree's only ERRCODE is
@@ -430,7 +441,7 @@ them again.
 | what | why it looks dead | why it is NOT |
 |---|---|---|
 | `frontend/src/pages/scm-v2/{SalesOrderDetail,PurchaseOrderDetail,PurchaseInvoiceDetail,GoodsReceivedDetail}.tsx` | each is headed "Legacy inline editor" and no page imports them by name | each is `lazy(() => import(...))`-ed by its own `*V2` successor (`SalesOrderDetailV2.tsx:496`, `PurchaseOrderDetailV2.tsx:365`, `PurchaseInvoiceDetailV2.tsx:335`, `GoodsReceivedDetailV2.tsx:263`) behind `params.get("edit") === "1"`. The V2 pages are read-only by design, so **these "legacy" files are the only editable path in the app** — deleting them breaks every Edit button |
-| `applyCustomerCreditToSiLegacy` (`scm/lib/customer-credits.ts:149`), `settlePiPaidCentiLegacy` (`scm/lib/pi-settlement.ts:145`) | named `*Legacy` | runtime fallbacks when the atomic RPC is absent (`customer-credits.ts:141`, `pi-settlement.ts:137`), and both are exercised by `customer-credits.test.ts:159/:382` |
+| `applyCustomerCreditToSiLegacy` (`scm/lib/customer-credits.ts:149`), `settlePiPaidCentiLegacy` (`scm/lib/pi-settlement.ts:145`) | named `*Legacy` | runtime fallbacks when the atomic RPC is absent (`customer-credits.ts:141`, `pi-settlement.ts:137`), and both are exercised by `backend/src/scm/lib/customer-credits.test.ts:159/:382` |
 | `frontend/src/vendor/scm/components/SpecialAddonsTab.tsx` | nothing imports it and nothing renders it | `frontend/src/auth/permissionDivergence.test.ts:35` pins the path and asserts on its **source text** via `readFileSync`. A test consumer means not dead — but note the dependency is a source scan, not an import, so the component may be unrendered in production while the test still passes. Worth a look, separately |
 | `vendor/scm/lib/react-virtual-shim.ts`, `frontend/src/main.tsx`, `frontend/src/test-setup.ts` | no import edges | reached via config: a Vite alias (`vite.config.ts:127` + `tsconfig.app.json:30`), `index.html:57`, and `vitest.config.ts:19` |
 | `frontend/src/pages/scm-v2/Drivers.tsx` | no importer, no route | deliberate and documented at `frontend/src/App.tsx:683-689`: "/scm/drivers is RETIRED... The file is KEPT on disk (vendored 2990 tree shape)... Do not re-add this route" |

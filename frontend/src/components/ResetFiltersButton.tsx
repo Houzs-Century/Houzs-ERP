@@ -10,6 +10,14 @@ import { cn } from "../lib/utils";
  * state. The page decides what "active" means (e.g. ignoring an "ALL"
  * pill default) and what reset does (clear URL params, drop sticky
  * localStorage, reset pagination).
+ *
+ * DataTable renders this unconditionally and ORs the page's `active` with its
+ * own column funnels, because a page cannot see those: they are sticky, live in
+ * localStorage, apply from the first paint, and appear nowhere but the header
+ * that carries them. Owner 2026-08-14 — a Purchaser reported 5 of 60 POs
+ * missing; the same account showed all 60 on another machine, and the toolbar
+ * offered him nothing to clear. Lists that pass no `resetFilters` at all get a
+ * button for that reason too.
  */
 export function ResetFiltersButton({
   active,
