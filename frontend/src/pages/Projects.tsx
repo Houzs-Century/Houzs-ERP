@@ -4762,13 +4762,13 @@ function ProjectsCalendarView() {
 
   // Window: month = 6 weeks (42 cells) from the first Monday on/before
   // the 1st; week = 1 week (7 cells) from the week anchor.
-  const q = useQuery<{ projects: CalendarProject[]; tasks: CalendarTask[] }>("/api/projects/calendar/events?from=:&to=:",
+  const eventsQ = useQuery<{ projects: CalendarProject[]; tasks: CalendarTask[] }>("/api/projects/calendar/events?from=:&to=:",
     () => api.get(`/api/projects/calendar/events?from=${fromStr}&to=${toStr}`),
     [fromStr, toStr]
   );
 
-  const allProjects = q.data?.projects ?? EMPTY_CALENDAR_PROJECTS;
-  const allTasks = q.data?.tasks ?? EMPTY_CALENDAR_TASKS;
+  const allProjects = eventsQ.data?.projects ?? EMPTY_CALENDAR_PROJECTS;
+  const allTasks = eventsQ.data?.tasks ?? EMPTY_CALENDAR_TASKS;
   const anchorMonth = anchor.getMonth();
   const calendarModel = useMemo(
     () =>
@@ -5076,10 +5076,10 @@ function ProjectsCalendarView() {
         )}
       </div>
 
-      {q.loading && <div className="text-[12px] text-ink-muted">Loading calendar…</div>}
-      {q.error && (
+      {eventsQ.loading && <div className="text-[12px] text-ink-muted">Loading calendar…</div>}
+      {eventsQ.error && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
-          {q.error}
+          {eventsQ.error}
         </div>
       )}
 
