@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from 'vitest';
 import {
   LOCAL_SCALE_ACK,
   LOCAL_SCALE_DATABASE,

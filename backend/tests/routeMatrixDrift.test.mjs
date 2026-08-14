@@ -13,7 +13,7 @@
 // noticed — and it was made quieter, so the half of this file that matters most
 // is the half proving it still fails on every authorization change.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from 'vitest';
 
 import { diffMatrices, formatDiff, readMatrix, parseCsv } from "../scripts/lib/route-matrix-diff.mjs";
 

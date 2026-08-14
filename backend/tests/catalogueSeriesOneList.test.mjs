@@ -11,7 +11,7 @@
 
    node:test with no dependencies, run by `npm run test:scale-contract`: the
    backend vitest suite runs in workerd and cannot read the filesystem. */
-import test from "node:test";
+import { test } from 'vitest';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";

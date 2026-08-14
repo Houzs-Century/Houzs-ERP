@@ -20,7 +20,7 @@
    one declaration: scripts/lib/so-processing-date.mjs, which is where the
    retired spelling lives so that the audit-log scans can still match rows
    written before the rename. Everywhere else, in code, it is a defect. */
-import test from "node:test";
+import { test } from 'vitest';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
