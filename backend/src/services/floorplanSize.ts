@@ -60,10 +60,46 @@ export type FloorplanSizeResult =
       source_file: string;
     };
 
+/** Does this checklist item hold the floorplan we read sizes from? Templates
+ *  use both namings, and titles carry owner-added suffixes. */
+export function isFloorplanTitle(title: string | null | undefined): boolean {
+  return /^(display floor\s*plan|blank floorplan)/i.test((title ?? "").trim());
+}
+
+/**
+ * `overwrite`:
+ *   false  — never touch an existing size (the old post-upload behaviour)
+ *   true   — always write (the manual "Auto" button; the user asked for it)
+ *   "auto" — write when the box is empty, OR when the value standing there is
+ *            the one a previous read wrote. A number a person typed always
+ *            wins; a stale auto-read gets refreshed when a corrected plan is
+ *            uploaded (owner 2026-08-14).
+ */
+async function mayWrite(
+  env: Env,
+  id: number,
+  current: number | null,
+  mode: boolean | "auto",
+): Promise<boolean> {
+  const hasValue = current != null && Number(current) > 0;
+  if (!hasValue) return true;
+  if (mode === true) return true;
+  if (mode !== "auto") return false;
+  const last = await env.DB.prepare(
+    `SELECT to_value FROM project_activity
+      WHERE project_id = ? AND action = 'floorplan_size_detected'
+      ORDER BY id DESC LIMIT 1`
+  )
+    .bind(id)
+    .first<{ to_value: string | null }>();
+  if (!last?.to_value) return false; // nothing was ever auto-written: a human typed this
+  return Number(last.to_value) === Number(current);
+}
+
 export async function detectFloorplanSize(
   env: Env,
   id: number,
-  opts: { overwrite: boolean; userId: number | null },
+  opts: { overwrite: boolean | "auto"; userId: number | null },
 ): Promise<FloorplanSizeResult> {
   const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -185,7 +221,7 @@ export async function detectFloorplanSize(
       : null;
   const hadValue = project.size_sqm != null && Number(project.size_sqm) > 0;
   let applied = false;
-  if (detected != null && (!hadValue || opts.overwrite)) {
+  if (detected != null && (await mayWrite(env, id, project.size_sqm, opts.overwrite))) {
     await env.DB.prepare(`UPDATE projects SET size_sqm = ? WHERE id = ?`).bind(detected, id).run();
     applied = true;
     await logProjectActivity(
