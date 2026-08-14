@@ -1,0 +1,685 @@
+{
+  "//": [
+    "GRANDFATHER LEDGER for backend/scripts/check-release-discipline.mjs.",
+    "This is DEBT, not the standard, and it may only SHRINK.",
+    "A NEW script must satisfy all four rules. Fixing a rule on a listed script means DELETING that rule from its entry in the SAME PR - the check fails when a listed rule now passes, and that is what makes the list shrink.",
+    "migrationReversalNoteRequiredFrom: every backend/src/db/migrations-pg file numbered at or above this must carry a `-- REVERSAL:` note. It may only come DOWN.",
+    "Written once, on 2026-08-13, from the tree as it then stood. Nothing regenerates it: a generator would let the list grow back, which is the one thing it must not do."
+  ],
+  "migrationReversalNoteRequiredFrom": 289,
+  "scripts": {
+    "_staging-setup.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "add-missing-sofa-fabrics.mjs": [
+      "fresh-verify"
+    ],
+    "align-backfill-kd-qd.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "align-backfill-size-code.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "align-categories-cleanup.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "align-converter-to-library.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "align-fabric-trackings.mjs": [
+      "rerun-note"
+    ],
+    "align-link-models.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "align-open-skus.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "align-rebind-unlinked.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "align-safe-cleanup.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "align-seed-skus.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "apply-costing-gap-fill-2.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "apply-hookka-quotation.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "apply-indexes-to-pg.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "apply-sofa-compartment-corrections.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "apply-variant-patch.mjs": [
+      "confirm-phrase"
+    ],
+    "backfill-2990-delivered-dos.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-2990-so-branding-from-sku.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-2990-so-venue.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-ac-line-keys.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-ac-sofa-line-keys.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-branding-to-canonical.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-canonicalize-venue.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-fabric-supplier-code.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-fifo-divergence.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-lot-batch-from-docs.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-po-ac-dtlkey.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-po-expected-at.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-po-so-item-links.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-product-price-baseline.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-sales-reps.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-so-building-type.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-so-dates.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-so-line-warehouse.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-so-venue-by-parking.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-sofa-leg-default.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-sofa-pwp-vouchers.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-sofa-special-orders.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-sofa-variants-from-desc2.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "backfill-specials-into-variants.mjs": [
+      "confirm-phrase",
+      "rerun-note"
+    ],
+    "backfill-suppliers-from-autocount.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "backfill-zero-cost-lots.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "bind-null-colour-lines.mjs": [
+      "confirm-phrase"
+    ],
+    "census-custom-specials-arrays.mjs": [
+      "confirm-phrase",
+      "rerun-note"
+    ],
+    "check-user-disable-blocked.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "cleanup-2990-import-strays.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "cleanup-roles.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "copy-pg-to-pg.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "create-migrated-documents.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "create-missing-sofa-fabrics.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "cross-fill-so-po-variants.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "delete-ac-iv-orders.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "delete-so-by-docnos.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "delete-test-so.mjs": [
+      "fresh-verify"
+    ],
+    "diag-pwp-price-gap.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "fix-bench-sides.mjs": [
+      "fresh-verify"
+    ],
+    "fix-combo-display-and-mech.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-combo-slot-sides.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-hc-sofa-branding.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-imported-so-venues-address.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-modenza-label-and-5526-pieces.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-so-line-totalheight.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-so-specials.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-sofa-binding-supplier-sku.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-sofa-compartment-pool.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-sofa-special-addon-names.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "fix-special-addon-categories.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "import-ac-outstanding-po.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-ac-outstanding-so.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "import-ac-so-linked-pos.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-ac-sofa-stock.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-ac-stock-balance.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "import-ac-stock-layers.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "import-assr-farra.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-po-line-photos.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-po-so-links.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "import-so-line-photos.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "link-po-to-so.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "load-d1-dump-to-pg.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "load-hookka-combos.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "load-supplier-combos.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "load-supplier-price-list.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "merge-duplicate-fabric-series.mjs": [
+      "confirm-phrase",
+      "rerun-note"
+    ],
+    "migrate-2990-into-houzs.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "migrate-2990-staff.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "mirror-hookka-bindings.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "move-altay-leg-and-merge-nolegs.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "move-specials-to-owning-category.mjs": [
+      "fresh-verify"
+    ],
+    "normalize-heights-td-tiers.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "normalize-stored-phones.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "normalize-venue-aliases.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "open-5526-model.mjs": [
+      "fresh-verify"
+    ],
+    "open-sofa-so-compartments.mjs": [
+      "fresh-verify"
+    ],
+    "park-2990-staff-showroom.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "park-unparked-2990-sales.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "pg-migrate.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "prune-duplicate-sofa-photos.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "purge-unused-retired-specials.mjs": [
+      "fresh-verify"
+    ],
+    "reactivate-venues.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "refresh-po-variants.mjs": [
+      "confirm-phrase"
+    ],
+    "refresh-so-variants.mjs": [
+      "confirm-phrase"
+    ],
+    "refresh-sofa-colours.mjs": [
+      "confirm-phrase"
+    ],
+    "remove-delivered-imported-so.mjs": [
+      "fresh-verify"
+    ],
+    "remove-derived-recliner-prices.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "rename-minted-sofa-sku-names.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "renumber-migrated-docs.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-2990-doc-refs.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-collided-so-variants.mjs": [
+      "confirm-phrase",
+      "rerun-note"
+    ],
+    "repair-consignment-to-pj.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-custom-specials-double-encoded.mjs": [
+      "confirm-phrase"
+    ],
+    "repair-dead-po-allocations.mjs": [
+      "fresh-verify"
+    ],
+    "repair-dedication-from-autocount.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-desc2-from-own-line.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-grn-variant-snapshot.mjs": [
+      "confirm-phrase"
+    ],
+    "repair-leaked-sofa-lines.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "repair-lorry-plates.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-orphan-do-movements.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-phantom-lots.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-po-so-dedication-code.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-po-so-links-autocount-text.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "repair-pure-losses-from-autocount.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "repair-so-fee-line-integrity.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "reseed-sofa-models.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "restamp-imported-so-costs.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "restore-deleted-so-lines.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "restore-owner-data.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "retier-sofa-tiers.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "revert-sofa-recliner-skus.mjs": [
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "rollback-2990-from-houzs.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "rollback-so-linked-po-import.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "scale-harness.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-2990-project-brands.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-delivery-rate-cards.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-delivery-zones.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-fleet-maintenance.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-fleet-plans.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "seed-hydraulic-special-addon.mjs": [
+      "confirm-phrase"
+    ],
+    "seed-ocr-sofa-sketch-rules.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "seed-owner-fabric-catalogue.mjs": [
+      "rerun-note"
+    ],
+    "seed-sofa-special-addons.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "seed-user-management.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "service-config-merge.mjs": [
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "set-autocount-writeback.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "set-compartment-art-1s2s3s.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "set-pos-pin.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "set-write-freeze.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "split-collapsed-sofa-lines.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "staging-seed-account.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "stamp-ac-grn-refs.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "sync-sales-dept-reps.mjs": [
+      "mode-gate",
+      "confirm-phrase",
+      "fresh-verify",
+      "rerun-note"
+    ],
+    "tidy-fabric-descriptions.mjs": [
+      "fresh-verify"
+    ],
+    "tidy-sofa-special-addons.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "unify-2990-venue-name.mjs": [
+      "confirm-phrase",
+      "fresh-verify"
+    ],
+    "zero-duplicate-do-lines.mjs": [
+      "confirm-phrase"
+    ]
+  },
+  "undefined": "undefined RAISED 287 -> 289 on 2026-08-14, once and for a reason that can be checked: 0287 and 0288 landed on main while this gate waited in review, and main deploys run pg-migrate, so both are APPLIED on prod. pg-migrate records filename + CHECKSUM and VERIFIES every already-applied file on each run (backend/scripts/pg-migrate.mjs:3-4, lib/migration-checksum.mjs) - so adding even a comment line to them would make the runner refuse the next deploy. Backfilling their notes is not available; exempting them is. Every migration from 0289 must carry the note."
+}

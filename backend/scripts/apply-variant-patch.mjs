@@ -13,6 +13,8 @@
 // existing JSON (never replace wholesale); numeric axes use COALESCE so a
 // missing field never nulls an existing value. DRY-RUN by default; APPLY=1 writes.
 //
+// RE-RUN: convergent. A hand-written patch list, re-applied verbatim; the rows land on the same values. Not keyed on anything, so it also overwrites a human edit made since - check the list before a second run.
+//
 // THE MERGE HAPPENS IN THE DATABASE, and this script was the last of its family
 // where it did not. It used to SELECT `variants`, spread it in JavaScript
 // (`{...row.variants, ...p.variants}`) and assign the whole column back. That

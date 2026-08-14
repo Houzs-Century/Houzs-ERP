@@ -1,0 +1,61 @@
+name: Repair the PO to SO dedication by code
+
+# A multi-piece sofa the importer could not decode landed as ONE line carrying
+# the bare -1S placeholder. This splits it into the pieces it really is, read
+# off the AutoCount sketch under the rule the owner confirmed on 2026-08-11.
+#
+# NOTHING IS DELETED: the existing row is re-coded as the first piece and the
+# rest are inserted beside it. The money is copied, never invented, and the
+# script rolls back if the sales-order total moves by a cent.
+#
+# DRY-RUN unless apply=1.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to WRITE. Anything else is a dry-run."
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-po-so-dedication-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-po-so-dedication-code.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-po-so-dedication-code.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
