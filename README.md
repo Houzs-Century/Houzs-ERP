@@ -15,8 +15,8 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 > | This README says | The code says | Authority |
 > |---|---|---|
 > | Data store is **Cloudflare D1 (SQLite)** | D1 was **removed 2026-06-13**; there is no `env.DB` binding in prod. Supabase Postgres via Hyperdrive (`[[hyperdrive]]` in `backend/wrangler.toml`) | `CLAUDE.md`, `docs/CODEBASE-MAP.md` §4 |
-> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (286 files, to `0285_*`) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
-> | "No backend/frontend unit tests exist yet" | **167** backend test files under `backend/tests/`, run by vitest in `deploy.yml` | `docs/CODEBASE-MAP.md` §1 |
+> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (**284 files, to `0286_*`**, counted 2026-08-14) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
+> | "No backend/frontend unit tests exist yet" | **169** test files under `backend/tests/` (293 across all of `backend/`), run by vitest in CI | `docs/CODEBASE-MAP.md` §1 |
 > | The Modules table (Overview, Orders, PO, ASSR, Projects, Logistics, Team, Settings) | Omits **`/scm/*` entirely** — the vendored SCM supply-chain surface is the largest part of the app | `docs/CODEBASE-MAP.md` §2-3 |
 >
 > **Start at [`docs/README.md`](docs/README.md)** — it maps every doc to the one thing
@@ -29,7 +29,7 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive.** D1 is test-only (removed from prod 2026-06-13) | `backend/src/db/client.ts` (`getDb` → `drizzle-orm/postgres-js`); binding is `[[hyperdrive]]` in `backend/wrangler.toml` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -45,6 +45,17 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 
 ## Modules
 
+> **⚠️ Corrected 2026-08-14. Six of the ten rows below are routes that NO LONGER
+> EXIST.** `grep 'path="…"' frontend/src/App.tsx` returns nothing for `/orders`,
+> `/delivery-orders`, `/po`, `/logistics`, `/trips` or `/fleet` — they went in
+> the strip-to-core cutover, and their function now lives under the `/scm/*`
+> surface this table omits entirely. Surviving from this table: `/`, `/assr`,
+> `/projects`, `/team`, `/settings`, `/profile`. The banner at the top of this
+> file faulted the table only for the OMISSION; the dead rows are the bigger
+> problem, because a route that is listed reads as a route that exists.
+> `docs/CODEBASE-MAP.md` §2–3 and `docs/generated/codebase-map-facts.md` carry
+> the real desktop route table.
+
 | Module | Route | Perm | What it does |
 |--------|-------|------|--------------|
 | **Overview** | `/` | — | Daily briefing. Inbox (tasks, reviews, blockers, this-week), KPI ribbon, cross-module P&L calendar, pipeline snapshot. |
@@ -58,9 +69,9 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 | **Settings** | `/settings` | `settings.manage` | Tabs: Connection, Sync (filtered cron + full refresh), Email (Resend channel toggles), Activity Log (execution history across all jobs). |
 | **Profile** | `/profile` | — | Password change, session, display name. |
 
-### Driver sub-app
+### Driver sub-app — REMOVED
 
-Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_orders.read`) are auto-redirected from `/` into the mobile shell at `/driver`. Pages: `DriverHome` (today's trip), `DriverTrip` (stop-by-stop POD capture), `DriverProfile` (clock-in, earnings, salary).
+**Corrected 2026-08-14: there is no `/driver` route.** `DriverHome`, `DriverTrip` and `DriverProfile` are gone; this section described a shell that no longer ships. The mobile surface is `frontend/src/mobile/` — see `docs/CODEBASE-MAP.md` for the desktop/mobile pairing.
 
 ### Public (no login) surfaces
 
@@ -249,14 +260,20 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 PUBLIC_APP_URL    = "https://erp.houzscentury.com"   # canonical domain; used to build email links
 EMAIL_FROM        = "Houzs ERP <no-reply@mail.it-houzs.dev>"
 
-[[d1_databases]]
-binding      = "DB"
-database_name = "autocount-sync"
+# The database. There is NO [[d1_databases]] binding in prod — this block used
+# to show one, and it was removed on 2026-06-13.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
 
 [[r2_buckets]]
 binding     = "POD_BUCKET"
 bucket_name = "houzs-erp"
+# plus SO_ITEM_PHOTOS, PUBLIC_ASSETS and SLIPS — see backend/wrangler.toml
 ```
+
+> Corrected 2026-08-14. The snippet above carried a copy-pasteable
+> `[[d1_databases]]` block two hundred lines below the banner that refutes it —
+> `grep -n d1_databases backend/wrangler.toml` returns nothing.
 
 ### Required secrets (`wrangler secret put`)
 
@@ -289,7 +306,9 @@ The SPA prepends this to every API call. In dev the fallback is `http://localhos
 - **`trips`, `trip_stops`, `trip_events`, `trip_drivers`** — dispatch graph. `trip_events` is append-only (clock-ins, status changes, notes).
 - **`finance_ledger`** — double-entry-ish project cost tracking feeding the Projects P&L.
 
-All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against SQLite views or ad-hoc queries — no pre-computed aggregates, since D1 handles the data volumes comfortably.
+All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against views or ad-hoc queries — no pre-computed aggregates.
+
+> Corrected 2026-08-14: this line said "SQLite views … since **D1** handles the data volumes comfortably". **The data store is Supabase Postgres, reached through Hyperdrive**; D1 is test-only. This is the same stale-D1 claim `CLAUDE.md` calls out as having survived a month past the cutover, still alive in the README.
 
 ---
 
@@ -335,17 +354,54 @@ npm test                                     # hits BASE_URL (default localhost)
 npm test -- --base-url=https://…             # override
 ```
 
-No backend/frontend unit tests exist yet — Vitest is the planned pick when a service grows complex enough to warrant them.
+Vitest, on both sides, and the backend suite GATES THE DEPLOY. `backend/tests/`
+holds 163 `*.test.ts` files plus colocated ones under `backend/src/`; the
+frontend has 131. Both `package.json`s define `"test": "vitest run"`, and
+`.github/workflows/deploy.yml` runs the backend suite sharded 4× as a job the
+deploy depends on. Real-Postgres integration tests live in `backend/tests-pg/`
+and run against CI's `postgres:16` service container (`npm run test:pg`); they
+SKIP rather than fail without `TEST_DATABASE_URL`.
+
+**Corrected 2026-08-14.** This line said *"No backend/frontend unit tests exist yet — Vitest is the planned pick"*. Vitest is in, and heavily: **169** test files under `backend/tests/`, **293** across all of `backend/`, **136** under `frontend/src`. CI runs them as `backend-typecheck` (the light suite) plus a two-way `backend-tests` shard matrix. See `.github/workflows/ci.yml`.
 
 ---
 
 ## Migrations discipline
 
-- Every schema change goes through a new numbered file in `backend/src/db/migrations/`.
-- Files are applied in numeric order by `npm run db:migrate`; the script tracks applied files in the `d1_migrations` table and skips them on re-run.
-- Don't edit a migration after it's been applied to prod. Write a new one.
+**There are TWO migration trees and only one reaches production.** Putting a
+change in the wrong one is the trap `CLAUDE.md` warns about by name: it ships,
+passes CI, merges — and the database never changes.
+
+- **`backend/src/db/migrations-pg/` is the LIVE tree.**
+  `.github/workflows/deploy.yml` runs `node scripts/pg-migrate.mjs` on every push
+  to `main`, so a merged file is applied to production automatically. A file that
+  fails there blocks every later migration until it is fixed.
+- **`backend/src/db/migrations/` is the older D1 / test mirror.** Kept for
+  test parity only. Production does not read it.
+- `pg-migrate` tracks applied files by FULL FILENAME, so number gaps and
+  out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the
+  number at MERGE time by re-listing the tree, not when you branch.
+- Don't edit a migration after it has been applied to prod — and note that
+  RENAMING one counts as editing: the tracker keys on the filename, so a renamed
+  applied file runs a second time against a schema it already changed.
 - SQLite can't `DROP COLUMN` when the column is referenced by an index or a foreign key. Pattern: `DROP INDEX` first, or rebuild the table (see `036_drop_legacy_suppliers.sql` for the projects-table rebuild example).
 - Use `IF EXISTS` and `IF NOT EXISTS` liberally — it keeps the migration idempotent against re-runs on half-applied state.
+
+> **Corrected 2026-08-14 — this section pointed at the DEAD tree.** It said every
+> schema change goes in `backend/src/db/migrations/` and is applied by
+> `npm run db:migrate`. That is the **D1/test** tree: a migration written there
+> ships, passes CI, merges, and **production never changes**. This is the single
+> most expensive stale claim in the file, and `docs/KNOWLEDGE-SYSTEM.md` names
+> this exact sentence as the one that cost real time.
+
+- **A schema change that must reach production goes in `backend/src/db/migrations-pg/`.** `deploy.yml` runs `node scripts/pg-migrate.mjs` on every push to `main`, so a merged file is applied to prod automatically — and a file that fails there blocks every later migration until it is fixed.
+- `backend/src/db/migrations/` is the older D1/test tree. It is NOT dead and must not be deleted (backend vitest builds an in-process D1 from it), but nothing applies it to production.
+- `pg-migrate` tracks applied files by **full filename**, so number gaps and out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the number at MERGE time by re-listing the tree, not when you branch.
+- Don't edit a migration after it's been applied to prod. Write a new one. **Renaming an applied file re-runs it**, because tracking is by filename.
+- Use `IF EXISTS` / `IF NOT EXISTS` and catalog guards liberally — it keeps the migration idempotent against re-runs on half-applied state.
+- Demo/seed data does not belong in a numbered migration; put it in a one-shot `backend/scripts/seed-*.mjs`.
+
+See `CLAUDE.md` § Migrations, which is the authority for this.
 
 ---
 
@@ -354,4 +410,4 @@ No backend/frontend unit tests exist yet — Vitest is the planned pick when a s
 - `/help` surface inside the app — in-app tour + keyboard shortcuts (⌘K / `/` for search).
 - `docs/` holds architecture PDFs and module-specific guides. Check there first when something is non-obvious.
 - Cloudflare dashboard → Workers → `autocount-sync-api` → Logs for live request traces.
-- `execution_logs` table in D1 for cron / sync history (also exposed in Settings → Activity Log).
+- `execution_logs` table for cron / sync history (also exposed in Settings → Activity Log).

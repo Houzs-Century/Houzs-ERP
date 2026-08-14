@@ -2022,11 +2022,29 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   // Resolve the SO doc_no + the target DO id (latest non-DRAFT/CANCELLED).
   let soDocNo: string | null = null;
   let doId: string | null = null;
+  /* COMPANY GATE for the whole handler: everything below keys off soDocNo /
+     doId, both taken from the caller-supplied :id. Resolve the document ONCE,
+     scoped, and refuse before any write. */
+  if (type === 'so') {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  } else {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      sb.from('delivery_orders').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
+
   if (type === 'so') {
     soDocNo = id;
     if (Object.keys(doUpdates).length > 0) {
-      const { data: doRows } = await sb.from('delivery_orders')
-        .select('id, status').eq('so_doc_no', id);
+      const { data: doRows, error: doRowsErr } = await scopeToCompany(sb.from('delivery_orders')
+        .select('id, status').eq('so_doc_no', id), c);
+      if (doRowsErr) return c.json({ error: 'lookup_failed', reason: doRowsErr.message }, 500);
       const live = ((doRows ?? []) as Array<{ id: string; status: string | null }>)
         .filter((d) => { const s = (d.status ?? '').toUpperCase(); return s !== 'DRAFT' && s !== 'CANCELLED'; });
       doId = live.length > 0 ? live[live.length - 1]!.id : null;
@@ -2150,9 +2168,24 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
       /* The board is a CROSS-COMPANY view, so the predicate WIDENS to the
          caller's granted companies rather than pinning the active one — but it
          is still a predicate. Without it, this service-role write reaches a DO
-         in a company the caller holds no grant for; nothing else re-checks. */
+         in a company the caller holds no grant for; nothing else re-checks.
+         Scoped again HERE and not only at the gate above, because doId can come
+         from the so_doc_no lookup and a scoped read never protects the write
+         that follows it (MULTICOMPANY-MODULE-MAP rule 1).
+
+         UNSETTLED, left visible: the gate at the top of this handler is
+         scopeToCompany (ACTIVE company), NARROWER than this line, so the
+         widening cannot admit a second company today. But
+         MULTICOMPANY-MODULE-MAP.md rule 3 says Delivery Planning is one unified
+         board across companies, which is what this line was written for.
+         Whoever settles it should change the GATE, not this predicate. */
       const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
+        /* DEAD BRANCH, here and at every other 42501 site in this file. 42501 is
+           Postgres permission-denied (RLS), and RLS cannot fire here: mig 0061
+           enabled it with NO policies and the SCM client is SERVICE-ROLE, which
+           bypasses RLS. No scm function raises 42501 either. Not a permission
+           check and not scoping — the only boundary is this route's predicate. */
         if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
         return c.json({ error: 'update_failed', reason: error.message }, 500);
       }

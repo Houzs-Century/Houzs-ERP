@@ -151,6 +151,18 @@ describe("/assr/:id — the route guard matches requireServiceCaseAccess", () =>
    empty and silent, which is the same defect class as the `?? []` that made a
    403 render as an empty dropdown. */
 describe("reference reads surface their failures", () => {
+  /* SCOPE, stated so this list is not mistaken for coverage. SITES names the
+     two files that had already broken; it is a REGRESSION pin on their specific
+     recovery behaviour (setRefError and friends below), not a census. It cannot
+     fail for the third file, and on 2026-08-13 there were 76 discarded-failure
+     sites left across frontend/src and backend/src that all pass this suite.
+
+     The tree-wide count is enforced elsewhere, because a filesystem scan of
+     both trees cannot run in either vitest project:
+         npm --prefix backend run audit:swallowed-reads
+     per-file ceilings in backend/scripts/data/swallowed-read-baseline.json,
+     wired into CI's backend-typecheck job. Add a site and that gate fails.
+     See docs/bug-classes.md, class B. */
   const SITES: { file: string; label: string }[] = [
     { file: "pages/Projects.tsx", label: "crew + lorry reads, phase/attachment thumbnails" },
     { file: "pages/ServiceCases.tsx", label: "attachment lightbox" },

@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { todayMyt } from "../scm/lib/my-time";
+import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
@@ -695,7 +696,7 @@ export async function getAssrDetail(env: Env, id: number) {
             co.code as company_code,
             CAST((julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER) as hours_to_deadline,
             CASE
-              WHEN c.stage = 'completed' THEN 0
+              WHEN NOT ${assrOpenStageSql("c")} THEN 0
               WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
               ELSE 0
             END as is_breached
@@ -1674,20 +1675,18 @@ export interface ListAssrFilters {
    *  these names — additive, OR-ed with the id clause; never narrows it.
    *  Only consulted for the scoped tier (visible_to_user_ids defined). */
   visible_agent_names?: string[];
-  /** Multi-company (HOUZS-ONLY module): the company ids ASSR is scoped to. For
-   *  rank-and-file sales the route passes houzsCompanyIds(c) — a single
-   *  `[houzsId]` — NOT the caller's full allowed set, so a both-company user
-   *  never sees 2990 cases here; other roles pass their allowed set (owner
-   *  2026-07-16). `undefined` = unresolved (pre-migration, D1 test mirror,
-   *  cold-start) → no predicate, single-company behaviour. `[]` = the caller is
-   *  granted no active company → matches nothing. NOT interchangeable. */
+  /** Multi-company: the company ids ASSR is scoped to. EVERY caller — including
+   *  rank-and-file sales — passes their GRANTED set. `undefined` = unresolved →
+   *  no predicate; `[]` = granted nothing → matches nothing. NOT interchangeable.
+   *  The HOUZS pin this used to describe was removed 2026-07-20; the trail and
+   *  what a stale copy of it cost are in docs/modules/service-case.md. */
   allowed_company_ids?: number[];
 }
 
-/** Shared company-scope WHERE fragment for the raw-SQL ASSR readers. ASSR pins
- *  to HOUZS for rank-and-file sales, so this receives `[houzsId]` from the
- *  route; other roles pass their allowed set. The ids come from OUR companies
- *  master (validated integers), so inlining is safe.
+/** Shared company-scope WHERE fragment for the raw-SQL ASSR readers. Receives
+ *  the caller's granted company ids from the route (see the field above — the
+ *  HOUZS pin this used to describe was removed on 2026-07-20). The ids come from
+ *  OUR companies master (validated integers), so inlining is safe.
  *
  *  THREE STATES (see the sentinel doc on companyScope.allowedCompanyIds):
  *  `undefined` = unresolved → NO predicate (single-company behaviour, and the
@@ -1930,7 +1929,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
              (julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER
            ) as hours_to_deadline,
            CASE
-             WHEN c.stage = 'completed' THEN 0
+             WHEN NOT ${assrOpenStageSql("c")} THEN 0
              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
              ELSE 0
            END as is_breached
@@ -2168,11 +2167,8 @@ export async function exportAssrCases(
             c.creditor_code as creditor_code,
             cr.company_name as creditor_name,
             co.code as company_code,
-            CASE
-              WHEN c.stage = 'completed' THEN 0
-              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1
-              ELSE 0
-            END as is_breached
+            CASE WHEN NOT ${assrOpenStageSql("c")} THEN 0
+              WHEN c.deadline_at IS NOT NULL AND datetime('now') > c.deadline_at THEN 1 ELSE 0 END as is_breached
        FROM assr_cases c
        LEFT JOIN users u ON u.id = c.assigned_to
        LEFT JOIN users u2 ON u2.id = c.created_by

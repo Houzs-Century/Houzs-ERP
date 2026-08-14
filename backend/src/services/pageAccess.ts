@@ -676,10 +676,6 @@ export function getPageDef(key: string): PageDef | null {
   return PAGES.find((p) => p.key === key) ?? null;
 }
 
-export function getChildrenOf(parentKey: string): PageDef[] {
-  return PAGES.filter((p) => p.parent === parentKey);
-}
-
 export function isValidAccessLevel(level: string): level is AccessLevel {
   return (
     level === "none" ||

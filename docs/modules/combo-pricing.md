@@ -1,5 +1,15 @@
 # Module: Combo Pricing (SCM)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Products -> **COMBO PRICING**. Prices a whole COMBINATION of sofa modules
 instead of adding the modules up, and overrides per-Model compartment pricing
 when a line's module set matches.
@@ -98,7 +108,7 @@ codes; it is not read when pricing an existing build.
 
 ## 6. The anchor mirror (R8) — code without a table
 
-**Absorbed from the standalone `docs/sofa-combo-anchor.md`, which this file
+**Absorbed from the standalone `docs/sofa-combo-anchor.md` [gone], which this file
 replaces.** A per-investigation doc at the top of `docs/` was the wrong home for
 it; this module had no guide at all, which is the gap the repo rule says to
 close.

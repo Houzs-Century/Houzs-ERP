@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type RateBasis = 'ITEM' | 'SET';
 /** What the tier ladder COUNTS (mig 0244). UNIT = sets/items per `basis`;
@@ -199,6 +200,7 @@ export function useUpdateRateRule(cardId: string) {
     mutationFn: ({ id, ...body }: Partial<NewRateRule> & { id: string }) =>
       authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
+    onError: writeFailed,
   });
 }
 
@@ -217,6 +219,7 @@ export function useComputeCost(cardId: string) {
       authedFetch<{ card: RateCard; facts: DeliveryFacts; breakdown: CostBreakdown }>(
         `/delivery-rate-cards/${cardId}/compute`, { method: 'POST', body: JSON.stringify(facts) },
       ),
+      onError: writeFailed,
   });
 }
 

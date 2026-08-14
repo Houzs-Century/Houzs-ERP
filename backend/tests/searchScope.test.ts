@@ -18,7 +18,9 @@ const COMPANIES = [
   { id: CO2990, code: "2990" },
 ];
 
-// Rank-and-file Sales: pinned to HOUZS by the ASSR rule. Office/directors widen.
+// Rank-and-file Sales, holding no permissions. ASSR scopes by the caller's
+// GRANTS, not their role (owner 2026-07-20, #934), so this user's reach is
+// whatever allowedCompanyIds says — exactly a director's.
 const SALES = { department_name: "Sales", permissions_set: new Set<string>() };
 const DIRECTOR = { permissions_set: new Set<string>(["*"]) };
 
@@ -207,16 +209,32 @@ describe("global search — company scoping (both directions)", () => {
     expect(idsOfType(hits, "project")).toEqual([9001, 9002]);
   });
 
-  test("ASSR pins rank-and-file Sales to HOUZS even when granted both companies", async () => {
-    const hits = await search("acme", {
+  /* This test used to assert the OPPOSITE — that a rank-and-file Sales rep is
+     pinned to HOUZS whatever they are granted. That pin was real until the owner
+     removed it on 2026-07-20 (#934, `dc16fb2e`): Service Cases now follow
+     user_companies like the rest of the SCM portal. #934 updated assr.ts and
+     assrCompanyScope.test.ts and missed BOTH this expectation and the private
+     copy of the rule that search.ts was still carrying, so the stale test kept
+     agreeing with the stale copy and neither one was visible as wrong. */
+  test("ASSR follows the caller's GRANTED companies, not their role", async () => {
+    const both = await search("acme", {
       companyId: HOUZS,
       allowedCompanyIds: [HOUZS, CO2990],
       user: SALES,
     });
-    expect(idsOfType(hits, "assr_case")).toEqual([9001]); // never the 2990 case
+    expect(idsOfType(both, "assr_case")).toEqual([9001, 9002]);
+
+    /* The other half of the stale pin: it HID a 2990-only rep's own cases and
+       showed them HOUZS cases they hold no grant for. */
+    const only2990 = await search("acme", {
+      companyId: CO2990,
+      allowedCompanyIds: [CO2990],
+      user: SALES,
+    });
+    expect(idsOfType(only2990, "assr_case")).toEqual([9002]);
   });
 
-  test("ASSR widens office/directors to their allowed companies", async () => {
+  test("ASSR gives office/directors the same grant-scoped reach", async () => {
     const hits = await search("acme", {
       companyId: HOUZS,
       allowedCompanyIds: [HOUZS, CO2990],

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13
 **Trigger:** The owner turned the write-back on and saved a Sales Order: *"所以我可以去开单，然后看它会不会进到去 AutoCount，是吗？"* Then, an hour and two orders later: *"我开了一张 Sales Order，帮我看一下这张通道去 AutoCount 会打通吗？"* It had not. Neither had the second.
-**Status:** Root causes TRACED, all seven of them, each against source or production rather than inference. Twelve fixes shipped the same day. **Not resolved:** no document has reached the account book yet — the last failure (`FK_SO_SalesAgent`) is fixed in flight at time of writing. Nothing was written to the licensed book at any point; every failure was refused before it landed.
+**Status:** Root causes TRACED, all seven of them, each against source or production rather than inference. Twelve fixes shipped the same day, and fault 7 — the one that was "in flight at time of writing" — landed as #2148. **Not resolved:** no document has reached the account book yet. Nothing was written to the licensed book at any point; every failure was refused before it landed. The two orders are `failed` at `MAX_ATTEMPTS`, and the re-queue tool refuses a non-`skipped` row by design, so re-sending them is an owner decision (§5).
 
 ---
 
@@ -53,6 +53,7 @@ In all three the ERP was right, the screen was right, and the write-back read th
 | #2094, #2144 | The health check stops mislabelling refusals, and prints the error on a *pending* row |
 | #2110, #2117 | The address block on the SO edit page — the dropdown was clipped, Chrome's autofill covered it, and the reverse city/postcode resolution was never wired there |
 | #2122 | The payment slip is optional on a Sales Order |
+| #2148 | **Fault 7.** `agent` is stamped at create from the salesperson the order is attributed to, and the composer falls back to `salesperson_id` for the orders that already exist. A create that can name neither is REFUSED into a readable `skipped` row instead of sent to fail on the foreign key |
 
 ---
 
@@ -70,11 +71,13 @@ In all three the ERP was right, the screen was right, and the write-back read th
 
 | Item | Owner |
 |---|---|
-| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | in progress, `docs/autocount-field-alignment-audit.md` |
+| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | in progress, `docs/autocount-field-alignment-audit.md` [planned] |
 | `recompute-2990-so-allocation.yml` is wired to secrets that do not exist and has never run; it is also what the re-queue was copied from | flagged with a header, own task |
 | `wrangler secret list` cannot be run here — the authenticated account does not match `account_id` in `wrangler.toml` | unassigned |
 | The C# create has no guard against a duplicate ERP document number, so a lost response on a retry could create a second document | unassigned; narrow, needs a mid-flight failure |
 | Browser verification of the payment-slip and address UI changes | owner |
+| `HC-SO-2608-001` / `-002` are `failed` at `MAX_ATTEMPTS` and the re-queue tool refuses a non-`skipped` row on purpose ("a failed create WAS sent"). Here the health check says `sent 0` and a foreign key rejects before any write, so nothing landed and both are safe to re-attempt — but relaxing that guard is a decision, not a cleanup | owner |
+| A PURCHASE order has no agent at all: `readPoHeader` hardcodes `agent: null`, so every `/create-po` sends `Agent: ""` into `FK_PO_PurchaseAgent` — fault 7's shape on the other document type. Needs a decision about what AutoCount's purchase reports should attribute an ERP order to | owner |
 
 ---
 

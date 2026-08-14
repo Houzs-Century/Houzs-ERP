@@ -1,5 +1,15 @@
 # Module: Team — Members & Invitations
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc for the System > Team > Members surface: the member
 list, the member lifecycle actions, and the pending-invitations queue. The
 Roles / Positions / Org Chart / Departments / Mailboxes tabs that share the
@@ -101,6 +111,8 @@ position / manager ids exist in the `invitations` table but are NOT selected.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
   desktop must land in the mobile pair (`MobileModuleList` config +
   `MemberActions`) in the same PR.
+- **Impersonation is registered TWICE, and the second one is dead.** See
+  section 4 below before changing either.
 - **Writing `users.name` or `users.status` fires a trigger into `scm.staff`.**
   Mig 0066's `trg_sync_user_to_staff` is `AFTER INSERT OR UPDATE OF name,
   status ON public.users` — the only trigger on the table — and it mirrors the
@@ -114,3 +126,77 @@ position / manager ids exist in the `invitations` table but are NOT selected.
   code otherwise. **When you touch name/status, the blast radius includes
   `scm.staff`** — and the operator only ever sees the generic 500 from
   `index.ts:385`, so check the trigger before believing the route.
+
+---
+
+## 4. Impersonation — two registrations, one of them dead
+
+`POST /api/users/:id/impersonate` is registered **twice on the same Hono `app`**
+in `backend/src/routes/users.ts` — once in the middle of the file, once again in
+the `── Impersonation ──` section near the end. Hono composes both chains in
+registration order, and the FIRST handler returns on every branch and never
+calls the continuation (no handler in that file does), so **the second
+registration is unreachable**.
+
+**What actually runs** is the first one: wildcard `*` ONLY, always a 1-hour
+session, minted by a direct `INSERT INTO sessions` rather than `createSession`
+so the 7-day default TTL cannot apply. A non-wildcard caller gets
+`403 "Owner only"`.
+
+**What the dead one describes** — two doors, both behind `users.manage`
+(Nico approved 2026-07-22):
+
+- **Staging flag** — `IMPERSONATION_ENABLED === "true"`, set ONLY in
+  `backend/wrangler.toml`'s `[env.staging.vars]`: every `users.manage` admin may
+  hop between the shared test accounts. Ordinary 7-day sessions.
+- **Wildcard owner** — a caller whose permissions carry `*` (Super Admin role /
+  god-tier position) may impersonate EVERYWHERE, prod included, with a 1-HOUR
+  session instead — the "view-as" design the owner hand-off in
+  `frontend/src/main.tsx` describes: short-lived + audited.
+
+Anyone else: the probe reports disabled and the mint endpoint 404s. It mints a
+REGULAR session for the target (2FA is bypassed by design — the caller already
+proved `users.manage`), so "exit" is just logging out.
+
+**So the staging door does not exist at runtime**, even though
+`backend/wrangler.toml` really does set `IMPERSONATION_ENABLED="true"` for
+`[env.staging.vars]`. And `GET /api/users/impersonation-enabled` is NOT shadowed
+— it is registered once, in the dead section — so on staging it still answers
+`enabled: true` to any `users.manage` admin whose mint call then 403s
+"Owner only". **Probe and mint disagree today.**
+
+**LEFT AS IS on purpose** (audit 2026-08-13, `docs/audit-2026-08-13-ledger.md`
+K2): which door is correct is a security decision, not a dead-code cleanup.
+Deleting the second registration hides the intent; deleting the first would
+silently GRANT every `users.manage` admin a 7-day impersonation session on
+staging. Owner picks.
+
+---
+
+## 5. Reset password — the admin sends a link, and changes nothing else
+
+`POST /api/users/:id/reset-password` is the admin-triggered "send reset link".
+It emails the user a one-hour, single-use link. **THE ACCOUNT IS NOT TOUCHED**
+(owner 2026-07-19: "如果他们没有点击，状态就保持不变；如果点击了，就可以重置密码"):
+the password hash, the status and the user's live sessions are all left exactly
+as they were. Only redeeming the link (`POST /api/auth/reset/:token`) changes
+anything — and that path already sets the new hash and revokes every session.
+
+**TWO DELIBERATE REMOVALS** from the earlier version of this handler, both of
+which made "send a link" a state change:
+
+1. It used to DELETE every session for the target the moment the admin clicked,
+   so an untouched link still logged the user out of their phone mid-job. That
+   is precisely the behaviour the owner ruled out.
+2. It used to RETURN the token (`token`, `reset_path`) and the Team screen
+   copied the live link to the admin's clipboard. That made `users.manage` a
+   silent account-takeover primitive: any holder could mint a working one-hour
+   credential for ANY account — including one more privileged than their own —
+   and use it themselves without the target's mailbox ever being involved, while
+   the audit row said only that a reset was "issued". The link is a credential;
+   it goes to the mailbox, not to the person who pressed the button. If email is
+   down, fix the channel (the response says which one) — do not route a
+   credential through an admin.
+
+Rate-limited on the TARGET, because an admin button that sends mail to a
+colleague is also a way to spam that colleague.

@@ -1,5 +1,15 @@
 # Module: MRP (finished-goods demand vs supply)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc for the MRP engine — `computeMrp` in
 `backend/src/scm/routes/mrp.ts` and everything that reads its allocation.
 This is a TRADING-company MRP (no BOM explosion): demand = outstanding
@@ -72,7 +82,8 @@ invariant (po-so-coverage.ts: "SO->PO and PO->SO can never disagree").
 | Consumer | File | includeUndated | Reads |
 |----------|------|----------------|-------|
 | MRP page `GET /mrp` | `mrp.ts` route | query param, default **false** | `skus[]` + `sofaSets[]` (the plan) |
-| SO drill-down Stock column | `mfg-sales-orders.ts` (2 call sites) | true | `mrpLineCoverage` (SO->PO) |
+| SO drill-down Stock column | `mfg-sales-orders.ts` (`:2916`, `:3075`) | true | `mrpLineCoverage` (SO->PO) |
+| SO LIST ready-chip enrichment | `mfg-sales-orders.ts` (`:1561`) | true | the raw `MrpResult`; fail-soft — a thrown MRP just drops READY chips |
 | PO / GRN / PI "Assigned SO" | `po-so-coverage.ts` (single + list) | true | `mrpReverseCoverage` (PO->SO) |
 | Outstanding-SO shortage cap | `mfg-purchase-orders.ts` | true | per-line `shortageQty` |
 | Reservations assigned/free | `inventory.ts` `/inventory/reservations` | true | `mrpStockAssignment` (stock side) |

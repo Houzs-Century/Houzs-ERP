@@ -164,6 +164,41 @@ fabricTierAddonConfig.delete('/special/:modelId', async (c) => {
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const modelId = c.req.param('modelId');
+  /* Scoped like the GET above (L112). scm.model_fabric_tier_overrides carries
+     company_id NOT NULL (mig 0083), so an id-only delete removed another
+     company's override and its SO recompute silently fell back to the global Δ
+     — a price change with no edit behind it. Same fix as sofa-combos and
+     model-free-gifts in this pass.
+
+     THIS PARAGRAPH USED TO CLAIM A BUG THAT DOES NOT EXIST, and it is kept as a
+     correction because the claim was plausible enough to be believed twice. It
+     said: the PK is `model_id` ALONE (2990s-full-schema.sql:770; mig 0083 added
+     company_id and left the key untouched), therefore one company's upsert
+     overwrites the other's.
+
+     The first half is true and the conclusion does not follow. product_models
+     itself carries company_id — rows are CREATED with `company_id:
+     activeCompanyId(c)` (routes/product-models.ts:445) and listed through
+     scopeToCompany (:181) — so each company owns its own model rows with their
+     own uuids. Two companies can never contend for one model_id, and a key of
+     (model_id) already implies a company.
+
+     Its compartment-level twin below IS real, but NOT for the reason this
+     comment first gave. It said "compartment_library carries no company_id, the
+     catalogue is shared" — mig 0089:74 adds one, NOT NULL. Corrected the same
+     day by a doc-vs-source sweep; the verdict held, the argument did not.
+
+     The real reason is one file away: `compartment_id` there is an UNVALIDATED
+     free string from the request body, never joined to the catalogue (nothing in
+     backend/src reads scm.compartment_library at all), and the values are
+     normalized sofa module codes that both companies produce from their own
+     SKUs. So its GET filtered by company while its PK permitted one row
+     globally — a contradiction provable inside that one handler. Re-keyed by
+     mig 0287.
+
+     Same DDL shape, opposite verdicts. The lesson stands but is narrower than
+     first written: counting company_id columns answers nothing, and neither does
+     one glance at a parent — you have to find who actually WRITES the key. */
   const { error } = await scopeToCompany(gate.supabase
     .from('model_fabric_tier_overrides')
     .delete()
@@ -217,16 +252,38 @@ fabricTierAddonConfig.put('/compartment-special', async (c) => {
     return c.json({ error: 'validation_failed', issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })) }, 400);
   }
 
+  /* The key is (compartment_id, company_id) since mig 0287, and BOTH halves have
+     to be present or the upsert cannot address a row. `compartmentId` arrives
+     from the request body and is NEVER validated against a catalogue — nothing
+     in backend/src reads scm.compartment_library — and the values are normalized
+     sofa module codes, which both companies produce from their own SKUs. So
+     before 0287 this upsert landed on the OTHER company's row: deltas replaced,
+     company_id flipped, their next
+     scoped GET showing the compartment as un-tagged. A fabric-tier delta is a
+     PRICE (mfg-pricing-recompute.ts:997 reads this table), so that silently
+     repriced their sofa builds.
+
+     An UNRESOLVED company therefore has to refuse rather than omit the stamp:
+     company_id is NOT NULL in the key now, so a write without it fails at the
+     database anyway — better to say so in words. Same fail-safe shape as
+     routes/pos-cart.ts after 0284. */
+  const companyId = activeCompanyId(c);
+  if (companyId == null) {
+    return c.json({
+      error: 'company_unresolved',
+      message: 'Cannot tell which company this belongs to right now. Reload and try again.',
+    }, 409);
+  }
   const { data: updated, error } = await gate.supabase
     .from('compartment_fabric_tier_overrides')
     .upsert({
-      ...(activeCompanyId(c) != null ? { company_id: activeCompanyId(c) } : {}),
+      company_id:     companyId,
       compartment_id: parsed.data.compartmentId,
       tier2_delta:    parsed.data.tier2Delta,
       tier3_delta:    parsed.data.tier3Delta,
       updated_at:     new Date().toISOString(),
       updated_by:     gate.userId,
-    }, { onConflict: 'compartment_id' })
+    }, { onConflict: 'compartment_id,company_id' })
     .select('compartment_id');
   if (error) return c.json({ error: 'upsert_failed', reason: error.message }, 500);
   if (!updated || updated.length === 0) return c.json({ error: 'upsert_failed', reason: 'rls_blocked_zero_rows' }, 403);
@@ -238,6 +295,9 @@ fabricTierAddonConfig.delete('/compartment-special/:compartmentId', async (c) =>
   const gate = await requireFabricEditor(c);
   if ('error' in gate) return gate.error;
   const compartmentId = c.req.param('compartmentId');
+  // Scoped like its model-level twin above. The single-column-PK problem this
+  // comment used to record was REAL here (unlike the model twin) and is closed:
+  // mig 0287 re-keyed the table (compartment_id, company_id).
   const { data: deleted, error } = await scopeToCompany(gate.supabase
     .from('compartment_fabric_tier_overrides')
     .delete()

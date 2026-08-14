@@ -14,6 +14,14 @@ Every insert path in this codebase that omits a column and lets the database fil
 
 ### Root cause — read off the loader, not inferred from the symptom
 
+**This describes the loader AS IT WAS. It was repaired on 2026-07-21 and the
+repair is in the tree** — `load-d1-dump-to-pg.mjs` now reads `dflt_value` and
+emits a Postgres `DEFAULT` for it (via `scripts/lib/sqlite-default-to-pg.mjs`,
+which routes date/time defaults through the app's own `rewriteDialect()`), and
+carries a comment at `:165-167` narrating the very defect below. §5 row 1 has
+the closure and the two gaps that remain. Read on for the mechanism, not for the
+current file.
+
 `backend/scripts/load-d1-dump-to-pg.mjs` does not translate the D1 `CREATE TABLE` text. It replays the SQLite schema into an in-memory `better-sqlite3` database, reads each table back through `PRAGMA table_info`, and re-emits a Postgres `CREATE TABLE` from that metadata (`:138-146`).
 
 The pragma row is destructured in the comment on `:138` as `{cid,name,type,notnull,dflt_value,pk}` — **`dflt_value` is named there and then never used**. The column definition it builds (`:141-143`) is:

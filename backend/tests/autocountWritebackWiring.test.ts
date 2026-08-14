@@ -114,7 +114,12 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
   });
 
   test('GRN cancel queues a cancel', () => {
-    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' } });");
+    /* End anchor is a PREFIX of the response, like the PO and DO cases above:
+       the handler now spreads a `cancelErrors` array into that same c.json, and
+       an anchor pinned to the whole statement failed on the wording while the
+       wiring it exists to protect was untouched. The window still ends at the
+       response, so an enqueue that slipped past the 200 would still be caught. */
+    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' }");
     expect(tail).toContain('enqueueCancel(sb, {');
     expect(tail).toContain("docType: 'GR'");
   });
