@@ -11,7 +11,7 @@
 //   node --test backend/tests/swallowedReadScan.node.mjs
 // ---------------------------------------------------------------------------
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { scanErrorlessReads, scanBareCatches } from '../scripts/lib/swallowed-read-scan.mjs';
 

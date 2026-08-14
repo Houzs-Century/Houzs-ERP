@@ -16,7 +16,7 @@
 // the whole extract, 318 item codes have a price that varies by PO, and
 // MAX-by-item-code inference overstates 10,513 purchase lines. That is the
 // number this lane removes.
-import { test } from "node:test";
+import { test } from 'vitest';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import zlib from "node:zlib";

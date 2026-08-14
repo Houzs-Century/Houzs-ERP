@@ -12,7 +12,7 @@
 // fixture would ever have noticed, because the fixture would have carried
 // whatever key the test author typed.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from 'vitest';
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
