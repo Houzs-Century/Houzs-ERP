@@ -8913,7 +8913,11 @@ function DocRow({
             // approve/reject *decision trail* stays in the Approval
             // column; the remark text itself belongs here.
             const remarkComments = comments
-              .filter((c) => c.kind !== "submit" && c.body)
+              // Remarks column shows human-typed notes only. Excludes:
+              // - 'submit' (empty ping, always body=null anyway)
+              // - 'upload' / 'remove' (system audit lines, filename is the body
+              //   but belongs in the History column, not Remarks — owner 2026-07-20).
+              .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
               .slice()
               .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
             if (!item.notes && remarkComments.length === 0)
@@ -8960,22 +8964,43 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): the approve/reject
-                  record. 'submit' entries are hidden as noise. */}
+              {/* Chronological history (oldest → newest): every action on this
+                  task — uploads, removes, approves, rejects. 'submit' entries
+                  (the internal "hey reviewer, this is ready" ping) are hidden
+                  as noise; the upload comment right next to it says the same
+                  thing with better context (the filename). Owner 2026-07-20:
+                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
+                  Sim · 06/08 10:33" removes the confusion about why the
+                  Approve button reappeared after a re-upload. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
                     .filter((c) => c.kind !== "submit")
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-                    .map((c) => (
-                      <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
-                        <span className={cn("font-semibold", commentKindColor(c.kind))}>
-                          {commentKindLabel(c.kind)}
-                        </span>{" "}
-                        · {c.user_name || "—"} · {formatDateTime(c.created_at)}
-                      </div>
-                    ))}
+                    .map((c) => {
+                      // Upload/remove comments carry the filename in `body`;
+                      // approve/reject leave body null (the decision itself is
+                      // the whole story).
+                      const showFile = (c.kind === "upload" || c.kind === "remove") && c.body;
+                      return (
+                        <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                          <span className={cn("font-semibold", commentKindColor(c.kind))}>
+                            {commentKindLabel(c.kind)}
+                          </span>
+                          {showFile && (
+                            <>
+                              {" "}
+                              <span className="max-w-[220px] truncate align-baseline text-ink">
+                                {c.body}
+                              </span>
+                            </>
+                          )}
+                          {" · "}
+                          {c.user_name || "—"} · {formatDateTime(c.created_at)}
+                        </div>
+                      );
+                    })}
                 </div>
               )}
               {/* Approve/Reject visibility. The control appears once a file is
@@ -9981,10 +10006,10 @@ function ChecklistRow({
           keeps this simple remark box. Falls away the moment a file is added. */}
       {expanded && (!attachments || attachments.length === 0) && (
         <div className="mt-2 border-t border-border pt-2">
-          {comments.filter((c) => c.kind !== "submit" && c.body).length > 0 && (
+          {comments.filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body).length > 0 && (
             <div className="mb-2 space-y-1">
               {comments
-                .filter((c) => c.kind !== "submit" && c.body)
+                .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
                 .map((c) => (
                   <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
@@ -10034,6 +10059,10 @@ function commentKindLabel(k: string): string {
       return "Marked amended";
     case "approve":
       return "Approved";
+    case "upload":
+      return "Uploaded";
+    case "remove":
+      return "Removed";
     default:
       return "Note";
   }
@@ -10042,11 +10071,13 @@ function commentKindLabel(k: string): string {
 function commentKindColor(k: string): string {
   switch (k) {
     case "reject":
+    case "remove":
       return "text-err";
     case "approve":
       return "text-synced";
     case "submit":
     case "amend":
+    case "upload":
       return "text-accent";
     default:
       return "text-ink";
