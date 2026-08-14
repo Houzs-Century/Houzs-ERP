@@ -83,7 +83,7 @@ correct `tx.json()` in the same file) and
 which is why the sweep that grepped for `::jsonb` missed it; the parameter is the
 thing to look at, not the cast).
 
-**Proved, not assumed.** `backend/tests/jsonbBindScan.node.mjs` (13 tests, in
+**Proved, not assumed.** `backend/tests/jsonbBindScan.test.mjs` (13 tests, in
 `pretest` so it cannot be skipped) runs the scanner against the real source of
 every occurrence, in both the shape that caused it and the shape that fixed it.
 One of those tests exists because mutation-testing this checker found a hole in

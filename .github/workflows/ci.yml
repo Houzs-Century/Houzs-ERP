@@ -66,12 +66,26 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
-      # Bug index drift. PR-only on purpose: it is NOT in deploy.yml, because a
-      # stale doc must never block a release (audit:routes as a deploy gate jammed
-      # prod twice in one day). But it IS gated here, because the ungated
-      # audit:map crashed unnoticed for three weeks — see
-      # docs/staging-bench-rot-coe.md. PR-gated, deploy-free is the shape that
-      # survives both failure modes.
+      # Does every test suite on disk actually get RUN? A suite collected by no
+      # vitest project does not fail — it is absent, and CI reports fewer files
+      # and goes green. Deliberately a script step and not a test: written as a
+      # test first, it turned out to be one of the files that stops being
+      # collected, so it would have vanished with the 17 suites it guards.
+      - run: npm run audit:test-projects
+      # The two DERIVED docs. Neither is in deploy.yml — a stale doc must never
+      # block a release (audit:routes as a deploy gate jammed prod twice in one
+      # day) — and since 2026-08-14 neither fails a PR on DRIFT either. They
+      # mirror things every PR is required to move: BUG-HISTORY.md, which the
+      # working agreement makes every code PR append to, and line numbers, which
+      # shift on every backend merge. With serial merges that made them a
+      # deadlock: five PRs failed here at once, were regenerated one by one, and
+      # were stale again after the next merge.
+      #
+      # What they DO still fail on is the reason they are here at all — the
+      # generator producing nothing, the failure docs/staging-bench-rot-coe.md
+      # records going unnoticed for three weeks. Drift prints on every run with
+      # both counts; `--strict` fails on it for anyone who wants that.
+      # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
       - run: npm run audit:bug-index
       - run: npm run audit:map
       - run: npm run audit:doc-refs
@@ -184,7 +198,12 @@ jobs:
       # Same class this repo keeps finding: a check that cannot run reports
       # nothing, and reads as a pass. Named explicitly so a future rename of the
       # test script cannot orphan them again silently. ~0.4s.
-      - run: npm run test:scale-contract
+      # test:scale-contract is GONE, and so is the pretest that ran it. Those
+      # seventeen files were `node --test`, whose runs contribute NOTHING to the
+      # merged coverage report — so twelve genuinely-tested scripts/lib modules
+      # read to the coverage ratchet as having no test at all. They are ordinary
+      # vitest files now (`*.test.mjs`, node:assert kept, only the `test` import
+      # swapped) and run in the light project above, where they are MEASURED.
 
       # The two artefacts a revert cannot undo: a migration, which pg-migrate
       # applies to prod on the next push to main and records by filename AND

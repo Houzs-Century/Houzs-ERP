@@ -50,6 +50,38 @@
 export const NEW_FILE_LIMIT = 2000;
 
 /**
+ * Source files modified in the working tree, parsed out of `git status
+ * --porcelain -z`.
+ *
+ * WHY THIS MATTERS AT ALL. The gate compares the COMMITTED tree against the
+ * merge base. Run it with source edits still uncommitted and it measures HEAD,
+ * prints "file-size ratchet OK", and the author reads that as a verdict on the
+ * code in front of them. On 2026-08-14 a change that grew an over-ceiling file
+ * by one line was told OK, and turned red the instant it was committed. The
+ * caller uses this to REFUSE rather than answer.
+ *
+ * The parse is here and the `git` call is not, because a shell-out is not
+ * testable and this is: porcelain gives `XY <path>`, and a rename gives
+ * `R  old -> new`, where only the NEW path is a file that exists to measure.
+ *
+ * @param {string} porcelainZ raw output of `git status --porcelain -z`
+ * @param {readonly string[]} extensions the source extensions the gate measures
+ * @returns {string[]} sorted, de-duplicated paths
+ */
+export function uncommittedSourcePaths(porcelainZ, extensions) {
+  const out = new Set();
+  for (const entry of String(porcelainZ ?? '').split('\0')) {
+    if (entry.length < 4) continue;             // '' or a bare status with no path
+    let p = entry.slice(3);                     // 'XY ' is exactly three characters
+    const arrow = p.indexOf(' -> ');            // a rename: measure where it landed
+    if (arrow !== -1) p = p.slice(arrow + 4);
+    p = p.trim();
+    if (p && extensions.some((e) => p.endsWith(e))) out.add(p);
+  }
+  return [...out].sort();
+}
+
+/**
  * Extensions the gate measures. Data (.json), documents (.md, .pdf), fonts and
  * lockfiles are excluded: their size is not a legibility problem and a data
  * refresh must never fail a gate about hand-written code.

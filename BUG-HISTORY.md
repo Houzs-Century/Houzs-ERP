@@ -126,6 +126,289 @@ OPEN, by name and count.
 **Ref** — 2026-08-14, `fix/autocount-field-alignment`. No migration.
 `docs/autocount-field-alignment-audit.md` carries the per-finding trace and what
 is still open.
+## The file-size gate reported OK on a tree it could not see [medium]
+
+**Symptom.** `node scripts/check-file-size.mjs --require-base` printed the
+ratchet summary and exited 0 while the working tree held changes that put a file
+over its ceiling. Committing the same changes and re-running turned it red. The
+gate had answered a question about a DIFFERENT tree and said nothing about it.
+
+**Root cause.** The "which files did this change touch" half is computed from
+git — `merge-base` plus a diff — so it sees only what is COMMITTED. The "how many
+lines" half is read from the working tree. With uncommitted work those two halves
+describe different trees: the line counts were current, the touched-file set was
+not, so a file this change had grown was classified as INHERITED debt and
+reported rather than charged. Exit 0.
+
+This is the same shape as the three checkers CLAUDE.md already records — a
+verdict computed over the wrong corpus reads exactly like a clean run. The
+difference here is that nothing was broken: both halves worked, and the gate was
+still wrong, because they were asked about different things.
+
+**Fix.** The gate REFUSES rather than answers: `uncommittedSourcePaths` parses
+`git status --porcelain -z`, and when the touched-file set is in play and any
+source file is dirty, it prints what it cannot see and exits 2. Not a warning —
+CLAUDE.md's rule is that a check which cannot execute must never report a pass,
+and a warning on a green run is a pass. Parsing lives in
+`scripts/lib/file-size-ratchet.mjs` so it is unit-tested without a repo: staged
+files, renames (`R old -> new`), and paths with spaces each have a case.
+
+**Ref.** 2026-08-14, PR #2179. Lesson: **a gate that reads two halves from two
+different places has a third state — not pass, not fail, but "asked about
+something else"** — and that state is invisible unless the gate is built to
+notice it.
+
+## Seventeen test files ran, passed, and counted as no test at all [medium]
+
+**Symptom.** The coverage ratchet failed a docs-only PR with
+`backend/scripts/lib: 17 files have NO test executing them, up from 15`. That PR
+touched no file in that directory. Three other PRs were blocked behind the same
+red, none of which had touched it either.
+
+**Root cause.** The merged coverage report is built from `test:coverage:light` +
+`test:coverage:workers`, both vitest. Seventeen test files ran under
+`node --test` (`tests/*.node.mjs`, via `test:scale-contract` and its `pretest`),
+and a `node --test` run contributes NOTHING to that report. Twelve modules in
+`backend/scripts/lib` are covered only by those files — `ac-line-key-audit`,
+`ac-po-line`, `ac-po-line-match`, `catalogue-series`, `classify-tests`,
+`invoice-price-core`, `jsonb-bind-scan`, `po-cost-plan`, `release-discipline`,
+`route-matrix-diff`, `so-line-dedication`, `swallowed-read-scan` — so the
+no-test floor for that area was a number about the RUNNER, not about testing.
+
+The gate was right and the tests were right. The measurement did not reach them.
+
+**Fix.** The seventeen are ordinary vitest files now: `*.node.mjs` ->
+`*.test.mjs`, `import test from 'node:test'` -> `import { test } from 'vitest'`,
+bodies untouched — vitest runs `node:assert` unchanged, so nothing else moved.
+`classify-tests.mjs`'s walk collects `*.test.mjs` alongside `*.test.ts`, which
+keeps them out of TypeScript entirely. `test:scale-contract` and its `pretest`
+are deleted.
+
+**Measured.** The light suite goes 4102 -> 4361 tests. Those 259 were always
+running; nothing that reads coverage could see them.
+
+**Not re-baselined, deliberately.** Raising the floor to 17 accepts the debt and
+turns a ratchet into a suggestion; exempting the area gives up on it. Both were
+cheaper than the conversion and both would have left the number lying.
+
+**What the rename then broke, and what caught it.** Nine documents and three
+runners still named the old files: `check-docs-drift --strict` found the docs,
+and `test:release-discipline` + two steps in `stamp-real-po-costs.yml` failed in
+CI. A rename is exactly the change those gates exist for.
+
+**What the rename broke a second time: the classifier classified itself wrong.**
+`classifyTests.node.mjs` became `classifyTests.test.mjs`, so the widened walk
+collected it — and sent it to the WORKERS pool. `classify-tests.mjs` decides by
+regex over raw text, and that file is the classifier's own test: its fixtures
+contain `cloudflare:test` and `env.DB` because that is what it tests. It also
+needs a real filesystem (`fs.mkdtemp`), which workerd has none of, so the pool
+did not fail the file — it died. `Worker cloudflare-pool emitted error`, and the
+run read **`Test Files 15 passed (16)`**: all seven of its tests reported as
+neither passed nor failed. Two assertions inside it were stale from the same
+rename (`assert.match(p, /\.test\.ts$/)` against a tree that now holds `.mjs`)
+and nobody saw them, because a file that never loads cannot go red.
+
+Being exiled to workerd is a KNOWN, accepted cost for a pure-logic file — slower,
+still correct, and pinned by its own test. For a file that touches `node:fs` it
+is fatal. That distinction did not exist before this rename.
+
+**Fix.** An explicit `// @vitest-project light|workers` overrides the text scan,
+honoured only ABOVE the first import — a file's directive block, never its body,
+so a declaration inside a fixture cannot declare on the real file's behalf. That
+hole is not hypothetical: this classifier's own test is made of such fixtures.
+Necessary rather than convenient — a content rule cannot judge a file whose
+content is ABOUT the content rule. Overrides are returned and printed, and pinned
+at exactly one file, so a second cannot arrive unnoticed.
+
+**And the guard for it was in the wrong place first.** "Every suite on disk is
+collected by some project" was written as a test in
+`tests/scaleRealSchemaContract.test.mjs`, replacing the `pretest` assertion whose
+arrangement this change deleted. Narrowing the walk back to `.test.ts` to prove
+it red returned `No test files found` — the guard was itself one of the 18 files
+that stop being collected. It would have vanished with the suites it protects and
+CI would have gone green on 267 files instead of 285. It is
+`backend/scripts/audit-test-projects.mjs` now, its own CI step, with a
+deliberately duplicated walk so that narrowing the classifier's produces a
+MISMATCH instead of two views that agree because they are the same code. It
+replaces `audit:test-projects`, which had been pointing at a script deleted
+weeks earlier (`gen-test-projects.mjs`, MODULE_NOT_FOUND) and was wired into no
+workflow, so nothing noticed. Both failure branches proven red, exit 1.
+
+**The conversion also imposed a 5-second budget on files that never had one.**
+`node --test` has NO default timeout. vitest's is 5,000ms — a UNIT-test budget —
+and moving the runner applied it silently to all seventeen.
+`tests/noNulBytesInSource.test.mjs` reads EVERY tracked source file (~2,000
+synchronous reads) looking for a raw NUL byte; measured on Windows it takes 3.47s
+alone, 70% of the default before any contention, and in a full 288-file run it
+returned `Test timed out in 5000ms` in two of six runs.
+
+It presented as a flake in the worst possible place: a whole-tree gate that
+intermittently reads as "the tree is dirty". The first hypothesis — a concurrent
+write leaving a file momentarily zero-filled — was tested (10 consecutive
+regenerations of the one candidate, checking `indexOf(0)` immediately after each)
+and REFUTED; the failure text, once captured rather than summarised, said
+`timed out` and never named an offending file. Two full runs were spent grepping
+only the summary lines, which is why the wrong theory survived as long as it did.
+
+Fixed with an explicit 60s timeout on that one test, with the reason in the file.
+Raising vitest's global `testTimeout` was the wrong lever: it hands the same
+slack to 288 files and hides a genuinely hung unit test. The other converted
+suites were measured too — the next slowest walks the script tree at 1.65s and
+the rest are under 1s, so none carries a declared timeout it does not need.
+
+**Ref.** 2026-08-14. Lesson, and it generalises past this gate: **a measurement
+can be wrong in the direction of looking rigorous.** "17 files have no test" read
+as a real backlog for as long as nobody asked which runner the report came from.
+Third lesson, from the timeout: **changing a runner changes the defaults the old
+runner never had** — and the failure surfaced as a flake, in a gate about
+something else entirely, five hours after the change that caused it.
+Second lesson, from the guard that had to move: **a guard that dies with the
+thing it guards is not a guard** — before trusting one, break the thing it
+watches and check that the guard is still alive to complain.
+## Two new comment kinds were written by raw SQL that bypassed the only typed entry point, and `main` stopped deploying [high]
+
+**Symptom.** `main` red on `frontend` — a REQUIRED status check — and the Deploy
+run reporting `frontend: failure` with `backend: skipped`, which CLAUDE.md says
+to treat as a failed deploy. Nothing reached production from #2184 merging until
+this fix. Two Deploy runs failed the same way (the second for an innocent PR that
+merely inherited the tree). Eight errors, all one shape:
+
+```
+src/pages/Projects.tsx(8955,53): error TS2367: This comparison appears to be
+unintentional because the types '"note" | "approve" | "reject" | "amend"'
+and '"upload"' have no overlap.
+```
+
+**Root cause.** PR #2184 added two per-task history kinds, `upload` and `remove`,
+and wrote them from `backend/src/routes/projects.ts` as raw SQL —
+`INSERT INTO project_checklist_comments (item_id, kind, body, user_id) VALUES (?, 'upload', ?, ?)`.
+That statement never passes through `addChecklistComment`, which is the ONE typed
+entry point for that column, so the backend compiled while emitting two values no
+type in the repo admitted. Neither union was widened:
+`backend/src/services/projects.ts` (the helper's parameter) nor
+`frontend/src/pages/Projects.tsx` (`interface ChecklistComment`).
+
+The frontend half of the same PR then filtered those kinds OUT of the Remarks
+column — correct, and at the owner's instruction — and `tsc -b` read those filters
+as comparisons that can never be true.
+
+**The shape worth remembering.** The type is declared in two files and written
+from a third that consults neither. Nothing connected them, so the drift was
+invisible until an UNRELATED expression happened to compare against a missing
+value. Had the PR not also added that filter, the two kinds would be undeclared
+today and no gate would have said a word — the build error was luck, not a check.
+
+**Fix, in two parts by two people.** The FRONTEND union was widened directly on
+`main` while this branch was in flight — that is what un-blocked the deploy, and
+this entry does not claim it. What landed here is the half that was still
+missing: the BACKEND union on `addChecklistComment`, which was still
+`"note" | "submit" | "reject" | "amend" | "approve"` after the outage was over,
+and `backend/tests/checklistCommentKinds.test.ts`, which extracts every kind
+literal written into that table and asserts both declarations admit all of them
+AND agree with each other. Proven red by reverting the frontend union — exit 1,
+naming both `remove` and `upload`.
+
+That split is worth recording rather than tidying away: the visible symptom was
+fixed in one file, and the other declaration — plus the thing that stops it
+recurring — was still open afterwards. Un-blocking the build and fixing the
+defect were not the same job.
+
+The guard is ANCHORED on the declaring construct (`interface ChecklistComment`,
+`export async function addChecklistComment(`), not on the first `kind:` union in
+the file. Its first draft was not, and read `kind: "income" | "cost"` 56 lines
+earlier in the same file — it refused with "only 2 kinds parsed" rather than
+reporting a pass, which is the property CLAUDE.md demands of a checker that
+cannot match, but the anchor is what makes it correct.
+
+**Ref.** 2026-08-14, PR #2184 introduced it. Deploy runs 31802261895 and the one
+before it, both `frontend: failure` / `backend: skipped`. Lesson: **a typed helper
+is not a boundary if another file can write the same column directly** — and
+CLAUDE.md's own rule, "a BUG-HISTORY entry with no test attached is unfixed", is
+why this one ships with a guard rather than a paragraph.
+
+## main went red again on the same file, and the frontend stopped deploying a second time [high]
+
+**Symptom** — hours after the last one, `main` fails `tsc -b`:
+
+```
+src/pages/Projects.tsx(4563,9): error TS2451: Cannot redeclare block-scoped variable 'q'.
+src/pages/Projects.tsx(4765,9): error TS2451: Cannot redeclare block-scoped variable 'q'.
+src/pages/Projects.tsx(4770,25): error TS2339: Property 'data' does not exist on type 'string'.
+src/pages/Projects.tsx(4771,22): error TS2339: Property 'data' does not exist on type 'string'.
+```
+
+Every open PR inherited it — `frontend`, `frontend-build`, `frontend-checks`,
+`frontend-typecheck` red on six of them at once — and the frontend deploy was
+blocked for the second time in one day.
+
+**Root cause** — the projects calendar declares two different `q` in one
+function scope. `:4563` is the SEARCH STRING (`params.get("q")`, read at `:4785`,
+`:4799`, `:4949`, `:4955`); `:4765` is the QUERY OBJECT from `useQuery`, read at
+`:4770`, `:4771`, `:5079`, `:5080`, `:5082`. Two features, added separately,
+each reaching for the shortest name in a 15,000-line file. The second
+declaration wins for the type checker, so `q.data` resolves against a `string`.
+
+**Fix** — landed as #2198, which renamed the SEARCH variable `q -> search` and
+left the query object as `q`. I had prepared the opposite rename (query object
+to `eventsQ`) and dropped it when theirs merged first: both are correct, and
+re-naming it a second time would be churn in a file that is already the most
+collided-on in the repo. This entry is the write-up that fix did not carry.
+
+**A near miss worth recording.** I first read `:4765` through a 120-column
+truncation, concluded the call was missing a comma before its fetcher, and wrote
+a patch to insert one. The comma was there — the display had cut it. The patch
+did not land only because the script asserted the line matched the shape it
+believed before editing, and refused when it did not. Read the bytes
+(`JSON.stringify` the line), not the pretty-printed excerpt, before repairing
+something you have only seen truncated.
+
+**Class** — *a semantic merge conflict*, the second in a day in this same file
+after the `"upload" | "remove"` union. Both PRs were green alone; the failure is
+the pair, which a per-PR gate cannot see. `Projects.tsx` is 15,003 lines and 128
+over its size ceiling — the collision surface IS the file's length, and every
+such fix has to be net-zero lines to get past the ratchet, which is its own
+argument for splitting it.
+
+**Ref** - `fix/calendar-query-shadows-search`, 2026-08-14
+
+## A comment mentioning `env.DB` sent five pure-logic tests to the serial workerd pool [low]
+
+**Symptom.** Not a failure — a cost, which is why it sat unnoticed. The backend
+test suite is split in two: `test:light` runs on a plain node runner, and
+`test:workers` runs in the Cloudflare pool with `fileParallelism: false` and
+`maxWorkers: 1`, i.e. strictly serial. Five files that import nothing but vitest
+and plain source modules were being paid for in the serial pool.
+
+**Root cause.** `backend/scripts/lib/classify-tests.mjs` decided the pool with
+
+```js
+const NEEDS_WORKERS = /\bcloudflare:test\b|\benv\.DB\b|\benv\.DB_PARITY\b/;
+… NEEDS_WORKERS.test(source)
+```
+
+applied to the file's RAW text. So prose counted. `tests/companyScopeFailClosed.test.ts`
+says `// Fake env.DB.` in a comment — it BUILDS a fake — and that comment alone
+routed it to workerd. Same for `adminResetLink`, `reviewHighFindings`,
+`fairPnl.route` and `fairReport.route`, each matching inside a `/* */` block.
+
+**Fix.** Blank comments before matching, with a string-aware scanner. Naive
+stripping was not an option and the repo already knew it: `check-docs-drift.mjs`
+deliberately does NOT strip, because `"http://x"` contains `//` and this codebase
+writes mount paths like `"/products/*"` that contain the block-comment opener.
+Tracking the four states (code / '…' / "…" / \`…\`) is what makes it safe, and two
+tests pin exactly those two traps.
+
+**Verified.** Workers pool 46 -> 41 files. All five relocated files pass in the
+light pool (71 tests). Both suites whole afterwards: light 276 files / 4284
+passed, workers 41 files / 335 passed — no test lost, none broken.
+
+**The class, for next time.** A regex over source text cannot tell code from
+prose, and a classifier is not a linter: being wrong costs time rather than
+correctness, so nothing goes red and nobody looks. The behaviour had in fact been
+PINNED as a known cost by `tests/classifyTests.node.mjs` a few hours earlier; that
+test now pins the fix instead, which is what a pin is for.
+
+**Ref** — 2026-08-14, PR `chore/classify-strip-comments`. No migration.
 
 ## The new linter could not start on Windows, and said "no ESLint installed" while ESLint was installed [medium]
 
@@ -159,6 +442,55 @@ where neither could previously start; both then reported real ratchet findings,
 which is the proof the run was genuine and not a silent no-op.
 
 **Ref** — 2026-08-14, PR #2137 `eslint-layer`. No migration.
+
+
+## Two derived docs were merge gates for a thing every PR is required to change [high]
+
+**Symptom** — on 2026-08-14, five open pull requests failed `backend-typecheck`
+simultaneously, all on the same line:
+
+```
+docs/generated/bug-index.md is out of date (175 entries in BUG-HISTORY.md).
+```
+
+None of them had touched the index. They were regenerated one at a time, and
+were stale again after the very next merge. Separately, `audit:map` failed a
+one-line fix for a **broken production deploy** while printing, in its own
+message, *"This is an on-demand check. It is deliberately NOT a CI or deploy
+gate."* — from inside `backend-typecheck`, where a non-zero exit is precisely a
+gate.
+
+**Root cause** — both files mirror something every pull request is *required* to
+move:
+
+- `bug-index.md` mirrors `BUG-HISTORY.md`, and the working agreement (#2135)
+  makes every code PR append an entry to it;
+- `codebase-map-facts.md` embeds LINE NUMBERS, which shift on essentially every
+  backend merge.
+
+`main-protection` sets `strict_required_status_checks_policy`, so merges are
+strictly serial. The instant any PR merges, both files are stale on every other
+open PR — through no act of their authors. Every author is charged for what the
+previous author did, and the queue cannot converge.
+
+**What the gate is actually for, and is kept** — `docs/staging-bench-rot-coe.md`
+records `audit:map` crashing unnoticed for three weeks. That is a generator
+DYING, not output drifting, and it is worth failing on. The two are now
+separated: a generator that parses zero entries or scans zero route modules
+exits **2**; drift prints both counts and the fix and returns **0**. `--strict`
+restores the hard failure for a local run or a job that wants it.
+
+**Pinned by** `backend/tests/derivedDocsDoNotDeadlock.node.mjs` (in
+`test:scale-contract`): it fails 3 of 3 on the previous scripts, and asserts
+that the only `process.exit(1)` left in either check path is guarded by
+`--strict`.
+
+**Class** — *a gate whose blast radius is wider than its subject.* Fourth
+instance in two days, after the fabric census counting deliberate tombstones and
+the file-size ratchet twice. The tell is the same every time: the failure
+message asks the author for something only somebody else can do.
+
+**Ref** - `fix/derived-docs-deadlock`, 2026-08-14
 
 ## The frontend deploy has been failing since 12:02 — a union that was never told about two kinds the server emits [high]
 
@@ -372,9 +704,9 @@ thorough `node:test` suite that runs on every PR:
 
 | module | lines | its test | measured by `node --test --experimental-test-coverage` |
 | --- | ---: | --- | ---: |
-| `release-discipline.mjs` | 231 | `tests/releaseDiscipline.node.mjs`, 43 cases | 98.60% lines |
-| `jsonb-bind-scan.mjs` | 125 | `tests/jsonbBindScan.node.mjs` | 95.53% lines |
-| `swallowed-read-scan.mjs` | 51 | `tests/swallowedReadScan.node.mjs` | 100.00% lines |
+| `release-discipline.mjs` | 231 | `tests/releaseDiscipline.test.mjs`, 43 cases | 98.60% lines |
+| `jsonb-bind-scan.mjs` | 125 | `tests/jsonbBindScan.test.mjs` | 95.53% lines |
+| `swallowed-read-scan.mjs` | 51 | `tests/swallowedReadScan.test.mjs` | 100.00% lines |
 
 407 lines, all of them exercised in CI, all of them reported by the gate as zero
 lines covered and three files with no test at all. The percentage did not fall
@@ -558,7 +890,7 @@ switched on by ambient configuration, whereas a stray `PGSSL=disable` in the
 wrong environment file would silently downgrade a production connection. Against
 the real DSN the value is `'require'` — byte-identical to the old behaviour.
 
-**Test.** `backend/tests/pgSslMode.node.mjs`, wired into `test:scale-contract`.
+**Test.** `backend/tests/pgSslMode.test.mjs`, wired into `test:scale-contract`.
 The cases that carry the weight are the near-misses, all of which must still
 require TLS: `localhost.evil.com`, `notlocalhost`, `127.0.0.1.evil.com`,
 `127.0.0.2`, and a production host carrying `?host=localhost`. A hostname is
@@ -1603,7 +1935,7 @@ has. `backfill-so-dates.mjs`'s refusal list is now built from the constants,
 current spellings **and** legacy; the probe counts only columns the catalog
 proved are there and names which one it counted.
 
-**Why the new test walks the directory.** `tests/soProcessingDateOneName.node.mjs`
+**Why the new test walks the directory.** `tests/soProcessingDateOneName.test.mjs`
 is `node:test`, run by `npm run test:scale-contract`, and it reads
 `backend/scripts` off disk — so a script written tomorrow is covered by code
 that already exists. Comments are stripped before matching: the rename is a
@@ -1772,7 +2104,7 @@ AutoCount line's price reached the same ERP row through the code-blind key.
 
 **Fix** — the decision moved out of the script into
 `backend/scripts/lib/po-cost-plan.mjs`, where it runs with no database and is
-unit-tested (`tests/poCostPlan.node.mjs`, wired into `test:scale-contract`).
+unit-tested (`tests/poCostPlan.test.mjs`, wired into `test:scale-contract`).
 Every key now carries the item code, by three routes, most exact first:
 `linked_ac_dtlkey` (migration 0273, a 1:1 identity); `supplier_sku`, which holds
 the RAW AutoCount `ItemCode` because `import-ac-outstanding-po.mjs` stores
@@ -1813,7 +2145,7 @@ The binding sequence is therefore: merge, then dispatch the workflow at
 `apply=1` writes — and only then dispatch `apply=1`.
 
 What IS measured in CI, on the real committed snapshot rather than by hand, is
-the collision the fix removes: `tests/poCostPlan.node.mjs` re-derives from
+the collision the fix removes: `tests/poCostPlan.test.mjs` re-derives from
 `scripts/data/ac-po-line-costs.json.gz` that the pre-fix `(PoNo, Desc2)` key
 yields 170 keys of which 9 merge more than one item code, that adding the item
 code splits them apart, and that PO-009826 and PO-009802 are among them. That
@@ -1934,7 +2266,7 @@ them, whose diffs nobody could read either.
 (`npm run typecheck`, which in the frontend is `tsc -b`; `npx tsc --noEmit`
 there resolves zero inputs and would have proved nothing).
 
-**The check** — `backend/tests/noNulBytesInSource.node.mjs`, in
+**The check** — `backend/tests/noNulBytesInSource.test.mjs`, in
 `npm run test:scale-contract`. It walks `git ls-files`, refuses to pass if the
 listing returns implausibly few files, and fails on any tracked source file
 carrying a NUL.
@@ -1945,7 +2277,7 @@ diff, so review and audit both silently see nothing.
 
 **The check caught itself first.** Its own `git ls-files -z` split was written
 with the raw separator, so the very first CI run of the gate failed on the gate:
-`backend/tests/noNulBytesInSource.node.mjs (first at byte 1943 of 2878)`. That is
+`backend/tests/noNulBytesInSource.test.mjs (first at byte 1943 of 2878)`. That is
 the strongest evidence it works, and it is why the escape — not the byte — has
 to be the habit: even the person writing the rule reached for the byte.
 
@@ -1976,7 +2308,7 @@ now reports those rows in their own line — *the owner's own 12 catalogue
 series, left exactly as he dictated* — instead of mixing them into the
 unparseable bucket.
 
-**The check** — `backend/tests/catalogueSeriesOneList.node.mjs`, wired into
+**The check** — `backend/tests/catalogueSeriesOneList.test.mjs`, wired into
 `npm run test:scale-contract`. It fails on the tree as it was (2 of 5 tests),
 and it asserts three things a comment cannot: both derivers import the shared
 list; a series the SEED declares is one the shared list holds, so the seed
@@ -3063,7 +3395,7 @@ cannot drift apart again. And the zip's tie-break sorted a serial `id` with
 sofa's compartment rows across different AutoCount lines; it sorts numerically
 now.
 
-**Guards, each proven by breaking it** (`tests/acPoLineRepair.node.mjs`, 24
+**Guards, each proven by breaking it** (`tests/acPoLineRepair.test.mjs`, 24
 tests, all passing): disable the coin-flip refusal -> **3 fail** (18/21 before
 the cross-product tests were added); drop the `sameProduct` gate so `base` is a
 blanket attempt again -> **1 fails** (23/24); restore the `localeCompare` row
@@ -3084,7 +3416,7 @@ write is a silent dependency, and JavaScript will not tell you when it breaks.*
 Reading a renamed key produced `undefined`, which flowed all the way into a
 `NULL` column with no error, no warning and no failing test — the same shape as
 the five-copies-of-findColour entry above, one layer earlier. The guard is
-`tests/acPoLineRepair.node.mjs`, which asserts the accessor still resolves on
+`tests/acPoLineRepair.test.mjs`, which asserts the accessor still resolves on
 every row of the COMMITTED snapshots (917 rows). A fixture would never have
 caught this, because a fixture carries whatever key the test author typed;
 revert the accessor to `DelivDate` and that test fails 338 + 579 times. The
@@ -4465,7 +4797,7 @@ the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first, whic
 every synthetic row sets to the same leg date. So the field was write-only on
 those rows and nulling it is behaviour-identical.
 
-**Left loud on purpose.** `tests/scaleRouteDrift.node.mjs` `deepEqual`s a
+**Left loud on purpose.** `tests/scaleRouteDrift.test.mjs` `deepEqual`s a
 hard-coded column list against the route's `HEADER` expression - it is the
 tripwire and it is meant to fail; note it appends `, proceeded_at,
 paid_total_centi, balance_centi_live` as its own literal, so retiring
@@ -6256,7 +6588,7 @@ A fence with an open gate beside it is not a fence.
 **Fix** - both routers resolve the source document from the line id first, then
 apply the SAME `refuseMigratedSources` rule, so a caller cannot pick a softer
 door. A FAILED lookup refuses rather than proceeds (`ok: false` -> 500): a guard
-that fails open is not a guard. `backend/tests/migratedConvertGuard.node.mjs`
+that fails open is not a guard. `backend/tests/migratedConvertGuard.test.mjs`
 pins all eight paths, asserts the refusal comes BEFORE the AutoCount enqueue (a
 refusal after it is no refusal at all), and asserts the GL suppression lives
 inside `postPiAccounting` / `postSiRevenue` rather than at their call sites, so

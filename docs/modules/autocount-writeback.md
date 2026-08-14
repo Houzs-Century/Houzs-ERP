@@ -276,7 +276,7 @@ The refusal therefore sits IN FRONT of the enqueue, in the route handler, not
 inside the outbox: all eight paths that can attach a migrated goods receipt or
 delivery to an invoice call `refuseMigratedSources`
 (`src/scm/lib/migrated-chain.ts`) and return 409 before any enqueue is reached.
-`backend/tests/migratedConvertGuard.node.mjs` asserts the ORDER, not merely the
+`backend/tests/migratedConvertGuard.test.mjs` asserts the ORDER, not merely the
 presence — a refusal placed after the enqueue is no refusal at all.
 
 Invoices for carried-over documents are written by
