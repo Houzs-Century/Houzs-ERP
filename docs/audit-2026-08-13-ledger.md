@@ -28,7 +28,7 @@ are its labels, not disjoint sets.
 |---|---|---|
 | cross-company scope | 56 (27 high) | **CLOSED** — reopened once when the scanner turned out too loose (§I), then finished: every WRITE finding either fixed or opened and annotated. Four of the last eleven were false positives for four DIFFERENT reasons, one of which would have become a bug if "fixed" |
 | permission / access gate | 11 (4 high) | **CLOSED** (§C) — 6 gated, 1 left open by owner decision |
-| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. **B4 is the only one left**, and it is now a workflow click rather than an open question |
+| money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. B4 **DONE** — the workflow was clicked on 2026-08-14, the data answered it, and the engine now carries sen |
 | silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
 | old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
 | dead code | 12 claimed — **at least 184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2291`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
@@ -171,7 +171,18 @@ and the three checkers print their own buckets.
 | rule mirrors | 0 DIVERGED |
 | dead code (§K) | **listed at last** — at least 184 sites, not the 12 that were claimed and never enumerated. 28 files annotated, 4 orphans deleted, the rest LEFT with a stated reason; 2 of those were already on record as deliberate keeps, so a naive sweep would have reversed two written decisions |
 
-**Still owner decisions — ONE, and it is not a bug waiting on a fix.**
+**Still owner decisions — NONE in this table.** B4 was the last, and it closed
+on 2026-08-14 the way it was designed to: the check ran, the data answered the
+question, and what looked like a business judgement turned out to be a defect.
+Production carries **23 part-ringgit combo prices out of 163**, so the business
+already prices in cents; the engine was rounding it away. Fixed by carrying sen
+end to end. The row below is kept for the reasoning, not as an open item.
+
+**What is NOT closed by that fix:** documents already priced from those 23 rows
+carry the rounded figure. Sizing that impact is a separate pass, deliberately not
+folded into the code change.
+
+**The original wording follows.**
 Each is a question about how the business should work, which is not this
 audit's to answer:
 
