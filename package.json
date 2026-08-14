@@ -21,6 +21,8 @@
     "db:reset:remote:DANGER": "npm --prefix backend run db:reset:remote:DANGER",
     "db:reset:local": "npm --prefix backend run db:reset:local",
     "db:migrate": "npm --prefix backend run db:migrate",
-    "install:all": "npm --prefix backend install && npm --prefix frontend install"
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
+    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update"
   }
 }
