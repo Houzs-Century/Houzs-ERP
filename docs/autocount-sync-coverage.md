@@ -1,3 +1,40 @@
+> # ⚠ SUPERSEDED IN SUBSTANCE — re-verified against the code 2026-08-13
+>
+> **Do not plan Friday from this document's §0 blockers or §2 matrix.** It was
+> written 2026-08-11 (#1931) and the code moved underneath it the same week;
+> nothing here was updated. Seventeen of its claims were refuted by reading the
+> source. The six that matter most, each re-verified by hand, not by grep:
+>
+> | This doc says | The code says (read 2026-08-13) |
+> |---|---|
+> | create returns only the DocNo, line DtlKeys never come back | `AcSyncService.cs:200` returns `Ok(docNo, CreatedLines(...))`; `CreatedLines` (`:217-254`) selects `DtlKey, ItemCode, Desc2` per line. Persisted by `persistLineKeys` (`autocount-outbox.ts:1606-1708`) |
+> | `/edit` treats a keyless line as new and would APPEND a duplicate set of lines into the live book | Refused on BOTH sides. C#: `AcSyncService.cs:790-801` throws `REFUSED: line N ... carries no DtlKey and does not declare IsNewLine` before any detail is touched. ERP: `KeylessLineError` at `autocount-writeback.ts:683-698` |
+> | line retirement is an unbuilt owner decision | Shipped. `AcSyncService.cs:832-838`: `Retire` ⇒ `Qty = 0`, `Transferable = false`, `[ERP-CANCELLED]` on Desc2. ERP side sends it for cancelled and hard-deleted lines |
+> | a soft-cancel column is a prerequisite, because once the row is gone the ERP cannot say which line to zero | `retiredLineOf` (`autocount-outbox.ts:890-908`) reads `linked_ac_dtlkey` BEFORE the delete, in all six routers |
+> | zero runtime code paths call the write-back — not from `backend/src`, not from a cron | `index.ts:525` calls `drainAutoCountOutbox` on the `*/5` cron; enqueue hooks exist in all six routers |
+> | `AC_SYNC_URL` is commented out | `wrangler.toml:42` — active `[vars]` entry since 2026-08-11 |
+>
+> The §2 matrix is therefore wrong in the direction that matters: cells scored
+> **NOTHING** (SO edit, PO edit, DO/GR/SI/PI edit, SI/PI cancel) are BUILT.
+> `enqueueCancel` is called at `sales-invoices.ts:2385` and
+> `purchase-invoices.ts:1467`; all four downstream routers import and call
+> `enqueueEdit`. Both named §0 divergences are closed too: D10 by
+> `resolveAcItemCode` + `ItemCodeError`, D9 by `collapseSofaLines` +
+> `SofaCollapseError` (`autocount-writeback.ts:422-437`).
+>
+> **What is still true and load-bearing**: the DB toggle
+> `scm.autocount_writeback` is `'off'`, `AC_SYNC_KEY` is unset (so every call
+> would 401/503 — see the runbook step in `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md`),
+> divergence **D6** is real (`ItemCode` is applied only on the append branch,
+> `AcSyncService.cs:810`, never on `EditDetail` `:840-845`), partial-QUANTITY
+> transfer is still not expressible (`autocount-outbox.ts:727-731`), and there is
+> no live reconciliation sweep against the account book.
+>
+> Every `AcSyncService.cs` line number below past ~line 30 is stale by 150-450
+> lines. The service now serves NINE POST routes, not eight (`/ensure-masters`
+> at `:197`, with the whole `EnsureMasters` path at `:485-710`, is absent from
+> this document entirely).
+
 # ERP -> AutoCount sync: coverage, gaps, and the build plan
 
 > ## SUPERSEDED IN ITS CONCLUSIONS — read this box before you quote anything below

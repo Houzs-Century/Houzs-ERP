@@ -166,7 +166,7 @@ async function loadMyTasks(env: Env, userId: number, perms: string[], isStar: bo
               CAST((julianday(c.deadline_at) - julianday('now')) * 24 AS INTEGER) as hours_to_deadline
          FROM assr_cases c
         WHERE c.archived_at IS NULL
-          AND c.stage != 'completed'
+          AND c.stage NOT IN ('completed', 'voided')
           AND c.assigned_to = ?${companiesPred(allowedCo, "c.company_id")}
         ORDER BY
           CASE WHEN c.deadline_at IS NULL THEN 1 ELSE 0 END,
@@ -367,7 +367,7 @@ async function loadBlockers(env: Env, userId: number, perms: string[], isStar: b
               CAST(julianday('now') - julianday(c.deadline_at) AS INTEGER) as days_overdue
          FROM assr_cases c
         WHERE c.archived_at IS NULL
-          AND c.stage != 'completed'
+          AND c.stage NOT IN ('completed', 'voided')
           AND c.deadline_at IS NOT NULL
           AND datetime('now') > c.deadline_at
           AND (c.assigned_to = ? OR c.assigned_to IS NULL)${companiesPred(allowedCo, "c.company_id")}
@@ -451,7 +451,7 @@ async function loadBlockers(env: Env, userId: number, perms: string[], isStar: b
                 ) AS INTEGER) as days_in_stage
            FROM assr_cases c
           WHERE c.archived_at IS NULL
-            AND c.stage != 'completed'
+            AND c.stage NOT IN ('completed', 'voided')
             AND c.assigned_to = ?${companiesPred(allowedCo, "c.company_id")}
        )
        WHERE days_in_stage > 3

@@ -137,7 +137,7 @@ Removed with it: `useDeletePurchaseConsignmentOrder`, and the desktop
 "Permanently delete" button that appeared on `CANCELLED`.
 
 **What is NOT a violation and must stay** — the create-time rollback at
-`purchase-consignment-orders.ts:371`. supabase-js has no transaction, so that
+`purchase-consignment-orders.ts:384`. supabase-js has no transaction, so that
 compensating delete is the only thing standing between a failed line insert and
 a headerless orphan PC Order. It removes a document that never successfully
 existed.
@@ -174,14 +174,19 @@ Numbering: `PCO-YYMM-NNN`, minted by `mintMonthlyDocNo` +
 `insertWithDocNoRetry` — a unique-violation (23505) on `pc_number` re-derives the
 next free number instead of 500ing.
 
-Header dates `supplier_delivery_date_2/3/4` (mig 0181) are the supplier's
+Header dates `supplier_delivery_date_2/3/4` (shipped here by `0026_scm_supplier_delivery_dates.sql`, whose header names 2990's 0180+0181 as the source — corrected 2026-08-12; the live tree's own 0181 is unrelated localities) are the supplier's
 revised promises, kept alongside the original `expected_at`.
 
 Currencies: `MYR`, `RMB`, `USD`, `SGD`.
 
-Every read is company-scoped through `requireActiveCompanyId(c)` +
-`scopeToCompanyId(...)`, returning `NOT_THIS_COMPANY` (404) rather than leaking
-that the row exists in another company.
+Every read is company-scoped — but by TWO different mechanisms, and one of them
+was missing until 2026-08-13. The write and status paths use the strict
+`requireActiveCompanyId(c)` + `scopeToCompanyId(...)` pair, returning
+`NOT_THIS_COMPANY` (404). The reads use the softer `scopeToCompany(q, c)` and
+404 `not_found`. `GET /:id/linked` used neither: it was a bare `.eq('id', id)`,
+so it resolved ANY company's document to its linked document numbers. All seven
+`/:id/linked` endpoints across the SCM routers shared that gap and were scoped
+on 2026-08-13 (BUG-HISTORY). Verified by reading each handler, not by grep.
 
 ---
 

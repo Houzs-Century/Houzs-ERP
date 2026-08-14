@@ -1,3 +1,10 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. PO amendments ARE their own document now (document-flow.ts:993-1017, mig 0194): the graph returns a poAmendments array; §2.3's categorical sentence is retired.
+> 2. HOUZS mints HC- since owner 2026-08-07 (companyScope.ts:400-441); a headless context degrades to the BASE prefix, never “” — §2.6/§2.7's bare-on-base frame is stale (the DocumentLinesExpansion.tsx:174-177 tooltip drifted the same way).
+> 3. ACCESSORY lines on purchase-doc drill-downs render AccessoryAssignmentSummary, not chips, since 2026-08-04 (DocumentLinesExpansion.tsx:342-379,:636-651).
+> 4. “Immutable stored links” is wording-stale: all three so_item_id FKs are ON DELETE SET NULL (so-line-relink.ts:1-33; re-adopted in 0235:87,99); survives-delivery = Yes stands.
+
 # Module: Cross-document traceability display (SCM)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

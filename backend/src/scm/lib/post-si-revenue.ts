@@ -19,6 +19,10 @@ import { nextJeNo, jePrefixForCompany } from './doc-no';
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
   | { ok: true; status: 'already_posted'; jeNo: string; jeId: string }
+  /* Deliberately not posted, and that is a SUCCESS — see the migrated guard in
+     postSiRevenue. `ok: true` so no caller records a failure for a thing that
+     was never meant to post. */
+  | { ok: true; status: 'migrated_source' }
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 /* Every read below binds its `error`. supabase-js does NOT throw — a failed
@@ -64,10 +68,20 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
 
   const { data: si, error } = await sb
     .from('sales_invoices')
-    .select('invoice_number, invoice_date, debtor_code, debtor_name, total_centi, company_id')
+    .select('invoice_number, invoice_date, debtor_code, debtor_name, total_centi, company_id, migrated_no_stock')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !si) return { ok: false, status: 'invoice_not_found' };
+
+  /* MIGRATED PAPERWORK BOOKS NO REVENUE (migration 0280). This invoice mirrors
+     one AutoCount already raised, and AutoCount already booked the revenue and
+     the receivable. Posting Dr 1100 / Cr 4000 here would count the same sale in
+     two books — and because the SI auto-posts on create/confirm, the leak would
+     be immediate and silent. Guarding here rather than at the five call sites
+     means every path is covered by construction. */
+  if ((si as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) {
+    return { ok: true, status: 'migrated_source' };
+  }
   // Multi-company (mig 0061): the JE + lines belong to the SI's company.
   const companyId = (si as { company_id?: number | null }).company_id ?? null;
 

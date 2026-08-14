@@ -65,6 +65,80 @@ SELECT COUNT(*) FROM scm.purchase_order_items WHERE company_id = 1;
 
 ---
 
+## B2. Count LINES, not only documents (added 2026-08-10, after a miss)
+
+A document-count tally cannot see a document that arrived with some of its lines
+missing, and on 2026-08-10 that is exactly what had happened: `PO 407 = 407
+MISSING 0` while 35 AutoCount PO lines (60 ERP rows) had no row at all. Both PO
+importers are idempotent at DOCUMENT level, so a document created by an earlier
+run was skipped WHOLE by the later one and the lines the earlier run did not
+carry were never written. See `BUG-HISTORY.md`, top entry.
+
+So the tally now has a line altitude, and it is a script, not a query to run by
+hand:
+
+```
+node backend/scripts/check-cutover-completeness.mjs      # section 1b
+```
+
+The two rules it counts by, both of which are load-bearing:
+
+- **PO - one AutoCount line must have AT LEAST ONE ERP row.** A sofa line
+  decomposes into its compartments, everything else is one-for-one, so fewer
+  rows than lines proves rows are missing without the check having to predict
+  the piece count. Rows are claimed for an AutoCount `ItemCode` by
+  `supplier_sku` (the importers write the ItemCode there, and
+  `${ItemCode} ${compartment}` for a piece), falling back to `material_code` for
+  the ~225 migrated lines that carry no `supplier_sku` at all. Above both sits
+  `linked_ac_dtlkey` (migration 0273), used where a row has one and written onto
+  every row the top-up inserts — but never relied on alone, because it is
+  nullable and its backfill cannot reach a sofa compartment.
+  Rule in full: `backend/scripts/lib/po-line-topup-core.mjs`.
+- **SO - the denominator is the OUTSTANDING lines, not every line.** An imported
+  order holds the AutoCount lines where `Qty > TransferedQty`. SO-000013 is the
+  clearest read: 8 AutoCount lines, 7 fully transferred, exactly the 1
+  untransfered line in the ERP. Counting all 13,588 lines calls 243 lines missing
+  on 65 orders, and every one of them is a delivered line that was never meant to
+  come; against the 13,342 outstanding ones the gap is 1 line.
+
+Repair for what it finds on the PO side, DRY-RUN by default:
+
+```
+Actions -> "Top up missing AutoCount PO lines (line level)" -> target=prod, apply=0
+```
+
+It inserts only lines whose AutoCount ItemCode has ZERO rows on the document; an
+ItemCode with SOME rows is reported and left alone, because a half-written sofa
+build is just as likely a build somebody corrected by hand.
+
+### The received quantity: only ONE of the two exports can supply it per line
+
+`ac-outstanding-po.json.gz` carries `PODTL.TransferedQty`, which is per PO LINE.
+`ac-so-linked-pos.json.gz` carries `GrQty`, which is **aggregated on
+(DocNo + ItemCode)** — on a document holding two lines of one ItemCode, every
+line reports the DOCUMENT's total. Reading it per line put 65 production rows at
+`received_qty > qty` (`BUG-HISTORY.md`, top entry). The tell is in the file:
+59 lines carry `GrQty > Qty`, which is impossible for a single line, and all 59
+sit on a repeated-ItemCode group.
+
+So the tally treats a received quantity as UNKNOWN unless `TransferedQty` supplied
+it or the aggregate is exactly zero, and the top-up **withholds the whole family**
+rather than write a number nobody can stand behind — `received_qty` is
+`NOT NULL DEFAULT 0`, so there is no blank to write. Withheld rows are printed
+under `WITHHELD - no per-line received quantity in the export`, and they stay
+MISSING, which this same check keeps reporting. That is the intended trade: a
+missing row is visible and recoverable, an inflated one is a silent permanent
+negative outstanding.
+
+**To clear them properly, re-export with the per-line column** —
+`backend/scripts/data/autocount-refetch-so-linked-po.sql`, read-only, run on the
+AutoCount host against `AED_HOUZS`, then gzip over `ac-so-linked-pos.json.gz` and
+re-run the DRY-RUN. Note `GRDTL.FromDocDtlKey` is NULL in this book, so
+reconstructing a per-line figure from GR details is not an option;
+`PODTL.TransferedQty` is the only correct source.
+
+---
+
 ## C. Three-way reconciliation (must tie out before go-live)
 
 | check | rule |
