@@ -438,7 +438,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // upload/remove are server-written: routes/projects.ts:4235,:4318
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -559,7 +559,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
@@ -1781,7 +1781,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1959,7 +1959,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -3041,7 +3041,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -7010,7 +7010,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -7289,7 +7289,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -9680,12 +9680,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }
