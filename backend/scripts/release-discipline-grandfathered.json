@@ -81,8 +81,7 @@
       "rerun-note"
     ],
     "apply-variant-patch.mjs": [
-      "confirm-phrase",
-      "fresh-verify"
+      "confirm-phrase"
     ],
     "backfill-2990-delivered-dos.mjs": [
       "confirm-phrase",

@@ -1,3 +1,47 @@
+## Migrated purchase lines were priced by inference, and 318 item codes have a price that varies by PO [high]
+
+**Symptom.** 10,372 migrated purchase-order lines carried no unit price. The
+standing repair for that was to infer one — a MAX or a single cost per item
+code — which reads as reasonable and is wrong wherever the same product was
+bought twice at different prices.
+
+**Root cause, traced down the AutoCount document chain.** The cost was never
+missing; it was on a document the cutover never read. `PO --(GRDTL.FromDocNo)-->
+GR --(PIDTL.FromDocType='GR')--> PI`, and the purchase invoice is what was
+actually paid. `NB-NH39(A)(K)` alone was bought at RM1,760.00, RM1,680.00,
+RM1,500.00 and RM1,180.00 on four named invoices; 318 of 754 item codes vary the
+same way, so one cost per code cannot be right about more than one of them —
+MAX-by-item-code overstates PO-003645 by RM580 per unit.
+
+**Fix.** Read the invoice. `stamp-real-po-costs.mjs` prices a blank line from its
+OWN receipt's invoice and writes nothing anywhere else. The join is the
+three-part key (source document, ItemCode, Desc2) because AutoCount publishes no
+line-to-line key on this chain — `PIDTL.FromDocDtlKey` and `GRDTL.FromDocDtlKey`
+are both 0-populated. An AutoCount GR is a MULTI-PO receipt, so GR lines are
+narrowed by `FromDocNo = our PO` before a price is read; without that narrowing
+the script imports another PO's price, silently.
+
+**What it refuses to do, which is the finding.** It does not write
+`inventory_lots.unit_cost_sen`. Measured on the committed extract: of 315
+zero-cost cutover layers, 289 have an own-receipt invoice that ALSO says 0.00, 23
+have no receipt at all, and 3 resolve to a real price. Reading the invoice
+cannot cost those layers, and the only way to put a number on them is to borrow
+one from a different document — the inference this lane exists to replace. A
+blank is visible; a plausible wrong number is silent forever.
+
+**Control.** On the 7,529 lines that already carried a price the invoice agrees
+with 7,396 (98.2%); the 133 that differ are order-to-invoice price changes, where
+the invoice is the truth for costing.
+
+**Also fixed here (2026-08-14).** The script wrote on `APPLY=1` alone with no
+CONFIRM phrase, no re-read on a fresh connection, and no stated re-run behaviour
+— `audit:release-discipline`, inside the required `backend-typecheck` check,
+failed on all three. `stamp-real-po-costs.yml` had been passing `CONFIRM` through
+since it was written and nothing read it. It now refuses without the phrase and
+verifies every priced line on a SECOND connection, asserting the VALUE and its
+type rather than a row count.
+
+**Ref** — 2026-08-14, PR #1969 `fix/real-po-costs-from-invoice`. No migration.
 ## The sofa engine billed a part-ringgit price rounded to the nearest ringgit [high]
 
 **Symptom.** Nobody reported it, because the amount is cents and the invoice
@@ -5716,6 +5760,70 @@ carries any of them in `variants.specials` (SO migrated 0, SO live 0, PO
 migrated 0, PO live 0). The same run states the old asymmetry in money: REAL
 SELLING exposure 0 sen against REAL COST exposure 755,000 sen on all 27
 candidate lines - the margin moved and the price never did.
+
+## The last variant writer merging jsonb in JavaScript, with no shape guard and no read-back [med]
+
+**Symptom** - none observed. `apply-variant-patch.mjs` is the reviewed
+hand-patch escape hatch: a human or AI reads a Desc2 the regex parser cannot,
+and the patch arrives gzip+base64 through a workflow input. Every other script
+in this family had been brought up to the COE standard after the colour sweep
+destroyed `variants` three times in an afternoon; this one had not, and it was
+found by audit rather than by damage.
+
+**Root cause (traced, not guessed)** - it merged the column in JavaScript:
+
+```js
+const [row] = await sql`SELECT variants FROM scm.mfg_sales_order_items WHERE id = ${p.id}`;
+const v = { ...(row.variants || {}), ...(p.variants || {}) };
+await sql`UPDATE scm.mfg_sales_order_items SET variants = ${sql.json(v)}, ... WHERE id = ${p.id}`;
+```
+
+That is correct on KEY PRESERVATION, which is why it never surfaced as the
+"refresh scripts REPLACE the whole variants jsonb" bug - the spread carries every
+key forward. It fails on the two things `docs/jsonb-double-encoding-coe.md` is
+actually about:
+
+1. **No shape guard.** Spreading a `variants` that is an ARRAY - the shape the
+   double-encoding defect leaves behind, and which #1938's repair owns - yields
+   `{"0": {...}, "1": "a stringified patch"}`. That is a *valid object*. The
+   write would have converted a row `jsonb_typeof` can detect as damaged into
+   one nothing can detect, silently, while reporting success.
+2. **No RETURNING and no read-back.** `nItems++` counted attempts, not rows. The
+   colour sweep reported `APPLIED - stamped 146 sofa lines` three times while
+   appending a string to an array, because a command tag answers "did a row
+   change", never "does the row hold what I meant".
+
+It also held a read-modify-write window between the SELECT and the UPDATE in
+which a concurrent writer's key could be read, forgotten and overwritten.
+
+**Fix** - the write moved into the database.
+`lib/variant-merge.mjs` gained `mergeReviewedVariantPatch`, a sibling of the
+sweep primitive with the same protections and a deliberately different contract:
+arbitrary keys are allowed (the patch IS the reviewed artifact - constraining it
+to `OWNED_VARIANT_KEYS` would stop the escape hatch setting `seatHeight` or the
+picker's `special`, the very fields it exists for), and geometry uses `COALESCE`
+so a patch that says nothing about `gap` leaves gap alone. Guarded on
+`jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'`, bound with
+`db.json(patch)`, counted from `RETURNING`, and every patched key re-read on a
+FRESH CONNECTION before the script reports success - it exits non-zero if any
+row does not hold the value that was written. `variants` is never read into
+JavaScript any more.
+
+Pinned by `tests/variantRefreshOwnedKeys.test.ts` (the script routes through the
+library; no JS-side spread; no `SELECT variants`; a read-back exists) and by
+`tests-pg/variantMergePreservesKeys.pg.test.ts` against a real postgres:16 (an
+unowned key lands, untouched keys survive, an omitted geometry axis is not
+nulled, and an array- or string-shaped column is REFUSED rather than coerced).
+The stringified-bind assertion could not reuse the sweeps' blanket
+`not.toContain('JSON.stringify')` - this script uses it legitimately in log
+lines - so the test scans postgres.js TAGGED TEMPLATE bodies only, which is the
+invariant that actually matters.
+
+**Lesson** - "correct on key preservation" is not the same as "safe to write".
+The three COE protections are independent, and a script can pass the one the
+last incident was about while failing the two it was not.
+
+**Ref** - 2026-08-11, PR #1970 (chore/po-variant-text-check).
 
 ## A fabric code was read as a bed height, because a measurement rule had no left boundary [high]
 
