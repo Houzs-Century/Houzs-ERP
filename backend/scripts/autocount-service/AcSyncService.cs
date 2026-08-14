@@ -484,11 +484,28 @@ class AcSyncService {
        a debtor's credit limit is Finance's, not the sync's, and overwriting one
        from an ERP field would be a silent business change. Existing masters are
        reported as `existed` and left exactly as they are.
-     - It never creates a LOCATION. A new warehouse is a real business decision
-       with stock consequences; a create that names an unknown one is refused on
-       the ERP side instead (MissingLocationError).
+     - It never creates a UDF LIST. An unknown list NAME is a spelling mistake
+       on our side, not a missing option, and inventing the list would hide it.
+       An OPTION on a list that exists is appended (read-modify-write, below).
      - Everything it creates is stamped in Desc2/Description so Finance can find
-       them: an auto-opened master is a thing to review, not a thing to hide. */
+       them: an auto-opened master is a thing to review, not a thing to hide.
+
+     WHAT IT DOES DO, AND THIS COMMENT USED TO DENY IT: it CREATES A LOCATION.
+     The Locations loop below calls lm.SaveLocation(e) and logs
+     "ensure-masters CREATED location". The bullet that stood here said the
+     opposite — "It never creates a LOCATION ... refused on the ERP side
+     instead (MissingLocationError)" — and was already false when it was
+     written: the code is newer than the comment, MissingLocationError refuses
+     only a line with NO location at all, and a warehouse code the book has
+     never held is passed through raw and opened. Corrected 2026-08-14 (audit
+     finding 12); the owner's decision on 2026-08-11 was "开everything", and the
+     module guide records it, so the CODE was right and this text was the lie.
+     The consequence is real and stays visible rather than being hidden here:
+     19 of 25 scm.warehouses codes are in neither LOCATION_MAP nor the book's
+     location list (measured 2026-08-14), so the first document naming one opens
+     a new stock location in a licensed book. A location is created EMPTY — a
+     code and a description — so everything a warehouse really needs stays for a
+     human. */
   static Dictionary<string, object> EnsureMasters(Dictionary<string, object> p) {
     var s = Session();
     var created = new List<string>();
