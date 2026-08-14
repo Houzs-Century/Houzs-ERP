@@ -48,6 +48,63 @@ export interface SofaModuleLineSpec {
   rot: number | null;
 }
 
+/**
+ * Split a BUILD-level line discount across the build's module rows.
+ *
+ * WHY THIS IS NOT JUST distributeProportionally. A sofa line's discount is
+ * validated against the WHOLE BUILD's unit price, then the build is written as
+ * one row per module. Putting the whole discount on module 0 drove that row's
+ * total negative, and every downstream document clamps with
+ * `Math.max(0, qty * unit - discount)` — so the discount was silently DELETED
+ * and the customer was invoiced MORE than the order (see
+ * tests/sofaBuildDiscountSplit.test.ts for the traced case).
+ *
+ * Proportional shares fix that, ALMOST. distributeProportionally floors every
+ * share and drops the rounding residue on the LAST entry, so at the very top of
+ * the allowed discount range that last share can exceed its own module's
+ * capacity by a few sen — which puts the row negative again, by 1 sen instead of
+ * by RM1,000. A test caught exactly that; this function is the repair.
+ *
+ * Guarantees, both asserted in the test:
+ *   · Σ shares === the discount (so the header total, computed BEFORE the split,
+ *     still equals the sum of the module rows)
+ *   · shares[i] <= qty * unitPricesSen[i] for every i — the same invariant the
+ *     SO's item PATCH enforces on edit, so a created row can also be edited
+ *
+ * If the discount genuinely exceeds the whole build (the caller's gate should
+ * have refused it), the shares are capped at capacity and the remainder is
+ * DROPPED rather than pushed negative: a discount that cannot be represented is
+ * not silently turned into a negative line.
+ */
+export function distributeBuildDiscount(
+  discountSen: number,
+  qty: number,
+  unitPricesSen: number[],
+): number[] {
+  const n = unitPricesSen.length;
+  if (n === 0) return [];
+  const cap = unitPricesSen.map((u) => Math.max(0, Math.floor(qty * (Number.isFinite(u) ? u : 0))));
+  const want = Number.isFinite(discountSen) ? Math.max(0, Math.floor(discountSen)) : 0;
+
+  const shares = distributeProportionally(want, cap.slice());
+
+  // Pull anything above a module's own capacity back, then re-home it on the
+  // modules that still have room. Left to right; exact by construction.
+  let excess = 0;
+  for (let i = 0; i < n; i++) {
+    const over = shares[i]! - cap[i]!;
+    if (over > 0) { shares[i] = cap[i]!; excess += over; }
+  }
+  for (let i = 0; i < n && excess > 0; i++) {
+    const room = cap[i]! - shares[i]!;
+    if (room <= 0) continue;
+    const take = Math.min(room, excess);
+    shares[i] = shares[i]! + take;
+    excess -= take;
+  }
+  return shares;
+}
+
 /** Distribute `totalSen` across `weights` proportionally; floor each share and
  *  put the rounding residue on the LAST entry (D3), so the sum is exact.
  *  All-zero weights → equal split. Negative totals distribute symmetrically. */

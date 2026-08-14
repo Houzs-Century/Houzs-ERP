@@ -353,10 +353,20 @@ export async function recostFromGrn(sb: any, grnId: string) {
     type Agg = { qty: number; amt: number };
     const byLotKey = new Map<string, Agg>();   // code::variant::batch — the lot's identity
     const byCoarse = new Map<string, Agg>();   // code::variant — pre-0120 fallback
+    /* `amt` is a TOTAL, so callers may hand it one directly instead of a
+       per-unit figure multiplied back up. That distinction is the whole of the
+       freight fix below: rounding a charge to sen-per-unit and then multiplying
+       by qty does not conserve the charge. */
     const addTo = (m: Map<string, Agg>, key: string, qty: number, landed: number) => {
       const a = m.get(key) ?? { qty: 0, amt: 0 };
       a.qty += qty;
       a.amt += qty * landed;
+      m.set(key, a);
+    };
+    const addTotal = (m: Map<string, Agg>, key: string, qty: number, amt: number) => {
+      const a = m.get(key) ?? { qty: 0, amt: 0 };
+      a.qty += qty;
+      a.amt += amt;
       m.set(key, a);
     };
     for (const g of giList) {
@@ -380,13 +390,22 @@ export async function recostFromGrn(sb: any, grnId: string) {
       if (goods === null) continue; // Pending — no price anywhere yet; leave the lot alone.
       /* GRN-allocated freight + PI-allocated freight, each folded in per unit over
          the RECEIVED qty (the lot's qty) so the lot carries the whole charge once. */
-      const freight = qty > 0
-        ? Math.round(Number(g.allocated_charge_centi ?? 0) / qty)
-          + Math.round((piFreightByGrnItem.get(g.id) ?? 0) / qty)
-        : 0;
-      const landed = goods + freight;
-      addTo(byLotKey, `${g.material_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, landed);
-      addTo(byCoarse, `${g.material_code}::${vkey}`, qty, landed);
+      /* THE CHARGE IS ADDED AS A TOTAL, not as a rounded per-unit figure.
+         It used to be `Math.round(charge / qty)` per source, and the aggregate
+         then multiplied that back by qty — so 50 sen spread over 100 units
+         became round(0.5) = 1 sen/unit = 100 sen capitalised against a 50-sen
+         allocation. Twice the charge, from rounding alone, once per source.
+
+         allocateLandedCharges guarantees Σ allocatedChargeCenti === the charge
+         pool EXACTLY (lib/landed-allocation.ts:116-137, running remainder plus a
+         lastPositiveIdx guard). Rounding it per unit threw that exactness away
+         at the last step. Adding the charge whole and letting the aggregate
+         divide ONCE preserves it; the goods half still enters per-unit, which is
+         what it is. */
+      const freightTotal = Number(g.allocated_charge_centi ?? 0) + (piFreightByGrnItem.get(g.id) ?? 0);
+      const amt = qty * goods + freightTotal;
+      addTotal(byLotKey, `${g.material_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, amt);
+      addTotal(byCoarse, `${g.material_code}::${vkey}`, qty, amt);
     }
     const resolve = (a: Agg | undefined): number | null =>
       a && a.qty > 0 ? Math.round(a.amt / a.qty) : null;

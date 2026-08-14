@@ -1469,6 +1469,26 @@ export const SalesOrderNew = () => {
        confirm means "this is a real order", proceed means "this is
        buildable". Save as Draft was never gated either way. */
     if (processingDate) {
+      /* Delivery completeness is the SAME proceed rule, and the server has
+         enforced it on procDate alone since 2026-07-31 (so-save-problems.ts).
+         Check it HERE too, or a blank address — or "Fill in address later" left
+         ticked, which BLANKS the address out of the payload — comes back as a
+         bare validation_failed naming no field. */
+      const addrMissing = [
+        !debtorName.trim() ? 'customer name' : null,
+        fillAddressLater || !address1.trim() ? 'address line 1' : null,
+        fillAddressLater || !postcode.trim() ? 'postcode' : null,
+        !deliveryDate.trim() ? 'delivery date' : null,
+      ].filter(Boolean) as string[];
+      if (addrMissing.length > 0) {
+        notify({
+          title: 'A Processing Date means this order is proceeding, so it needs a delivery address.',
+          body: `Still missing: ${addrMissing.join(', ')}.`
+            + (fillAddressLater ? '\n\nUntick "Fill in address later" to enter it.' : ''),
+          tone: 'error',
+        });
+        return;
+      }
       const missOf = (l: SoLineDraft): string[] =>
         missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
       const variantGaps = validLines

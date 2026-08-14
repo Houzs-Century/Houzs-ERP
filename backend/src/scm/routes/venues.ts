@@ -109,6 +109,11 @@ venues.get("/", async (c) => {
 // so the POS's inline "add venue" never trips the unique constraint. Accepts the
 // 2990 `address` field (mapped to `notes`) as well as native `notes`/`state`.
 venues.post("/", async (c) => {
+  /* company-scope: the reactivate branch UPDATEs by the id of a row found by the
+     lookup above, which carries activeCompanySql(c); the INSERT branch stamps
+     company_id explicitly. Both scoped — the checker anchors its window at the
+     .prepare( line and cannot see a predicate composed above it.
+     Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try {
     body = (await c.req.json()) as Record<string, unknown>;

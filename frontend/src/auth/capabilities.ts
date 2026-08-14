@@ -124,11 +124,3 @@ export function useCapability(key: CapabilityKey): boolean {
   return capability(user, key);
 }
 
-/**
- * Hook form of {@link capabilitiesUnresolved} — for the one or two places that
- * render the "could not load permissions" message.
- */
-export function useCapabilitiesUnresolved(): boolean {
-  const { user } = useAuth();
-  return capabilitiesUnresolved(user);
-}

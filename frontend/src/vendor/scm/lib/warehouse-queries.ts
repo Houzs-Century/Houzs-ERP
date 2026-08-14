@@ -11,6 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type RackStatus = 'OCCUPIED' | 'EMPTY' | 'RESERVED';
@@ -206,6 +207,7 @@ export function useTransfer() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse'] }),
+    onError: writeFailedAs('Rack transfer not saved'),
   });
 }
 

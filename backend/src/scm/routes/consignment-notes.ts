@@ -856,8 +856,14 @@ consignmentNotes.post('/:id/items', async (c) => {
   await recomputeTotals(sb, id);
   /* Reconcile inventory for the added line — resync writes the new line's OUT
      when the note has already shipped, and is a no-op otherwise. Idempotent. */
-  try { await resyncNoteInventory(sb, id, user?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, user?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ item: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) }, 201);
 });
 
 consignmentNotes.patch('/:id/items/:itemId', async (c) => {
@@ -926,8 +932,14 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   /* Adjust inventory by the qty/variant delta (no-op until shipped). */
-  try { await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 consignmentNotes.delete('/:id/items/:itemId', async (c) => {
@@ -944,8 +956,14 @@ consignmentNotes.delete('/:id/items/:itemId', async (c) => {
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
   await recomputeTotals(sb, id);
   /* Give the deleted line's stock back (no-op until shipped). */
-  try { await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 // ── Payments (mirror DO payments ledger) ──────────────────────────────────
@@ -1092,10 +1110,19 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   /* Inventory ledger — one self-healing resync covers BOTH the ship-out (first
      transition into a shipped state writes the CS_DO OUT) and the cancel (status
      CANCELLED drives every bucket's net back to 0). Idempotent + best-effort. */
+  // Hoisted: the response is OUTSIDE this block, so a block-scoped
+  // declaration would leave the cancel path unable to report.
+  let resyncErrs: string[] = [];
   if (SHIPPED_STATES.includes(body.status) || body.status === 'CANCELLED') {
-    try { await resyncNoteInventory(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+    movementErrors; these mutations threw it away, so a resync that failed to
+    book or drain stock returned a clean 200. writeMovements never throws, so
+    the catch caught nothing either. */
+    resyncErrs = [];
+    try { resyncErrs = await resyncNoteInventory(sb, id, user.id); }
+    catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   }
 
-  return c.json({ consignmentNote: data });
+    return c.json({ consignmentNote: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 };
 consignmentNotes.patch('/:id/status', patchConsignmentNoteStatusHandler);

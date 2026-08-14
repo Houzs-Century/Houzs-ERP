@@ -258,3 +258,44 @@ describe('soConfirmProblemsForDoc', () => {
     expect(codes(problems)).not.toContain('so_line_not_catalog');
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONFIRM DOES NOT CHECK VARIANTS — owner ruling, PR #2072 (2026-08-13):
+   "variant completeness is the PROCEED rule, and only the proceed rule."
+
+   Worth recording because this branch briefly went the OTHER way. Auditing a
+   tree eight commits behind origin/main, I found this gate computing a line's
+   itemCode and not passing it to missingConfirmVariantAxes — which killed the
+   DIVAN ONLY (2026-08-09) and electric/pull-out bed (2026-08-10) exemptions —
+   and fixed the argument. Upstream had answered the same question better on the
+   same day by deleting the check outright. The merge took upstream.
+
+   The rule is now enforced by the TYPE, not by a test: SoConfirmLineFacts
+   carries itemCode / group / lineNo / description and NO `variants` field at
+   all, so this gate cannot read one. That is a stronger guarantee than any
+   assertion here could make, and it is why the cases below only pin what the
+   gate DOES do. The variant requirement still exists where it belongs, gated on
+   the Processing Date (lib/so-variant-check.ts), and that gate does pass
+   itemCode — so the exemptions live.
+   ═══════════════════════════════════════════════════════════════════════════ */
+describe('confirm gate — what it does and does not police', () => {
+  const base = { salespersonId: 'staff-1', agent: null, venue: 'PJ Showroom', venueId: null };
+  const confirmOf = (lines: Array<Record<string, unknown>>) =>
+    collectSoConfirmProblems({ ...base, lines } as unknown as Parameters<typeof collectSoConfirmProblems>[0]);
+
+  it('an ordinary bedframe confirms — variants are not this gate\'s business', () => {
+    expect(confirmOf([{ itemCode: 'Y103-(Q)', group: 'bedframe' }])).toEqual([]);
+  });
+
+  it('a DIVAN ONLY line confirms', () => {
+    expect(confirmOf([{ itemCode: 'AKEMI DIVAN ONLY (Q)', group: 'bedframe' }])).toEqual([]);
+  });
+
+  it('an ADJUSTABLE (electric) bed confirms', () => {
+    expect(confirmOf([{ itemCode: 'TRION ADJUSTABLE (KING)', group: 'bedframe' }])).toEqual([]);
+  });
+
+  it('it still refuses a product-less line — that IS its job', () => {
+    expect(confirmOf([{ itemCode: '', group: 'bedframe', lineNo: 1 }]).length).toBeGreaterThan(0);
+  });
+});

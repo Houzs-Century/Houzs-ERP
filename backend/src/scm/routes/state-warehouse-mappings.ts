@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { canWriteScmConfig } from '../lib/houzs-perms';
 
 export const stateWarehouseMappings = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -52,6 +53,14 @@ stateWarehouseMappings.get('/', async (c) => {
 
 // PUT /:state — upsert. Body: { warehouseId, notes }.
 stateWarehouseMappings.put('/:state', async (c) => {
+  /* GATED. Both writes had NO permission check - only supabaseAuth - and the
+     router is mounted bare, so no area guard runs. Any caller who passes
+     requireScmAccess could repoint which warehouse an ENTIRE STATE ships from,
+     or clear the mapping. Same class as the localities writes fixed alongside
+     this; every other config writer in the SCM tree gates on canWriteScmConfig. */
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to change state routing." }, 403);
+  }
   const state = c.req.param('state');
   if (!state) return c.json({ error: 'state_required' }, 400);
 
@@ -82,6 +91,9 @@ stateWarehouseMappings.put('/:state', async (c) => {
 
 // DELETE /:state — clear mapping.
 stateWarehouseMappings.delete('/:state', async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to change state routing." }, 403);
+  }
   const state = c.req.param('state');
   if (!state) return c.json({ error: 'state_required' }, 400);
   const sb = c.get('supabase');

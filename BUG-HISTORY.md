@@ -1,3 +1,715 @@
+## The migration tool could only ever reach production [medium]
+
+**Symptom.** None visible, and that is the point. `pg-migrate.mjs` appeared to
+work, because the only database anyone ever pointed it at was the one it could
+reach.
+
+**Root cause.** `pg-migrate.mjs:48` opened its connection with `ssl: "require"`
+hardcoded. Correct for production — Supabase through Hyperdrive — and fatal
+against any local PostgreSQL, which serves no TLS: the script dies in **0.059s**
+with `Client network socket disconnected before secure TLS connection was
+established`, inside `loadAppliedMigrationRows`, before reading a single
+migration file.
+
+**Why it matters more than a developer-convenience bug.** It means a migration
+could not be applied anywhere except production, so the first real database any
+migration ever met was the production one, during a deploy. That is exactly how
+mig 0290 stopped the backend release on 2026-08-14
+(`docs/migration-gate-coe.md`).
+
+**Fix.** `backend/scripts/lib/pg-ssl-mode.mjs` — TLS required for everything
+except the two loopback names spelled exactly, failing CLOSED on an unparseable
+URL, an empty string, `undefined`, or a number. Keyed on the hostname rather than
+an env var on purpose: a hostname comes from the target itself, so it cannot be
+switched on by ambient configuration, whereas a stray `PGSSL=disable` in the
+wrong environment file would silently downgrade a production connection. Against
+the real DSN the value is `'require'` — byte-identical to the old behaviour.
+
+**Test.** `backend/tests/pgSslMode.node.mjs`, wired into `test:scale-contract`.
+The cases that carry the weight are the near-misses, all of which must still
+require TLS: `localhost.evil.com`, `notlocalhost`, `127.0.0.1.evil.com`,
+`127.0.0.2`, and a production host carrying `?host=localhost`. A hostname is
+compared whole, never by prefix or suffix.
+
+**Ref.** 2026-08-14. Found by building a CI gate that turned out not to work; the
+gate is ruled out in the COE, this fix outlived it.
+
+## A view migration written against the wrong baseline stopped the production deploy [high]
+
+**Symptom.** PR #2140 merged green and the backend never shipped. The Deploy run
+concluded `failure` with `pg-migrate` red and the wrangler step **skipped**, so
+production kept serving the previous Worker while `main` looked healthy. Every
+migration after this one was queued behind it.
+
+```
+FAILED 0290_scm_gl_keep_reversed_originals.sql:
+cannot change name of view column "line_id" to "journal_entry_id"
+```
+
+**Root cause — the migration was written against an OLD definition of the view.**
+`scm.v_gl_entries` is defined by mig 0106 and opens `l.id AS line_id`. The new
+migration opened `j.id AS journal_entry_id` and inserted its two new columns
+BEFORE `company_id`. `CREATE OR REPLACE VIEW` allows neither: existing column
+names, types and ORDER must match exactly, and new columns may only be APPENDED.
+The file's own header asserted "ordering, company_id and every existing column
+are untouched" — a claim about a database, made without one.
+
+**Why nothing caught it.** The pg suite applies the specific migrations a test
+names, and no test named this one — two of the five migrations in that PR had pg
+tests, the view did not. `tests/setup.ts` replays a different tree entirely
+(`src/db/migrations/`, the D1 mirror), and SQLite does not enforce this rule.
+**Nothing anywhere replays `migrations-pg/` in order against a real Postgres**,
+so a rule only PostgreSQL enforces had no gate in front of it.
+
+**Fix.** Match mig 0106's column list exactly for the first 18 columns and append
+`reversed` / `reversed_by_je` after `company_id`; the WHERE change that the
+migration is actually for is unaffected. Verified mechanically: the first 18
+columns now diff clean against 0106.
+
+**The repair NOT taken, deliberately.** `DROP VIEW` + `CREATE VIEW` also fixes
+the error and is the obvious move. It is wrong: a recreated view is a NEW object
+with an EMPTY ACL — this is how mig 0189 took the production Sales Order list
+down for every user and needed both 0190 and 0191 to restore the grants. Keeping
+it a REPLACE never drops a privilege.
+
+**Test attached** — `backend/tests-pg/glViewKeepsReversed.pg.test.ts`. It builds
+mig 0106's view as its FIXTURE and applies the migration on top, which is the
+only arrangement that can catch this class; a test that built the view from the
+migration's own SQL would have passed while production failed. It also asserts
+the fixture still reproduces the original bug, so the suite cannot pass
+vacuously.
+
+**Ref.** 2026-08-14, after PR #2140. Lesson, and it is the one this file keeps
+re-learning: **a migration that edits an existing object must be written against
+what is LIVE, not against the migration that first created it** — and a claim
+about what a database will accept is not evidence until a database has accepted
+it.
+
+## Three gates gave a different verdict on Windows than on Linux, and one of them hid a real defect [medium]
+
+**Symptom.** `npm --prefix backend run audit:jsonb-binds`, `audit:swallowed-reads`
+and `audit:test-schema` all failed on a Windows checkout of a tree whose Linux CI
+was green. The test-schema one was the most misleading: it said "regenerate", and
+regenerating produced a byte-identical file that `git diff` reported as unchanged.
+
+**Root cause — the platform's own separators, in three places.** Each gate
+compares something it builds at runtime against something committed, and each
+comparison was written on Linux where the two forms coincide.
+
+- `check-jsonb-binds.mjs:80` keyed its ALLOWLIST on `relative(REPO, file)`, which
+  returns `backend\scripts\...` on Windows against a list written
+  `backend/scripts/...`. No key ever matched, so the one deliberately allowed
+  site was reported as a finding.
+- `check-swallowed-reads.mjs:55` had the same bug against
+  `swallowed-read-baseline.json`, whose 126 keys are posix because CI writes
+  them. Every per-file ceiling lookup missed, so the ratchet reported the whole
+  tree as 153 NEW sites.
+- `gen-test-schema-snapshot.mjs:324` compared file text with `!==`. Git hands a
+  Windows checkout CRLF; the generator always builds LF.
+
+**Why the middle one mattered.** A ratchet that reports everything as new is not
+merely noisy — it is unreadable, and an unreadable gate gets waved through. Under
+those 153 phantom findings sat a REAL one: this branch had added 21 reads shaped
+`const { data: own } = await <query>` with no `error` bound, in the very company-scope
+guards it was adding. supabase-js does not throw, so on a database failure `own` is
+undefined and the guard answers `404 not_found` — reporting an outage as "this
+document does not exist". Fixing the path bug is what made that visible.
+
+**Fix.** Normalise before comparing: `.split(sep).join('/')` on both scanners,
+and an `eol()` that strips `
+` before the snapshot comparison. Then bind
+`error` at all 21 sites and return `500 lookup_failed` so a failed read can never
+be read as an absent row.
+
+**Ref.** PR #2140, 2026-08-14. Same family as the `#!` shebang trap and the CRLF
+test anchors already in this file: **a gate that only runs green on CI's platform
+is a gate the person doing the work cannot use.**
+
+## A restricted salesperson could re-price, re-pay and cancel ANY consignment order [high]
+
+**Symptom.** None until someone noticed a document had changed. Consignment
+order doc numbers are enumerable, so a scoped rep with a doc_no could PATCH the
+header, override a line price, add or delete a payment, or cancel the order
+outright — on an order belonging to a rep they have no relationship with.
+
+**Root cause — the reads were guarded and the writes were not.** `GET /:docNo`,
+`/audit-log` and `/payments` all ran `salesDocOutOfScope`. Every one of the TEN
+write verbs had COMPANY scope only. So the module correctly refused to SHOW a
+rep an order outside their scope, and cheerfully let them WRITE to it.
+
+**This is the second time.** `mfg-sales-orders.ts:806` fixed exactly this on the
+Sales Order on 2026-07-22, in these words: *"a scoped salesperson could PATCH /
+delete / repay / reassign ANY SO by enumerable doc_no"*, covering *"all four SO
+payment verbs, which WRITE money"*. The consignment order is described in-repo
+as an SO clone — the clone did not inherit the fix, because a fix applied to one
+file is not applied to its copy.
+
+**Fix.** `selfScopedConsignmentBlocked`, a direct mirror of the SO's
+`selfScopedSalesBlocked`: company checked FIRST and for everyone (view-all
+included, via the degrading three-state sentinel), salesperson checked second
+and only for the self-scoped tier, same refusal body byte for byte. It scopes
+the LOAD, not a stamp. Company scope was ADDED TO, never replaced. The guard
+sits ahead of `coHasDownstream` in every verb so an authorization refusal is
+never dressed up as a 409 `co_has_downstream` — the SO's own 2026-07-22 lesson,
+now pinned by a test.
+
+27 tests across three layers, including a STRUCTURAL sweep of the route source
+so a write verb added later cannot skip the guard and the create's exemption
+must be documented to pass. Non-vacuity proved twice by reverting individual
+guards.
+
+**Deliberately NOT fixed, and written into the source rather than skipped:** the
+CO create takes `body.salespersonId` VERBATIM, while the SO gates it on
+`scm.so.attribute_other` and overrides a self-scoped caller's pick. So a scoped
+rep can still book a NEW consignment order under another rep's name. That
+changes who gets paid, it is a different control from row scope, and the owner's
+ruling was about reaching an EXISTING order — so it is his call, not the fix's.
+
+**Lesson.** When a module is a clone, its bug ledger is shared whether anyone
+says so or not. Fixing a rule in the original and not grepping for its twin is
+how the same defect ships twice — and `check-shared-mirrors` only refereed
+`shared/` rule modules, not two route files that are copies of each other.
+
+**Ref.** the SO's fix 2026-07-22, this one 2026-08-13.
+
+## The backend said the stock write failed; the screen said "Stock OUT recorded." [high]
+
+**Symptom.** A purchase return is created, the inventory movement is refused at
+the database, and the operator is told it worked. The stock never left, the
+paperwork says it did, and nobody finds out until someone counts.
+
+**Root cause — a 200 that CARRIES a failure, and nobody reads the payload.**
+`POST /purchase-returns` has returned `movementErrors` since it was written.
+`useCreatePurchaseReturn` typed the response as `{id, returnNumber}` and
+`PurchaseReturnNew.tsx` announced "Stock OUT recorded." unconditionally. The
+backend was doing its half correctly for months; the field simply had no reader.
+
+The three LINE verbs were worse: `writePrLineDeltaMovement` returned `void`, so
+they discarded a failure they already knew about. `DELETE` answered **204**,
+which has no body and cannot carry the error at all — while every sibling
+line-delete (`consignment-notes`, `consignment-returns`, `delivery-returns`)
+already answered `200 {ok, movementErrors?}`.
+
+**This is a class, not one bug.** Eight backend route files return
+`movementErrors`; before this fix, THREE frontend files read it — and one of
+those three is a mobile wizard. The rest of the surface throws the field away.
+
+**It is also invisible to the checker built for exactly this problem.**
+`check-silent-mutations.mjs` asks whether a mutation handles a REJECTION. These
+mutations resolve: HTTP 200, no exception, `onError` never fires. The failure
+rides *inside* a success. A different shape needs a different check.
+
+**Fix.** `writePrLineDeltaMovement` now returns `string[]` in the create path's
+exact shape; all three verbs return it; `DELETE` moves 204 -> `200 {ok,
+movementErrors?}` because a status with no body cannot report anything. A
+`RECOUNT_FAILED` audit row lands too, matching the shape `grns.ts` and
+`delivery-orders-mfg.ts` already use. The write still COMMITS — an edit must not
+be rolled back for a ledger hiccup — but it is now loud. Frontend: one shared
+`reportMovementErrors` helper in the hook layer so desktop and mobile cannot
+drift apart, and `PurchaseReturnNew.tsx` stops claiming success the response
+contradicts.
+
+**Stated honestly: today's operator-visible change is the CREATE path only.**
+The desktop detail page has no line editor (`useUpdatePurchaseReturnItem` and
+`useDeletePurchaseReturnItem` have zero consumers, and the Edit button
+navigates to an `?edit=1` param the page never reads), and mobile renders
+purchase returns read-only. The line verbs are API-only; the wiring is what a
+future editor inherits.
+
+**Lesson.** Returning an error field is half a feature. A repo-wide grep for the
+field's READERS is the other half, and it takes ten seconds. When a response
+shape says "this may have failed", something has to be looking.
+
+**Ref.** 2026-08-13, owner decision ("要,和创建路径一致").
+
+## A payment recorded in one company moved the OTHER company's invoice [high]
+
+**Symptom.** None at the keyboard, which is why seven of these survived. An
+operator with company A active opens company B's invoice by id and records a
+payment. The payment row is filed under **A**. `recomputePaid` then moves **B's**
+`paid_centi` and flips B's AR status SENT -> PARTIALLY_PAID -> PAID. Both books
+are now wrong and neither shows an error.
+
+**Root cause — A STAMP IS NOT A PREDICATE.** Every one of these handlers read a
+document BY ID with no company predicate and then wrote a child row stamped with
+the ACTIVE company:
+
+```ts
+const { data: si } = await sb.from('sales_invoices').select(...).eq('id', id).maybeSingle();
+...
+await sb.from('sales_invoice_payments').insert({ company_id: activeCompanyId(c), ... })
+//                                               ^ this is a STAMP, not a check
+```
+
+The stamp is what makes it silent: the row looks correctly attributed while
+sitting on the wrong parent. `sales-invoices.ts:2068` carried a comment reading
+*"multi-company: match the SI's company"* directly above a line that never
+compared anything.
+
+**Seven sites, all confirmed by reading the source:** `sales-invoices.ts`
+`POST /:id/payments` (:2068), `PATCH /:id/payment` (:2555, the Outstanding page's
+quick-pay), `DELETE /:id/payments/:paymentId` (:2152 — takes a payment OFF the
+other company's invoice; the existing `payment_doc_mismatch` check only proves
+the payment belongs to the invoice in the URL, never whose invoice that is),
+`GET /:id/payments` (:1971), `POST /:id/items/from-do/:doId` (:1461),
+`delivery-orders-mfg.ts` `POST /:id/items` (:4593 — the ADD verb, the only one of
+three left unscoped; on an already-shipped DO the resync moves the OTHER
+company's stock), and `delivery-returns.ts` `POST /` + `/from-do(s)`.
+
+**Two of them are CONVERTERS, and that is the sharper half.** `companyScope.ts`
+names four conversions that each refuse a cross-company source (SO->DO, SO->SI,
+DO->SI, PO->GRN). The partial DO->SI form and the whole DO->DR path checked
+NOTHING — so a 2990 delivery could be folded into a Houzs invoice and 2990's
+revenue posted to Houzs' books, or returned as a HOUZS return with a Houzs
+document number, writing the stock back in against the wrong ledger.
+
+**Fix.** `scopeToCompany` on every header read; `isCrossCompanySource` +
+`crossCompanyConversionBlocked` on both unguarded converters. 8 new tests in
+`tests/companyScopeSalesInvoiceMoney.test.ts`, proved non-vacuous by reverting
+the fixes (3 of 8 fail) and restoring them (8 pass).
+
+**Lesson, and it is about the tooling as much as the code.**
+`check-company-scope.mjs` reported **0 WRITE findings** while all seven existed,
+because `.from('x').insert({ company_id: activeCompanyId(c) })` contains a real
+`.from(` query and the helper's name, so its scoped-ness test passed. That is the
+FIFTH blind spot found in that script in one day, and like the other four it made
+the number too SMALL. The checker now strips an insert payload before testing,
+and the honest count went 0 WRITE -> 11 WRITE.
+
+**Ref.** 2026-08-13, audit ledger §A.
+
+## A test froze the OLD ASSR company rule, so the stale copy of it looked correct [medium]
+
+**Symptom.** None visible, and that is the finding. When this branch deleted
+`search.ts`'s private copy of `assrCompanySql` — a copy still applying a HOUZS
+pin the owner removed on 2026-07-20, so a 2990 rep saw HOUZS service cases and
+missed their own — `tests/searchScope.test.ts` went RED. The obvious reading was
+that the fix had broken something. It had not. The test was the second stale
+artifact.
+
+**Root cause (traced).** PR #934 (`dc16fb2e`, 2026-07-21) deleted
+`assrPinsToHouzs()` and the `houzsCompanySql` branch, leaving
+`assrCompanySql(c, col) = allowedCompaniesSql(c, col)` — no role consulted at
+all (`routes/assr.ts:141`). It updated `assr.ts` and
+`tests/assrCompanyScope.test.ts` and missed TWO other places that held the old
+rule: the private copy in `search.ts` and `tests/searchScope.test.ts`, whose
+`toEqual([9001])` is a frozen snapshot of the pre-#934 pin (last touched by #910
+and #859, both older than #934).
+
+**Two stale artifacts agreeing with each other is why neither looked wrong.**
+The test asserted the copy's behaviour, the copy satisfied the test, and the
+pair was self-consistent and jointly wrong for three weeks. A drift only becomes
+visible when something OUTSIDE the pair is compared against it.
+
+**Fix.** The test now asserts the real rule, plus the direction nothing covered:
+a Sales rep granted only 2990 sees ONLY the 2990 case. That is the half of the
+old pin's damage that was invisible — it did not merely add HOUZS cases the rep
+holds no grant for, it HID the rep's own.
+
+**Lesson.** A test is a copy of a rule, and it rots exactly like the code copies
+`check-shared-mirrors` exists to referee. When a rule changes, grep for its
+NAME across `src` AND `tests` before deciding the change is complete — #934
+changed the rule in one file and left it standing in two others.
+
+**Ref.** #934 (the original miss), this branch (both copies removed), 2026-08-13.
+
+## Move up / Move down on a category did nothing when the server refused it [medium]
+
+**Symptom.** The owner's canonical shape: press the kebab menu's "Move up", the
+card stays where it was, nothing is said. Indistinguishable from a dead button.
+
+**Root cause.** `Categories.move()` (frontend/src/pages/scm-v2/Categories.tsx)
+fires `updateMut.mutate(...)` twice — fire-and-forget, nothing awaits it — and
+`useUpdateCategory` carried an `onSuccess` and no `onError`. The page's OTHER
+consumer of the same hook, `CategoryForm.onSubmit`, awaits `mutateAsync` in a
+try/catch and renders `errMsg(e)`, so the SAVE path was always loud and only the
+REORDER path was mute. A hook is not safe because one of its callers is: the
+verdict has to be taken per call site.
+
+**Fix.** Per-call `onError: writeFailedAs('Category order not changed')` on both
+`.mutate` calls in `move()`, leaving the form's inline error panel untouched. The
+same sweep closed 37 other mutations that had no error path at all — every one of
+them an exported hook in `frontend/src/vendor/scm/lib/*-queries.ts` with ZERO
+callers today, so nothing was broken for a user yet; they now carry
+`writeFailed` / `writeFailedAs` so the first page wired to one cannot inherit the
+silence. `check-silent-mutations.mjs` went 41 UNRESOLVED to 0.
+
+**Lesson.** `check-silent-mutations.mjs` resolves a hook by asking whether ANY
+consumer handles the failure. That is the right question for reporting and the
+wrong one for a verdict — `useUpdateCategory` would have passed on the strength of
+the consumer that was fine. Also: a stale comment sent the reader the other way —
+`grn-queries.ts` still describes `usePurchaseReturnFromGrn` as "a context-menu
+action on a LIST row (GoodsReceived.tsx)", and that file no longer exists and no
+caller does either.
+
+**Ref.** branch `fix/company-scope-sweep`, 2026-08-13.
+
+## Reducing a line on a shipped DO returned the stock at a made-up cost, and minted a lot at it [high]
+
+**Symptom.** None visible, which is why it lasted. An operator lowers a qty on an
+already-shipped DO; the stock comes back; the numbers look plausible. What
+actually happened is that the returning units were priced at a figure no lot ever
+charged, and a NEW inventory lot was opened at that figure for the next FIFO
+consumer to eat.
+
+**Root cause.** `resyncInventoryForDo` priced the compensating IN at the bucket's
+weighted average:
+
+```
+unit_cost_sen = round(out_total_cost / out_qty)
+```
+
+That average blends units that HAVE a cost with units that do not. A "ship
+anyway" oversell leaves its short units with no lot consumption, so they
+contribute 0 to `out_total_cost` while still counting in `out_qty`. Return 4 of an
+OUT of 10 where 6 cost 100 sen and 4 cost nothing and it hands back 60 sen/unit —
+240 sen of capitalised value for stock that is worth either 400 or 0 depending
+on which units came back, and the qty delta does not say which.
+
+**Correction 2026-08-13 (audit).** This paragraph first read "120 sen/unit — 480
+sen … either 1,000 or 0". The arithmetic is `600 / 10 = 60`, and both the code
+this entry describes and the migration that replaced it say 60: mig 0286's
+header worked example, and `delivery-orders-mfg.ts:1788`. The mechanism was
+right; the numbers were not.
+
+The DO CANCEL path never had this problem: `fn_reverse_do_out` (0198) walks
+`inventory_lot_consumptions`, the row-level record of which lot paid for which
+unit, and restores each unit to its own lot at its own cost. The partial path had
+no equivalent, so it invented one.
+
+**Fix.** Migration 0286 `fn_return_do_units_at_cost` — the PARTIAL form of the
+same function. Unwinds the bucket's consumptions newest-first, returns each unit
+to the lot that paid for it, shrinks or deletes the consumption row, restamps the
+OUT's COGS from what survives, and writes ONE balancing IN at cost 0 with its
+minted lot closed (the value went back to the original lots; pricing it again
+would capitalise it twice). Units with no consumption behind them return at
+nothing and are REPORTED in `qty_uncosted`, never smeared into a per-unit figure.
+The old blended row survives only as a fallback for a database without 0286,
+because a reduction that posts nothing leaves shipped stock permanently deducted —
+worse than an imprecise cost. Owner decision 2026-08-13 ("按原成本退回").
+
+**Lesson.** When the truth was recorded at the time of the event, do not
+re-derive it from an aggregate afterwards. The average was computed from
+`SUM(total_cost)/SUM(qty)` over a bucket, and every fact needed to avoid it was
+sitting one join away in `inventory_lot_consumptions`. Also: a rule that cannot be
+derived from the data — LIFO here — is a CHOICE, and it belongs in the migration
+header in words, or the next reader will read it as a fact and preserve it for
+the wrong reason.
+
+**Ref.** mig 0286 + `tests-pg/returnDoUnitsAtCost.pg.test.ts` (9 cases; the first
+asserts the OLD arithmetic is wrong on the fixture, so the suite cannot pass
+vacuously), audit ledger B6, 2026-08-13.
+
+## Posting a payment voucher stamped a journal entry into the other company's ledger [high]
+
+**Symptom.** None at the keyboard. `POST /payment-vouchers/:id/post` accepted a
+voucher id from either company and wrote the GL entry against whichever company
+that voucher belonged to.
+
+**Root cause.** The handler loaded the voucher by id with no company predicate,
+then built the journal entry from `pv.pv_number`, `pv.credit_account_code` and
+`pv.company_id` — so the leak was not a read of someone else's data, it was a
+WRITE into someone else's books. The sibling paths were already correct: the GET
+at `:208` scopes this exact read, and `cancelPaymentVoucherHandler` was hardened
+by PR #826. Post is the same door and was the one left unlocked. RLS is not a
+backstop here: mig 0061 enabled it with NO policies and the SCM client is the
+service-role client, which bypasses it.
+
+**Fix.** `requireActiveCompanyId` + `scopeToCompanyId` before the load, refusing
+with the shared `NOT_THIS_COMPANY` 404.
+
+**Lesson.** Found TWICE, independently — by this audit and by #2086 — and the two
+fixes were byte-for-byte the same idea. An audit that hardens "the reads" and
+stops has done half a job; the write paths are where the damage is, and they are
+easy to miss precisely because a write path usually starts with a read.
+
+**Ref.** #2086 and audit ledger §A, 2026-08-13.
+
+## A system-wide destructive rename had no permission gate, because two comments each said the other side had it [high]
+
+**Symptom.** `POST /maintenance-config/sofa-compartments/rename` renames a sofa
+compartment code across the SKU master, EVERY historical doc-line snapshot,
+Modular allowed-options, combos, quick picks and in-flight carts — irreversibly —
+and opened straight at `c.req.json()` with no check of any kind.
+
+**Root cause — a gate handed over and never received.** The porting migration
+(`scripts/scm-schema/port-missing-functions-triggers.sql:165`) says:
+
+> "The 2990 body opens with `IF NOT is_admin() THEN RAISE forbidden`. scm has no
+> is_admin()/auth machinery … **The admin gate now lives in the route/RBAC
+> layer** — the DB-level gate is dropped here … (Behaviour change — flagged.)"
+
+The route comment said the opposite:
+
+> "Admin-gated inside the function (is_admin()); 403 surfaces here."
+
+The DB dropped its gate and pointed at the route. The route believed the DB
+still had one. **Nobody wrote it.** Both of that handler's siblings in the SAME
+file (`POST /changes:237`, `DELETE /changes/:id:347`) do check
+`canWriteScmConfig`. The `42501 → 403` branch is dead for the same reason:
+service-role client, RLS bypassed, and the `RAISE` was removed with the gate.
+
+**Fix.** `canWriteScmConfig(c)` on the handler, and the lying comment replaced
+with the evidence.
+
+**Lesson.** "Flagged" in a migration comment is not a hand-off. When a guard
+moves layers, the receiving layer's change belongs in the SAME commit.
+
+## Two config routers let any SCM user rewrite shared master data [high]
+
+**Symptom.** `POST|PATCH|DELETE /localities` (the shared 5,870-row Malaysian
+postcode master, and `warehouse_id` — the city-level delivery-routing override)
+and `PUT|DELETE /state-warehouse-mappings/:state` (which warehouse an ENTIRE
+STATE ships from) had no permission check at all.
+
+**Root cause.** Neither file imported `houzs-perms`, and both routers are mounted
+bare — `localities` is listed in `SCM_UNGUARDED_PREFIXES` (`lib/scm-areas.ts`),
+so no area guard runs over it either. The only barrier was `requireScmAccess`,
+which admits any SCM user including a view-only Sales Executive. `my_localities`
+has no `company_id`, so an edit hits BOTH companies.
+
+**Fix.** `canWriteScmConfig(c)` on all five writes, matching every sibling on the
+same ungated umbrella (`currencies.ts:76`, `categories.ts` ×7, `staff.ts:433`).
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+## A refused write reached nobody — 35 mutations across the SCM UI [high]
+
+**Symptom (owner).** "我点了 deactivate 它也是没反应." Press Deactivate on a
+fabric: the row does not change, no message appears, nothing in the console. The
+button reads as broken.
+
+**Root cause (traced).** `vendor/scm/lib/fabric-queries.ts` had EIGHT mutations,
+eight `onSuccess`, and ZERO `onError`. The server's refusal — the SCM area guard
+wanting `edit` where the grid's GET only needs `view`
+(`scm/middleware/area-guard.ts:16`), a 409 while the active company has not
+resolved, a 404 on the other company's row — arrived, was correct, and was
+dropped on the floor. `serviceNotify` was ALREADY imported in that file, used for
+one SUCCESS toast on the tier update; only the failure half was missing.
+
+This is the worst shape a defect can take here: the USER cannot report it
+usefully, and the DEVELOPER cannot see it either.
+
+**Fix.** Shared `writeFailed` (`vendor/scm/lib/mutation-error.ts`) showing the
+SERVER's own sentence — `authedFetch` throws Errors carrying it, and a generic
+"something went wrong" would only send the next person hunting again.
+
+**Correction 2026-08-13 (audit).** Two details in this entry were wrong about the
+file it names. (1) The count is EIGHT, not nine — `fabric-queries.ts` has eight
+`useMutation` calls (`useUpdateFabricTier`, `…SupplierCode`, `…Series`,
+`…Active`, `…Description`, `useCreateFabric`, `useBulkUpsertFabrics`,
+`useDeleteFabric`), and had eight before the fix too (`git show e1fb493b^` — 8
+`useMutation`, 0 `onError`). The file's own header comment at
+`fabric-queries.ts:17` still says "all nine"; it is wrong the same way.
+(2) Fabric does NOT use the shared `writeFailed`: it defines a local
+`fabricWriteFailed` (`fabric-queries.ts:31`) with its own title, "That change was
+not saved". Same shape — it surfaces `err.message`, the server's own sentence —
+but the shared helper is what the OTHER 33 files import (31 `*-queries.ts`, plus
+`Categories.tsx` and `PhotoGallery.tsx`), not this one.
+
+**System-wide.** New `frontend/scripts/check-silent-mutations.mjs`: 297
+`useMutation` sites, 270 with no `onError`. It does a SECOND pass over each
+hook's consumers, because "no onError" is not "nobody catches it" — 182 are
+CAUGHT (`mutateAsync`, `.isError`, or per-call `.mutate(vars, { onError })`), 53
+UNRESOLVED and listed for a human, **35 genuinely SILENT**. All 35 fixed.
+
+**The checker's own first answer was 104, and it was wrong** — it could not see
+the per-call `.mutate(vars, { onError })` form, which `ConsignmentNoteNew` uses.
+Reading the source of a case it had flagged is what found it. 104 → 35. The raw
+270 was never the bug count.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13. See `docs/one-sided-rules-coe.md`.
+
+## Variants were demanded on 9 forms whose own servers never asked [high]
+
+**Symptom (owner).** "明明是当我有 ProcessingDate 和 DeliveryDate 的时候，它才
+compulsory，现在怎么变成就算没有 ProcessingDate，也强制要求我填写了？"
+
+**Root cause — a default, not a rule.** `SoLineCard` declared
+`variantsRequired = true`, commented "DEFAULT true so Consignment + any other
+consumer is unchanged (owner 2026-07-14)". ELEVEN render sites exist; TWO passed
+the prop, one passed false, and the other NINE silently inherited `true`.
+
+Checked against each document's OWN route:
+- `consignment-orders.ts:687` runs the check `procDate ? ... : []`; its PATCH
+  (`:1267`) only collects offenders when `internalExpectedDd` is set. CONDITIONAL.
+- `consignment-notes.ts` / `consignment-returns.ts` / `delivery-returns.ts` /
+  `sales-invoices.ts` — `findIncompleteVariantLines` appears **zero** times. The
+  requirement was pure client-side invention.
+
+**Fix.** CO New + Detail pass the conditional; the eight downstream cards pass
+false (the rule `DeliveryOrderNewV2` already states for the DO). **The default is
+gone** — `variantsRequired` is a REQUIRED prop, so the next caller that forgets
+it fails to compile instead of shipping a field the operator cannot get past.
+
+**NOT changed.** `SalesOrderNew`'s confirm gate (`:1443`, owner 2026-08-08,
+HC-SO-2607-008) requires category axes on CONFIRM "date or no date". That is an
+explicit owner decision; its marker and its gate disagree and that is an owner
+call, recorded not silently resolved.
+
+**Superseded, same day.** That owner call was made and the gate is gone. The
+block is now `if (processingDate)` — variant completeness is the PROCEED rule and
+only the proceed rule (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不
+一定是需要填写的，除非它是 proceed 了"). The comment that replaced it records why:
+running it at confirm "made a salesperson unable to book a real order from a real
+customer who had not yet picked a seat height". Read this paragraph as history,
+not as an open item; the code is `SalesOrderNew.tsx:1443-1455`, commit
+`1d7d36cc`.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## The UI locked a payment method the API would have let you delete [medium]
+
+**Symptom.** SO Maintenance renders the `Installment` payment-method row locked
+— value / active / delete disabled, tooltip "it can't be removed or turned off"
+— while the API would have accepted deleting it.
+
+**Root cause.** `isCorePaymentMethodRow` was inferred from
+`PAYMENT_METHOD_VALUE_TO_CODE`, so ONE constant answered two questions with
+opposite needs: `paymentMethodCodeForValue` deliberately EXCLUDES `Installment`
+(legacy installment ledger rows persist the code directly), while the lock check
+must INCLUDE it (it is wired into order logic — the DO payment schema is
+`z.enum([...,'installment'])`). The frontend and backend copies landed on
+opposite answers, and their comments said so out loud: frontend "the FOUR core
+method rows … the API mirrors this with a 409"; backend "the THREE locked core
+rows … 'Installment' is NOT core".
+
+**Fix.** `PAYMENT_METHOD_CORE_VALUES` declared explicitly on both sides, four
+entries. `VALUE_TO_CODE` keeps its documented three.
+
+**How it was found, and the general lesson.** New
+`backend/scripts/check-shared-mirrors.mjs`. The frontend does NOT import the
+backend's rule modules — it VENDORS COPIES. Only `phone.ts` has a byte-identical
+canonical test, which is exactly why phone normalisation has never drifted. Of 41
+rule modules, this was the one real divergence.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## Two audit scripts reported a clean run because their regex could not match [high]
+
+**Symptom.** `check-company-scope.mjs` reported 34 findings. After a one-line
+repair it reported 37 — and the extra was `POST /payment-vouchers/:id/post`,
+which posts a journal entry into the voucher's company ledger with no company
+predicate. The tool had been hiding it.
+
+**Root cause.** Two escapes lost on the way into a JS string: `"\s"` is not the
+whitespace class, it is the letter `s`; `"\b"` is not a word boundary, it is
+BACKSPACE (0x08). The named-handler resolver could therefore never match a
+declaration, `declAt` stayed -1, and the scan silently fell back to slicing
+"this registration to the next" — reading a DIFFERENT function's body.
+`POST /:id/cancel` was being reported against `reversePvAccounting`, three
+functions away.
+
+The same day, `check-shared-mirrors.mjs` extracted only `export function` and
+missed `export const foo = () => {}`. Nine of thirteen pairs compared ZERO
+functions and it printed "every shared function is identical" — about an empty
+set.
+
+**Fix.** Escapes doubled; arrow-function form parsed; NO-OVERLAP is its own
+verdict, never folded into a pass. **Every checker now self-tests its patterns at
+startup and exits non-zero rather than reporting from a dead one.**
+
+**Lesson.** A regex that cannot match fails SILENTLY and looks exactly like
+success. A verdict computed over nothing must never read as a pass.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## Switching company destroyed the salesperson's POS cart, silently [high]
+
+**Symptom** - a salesperson who works both companies builds a Houzs POS cart,
+switches to 2990, saves anything there, switches back — the Houzs cart is empty.
+No error at any step. Indistinguishable from "I never saved it", which is why it
+was never reported as a bug.
+
+**Root cause - the KEY, not the scoping.** `scm.pos_carts` came from the 2990
+import keyed `staff_id uuid PRIMARY KEY`
+(`scripts/scm-schema/2990s-full-schema.sql:930`). Migration 0100 added
+`company_id` so the merged backend could scope carts per company — its own header
+says carts "must be company-scoped ... like every other per-company module" — and
+left the PRIMARY KEY untouched. A column was added; the key was not. The table
+therefore still held exactly ONE row per salesperson across both companies, while
+`routes/pos-cart.ts` read it with `scopeToCompany` and wrote it with
+`onConflict: 'staff_id'`. The 2990 save upserted onto the Houzs row: `lines`
+replaced, `company_id` restamped to 2. The scoped Houzs GET then matched nothing.
+
+**Why it looked handled** - `company_id` is present on the table, stamped on every
+write, and filtered on every read. Everything you can see in the route file is
+correct. Only the DDL says otherwise.
+
+**Fix** - migration `0284_scm_pos_cart_company_key.sql`: backfill NULL
+`company_id` to HOUZS, `SET NOT NULL`, then drop the single-column PK and add
+`PRIMARY KEY (staff_id, company_id)`. `pos-cart.ts` upserts
+`onConflict: 'staff_id,company_id'` **in the same change** — per the
+`special_addons` lesson below, a constraint that no longer matches the caller's
+`onConflict` turns every save into a `42P10` 500, so the two must move together.
+The route now refuses a save with a plain-language 409 when the active company is
+unresolved, instead of writing a company-less row it can no longer key.
+
+**Verification** - `tests-pg/posCartCompanyKey.pg.test.ts`, 9 cases against real
+Postgres: the pre-migration key is asserted to be the single column FIRST (so the
+fixture cannot drift into already-fixed and pass vacuously), then the re-key, the
+existing cart surviving it, two companies holding a cart for the same staff, the
+route's exact `ON CONFLICT` statement leaving the other company's cart
+byte-identical, re-run idempotency, the NULL backfill, and NOT NULL. **These ran
+SKIPPED locally — this machine has no Docker and no `TEST_DATABASE_URL`. They
+execute on CI's postgres:16 service container. Nothing here has been observed
+green yet.**
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
+
+## Fabric-tier overrides: one company can delete the other's, and overwrite it [medium]
+
+**Symptom** - a model's fabric-tier delta reverts to the global value with no edit
+behind it, so the SO recompute quietly prices the model differently.
+
+**Root cause** - `DELETE /special/:modelId` and
+`DELETE /compartment-special/:compartmentId` in `routes/fabric-tier-addon.ts`
+filtered on the id alone, while the sibling GETs use `scopeToCompany` and both
+tables carry `company_id NOT NULL` (mig 0083). Same class as the sofa-combo and
+model-free-gift deletes fixed in the same pass.
+
+**Fix** - both deletes wrapped in `scopeToCompany`.
+
+**KNOWN AND NOT FIXED, deliberately** - the PK of both tables is the single
+business column (`model_id`, `2990s-full-schema.sql:770`; `compartment_id text
+PRIMARY KEY`, mig 0025:11). Mig 0083 added `company_id` and left both keys alone,
+so each table can hold only ONE row per model/compartment across all companies and
+the upsert (`onConflict: 'model_id'` / `'compartment_id'`) overwrites whichever
+company saved first — the same shape as the POS-cart entry above. Scoping the
+delete cannot fix that. Making it `(company_id, model_id)` is a migration AND a
+business question (does Houzs want per-company fabric-tier deltas at all, or is
+one shared table the intent?), so it is recorded here for the owner rather than
+changed unilaterally.
+
+**Both halves of that paragraph were overtaken, same branch — read it as
+history.** The two tables looked identical and are not, and telling them apart
+needed the PARENT table, not the child's column list.
+
+- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql`
+  re-keys `scm.compartment_fabric_tier_overrides` to `(compartment_id,
+  company_id)`, and the PUT moved to `onConflict: 'compartment_id,company_id'`
+  in the same change (`fabric-tier-addon.ts:274`) — the constraint and the
+  caller's `onConflict` must move together or every save is a `42P10`, the
+  `special_addons` lesson below. It was NOT an owner question: the same file
+  already scoped the GET by company, so the intent was on record and only the
+  key was the leftover.
+- MODEL: not a defect at all. `product_models` itself carries `company_id` —
+  rows are created with `company_id: activeCompanyId(c)`
+  (`product-models.ts:445`) and listed through `scopeToCompany` (`:181`) — so
+  each company owns its own model rows with their own uuids and two companies
+  can never contend for one `model_id`. A key of `(model_id)` already implies a
+  company. `onConflict: 'model_id'` therefore still stands at
+  `fabric-tier-addon.ts:155`, deliberately; the retraction is written into the
+  route at `:173-192`.
+
+Open, and unsettled from source: mig 0293's header justifies itself with
+"`scm.compartment_library` carries NO `company_id`", and mig 0089:74 stamps
+`company_id` on that very table (NOT NULL, FK, index). 0089's own header says the
+text PK was left alone so "a 2990 import must use ids distinct from Houzs's".
+Whether the two companies actually share compartment ids in production is a data
+question this audit could not answer, so the re-key is at worst a harmless
+widening — but the stated reason for it does not match the DDL.
+
+**Ref** - `fix/company-scope-sweep`, 2026-08-13.
 ## The working-agreement gate measures narrower than the rules it enforces, in seven places [high]
 
 **Symptom** — the gate from #2135 reports `OK` on pull requests that violate all
@@ -3539,6 +4251,30 @@ still means null. That is not the phantom risk the surrounding comment guards
 against: `resolveOwnerStaffId` returns the caller's REAL staff row, never the
 bridge's pinned SYSTEM uuid.
 
+**Correction 2026-08-13 (audit) - "an explicit null still means null" is not what
+the code does.** The stamp is
+`canAttributeOther ? ((body.salespersonId as string) ?? callerStaffId ?? null) : callerStaffId`
+(`mfg-sales-orders.ts:3537`). `??` is nullish coalescing: it falls back on `null`
+AND on `undefined`, and `body` is a raw `c.req.json()` bag (`:3299`) with no zod
+step that could distinguish the two. So an explicit `null` falls back to the
+caller as well. That is load-bearing rather than academic - MOBILE sends an
+explicit null. `MobileNewSO.tsx:1090` maps its `__self__` sentinel to `null`,
+while desktop `SalesOrderNew.tsx:1619` sends `undefined` (dropped by
+JSON.stringify). Both work; only one of them works for the reason this entry
+gives. The same wrong distinction is written into the route comment at `:3535`.
+
+**Only the DESKTOP surface got the user_id key.** `MobileNewSO.tsx:1179`'s
+`selfStaffMatch` still matches by email, then name - no `userId`, no staff id -
+so the IT Admin (email NULL) still misses there and the page still seeds the
+`__self__` sentinel. Mobile never had the roster filter (no `filteredStaffList`),
+so its picker is not empty and the admin can pick themselves by hand; and the
+backend fallback above means a submitted null is stamped correctly. But the
+mobile confirm gate `!outgoingSalespersonId && !selfStaffMatch`
+(`MobileNewSO.tsx:1772`) fires on exactly that state, so an attribute_other
+caller who does not re-pick is still refused - client-side now, with a clearer
+sentence. Desktop and mobile are one product (CLAUDE.md); this pair is still
+split.
+
 **Lesson** - **joining two systems on a human-typed field is a join that will
 silently return nothing.** Both halves of this were the same mistake: email was
 chosen as the key because it reads like an identity, while `user_id` - the
@@ -3559,12 +4295,12 @@ drift", and `CODEBASE-MAP.md` points every new reader at it as the mechanical
 layer that is safe to trust.
 
 **Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
-`backend/vitest.config.ts`. That file was renamed to **`vitest.config.mts`** by
+`backend/vitest.config.mts`. That file was renamed to **`vitest.config.mts`** by
 #925 (the Vitest 4 / Vite 8 toolchain upgrade). Every run since has died before
 writing a line:
 
 ```
-Error: ENOENT: no such file or directory, open '...backend/vitest.config.ts'
+Error: ENOENT: no such file or directory, open '...backend/vitest.config.mts'
     at read (backend/scripts/gen-codebase-map.mjs:50:13)
     at backend/scripts/gen-codebase-map.mjs:162:22
 ```
@@ -7688,7 +8424,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 ### [HIGH] Global search reported an UNREADABLE source as an EMPTY one — a PostgREST failure on any of the seven SCM sources rendered as "No matches"
 - **Symptom.** Not yet reported by staff, which is the point: it is undetectable from the outside. Search a Sales Invoice number while PostgREST is erroring on `sales_invoices` (schema drift, a timeout, a bad `.or` grammar) and the palette says "No matches for INV-2607-001" — the same words it uses for a document that genuinely does not exist. The operator concludes the invoice was deleted. This is the owner's "东西不见了" class.
 - **Root cause (traced, not guessed).** `appendScmHits` (`backend/src/routes/search.ts`) fans the seven SCM sources out through `Promise.allSettled` and then consumed each with `if (res.status === "fulfilled" && !res.value.error) { …push hits… }` — with no `else`. A rejected promise and a PostgREST `error` body both fell through to "contribute zero hits", which is observationally identical to "matched nothing". The route returned HTTP 200 either way, so `api/client.ts` never threw and the frontend's (correct) `error` state never engaged: both palettes already gate "No matches" behind `!error`, but there was no error to gate on. The graceful degradation itself was deliberate and is documented in the file header — what was missing was any report of it.
-- **How it was found.** Reading Hookka's `docs/BUG-HISTORY.md` BUG-2026-07-03-002, whose ② is the same class from the opposite direction: their global search `.catch(() => {})`-ed six fetches so a weak-wifi timeout rendered "No results". Their fix — an honest error state textually distinct from an empty one — is the fix here.
+- **How it was found.** Reading Hookka's `BUG-HISTORY.md` BUG-2026-07-03-002, whose ② is the same class from the opposite direction: their global search `.catch(() => {})`-ed six fetches so a weak-wifi timeout rendered "No results". Their fix — an honest error state textually distinct from an empty one — is the fix here.
 - **Fix.** `runGlobalSearch` now returns `{ hits, degraded }` where `degraded` names every source that FAILED (never one that merely matched nothing); an unconfigured Supabase stays silent because that deployment has no SCM half to read. The seven repeated conditionals collapse into one `sourceRows(res, type, degraded)` helper, so the failure branch cannot be forgotten when an eighth source is added — the shape that caused this. `GET /api/search` returns `degraded` alongside `hits`; `degradedSearchNotice()` in `frontend/src/lib/globalSearch.ts` renders one sentence, consumed identically by `GlobalSearch.tsx` and `MobileSearch.tsx`, and the "No matches" copy changes to "in what could be searched" whenever a source is degraded so the two lines cannot contradict each other. `search_erp` (the ERP Assistant tool) carries the same note, because an assistant that says "no such invoice" on an unread table is the most damaging consumer of all. Every failure is `console.warn`-ed with its source name.
 - **Test.** Backend `typecheck` clean; frontend `tsc -b` + `vite build` clean; frontend suite 960 tests / 104 files green. **NOT proven by test:** no case forces a PostgREST error to assert the degraded path end-to-end — there is no PostgREST in the frontend jsdom pool or the backend scm vitest pool. The wire field is optional (`degraded?`) so a Worker older than this deploy reports nothing degraded rather than rendering `undefined`.
 - **Ref:** #<PR>. `fix/search-trgm-and-silent-source-failures` 2026-08-02.
@@ -8824,7 +9560,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Ref:** #<PR> (P0 hotfix).
 
 ### [LOW] Deleted dead `scm/lib/roles.ts` — an orphaned duplicate that misled every grep
-- **Symptom.** Fragmentation audit finding #10. `backend/src/scm/lib/roles.ts` exported `canViewAllSales`, `isSelfScopedSales`, `isPinLoginRole`, `ALL_SALES_VIEWER_ROLES`, `PIN_LOGIN_ROLES` and read as authoritative ("keep this list in lockstep with the POS predicate"), but **nothing imported the file**. The live `canViewAllSales` (different signature — takes a caller-source shim) is in `scm/lib/houzs-perms.ts`, and `mfg-sales-orders.ts:84` already noted the role functions "were removed — replaced by flat permission". The dead copy still cost every reader/agent a wrong turn: grep `canViewAllSales` → two definitions, one of them a trap.
+- **Symptom.** Fragmentation audit finding #10. `backend/src/scm/lib/roles.ts` [gone] exported `canViewAllSales`, `isSelfScopedSales`, `isPinLoginRole`, `ALL_SALES_VIEWER_ROLES`, `PIN_LOGIN_ROLES` and read as authoritative ("keep this list in lockstep with the POS predicate"), but **nothing imported the file**. The live `canViewAllSales` (different signature — takes a caller-source shim) is in `scm/lib/houzs-perms.ts`, and `mfg-sales-orders.ts:84` already noted the role functions "were removed — replaced by flat permission". The dead copy still cost every reader/agent a wrong turn: grep `canViewAllSales` → two definitions, one of them a trap.
 - **Root cause (traced).** Leftover from the role→flat-permission migration; the file was orphaned but never removed.
 - **Fix.** Deleted `scm/lib/roles.ts`. Proven safe: `tsc --noEmit` resolves every import and passes after deletion (nothing imported it); no test references it; the only `roles` imports in the tree are `./routes/roles` (an unrelated route module).
 - **The class, for next time.** When a migration replaces a helper, delete the old file in the same PR — an orphaned "single source" is worse than none, because the next grep can't tell the live one from the dead one.
@@ -9128,7 +9864,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 
 ### [CRITICAL] The POS corrupted a customer's phone number the moment anyone edited it — in the upstream repo the whole SCM layer is vendored from
 - **Symptom.** None visible. A salesperson opens a customer whose phone is stored in the ordinary Malaysian local form, `0123456789`. The country picker shows `+60` and the number box shows `0123456789`. Nothing looks wrong. They change something else and save, and the stored number becomes `+600123456789`. The original is not recoverable from the stored value.
-- **Root cause (traced).** `splitE164()` in `2990s/packages/shared/src/phone.ts` returned `{ dial: '60', national: '0123456789' }` — it defaulted the dial code to Malaysia but left the local **trunk 0** inside the national part. `combineE164('60', '0123456789')` then does exactly what it is told and produces `+600123456789`. Both country pickers are built on this pair: `apps/pos/src/components/CountryPhoneInput.tsx:34` and `apps/backend/src/components/PhoneInput.tsx:39`.
+- **Root cause (traced).** `splitE164()` in `2990s/packages/shared/src/phone.ts` returned `{ dial: '60', national: '0123456789' }` — it defaulted the dial code to Malaysia but left the local **trunk 0** inside the national part. `combineE164('60', '0123456789')` then does exactly what it is told and produces `+600123456789`. Both country pickers are built on this pair: `apps/pos/src/components/CountryPhoneInput.tsx:34` and `apps/frontend/src/vendor/scm/components/PhoneInput.tsx:39`.
 - **A second defect in the same function.** The dial-code scan was greedy over the DIGITS with no requirement that the value carried an explicit `+`, so `"197770309"` — a `+60` number written without the trunk 0, which is exactly the shape the OCR slip rule produces — matched `"1"` first and rendered the picker as **"us +1"** on a Malaysian customer.
 - **Why it survived.** `splitE164` had **zero tests**. The Houzs ERP vendors this file as `backend/src/scm/shared/phone.ts` and `frontend/src/vendor/shared/phone.ts`, and both defects were fixed HERE on 2026-06-24 — and never flowed back. The upstream, which is a live production system serving POS + Backend + API, kept running the broken version for a month.
 - **Fix.** `2990s#751`, merged 2026-07-22: a country code is read only off a value carrying an explicit `+`; a plus-less `60…` is Malaysian; everything else is a Malaysian national number with leading zeros stripped. `canonicalizeSinglePhone` came across in the same commit. **15 tests added**, covering the two defects and round-tripping the trunk-0 case back through `combineE164`.
@@ -9370,8 +10106,8 @@ of this file for the shape, the remedy, and the rest of the sweep.
 
 ### [P0+P1] Slip Zod schema mismatch + describePosHandoffError silent on 6 owner-rule server codes (rule-alignment audit #2, #21)
 - **P0 Symptom (schema).** `SlipInitResponseSchema` on POS required `putUrl` + `expiresAt`. Houzs converted `/slips` OFF presigned-PUT to a Worker-proxy upload (`backend/src/scm/shared/schemas/slip.schema.ts:14-34` — `{uploadSessionId, r2Key}` only). POS's `slip.ts:106` else-branch would try `putToR2(undefined, opts.file)` → `fetch(undefined)` → NetworkError. Guard on the Houzs branch (IS_HOUZS) meant runtime didn't blow up TODAY on Houzs, but the type-safety contract was broken and any drift would surface as a bare NetworkError.
-- **P0 Root cause (traced).** Two prior PRs converged the server side (`backend/src/scm/routes/slips.ts` + `packages/shared/src/schemas/slip.schema.ts`); the POS-side shared schema was left on the presigned-PUT shape. `apps/backend/src/lib/slip.ts:144` also treated `init.putUrl` as non-optional and typechecked green only because the schema promised it.
-- **P0 Fix.** Loosen `SlipInitResponseSchema.putUrl` + `expiresAt` to `.optional()`; loosen `SlipUrlResponseSchema.url` from `.url()` to `.string()` (Houzs streams via Worker, url is a client-made object-URL wrapper). Guard both consumers (`apps/pos/src/lib/slip.ts` + `apps/backend/src/lib/slip.ts`) with an explicit `init.putUrl` check + loud throw when neither transport is available.
+- **P0 Root cause (traced).** Two prior PRs converged the server side (`backend/src/scm/routes/slips.ts` + `packages/shared/src/schemas/slip.schema.ts`); the POS-side shared schema was left on the presigned-PUT shape. `apps/backend/src/scm/lib/slip.ts:144` also treated `init.putUrl` as non-optional and typechecked green only because the schema promised it.
+- **P0 Fix.** Loosen `SlipInitResponseSchema.putUrl` + `expiresAt` to `.optional()`; loosen `SlipUrlResponseSchema.url` from `.url()` to `.string()` (Houzs streams via Worker, url is a client-made object-URL wrapper). Guard both consumers (`apps/pos/src/lib/slip.ts` + `apps/backend/src/scm/lib/slip.ts`) with an explicit `init.putUrl` check + loud throw when neither transport is available.
 - **P1 Symptom (error copy).** Handover path's `describePosHandoffError` had branches for `variant_not_allowed` and `pricing_drift` only. The 6 owner-rule 409s (`so_locked_processing`, `processing_date_remove_forbidden`, `so_identity_locked`, `free_and_pwp_exclusive`, `free_item_not_eligible`, plus `state_change_conflicts_line_warehouse` from PR #985) fell through to the generic block, so a salesperson trying to save on an already-processing-passed SO saw a bare code instead of "The processing date has passed — items and dates are locked. Customer, address and payment can still be updated." Same for the `validation_failed` 422 aggregate shape — POS never unpacked `payload.problems[]` so a Houzs response containing "2 issues" printed as one summary line, dropping the per-line/per-field detail the server aggregated for exactly this UX.
 - **P1 Fix.** Add branches for each owner-rule code with the same copy the drawer already showed; add `validation_failed` unpacker that walks `payload.problems[]` and renders `${line}: ${message} (${field})` per issue.
 - **Ref:** `fix/pos-slip-schema-align-and-error-copy`, POS PR #742, 2026-07-22.
@@ -9511,7 +10247,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 - **Ref:** `fix/module-audit-small-batch`, 2026-07-21. Frontend only; one file, no migration, no API change. NOT merged.
 
 ### [LOW] A never-rendered progress-stepper component sat in the tree carrying an UNFILTERED copy of the stage list — dead code with the 7-vs-5 rule pre-broken inside it
-- **Symptom.** None in production, and that is the point: the hazard was latent. `frontend/src/components/ServiceProgressTracker.tsx` was imported at `frontend/src/pages/ServiceCases.tsx:84` and rendered nowhere — a full-tree grep for `<ServiceProgressTracker` returned zero JSX sites — so it shipped inside the desktop bundle without ever being drawn.
+- **Symptom.** None in production, and that is the point: the hazard was latent. `frontend/src/components/ServiceProgressTracker.tsx` [gone] was imported at `frontend/src/pages/ServiceCases.tsx:84` and rendered nowhere — a full-tree grep for `<ServiceProgressTracker` returned zero JSX sites — so it shipped inside the desktop bundle without ever being drawn.
 - **Root cause (traced, not guessed).** It predates the shared stage module and kept its own `STAGES` table (`:27-35`): all seven canonical stages, with **no** internal-resolution filter. The live rule lives in `frontend/src/vendor/scm/lib/assr/stages.ts` and drops the two supplier-only stages (Supplier Pickup, Item Ready) for an own-field-service / return-visit case, which therefore runs a **5**-stage pipeline. The component would have rendered 7 nodes and an `N / 7` counter for those cases the moment anyone wired it — reinstating precisely the regression `stages.ts` was created to end (`docs/mobile-design-changelog.md` #73: mobile once offered the supplier stages to internal cases and counted against the wrong denominator). A dead component is a low-friction thing to "just render"; a dead component with a stale rule inside it is a trap set for a future session.
 - **Fix.** DELETED the component and the unused import. Swept with it so nothing dangles: the `.design-sync` preview, its `export *` in `.design-sync/entry.tsx`, and its two `config.json` entries — that tree is design-tool-only (`tsconfig.app.json` includes `src` alone, so CI never compiled it either way). `backend/src/services/printTracker.ts`'s header pointed at the deleted path; it now points at the shared stage source and states plainly that its own list is unfiltered. `docs/modules/service-case.md`, which had recorded the component as dead-but-present, now records it as deleted.
 - **Deliberately NOT done.** `printTracker.ts`'s own 7-stage copy is NOT fixed. It has no importer at this commit (grep across `backend/` and `frontend/`), so it renders nothing today, and rewriting a print artifact's stage derivation is a behaviour change that does not belong in a delete-dead-code commit. It is now labelled in place and in the module doc as the next site where the rule would break. `docs/mobile-design-changelog.md` #73 keeps its original wording — it is a dated historical record, not a live claim.
@@ -9537,7 +10273,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 
 ### [MEDIUM] Every PR waited 6-11 minutes on ONE backend CI job that ran typecheck and 112 vitest files back-to-back on a single runner
 - **Symptom.** `ci.yml` had exactly two jobs. `frontend` (npm ci → typecheck → test → build → check:bundle) finished in ~1m30s. `backend` (npm ci → audit:routes → typecheck → test) took 6-11 minutes and was the wait on EVERY pull request — six rounds of it on 2026-07-21 alone. Step timings off run 29839727146 put the whole cost in one place: npm ci 26s, `audit:routes` 1s, `typecheck` 26s, **`npm test` 334s**. The frontend job does strictly more build work in under two minutes, so essentially the entire wait was vitest. The second, quieter cost: because typecheck ran in the same job ahead of the suite, a one-line type error was reported only after the full 334s had also burned.
-- **Root cause (traced, not guessed).** Not a slow test — a serial one. `backend/vitest.config.ts` pins `singleWorker: true`, which runs all 112 files SERIALLY inside one workerd worker. That pin is load-bearing and was itself the fix for a prior incident: at full concurrency this pool collapses with 50-65 of 66 files "failing", ZERO `AssertionError`s, and 100+ `[vitest-worker]: Timeout calling "onTaskUpdate"` — the worker cannot reach the main thread. So the suite's cost is a straight sum, and it grows every time a file is added. The baseline profile shows what that sum is made of: `setup 196.48s, tests 133.08s`. The 196s is `tests/setup.ts` replaying `schema.sql` plus every D1 migration once per file (`isolatedStorage` gives each file its own D1) — ~1.75s of pure schema rebuild per file, paid 112 times, before a single assertion runs.
+- **Root cause (traced, not guessed).** Not a slow test — a serial one. `backend/vitest.config.mts` pins `singleWorker: true`, which runs all 112 files SERIALLY inside one workerd worker. That pin is load-bearing and was itself the fix for a prior incident: at full concurrency this pool collapses with 50-65 of 66 files "failing", ZERO `AssertionError`s, and 100+ `[vitest-worker]: Timeout calling "onTaskUpdate"` — the worker cannot reach the main thread. So the suite's cost is a straight sum, and it grows every time a file is added. The baseline profile shows what that sum is made of: `setup 196.48s, tests 133.08s`. The 196s is `tests/setup.ts` replaying `schema.sql` plus every D1 migration once per file (`isolatedStorage` gives each file its own D1) — ~1.75s of pure schema rebuild per file, paid 112 times, before a single assertion runs.
 - **Fix — more runners, NOT more in-process concurrency.** (1) `backend-typecheck` is split into its own job (npm ci → audit:routes → typecheck), so a type error reports in ~1 minute in parallel instead of behind the suite. (2) `backend-tests` becomes a 4-way matrix on vitest's `--shard=i/n` (vitest 3.0.9; `sequencer.shard()` slices the collected spec list BEFORE it reaches the pool, so it is pool-agnostic). Each runner still runs its ~28 files serially in one worker at exactly today's concurrency — **nothing in `vitest.config.ts` is touched**, because raising in-process parallelism is the precise thing that triggers the collapse above. (3) A roll-up job named `backend` keeps ONE stable check name red/green as before; it uses `if: always()` plus explicit `needs.*.result` assertions, because a dependency failure would otherwise SKIP the job and a skipped check is not a failed check. Why 4 and not 8: per-shard cost is ~30s fixed overhead + ~200s/N setup + ~140s/N tests, so N=3 → 2m21s, N=4 → 1m54s, N=6 → 1m26s; 4→6 buys 28s for two more runners, by which point fixed overhead plus the un-shardable per-file schema rebuild dominates.
 - **Measured, not asserted — including the part that did not go cleanly.** Baseline `backend` job on three consecutive real runs: **6m24s, 6m31s, 6m40s**. Across SIX observed runs of the new pipeline, `backend-typecheck` was **48-58s every time** and shards 2/3/4 were **75-100s every time**; the end-to-end `backend` gate came in at **2m12s, 2m15s, 2m37s, 3m23s, 5m16s, 6m41s**. So the typecheck split is an unqualified win and four of six runs land in the 2-3.5min target, but **two of six were no faster than the old baseline** — and the offender is the same shard every time. Shard 1's vitest `tests` phase measured 40.1s / 46.5s / 65.1s / 118.7s / 229.0s / 303.6s — it was the slowest shard in **all six** runs — while its `setup` phase stayed normal throughout (38-53s, right on the 1.75s/file baseline) and shards 2-4 never left 30-55s. Same 112 files, same assertions, nothing skipped, all green.
 - **What the slow shard is, and what it is NOT.** NOT an unbalanced partition: `--shard` is deterministic by file-path hash, so every run hands shard 1 the *identical* 29 files, and those same files finished in 95s on the fast runs. NOT the pool-collapse signature either — every file PASSED, zero failures, zero `AssertionError`s, zero RPC timeouts. Per-file timings inside a slow shard 1 show a **decaying warm-up curve**: files 1-11 take 9-19s each, then it drops off a cliff to 1.6-5s for files 12-29. A genuinely slow file set would be flat; a curve that decays means the runner or its workerd process starts cold/throttled and recovers. **Root cause NOT established** — but note that six samples have now ruled out pure bad luck: shard 1 was the slowest leg in 6 of 6 runs, which points at something systematic about matrix leg 1 (scheduling, or a cold cache/runner pool it consistently draws) rather than a random noisy neighbour. Naming the mechanism would still be a guess, and a guess written here would be worse than the gap. Open follow-up. It is not a blocker: the bad case equals the old status quo (6m41s against a 6m24-6m40s baseline), never worse. **Do not respond to a slow shard by touching pool config** — that is the one change that turns this from slow into broken.
@@ -9578,7 +10314,7 @@ of this file for the shape, the remedy, and the rest of the sweep.
 
 ### [HIGH] A new announcement popped up on the desktop but was INVISIBLE on the phone — no pop-up, no unread dot, so a salesperson never learned it existed
 - **Symptom (owner-reported).** Publish an announcement: on the desktop it appears immediately as a modal with an Acknowledge button. On the phone nothing pops up at all, and there is not even an unread dot — the only way a salesperson learns a notice exists is if they think to walk into Profile > Announcements. The people who live on the phone are exactly the people the notices are written for.
-- **Root cause (traced).** Two independent gaps. (1) The pop-up is `frontend/src/components/AnnouncementBanner.tsx`, and it is mounted in exactly ONE place — `frontend/src/App.tsx:349`, the DESKTOP shell. `frontend/src/mobile/MobileApp.tsx` has no banner of any kind; it only routes to a MobileAnnouncements SCREEN (`MobileApp.tsx:355`, `alwaysShow`), i.e. a place you must already know to go. (2) The mobile unread badge (`frontend/src/mobile/useSystemNoticeUnread.ts:16-20`) queried `/api/announcements/banner?scope=system`. The backend splits that endpoint (`backend/src/routes/announcements.ts:571-578`): `scope=system` is the actionable per-user scan / service-case notices, `scope=human` is the human-written posts. A normal broadcast is `human`, so it contributed NOTHING to the badge — the one remaining signal was silent too.
+- **Root cause (traced).** Two independent gaps. (1) The pop-up is `frontend/src/components/AnnouncementBanner.tsx`, and it is mounted in exactly ONE place — `frontend/src/App.tsx:349`, the DESKTOP shell. `frontend/src/mobile/MobileApp.tsx` has no banner of any kind; it only routes to a MobileAnnouncements SCREEN (`MobileApp.tsx:355`, `alwaysShow`), i.e. a place you must already know to go. (2) The mobile unread badge (`frontend/src/mobile/useSystemNoticeUnread.ts:16-20` [gone]) queried `/api/announcements/banner?scope=system`. The backend splits that endpoint (`backend/src/routes/announcements.ts:571-578`): `scope=system` is the actionable per-user scan / service-case notices, `scope=human` is the human-written posts. A normal broadcast is `human`, so it contributed NOTHING to the badge — the one remaining signal was silent too.
 - **Fix.** (a) The pop-up's logic — the feed read, the ack POST, the localStorage ack memo, the "office pressed Remind since your ack" re-pop rule, the session-dismiss rule and what the secondary button MEANS per category — moved verbatim into a shared `frontend/src/components/useAnnouncementBanner.ts`. `AnnouncementBanner.tsx` keeps its markup and consumes the hook, so the desktop behaves exactly as before (same unscoped feed, same 60s cadence, same buttons, same backdrop-dismiss). (b) New `frontend/src/mobile/MobileAnnouncementPopup.tsx` renders the same hook as a `.hz-m` bottom sheet using the app's existing sheet chrome (`.sheet-bd / .sheet / .grab / .sheet-head / .sheet-x / .sheet-scroll / .sheet-foot`), with the same "Got it" ack and the same inline attachments + Download rows — those were lifted out of `MobileAnnouncements.tsx` into `frontend/src/mobile/MobileAnnouncementMedia.tsx` so the pop-up and the detail screen render media from ONE renderer. It is mounted in `MobileApp.tsx` above the tab shell AND above any overlay screen, so it reaches the user wherever they are; suppressed on the Announcements screen itself. (c) `useSystemNoticeUnread` → `useAnnouncementUnread`: it now sums the un-acked HUMAN and SYSTEM counts, keeping the 30s poll, the fail-soft "any hiccup yields 0", and the shared React Query keys — every announcement read in the app (list, bell, badge, both pop-ups) now goes through `announcementFeedKey(scope)`, so each scope is fetched ONCE no matter how many surfaces are mounted and the phone's pop-up costs no extra request. Acking anywhere invalidates the whole feed-key namespace, so the badge drops at once instead of a poll later.
 - **Deliberately NOT changed.** No migration and no backend change — the endpoints, their shapes and their permissions are untouched, including the deliberate rule that `GET /api/announcements/banner` is NOT gated on `announcements.read` (ordinary sales lack it and must still get their own notices). The desktop pop-up keeps the UNSCOPED feed, so it still shows system notices as it always has. The phone pop-up is deliberately `scope=human` only: the system half already has its own phone surface (the bell inside Announcements plus this badge, owner 2026-07-20 B2), and a scan notice is written to the person who scanned — popping that scope would throw a sheet at the operator every time their own upload finished. One-line reversible (the `scope` argument) if the owner wants both. No ack/dismiss semantics were invented: ack = server ack + local stamp + hide; secondary = navigate for WARNING/SOP, session-dismiss (re-surfaces next visit, no ack) for GENERAL/LEARNING; backdrop tap never acks.
 - **Testing.** Cannot log into production from here, and the isolated worktree has no `node_modules` (installing in a worktree nukes MAIN deps), so this is NOT tsc-verified locally — it relies on CI (`tsc -b` + build). Verified by reading the code paths: the single desktop mount point, the mobile shell's lack of one, the backend scope split, and every consumer of the renamed badge hook (`MobileApp.tsx` tab badge + `MobileProfile.tsx:198` row pill) reading a plain number as before.
@@ -10357,7 +11093,7 @@ Six mobile screens diverged from their desktop twins — three touching stock, m
 
 ### 🟢 Removed the redundant Fulfillment Costing module and renamed Fair Report → "Sales Report" (owner decision, not a bug)
 - **Owner decision, logged per the mandatory-entry rule.** The "Fair Report" already carries the three-way SO→DO→Invoice cost comparison, so the standalone **Fulfillment Costing** report was redundant. Removed the whole FC module; renamed the Fair Report's user-visible label + page/heading to **"Sales Report"**.
-- **Removed (FC module).** Desktop page `frontend/src/pages/scm-v2/FulfillmentCosting.tsx` + its `/scm/reports/fulfillment-costing` route + the `FinanceCostingGuard` route guard in `App.tsx`; mobile `MobileFulfillmentCosting.tsx` + its `MobileApp.tsx` screen variant / route mapping / menu row; the Sidebar nav entry (`Sidebar.tsx`, incl. its now-unused `Scale` icon import); the `useFulfillmentCosting` hook + its `FulfilmentCosting*` types in `reports-queries.ts`; and the backend endpoint **`GET /scm/reports/fulfillment-costing`** in `backend/src/scm/routes/reports.ts` (handler + its `lib/fulfillment-costing` import block). `canViewScmCosting` was dropped only from the App/Mobile imports — it is still used by ~10 other SCM pages, so the function stays.
+- **Removed (FC module).** Desktop page `frontend/src/pages/scm-v2/FulfillmentCosting.tsx` [gone] + its `/scm/reports/fulfillment-costing` route + the `FinanceCostingGuard` route guard in `App.tsx`; mobile `MobileFulfillmentCosting.tsx` + its `MobileApp.tsx` screen variant / route mapping / menu row; the Sidebar nav entry (`Sidebar.tsx`, incl. its now-unused `Scale` icon import); the `useFulfillmentCosting` hook + its `FulfilmentCosting*` types in `reports-queries.ts`; and the backend endpoint **`GET /scm/reports/fulfillment-costing`** in `backend/src/scm/routes/reports.ts` (handler + its `lib/fulfillment-costing` import block). `canViewScmCosting` was dropped only from the App/Mobile imports — it is still used by ~10 other SCM pages, so the function stays.
 - **KEPT — the cost/freeze infrastructure the Sales Report depends on.** `delivery_order_items.ship_cost_centi` (mig 0143), `freezeShipCost` / freeze-at-ship in `delivery-orders-mfg.ts`, the recost path, and the **pure lib `backend/src/scm/lib/fulfillment-costing.ts`** were all left intact. The lib could NOT be deleted anyway: `delivery-orders-mfg.ts` imports `freezeShipCost` from it (so the endpoint's "remove the gate lib only if nothing imports it" conditional resolves to *leave it*). Its test `backend/tests/fulfillmentCosting.test.ts` stays too — it pins the kept lib, not the removed HTTP route. The report-math exports (`aggregateDoLines`/`computeLineComparison`/etc.) are now only exercised by that test; left in place rather than refactored (owner rule: minimise risk / don't over-refactor).
 - **Sales Report DO cost still works — verified by reading the path.** The Sales Report handler (`reports.ts` `fairReportHandler`, `stage=do` / `stage=invoice`) uses `lib/fair-report.ts` `doCostTotal`, which sums **`COALESCE(ship_cost_centi, unit_cost_centi) × qty`** — its OWN implementation, with no code dependency on the removed FC endpoint or the FC report-math. Removing the FC page/endpoint leaves that read untouched.
 - **Rename = visible text only.** Changed `label`/page `title`/error copy to "Sales Report" on desktop (`FairReport.tsx`, `Sidebar.tsx`) and mobile (`MobileFairReport.tsx`, `MobileApp.tsx` menu label + `TabLocked` title). The route path (`/reports/fair-report`), component/file names, and ALL permission gating (management + Sales Director on the SO stage, per-stage split) were deliberately left AS-IS to minimise churn/risk.
@@ -10906,7 +11642,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Ref:** `wt/moneyguard` → `infra/plpgsql-migrations`, 2026-07-19. Backend only. Applied by the deploy as migration `0147`; no hand step. NOT merged — staged for owner review.
 
 ### 🟠 The "≈ posted to GL" figure on every foreign-currency document contradicted what the system would actually post — the screen said RM 0.00, the write said full value
-- **Where this came from:** the owner's 2026-07-19 instruction to mine HOOKKA's `docs/BUG-HISTORY.md` (10,706 lines, 444 incidents) and apply every lesson that transfers. This is from the first third of that log. The matching HOOKKA incidents are **BUG-2026-06-23-008** (an edit path recomputed a money total without the `toHome(fxRate)` conversion its create path applied, corrupting an approved foreign PI's home amount), **BUG-2026-06-11-011** and **BUG-2026-06-07-008** (the same business quantity derived by divergent formulas in the engine and in the display, so the two never tied), and **BUG-2026-06-10-007** (a 0/0 rate treated as a real "free" rate instead of as UNSET). Houzs had the display half of all four.
+- **Where this came from:** the owner's 2026-07-19 instruction to mine HOOKKA's `BUG-HISTORY.md` (10,706 lines, 444 incidents) and apply every lesson that transfers. This is from the first third of that log. The matching HOOKKA incidents are **BUG-2026-06-23-008** (an edit path recomputed a money total without the `toHome(fxRate)` conversion its create path applied, corrupting an approved foreign PI's home amount), **BUG-2026-06-11-011** and **BUG-2026-06-07-008** (the same business quantity derived by divergent formulas in the engine and in the display, so the two never tied), and **BUG-2026-06-10-007** (a 0/0 rate treated as a real "free" rate instead of as UNSET). Houzs had the display half of all four.
 - **Symptom (latent — nobody reported it, which is why it is worth writing down):** open a foreign-currency Payment Voucher or Purchase Invoice and the rate field starts at `'1'`. Clear it to type a real rate, and the two "≈ posted to GL" figures — the hint beside the rate box and the line in the totals panel — both drop to **RM 0.00** for as long as the box is empty or holds a partial entry like `"4."`. The same on the GRN's "≈ recorded as inventory cost", on its per-line preview, and on the stored-record hero cards of a received GRN and a purchase invoice, where a null or unparseable stored rate printed a confident RM 0.00 next to a rate label reading `1`.
 - **Root cause — two rules for one question, three lines apart.** Every WRITE path already agreed that a blank, zero, negative or unparseable foreign rate posts at **1**, and four of them inlined their own copy of that agreement: `(Number(x) > 0 && Number.isFinite(Number(x))) ? Number(x) : 1` (`PaymentVoucherNew` :224, `PaymentVoucherDetail` :273, `PurchaseInvoiceNew` :456, and `GrnNew` :632 via `rateNum > 0 ? rateNum : 1`). Two of those files even carry the comment "a blank/invalid foreign rate → 1". The PREVIEWS sitting in the same components inlined a **different** rule, `Number(x) || 0`, which falls back to **0** (`PaymentVoucherNew` :328 and :472, `PurchaseInvoiceNew` :650, `PaymentVoucherDetail` :190, `PurchaseInvoiceDetailV2` :266, `GoodsReceivedDetailV2` :192, and `GrnNew` :468 feeding three previews). So the preview did not merely round differently from the write — it asserted the opposite of it, on the exact number the operator uses to decide whether to press the button. `Number(x) ?? 1` would not have helped either: `?? ` never fires for a string, and the `|| 0` behind it discards the default anyway. This is the standing `??`-hides-ignorance rule with the confident value being 0 instead of the usual `?? 0`.
 - **Why it stayed hidden:** MYR is the overwhelming majority of documents and every one of these previews is gated behind `isForeign`, so the wrong branch only renders for foreign-currency work. And the write was never wrong — the GL is correct on every voucher ever posted. Only the sentence describing it was wrong, which is a class that no reconciliation will ever surface because the books balance.
@@ -10915,7 +11651,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Testing:** `frontend/src/pages/scm-v2/fx-rate.test.ts`, 5 tests, colocated in the existing frontend vitest harness (no new harness, no new config). Covers pass-through, the five UNSET shapes that used to render 0, zero/negative as UNSET, the infinities, and the write-path-equivalence assertion described above. Frontend suite 7 files / 57 tests green; **`npx tsc -b`** (the CI command — `--noEmit -p` is falsely clean in a worktree) clean against a real `npm ci`, not a junction; backend `npx tsc --noEmit -p tsconfig.json` clean and the backend suite green, though no backend file was touched.
 - **NOT fixed, deliberately — the same class on the WRITE side, which is the owner's call.** `pages/Sales.tsx` :868-870 and :878 save `parseFloat(it.qty) || 0`, `parseFloat(it.unit_price) || 0` and `parseFloat(p.amount) || 0` straight into the sales-entry payload, so a mis-keyed price persists silently as RM 0 — HOOKKA's **BUG-2026-06-11-002** ("unpriced lines saved silently at RM0") exactly. That is a money WRITE, and refusing the save is a behaviour change the office would feel the same day, so it is reported rather than shipped. Also unfixed and reported: mutations in `api/client.ts` get `retries = 0` and **no abort timeout** (only GETs get one), so a dead connection on a save spins forever with no honest failure — HOOKKA's **BUG-2026-07-03-002** ①, and the reason a punch was believed to have been recorded when it had not.
 - **The class, for next time:** when a screen previews what a write will do, the preview and the write must not each own a copy of the rule. If they do, the one nobody tests will drift, and it will drift toward whichever default the author of that line found natural — here, `|| 0`, four separate times, in a codebase whose write paths had already settled the question and written the answer in a comment.
-- **Ref:** `wt/hk-a`, 2026-07-19. Frontend only. HOOKKA slice audited: `docs/BUG-HISTORY.md` lines 1-3,600 (~190 incidents). NOT merged — staged for owner review.
+- **Ref:** `wt/hk-a`, 2026-07-19. Frontend only. HOOKKA slice audited: `BUG-HISTORY.md` lines 1-3,600 (~190 incidents). NOT merged — staged for owner review.
 
 ### 🟡 A failed project-file delete told the operator nothing and refreshed the grid anyway
 - **Where this came from:** the same HOOKKA sweep. Matching incidents: **BUG-2026-06-18-003** (supplier/SKU saves swallowed every error with an empty `catch {}`, so the next refetch silently reverted and looked like data loss), **BUG-2026-06-09-003** (Generate Invoice failed silently — an empty catch closed the dialog as if it had worked), and **BUG-2026-06-18-011** (five save surfaces that always said "Saved").
@@ -10943,7 +11679,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Ref:** `wt/auditfail`, 2026-07-19. Backend only. **The SQL function must be applied by hand (staging, then prod) for the full guarantee; until then the pre-flight is reachability-only.** NOT merged — staged for owner review.
 ### 🔴 The PO "Send to supplier" button could email a CANCELLED order, send the same PO twice on a double-click, and left no record of who sent it — the channel was about to be turned ON over all three
 - **Symptom:** none reported, and that is the point — the `purchase_order` email channel has been seeded OFF since mig 0132, so every defect below was dormant. The owner's instruction (2026-07-19) was to turn it on, and *first* to go and read what HOOKKA already suffered with outbound email and put those safeguards in place here. This entry is that audit and its fixes. The send path (`mfg-purchase-orders.ts` `POST /:id/send-to-supplier`) had exactly three refusals: no supplier email, PO still DRAFT, channel off.
-- **What the research found, source by source.** HOOKKA's `docs/BUG-HISTORY.md` (10,706 lines, ~15 email incidents) plus `src/api/lib/email.ts` / `email-outbox.ts` / `customer-notify.ts`; Houzs's own `feat/r1-do-email` entry below; `services/email.ts`. `hookka-erp` is an unrelated Next.js prototype with no outbound email at all; `hookka-audit` is an older snapshot of the same repo as `hookka-erp-testing`, useful only as a before-diff. The failure modes that transfer, and Houzs's standing before this PR:
+- **What the research found, source by source.** HOOKKA's `BUG-HISTORY.md` (10,706 lines, ~15 email incidents) plus `src/api/lib/email.ts` / `email-outbox.ts` / `customer-notify.ts`; Houzs's own `feat/r1-do-email` entry below; `services/email.ts`. `hookka-erp` is an unrelated Next.js prototype with no outbound email at all; `hookka-audit` is an older snapshot of the same repo as `hookka-erp-testing`, useful only as a before-diff. The failure modes that transfer, and Houzs's standing before this PR:
   - **Frontend-only send → 128 delivered orders emailed nothing** (HOOKKA BUG-2026-06-23-005; the browser simply was not open). ALREADY HANDLED, and deliberately: the DO email sends from the backend transition (`scm/lib/do-email.ts`). The PO send is the deliberate EXCEPTION — it is operator-triggered by design, so there is no silent-miss surface.
   - **Provider blip loses the mail silently** (HOOKKA BUG-2026-06-04-005). ALREADY HANDLED: `sendEmail` enqueues to `email_outbox` BEFORE its first attempt and a 5-minute cron drains it, 3 attempts.
   - **Wrong-brand FROM across 5 code paths** (HOOKKA BUG-2026-05-27-006). ALREADY HANDLED: one `deliverViaResend`, From resolved from central Branding, no hardcoded fallbacks.
@@ -11010,7 +11746,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Ref:** `wt/hookkalessons`, 2026-07-19.
 
 ### 🟠 A negative or unparseable payment-voucher amount was silently turned into ZERO — the voucher saved, returned 200, and its total was short by exactly the line nobody was told about
-- **Source:** HOOKKA `docs/BUG-HISTORY.md` BUG-2026-05-20-002 (negative payment amount accepted, bypassed the Credit Note workflow) and its siblings -003 / -005 / BUG-2026-05-21-002/003/004, all one class: **a route accepting a money field from the wire and coercing it instead of refusing it.**
+- **Source:** HOOKKA `BUG-HISTORY.md` BUG-2026-05-20-002 (negative payment amount accepted, bypassed the Credit Note workflow) and its siblings -003 / -005 / BUG-2026-05-21-002/003/004, all one class: **a route accepting a money field from the wire and coercing it instead of refusing it.**
 - **Symptom (latent — and the shape of it is why nobody reported it):** none observed. That is the finding. `buildLines` in `scm/routes/payment-vouchers.ts` read each line's amount as `Math.max(0, Math.round(Number(line.amountCenti ?? 0)) || 0)`. That expression is a **clamp, not a validation**: `-500000` became `0`, `"abc"` became `0`, `NaN` became `0`. The voucher was then created from those rows, its header total recomputed as their sum, and the handler returned 200. So a supplier payment could save with a line reading RM 0 that the operator believes is RM 5,000, and the only trace is a total that is quietly short. HOOKKA's version of this was *louder* — its negative actually subtracted — which is precisely why HOOKKA found it and we had not.
 - **Same expression, second site:** `buildAllocations` (the PV→PI settlement added by mig 0202). A negative allocation clamped to `0` and was then dropped by the `amount <= 0` skip, so "apply −RM 500 to this PI" silently applied *nothing* while the voucher still posted. The Σ-allocations-≤-PV-total guard above it was already correct and is untouched.
 - **Fix:** one shared `parseAmountCenti(raw)` returning `number | null`, used by both builders. A payable amount is a **non-negative INTEGER sen**; anything else returns `null` and the builder returns an error the route already knows how to surface (`return c.json({ error: built.error }, 400)` was there — the new codes `line_amount_invalid` / `allocation_amount_invalid` ride the existing path, no new mechanism). Non-integer is refused too: sen is integer by contract, so `48.5` is RM posted into a sen field, and rounding it would bury a 100× unit mistake rather than surface it — the same reasoning HOOKKA's BUG-2026-05-20-005 / -2026-05-21-002 landed on for credit and debit notes.
@@ -11037,7 +11773,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Ref:** `wt/hk-b`, 2026-07-19. Frontend static config only. The `/*` half is deliberately NOT in this PR.
 
 ### 🟠 A single malformed compose draft in localStorage took the whole Mail Center down — and the tolerant date helper written to prevent exactly that was being bypassed one line above it
-- **Source:** HOOKKA `docs/BUG-HISTORY.md` lines 7,100–end (the OLDEST 145 incidents, mostly foundations). This is the one class from that slice that Houzs demonstrably still had. Two HOOKKA incidents are the same defect seen from two sides: **BUG-2026-05-12-008** (`Date.toISOString(undefined)` → `RangeError: Invalid time value` → ErrorBoundary ate the whole page tree) and **BUG-2026-04-22-001** (three pages sharing one localStorage key wrote incompatible shapes; the reader trusted the shape and crashed on load).
+- **Source:** HOOKKA `BUG-HISTORY.md` lines 7,100–end (the OLDEST 145 incidents, mostly foundations). This is the one class from that slice that Houzs demonstrably still had. Two HOOKKA incidents are the same defect seen from two sides: **BUG-2026-05-12-008** (`Date.toISOString(undefined)` → `RangeError: Invalid time value` → ErrorBoundary ate the whole page tree) and **BUG-2026-04-22-001** (three pages sharing one localStorage key wrote incompatible shapes; the reader trusted the shape and crashed on load).
 - **Symptom (latent — no operator has hit it yet, which is why it is worth fixing now):** opening Mail Center → Drafts with one malformed entry under `houzs-mail-local:v1` unmounts the entire page, not just that row. The user sees the ErrorBoundary, not a missing draft. Verified directly: `new Date(undefined).toISOString()` throws `RangeError: Invalid time value` — it does **not** return a falsy value the renderer could skip, which is what makes this a page-killer rather than a blank cell.
 - **Root cause, both halves.** (1) `mail-local.ts` `load()` checked `Array.isArray(parsed.drafts)` and then trusted every **element**. The container check and the element check are different checks, and only one was being made. (2) `Inbox.tsx:814` rendered `fmtTime(new Date(d.updatedAt).toISOString())` — and `fmtTime` **already** guards both empty and invalid input (`if (!iso) return ""`, then a `Number.isNaN(d.getTime())` bail). The eager conversion threw *before* that guard could run. The safety net existed and the call site jumped over it.
 - **Why persisted JSON is untrusted input:** it outlives the code that wrote it, it is hand-editable, and it is replayed verbatim into a tab running a newer build. The sibling module `mail-prefs.ts` already validates field-by-field on load — so the codebase's own convention was on the right side of this and `mail-local.ts` was the outlier.
@@ -11282,7 +12018,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Root cause:** adjustment writes ride `POST /inventory/adjustments`, mounted behind `scmAreaGuard('scm.warehouse.inventory')` (scm/index.ts:265) — the server enforces `scm.warehouse.inventory`. But the frontend nav (`Sidebar.tsx:517`) and both routes (`App.tsx:469/470`) gated on `scm.warehouse.adjustments`, a FRONTEND-ONLY key no scmAreaGuard has ever read (grep-verified: only its `PAGES[]` def + the prod snapshot's stored value reference it). So #731's grant landed on `inventory`, the key the FE did not consult. Measured with the real `resolvePositionAccessFromRows` over the prod snapshot + `applyOperationJdOverride`: under the old `adjustments` gate, Procurement/Purchasing, Operation Executive and Logistic Admin resolve `none` (no warehouse row at all) and so saw nothing; under the correct `inventory` gate the override raises them to `edit`. Transfers and Stock Take were already correct (they gate on `scm.warehouse.transfers` / `scm.warehouse.stock_take`, matching their mounts) — only Adjustments was wrong.
 - **Fix:** point the frontend at the key the backend enforces — `Sidebar.tsx` Adjustments child and both `App.tsx` stock-adjustment routes now gate on `scm.warehouse.inventory`; the `scm-warehouse` nav group's `anyAccess` drops the now-redundant `scm.warehouse.adjustments` term (still visible via `inventory` and the other warehouse children — `inventory >= adjustments` for every position, so the group resolves identically). No backend change: `scmAreaGuard`, the `/inventory/*` mount, `operationJdAccess` all untouched — this is a FE-gate correctness fix, so who can WRITE is exactly as #731 left it. With the FE off it, `scm.warehouse.adjustments` has zero consumers, so it joins `DORMANT_PAGE_KEYS` (services/pageAccess.ts) — greyed "not wired" in both matrix editors, its stored Finance Manager value kept inert (the #717 dormant treatment). Not retired: it stays in `PAGES[]`.
 - **Blast radius (real resolver, all 17 positions):** GAINERS are exactly Operation Executive, Procurement/Purchasing, Logistic Admin — all #731 cohort members whose only inventory path is the override. LOSERS: none — no position saw Adjustments under the old key and loses it (Operation Manager `full`, Storekeeper/Supervisor + Helper `view`, Finance Manager `view` all keep it via `inventory`). Driver stays out (excluded from #731); no Sales/Finance/Driver newly gains.
-- **Verification:** `frontend/src/components/navFilter.test.ts` — the Adjustments entry shows for a holder of `scm.warehouse.inventory` and NOT for a holder of only the dead `scm.warehouse.adjustments`, on desktop AND phone. `backend/tests/dormantPageKeys.test.ts` pins the key into the dormant set (eight now); `backend/tests/operationJdAccess.test.ts` asserts it is dormant, that the enforced `inventory` key is not, and that the grant lands on `inventory` never `adjustments`. `pageCatalogueDrift.test.ts` invariant respected (dormant ∩ retired = ∅; dormant key stays a valid page key). Frontend CI is `tsc -b && vite build` — a fresh worktree with no `node_modules` reports a false-clean local tsc, so gated on CI.
+- **Verification:** `frontend/src/components/navFilter.test.ts` — the Adjustments entry shows for a holder of `scm.warehouse.inventory` and NOT for a holder of only the dead `scm.warehouse.adjustments`, on desktop AND phone. `backend/tests/dormantPageKeys.test.ts` pins the key into the dormant set (eight now); `backend/tests/operationJdAccess.test.ts` [gone] asserts it is dormant, that the enforced `inventory` key is not, and that the grant lands on `inventory` never `adjustments`. `pageCatalogueDrift.test.ts` invariant respected (dormant ∩ retired = ∅; dormant key stays a valid page key). Frontend CI is `tsc -b && vite build` — a fresh worktree with no `node_modules` reports a false-clean local tsc, so gated on CI.
 - **Ref:** `fix/scm-adjustments-fe-gate`, 2026-07-18. Follow-up to #731; found by re-checking that the grant the owner set is actually reachable in the UI.
 
 ### 🟠 Operation staff could not perform stock transfer / count / adjustment — no position carried `edit` on the warehouse write keys, only `*`
@@ -11939,7 +12675,7 @@ DECLARE r RECORD"`, `"END LOOP"`, `"END $$"` as separate statements). **Two othe
 - **Ref:** `fix/s1-recompute-silent`, 2026-07-17. Third of the `??`-collapses-ignorance class today, after #649/#650 (`?? 0` → fake 100% margin) and #661 (zero-priced PI line wiping a lot).
 ### 🟠 The Settings toggle "Auto-email the customer their D.O." has done NOTHING for a month — the feature was fully wired, then strip-to-core deleted the module under it and left the migration, the template, the toggle and the tests standing
 - **Symptom:** `Settings.tsx:287` offers an admin a switch labelled *"Delivery Order (to customer) — Auto-email the customer their D.O. when an order is dispatched"*. Flipping it ON does nothing at all: no email, ever. `backend/src/routes/settings.ts:33` accepts the key, `email.ts:88` maps the purpose, `app_settings` stores the value — and **no code anywhere reads that value for a Delivery Order**, because nothing calls the sender. The stamp column `delivery_tracking.do_email_sent_at` appears in exactly two files, both of them migrations (`migrations/098_document_email.sql:20`, `migrations-pg/0009_document_email.sql:10`). Not found by a report — a customer-facing switch that silently no-ops produces no report, which is the point.
-- **Root cause — NOT "the foundation shipped half-wired", which is what the tree looks like today and it is backwards. It shipped FULLY wired and its module was amputated around it.** Traced through git, not guessed: `e7654e4` (**2026-06-14**, *"feat(email): auto-send customer documents foundation (DO on dispatch)"*) added `backend/src/services/delivery.ts` carrying `buildDeliveryOrderEmail()` + `maybeSendDeliveryOrderEmail()`, wired into `advanceStatus` at the region-aware dispatch milestone (WEST/EAST `out_for_delivery`, SG `shipped`), with **209 lines of tests** and the guard already correct — gated OFF, no-op without a recipient, and *"Only stamp the guard on a real send"*. It was complete. `dfa1111` (**"chore: strip ERP to core modules"**) then deleted `services/delivery.ts`, `routes/delivery.ts` and `pages/DeliveryTracking.tsx` — the whole core delivery module — taking the trigger, the guard and 8 of the 9 tests with it. What it could NOT delete is a **numbered migration**: 098/0009 had already run, so the columns and the seeded toggles stayed, and `documentEmail.test.ts` was cut down to the template + gating with a header that says so in writing (*"the per-document auto-send features … were removed in the strip-to-core cutover"*).
+- **Root cause — NOT "the foundation shipped half-wired", which is what the tree looks like today and it is backwards. It shipped FULLY wired and its module was amputated around it.** Traced through git, not guessed: `e7654e4` (**2026-06-14**, *"feat(email): auto-send customer documents foundation (DO on dispatch)"*) added `backend/src/services/delivery.ts` [gone] carrying `buildDeliveryOrderEmail()` + `maybeSendDeliveryOrderEmail()`, wired into `advanceStatus` at the region-aware dispatch milestone (WEST/EAST `out_for_delivery`, SG `shipped`), with **209 lines of tests** and the guard already correct — gated OFF, no-op without a recipient, and *"Only stamp the guard on a real send"*. It was complete. `dfa1111` (**"chore: strip ERP to core modules"**) then deleted `services/delivery.ts`, `routes/delivery.ts` and `pages/DeliveryTracking.tsx` — the whole core delivery module — taking the trigger, the guard and 8 of the 9 tests with it. What it could NOT delete is a **numbered migration**: 098/0009 had already run, so the columns and the seeded toggles stayed, and `documentEmail.test.ts` was cut down to the template + gating with a header that says so in writing (*"the per-document auto-send features … were removed in the strip-to-core cutover"*).
 - **The trap worth recording, because this codebase will hit it again: a migration is IMMUTABLE and the code around it is not, so deleting a module leaves its schema standing — and standing schema reads as a foundation somebody is about to build on.** Every artefact a reviewer checks says the feature is real: there is a column, an index, a seeded toggle, a Settings row with a careful safety label, a purpose enum, a shared `documentEmailHtml()` template, a passing test file named `documentEmail.test.ts`. The one artefact that is gone is the only one that did anything. **A half-wired feature reads as done; an amputated one reads as done AND as deliberate** — the OFF toggle even supplies the alibi for why nothing is happening ("it's off because the owner hasn't switched it on yet"). The residue is not inert: it is a live instruction to the next author to wire onto `delivery_tracking`, which is precisely the wrong table (below).
 - **Both columns mig 098 added are unusable for the live document, and this is the part that would have burned the next author:** (1) **`delivery_tracking` is a zombie.** `0017_drop_deleted_modules.sql` deliberately did NOT drop it, so it still exists — indexed (`0002`) and even maintained (`0098_restore_timestamp_defaults`) — but `createDeliveryRecord` went with `services/delivery.ts`, so **nothing has inserted a row since the cutover**, and its primary key is the CORE `sales_orders.doc_no` (an AutoCount SO), which no `scm.delivery_orders` row can key. Stamping it would write to a table with no rows. (2) **`sales_orders.customer_email` is the wrong recipient**: it hangs off the same deleted core module. The LIVE Delivery Order carries **its own `email` column** (`delivery-orders-mfg.ts:133`, snapshotted from the SO at create, `:2451`/`:2787`/`:2840`) — that is the address the goods are actually shipping against.
 - **And "send when the DO is CONFIRMED" (owner's ruling, trigger A) names a status that does not exist.** The DO enum is `LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED, CANCELLED` (+ `DRAFT`, added by `0040_scm_do_status_draft.sql`); **`CONFIRMED` is a Sales Order status**. In this codebase the DO Confirm action is spelled out at `delivery-orders-mfg.ts:3768` — *"the Confirm action is exactly DRAFT→DISPATCHED"* — and a DO created without `asDraft` is **born DISPATCHED** (`:2472`, `:2858`). So "confirmed" is one event with three call sites, and they are exactly the three the inventory OUT already fires on (`:2523`, `:2955`, `:3793`). The email now fires where `deductInventoryForDo` fires, because both answer the same question: have the goods left for the customer?
