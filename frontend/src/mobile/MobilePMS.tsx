@@ -2290,13 +2290,6 @@ function TaskRow({
         file.type || "application/octet-stream",
       );
       reload();
-      // Floorplan → the size box fills itself (owner 2026-08-14). The upload
-      // route starts the read server-side for every client, but it takes a few
-      // seconds, so the reload above lands before the number does. Refresh once
-      // more when it has had time to finish — no button, no second visit.
-      if (/^(display floor\s*plan|blank floorplan)/i.test((it.title || "").trim())) {
-        setTimeout(reload, 9000);
-      }
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
     } finally {
