@@ -341,3 +341,73 @@ export async function loadIncomingLines(sb: any, itemCodes: string[], warehouseI
 }
 
 export const incomingBucketKey = bucketKey;
+
+/* ─── THE FLIP, and what it decided ─────────────────────────────────────────
+ *
+ * Moved here from routes/delivery-orders-mfg.ts on 2026-08-14, verbatim. That
+ * file is 261 lines over its size ceiling and this PR added 120 lines to it,
+ * every one of them a comment — so the ratchet charged it, correctly. Prose
+ * about what this module decides belongs beside the module, not copied into
+ * each caller.
+ *
+ * ── resolveShipCommitments (2026-07-31; allocator-bound since PR-4) ──────────
+ *    THE ONE PLACE a ship decides whether it is binding an incoming PO.
+ * 
+ *    Owner's rule: "when they pick ship-anyway, that matched PO should be bound and
+ *    go negative against it." So binding follows the FACT that the line resolves a
+ *    PO — it is not a second question after the drop-ship dialog, and it is not
+ *    gated on the DO header's is_dropship flag (which mig 0057 defines as the UI
+ *    badge). The decision table itself is PURE and unit-tested in
+ *    scm/lib/ship-commitment.ts; this helper only gathers the four facts it needs:
+ * 
+ *      · isSofa            — detectSofaSoItemIds (the same detector the cost paths use)
+ *      · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (a RECEIVED batch)
+ *      · expectedBatchNo   — THE LIVE ALLOCATOR'S PICK (Decision 2026-08-06, "soft
+ *                            until DO, hard from DO"): allocateExpectedBatches over
+ *                            the pooled open-PO supply minus outstanding
+ *                            commitments (lib/do-live-allocator +
+ *                            lib/committed-shipments), supply ordered earliest
+ *                            effective ETA then smaller PO number, demand ordered
+ *                            delivery date then doc number, sofa sets picked WHOLE
+ *                            (one dye lot per set). The stored PO→SO link
+ *                            (resolveExpectedBatchBySoItem) stopped deciding this
+ *                            at the flip — it is procurement provenance, resolved
+ *                            only for the BIND_SHADOW divergence evidence below.
+ *      · availableQty      — from the shortage list the short-stock guard just
+ *                            produced, so the binding cannot disagree with the
+ *                            question the operator was asked
+ * 
+ *    Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
+ *    ONE dialog the operator sees can name the incoming PO), plus any SOFA SET
+ *    this write would split across two batches — see planSofaSetPoConflicts,
+ *    which stays ARMED as the backstop even though whole-set picks make a split
+ *    structurally unreachable from this path (a stored allocated_batch_no on part
+ *    of a set can still conflict with the pick for the rest).
+ *    Best-effort throughout: any read failure yields no commitments, i.e. exactly
+ *    the pre-0230 behaviour (ship, no binding) — a binding lookup must never block
+ *    a shipment. The set conflict is the one exception, and deliberately so: it is
+ *    raised only when a binding WAS resolved, so it can never turn a working ship
+ *    into a refusal. Ties auto-pick + the operator confirms in the existing
+ *    short-stock dialog — never a new refusal (owner tiebreak ruling).
+ *
+ * ── THE LIVE PICK (PR-4, Decision 2026-08-06) ──────────────────────────
+ *        The allocator decides the binding at DO time: pooled open-PO supply for
+ *        the DO's own item codes, MINUS the units earlier ship-before-arrivals
+ *        already own (subtractOutstanding over the SAME loadCommittedShipments
+ *        read computeMrp deducts with — one definition of "still committed", so
+ *        double-commitment is structurally impossible), walked in the owner's
+ *        demand order with sofa sets picked whole. loadIncomingLines throws on a
+ *        read error, which lands in the outer catch: ship, no binding — a lookup
+ *        must never block a shipment.
+ *
+ * ── SHADOW, INVERTED (post-flip observability) ─────────────────────────
+ *        The allocator BINDS now; the stored raise-link is procurement provenance
+ *        (Decision 2026-08-06). The comparison and its BIND_SHADOW evidence rows
+ *        stay — same rows, same checker (scripts/check-bind-shadow.mjs), so the
+ *        soak keeps measuring how often provenance and execution disagree AFTER
+ *        the flip. A divergence here is NOT a defect (the Decision says so in as
+ *        many words); a double-SERVE in the delivered ledger is, and that is what
+ *        the other checks watch. Failure-isolated exactly as before: nothing in
+ *        this block can touch shipping.
+ *
+ */
