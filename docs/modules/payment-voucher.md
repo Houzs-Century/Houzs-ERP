@@ -1,3 +1,9 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. pv_allocations + purpose ship in 0081_scm_payment_vouchers.sql (a port of 2990's 0189+0202) — this repo's 0202 is the lorry compliance vault; the route comments repeat the source-repo number and the guide transcribed them.
+> 2. “No deposit concept anywhere in backend/src” is scope-false: customer-side deposits exist (customer-credits.ts:22,:489-523; finance-keys.ts). The AP-side intent is verified true — a PV settles invoices, never orders.
+> 3. nextPvNo lives in payment-vouchers.ts:99-104, not doc-no.ts.
+
 # Module: Payment Voucher / PV (SCM Finance)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

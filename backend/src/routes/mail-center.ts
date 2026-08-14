@@ -2147,6 +2147,12 @@ app.post("/compose", async (c) => {
   // mailbox's domain so the display name matches the sending company.
   const result = await sendEmail(c.env, {
     to,
+    /* Compose validated and STORED cc/bcc but never passed them to the
+       provider, so copied recipients silently never received the mail while
+       the thread rendered them (found 2026-08-12, code-read sweep). Same
+       shape as the reply path above. */
+    cc: ccList.join(", ") || null,
+    bcc: bccList.join(", ") || null,
     subject,
     html: htmlBody,
     text,

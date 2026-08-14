@@ -26,6 +26,10 @@ type Store = {
   creditRows: Row[]; // customer_credits balance rows for the debtor
   companyId: number | null;
   paidCenti: number;
+  /** scm.sales_invoices.migrated_no_stock for the SI under test (migration 0294). */
+  migrated: boolean;
+  /** when set, the migrated pre-flight read fails with this message */
+  migratedReadError: string | null;
 };
 
 /** Chainable, awaitable PostgREST stand-in covering the reads/writes the legacy
@@ -64,6 +68,14 @@ function fakeSb(store: Store) {
         return { data: store.creditRows, error: null };
       }
       if (this.table === 'sales_invoices') {
+        /* The migrated pre-flight (migration 0280) reads this column alone. Its
+           own error channel is modelled too: the guard must FAIL CLOSED, and a
+           test that cannot produce the failure cannot prove that. */
+        if (this.cols.includes('migrated_no_stock')) {
+          if (store.migratedReadError) return { data: null, error: { message: store.migratedReadError } };
+          const row = { migrated_no_stock: store.migrated };
+          return { data: this.singleRow ? row : [row], error: null };
+        }
         const row = this.cols.includes('paid_centi')
           ? { paid_centi: store.paidCenti }
           : { company_id: store.companyId };
@@ -94,6 +106,8 @@ function baseStore(over: Partial<Store> = {}): Store {
     creditRows: [],
     companyId: 1,
     paidCenti: 0,
+    migrated: false,
+    migratedReadError: null,
     ...over,
   };
 }
@@ -206,6 +220,47 @@ describe('applyCustomerCreditToSi — guards (no DB touched)', () => {
     const res = await applyCustomerCreditToSi(fakeSb(store), { ...ARGS, remainingDueCenti: 0 });
     expect(res).toEqual({ applied: 0, reason: 'no_due' });
     expect(store.rpcCalls).toHaveLength(0);
+  });
+});
+
+/* MIGRATED INVOICES SPEND NO CREDIT (migration 0294).
+   A migrated SI mirrors an invoice AutoCount already raised and already settled
+   in its own book. Paying it from the customer's ERP credit balance spends a
+   real balance a second time — the customer silently loses money still owed to
+   them. Migration 0280's column COMMENT promises this; these pin the promise to
+   behaviour, because 0276 shipped exactly such a comment with nothing enforcing
+   it. Today's three callers all miss migrated invoices by accident, so an
+   accident is all that stands here without the guard. */
+describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
+  test('migrated SI → applies nothing, and never reaches the write', async () => {
+    const store = baseStore({ migrated: true, creditRows: [{ balance_centi: 900000 }] });
+    const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
+    expect(res).toEqual({ applied: 0, reason: 'migrated_source' });
+    /* The money assertions are the point: no RPC, no ledger row, no payment row.
+       A guard that returns the right shape after spending the credit is no
+       guard. */
+    expect(store.rpcCalls).toHaveLength(0);
+    expect(store.inserts).toHaveLength(0);
+    expect(store.updates).toHaveLength(0);
+  });
+
+  test('an ordinary SI is untouched by the guard — it still applies credit', async () => {
+    const store = baseStore({
+      migrated: false,
+      rpcResponse: { data: [{ applied_centi: 5000 }], error: null },
+    });
+    const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
+    expect(res).toEqual({ applied: 5000 });
+    expect(store.rpcCalls).toHaveLength(1);
+  });
+
+  test('a failed migrated read REFUSES rather than proceeding blind', async () => {
+    const store = baseStore({ migratedReadError: 'connection reset' });
+    const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
+    expect(res.applied).toBe(0);
+    expect(res.reason).toContain('migrated_check_failed');
+    expect(store.rpcCalls).toHaveLength(0);
+    expect(store.inserts).toHaveLength(0);
   });
 });
 

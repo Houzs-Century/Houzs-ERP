@@ -1,3 +1,8 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. Three stale line cites, behavior verified correct at the new spots: DELETE /:docNo registers at :5987 (not :5555); cancel-final guards at :5749-5754 and :5720-5728 (not :5396); tbcSwapCommandHandler at :8982 (not :8669). 83 claims clean, including the full Processing-Date gate set, voucher settlement, relink transaction and the surcharge charging.
+> 2. “mig 0121/0118” for allocated_batch_no / items.warehouse_id are the 2990 source repo's numbers; this tree's 0118/0121 are unrelated. Columns themselves proven in the schema.
+
 # Module: Sales Order (SCM)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

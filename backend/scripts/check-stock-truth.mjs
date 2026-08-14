@@ -39,8 +39,22 @@
 //           ERP's ledger cannot represent one, so the difference is arithmetic
 //           rather than missing stock.
 //
-//       What survives all three is the real divergence, and that is what the
-//       VERDICT line counts.
+//       What survives all three is then split ONE more time, and this is the
+//       split that decides the verdict:
+//
+//         EXPLAINED — the difference is EXACTLY AutoCount's own movement since
+//           the cutover, measured against the frozen opening-balance snapshot
+//           (data/ac-stock-balance.json.gz) the ERP was actually opened with.
+//           AutoCount is still the live book; it keeps selling, and the ERP —
+//           which has posted no outbound movement at all — cannot know about it.
+//           On 2026-08-11 this was 33 of 35 ERP-HIGHER cells, matching to the
+//           unit. A verdict keyed to raw divergence would read DIVERGES forever,
+//           grow every day, and train everyone to ignore the line.
+//         UNEXPLAINED — everything else. This is the number that deserves a
+//           human, and it is what VERDICT BALANCE counts. The reconciliation is
+//           EXACT, never a tolerance: one unit that does not account for itself
+//           keeps the cell in this bucket, because a tolerance would hide the
+//           small real divergence the check exists to find.
 //
 //   (B) FIFO INTEGRITY — four invariants that must hold if the layer ledger is
 //       trustworthy:
@@ -102,6 +116,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { DO_SHIPPED_STATES } from "./lib/do-shipped-states.mjs";
+import { explainDivergence } from "./stock-truth-classify.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, "data");
@@ -197,6 +212,32 @@ function loadAcSnapshot() {
   }
   const j = JSON.parse(raw);
   return { rows: j.rows ?? j, pulledAt: j.pulled_at ?? null, source: j.source ?? "unknown" };
+}
+
+/* The FROZEN cutover balance — the very rows the ERP's opening stock was
+   imported from (docs/autocount-cutover-ledger.md §W4, AC-BAL-2026-08-09). It is
+   deliberately a different file from the live pull above, and it must never be
+   overwritten: it is the only record of what the ERP was opened with.
+
+   WHY THE CHECK NEEDS IT. AutoCount is still the live book. It keeps selling
+   after the ERP's opening balance was taken, and the ERP — which has not shipped
+   a single normal delivery order yet — cannot know about any of it. Comparing
+   today's AutoCount against a frozen ERP therefore reports a divergence that
+   GROWS EVERY DAY and is not the ERP's fault. Measured 2026-08-11: 33 of the 35
+   ERP-HIGHER cells matched AutoCount's own movement since the cutover to the
+   unit (AMN-SOFA PILLOW 130 -> 115 against a reported +15, and so on down the
+   list). Without this baseline the headline reads DIVERGES forever and the real
+   signal — a cell that moved for some OTHER reason — is buried in the noise.
+   Absent file is not fatal: the check says so and reports every cell as
+   unexplained, which is the honest answer when the baseline is unknown. */
+function loadAcBaseline() {
+  const f = path.join(DATA, "ac-stock-balance.json.gz");
+  try {
+    const j = JSON.parse(gunzipSync(readFileSync(f)).toString("utf8").replace(/^﻿/, ""));
+    return { rows: j.rows ?? j, pulledAt: j.pulled_at ?? null };
+  } catch {
+    return null;
+  }
 }
 
 /* Categories that are not stock at all. AutoCount books a delivery charge, a
@@ -349,49 +390,66 @@ async function sectionA(state) {
      NB-KHJ21(Q) and HOK-1041 (Q) both resolve to ERP VICTORIA-(Q) — so comparing
      per AutoCount row would report two false divergences where the ERP correctly
      holds the sum. */
-  const acBy = new Map();          // erpKey -> { qty, items:Set }
-  const unmappedItem = new Map();  // ac code -> units (non-zero only)
-  const unmappedLoc = new Map();   // ac location -> {cells, units}
-  let sofaCells = 0, sofaUnits = 0, sofaCodesSeen = new Set();
-  let nonStockCells = 0, nonStockUnits = 0, nonStockSeen = new Set();
-  let acRowsConsidered = 0;
+  /* Folding is a FUNCTION so the frozen cutover baseline is treated identically
+     to the live pull — same exclusions, same many-to-one mapping, same warehouse
+     resolution. If the two sides were folded by two copies of this logic, a
+     divergence could be manufactured by the difference between the copies. */
+  const foldAc = (rows) => {
+    const acBy = new Map();          // erpKey -> { qty, items:Set }
+    const unmappedItem = new Map();  // ac code -> units (non-zero only)
+    const unmappedLoc = new Map();   // ac location -> {cells, units}
+    let sofaCells = 0, sofaUnits = 0; const sofaCodesSeen = new Set();
+    let nonStockCells = 0, nonStockUnits = 0; const nonStockSeen = new Set();
+    let acRowsConsidered = 0;
 
-  for (const r of snap.rows) {
-    const ac = norm(r.ItemCode);
-    const qty = Math.round(n(r.BalQty));
-    if (sofaCodes.has(ac)) {
-      if (qty !== 0) { sofaCells++; sofaUnits += qty; sofaCodesSeen.add(ac); }
-      continue;                                   // owner's ruling — excluded, and said so above
+    for (const r of rows) {
+      const ac = norm(r.ItemCode);
+      const qty = Math.round(n(r.BalQty));
+      if (sofaCodes.has(ac)) {
+        if (qty !== 0) { sofaCells++; sofaUnits += qty; sofaCodesSeen.add(ac); }
+        continue;                                 // owner's ruling — excluded, and said so above
+      }
+      /* NON-STOCK. A charge item is not goods. AutoCount carries DISPOSE,
+         TRANSPORTATION CHARGES and STORAGE as items whose balance runs negative as
+         they are billed out, so every one of them differs from the ERP's (correct)
+         absence of a stock row. In the previous run these four codes alone
+         contributed 4,048 of the 4,209 units reported as "ERP HIGHER" — 96% of a
+         headline that read as missing stock and was nothing of the kind. */
+      if (nonStockCodes.has(ac)) {
+        if (qty !== 0) { nonStockCells++; nonStockUnits += qty; nonStockSeen.add(ac); }
+        continue;
+      }
+      acRowsConsidered++;
+      const erpCode = acToErp.get(ac);
+      if (!erpCode) {
+        if (qty !== 0) unmappedItem.set(ac, (unmappedItem.get(ac) ?? 0) + qty);
+        continue;
+      }
+      const wh = resolveWh(r.Location);
+      if (!wh) {
+        const k = String(r.Location ?? "");
+        const cur = unmappedLoc.get(k) ?? { cells: 0, units: 0 };
+        if (qty !== 0) { cur.cells++; cur.units += qty; unmappedLoc.set(k, cur); }
+        continue;
+      }
+      const key = `${norm(erpCode)}|${wh.id}`;
+      const cur = acBy.get(key) ?? { qty: 0, items: new Set() };
+      cur.qty += qty;
+      cur.items.add(r.ItemCode);
+      acBy.set(key, cur);
     }
-    /* NON-STOCK. A charge item is not goods. AutoCount carries DISPOSE,
-       TRANSPORTATION CHARGES and STORAGE as items whose balance runs negative as
-       they are billed out, so every one of them differs from the ERP's (correct)
-       absence of a stock row. In the previous run these four codes alone
-       contributed 4,048 of the 4,209 units reported as "ERP HIGHER" — 96% of a
-       headline that read as missing stock and was nothing of the kind. */
-    if (nonStockCodes.has(ac)) {
-      if (qty !== 0) { nonStockCells++; nonStockUnits += qty; nonStockSeen.add(ac); }
-      continue;
-    }
-    acRowsConsidered++;
-    const erpCode = acToErp.get(ac);
-    if (!erpCode) {
-      if (qty !== 0) unmappedItem.set(ac, (unmappedItem.get(ac) ?? 0) + qty);
-      continue;
-    }
-    const wh = resolveWh(r.Location);
-    if (!wh) {
-      const k = String(r.Location ?? "");
-      const cur = unmappedLoc.get(k) ?? { cells: 0, units: 0 };
-      if (qty !== 0) { cur.cells++; cur.units += qty; unmappedLoc.set(k, cur); }
-      continue;
-    }
-    const key = `${norm(erpCode)}|${wh.id}`;
-    const cur = acBy.get(key) ?? { qty: 0, items: new Set() };
-    cur.qty += qty;
-    cur.items.add(r.ItemCode);
-    acBy.set(key, cur);
-  }
+    return { acBy, unmappedItem, unmappedLoc, sofaCells, sofaUnits, sofaCodesSeen,
+             nonStockCells, nonStockUnits, nonStockSeen, acRowsConsidered };
+  };
+
+  const live = foldAc(snap.rows);
+  const { acBy, unmappedItem, unmappedLoc, sofaCells, sofaUnits, sofaCodesSeen,
+          nonStockCells, nonStockUnits, nonStockSeen, acRowsConsidered } = live;
+
+  // The frozen cutover balance, folded the same way — the ERP's opening stock.
+  const baseSnap = loadAcBaseline();
+  const baseBy = baseSnap ? foldAc(baseSnap.rows).acBy : null;
+  notice(`  cutover baseline   : ${baseSnap ? `${baseSnap.rows.length} rows (data/ac-stock-balance.json.gz — the frozen balance the ERP was opened with)` : "ABSENT — every divergence will be reported as UNEXPLAINED"}`);
 
   // Compare over the UNION of both sides. A cell the ERP holds that AutoCount
   // has no row for is not "agreement by absence" — it is ERP-only stock, and it
@@ -415,9 +473,31 @@ async function sectionA(state) {
     else if (row.delta > 0) higher.push(row);
     else lower.push(row);
   }
+  /* EXPLAINED vs UNEXPLAINED. AutoCount is still the live book: it keeps issuing
+     stock after the ERP's opening balance was taken, and the ERP has posted no
+     outbound movement at all (section C proves it: 0 DO OUT movements). So a
+     cell whose difference is EXACTLY AutoCount's own movement since the cutover
+     is not an ERP defect — it is the ERP correctly holding the balance it was
+     opened with, while AutoCount moved on.
+
+     The test is deliberately EXACT, not a tolerance. delta === baseline - now
+     means every unit of the difference is accounted for by AutoCount's own
+     books. One unit that does not reconcile leaves the cell UNEXPLAINED, which
+     is the bucket that deserves a human. A tolerance here would hide exactly the
+     small, real divergence this check exists to find. */
+  for (const r of [...higher, ...lower]) {
+    const c = explainDivergence(r, baseBy?.get(`${r.code}|${r.whId}`));
+    r.movedSinceCutover = c.movedSinceCutover;
+    r.unaccounted = c.unaccounted;
+    r.explained = c.explained;
+  }
+  const unexplained = [...higher, ...lower].filter((r) => !r.explained);
+  const explained = [...higher, ...lower].filter((r) => r.explained);
+
   const sumBy = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
   higher.sort((x, y) => y.delta - x.delta);
   lower.sort((x, y) => x.delta - y.delta);
+  unexplained.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
   erpOnly.sort((x, y) => Math.abs(y.erp) - Math.abs(x.erp));
   acNegative.sort((x, y) => x.ac - y.ac);
 
@@ -427,6 +507,8 @@ async function sectionA(state) {
   notice(`  AGREE                             : ${agree.length}   (non-zero cells that agree: ${agreeNonZero.length}, units ${sumBy(agreeNonZero, (r) => r.erp)})`);
   notice(`  ERP HIGHER than AutoCount         : ${higher.length} cells, +${sumBy(higher, (r) => r.delta)} units`);
   notice(`  ERP LOWER than AutoCount          : ${lower.length} cells, ${sumBy(lower, (r) => r.delta)} units`);
+  notice(`    of those, EXPLAINED by AutoCount trading on since the cutover : ${explained.length} cells, ${sumBy(explained, (r) => r.delta)} units`);
+  notice(`    UNEXPLAINED — the real signal                                 : ${unexplained.length} cells, ${sumBy(unexplained, (r) => r.delta)} units`);
   notice(`  ERP-ONLY (no AutoCount row maps)  : ${erpOnly.length} cells, ${sumBy(erpOnly, (r) => r.erp)} units`);
   notice(`  ITEM NOT MAPPED (AC -> ERP)       : ${unmappedItem.size} AutoCount codes, ${[...unmappedItem.values()].reduce((s, v) => s + v, 0)} units`);
   notice(`  LOCATION NOT MAPPED (AC -> ERP)   : ${unmappedLoc.size} AutoCount locations, ${[...unmappedLoc.values()].reduce((s, v) => s + v.units, 0)} units`);
@@ -448,17 +530,36 @@ async function sectionA(state) {
   notice(`    ERP compartment cell reporting as ERP-only — a gap invented by the filter, not found by it.`);
   notice(`    Sofa PILLOW accessories are NOT excluded (category ACC, real countable stock).`);
 
-  if (higher.length) {
-    notice("");
-    notice(`  --- ERP HIGHER (top ${Math.min(SAMPLE, higher.length)} of ${higher.length}) ---`);
-    for (const r of higher.slice(0, SAMPLE))
-      notice(`    +${pad(r.delta, 6)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} ERP ${r.erp} vs AC ${r.ac}   [AC: ${r.items.join(", ")}]`);
+  /* The UNEXPLAINED list first, and always — it is the only part of section A
+     that asks for a human. Printing it above the much longer explained list is
+     deliberate: the thing that needs attention must not be below the fold. */
+  notice("");
+  if (!baseBy) {
+    notice(`  --- UNEXPLAINED: cannot be computed, the cutover baseline file is absent. All ${unexplained.length} divergent cells are listed below. ---`);
+  } else if (unexplained.length === 0) {
+    notice(`  --- UNEXPLAINED: NONE. Every divergent cell reconciles exactly to AutoCount's own movement since the cutover. ---`);
+  } else {
+    notice(`  --- UNEXPLAINED DIVERGENCE (all ${unexplained.length}) — these do NOT reconcile to AutoCount activity since the cutover ---`);
+    /* The known cause, so the next reader does not re-derive it from scratch.
+       On 2026-08-11 all 6 unexplained cells were the SAME defect: the cutover
+       import (import-ac-stock-balance.mjs:129,137) routes any non-positive delta
+       into `negs` and writes it only when NEG is set — and the cutover ran
+       without it. Where a many-to-one item mapping folds a NEGATIVE AutoCount
+       row together with a positive one, the mapped total stays positive, so the
+       AC-NEGATIVE bucket above never fires and the dropped units surface here.
+       In every cell the unaccounted amount equalled the dropped row exactly.
+       Confirm against live AutoCount before assuming it is still the cause. */
+    notice(`      known cause (2026-08-11, all 6 cells): the cutover import wrote positive deltas only, so a NEGATIVE`);
+    notice(`      AutoCount row folded under a many-to-one mapping was dropped. See BUG-HISTORY.md. Re-confirm before assuming.`);
+    for (const r of unexplained)
+      notice(`    ${pad(r.delta > 0 ? `+${r.delta}` : r.delta, 7)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} ERP ${r.erp} vs AC ${r.ac}` +
+             `${r.movedSinceCutover == null ? "   [no cutover row for this cell]" : `   [AutoCount moved ${r.movedSinceCutover} since cutover — ${r.unaccounted} unaccounted]`}   [AC: ${r.items.join(", ")}]`);
   }
-  if (lower.length) {
+  if (explained.length) {
     notice("");
-    notice(`  --- ERP LOWER (top ${Math.min(SAMPLE, lower.length)} of ${lower.length}) ---`);
-    for (const r of lower.slice(0, SAMPLE))
-      notice(`    ${pad(r.delta, 7)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} ERP ${r.erp} vs AC ${r.ac}   [AC: ${r.items.join(", ")}]`);
+    notice(`  --- EXPLAINED by AutoCount trading on (top ${Math.min(SAMPLE, explained.length)} of ${explained.length}) — ERP holds the opening balance, AutoCount moved ---`);
+    for (const r of explained.slice(0, SAMPLE))
+      notice(`    ${pad(r.delta > 0 ? `+${r.delta}` : r.delta, 7)} ${pad(r.code, 34)} @ ${pad(whById.get(r.whId)?.code ?? r.whId, 18)} ERP ${r.erp} vs AC ${r.ac}   [AutoCount issued exactly ${r.movedSinceCutover} since the cutover]`);
   }
   if (erpOnly.length) {
     notice("");
@@ -490,6 +591,9 @@ async function sectionA(state) {
     agree: agree.length, agreeNonZero: agreeNonZero.length,
     higher: higher.length, higherUnits: sumBy(higher, (r) => r.delta),
     lower: lower.length, lowerUnits: sumBy(lower, (r) => r.delta),
+    hasBaseline: baseBy != null,
+    explained: explained.length, explainedUnits: sumBy(explained, (r) => r.delta),
+    unexplained: unexplained.length, unexplainedUnits: sumBy(unexplained, (r) => r.delta),
     erpOnly: erpOnly.length, erpOnlyUnits: sumBy(erpOnly, (r) => r.erp),
     unmappedItems: unmappedItem.size, unmappedItemUnits: [...unmappedItem.values()].reduce((s, v) => s + v, 0),
     unmappedLocs: unmappedLoc.size, unmappedLocUnits: [...unmappedLoc.values()].reduce((s, v) => s + v.units, 0),
@@ -693,12 +797,10 @@ async function sectionB(state) {
 /* ════════════════════════════════════════════════════════════════════════════
    SECTION C — delivered COGS
    ════════════════════════════════════════════════════════════════════════════ */
-/* The WRITE-trigger set, deliberately not DO_STOCK_OUT_STATES: section C
-   measures COGS on lines whose OUT this status fired. A COMPLETED delivery
-   order is therefore out of scope here while check-doc-line-vs-movement.mjs
-   includes it — the two audits ask different questions, so they read
-   different constants BY NAME instead of two hand-typed lists that looked
-   like a typo for each other. */
+/* From the shared module, not a hand copy. main extracted this list while this
+   branch was open and tests/doShippedStatesMirror.test.ts pins it; an audit that
+   scans a different status set than the write path is how a COMPLETED delivery
+   order was in scope for one sweep and invisible to another on the same day. */
 const SHIPPED_STATES = DO_SHIPPED_STATES;
 
 async function sectionC(state) {
@@ -834,8 +936,14 @@ async function main() {
   const A = state.A, B = state.B, C = state.C;
   notice("");
   notice("================ VERDICT ================");
-  const balOk = A.higher === 0 && A.lower === 0 && A.erpOnly === 0;
-  notice(`VERDICT BALANCE : ${balOk ? "AGREES" : "DIVERGES"} — ${A.agreeNonZero} of ${A.cells - (A.agree - A.agreeNonZero)} non-zero cells agree; ERP higher ${A.higher} (+${A.higherUnits}u); ERP lower ${A.lower} (${A.lowerUnits}u); ERP-only ${A.erpOnly} (${A.erpOnlyUnits}u); unmapped items ${A.unmappedItems} (${A.unmappedItemUnits}u); unmapped locations ${A.unmappedLocs} (${A.unmappedLocUnits}u)${A.stale ? "; SNAPSHOT STALE" : ""}`);
+  /* The verdict turns on UNEXPLAINED divergence, not on raw divergence. While
+     AutoCount remains the live book and the ERP holds a frozen opening balance,
+     raw divergence grows every day on its own; a verdict keyed to it would read
+     DIVERGES forever and teach everyone to ignore this line. Explained cells are
+     still printed above, in full — nothing is hidden, it is ranked. */
+  const balOk = A.unexplained === 0 && A.erpOnly === 0 && A.unmappedItems === 0 && A.unmappedLocs === 0;
+  notice(`VERDICT BALANCE : ${balOk ? "AGREES" : "DIVERGES"} — ${A.agreeNonZero} of ${A.cells - (A.agree - A.agreeNonZero)} non-zero cells agree; UNEXPLAINED ${A.unexplained} cells (${A.unexplainedUnits}u)${A.hasBaseline ? `; explained by AutoCount trading on since the cutover ${A.explained} cells (${A.explainedUnits}u)` : "; NO CUTOVER BASELINE — nothing could be explained"}; ERP-only ${A.erpOnly} (${A.erpOnlyUnits}u); unmapped items ${A.unmappedItems} (${A.unmappedItemUnits}u); unmapped locations ${A.unmappedLocs} (${A.unmappedLocUnits}u)${A.stale ? "; SNAPSHOT STALE" : ""}`);
+  notice(`                  raw difference before that split: ERP higher ${A.higher} (+${A.higherUnits}u), ERP lower ${A.lower} (${A.lowerUnits}u)`);
   notice(`                  NOT COMPARABLE (excluded from the above, by design): AC-negative ${A.acNegative} cells (AC ${A.acNegativeAcUnits}u); non-stock SERVICE/TRANS ${A.nonStockCells} cells (${A.nonStockUnits}u); SOFA ${A.sofaCells} AC cells (${A.sofaUnits}u) / ${A.erpSofaCells} ERP cells (${A.erpSofaUnits}u)`);
   const fifoOk = B.b1Broken === 0 && B.negative === 0 && B.overRemaining === 0 && B.zeroShipRows === 0 && B.b4Buckets === 0;
   notice(`VERDICT FIFO    : ${fifoOk ? "SOUND" : "NOT SOUND"} — B1 layer-arithmetic broken on ${B.b1Broken} of ${B.lots} layers; B2 negative ${B.negative}, over-remaining ${B.overRemaining}; B3 zero-cost SHIPMENT consumptions ${B.zeroShipRows} rows (${B.zeroShipUnits}u) [+${B.zeroNonShipRows} non-shipment rows (${B.zeroNonShipUnits}u) not counted]; B4 layer-vs-movement buckets diverging ${B.b4Buckets} (${B.b4Units}u); B5 layer value ${rm(B.layerValueSen)} vs reported ${B.viewValueSen == null ? "n/a" : rm(B.viewValueSen)}; B6 zero-cost open layers ${B.zeroCostLots} (${B.zeroCostUnits}u)`);

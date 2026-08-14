@@ -1,3 +1,8 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. computeMrp has 3 call sites in mfg-sales-orders.ts (list :1528 added 2026-08-02, detail :2883, :3042), not 2.
+> 2. The Decision section's “provenance influences NO coverage precedence” is false against current code: stored link still outranks MRP floating (po-so-coverage.ts:53-57); the flip is PR-4, owner-gated. The §7 table is the correct current statement.
+
 # Module: MRP (finished-goods demand vs supply)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

@@ -1,3 +1,13 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. Dedup does NOT prefix the SO note (owner standing rule): scan-so.ts:4060-4066 — the duplicate signal rides scan_jobs.duplicate_of + the private notice only.
+> 2. “Warn, never block” is wrong for rule A: image-sha 30-day duplicates are a synchronous 409 duplicate_slip at /enqueue unless force=1 (:4289-4312); only rule B still creates the draft.
+> 3. THREE reserved keys: __GLOBAL_MANUAL__ (:1747) carries a hand-written sofa-sketch grammar injected after the distilled block (:2565-2590), seeded by seed-ocr-sofa-sketch-rules.mjs.
+> 4. Desktop handoff is the scoped store readScmHandoff('soScanPrefill') (scmHandoffStorage.ts:17; SalesOrderNew.tsx:391-396) — SCAN_PREFILL_KEY has zero hits repo-wide. The load-bearing conclusion (confirm endpoint unreachable) re-verified TRUE.
+> 5. backend/tests/scanSlipPhone.test.ts also exists; §8's “only scan tests” is short.
+> 6. §6 omits scan_jobs.company_id (mig 0089:412; stamped :4329, filtered :4687,:4755).
+> 7. Every §2 line cite has drifted (+24…+64); the logic at each drifted location matches.
+
 # Module: Scan to Sales Order (OCR)
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

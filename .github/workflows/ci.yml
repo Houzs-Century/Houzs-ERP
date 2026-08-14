@@ -66,6 +66,15 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # Bug index drift. PR-only on purpose: it is NOT in deploy.yml, because a
+      # stale doc must never block a release (audit:routes as a deploy gate jammed
+      # prod twice in one day). But it IS gated here, because the ungated
+      # audit:map crashed unnoticed for three weeks — see
+      # docs/staging-bench-rot-coe.md. PR-gated, deploy-free is the shape that
+      # survives both failure modes.
+      - run: npm run audit:bug-index
+      - run: npm run audit:map
+      - run: npm run audit:doc-refs
       # The AutoCount write-back composes against two GENERATED files: the
       # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
       # run on (D9). Both are compiled from backend/scripts/data/ because the
@@ -212,7 +221,18 @@ jobs:
       # spread across the four workerd shards below at ~1.76s of startup per
       # file. Not sharded: sharding 7s of work across runners costs more in
       # checkout than it saves.
-      - run: npm run test:light
+      # `test:coverage:light` and not `test:light`: the SAME files, with
+      # istanbul on (measured 2026-08-13: 7s -> 41s, still inside this job's
+      # minute). Its report is half of what the coverage-ratchet job merges —
+      # the other half comes from the workers shards below, and merging the two
+      # is the only way to get one honest number per area.
+      - run: npm run test:coverage:light
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend-light
+          path: backend/coverage/light/coverage-final.json
+          if-no-files-found: error
+          retention-days: 3
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
   # workerd worker (`singleWorker: true` in backend/vitest.config.mts). That is
@@ -253,20 +273,36 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       # Let every shard finish. If the pool-collapse signature above ever
-      # returns it shows up as ALL FOUR shards red with no AssertionError,
+      # returns it shows up as EVERY shard red with no AssertionError,
       # which is instantly distinguishable from one shard with a real failing
       # test. fail-fast would hide that. It does NOT weaken the gate — the
       # `backend` roll-up below still fails if any shard fails.
       fail-fast: false
       matrix:
-        # 2, not 4. This job now runs ONLY the files that need the Workers
-        # runtime — 44 of the 265 that used to be here, ~99s in total — because
-        # the other 221 moved to `test:light` in backend-typecheck above. Two
-        # shards put each at ~50s, which is already below the fixed
-        # checkout+install overhead; a third would buy seconds and cost a slot
-        # the account does not have (see docs/ci-capacity-coe.md on the 20-job
-        # ceiling).
-        shard: [1, 2]
+        # 3, raised from 2 on 2026-08-14. This job runs ONLY the files that need
+        # the Workers runtime; the rest are in `test:light` under
+        # backend-typecheck above.
+        #
+        # THE PREVIOUS COMMENT'S ARITHMETIC WAS RIGHT AND ITS INPUTS WERE STALE.
+        # It said each shard sat at "~50s, already below the fixed
+        # checkout+install overhead", so a third would buy seconds. Measured on
+        # run 31779735023: the two shards ran 139s and 124s, of which ~29s is
+        # fixed (checkout + setup-node + cached npm ci). So the test work is
+        # ~110s per shard, not 50s — the suite grew, and the sizing argument
+        # never did. Three shards put the test work near ~73s, i.e. ~102s a
+        # shard including overhead.
+        #
+        # The other half of that comment — "costs a slot the account does not
+        # have" — was also re-measured: per-job QUEUE time on the same run was
+        # 3 SECONDS. The 20-job ceiling in docs/ci-capacity-coe.md was not
+        # binding, so the third runner is free today. It will stop being free if
+        # concurrent PRs rise; re-measure queue time before adding a fourth.
+        #
+        # Do NOT instead raise in-pool concurrency. vitest.config.mts sets
+        # fileParallelism:false / maxWorkers:1 deliberately — the pool collapses
+        # above that, with 50-65 files "failing" and zero AssertionErrors. More
+        # runners is the only safe direction.
+        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: backend
@@ -285,7 +321,17 @@ jobs:
       # LAST command only — so every shard would re-run all 221 light files to
       # shard the 44 workers ones. Same append trap documented for `pretest` in
       # docs/SCALE-PERFORMANCE-HARNESS.md, one script along.
-      - run: npm run test:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      # `test:coverage:workers`, so this shard's slice of the workers project
+      # lands in the merged coverage report. Measured 2026-08-13: the whole
+      # workers project is 106s bare and 265s instrumented, so a quarter of it
+      # is well under this job's existing budget.
+      - run: npm run test:coverage:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-backend-workers-${{ matrix.shard }}
+          path: backend/coverage/workers/coverage-final.json
+          if-no-files-found: error
+          retention-days: 3
 
   # Roll-up so the backend gate keeps ONE stable check name. Before this PR the
   # required-looking check was `backend`; after the split the real work lives in
@@ -382,6 +428,52 @@ jobs:
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
       - run: npm ci
       - run: npm run lint
+
+  # EVERY area against its floor, from ONE merged report.
+  #
+  # It has to be its own job because the inputs are produced by three different
+  # jobs: the backend light suite (backend-typecheck), the four workers shards
+  # (backend-tests), and the frontend suite (frontend-checks). Each of those already
+  # checks what it can see on its own — `frontend-checks` fails immediately on a
+  # frontend/src regression, which is the fast feedback that matters — but no
+  # single one of them can compute the backend numbers, because a file in
+  # scm/lib is executed by BOTH backend projects and only the union is true.
+  #
+  # It depends on `frontend-checks` and not the `frontend` roll-up on purpose: the
+  # roll-up also waits on the bundle and perf jobs, and a bundle-size failure must
+  # not SKIP the coverage verdict — a skipped check is not a failed check.
+  #
+  # This job is NOT in the repo's required-check ruleset (only `backend-typecheck`
+  # and `frontend` are, and that list is the owner's to change). It shows as a
+  # red X on the PR. The frontend area is the one that hard-blocks today, from
+  # inside `frontend-checks`, which the `frontend` roll-up covers.
+  coverage-ratchet:
+    needs: [backend-typecheck, backend-tests, frontend-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # The gate's own logic first: if these fail, nothing it says about
+      # coverage means anything.
+      - run: node --test scripts/check-coverage-verdict.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/coverage
+          pattern: coverage-*
+      # A gate whose scan found nothing must SAY SO. Printing the inputs is how
+      # you tell "the ratchet passed" from "the ratchet found no reports", and
+      # the script itself exits non-zero on an empty set rather than passing.
+      - name: List the reports that were downloaded
+        run: find /tmp/coverage -name coverage-final.json | sort
+      - name: Check every area against its floor
+        run: |
+          set -euo pipefail
+          REPORTS=()
+          while IFS= read -r f; do REPORTS+=(--report "$f"); done < <(find /tmp/coverage -name coverage-final.json | sort)
+          echo "found ${#REPORTS[@]} report arguments"
+          node scripts/coverage-ratchet.mjs --check "${REPORTS[@]}"
 
   scale-postgres-contract:
     # The full 100k evidence run is deliberately PR-only. GitHub emits both a
@@ -503,12 +595,70 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run check:test-focus
-      - run: npm run typecheck
-      - run: npm test
-      # Zero-dependency node:test checks for the two gate scripts' own logic.
+      # `test:coverage` and not `test`: the SAME suite with the v8 provider on.
+      # Measured 2026-08-13 on this machine: 18s bare, 20s instrumented. Running
+      # both would pay for the suite twice for 2s of information.
+      - run: npm run test:coverage
+      # frontend/src may only go UP, and its count of files with NO test may only
+      # go DOWN. Checked here rather than only in the merged `coverage-ratchet`
+      # job because THIS job is the one the ruleset requires, so a frontend
+      # regression blocks the merge instead of merely showing a red X.
+      #
+      # The gate refuses to report at all if its own scan found zero files, or if
+      # a file on disk is missing from the report — a shrinking denominator is a
+      # RISING percentage, which is the false green that looks like progress.
+      - run: node ../scripts/coverage-ratchet.mjs --check --only frontend/src --report coverage/coverage-final.json
+      # docs/TESTING-RATCHET.md publishes the per-area numbers; this proves the
+      # published table still equals the committed baseline. Two file reads, no
+      # suite and no report — a typed number in a doc is how CLAUDE.md came to
+      # claim the database was D1 SQLite for a month after the Postgres cutover.
+      - run: node ../scripts/coverage-ratchet.mjs --check-docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/coverage-final.json
+          if-no-files-found: error
+          retention-days: 3
+      # Zero-dependency node:test checks for the gate scripts' own logic.
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.
+      - run: node --test ../scripts/check-coverage-verdict.mjs
+
+  # The typecheck half of what used to be one `frontend-checks` job.
+  #
+  # WHY IT IS ITS OWN JOB. Measured 2026-08-14 on run 31779735023, when the two
+  # halves were one job: `npm run typecheck` 60s and `npm run test:coverage` 63s,
+  # run one after the other, making frontend-checks 149s and the SLOWEST job in
+  # the run — so it, alone, decided how long a PR waited. Neither half needs the
+  # other: tsc reads the tree, vitest runs the suite. In parallel the frontend
+  # gate costs the LONGER of the two instead of their sum.
+  #
+  # The queue was measured at the same time and is 3s, so the extra runner is
+  # free here; docs/ci-capacity-coe.md reasons from a 20-job ceiling that was NOT
+  # binding on that run. Re-measure before assuming it still is not.
+  #
+  # The coverage half keeps the name `frontend-checks` on purpose: the
+  # `coverage-ratchet` job declares `needs: [..., frontend-checks]` and downloads
+  # the `coverage-frontend` artifact it uploads. Splitting the other half out
+  # leaves both of those untouched.
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:test-focus
+      - run: npm run typecheck
+      # Zero-dependency node:test checks for the gate scripts' own logic.
+      # Not part of `npm test` (vitest only collects src/**), so they are run
+      # explicitly — a checker nobody runs is not a checker.
       - run: node --test scripts/check-bundle-verdict.mjs
       # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
       # zero inputs and exits 0 on a tree full of type errors. The typecheck
@@ -653,16 +803,23 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-build, frontend-perf]
+    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # frontend-typecheck was split out of frontend-checks on 2026-08-14 and is
+      # asserted here for the reason this roll-up exists at all: `frontend` is a
+      # REQUIRED context, so a job missing from this list is a job that cannot
+      # block a merge. Adding the job without adding the assertion would have
+      # made the typecheck advisory and nothing would have said so.
       - name: Assert all frontend jobs succeeded
         run: |
-          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
-          echo "frontend-build:  ${{ needs.frontend-build.result }}"
-          echo "frontend-perf:   ${{ needs.frontend-perf.result }}"
+          echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
+          echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
+          echo "frontend-build:     ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
           [ "${{ needs.frontend-checks.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-typecheck.result }}" = "success" ] || exit 1
           [ "${{ needs.frontend-build.result }}" = "success" ] || exit 1
           [ "${{ needs.frontend-perf.result }}" = "success" ] || exit 1
 

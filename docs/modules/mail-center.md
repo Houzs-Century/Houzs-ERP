@@ -1,3 +1,10 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. LIVE BUG (flagged separately): compose VALIDATES and STORES cc/bcc (mail-center.ts:2104-2120,:2219) but the sendEmail call (:2148-2161) passes neither — composed Cc/Bcc recipients never receive the mail while the thread renders them. Reply is correct (:2004-2019).
+> 2. LIVE BUG (same chip): attachment-bearing reply/compose do not set outboxRetry:false (only mfg-purchase-orders.ts:4203 does), so a failed send is re-drained BODY-ONLY by the */5 cron.
+> 3. The cc/bcc outbox columns are migrations 0269/148, not 0254/144 (those were renumbered to assr_product_categories_refresh).
+> 4. Plain-reply To = the newest inbound message's from_address, falling back to counterparty_email (mail-center.ts:1946-1956) — the two diverge when a later inbound came from a different sender.
+
 # Module: Mail Center
 
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at

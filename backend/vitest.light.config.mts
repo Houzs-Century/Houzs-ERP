@@ -2,6 +2,10 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 import { classifyTests } from "./scripts/lib/classify-tests.mjs";
 
+// The ratcheted areas, from the ONE list scripts/coverage-ratchet.mjs also
+// reads, so what vitest instruments and what the gate audits cannot drift.
+import { includeGlobsFor } from "../scripts/coverage-areas.mjs";
+
 // The backend's pure-logic suite, on a plain node runner.
 //
 // These are the same tests that used to run inside the Workers pool. Nothing
@@ -32,6 +36,20 @@ export default defineConfig(async () => {
       globals: true,
       environment: "node",
       include: testProjects.light,
+      // ISTANBUL even though this project runs on plain node and v8 would be
+      // cheaper here. The two backend projects' reports are MERGED, and a merge
+      // is only meaningful when both sides describe the same statements — v8 and
+      // istanbul derive different statement maps for the same file, so mixing
+      // them would either double-count a file both projects touch or make the
+      // ratchet's shape check reject the pair outright. One provider per merged
+      // set. (The frontend is v8 and is never merged with these.)
+      coverage: {
+        provider: "istanbul",
+        all: true,
+        include: includeGlobsFor("backend", "backend"),
+        reporter: ["text-summary", "json"],
+        reportsDirectory: "./coverage/light",
+      },
     },
   };
 });

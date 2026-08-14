@@ -989,6 +989,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   const eventTypeParam = c.req.query("event_type_id");
   const yearParam = c.req.query("year");
   const monthParam = c.req.query("month");
+  const fromParam = c.req.query("from");
+  const toParam = c.req.query("to");
   const user = c.get("user");
   const scope = getProjectScope(user);
   // "My pending tasks" filter — map the caller's role to the task scope
@@ -1131,6 +1133,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // (4-digit year / 1-12 month) and binds them individually.
     year: yearParam || undefined,
     month: monthParam || undefined,
+    from: fromParam || undefined,
+    to: toParam || undefined,
     page: parseInt(c.req.query("page") || "1", 10),
     per_page: parseInt(c.req.query("per_page") || "50", 10),
     include_archived: c.req.query("include_archived") === "1",
