@@ -49,20 +49,24 @@ export interface SofaModuleSpec {
 export interface SofaProductPricingRow {
   compartmentId: string;
   active: boolean;
-  price: number;
+  /** SEN. Was whole MYR until 2026-08-14; the rename is deliberate so that a
+   *  missed call site fails to compile instead of being silently 100x off. */
+  priceSen: number;
 }
 export interface SofaProductPricingBundle {
   bundleId: string;
   active: boolean;
-  price: number;
+  /** SEN — see SofaProductPricingRow.priceSen. */
+  priceSen: number;
 }
 export interface SofaProductPricing {
   compartments: SofaProductPricingRow[];
   bundles: SofaProductPricingBundle[];
-  reclinerUpgradePrice: number;
+  /** SEN — see SofaProductPricingRow.priceSen. */
+  reclinerUpgradeSen: number;
   /** Per-Model name for the per-seat upgrade ('Power slide','Headrest', …).
    *  null/undefined → this Model offers no per-seat upgrade (POS hides the add
-   *  button). Display only — the upgrade price is `reclinerUpgradePrice`.
+   *  button). Display only — the upgrade price is `reclinerUpgradeSen`.
    *  F3, 2026-05-23 (migration 0039). */
   seatUpgradeLabel?: string | null;
   /** true → upgraded seat opens a footrest (power recliner/incliner/slide/leg);
@@ -491,8 +495,9 @@ export const sofaModuleCostPricesFromSkus = (
 };
 
 /** Build `SofaProductPricing.compartments` from a per-Model module→price map.
- *  `compartmentId` is normalised (matches a laid-out `cell.moduleId`); price is
- *  whole-MYR (sen ÷ 100). */
+ *  `compartmentId` is normalised (matches a laid-out `cell.moduleId`); the price
+ *  is carried through in SEN, unchanged. It used to be divided by 100 and
+ *  ROUNDED here, which is where a part-ringgit module price was lost. */
 export const sofaCompartmentsFromModulePrices = (
   prices: SofaModulePriceSen | null | undefined,
 ): SofaProductPricingRow[] => {
@@ -500,15 +505,15 @@ export const sofaCompartmentsFromModulePrices = (
   return Object.entries(prices).map(([code, sen]) => ({
     compartmentId: normalizeCompartmentCode(code),
     active: true,
-    price: Math.round(sen / 100),
+    priceSen: sen,
   }));
 };
 
 /** Authoritative SELLING total (in sen) for a configured sofa. Reuses the same
  *  `computeSofaPrice` the POS uses, fed compartments from the Model's module→
  *  price map + combos (sofa_combo_pricing). mfg sofas carry no bundles and
- *  `reclinerUpgradePrice` 0 at pilot, so those are fixed here. Returns whole-
- *  build sen (×100) for the server drift gate. */
+ *  `reclinerUpgradeSen` 0 at pilot, so those are fixed here. Returns whole-
+ *  build SEN — the engine carries sen throughout now, so there is no ×100. */
 export const computeSofaSellingSen = (
   cells: Cell[],
   depth: Depth,
@@ -518,7 +523,7 @@ export const computeSofaSellingSen = (
   const pricing: SofaProductPricing = {
     compartments: sofaCompartmentsFromModulePrices(modulePrices),
     bundles: [],
-    reclinerUpgradePrice: 0,
+    reclinerUpgradeSen: 0,
     combos,
     // Match combos at PRICE_1 — the base tier the whole sofa runs at (Chairman
     // 2026-06-01). Module seat prices load at PRICE_1 and every combo is
@@ -530,7 +535,7 @@ export const computeSofaSellingSen = (
     comboHeight: String(depth),
     baseModel: '',
   };
-  return Math.round(computeSofaPrice(cells, depth, pricing).total * 100);
+  return computeSofaPrice(cells, depth, pricing).total;
 };
 
 /** Auto-detect a Combo's COST (sen) = Σ COST of each slot's representative
@@ -1248,7 +1253,7 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
     // function, so the drift-reject on POST /orders can't fire from mirroring.
     const row = compRow(pricing, cell.moduleId)
       ?? compRow(pricing, mirrorCode(cell.moduleId));
-    aLaCarteTotal += row?.price ?? 0;
+    aLaCarteTotal += row?.priceSen ?? 0;
   }
 
   // Bundle candidate — if the assembled shape matches a known bundle AND the
@@ -1275,7 +1280,7 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
     const closed = group.length === 1 || analyzeSofa(group, depth).closed;
     if (row && row.active && closed) {
       bundle = candidate;
-      bundlePrice = row.price;
+      bundlePrice = row.priceSen;
       basis = 'bundle';
     }
   }
@@ -1305,19 +1310,20 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
       pricing.combos,
     );
     if (match) {
-      // UNIT FIX (Commander 2026-05-28): `match.comboPriceCenti` is CENTI (the
-      // combo dialog stores `Math.round(rm * 100)`), but EVERYTHING else in
-      // groupPrice — compartment `.price`, bundle price, recliner upgrade — is
-      // whole-MYR in the POS pricing object (apps/pos/src/lib/queries.ts:169
-      // divides base_price_sen by 100; product_compartments/bundles.price are
-      // whole-MYR). Convert the combo total to whole-MYR ONCE here so the
-      // cheaper-only guard, the stored comboPrice, and basePrice all compare /
-      // sum in the same unit. (The SERVER recompute keeps centi — it works in
-      // unit_price_sen throughout — so the fix lives at the call site, not in
-      // pickComboMatch's returned unit.)
-      const comboPriceMyr = Math.round(match.comboPriceCenti / 100);
+      // `match.comboPriceCenti` is CENTI, which IS sen — the combo dialog
+      // stores `Math.round(rm * 100)`. Everything in groupPrice is sen now, so
+      // it is carried straight through.
+      //
+      // This line used to read `Math.round(match.comboPriceCenti / 100)`,
+      // converting the combo total DOWN to whole MYR because the rest of the
+      // object was whole-MYR. That is the defect: production carries 23
+      // part-ringgit combo prices out of 163, so RM3152.63 billed as RM3153.00
+      // and RM5712.11 as RM5712.00 — over- and under-charging, with margin
+      // computed against a rounded revenue while cost stayed exact.
+      // Ledger B4, answered by Actions -> "Sofa price rounding check".
+      const comboPriceSen = match.comboPriceCenti;
       // À-la-carte sum of the matched subset (the cells the combo replaces).
-      // Whole-MYR — sums compartment `.price` which is whole-MYR.
+      // SEN — sums compartment `.priceSen`.
       const matchedSet = new Set(match.matchedIndices);
       let subsetSum = 0;
       for (let i = 0; i < group.length; i++) {
@@ -1330,7 +1336,7 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
         // of the combo price — a mirrored build paid combo + module twice.
         const row = compRow(pricing, cell.moduleId)
           ?? compRow(pricing, mirrorCode(cell.moduleId));
-        subsetSum += row?.price ?? 0;
+        subsetSum += row?.priceSen ?? 0;
       }
       // Q2 (Chairman 2026-05-30): the Master Account combo price is the
       // canonical price for a matched set — apply it whenever it matches and is
@@ -1338,9 +1344,9 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
       // former cheaper-only guard ("ignore equal / dearer combos") was removed
       // per the always-use-combo ruling. `comboSubsetALaCarte` is still recorded
       // for display, but no longer gates whether the combo applies.
-      if (comboPriceMyr > 0) {
+      if (comboPriceSen > 0) {
         basis = 'combo';
-        comboPrice = comboPriceMyr;
+        comboPrice = comboPriceSen;
         comboSubsetALaCarte = subsetSum;
         comboExtrasALaCarte = Math.max(0, aLaCarteTotal - subsetSum);
         comboMatchedCellIds = match.matchedIndices.map((i) => cellIds[i]!);
@@ -1358,7 +1364,7 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
     if (!reclinerEligible(cell.moduleId)) continue;
     reclinerCount += (cell.recliners ?? []).length;
   }
-  const reclinerExtra = reclinerCount * pricing.reclinerUpgradePrice;
+  const reclinerExtra = reclinerCount * pricing.reclinerUpgradeSen;
 
   // Base price by basis. For 'combo', the subset price + extras-at-full-price
   // (HOOKKA: comboTotal + Σ extras). For 'bundle' / à la carte, unchanged.
@@ -1394,8 +1400,8 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
  * Compute the price of a sofa cart line.
  *
  * Splits cells into independent sofa groups via edge-contact union-find, then
- * prices each group: à la carte sum (sum of comp.price per cell), bundle override
- * if the signature matches AND bundle.active AND bundle.price < à la carte, plus
+ * prices each group: à la carte sum (sum of comp.priceSen per cell), bundle override
+ * if the signature matches AND bundle.active AND bundle.priceSen < à la carte, plus
  * recliner upgrades counted globally and added to the chosen base.
  *
  * `pricing` is the per-Model SofaProductPricing — Backend SKU Master writes it
