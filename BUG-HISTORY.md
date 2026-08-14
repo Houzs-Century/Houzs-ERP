@@ -12,18 +12,28 @@ tested (`--update lowers a ceiling but will NOT raise one to clear a violation`,
 `scripts/check-file-size-ratchet.mjs`). So there is exactly ONE way to clear this
 debt — shrink the file — and the message named a second one that cannot be done.
 
-**Measured, and it is why this is worth fixing rather than shrugging at.** As of
-2026-08-15 there are **14 files over their ceilings, 1,430 lines in total**, and
-every crossing happened between 2026-08-12 and 2026-08-14 — the ceilings were
-baselined by #2139 on 2026-08-12. The debt is three days old and still growing:
-`Projects.tsx` went 14,996 -> 15,053 in the hours between two measurements taken
-for this entry. `file-size` is not a required status check, so a PR that trips it
-merges, and the next author inherits it.
+**Measured, and it is why this is worth fixing rather than shrugging at.** Every
+crossing happened between 2026-08-12 and 2026-08-14 — the ceilings were baselined
+by #2139 on 2026-08-12, so the whole debt is three days old.
 
-Attribution to a specific PR was ATTEMPTED and is not reliable: 8 of the 14
+**Do not quote a total from here; run `node scripts/check-file-size.mjs`.** It
+prints the aggregate now, which is the point of this change. Two readings taken
+while writing this entry, hours apart, gave *14 files / 1,430 lines* and then
+*13 files / 1,391*, and `frontend/src/pages/Projects.tsx` moved
+14,996 -> 15,053 -> 14,987 -> 14,990 -> 15,056 -> 15,128 across six commits on a
+single day. A number typed here would have been wrong before the PR merged —
+which is the rule this repo already has about numbers in prose, applied to
+itself.
+
+`file-size` is not a required status check, so a PR that trips it merges, and the
+next author inherits it. That is the mechanism; the total is just today's reading
+of it.
+
+Attribution to a specific PR was ATTEMPTED and is not reliable: most
 first-crossings land on MERGE commits (one `merge: take origin/main (7 commits)`
 crosses five files at once), which is where two histories joined, not where the
-lines were written. Recorded as UNKNOWN rather than dressed up.
+lines were written. **UNKNOWN**, recorded rather than dressed up — "fix these
+where they were grown" is not currently answerable by this repo's history.
 
 **Fix.** The message now names the real remedy and prints the aggregate, so the
 debt carries a number every time the gate runs instead of being a list you scroll
