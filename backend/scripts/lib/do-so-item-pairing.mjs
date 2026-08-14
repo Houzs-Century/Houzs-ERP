@@ -1,0 +1,114 @@
+// ---------------------------------------------------------------------------
+// do-so-item-pairing — resolve which Sales Order line a Delivery Order line
+// shipped, for DO lines whose so_item_id was never written.
+//
+// WHY THE LINK MATTERS. Everything that asks "how much of this order is still
+// to fulfil" resolves on delivery_order_items.so_item_id: the remaining-qty
+// guard, the sofa batch guard, the SO header's status flip, and MRP's
+// delivered-netting (soDeliverableRemaining does `.in('so_item_id', ...)` and
+// skips a null). A DO line with no link is a shipment the system cannot see —
+// MRP re-reports the whole order as demand and tells purchasing to order it
+// again. Measured 2026-08-14: 24 unlinked lines, 11 open sales orders
+// over-reporting shortage.
+//
+// WHY PAIRING IS SAFE HERE, AND WHERE IT IS NOT. The pairing is only ever made
+// WITHIN one sales order (the DO already names its so_doc_no) and only between
+// lines of the SAME item_code. That leaves one real ambiguity: an order with
+// two lines of the same code. This resolves it on the variant identity both
+// documents already carry — the DO line is a SNAPSHOT of the SO line, so its
+// variants were copied from it and still match. 2990-SO-2606-016 has two
+// CODY-(K) lines that differ only by colour (BF-10 / BF-12); both documents
+// carry that colour, so the pairing is read, not guessed.
+//
+// WHAT IT REFUSES. When a group cannot be paired one-to-one on identity, the
+// group is returned as UNRESOLVED and nothing is proposed for it. A wrong link
+// is worse than no link: it would silently credit one customer's shipment
+// against another line and is indistinguishable from a fact afterwards.
+// ---------------------------------------------------------------------------
+
+/** The variant identity a DO line inherits from its SO line. Falls back
+ *  through the fields that actually distinguish two same-code lines, in
+ *  descending order of how specific they are. */
+export function variantIdentity(line) {
+  const v = line?.variants ?? null;
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    // pwpCode is per-configuration and the most specific; colour next.
+    if (v.pwpCode) return `pwp:${v.pwpCode}`;
+    if (v.colourId) return `colour:${v.colourId}`;
+    if (v.summary) return `summary:${v.summary}`;
+  }
+  if (line?.description2) return `d2:${line.description2}`;
+  return '';
+}
+
+/* JSON, not "doc + separator + code": real item codes contain spaces
+   ("2990 ARRUS-FIRM MATT (Q)"), so any single-character join is a key that
+   cannot be taken apart again. The group carries its own fields below rather
+   than being split back out. */
+const groupKey = (docNo, itemCode) => JSON.stringify([docNo, itemCode]);
+
+/**
+ * Propose a so_item_id for each unlinked DO line.
+ *
+ * @param doLines  [{ id, so_doc_no, item_code, qty, variants, description2 }]
+ * @param soLines  [{ id, doc_no, item_code, qty, variants, description2 }]
+ * @returns {{ pairs: Array<{doItemId, soItemId, so_doc_no, item_code, how}>,
+ *             unresolved: Array<{so_doc_no, item_code, reason, doCount, soCount}> }}
+ */
+export function pairDoLinesToSoLines(doLines, soLines) {
+  const soByGroup = new Map();
+  for (const s of soLines) {
+    const k = groupKey(s.doc_no, s.item_code);
+    const arr = soByGroup.get(k) ?? [];
+    arr.push(s);
+    soByGroup.set(k, arr);
+  }
+  const doByGroup = new Map();
+  for (const d of doLines) {
+    const k = groupKey(d.so_doc_no, d.item_code);
+    const g = doByGroup.get(k) ?? { so_doc_no: d.so_doc_no, item_code: d.item_code, lines: [] };
+    g.lines.push(d);
+    doByGroup.set(k, g);
+  }
+
+  const pairs = [];
+  const unresolved = [];
+  for (const [k, { so_doc_no, item_code, lines: dos }] of doByGroup) {
+    const sos = soByGroup.get(k) ?? [];
+    if (sos.length === 0) {
+      unresolved.push({ so_doc_no, item_code, reason: 'no SO line with this item code', doCount: dos.length, soCount: 0 });
+      continue;
+    }
+    // The simple, overwhelmingly common case: one DO line, one SO line.
+    if (dos.length === 1 && sos.length === 1) {
+      pairs.push({ doItemId: dos[0].id, soItemId: sos[0].id, so_doc_no, item_code, how: 'only line of its code' });
+      continue;
+    }
+    /* Several of the same code: pair on variant identity, and only where that
+       identity is UNIQUE on both sides. Two indistinguishable lines admit a
+       bijection, but picking one of the two is a coin flip, not a reading —
+       and the two SO lines can differ in what is linked to them (their own PO,
+       their own batch), so the coin flip is not harmless. Refuse instead. */
+    const taken = new Set();
+    const made = [];
+    for (const d of dos) {
+      const want = variantIdentity(d);
+      if (!want) break;
+      if (dos.filter((x) => variantIdentity(x) === want).length > 1) break;
+      const matches = sos.filter((s) => !taken.has(s.id) && variantIdentity(s) === want);
+      if (matches.length !== 1) break;
+      taken.add(matches[0].id);
+      made.push({ doItemId: d.id, soItemId: matches[0].id, so_doc_no, item_code, how: `variant ${want}` });
+    }
+    if (made.length === dos.length) {
+      pairs.push(...made);
+    } else {
+      unresolved.push({
+        so_doc_no, item_code,
+        reason: 'same item code more than once and the variants do not pair one-to-one',
+        doCount: dos.length, soCount: sos.length,
+      });
+    }
+  }
+  return { pairs, unresolved };
+}

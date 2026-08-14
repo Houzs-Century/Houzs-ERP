@@ -37,6 +37,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { AREAS, REPO_ROOT, areaOf, listAreaFiles } from './coverage-areas.mjs';
 import {
@@ -279,4 +280,15 @@ function main() {
   console.log('coverage-ratchet: every area held its floor.');
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) main();
+/* pathToFileURL, not string concatenation. `file://${process.argv[1]}` builds
+   `file://C:\Users\...` on Windows while import.meta.url is
+   `file:///C:/Users/...` — different slash count, different separators, never
+   equal. So main() was NEVER CALLED on Windows and the script exited 0 having
+   done nothing: `coverage:check` reported success without reading a single
+   report. Linux CI matched by luck (a POSIX path starts with `/`, so the
+   concatenation happens to produce three slashes), which is why it survived.
+
+   Same shape as the ESLint spawn bug in BUG-HISTORY 2026-08-14: a gate that is
+   silently a no-op on the OS this repo is developed on, green on CI throughout.
+   A check that cannot run must not be able to report a pass. */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

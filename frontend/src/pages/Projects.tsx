@@ -1039,6 +1039,90 @@ const PROJECTS_LIST_FILTER_KEYS = [
  *  grouped (the task filter groups by checklist section); pass one group with a
  *  null name for a flat list. Selection is a string[] the caller comma-joins
  *  into the URL. */
+// Date-range filter (owner 2026-08-11) — a From/To picker chip that replaces the
+// old year + month dropdowns. Two native date inputs; the list scopes to events
+// overlapping the window (start <= to AND end >= from).
+function DateRangeFilter({
+  from,
+  to,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const fmt = (d: string) => {
+    if (!d) return "…";
+    const [y, m, day] = d.split("-");
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
+    return `${parseInt(day, 10)} ${mon} ${y}`;
+  };
+  const active = !!(from || to);
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-8 max-w-[240px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          active ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <Calendar size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{active ? `${fmt(from)} – ${fmt(to)}` : "All dates"}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-30 w-[250px] rounded-md border border-border bg-surface p-3 shadow-slab">
+          <div className="mb-2 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">Date range</span>
+            {active && (
+              <button type="button" onClick={() => onChange("", "")} className="text-[10.5px] font-semibold text-ink-secondary hover:text-err">
+                Clear
+              </button>
+            )}
+          </div>
+          <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
+            From
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => onChange(e.target.value, to)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+          <label className="block text-[11px] font-semibold text-ink-secondary">
+            To
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => onChange(from, e.target.value)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MultiSelectFilter({
   placeholder,
   groups,
@@ -1182,6 +1266,10 @@ function ProjectsListView() {
   const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
   const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
+  // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
   // Ticked values per filter (owner 2026-08-07 multi-select). The raw comma
   // strings above are what go on the wire; these arrays drive the checkboxes.
   const sectionList = useMemo(() => csvParam(section), [section]);
@@ -1208,6 +1296,7 @@ function ProjectsListView() {
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
   const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
+  const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
   const setPage = (n: number) => patchParams({ page: String(n) });
 
@@ -1292,6 +1381,8 @@ function ProjectsListView() {
           brand: restrictedCohort ? undefined : brand || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
+          from: restrictedCohort ? undefined : from || undefined,
+          to: restrictedCohort ? undefined : to || undefined,
           section: restrictedCohort ? undefined : section || undefined,
           task_pending: restrictedCohort ? undefined : taskPending || undefined,
           phase: restrictedCohort && phase ? phase : undefined,
@@ -1310,7 +1401,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -1351,6 +1442,8 @@ function ProjectsListView() {
             brand: restrictedCohort ? undefined : brand || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
+            from: restrictedCohort ? undefined : from || undefined,
+            to: restrictedCohort ? undefined : to || undefined,
             section: restrictedCohort ? undefined : section || undefined,
             task_pending: restrictedCohort ? undefined : taskPending || undefined,
             phase: restrictedCohort && phase ? phase : undefined,
@@ -1621,7 +1714,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1799,7 +1892,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -1929,40 +2022,7 @@ function ProjectsListView() {
             { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
           ]}
         />
-        <MultiSelectFilter
-          placeholder="All years"
-          summary={(n) => `${n} years`}
-          panelWidth="w-[160px]"
-          selected={yearList}
-          onChange={(next) => setYear(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: (() => {
-                const y = new Date().getFullYear();
-                const out: { value: string; label: string }[] = [];
-                for (let i = y + 1; i >= y - 4; i--) out.push({ value: String(i), label: String(i) });
-                return out;
-              })(),
-            },
-          ]}
-        />
-        <MultiSelectFilter
-          placeholder="All months"
-          summary={(n) => `${n} months`}
-          panelWidth="w-[180px]"
-          selected={monthList}
-          onChange={(next) => setMonth(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December",
-              ].map((label, i) => ({ value: String(i + 1), label })),
-            },
-          ]}
-        />
+        <DateRangeFilter from={from} to={to} onChange={setDateRange} />
         <MultiSelectFilter
           placeholder="All statuses"
           title="Filter by project status"
@@ -1979,7 +2039,7 @@ function ProjectsListView() {
             dropdown keeps its own in-panel "Clear (n)"; this resets them all
             together so the owner doesn't have to open each one. Shown only when
             at least one dropdown is active. Search + My-pending are left alone. */}
-        {(section || taskPending || brand || year || month || status) && (
+        {(section || taskPending || brand || from || to || status) && (
           <button
             type="button"
             onClick={() =>
@@ -1989,11 +2049,13 @@ function ProjectsListView() {
                 brand: "",
                 year: "",
                 month: "",
+                from: "",
+                to: "",
                 status: "",
                 page: "1",
               })
             }
-            title="Untick every filter dropdown"
+            title="Clear every filter"
             className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
           >
             <X size={13} />
@@ -2921,7 +2983,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -6890,7 +6952,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -7169,7 +7231,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -7463,6 +7525,12 @@ function TaskAttachmentRow({
     }
   }
   const isImage = (attachment.content_type ?? "").startsWith("image/");
+  // Owner 2026-07-20: PDFs get an inline first-page preview too, using the
+  // browser's built-in PDF viewer via <embed>. No pdfjs dep needed and no
+  // bundle weight; every modern browser + iOS/Android WebView renders it.
+  const isPdf =
+    (attachment.content_type ?? "").includes("pdf") ||
+    attachment.file_name.toLowerCase().endsWith(".pdf");
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // Per-photo remark (owner 2026-07-16): each attachment carries its own caption.
@@ -7484,12 +7552,18 @@ function TaskAttachmentRow({
     }
   }
 
+  // Fetch a blob URL for anything we can preview inline (images AND PDFs) so
+  // the same effect handles cleanup + revocation on unmount for both.
+  const wantsInlinePreview = isImage || isPdf;
   useEffect(() => {
-    if (!isImage) return;
+    if (!wantsInlinePreview) return;
     let cancelled = false;
     let revoke: string | null = null;
     api
-      .fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`)
+      .fetchBlobUrl(
+        `/api/projects/attachments/${attachment.r2_key}`,
+        isPdf ? "application/pdf" : undefined,
+      )
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url);
@@ -7505,7 +7579,7 @@ function TaskAttachmentRow({
       cancelled = true;
       if (revoke) URL.revokeObjectURL(revoke);
     };
-  }, [attachment.r2_key, isImage]);
+  }, [attachment.r2_key, wantsInlinePreview, isPdf]);
 
   async function download() {
     try {
@@ -7551,6 +7625,29 @@ function TaskAttachmentRow({
               draggable={false}
             />
           </button>
+        ) : isPdf && thumbUrl ? (
+          // Native browser PDF viewer — shows page 1 inline. Wrapped in a
+          // click-through overlay so the PDF's own scrollbars don't swallow
+          // the click; the label + click always opens the full doc in a tab.
+          <div
+            className="relative block max-w-full overflow-hidden rounded border border-border bg-surface"
+            title="Click to open the full document"
+          >
+            <embed
+              src={`${thumbUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+              type="application/pdf"
+              className="pointer-events-none block h-44 w-full"
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); viewInTab(); }}
+              className="absolute inset-0 flex cursor-zoom-in items-end justify-end bg-transparent p-1.5 text-[9px] font-semibold text-ink-muted opacity-0 transition hover:bg-black/5 hover:opacity-100"
+            >
+              <span className="rounded bg-surface/95 px-1.5 py-0.5 shadow-sm">
+                Open PDF
+              </span>
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -8851,7 +8948,11 @@ function DocRow({
             // approve/reject *decision trail* stays in the Approval
             // column; the remark text itself belongs here.
             const remarkComments = comments
-              .filter((c) => c.kind !== "submit" && c.body)
+              // Remarks column shows human-typed notes only. Excludes:
+              // - 'submit' (empty ping, always body=null anyway)
+              // - 'upload' / 'remove' (system audit lines, filename is the body
+              //   but belongs in the History column, not Remarks — owner 2026-07-20).
+              .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
               .slice()
               .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
             if (!item.notes && remarkComments.length === 0)
@@ -8898,22 +8999,43 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): the approve/reject
-                  record. 'submit' entries are hidden as noise. */}
+              {/* Chronological history (oldest → newest): every action on this
+                  task — uploads, removes, approves, rejects. 'submit' entries
+                  (the internal "hey reviewer, this is ready" ping) are hidden
+                  as noise; the upload comment right next to it says the same
+                  thing with better context (the filename). Owner 2026-07-20:
+                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
+                  Sim · 06/08 10:33" removes the confusion about why the
+                  Approve button reappeared after a re-upload. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
                     .filter((c) => c.kind !== "submit")
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-                    .map((c) => (
-                      <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
-                        <span className={cn("font-semibold", commentKindColor(c.kind))}>
-                          {commentKindLabel(c.kind)}
-                        </span>{" "}
-                        · {c.user_name || "—"} · {formatDateTime(c.created_at)}
-                      </div>
-                    ))}
+                    .map((c) => {
+                      // Upload/remove comments carry the filename in `body`;
+                      // approve/reject leave body null (the decision itself is
+                      // the whole story).
+                      const showFile = (c.kind === "upload" || c.kind === "remove") && c.body;
+                      return (
+                        <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                          <span className={cn("font-semibold", commentKindColor(c.kind))}>
+                            {commentKindLabel(c.kind)}
+                          </span>
+                          {showFile && (
+                            <>
+                              {" "}
+                              <span className="max-w-[220px] truncate align-baseline text-ink">
+                                {c.body}
+                              </span>
+                            </>
+                          )}
+                          {" · "}
+                          {c.user_name || "—"} · {formatDateTime(c.created_at)}
+                        </div>
+                      );
+                    })}
                 </div>
               )}
               {/* Approve/Reject visibility. The control appears once a file is
@@ -9500,12 +9622,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }
@@ -9919,10 +10041,10 @@ function ChecklistRow({
           keeps this simple remark box. Falls away the moment a file is added. */}
       {expanded && (!attachments || attachments.length === 0) && (
         <div className="mt-2 border-t border-border pt-2">
-          {comments.filter((c) => c.kind !== "submit" && c.body).length > 0 && (
+          {comments.filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body).length > 0 && (
             <div className="mb-2 space-y-1">
               {comments
-                .filter((c) => c.kind !== "submit" && c.body)
+                .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
                 .map((c) => (
                   <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
@@ -9972,6 +10094,10 @@ function commentKindLabel(k: string): string {
       return "Marked amended";
     case "approve":
       return "Approved";
+    case "upload":
+      return "Uploaded";
+    case "remove":
+      return "Removed";
     default:
       return "Note";
   }
@@ -9980,11 +10106,13 @@ function commentKindLabel(k: string): string {
 function commentKindColor(k: string): string {
   switch (k) {
     case "reject":
+    case "remove":
       return "text-err";
     case "approve":
       return "text-synced";
     case "submit":
     case "amend":
+    case "upload":
       return "text-accent";
     default:
       return "text-ink";
