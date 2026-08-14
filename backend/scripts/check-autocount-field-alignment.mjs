@@ -131,7 +131,7 @@ const top = (m, n = 10) =>
  *             book, so `/ensure-masters` would CREATE them. A pass-through is
  *             only as safe as this number is small and this list is readable.
  */
-function verdict(label, rows, send, { fatal, book, howItFails, opensWhat }) {
+function verdict(label, rows, send, { fatal, book, map, howItFails, opensWhat }) {
   const missing = [];
   const values = new Map();
   for (const r of rows) {
@@ -146,12 +146,29 @@ function verdict(label, rows, send, { fatal, book, howItFails, opensWhat }) {
           ` First few: ${missing.slice(0, 6).join(", ")}`
         : " (every one of them now carries a value)."),
   );
-  if (!book) return;
-  const fresh = [...values.entries()].filter(([v]) => !book.has(v.toUpperCase()));
-  const freshRows = fresh.reduce((a, [, n]) => a + n, 0);
+  /* WHAT A PASS-THROUGH WOULD OPEN. Two ways to answer it, and the difference
+     matters: where the book's own vocabulary is committed beside this script we
+     can name exactly what is NEW; where it is not (BRANDING — recorded only as
+     prose), the honest answer is the values the MAP does not know, which is an
+     over-count of the truth rather than a comfortable silence. Printing nothing
+     because the reference list is missing is how a real consequence goes
+     unreviewed. */
+  if (book) {
+    const fresh = [...values.entries()].filter(([v]) => !book.has(v.toUpperCase()));
+    const freshRows = fresh.reduce((a, [, n]) => a + n, 0);
+    notice(
+      `  OPENS ${fresh.length} new ${opensWhat} in the licensed book, on ${freshRows} order(s): ` +
+        `${fresh.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
+    );
+    return;
+  }
+  if (!map) return;
+  const unmapped = [...values.entries()].filter(([v]) => !bookSpelling(v, map));
+  const unmappedRows = unmapped.reduce((a, [, n]) => a + n, 0);
   notice(
-    `  OPENS ${fresh.length} new ${opensWhat} in the licensed book, on ${freshRows} order(s): ` +
-      `${fresh.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
+    `  MAY OPEN up to ${unmapped.length} new ${opensWhat} on ${unmappedRows} order(s) — these are the ` +
+      `values ${"the map"} does not know, and this book's option list is not committed here, so some ` +
+      `may already exist: ${unmapped.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
   );
 }
 
@@ -318,8 +335,35 @@ try {
         fatal: true,
         book: bookLocations,
         opensWhat: "stock location(s)",
-        howItFails: "SalesLocation is assigned unconditionally — FK_SO_SalesLocation.",
+        howItFails:
+          "SalesLocation is assigned unconditionally — FK_SO_SalesLocation. The composer now REFUSES " +
+          "these by name instead of sending it, so they are a visible skipped row rather than a lost " +
+          "document — but they are still not WRITTEN.",
       },
+    );
+    /* WHY a document is still unanswerable, split by remedy, because "21 fail"
+       and "21 need the same fix" are different statements and only the second
+       one tells anybody what to do. A blank sales_location falls back to the
+       lines; if the lines cannot answer either, there are exactly two reasons
+       and they are fixed by different people. */
+    const stuck = unlinked.filter((r) =>
+      !bookSpellingOrOwn(r.sales_location, LOCATION_MAP)
+      && !bookSpellingOrOwn(lineLocByDoc.get(r.doc_no) ?? null, LOCATION_MAP));
+    const liveLineRows = await pg`
+      SELECT s.doc_no, count(i.id)::int AS n
+        FROM scm.mfg_sales_orders s
+        LEFT JOIN scm.mfg_sales_order_items i
+          ON i.doc_no = s.doc_no ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
+       WHERE s.linked_ac_docno IS NULL
+       GROUP BY s.doc_no`;
+    const liveLines = new Map(liveLineRows.map((r) => [r.doc_no, r.n]));
+    const noLines = stuck.filter((r) => !liveLines.get(r.doc_no));
+    notice(
+      `  of those ${stuck.length}: ${noLines.length} have NO live line at all (MissingSalesLocationError ` +
+        `— nothing to sell, so nothing to take a warehouse from), and ${stuck.length - noLines.length} ` +
+        `have lines that carry no warehouse_id (MissingLocationError, which already refused them ` +
+        `before this change). Both are named skipped rows; the remedy for the second is to set the ` +
+        `warehouse on the line or the sales location on the order.`,
     );
   }
 
@@ -357,9 +401,12 @@ try {
       {
         fatal: false,
         /* The book's BRANDING option list is recorded only as prose in
-           autocount-so-writeback-mappings.json, so there is no set to check a
-           new option against and no OPENS line can be honest here. */
+           autocount-so-writeback-mappings.json, so there is no set to say what
+           is NEW. Falling back to "what the map does not know" over-counts
+           rather than staying silent — see verdict(). */
         book: null,
+        map: BRANDING_MAP,
+        opensWhat: "BRANDING option(s)",
         howItFails: "udf() drops a null, so the BRANDING UDF is never written.",
       },
     );
