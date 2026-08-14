@@ -16,6 +16,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { splitSqlStatements } from "./lib/split-sql.mjs";
+import { pgSslMode } from "./lib/pg-ssl-mode.mjs";
 import {
   ADOPTED_LEGACY_CHECKSUM,
   checksumMigrationSql,
@@ -45,7 +46,13 @@ if (!url) {
   console.error("DATABASE_URL not set (env var or .dev.vars). Aborting.");
   process.exit(1);
 }
-const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
+/* TLS is REQUIRED, and pgSslMode is the only thing allowed to say otherwise:
+   loopback only, spelled exactly, failing closed on anything it cannot parse
+   (lib/pg-ssl-mode.mjs, tests/pgSslMode.node.mjs). The exception exists because
+   CI replays every migration into a scratch postgres:16 container that serves
+   no TLS at all — with `ssl: "require"` hardcoded that replay died in 0.06s
+   before reading a single migration. */
+const pg = postgres(url, { ssl: pgSslMode(url), prepare: false, max: 1 });
 
 /* A dry-run/verification is a production diagnostic, so it must be literally
    read-only. The helper introspects the catalog and projects NULL for a legacy
