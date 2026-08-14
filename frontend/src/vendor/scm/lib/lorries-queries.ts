@@ -19,6 +19,7 @@ import {
   correlatedFetch,
   requestIdFromResponse,
 } from '../../../lib/requestCorrelation';
+import { writeFailed } from './mutation-error';
 
 // Matches the lorry_type enum in migration 0195 / Houzs scm 0053.
 export const LORRY_TYPES = [
@@ -247,6 +248,7 @@ export function useUpdateLorryServiceRecord(lorryId: string) {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-service-records', lorryId] }),
+    onError: writeFailed,
   });
 }
 

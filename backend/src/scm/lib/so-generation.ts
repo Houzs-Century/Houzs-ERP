@@ -36,6 +36,11 @@ export async function advanceSoGeneration(
       || (expected?.status !== undefined && expected.status !== row.status)) {
     return { applied: false, reason: 'conflict', currentVersion: version };
   }
+  /* company-scope: doc_no IS mfg_sales_orders' PRIMARY KEY
+     (2990s-full-schema.sql:638) and the numbering is prefix-partitioned per
+     company (companyDocPrefix: HOUZS 'HC-', others '<CODE>-'), so one doc_no
+     names exactly one company's order. A company predicate here would be
+     redundant, not safer. */
   let query = sb.from('mfg_sales_orders').update({
     ...patch,
     version: version + 1,

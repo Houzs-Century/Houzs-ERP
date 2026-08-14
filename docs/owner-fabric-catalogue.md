@@ -27,7 +27,22 @@
 
 **(3) 改名字 = 一次只有一个成员的 merge。** 把 `ZL-3` 改成 `ZL-03`,会改掉活跃单据
 `variants->>'fabricCode'` 里存的那个字符串。所以**改名也必须把单据一起 repoint**,
-四条 arm(SO / PO / GRN / DO)一条都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+一条 arm 都不能漏 —— #1964 抓到的就是漏扫 GRN 那条。
+
+> **arm 是 15 条,不是 4 条**(2026-08-13 从 `backend/scripts/lib/fabric-write.mjs`
+> 的 `ARMS` 量出来:SO / PO / GRN / DO / SI / PI / PRT / DRT / CSO / CDO / CDRT /
+> PCO / PCR / PCRT / MOV)。这行本来写「四条 arm(SO / PO / GRN / DO)」,那是
+> 2026-08-11 当天的实况;`repair-superseded-colour-refs.mjs` 就是去收拾那次
+> 「只认得 15 条里的 4 条」留下的活单。除了 `variants` 两个轴之外,同一个码还materialise
+> 在 `description2`、库存桶 `variant_key`、和 model 的 `allowed_options` 白名单里,
+> 也要一起跟着走。**不要照抄这段清单去手写扫描,`lib/fabric-write.mjs` 才是唯一那份。**
+
+**(4) 这一家脚本可以再跑,但要看得懂 plan。** `normalize-fabric-codes.mjs` 的
+CODE / LABEL 那段里,如果 `->` 右边比左边**少了一个词**(`J9226-01 SAND` 变成
+`J9226-01`),那就是颜色名字被抹掉,不是整理。2026-08-13 的 prod plan 一次提了
+200 条这种,全部 code 没变、只掉名字。原因是名字本来住在 code 里,第一趟把它搬去
+label,第二趟再从 code 推就推不出来了。修法是把 label 也当成名字的来源
+(`lib/fabric-code.mjs` 的 `nameFromLabel`),现在第二趟是空转。
 
 ---
 
@@ -140,10 +155,35 @@ plan 阶段就逐行印出来:
 的地方(数字守卫,#1976)。之前五个脚本各抄一份、抄到互相打架,#1893 才收回来一份。
 **不要在这里再抄第七份。**
 
-### jsonb 的写法是 `jsonb_set(..., to_jsonb($1::text))`
+### 「这 12 个系列是 owner 定的」也只有一份:`lib/catalogue-series.mjs`
+
+清单本身是**决定**,不是推导出来的结果,所以任何会自己算出 canonical 码或描述的脚本
+都必须先问它。2026-08-14 之前只有 `normalize-fabric-codes.mjs` 知道(而且是自己抄了
+一份放在档案里),`tidy-fabric-descriptions.mjs` 完全不知道 —— 那天的 prod plan 就把
+owner 自己的 249 行(Converter 78、销售库 171)报成
+`code is not canonical (would be DE-01) - fix the CODE first`。一行都没改到,但真正
+的问题从此埋在 249 行噪音里。
+
+现在:`isCatalogueSeries(parsedSeries)`,问的是**解析后的系列**,所以 `DE01` 跟
+`DE-01` 答案一样。`backend/tests/catalogueSeriesOneList.node.mjs` 钉住三件事——两个
+推导脚本都要 import;seed 新加的系列必须在清单里(否则下次 normalize 会把它推翻);
+除了 seed 和这份 lib,没有第三个档案列满 12 个。
+
+### jsonb 写法有两条,不是一条
+
+**写单一个 key(scalar):`jsonb_set(..., to_jsonb($1::text))`。** 这是这批脚本在用的。
+
+**写一整个 object:`$n::text::jsonb`,那个 `::text` 是关键。** 只写 `$n::jsonb`
+没有用 —— postgres.js 已经把参数标成 jsonb 了,再 cast 一次等于没 cast,结果存进去
+的是一个 jsonb **字符串**,不是 object。2026-08-13 就是这样把 7 笔 prod 资料写坏的,
+而且写坏它的正是当初为了修这个 bug 才写的那支脚本。
 
 把已经序列化好的字符串绑到 jsonb 参数上,是 2026-08-10 一天之内毁掉 variants 栏三次的
-那个写法。见 `docs/jsonb-double-encoding-coe.md`。
+那个写法。两次的完整经过见 `docs/jsonb-double-encoding-coe.md`(第二次在
+*IT RECURRED* 那一节)。
+
+> 2026-08-14 补:这一节本来只写了 scalar 那半条,并且把它当成「jsonb 的写法」。
+> 少掉的那半条正是让同一个 bug 再犯一次的原因。
 
 ---
 

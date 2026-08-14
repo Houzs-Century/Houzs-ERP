@@ -1,47 +1,14 @@
-> ## Corrections — 2026-08-12 code-read sweep
->
-> This guide pins itself to a 2026-07-21 commit and the module moved under it.
-> Ten claims were checked against today's code and corrected; the largest are
-> fixed inline below, the rest are listed here with evidence so the stale text
-> cannot be quoted without hitting this block first.
->
-> 1. **Stage order changed** (#1983, 2026-08-11): `pending_solution` now comes
->    BEFORE `under_verification` — `services/assr.ts:99-108`, `stages.ts:40-50`,
->    desktop `ServiceCases.tsx:5516-5524`, mobile `MobileServiceCase.tsx:89-93`.
->    The `pending_item_ready` chip reads "Pending Item Ready".
-> 2. **A terminal `voided` stage exists** (2026-07-29, #1408/#1413):
->    `services/assr.ts:63-67`; `statusForStage` maps it to "Closed" (:88);
->    `closed_at` set for completed OR voided, `completion_date` only for
->    completed (:858-865); `void_reason` column (mig 0226). FIXED 2026-08-13: twelve
->    predicates (not two) still spelled "open" as `!= 'completed'` — the
->    escalation sweep, nine counters in `routes/assr.ts` and three inbox lists.
->    All now read `NOT IN ('completed','voided')`; the `= 'completed'` "closed"
->    counters were left alone on purpose.
-> 3. **"At least one item" is no longer required at create** (owner audit
->    2026-07-22): `routes/assr.ts:1735-1746` accepts empty items[]; in its
->    place an undocumented duplicate-open-case 409 guard (:1748-1802).
-> 4. **mark-opened advances to `pending_solution`** now, not
->    `under_verification` (`services/assr.ts:933-942`).
-> 5. **The stage set is bounded by the app-level guard**
->    (`ALL_STAGES.includes`, `services/assr.ts:815-817`), not a DB CHECK —
->    the code's own comment records prod PG carries none.
-> 6. **The "known divergence" (mobile omits the director branch) was FIXED**
->    the same day the guide was pinned (#974): `MobileServiceCase.tsx:377-380`
->    now includes `org.director`.
-> 7. **Mobile list query key** is now
->    `["mobile-assr-list-paged", q, sort, activeChip.key, user.id]` with a
->    role-aware chip system (:404-422, :452).
-> 8. **Attachment upload gate is wider**: `requireAnyPermission(["service_cases.write","service_cases.create","service_cases.manage"])`
->    (`routes/assr.ts:3150, :3197`).
-> 9. **`requireServiceCaseAccess` also gates two mutations** (sales-comment
->    :1512, sales-nudge :1538) and an `enforceCaseScope` middleware runs on
->    every mutating /:id route (:65-73).
-> 10. **Post-pin surface this guide does not cover**: the sheet-sync intake
->    `POST /api/assr-form-intake/delivery-dates` writing three `sched_*` date
->    columns (mig 0282, #2059); the letterhead-at-print-time rebuild (#2020,
->    `assr_print.ts` now ~1,200 lines); route count now 61 registrations.
-
 # Module: Service Case (ASSR)
+
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Per-module technical doc — after-sales service cases from intake to close:
 the screen, the pipeline, the API, the tables, and who is allowed to do what.
@@ -75,19 +42,33 @@ bottom tab (`:756`).
 
 ### The 7-stage pipeline (and why a case sometimes runs 5)
 
-`frontend/src/vendor/scm/lib/assr/stages.ts:38-46` is the canonical ordered
-table; the backend's enum mirrors it at `backend/src/services/assr.ts:90-98`
-(`ALL_STAGES`).
+`frontend/src/vendor/scm/lib/assr/stages.ts` (`ASSR_STAGES`) is the canonical
+ordered table; the backend's `ALL_STAGES` (`backend/src/services/assr.ts`)
+carries the same seven plus the terminal `voided` below.
+
+**Order changed 2026-08-11 (Nico): Solution now comes BEFORE Verification** —
+decide the fix first, then inspect/verify.
 
 | # | `assr_cases.stage` | Chip | Owner role |
 |---|---|---|---|
 | 1 | `pending_review` | Review | Service Admin |
-| 2 | `pending_solution` | Verify | Service Admin |
-| 3 | `under_verification` | Solution | Service Admin |
+| 2 | `pending_solution` | Solution | Service Admin |
+| 3 | `under_verification` | Verify | Service Admin |
 | 4 | `pending_supplier_pickup` | Supplier | Service Admin |
-| 5 | `pending_item_ready` | Item Ready | Service Admin |
+| 5 | `pending_item_ready` | Pending Item Ready | Service Admin |
 | 6 | `pending_delivery_service` | Delivery | Logistic Admin |
 | 7 | `completed` | Completed | System |
+
+**`voided` is an EIGHTH stage value and is NOT in the pipeline table** (Nico
+2026-07-29). It is the terminal alt-outcome for a case verified as not valid /
+not warranty-covered, parallel to `completed`, never a step. It is in the
+backend `Stage` union and in `ALL_STAGES` (so `transitionStage` accepts it) but
+absent from `ASSR_STAGES`, so no surface renders it as a stage chip.
+`statusForStage` maps both `completed` and `voided` to "Closed". The difference
+that matters: BOTH stamp `closed_at` and stop the SLA clock, but only
+`completed` stamps `completion_date` and feeds the satisfaction survey — a
+voided case stays out of the completed count and out of CSAT. Its reason is
+captured in `void_reason` (a `PATCH_FIELDS` member).
 
 **Stages 4 and 5 are supplier-only.** `ASSR_SUPPLIER_ONLY_STAGES`
 (`stages.ts:53-56`) drops out when the case's `resolution_method` routes
@@ -142,14 +123,27 @@ Enforced on **both** halves as of 2026-07-21:
 
 | Field | Frontend gate | Server guard |
 |---|---|---|
-| `doc_no` (SO) | desktop `ServiceCases.tsx:2865-2871`; mobile `MobileServiceCase.tsx:1921` | `backend/src/routes/assr.ts:1550-1554` → 400 |
-| at least one item | same | `assr.ts:1563-1566` → 400 `"At least one item is required"` |
-| `complaint_issue` | same | `assr.ts:1550-1554` |
-| `issue_category` | same (desktop also requires the custom label when "Other…" is picked) | `assr.ts:1548-1554` — `hasCategory` treats whitespace-only as missing |
+| `doc_no` (SO) | desktop `ServiceCases.tsx`; mobile `MobileServiceCase.tsx` | `backend/src/routes/assr.ts` → one combined 400 `"doc_no, complaint_issue and issue_category are required"` |
+| `complaint_issue` | same | same 400 |
+| `issue_category` | same (desktop also requires the custom label when "Other…" is picked) | same 400 — `hasCategory` treats whitespace-only as missing |
 
-The desktop comment at `ServiceCases.tsx:2858-2861` still says *"server still
-accepts a null category"*. That is **stale** — the server guard at
-`assr.ts:1548` is the authority now.
+**`items[]` is NOT required — that changed on owner audit 2026-07-22.** The
+server used to 400 `"At least one item is required"`; it no longer does, and the
+literal is gone from the tree. A Service Case is not necessarily about a
+defective product (a driver damaged the customer's floor, a lorry problem left
+the delivery incomplete), and the old guard forced staff to invent a fake item
+code to submit. `item_code` (old shape) and `items[]` (new) are both accepted
+and an empty result is fine.
+
+**Create also has a duplicate-open-case guard** (same audit): if any submitted
+`item_code` is already attached to a non-archived, non-`completed` case on the
+SAME `doc_no` (company-scoped), create refuses **409 `duplicate_open_case`**
+carrying an `existing[]` array grouped by case id, so the caller can offer "add
+to that case instead". Item-less cases skip it — they have no product signature
+to collide on.
+
+The desktop comment at `ServiceCases.tsx` saying *"server still accepts a null
+category"* is **stale** — the server `hasCategory` guard is the authority now.
 
 ### Complaint date is automatic and locked
 
@@ -210,8 +204,8 @@ is the ones that matter; the full machine-checked gate list is
 | POST | `/api/assr` | `requireServiceCaseAccess(["service_cases.create","service_cases.write","service_cases.manage"])` `:1517-1528` | Create (see required fields above) |
 | PATCH | `/api/assr/:id` | `requirePermission("service_cases.write")` `:1657` | Field edits, whitelisted by `PATCH_FIELDS` |
 | POST | `/api/assr/:id/transition` | `service_cases.write` `:2570` | Move stage (any-to-any; fires the survey email on `completed`) |
-| POST | `/api/assr/:id/mark-opened` | `service_cases.write` `:1744` | Mig 106 auto-advance `pending_review` → `under_verification` on first open |
-| POST | `/api/assr/:id/approve` | `service_cases.approve` `:2523` | Cost approval |
+| POST | `/api/assr/:id/mark-opened` | `service_cases.write` | Auto-advance on first open. Since the 2026-08-11 order change it lands on **`pending_solution`**, not `under_verification` (`markCaseOpened`, `services/assr.ts`). No-op unless the case is currently `pending_review`. |
+| POST | `/api/assr/:id/approve` | `service_cases.approve` | Cost approval. **The key was UNDECLARED until 2026-08-13** — the route had always checked it, but it was missing from `services/permissions.ts`, so it never reached `PERMISSION_KEYS`, could not be granted in the roles matrix, and only `*` holders passed. Cost approval was accidentally Owner/IT-only. Now declared; who can approve today is unchanged, but the gate is grantable. |
 | POST | `/api/assr/:id/generate-po` | `service_cases.manage` `:2470` | Mint the service PO number |
 | GET | `/api/assr/summary` | `service_cases.read` `:584` | KPI tiles (backlog, aging, SLA breach, by stage/status/location/category) |
 | GET | `/api/assr/metrics`, `/metrics/drill` | `service_cases.read` `:2064`, `:2320` | Reporting |
@@ -307,17 +301,40 @@ transition. The resolved value is **snapshotted** onto
 (`transitionStage` `:650-706`), so amending a profile later does not rewrite
 history.
 
-**Escalation** — `runSlaEscalation` (`backend/src/services/assrEscalation.ts:17-27`)
+**Escalation** — `runSlaEscalation` (`backend/src/services/assrEscalation.ts`)
 stamps `escalated_at` on open cases more than 24 h past `deadline_at`, logs to
 `assr_activity`, and emails the assignee plus `service_cases.manage` holders.
-Runs from the daily cron (`backend/src/index.ts:459`) and manually via
+Runs from the daily cron (`backend/src/index.ts`) and manually via
 `POST /api/assr/run-escalation`.
+
+**"Open" means neither terminal stage, and not archived (2026-08-14).** There
+are TWO terminal stages — `completed` and `voided`. Both stamp `closed_at`, both
+render as "Closed". Every open / backlog / aging / SLA-breach predicate used to
+be a hand-written `stage != 'completed'`, roughly thirty copies naming one of the
+two, so a VOIDED case stayed in the backlog, kept aging, kept breaching, and was
+picked up by this cron — which mailed the assignee and every manager about a case
+somebody had closed precisely so it would stop demanding attention. Archived
+cases were never excluded either.
+
+The predicate now has one home: `assrOpenStageSql(alias)` in
+`backend/src/services/assrStages.ts`, used by the escalation candidates, the
+three `is_breached` CASE arms in `services/assr.ts`, and every count and list
+filter in `routes/assr.ts`. Two rules go with it:
+
+- The **closed** side (`stage = 'completed'`) is deliberately NOT collapsed into
+  it. That drives the resolved counts and the average-resolution-time figures,
+  and a voided case was not resolved. "Not open" and "resolved" are different
+  questions.
+- The `stage IS NULL` arm is load-bearing. `stage NOT IN (…)` is NULL for a
+  legacy row, which is not TRUE, so those rows would silently leave every count.
 
 ### Transition (`services/assr.ts:650-706`)
 
 Transitions are deliberately **unrestricted** in both directions — ops can
-revert a completed case or skip stages (rationale at `:83-89`); only the column
-CHECK bounds the value set. Each transition refreshes `stage_changed_at` +
+revert a completed case or skip stages; the only bound is `ALL_STAGES.includes`,
+which throws `Unknown stage: …` (prod PG carries no CHECK on the column; the D1
+test mirror's CHECK does not list `voided`, so do not write a voided-stage test
+there). Each transition refreshes `stage_changed_at` +
 `stage_entered_at`, re-snapshots `stage_target_days`, and seeds `sub_status`
 to the stage's first sub-state (or NULL for stages without one, `:689-702`) so
 a stale sub-status cannot leak across stages.
@@ -398,6 +415,32 @@ Watch as data grows:
 **The backend is the authority. Nothing on the frontend re-derives the rule —
 where it does today, that is called out below as a divergence, not a pattern.**
 
+### Company scope: there is NO Houzs pin, and there has not been since 2026-07-20
+
+`assrCompanySql` (`backend/src/routes/assr.ts`) is `allowedCompaniesSql` — it
+consults no role. EVERY caller, rank-and-file sales included, is scoped to the
+companies they are GRANTED.
+
+It was not always so. Until 2026-07-20 the rule pinned rank-and-file sales to
+HOUZS alone; the owner reversed it when 2990 began raising service cases on the
+merged platform, and PR #934 deleted `assrPinsToHouzs()` and the
+`houzsCompanySql` branch outright.
+
+**What that reversal cost, because it is the reason this section exists.** #934
+changed the rule in `assr.ts` and its own test, and missed TWO other places
+holding a copy: a private `assrCompanySql` inside `routes/search.ts`, and the
+frozen expectation in `tests/searchScope.test.ts`. So global search and
+`/api/assr` answered the SAME REP DIFFERENTLY for three weeks — a 2990 rep was
+shown HOUZS cases and NOT shown their own — and neither copy looked wrong,
+because the stale test asserted the stale copy's behaviour and both agreed.
+Both are removed; `search.ts` now imports the one function.
+
+The three-state sentinel applies as everywhere else: `undefined` = unresolved
+(pre-migration, D1 test mirror, cold start) → no predicate at all; `[]` = the
+caller is granted no active company → matches nothing. They are NOT
+interchangeable, and collapsing the first into the second is a cross-company
+leak while collapsing the second into the first is an empty-list outage.
+
 ### Route admission (who gets THROUGH)
 
 Two gates, deliberately different:
@@ -429,6 +472,39 @@ Company scope is orthogonal: every reader filters on `allowedCompanyIds`
 `assrCreateCompanyId` (`:124`), and an SO-attached case inherits the SO's own
 company (`createAssrCase`).
 
+**The PRINTABLE route was the exception, until 2026-08-13.**
+`backend/src/routes/assr_print.ts` GET `/:id` was guarded by
+`requirePermission("service_cases.read")` and nothing else, while
+`getAssrDetail`'s SQL is `WHERE c.id = ?` with no company predicate at all — so
+it rendered ANY company's service case, as a document with letterhead, to anyone
+holding the read permission. **A permission says what you may do, never whose.**
+PR #2086 applied `allowedCompanyIds(c)` there with the same semantics the JSON
+detail route documents, and the distinction matters: an **UNRESOLVED** scope
+(`undefined` — pre-migration / the D1 test mirror) skips the check, while an
+**EMPTY** scope means the caller is granted no active company and every
+company-stamped case must 404. Those two used to share `[]`, and the merged state
+failed open. Out-of-scope answers 404, indistinguishable from a missing id. See
+BUG-HISTORY, *"The writes the read-hardening audit left"*.
+
+**The PRINT route applies both halves too (2026-08-14).**
+`GET /api/assr-print/:id` (`routes/assr_print.ts`) emits the same case content as
+the JSON detail route, as a letterheaded document. It had the company check and
+nothing else, so a visibility-scoped salesperson could render ANY case in their
+own company by walking the id — and get MORE out of it than the JSON route would
+give them, because the office variant printed `creditor_name` in full. Both rules
+now live in `backend/src/services/assrVisibility.ts` — `services/` cannot import
+from `routes/`, so that is the only direction in which both surfaces can share
+them — and are called by both:
+
+| exported from `services/assrVisibility.ts` | answers |
+|---|---|
+| `assrCaseRowInScope(c, caseRow)` | may this caller see this case at all (self + downline + the legacy `sales_agent` reach)? `true` for an unrestricted caller. |
+| `assrCallerIsScoped(c)` | is this caller visibility-restricted, i.e. must not see supplier identity? |
+| `stripCreditorFields(row)` | removes the creditor columns, both naming conventions. |
+
+If you add a third surface that renders a case, it calls these. A rule enforced
+on one of two routes that emit the same content is not enforced.
+
 ### Frontend gates
 
 | Surface | What it checks | File |
@@ -436,16 +512,15 @@ company (`createAssrCase`).
 | Desktop routes `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id` | `PageGuard page="service_cases" allowSales` | `App.tsx:369, 386, 402, 410` |
 | `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")`, the same `pmsAccess.isSalesUser` classifier `requireServiceCaseAccess` admits on | `frontend/src/auth/PageGuard.tsx:70`, `backend/src/services/capabilities.ts:244` |
 | Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx:474` |
-| Mobile list query `enabled` | `can("service_cases.read") \|\| isSalesStaff(user)` — a **local mirror** | `frontend/src/mobile/MobileServiceCase.tsx:340` |
+| Mobile list query `enabled` | `can("service_cases.read") \|\| capability(user, "org.sales.staff") \|\| capability(user, "org.director")` — `canViewCases` | `frontend/src/mobile/MobileServiceCase.tsx` |
 
-> **Known divergence, verified at this commit.** The mobile predicate at
-> `MobileServiceCase.tsx:340` reproduces two of the backend's three terms and
-> omits the **director** branch that `canAccessServiceCases` carries
-> (`assr.ts:73`). A director who holds neither `service_cases.read` nor Sales
-> staffing is admitted by the API but leaves the mobile infinite query
-> `enabled: false`. The fix is the capability the backend already exports
-> (`org.director`, `capabilities.ts:248`), consumed the way `PageGuard` consumes
-> `org.sales.staff` — not a second local copy.
+> **The director divergence this section used to report is FIXED.** The mobile
+> predicate carried only two of the backend's three terms and omitted the
+> director branch, so a director holding neither `service_cases.read` nor Sales
+> staffing was admitted by the API but left the mobile infinite query
+> `enabled: false`. It now consumes the backend's own `org.director` capability
+> (`capabilities.ts`), the way `PageGuard` consumes `org.sales.staff` — all
+> three terms, no second local copy of the rule.
 
 ---
 

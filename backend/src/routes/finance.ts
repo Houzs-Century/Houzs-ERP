@@ -182,31 +182,68 @@ async function rawSales(env: Env, start: string, end: string, companyId?: number
 // without joining projects counts cost from projects that were deliberately
 // removed. Measured 2026-07-29: RM 6,290,856 of the RM 69,251,852 this reported
 // belonged to archived projects — the six duplicate FAIR PNL seeds among them.
-async function rawProjectCost(env: Env, start: string, end: string, companyId?: number) {
-  const rows = await env.DB.prepare(
-    `SELECT COALESCE(l.occurred_at, l.created_at) AS d, COALESCE(l.amount, 0) AS a
-       FROM project_finance_lines l
+/* ── ONE predicate per source, shared by the total and by its drill-down ──────
+ *
+ * A P&L bucket and the row list you get by clicking it are two different
+ * queries over the same source. When the predicate is re-typed in each, they
+ * drift, and the drift is INVISIBLE: the total is right, the list is longer,
+ * and nothing in the response says which one to believe. That is exactly what
+ * happened here — `bucketDrilldown`'s project-cost and service-cost queries
+ * carried NEITHER the company filter nor the archived-project join that their
+ * own totals apply, so clicking a Houzs cost bucket listed 2990's cost lines
+ * and the archived FAIR PNL seeds alongside them (the RM 6,290,856 named in the
+ * comment below).
+ *
+ * So the predicate now exists ONCE per source and both callers interpolate the
+ * same string with the same binds. A future filter added here cannot reach the
+ * total and miss the list. Text fragments rather than a query builder because
+ * `env.DB.prepare` takes SQL text, and the two callers differ only in their
+ * SELECT list and ORDER BY.
+ *
+ * `companyId === undefined` (pre-migration / cold-start) omits the filter, which
+ * is the same three-state degrade `rawSales` has always used so single-company
+ * Houzs is unchanged. */
+const projectCostFrom = (companyId?: number) =>
+  `FROM project_finance_lines l
        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
       WHERE l.kind = 'cost' AND l.archived_at IS NULL
         AND COALESCE(l.occurred_at, l.created_at) >= ?
         AND COALESCE(l.occurred_at, l.created_at) < ?
-        ${companyId != null ? "AND l.company_id = ?" : ""}`
+        ${companyId != null ? "AND l.company_id = ?" : ""}`;
+
+const serviceCostFrom = (companyId?: number, alias = "", join = "") => {
+  const p = alias ? `${alias}.` : "";
+  return `FROM assr_cases${alias ? ` ${alias}` : ""}
+         ${join}
+        WHERE ${p}po_amount IS NOT NULL AND ${p}archived_at IS NULL
+          AND COALESCE(${p}completion_date, ${p}updated_at) >= ?
+          AND COALESCE(${p}completion_date, ${p}updated_at) < ?
+          ${companyId != null ? `AND ${p}company_id = ?` : ""}`;
+};
+
+/** The binds every fragment above expects, in order. */
+const costBinds = (start: string, end: string, companyId?: number) =>
+  [start, end, ...(companyId != null ? [companyId] : [])] as const;
+
+/* Exported for backend/tests/reviewHighFindings.test.ts: the invariant under test
+   is that a bucket TOTAL and its drill-down apply the same predicate, and that is
+   only checkable by driving both. */
+export async function rawProjectCost(env: Env, start: string, end: string, companyId?: number) {
+  const rows = await env.DB.prepare(
+    `SELECT COALESCE(l.occurred_at, l.created_at) AS d, COALESCE(l.amount, 0) AS a
+       ${projectCostFrom(companyId)}`
   )
-    .bind(start, end, ...(companyId != null ? [companyId] : []))
+    .bind(...costBinds(start, end, companyId))
     .all<{ d: string; a: number }>();
   return rows.results ?? [];
 }
 
-async function rawServiceCost(env: Env, start: string, end: string, companyId?: number) {
+export async function rawServiceCost(env: Env, start: string, end: string, companyId?: number) {
   const rows = await env.DB.prepare(
     `SELECT COALESCE(completion_date, updated_at) AS d, COALESCE(po_amount, 0) AS a
-       FROM assr_cases
-      WHERE po_amount IS NOT NULL AND archived_at IS NULL
-        AND COALESCE(completion_date, updated_at) >= ?
-        AND COALESCE(completion_date, updated_at) < ?
-        ${companyId != null ? "AND company_id = ?" : ""}`
+       ${serviceCostFrom(companyId)}`
   )
-    .bind(start, end, ...(companyId != null ? [companyId] : []))
+    .bind(...costBinds(start, end, companyId))
     .all<{ d: string; a: number }>();
   return rows.results ?? [];
 }
@@ -333,7 +370,7 @@ app.get("/pnl", requirePermission("projects.read"), async (c) => {
 // Drill-down: returns the contributing rows for a single bucket
 // (whatever granularity).
 
-async function bucketDrilldown(env: Env, start: string, end: string, companyId?: number) {
+export async function bucketDrilldown(env: Env, start: string, end: string, companyId?: number) {
   const [sales, projectLines, cases, poLines] = await Promise.all([
     env.DB.prepare(
       `SELECT doc_no, debtor_name, doc_date, local_total, sales_agent, region
@@ -350,30 +387,21 @@ async function bucketDrilldown(env: Env, start: string, end: string, companyId?:
       `SELECT l.id, l.project_id, l.category, l.description, l.amount,
               COALESCE(l.occurred_at, l.created_at) AS anchor_date,
               p.code AS project_code, p.name AS project_name
-         FROM project_finance_lines l
-         JOIN projects p ON p.id = l.project_id
-        WHERE l.kind = 'cost' AND l.archived_at IS NULL
-          AND COALESCE(l.occurred_at, l.created_at) >= ?
-          AND COALESCE(l.occurred_at, l.created_at) < ?
+         ${projectCostFrom(companyId)}
         ORDER BY anchor_date DESC, l.id DESC
         LIMIT 500`
     )
-      .bind(start, end)
+      .bind(...costBinds(start, end, companyId))
       .all(),
     env.DB.prepare(
       `SELECT c.id, c.assr_no, c.customer_name, c.po_amount,
               COALESCE(c.completion_date, c.updated_at) AS anchor_date,
               cr.company_name AS supplier_name
-         FROM assr_cases c
-         LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
-        WHERE c.po_amount IS NOT NULL
-          AND c.archived_at IS NULL
-          AND COALESCE(c.completion_date, c.updated_at) >= ?
-          AND COALESCE(c.completion_date, c.updated_at) < ?
+         ${serviceCostFrom(companyId, "c", "LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code")}
         ORDER BY anchor_date DESC, c.id DESC
         LIMIT 500`
     )
-      .bind(start, end)
+      .bind(...costBinds(start, end, companyId))
       .all(),
     env.DB.prepare(
       `SELECT doc_no, '' AS item_code, ref AS item_description, creditor_name,

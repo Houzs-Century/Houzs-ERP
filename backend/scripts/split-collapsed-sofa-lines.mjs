@@ -33,6 +33,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: inert. Every document must hold EXACTLY ONE bare -1S sofa line; the split re-codes that line, so a second run finds none and refuses.
  */
 import postgres from "postgres";
 
@@ -170,7 +172,15 @@ async function main() {
             `INSERT INTO scm.mfg_sales_order_items
                (doc_no, item_code, item_group, qty, uom, description2, variants, company_id, line_no, ${MONEY_SO.join(", ")})
              SELECT i.doc_no, $1, i.item_group, 1, i.uom, i.description2,
-                    COALESCE(i.variants,'{}'::jsonb) || $2::jsonb, i.company_id, COALESCE(i.line_no,0),
+                    -- $2::TEXT::jsonb, and the ::text is load-bearing. This has
+                    -- to stay .unsafe() because the money column list is built
+                    -- at runtime, so tx.json() (used on every tagged-template
+                    -- write in this file) is not available here. Without the
+                    -- ::text the server types $2 as jsonb, postgres.js runs its
+                    -- own JSON.stringify over the already-stringified value,
+                    -- and the row lands as a jsonb STRING that reads as empty
+                    -- to every consumer. docs/jsonb-double-encoding-coe.md.
+                    COALESCE(i.variants,'{}'::jsonb) || $2::text::jsonb, i.company_id, COALESCE(i.line_no,0),
                     ${MONEY_SO.map(() => "0").join(", ")}
                FROM scm.mfg_sales_order_items i WHERE i.id = $3
              RETURNING id`,

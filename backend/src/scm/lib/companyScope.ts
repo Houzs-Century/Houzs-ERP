@@ -22,11 +22,16 @@ import type { CompanyRow } from "../../middleware/companyContext";
  *    from whichever company you're currently in; it can still reference the
  *    other company's DOs).
  *
- *  • HOUZS-ONLY module (Service Cases / ASSR): a Houzs-exclusive concept (2990
- *    has 0% service overlap). Its raw-SQL reads pin to HOUZS via
- *    `houzsCompanySql(c)` / `houzsCompanyIds(c)` — NOT the caller's allowed set —
- *    so a both-company user never sees 2990 orders/customers/cases under Service
- *    Cases. See routes/assr.ts.
+ *  • Service Cases / ASSR was a THIRD pattern — a HOUZS-ONLY pin — until
+ *    2026-07-20. It is not one any more: the owner put 2990's service cases on
+ *    the merged platform, and ASSR now follows the caller's GRANTED companies
+ *    like every other module (`assrCompanySql` in routes/assr.ts is
+ *    `allowedCompaniesSql`; the dated decision trail is at routes/assr.ts:113).
+ *    This paragraph used to describe the pin as current, and that is not a
+ *    harmless staleness: routes/search.ts kept its own copy of the removed pin
+ *    and answered the same rep differently from /api/assr until it was found.
+ *    `houzsCompanySql` / `houzsCompanyIds` below served that pin and now have NO
+ *    caller anywhere in backend/src, frontend/src or the tests.
  *
  * All helpers NO-OP when the active/allowed company is unresolved (companies
  * master absent pre-migration, or a DB cold-start) — so single-company Houzs
@@ -205,16 +210,23 @@ export function activeCompanySql(c: CompanyScopeCtx, col = "company_id"): string
 }
 
 /**
- * HOUZS-ONLY PIN (Service Cases / ASSR). ASSR is a Houzs-exclusive module —
- * 2990 has zero service-case overlap (owner: "Service pricing CANNOT merge,
- * 0% overlap"). So ASSR queries pin to the base company HOUZS rather than the
- * caller's full allowed set: a both-company user (the owner) must NOT see 2990
- * orders/customers/cases under Service Cases. HOUZS is identified by
- * `companies.code === 'HOUZS'` from the companies master already on context —
- * no hardcoded id.
+ * THE BASE COMPANY, resolved from `companies.code === 'HOUZS'` on context — no
+ * hardcoded id (the bigint differs across staging/prod).
  *
- * houzsCompanyId returns the resolved id, or undefined when the companies
- * master is unresolved (pre-migration / cold-start).
+ * This used to be documented as the "HOUZS-ONLY PIN (Service Cases / ASSR)".
+ * THAT PIN NO LONGER EXISTS — the owner moved 2990's service cases onto the
+ * merged platform on 2026-07-20 and ASSR now scopes to the caller's granted
+ * companies (routes/assr.ts:113 carries the dated trail). Do not reintroduce it
+ * from this comment; that is exactly how routes/search.ts came to answer a rep
+ * differently from /api/assr.
+ *
+ * What still uses it: `assrCreateCompanyId` (routes/assr.ts:157) as the FALLBACK
+ * when no active company resolves, routes/assr.ts:1300, and scm/routes/staff.ts
+ * for attributing the unlinked mirror rows. All three want "the base company",
+ * not a pin.
+ *
+ * Returns the resolved id, or undefined when the companies master is unresolved
+ * (pre-migration / cold-start).
  */
 export function houzsCompanyId(c: CompanyScopeCtx): number | undefined {
   const rows = (c.get("companies") as CompanyRow[] | undefined) ?? [];
@@ -237,13 +249,16 @@ export function mirrorCompanyId(c: CompanyScopeCtx): number | undefined {
   return m?.id != null ? Number(m.id) : undefined;
 }
 
-/** houzsCompanyIds — the array flavour for callers that take an id list
- *  (e.g. the ASSR list/export `allowed_company_ids` param). `[houzsId]` when
- *  resolved, else `undefined` — NOT `[]` — so the callee degrades to
- *  single-company (no predicate), matching the pre-migration / cold-start
- *  behaviour. This feeds the SAME sinks as allowedCompanyIds, where `[]` now
- *  means "restricted to nothing / match nothing"; returning `[]` for unresolved
- *  here would blank ASSR for every sales user on a cold start. */
+/** houzsCompanyIds — the array flavour, for a callee that takes an id list.
+ *  `[houzsId]` when resolved, else `undefined` — NOT `[]` — so the callee
+ *  degrades to single-company (no predicate). It feeds the SAME sinks as
+ *  allowedCompanyIds, where `[]` means "restricted to nothing / match nothing".
+ *
+ *  NO CALLER as of 2026-08-13. Its one consumer was the ASSR list/export
+ *  `allowed_company_ids` param under the HOUZS-only pin removed on 2026-07-20;
+ *  routes/assr.ts now passes `allowedCompanyIds`. Kept, not deleted, because the
+ *  companion `houzsCompanyId` is live and the pair reads as one idea — but do
+ *  not wire this back in on the strength of its name. */
 export function houzsCompanyIds(c: CompanyScopeCtx): number[] | undefined {
   const id = houzsCompanyId(c);
   return id != null ? [id] : undefined;
@@ -253,7 +268,14 @@ export function houzsCompanyIds(c: CompanyScopeCtx): number[] | undefined {
  *  or "" when HOUZS is unresolved (pre-migration / cold-start) so legacy
  *  single-company SQL runs unchanged. Same inline-not-bind safety as
  *  allowedCompaniesSql — the id comes from OUR companies master, re-validated
- *  as a positive integer here. */
+ *  as a positive integer here.
+ *
+ *  NO CALLER as of 2026-08-13, and reaching for it is almost certainly a
+ *  mistake: its only consumers were the ASSR readers, and the HOUZS-only pin
+ *  they implemented was REVERSED by the owner on 2026-07-20 (routes/assr.ts:113).
+ *  A module that pins to one company rather than scoping to the caller's granted
+ *  set shows a rep the wrong company's book — which is the bug this repo already
+ *  paid for once in routes/search.ts. */
 export function houzsCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   const id = Number(houzsCompanyId(c));
   if (!Number.isInteger(id) || id <= 0) return "";
@@ -469,8 +491,16 @@ export function docPrefixForCode(code: string): string {
  *    headless scan job (createDraftSalesOrder) reaches createSalesOrderCore
  *    through a reconstructed context that carries companyId but NOT
  *    companyCode, so it stamps the 2990 company_id while companyDocPrefix
- *    above correctly falls back to BARE numbering. That SO is Houzs-native and
- *    Houzs MUST stay able to write it.
+ *    above falls back to the BASE company's `HC-` prefix. That SO is
+ *    Houzs-native and Houzs MUST stay able to write it.
+ *
+ *    This clause used to say the fallback was "BARE numbering". That was true
+ *    until 2026-08-07, when HOUZS stopped minting bare numbers and took `HC-`;
+ *    companyDocPrefix now returns docPrefixForCode(BASE_COMPANY_CODE), and
+ *    companyScope.test.ts asserts exactly that for an unresolved code. The
+ *    CONCLUSION is unchanged — `HC-` is not `2990-`, so isMirroredDocNo stays
+ *    false and the guard still lets Houzs write its own SO — but the stated
+ *    mechanism was describing a shape the code no longer mints.
  *
  *  • the prefix needs no companies-master lookup, so a guard built on it works
  *    in a reconstructed context and in a library called without a Context —
@@ -539,33 +569,64 @@ export const MIRRORED_SO_CREATE_BLOCKED: { error: string; message: string } = {
 };
 
 /**
- * CROSS-COMPANY CONVERSION GUARD.
+ * CROSS-COMPANY CONVERSION GUARD — THE OLDER OF THE TWO MECHANISMS.
  *
- * The converters (SO -> DO, SO -> SI, DO -> SI, PO -> GRN) all follow the same
- * shape: load a SOURCE document by id/doc_no, then INSERT a new document
- * stamped `company_id: activeCompanyId(c)`. The source load is NOT scoped —
- * every one of them reads the source by primary key with no company predicate,
- * and the DB client is service-role, so nothing else re-checks it.
+ * READ THIS FIRST: since 2026-08-13 the standard way to hold "a conversion never
+ * crosses a company" is to SCOPE THE SOURCE LOAD, not to compare companies after
+ * loading it unscoped. A converter reads its source through `scopeToCompany` /
+ * `scopeToCompanyId`, so another company's document is not visible to it and
+ * there is nothing left to compare. `scripts/check-conversion-guards.mjs` asserts
+ * that per route, against a registry naming which document is the source.
  *
- * That combination silently RE-COMPANIES the document: convert a 2990 sales
- * order while the switcher says Houzs Century and you get a HOUZS delivery
- * order — Houzs doc number, Houzs company_id — which then posts the stock
- * movement, the invoice revenue and the commission against Houzs' books for an
- * order Houzs never sold. The source row legitimately exists in this database
- * (the one-way 2990 SO mirror puts it there); what must not happen is Houzs
- * claiming it as its own document.
+ * The shape this function was written for: load a SOURCE document by id/doc_no
+ * with NO company predicate, then INSERT a new document stamped
+ * `company_id: activeCompanyId(c)`. The DB client is service-role, so nothing
+ * else re-checks it. That combination silently RE-COMPANIES the document:
+ * convert a 2990 sales order while the switcher says Houzs and you get a HOUZS
+ * delivery order — Houzs doc number, Houzs company_id — which then posts the
+ * stock movement, the invoice revenue and the commission against Houzs' books
+ * for an order Houzs never sold. The source row legitimately exists in this
+ * database (the one-way 2990 SO mirror puts it there); what must not happen is
+ * Houzs claiming it as its own document.
  *
- * The rule, and it is deliberately NOT "block all cross-company conversion":
+ * WHY SCOPING WON. Both mechanisms give the same answer. The difference is what
+ * happens when someone forgets: a missing comparison leaves a handler that reads
+ * perfectly well and re-companies money, while a missing predicate leaves an
+ * empty result. Seven of eleven conversions had no comparison at all when this
+ * was audited, and nothing in the code said which seven.
  *
- *  • INHERIT is correct and already implemented where the destination stamps
- *    the SOURCE's company — POST /from-sos in delivery-orders-mfg.ts stamps
- *    `head.company_id` and mints under the source's prefix, so a 2990 SO
- *    converted from the shared Delivery Planning queue becomes a 2990 DO. That
- *    path keeps the books straight and is left alone.
+ * WHERE THIS FUNCTION IS STILL RIGHT, and it is not a leftover: the BARE-CREATE
+ * paths — `POST /` on delivery-returns, grns, purchase-consignment-receives,
+ * purchase-consignment-returns, purchase-invoices, purchase-returns,
+ * sales-invoices. There the source document is an OPTIONAL body field on a route
+ * that also serves manual, source-less documents, and the ids arrive from two
+ * places at once (a header field and each line's link). There is no single
+ * source read to scope, so the comparison is the mechanism. Those callers are
+ * the reason this stays.
  *
- *  • REFUSE is correct where the destination stamps the ACTIVE company. There
- *    the conversion would move the document between companies' books, so it
- *    must fail loudly rather than write a mis-attributed row.
+ * THE THIRD RULE IS REAL AND IT SURVIVED — read this before "fixing" the route
+ * it names, because two people have now broken it in one day.
+ *
+ * INHERIT is correct where the destination stamps the SOURCE's company.
+ * `POST /from-sos` in delivery-orders-mfg.ts is that path: the shared Delivery
+ * Planning queue, where a 2990 SO converts into a 2990 DO under 2990's document
+ * prefix. It crosses the switcher ON PURPOSE, and it keeps the books straight
+ * because the destination never CLAIMS the document — it takes the source's
+ * company, its prefix, and (since 2026-08-13) its warehouse and stock lines too.
+ * That last part was the real defect there: the header inherited while the LINES
+ * stamped the active company, so a 2990 DO deducted HOUZS stock.
+ *
+ * On 2026-08-13 that route was broken TWICE by people who did not read this
+ * paragraph — once by adding a crossCompanySourceRefusal (which killed the
+ * feature outright), once by scoping its source reads to the active company
+ * (which killed it structurally, since the dispatcher can then no longer SEE the
+ * 2990 SO). The owner confirmed the design; both were reverted.
+ * `scripts/check-conversion-guards.mjs` now carries an INHERIT kind that fails
+ * if either mistake comes back, so this is enforced and not merely asked for.
+ *
+ * The distinction that decides which rule applies is one question: does the
+ * destination stamp the SOURCE's company, or the ACTIVE one? Inherit is safe;
+ * claiming is re-parenting.
  *
  * UNRESOLVED (no active company — pre-migration / cold-start) and a source row
  * with a NULL company_id both DEGRADE to allowed, matching the three-state
@@ -623,4 +684,89 @@ export function crossCompanyConversionBlocked(
     sourceCompany: srcCode,
     activeCompany: activeCode,
   };
+}
+
+/**
+ * THE CONVERSION RULE, in one place. A document conversion never crosses a
+ * company boundary.
+ *
+ * Load the source documents this conversion names, and return a refusal for the
+ * FIRST one that belongs to another company. Null means every referenced source
+ * is in the active company (or the company is unresolved, which degrades to
+ * allowed exactly like every other helper in this file).
+ *
+ * WHO STILL CALLS IT. The BARE-CREATE paths, and nothing else. A declared
+ * converter (`/from-x`, `/convert-from-x`) scopes its source read instead — see
+ * the note on isCrossCompanySource above — so a refusal on one of those can
+ * never fire and is dead code that looks like protection. If you are adding this
+ * call to a `/from-x` route, scope the read instead.
+ *
+ *   · `POST /` on delivery-returns, grns, purchase-consignment-receives,
+ *     purchase-consignment-returns, purchase-invoices, purchase-returns,
+ *     sales-invoices — the source is an optional body field on a route that also
+ *     serves manual, source-less documents, and the ids arrive from two places
+ *     at once (a header field and each line's link), so there is no single
+ *     source read to scope.
+ *
+ * purchase-returns.ts `/from-grns` + `/from-grn` were the last pair left on the
+ * refusal, the file having been held by concurrent work during the 2026-08-13
+ * sweep. Both were converted the same day; check-conversion-guards.mjs now
+ * carries no legacyRefusal entry at all.
+ *
+ * WHY IT EXISTS AS A SHARED PRIMITIVE. Before 2026-08-13 this exact rule was
+ * written THREE different ways: inline in some handlers, as a file-local
+ * `firstCrossCompanyPo` in grns.ts, and as a file-local
+ * `crossCompanyDoSourceBlocked` in delivery-returns.ts. Eleven conversions
+ * existed; four were guarded and SEVEN WERE NOT, and nothing in the code said
+ * which was which — not to a reader, and not to any scanner, because each copy
+ * had its own name. The seven gaps let a 2990 delivery be folded into a Houzs
+ * invoice, a 2990 SO mint a HOUZS purchase order, and stock be drawn out of one
+ * company's warehouse under the other's refund.
+ *
+ * Collapsing three copies into one name is what made the NEXT step possible:
+ * once the rule had one name it could be counted, and counting it is what showed
+ * that a comparison anyone can forget was the wrong mechanism for it.
+ *
+ * FAILS CLOSED on a read error. If we cannot prove the source belongs here, we
+ * do not convert it: unlike a read, a conversion MOVES money, so "unknown" must
+ * not resolve to "allowed". This is deliberately stricter than the rest of the
+ * file, which degrades open — and the difference is the point.
+ *
+ * @param table       the source table, e.g. 'purchase_orders'
+ * @param idColumn    its primary key, e.g. 'id'
+ * @param docNoColumn the human document number to NAME in the refusal — an
+ *                    operator cannot act on a uuid
+ */
+export async function crossCompanySourceRefusal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  c: CompanyScopeCtx,
+  table: string,
+  ids: Array<string | null | undefined>,
+  docNoColumn: string,
+  idColumn = "id",
+): Promise<
+  | { blocked: ReturnType<typeof crossCompanyConversionBlocked> }
+  | { loadError: string }
+  | null
+> {
+  const unique = [...new Set(ids.filter((v): v is string => !!v))];
+  if (unique.length === 0) return null;
+  const { data, error } = await sb
+    .from(table)
+    .select(`${idColumn}, ${docNoColumn}, company_id`)
+    .in(idColumn, unique);
+  if (error) return { loadError: error.message };
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    if (isCrossCompanySource(row.company_id, c)) {
+      return {
+        blocked: crossCompanyConversionBlocked(
+          (row[docNoColumn] as string | null) ?? null,
+          row.company_id,
+          c,
+        ),
+      };
+    }
+  }
+  return null;
 }

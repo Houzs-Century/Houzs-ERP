@@ -23,8 +23,10 @@
 // Numbering: PCR-YYMM-NNN.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -35,7 +37,8 @@ import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo } from '../lib/doc-no';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
@@ -46,7 +49,7 @@ purchaseConsignmentReceives.use('*', supabaseAuth);
    Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
    (recompute-from-live) and flips the receive to POSTED; the inventory IN is then
    booked by resyncReceiveInventory (called at the end of this helper). */
-async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true } | { ok: false; reason: string; status?: number }> {
+async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true; recountError?: string } | { ok: false; reason: string; status?: number }> {
   const { data: items } = await sb.from('purchase_consignment_receive_items')
     .select('pc_order_item_id')
     .eq('pc_receive_id', receiveId);
@@ -54,7 +57,10 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // Recount received_qty + re-evaluate PC Order status from live receive lines.
   const touchedPcoItemIds = (items ?? [])
     .map((it: { pc_order_item_id: string | null }) => it.pc_order_item_id);
-  await recomputePcoReceived(sb, touchedPcoItemIds);
+  /* Carried, not discarded — the counterpart postGrnAndRollup returns its
+     recountError and this one dropped it, so a PC Order could keep a stale
+     received_qty while the receive reported a clean post. */
+  const recount = await recomputePcoReceived(sb, touchedPcoItemIds);
 
   // Receives are created POSTED directly; this is idempotent on already-POSTED
   // rows (matches any non-CLOSED status). The inventory IN is booked by the
@@ -72,7 +78,7 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // + best-effort).
   try { await resyncReceiveInventory(sb, receiveId, null); } catch { /* best-effort */ }
 
-  return { ok: true };
+  return recount.ok ? { ok: true } : { ok: true, recountError: recount.reason };
 }
 
 /* ── resyncReceiveInventory — self-healing IN ledger for a PC Receive ──────────
@@ -328,9 +334,20 @@ async function verifyPcReceiveOverReceipt(
    sum of qty_accepted (net of returned_qty) across ALL live (non-cancelled)
    receive lines that point at it, then re-evaluate the parent PC Order's status.
    No inventory is touched. Never resurrects a CANCELLED PC Order. Best-effort. */
-export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | null | undefined>) {
+/* Reports its outcome, the way recomputePoReceived does.
+   It used to return void and only console.error, so the PC lane never received
+   the 2026-07-31 upgrade that followed eleven POs sitting with their goods in
+   the warehouse and received_qty untouched for seventeen days — the only trace
+   being a console line in an ephemeral Worker log. Both writes below are now
+   CHECKED for the same reason the PO twin's are: supabase-js RESOLVES on a
+   rejected write instead of throwing, so an unchecked failure never reaches the
+   catch and the function would report a recount that never happened. */
+export async function recomputePcoReceived(
+  sb: any,
+  pcoItemIds: Array<string | null | undefined>,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const ids = [...new Set(pcoItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return { ok: true };
 
   try {
     const { data: rlines } = await sb.from('purchase_consignment_receive_items')
@@ -351,9 +368,13 @@ export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | n
       const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
       recvByPcoi.set(r.pc_order_item_id, (recvByPcoi.get(r.pc_order_item_id) ?? 0) + Math.max(0, net));
     }
-    await Promise.all([...recvByPcoi.entries()].map(([pcoiId, recv]) =>
+    const itemWrites = await Promise.all([...recvByPcoi.entries()].map(([pcoiId, recv]) =>
       sb.from('purchase_consignment_order_items').update({ received_qty: recv }).eq('id', pcoiId),
     ));
+    const itemErr = itemWrites.find((r: { error?: { message?: string } | null }) => r?.error);
+    if (itemErr) {
+      return { ok: false, reason: `received_qty write failed: ${itemErr.error?.message ?? 'unknown'}` };
+    }
 
     // Re-evaluate each touched PC Order's status from its (now-recounted) lines.
     const { data: pcoiRows } = await sb.from('purchase_consignment_order_items')
@@ -373,10 +394,16 @@ export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | n
       const prevReceivedAt = (head as { received_at: string | null } | null)?.received_at ?? null;
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
-      await sb.from('purchase_consignment_orders').update(patch).eq('id', pcoId).neq('status', 'CANCELLED');
+      const { error: pcoErr } = await sb.from('purchase_consignment_orders')
+        .update(patch).eq('id', pcoId).neq('status', 'CANCELLED');
+      if (pcoErr) {
+        return { ok: false, reason: `PC order status write failed for ${pcoId}: ${pcoErr.message ?? 'unknown'}` };
+      }
     }
+    return { ok: true };
   } catch (e) {
     console.error('[recomputePcoReceived] best-effort recount failed', { pcoItemIds: ids, error: e });
+    return { ok: false, reason: (e as Error)?.message ?? 'recount threw' };
   }
 }
 
@@ -386,8 +413,16 @@ export async function recomputePcoReceived(sb: any, pcoItemIds: Array<string | n
    scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
    the receive is free to edit. */
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
-  const { data } = await sb.from('purchase_consignment_receive_items')
+  const { data, error } = await sb.from('purchase_consignment_receive_items')
     .select('returned_qty').eq('pc_receive_id', receiveId);
+  /* A failed read is not an empty line set (mirrors scm/lib/downstream-lock.ts).
+     Dropping the error made `data ?? []` read as "no line has been returned",
+     which is the absence that authorises the cancel / line edit this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (error) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Receive has a Consignment Return, so it is locked for safety — try again (${error.message}).` };
+  }
   const any = ((data ?? []) as Array<{ returned_qty: number }>)
     .some((r) => (r.returned_qty ?? 0) > 0);
   if (any) return { error: 'pc_receive_has_downstream', message: 'Receive has a Consignment Return — delete it first to edit' };
@@ -681,6 +716,9 @@ purchaseConsignmentReceives.get('/:id/linked', async (c) => {
 });
 
 purchaseConsignmentReceives.post('/', async (c) => {
+  /* company-scope: the parent PC Order named in the body is refused when it
+     belongs to another company (isCrossCompanySource, below); the other by-id
+     writes roll back the header this handler just inserted. Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Consignment receives post immediately on create.' }, 400);
@@ -728,8 +766,18 @@ purchaseConsignmentReceives.post('/', async (c) => {
   const pcOrderId = (body.purchaseConsignmentOrderId as string | undefined) ?? null;
   let pcOrderNo: string | null = null;
   if (pcOrderId) {
-    const { data: pcoHead } = await sb.from('purchase_consignment_orders').select('pc_number').eq('id', pcOrderId).maybeSingle();
-    pcOrderNo = (pcoHead as { pc_number: string } | null)?.pc_number ?? null;
+    const { data: pcoHead } = await sb.from('purchase_consignment_orders').select('pc_number, company_id').eq('id', pcOrderId).maybeSingle();
+    const pco = pcoHead as { pc_number?: string | null; company_id?: number | null } | null;
+    /* CROSS-COMPANY SOURCE (lib/companyScope) — the parent PC Order arrives as a
+       body field and the receive below is stamped `activeCompanyId(c)`, so a PC
+       Order id from the other company would have this company receive against
+       it and recomputePcoReceived would then move that company's received_qty.
+       A manual receive sends no parent, resolves to no source, and is
+       unaffected. Refused before the doc number is committed to. */
+    if (pco && isCrossCompanySource(pco.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(pco.pc_number ?? null, pco.company_id, c), 409);
+    }
+    pcOrderNo = pco?.pc_number ?? null;
   }
 
   // Created POSTED directly — no inventory IN is written.
@@ -805,18 +853,36 @@ purchaseConsignmentReceives.post('/', async (c) => {
 // ── POST /from-pcos ─────────────────────────────────────────────────────
 // Batch-convert multiple PC Orders into ONE PC Receive (same supplier).
 // Pre-fills qty_received + qty_accepted with the outstanding qty per line.
-purchaseConsignmentReceives.post('/from-pcos', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Order is not visible here at all; the by-id writes are this handler's own
+     rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseConsignmentOrderIds?: string[]; deliveryNoteRef?: string; notes?: string; warehouseId?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const pcoIds = body.purchaseConsignmentOrderIds ?? [];
   if (pcoIds.length === 0) return c.json({ error: 'pco_ids_required' }, 400);
 
-  const { data: pcos, error: pcoErr } = await sb.from('purchase_consignment_orders')
-    .select('id, pc_number, supplier_id, status')
-    .in('id', pcoIds);
+  /* SOURCE LOAD, SCOPED — the PC Order ids arrive in the request body, so this
+     is the read that decides what this conversion can see. Scoped, so another
+     company's PC Order resolves to NO ROW and falls out at `pcos_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's PC Order gets
+     `pcos_not_found` instead of "that consignment order belongs to 2990, switch
+     company" — the trade the PO's /:id/convert-from-so already records, taken for
+     the same reason: naming the other company needs an UNSCOPED read this
+     handler otherwise never makes. */
+  const { data: pcos, error: pcoErr } = await scopeToCompany(sb.from('purchase_consignment_orders')
+    .select('id, pc_number, supplier_id, status, company_id')
+    .in('id', pcoIds), c);
   if (pcoErr) return c.json({ error: 'load_failed', reason: pcoErr.message }, 500);
-  const pcoList = (pcos ?? []) as Array<{ id: string; pc_number: string; supplier_id: string; status: string }>;
+  const pcoList = (pcos ?? []) as Array<{ id: string; pc_number: string; supplier_id: string; status: string; company_id?: number | null }>;
   if (pcoList.length === 0) return c.json({ error: 'pcos_not_found' }, 404);
 
   const supplierIds = new Set(pcoList.map((p) => p.supplier_id));
@@ -825,11 +891,15 @@ purchaseConsignmentReceives.post('/from-pcos', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  const { data: items } = await sb.from('purchase_consignment_order_items')
+  // LINE-level half of the same source document — scoped under the same
+  // predicate as the header read above. `.in('purchase_consignment_order_id',
+  // pcoIds)` is id-keyed, and an id-keyed read on a converter is the shape this
+  // sweep exists for, so it carries the predicate rather than inheriting it.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_order_items')
     .select('id, purchase_consignment_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date')
-    .in('purchase_consignment_order_id', pcoIds);
+    .in('purchase_consignment_order_id', pcoIds), c);
   const itemList = ((items ?? []) as unknown as Array<{
     id: string; purchase_consignment_order_id: string; material_kind: string; material_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_centi: number;
@@ -911,7 +981,8 @@ purchaseConsignmentReceives.post('/from-pcos', async (c) => {
   await recomputePcReceiveTotals(sb, h.id);
 
   return c.json({ id: h.id, grnNumber: h.receive_number, pcoCount: pcoList.length, lineCount: itemList.length }, 201);
-});
+};
+purchaseConsignmentReceives.post('/from-pcos', createPcReceiveFromPcosHandler);
 
 purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   // Kept as a no-op endpoint for backward compat — receives are created POSTED.
@@ -933,7 +1004,11 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   const res = await postPcReceiveAndRollup(sb, id);
   if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
   const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).single();
-  return c.json({ receive: data });
+  /* recountError surfaced, matching the GRN post which returns the same field.
+     The receive IS posted — a stale received_qty on the parent PC Order must not
+     un-post it — but the operator and /inventory/reconcile now learn that the
+     roll-up did not land, instead of a clean 200 hiding it. */
+  return c.json({ receive: data, ...(res.recountError ? { recountError: res.recountError } : {}) });
 });
 
 /* ── PATCH /:id/cancel — cancel a PC Receive ────────────────────────────────
@@ -1058,15 +1133,12 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
      PC Order line's remaining (qty - received_qty). Manual lines uncapped. */
   const addLinePcoItemId = (it.pcOrderItemId as string) ?? null;
   if (addLinePcoItemId) {
-    const { data: pcoItem } = await sb.from('purchase_consignment_order_items')
-      .select('qty, received_qty').eq('id', addLinePcoItemId).maybeSingle();
-    if (pcoItem) {
-      const p = pcoItem as { qty: number; received_qty: number };
-      const remaining = (p.qty ?? 0) - (p.received_qty ?? 0);
-      if (qtyReceived > remaining) {
-        return c.json({ error: 'qty_exceeds_remaining', pcoItemId: addLinePcoItemId, requested: qtyReceived, remaining }, 409);
-      }
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_consignment_order_items', id: addLinePcoItemId,
+      capColumn: 'qty', drawnColumns: ['received_qty'],
+      requested: qtyReceived, what: 'PC Order line',
+    });
+    if (capLock) return c.json({ ...capLock, pcoItemId: addLinePcoItemId }, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -1168,15 +1240,12 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
     const pcoItemId = (prev as { pc_order_item_id: string | null }).pc_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
     if (pcoItemId && qtyReceived > prevQty) {
-      const { data: pcoItem } = await sb.from('purchase_consignment_order_items')
-        .select('qty, received_qty').eq('id', pcoItemId).maybeSingle();
-      if (pcoItem) {
-        const p = pcoItem as { qty: number; received_qty: number };
-        const headroom = (p.qty ?? 0) - ((p.received_qty ?? 0) - prevQty);
-        if (qtyReceived > headroom) {
-          return c.json({ error: 'qty_exceeds_remaining', pcoItemId, requested: qtyReceived, remaining: headroom }, 409);
-        }
-      }
+      const capLock = await qtyCapRefusal(sb, {
+        table: 'purchase_consignment_order_items', id: pcoItemId,
+        capColumn: 'qty', drawnColumns: ['received_qty'],
+        requested: qtyReceived, ownPriorDraw: prevQty, what: 'PC Order line',
+      });
+      if (capLock) return c.json({ ...capLock, pcoItemId }, 409);
     }
   }
 

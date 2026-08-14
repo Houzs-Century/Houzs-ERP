@@ -4,6 +4,16 @@
 
 # Module: Announcements
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — office notices and system per-user notices, from the
 screen down to the database. Same structure as
 [`sales-order.md`](./sales-order.md).
@@ -273,8 +283,9 @@ de-dupes an identical still-unread notice (`:68-87`).
 | Slip-scan completion | `backend/src/scm/routes/scan-so.ts:3581` (wrapper `postScanNotice`) | `'scan'` | 7 days |
 | Service-case create / reassign | `backend/src/services/assrNotify.ts:148-155` | `'service_case'` | 14 days (default) |
 
-Grep confirms exactly three `INSERT INTO announcements` sites in the tree: these
-two (via one helper) and the human composer at `announcements.ts:873`.
+Grep confirms exactly **two** `INSERT INTO announcements` statements in the whole
+tree: `personalNotice.ts` (the one helper both producers above call) and the
+human composer in `announcements.ts`. Two producers, one insert path.
 
 ---
 

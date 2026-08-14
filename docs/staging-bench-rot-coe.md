@@ -152,7 +152,7 @@ The timeline is exact:
 | when | what |
 |---|---|
 | 2026-07-21 22:28 | `#963` writes `gen-codebase-map.mjs` and generates the facts file **once** |
-| 2026-07-22 10:03 | `#925` upgrades the test toolchain and renames `backend/vitest.config.ts` to `vitest.config.mts` |
+| 2026-07-22 10:03 | `#925` upgrades the test toolchain and renames `backend/vitest.config.ts` [gone] to `vitest.config.mts` |
 | ever since | the generator dies on `ENOENT ... vitest.config.ts` at line 162, before writing anything |
 
 The generator was broken **eleven hours and thirty-five minutes after it was

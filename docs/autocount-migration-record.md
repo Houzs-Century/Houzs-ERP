@@ -287,7 +287,49 @@ save typing five requests.
 
 **Undo:** the document is cancelled, not deleted, which is the whole point. Nothing else changed.
 
-### Step 3 — Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY`
+### Step 3 — DONE 2026-08-11. The tunnel fronts the service and the runbook PASSED
+
+**Do not re-plan this step. It is finished, and the four "this machine cannot
+reach it" findings that were true this morning stopped being true at the moment
+the hostname was repointed.** They are recorded here because a later session
+re-derived them from the pre-repoint state of this document and concluded the
+whole thing was unrunnable.
+
+| what was true this morning | why it is no longer |
+|---|---|
+| ZeroTier to `10.147.17.100:8900` answers 400, and 403 with a forged Host | Still true, and irrelevant. The listener prefix is `http://localhost:<port>/`, so http.sys serves loopback only. **cloudflared connects from loopback ON that host**, so the tunnel path works where a direct one cannot |
+| `it-houzs.dev` does not front AcSyncService | Correct, and it never will. **`autocount.houzscentury.com` does**, since the owner repointed it |
+| the API key exists only in `C:\Tempc-svc-key.txt` on the host | It was downloadable over the old file server, and is now the `AC_SYNC_KEY` Worker secret. **Set.** |
+| no `AED_HOUZS` SQL password locally | True and not needed: the HTTP path needs the API key, not the database |
+
+**The evidence, from an ordinary workstation over the public tunnel:**
+
+```
+POST https://autocount.houzscentury.com/health
+  -> {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+
+/create-so ZZERP-0001, two lines  -> lines[] with DtlKey 894957, 894958   (4.1 PASS)
+/edit  no DtlKey                  -> HTTP 500 REFUSED                     (4.2 PASS)
+/edit  DtlKey 894957, Qty 9       -> ok                                   (4.3 PASS)
+/edit  IsNewLine                  -> ok                                   (4.4 PASS)
+/edit  DtlKey 894958, Retire      -> ok                                   (4.5 PASS)
+/cancel                           -> ok, cancelled and NOT deleted
+```
+
+`ZZERP-0001` stays in the book, cancelled, per 不可以删只可以 cancel. **Do not
+delete it.** `GET /ac-svc-key.txt` now returns 405 from the service, so the
+file server that had been publishing the key is no longer in front — see
+`docs/autocount-writeback-exposure-coe.md`.
+
+**What is still NOT proven:** anything on the ERP side. Nothing has been driven
+from an ERP save — `scm.autocount_writeback` is still `off` and the outbox still
+holds zero rows. And the exe on the host is still the pre-`/ensure-masters`
+build, so a document naming a new master would still fail there.
+
+<details><summary>The original Step 3, kept because the rollback and the
+configuration notes in it are still correct</summary>
+
+### Step 3 (original) — Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY`
 
 **Who: IT, physically at the office machine. This is the only step that needs that, and it blocks
 every step after it.**
@@ -317,6 +359,8 @@ Worker** — not from the office LAN. A localhost curl proves nothing about the 
 
 **Undo:** re-comment `AC_SYNC_URL` and redeploy. `drainAutoCountOutbox` returns
 `ac_service_not_configured` before it reads the queue, so an unset URL is a complete stop.
+
+</details>
 
 ### Step 4 — Turn on `scm.autocount_writeback` for company 1
 
@@ -979,7 +1023,7 @@ they were fine.
 | 4 | **An uncompilable over-transfer handler** — still on `main` today, fix on `fix/acsync-overqty-uncompilable` | The SDK raises a WinForms dialog for over-transfer, and the service carries a handler to answer it programmatically: four `doc.ConfirmOverTransferedQtyEvent += OverQty` subscriptions (`AcSyncService.cs:316, 325, 334, 344`) and the handler at `:358`. `AutoCount.Invoicing.ConfirmOverTransferedQtyEventArgs` is **not public**, so that method cannot compile — the file on `main` does not build | Reading the reflected SDK surface rather than the documentation, while preparing the host build. Replaced by making the condition unreachable: only ever transfer what is outstanding. **A file that compiles on exactly one machine in the building gets no CI, which is why this sat undetected** |
 | 5 | **`/health` reported a book it was not connected to** (same branch) | `BOOK` was a hardcoded `"AED_HOUZS"` constant, separate from the value that builds the DB connection line. A build pointed at a test book **still announced the live one** — on the single signal an operator uses to check exactly that | Found while preparing the test-book verification, at the moment the two values had to differ. Now `__BOOK__`, substituted from the same source as the connection line |
 | 6 | **The SO list named no purchase order for 91% of the orders that had one** (`fix/so-list-po-and-specials-display`) | `HC-SO-011733` rendered an em-dash in the PO No. column while its own Relationship Map showed `HC-PO-008783` linked. Every row on page one showed the em-dash. The column reads `source_po_union` and **both its arms require EXECUTION**; the line-link content had been demoted to a tooltip by the previous fix for this same bug | Measured on production over all **2,723** Houzs Century sales orders: at most **53** can light either source arm, while **277** carry a real non-cancelled PO on the line link — *"blank for ~91% of the orders that have a purchase order"*. After the fix, **53 to 295**, a gain of **242**. Class lesson recorded: "the column is empty for every row on page one" is a **population** question, not a row question |
-| 7 | **The amendment path repriced migrated orders** (`#1954`) | Approving **any** amendment on a migrated SO — including a quantity-only one — overwrote `unit_price_centi` with `mfg_products.sell_price_sen`, restating a historical customer price. `recomputeFromSnapshot` takes `trustOperatorSelling` as its **15th** positional parameter; `recomputeOneLine` called it with **14**, so the flag could not be passed at all | Traced by **argument count** against the three call sites that do pass it. The regression guard is behavioural: three tests drive `recomputeOneLine` through a stubbed client, and dropping the forwarded argument fails two of them — verified by reverting the line. Not yet observed in production only because the importer never sets `internal_expected_dd`, so a migrated SO is never processing-locked |
+| 7 | **The amendment path repriced migrated orders** (`#1954`) | Approving **any** amendment on a migrated SO — including a quantity-only one — overwrote `unit_price_centi` with `mfg_products.sell_price_sen`, restating a historical customer price. `recomputeFromSnapshot` takes `trustOperatorSelling` as its **15th** positional parameter; `recomputeOneLine` called it with **14**, so the flag could not be passed at all | Traced by **argument count** against the three call sites that do pass it. The regression guard is behavioural: three tests drive `recomputeOneLine` through a stubbed client, and dropping the forwarded argument fails two of them — verified by reverting the line. Not yet observed in production only because the importer never sets `processing_date`, so a migrated SO is never processing-locked |
 | 8 | **Editing a shipped delivery order never reached the stock ledger** (`#1957`) | An operator changes a line quantity on a DO that has already shipped. The document saves, the screen agrees, the paperwork is right — and **inventory does not move**. `resyncInventoryForDo` writes delta movements into the same `(source_doc_type, source_doc_id, product_code, variant_key)` bucket the first ship already wrote, and production carries a partial unique index on exactly that key with `movement_type` **not** in it | Measured on production, Actions run **31426819498**: **zero** movements anywhere carry the function's own notes marker — it had never landed a single row. The index (`uq_inv_mov_do_source`) is prod-only DDL that exists in **no file in this repository**. Read against the migration tree the old belief was reasonable; read against `pg_indexes` it was false |
 | 9 | **Three document-level hard deletes** (`fix/po-no-hard-delete`, `fix/remove-remaining-hard-deletes`) | `DELETE /mfg-purchase-orders/:id` purged a CANCELLED PO, header and lines by cascade. `DELETE /purchase-consignment-orders/:id` did the same, and **without even the audit row**, because the module is a line-for-line clone. `DELETE /quotes/:id` purged a quote with **no status guard at all**, at any point in its life, including one already promoted to a sales order | The first by reading the code's own comment — the audit row is documented as *"the ONLY remaining evidence that the PO existed"*. **When a comment has to explain that an action destroys the only evidence of its own subject, the comment is the review finding.** The other two by the sweep that should have happened first: `docs/hard-delete-inventory.md` classifies all **70** `DELETE` handlers on the SCM surface as VIOLATION / COMPLIANT / ROLLBACK-KEEP. Three found on three separate occasions, one at a time, is the signature of ad-hoc discovery rather than an audit |
 
@@ -1205,7 +1249,7 @@ price is strictly better and is still open.
 
 | # | Task |
 |---|---|
-| 1 | **Stand up the tunnel route to `AcSyncService` on port 8900.** Copy the shape already carrying `it-houzs.dev`. This is the one step that requires physical presence and it blocks every step after it. **Write the configuration down somewhere — today it lives only on that machine** |
+| 1 | ~~Stand up the tunnel route~~ **DONE 2026-08-11.** `autocount.houzscentury.com` fronts `localhost:8900`; the owner changed it in the Cloudflare dashboard, which is where a token-mode cloudflared keeps its ingress — **no physical presence was needed after all**. `AC_SYNC_URL` and the `AC_SYNC_KEY` secret are both set. See Step 3 |
 | 2 | Set `AC_SYNC_URL` in `backend/wrangler.toml` and `wrangler secret put AC_SYNC_KEY`, matching `C:\Temp\ac-svc-key.txt` |
 | 3 | Rebuild the clean service from the bridge and confirm `/health` names the book it is connected to (runbook step 1) |
 | 4 | Restore or replace `AED_TESTING`, if a test book is ever wanted again. The current one has exhausted its 500-transaction evaluation limit |

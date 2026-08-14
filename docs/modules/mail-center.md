@@ -7,6 +7,16 @@
 
 # Module: Mail Center
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Shared team mailboxes inside the ERP — inbound mail lands in threads, and staff
 reply or compose from the mailbox address rather than from `no-reply@`.
 
@@ -30,7 +40,7 @@ module IS and the traps found while working in it, not every line of it.
 |---|---|---|
 | `email_threads` | `0039_mail_center.sql` | one per conversation; carries `mailbox_address` and `counterparty_email` |
 | `email_messages` | `0039` | `direction` inbound/outbound, `from_address`, **`to_addresses`**, **`cc_addresses`** (JSON arrays) |
-| `email_outbox` | `0005`, +`0254` | the durable send queue: `to_address`, **`cc_address`**, **`bcc_address`**, `status`, `attempts` |
+| `email_outbox` | `0005`, +`0269` | the durable send queue: `to_address`, **`cc_address`**, **`bcc_address`** (both added by `0269_email_outbox_cc_bcc.sql`), `status`, `attempts` |
 | `email_log` | — | per-attempt audit, separate from the queue |
 
 ## Sending: one queue row, one provider call
@@ -80,11 +90,14 @@ inbound Cc since mig 0039 and was simply never read back.
 
 Precedence, in order:
 
-1. An explicit `to` from the caller.
-2. `replyAll: true` — rebuilds To from the newest **inbound** message's sender,
-   and Cc from that message's To + Cc, **minus this mailbox and minus anyone
-   already on To**.
-3. Otherwise the counterparty, exactly as before.
+1. An explicit `to` from the caller wins outright.
+2. No explicit `to` — To becomes the newest **inbound** message's `from_address`,
+   whether or not `replyAll` was asked for. `thread.counterparty_email` is only
+   the fallback when the thread has no inbound message at all.
+3. `replyAll: true` **and** the caller sent no `cc` — Cc is rebuilt from that
+   same inbound message's To + Cc, **minus every address in the caller's mailbox
+   scope (not just this mailbox) and minus anyone already on To**. An explicit
+   `cc` is never overwritten.
 
 **Bcc is never reconstructed.** It was blind; guessing at it would expose a
 recipient the original sender chose to hide.
@@ -103,15 +116,19 @@ ops-only, so a retry can reproduce the same send).
 - **Two migration trees.** `email_outbox` exists in `migrations-pg/` (production)
   *and* `migrations/` (D1, test-only). The outbox tests exercise the real INSERT,
   so a column added to only one tree fails the suite with "no outbox row" rather
-  than anything mentioning a schema — see `0254` / `144`.
+  than anything mentioning a schema — see `migrations-pg/0269_email_outbox_cc_bcc.sql`
+  / `migrations/148_email_outbox_cc_bcc.sql`.
 - **From is authorised per user.** `canSendFrom()` — a non-admin may only send
   from a mailbox in their scope or their own alias. Admins may send from any.
 - **`purpose` gates delivery at both ends.** `isChannelEnabled()` is checked when
   sending AND again at drain time, so a channel switched off after enqueue stops
   the retry.
-- **Attachments are not persisted.** `email_outbox` has no attachment column, so
-  a send carrying one sets `outboxRetry: false` — otherwise a cron retry would
-  re-send it body-only.
+- **Attachments are not persisted.** `email_outbox` has no attachment column.
+  The Mail Center reply DOES forward attachments to Resend on the immediate send
+  (`contentBase64` → base64 content) but leaves the outbox row retryable, so a
+  drained retry sends that mail BODY-ONLY. `outboxRetry: false` — suppress the
+  outbox row entirely rather than retry it wrong — is used on the PO email path
+  (`scm/routes/mfg-purchase-orders.ts:4223`), not here.
 
 ## See also
 

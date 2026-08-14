@@ -33,6 +33,7 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
+import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -111,6 +112,14 @@ export interface ErpSoHeader {
   phone: string | null;
   ref: string | null;
   po_doc_no: string | null;
+  /** The SO's "Processing date" — the field with that label in the UI, and the
+   *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
+   *  such field: 0189 dropped a dead second column carrying this label, and 0284
+   *  renamed the surviving one (internal_expected_dd) onto the name everybody
+   *  says, because two names for one field kept producing blank dates just as
+   *  reliably as two columns did. Do not reintroduce a second source, or a
+   *  second name, for it. Goes out as the `PDate` UDF. */
+  processing_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -375,6 +384,80 @@ export class MissingLocationError extends Error {
   }
 }
 
+/**
+ * A CREATE with no salesperson is refused, because AutoCount refuses it too.
+ *
+ * MEASURED ON THE LIVE BOOK, 2026-08-13 — the day the write-back went live. Two
+ * re-queued sales orders retried four times each and AED_HOUZS answered
+ * `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`. Both carried an empty
+ * `mfg_sales_orders.agent`, because no SO form has ever sent `body.agent` and
+ * that column was the composer's only source. AcSyncService's create applies
+ * the key unconditionally (`Set(() => so.Agent = Str(p, "Agent"))`) and `Str`
+ * turns an absent key into `""` — and `""` is not a row in `dbo.SalesAgent`.
+ *
+ * Nothing was written: the foreign key rejects the document before it lands, so
+ * a refusal here loses no successful write. It only converts a 500 buried in
+ * `C:\Temp\ac-sync-service.log` into a `skipped` outbox row naming the remedy.
+ *
+ * Same shape and same reason as MissingLocationError, one level up: the
+ * document as a whole is refused, never sent with a blank the book will reject.
+ */
+export class MissingAgentError extends Error {
+  /** What `mfg_sales_orders.agent` held, for the operator reading the row. */
+  readonly agentText: string | null;
+  constructor(agentText: string | null) {
+    const saw = agentText && agentText.trim()
+      ? `\`agent\` holds "${agentText.trim()}", which is neither an AutoCount sales agent nor a `
+        + 'name this ERP can vouch for, and no salesperson is linked to the order'
+      : 'the order names no salesperson at all — `agent` is blank and `salesperson_id` is empty';
+    super(
+      `This sales order cannot name an AutoCount sales agent: ${saw}. AutoCount rejects a sales `
+      + 'order whose Agent is not in dbo.SalesAgent, and an absent Agent reaches it as the empty '
+      + 'string — so this create would fail on FK_SO_SalesAgent, which is exactly what the live '
+      + 'book answered on 2026-08-13. Assign a salesperson on the order, then re-queue it.',
+    );
+    this.name = 'MissingAgentError';
+    this.agentText = agentText;
+  }
+}
+
+/**
+ * The AutoCount Sales Agent a sales order names, from the ERP's two sources.
+ *
+ * They are not equally trustworthy, and the order below says so:
+ *
+ *   1. `agent` THROUGH AGENT_MAP. A hit means the account book already spells
+ *      this rep, under its own spelling (`ZACK` -> `Zack`, `KAR JIUN` ->
+ *      `TAN KAR JIUN`). Nothing to open, nothing to guess.
+ *   2. the SALESPERSON's name, through the same map. Same certainty; it just
+ *      arrived by the id rather than the text.
+ *   3. the salesperson's name AS ITSELF, opened by `/ensure-masters`. This is
+ *      the D10 rule applied to people: an unmapped item code no longer refuses
+ *      a document, it resolves to the ERP's own code and the item is opened
+ *      (owner 2026-08-13). AGENT_MAP is a snapshot of the book's spellings, not
+ *      an allow-list, so every rep hired since would otherwise be unwritable.
+ *   4. nothing -> MissingAgentError.
+ *
+ * WHAT DELIBERATELY NEVER PASSES THROUGH IS THE RAW `agent` TEXT. That column
+ * is free text with no writer that keeps it honest: production rows hold bare
+ * `scm.staff` UUIDs (`useStaffLookup` carries a UUID_RE for exactly that) and
+ * placeholder text like "Unassigned" (HC-SO-2607-008, the order that produced
+ * the confirm gate's salesperson rule). `/ensure-masters` opens a sales agent
+ * under EXACTLY the string it is given, so passing that through would write
+ * permanent garbage master data into a licensed book. `scm.staff.name` is a
+ * real person by construction, which is why only IT is trusted unmapped.
+ */
+export function resolveAcAgent(
+  agent: string | null | undefined,
+  salespersonName: string | null,
+): string | null {
+  const mapped = mapOrPassthrough(agent, AGENT_MAP);
+  if (mapped) return mapped;
+  const name = (salespersonName ?? '').trim();
+  if (!name) return null;
+  return mapOrPassthrough(name, AGENT_MAP) ?? name;
+}
+
 export { ItemCodeError };
 
 /**
@@ -484,17 +567,55 @@ function udf(entries: Record<string, string | null>): Record<string, string> {
   return out;
 }
 
+/**
+ * A date on its way into an AutoCount UDF, normalised to `YYYY-MM-DD`.
+ *
+ * The ERP stores these as text and they arrive in more than one shape — a bare
+ * date from a date input, a full ISO timestamp from anything that went through
+ * a Date. AutoCount's own reader hands the same field back as
+ * `SOUDF_PDate: "2026-08-12T00:00:00"`, which the inbound pull already trims
+ * with `dateOnly()`; this is that trim on the way out, so a round trip does not
+ * change the value.
+ *
+ * Anything that is not a date is dropped rather than passed through. Every UDF
+ * write inside AcSyncService is wrapped in its exception-swallowing `Set()`
+ * helper, so a value AutoCount rejects fails INVISIBLY — no error, no failed
+ * outbox row, just a field that never updates. Sending only what is
+ * unambiguously a date is the half of that we control from here.
+ */
+export function acUdfDate(v: string | null | undefined): string | null {
+  if (!v) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$/.exec(String(v).trim());
+  return m ? m[1] : null;
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
+  /**
+   * The name behind `mfg_sales_orders.salesperson_id`, resolved by the caller —
+   * REQUIRED, never optional. It DECIDES whether this document can be sent at
+   * all, so an omitted argument must be a compile error rather than a silent
+   * fallback to the empty agent that caused FK_SO_SalesAgent (CLAUDE.md, "a
+   * parameter that DECIDES something is required, never optional"). Pass an
+   * explicit `null` to state that the order has no salesperson link; that is a
+   * REFUSAL when `agent` cannot answer either.
+   *
+   * The composer stays pure: the `scm.staff` read lives beside the other header
+   * reads in scm/lib/autocount-outbox.ts, the same division `withLocations`
+   * uses for the line-level warehouse.
+   */
+  salespersonName: string | null,
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
+  const agent = resolveAcAgent(header.agent, salespersonName);
+  if (!agent) throw new MissingAgentError(header.agent ?? null);
   return {
     DocNo: header.doc_no,
     DocDate: header.so_date,
     DebtorCode: AC_DEBTOR_CODE,
     DebtorName: header.debtor_name,
-    Agent: mapOrPassthrough(header.agent, AGENT_MAP),
+    Agent: agent,
     SalesLocation: mapOrPassthrough(header.sales_location, LOCATION_MAP),
     Ref: header.ref,
     Phone: header.phone,
@@ -507,6 +628,7 @@ export function composeCreateSo(
       BRANDING: mapOrPassthrough(header.branding, BRANDING_MAP),
       VENUE: mapOrPassthrough(header.venue, VENUE_MAP),
       ToPONo: header.po_doc_no,
+      PDate: acUdfDate(header.processing_date),
     }),
     Details: composeDetails(live(lines), {
       ...opts,
@@ -636,7 +758,26 @@ export function composeEdit(
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
-    return dtlKey != null ? { ...d, DtlKey: dtlKey } : d;
+    if (dtlKey == null) return d;
+    /* AUTOCOUNT OWNS THE ITEM ON A LINE IT ALREADY HOLDS — the same rule
+     * Location runs under, applied to the item itself. Owner 2026-08-13: an
+     * edit to an order that came in through the API changes its Description 2,
+     * never its SKU.
+     *
+     * The ERP's answer for these codes is a POLICY, not a reading of the book.
+     * A sales order does not know the brand, so four sofa models resolve to one
+     * canonical item — right for a new order, wrong for the 194 real lines the
+     * book already holds under the two brand items the cutover collapsed. An
+     * edit that sent the canonical code would move every one of them, silently,
+     * in a licensed ledger.
+     *
+     * Swapping the product on a line still propagates, because that is a DELETE
+     * plus an ADD: the removed row arrives in `retired` and is zeroed, and the
+     * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
+     * an in-place item change on a line the book owns is dropped, and the ERP
+     * has no such operation. */
+    const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 
   /* Refused BEFORE the keyless check, because a half-cancelled build is a

@@ -1114,15 +1114,23 @@ function MultiSelectFilter({
             <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">
               {placeholder}
             </span>
-            {selected.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onChange([])}
-                className="text-[10.5px] font-semibold text-ink-secondary hover:text-err"
-              >
-                Clear ({selected.length})
-              </button>
-            )}
+            {/* Untick-all is ALWAYS shown (owner 2026-08-11) so the affordance is
+                visible even before anything is ticked — it just greys out and is
+                disabled while the list is empty, then activates (with a count)
+                once you tick something. */}
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              disabled={selected.length === 0}
+              className={cn(
+                "text-[10.5px] font-semibold",
+                selected.length === 0
+                  ? "cursor-default text-ink-muted/50"
+                  : "text-ink-secondary hover:text-err",
+              )}
+            >
+              {selected.length > 0 ? `Untick all (${selected.length})` : "Untick all"}
+            </button>
           </div>
           {groups.map((g, gi) => (
             <div key={g.name ?? `g${gi}`} className="mb-1.5">
@@ -3285,9 +3293,12 @@ function ProjectsAnalyticsView() {
   const brand = params.get("af_brand") ?? "";
   const organizer = params.get("af_org") ?? "";
   const eventTypeId = params.get("af_type") ?? "";
-  // An event that has not started only carries booked rental, so counting it
-  // reads as a loss that has not happened — settled/started is the default.
-  const scope = params.get("af_scope") ?? "completed";
+  // Owner decision 2026-08-11: default to the full picture. "completed" was
+  // the original default (an unstarted event carries only booked rental, which
+  // reads as a loss that has not happened), but half the year's sales sat on
+  // events staff never marked completed, so the completed-only view kept
+  // understating revenue by ~50% and reading as "the numbers are wrong".
+  const scope = params.get("af_scope") ?? "all";
 
   // Writing a filter clears the open drill: its value may not exist under the
   // new scope, so an orphaned drill path would just render "no data".

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 import { getAssrDetail } from "../services/assr";
+import { assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields } from "../services/assrVisibility";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   getBrandingForCompany,
   resolveCompanyCode,
@@ -173,6 +175,52 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
 
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.text("Not found", 404);
+
+  /* Multi-company: getAssrDetail's SQL is `WHERE c.id = ?` with no company
+     predicate, so this route rendered ANY company's service case to anyone
+     holding service_cases.read — the permission alone says nothing about
+     which company's cases you may see.
+
+     The JSON detail route already applies this exact guard (assr.ts, "a case
+     must fall inside the caller's ASSR company scope"); the PRINTABLE one,
+     which emits the same content as a document with letterhead, did not.
+
+     Same semantics, deliberately: an UNRESOLVED scope (undefined —
+     pre-migration / the D1 test mirror) skips the check, while an EMPTY scope
+     means the caller is granted no active company and every company-stamped
+     case must 404. Those two used to share `[]` and the merged state failed
+     open. Out-of-scope answers 404, indistinguishable from a missing id. */
+  const allowedCo = allowedCompanyIds(c as any);
+  if (allowedCo) {
+    const caseCo = Number(
+      (detail.case as any)?.companyId ?? (detail.case as any)?.company_id ?? NaN,
+    );
+    if (Number.isFinite(caseCo) && !allowedCo.includes(caseCo)) {
+      return c.text("Not found", 404);
+    }
+  }
+
+  /* Row-level visibility — the SECOND half of the JSON route's guard, and the
+     half this route never had. The company check above answers "whose company",
+     `service_cases.read` answers "may you read service cases at all"; neither
+     answers "is this case yours". So a visibility-scoped salesperson could
+     render ANY case in their own company as a letterheaded document by walking
+     the id, and get more out of it than the JSON route would give them (see the
+     creditor strip below). Both halves now come from routes/assr.ts, so the rule
+     cannot drift between the two surfaces again. */
+  if (!(await assrCaseRowInScope(c as any, detail.case as any))) {
+    return c.text("Not found", 404);
+  }
+
+  /* Supplier identity is office + supplier-portal only (Nick 2026-07-15:
+     「这个我要 office, supplier 看到而已」). The JSON detail route strips it for a
+     scoped caller; the OFFICE print variant rendered `creditor_name` in full,
+     which made this route the way around that rule. Stripped on the same
+     condition, and only for the office variant — the supplier variant is the
+     document the supplier themselves receives, and the customer variant never
+     printed the field. */
+  const callerScoped = await assrCallerIsScoped(c as any);
+  if (callerScoped && isOffice) stripCreditorFields(detail.case as any);
 
   const { case: cs, items, attachments, activity, logistics } = detail;
 

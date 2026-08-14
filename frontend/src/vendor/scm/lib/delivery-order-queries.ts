@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
+import { writeFailedAs } from './mutation-error';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
@@ -387,6 +388,7 @@ export const useAddDeliveryOrderPayment = () => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
     },
+    onError: writeFailedAs('Payment not recorded'),
   });
 };
 
@@ -399,5 +401,6 @@ export const useDeleteDeliveryOrderPayment = () => {
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', vars.id, 'payments'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-order-detail', vars.id] });
     },
+    onError: writeFailedAs('Payment not deleted'),
   });
 };

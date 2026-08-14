@@ -34,6 +34,9 @@ function buildApp() {
   app.post("/attachments/:attId/archive", (c) => c.json({ ok: "att" }));
   app.post("/creditors/create", (c) => c.json({ ok: "creditor" }));
   app.post("/resync-so/:docNo", (c) => c.json({ ok: "resync" }));
+  app.post("/bulk/archive", (c) => c.json({ ok: "bulk-archive" }));
+  app.post("/bulk/unarchive", (c) => c.json({ ok: "bulk-unarchive" }));
+  app.post("/bulk/assign", (c) => c.json({ ok: "bulk-assign" }));
   return app;
 }
 
@@ -61,4 +64,17 @@ test("non-case-id routes are not caught by the guard (documented follow-up)", as
   assert.equal(await call(app, "POST", "/attachments/9/archive"), 200);
   assert.equal(await call(app, "POST", "/creditors/create"), 200);
   assert.equal(await call(app, "POST", "/resync-so/DOC-1"), 200);
+});
+
+/* The load-bearing fact behind the in-handler company predicate on the three
+   /bulk routes (assr.ts :1123): the guard patterns key on the FIRST path segment
+   being numeric, and "bulk" is not — so a /bulk write is NOT gated by the
+   middleware however many case ids its body carries. If someone ever widens the
+   patterns to cover /bulk, this test fails and the in-handler predicate can be
+   revisited; until then it must stay. */
+test("/bulk/* is NOT reached by the guard — its ids come from the body", async () => {
+  const app = buildApp();
+  assert.equal(await call(app, "POST", "/bulk/archive"), 200);
+  assert.equal(await call(app, "POST", "/bulk/unarchive"), 200);
+  assert.equal(await call(app, "POST", "/bulk/assign"), 200);
 });

@@ -438,14 +438,29 @@ The per-line `stock_status` itself is **stored**, not derived — plain `text` o
 `PENDING` / `READY` / `PARTIAL`. It is written by
 `recomputeSoStockAllocation`.
 
-### 6.1 The processing-date gate
+### 6.1 The `proceeded_at` gate
 
-`recomputeSoStockAllocation` gates on `proceeded_at`. An SO with a NULL
-processing date has **every line forced to PENDING and consumes no stock**,
-so the ERP emits the blank remark however much stock is physically on hand.
-Any order that AutoCount marks `READY` but the ERP has not yet processed will
-therefore disagree, and it is not a stock error. The checker pulls
-`proceeded_at` and separates this class out by name.
+`recomputeSoStockAllocation` gates on **`proceeded_at`** — the lifecycle
+timestamp, NOT the Processing Date. An SO with a NULL `proceeded_at` has
+**every line forced to PENDING and consumes no stock**, so the ERP emits the
+blank remark however much stock is physically on hand. Any order that AutoCount
+marks `READY` but the ERP has not yet processed will therefore disagree, and it
+is not a stock error. The checker pulls `proceeded_at` and separates this class
+out by name.
+
+> **Naming corrected 2026-08-14.** This section was headed "The processing-date
+> gate" and called `proceeded_at` "the processing date". Since mig 0286 those
+> are two different columns: the Processing Date is
+> `scm.mfg_sales_orders.processing_date`, and `proceeded_at` is a separate live
+> timestamp. The MECHANICS above are unchanged and still correct —
+> `lib/so-stock-allocation.ts` really does select and gate on `proceeded_at`.
+>
+> The distinction is not academic on migrated data: the cutover importer writes
+> AutoCount's `UDF_PDate` into `proceeded_at` and leaves `processing_date` NULL
+> (`docs/cutover-tally-method.md`), so a migrated order allocates stock while
+> carrying no Processing Date, and the owner's pinned rule *"没有 processing
+> date 就代表没有 proceed"* says that order is not proceeded. Whichever way that
+> is resolved, it is a decision about the ALLOCATOR, not a rewording here.
 
 ---
 
@@ -537,6 +552,10 @@ checker removes:
    If every unit had landed at `KL WAREHOUSE`, the item-level check would still
    report 93% agreement. That gap is the single largest unverified risk in the
    balance axis, and closing it is the main reason the new checker exists.
+
+   > **Measured 2026-08-11 — see section 11.1. It did not happen.** Stock is
+   > spread across 15 warehouses, 910 of 988 cells agree, and eight of them
+   > agree to the unit.
 2. **It compares against a frozen snapshot, not the live book.** The −97 units
    AutoCount has shipped since (section 5) are invisible to it.
 3. **It does not exclude the pseudo-items**, so its own headline is distorted
@@ -825,6 +844,222 @@ the warehouse map resolves every location, the exclusion buckets are defined
 and measured, and the readiness port is differentially tested. What is missing
 is the runner, the alerting policy, and the owner's decision on the scheduling
 exemption.
+
+---
+
+## 11. Closing the three gaps (2026-08-11)
+
+Sections 1-10 measured. This section is what was then **applied**, and what an
+independent read says afterwards. Every number below comes from
+`check-stock-criterion.mjs` (a different script with a different query set) or
+from the canonical allocator's own transaction — never from the log line of the
+script that did the writing.
+
+### 11.1 The per-warehouse split: measured, and the import did NOT concentrate stock
+
+Section 7.2 called this "the single largest unverified risk in the balance
+axis". It is now measured (prod run `31419069241`, live export
+`2026-08-11T01:28:52`). **The fear was unfounded.**
+
+| ERP warehouse | cells | agree | AutoCount | ERP | delta |
+|---|---|---|---|---|---|
+| BALAKONG WAREHOUSE (KL) | 225 | 181 | 4,951 | 5,133 | +182 |
+| PENANG WAREHOUSE | 230 | 210 | 2,168 | 2,206 | +38 |
+| BALAKONG DISPLAY | 94 | 84 | 449 | 465 | +16 |
+| CASH & CARRY - FAIR | 78 | 77 | 666 | 672 | +6 |
+| PENANG DISPLAY | 98 | 97 | 349 | 350 | +1 |
+| PENANG SERVICE | 13 | 12 | 14 | 15 | +1 |
+| Headquarter | 7 | 6 | 11 | 10 | -1 |
+| CASH & CARRY - KELANA JAYA | 66 | 66 | 507 | 507 | **0** |
+| SARAWAK DISPLAY | 45 | 45 | 94 | 94 | **0** |
+| SABAH WAREHOUSE | 17 | 17 | 55 | 55 | **0** |
+| BALAKONG SERVICE | 27 | 27 | 51 | 51 | **0** |
+| AKEMI SLEEP STUDIO KELANA JAYA | 17 | 17 | 58 | 58 | **0** |
+| DUNLOPILLO SUITE SUNWAY CARNIVAL | 32 | 32 | 175 | 175 | **0** |
+| SABAH DISPLAY | 25 | 25 | 47 | 47 | **0** |
+| SARAWAK WAREHOUSE | 14 | 14 | 46 | 46 | **0** |
+
+**988 cells compared, 910 agree (92%).** Eight of the fifteen warehouses agree
+to the unit. The cell-level figure is essentially the item-level 93%, which is
+the whole point: had the import dumped everything into KL, item-level agreement
+would have held at 93% while every warehouse figure collapsed. It did not.
+
+The ERP's own balance confirms the spread independently — 15 of the 16 defined
+warehouses hold non-zero stock, 9,987 units over 1,065 cells, and KL holds 52%
+of it against AutoCount's own 51%. **The `SALESLOC` map did its job.**
+
+### 11.2 `warehouse_id` on migrated SO lines: closed, and now audited
+
+The gap described as "13,881 of 13,881 NULL" had **already been closed** before
+this work started — `backfill-so-line-warehouse.mjs` ran `APPLY group=all` at
+09:13 (13,885 lines, run `31373582517`) and 14:24 (24 more, run `31397940405`).
+A dry-run at 18:20 read 0 remaining.
+
+What had *not* happened is any check that the filled values are **right**. The
+apply was a blanket `UPDATE ... WHERE upper(btrim(location)) = 'KL'`, and that
+`location` text is the transcription written by `import-ac-outstanding-so.mjs` —
+the same script whose INSERT column-list bug created the gap. So the audit:
+
+| verdict | lines |
+|---|---|
+| AGREES with AutoCount, matched on the exact `DtlKey` | 7,800 |
+| AGREES with AutoCount, matched on the header `SalesLocation` | 6,037 |
+| no AutoCount evidence (13 documents, all since-completed) | 70 |
+| **MISWAREHOUSED** | **0** |
+
+**13,837 of 13,907 lines verified against AutoCount's own record for that same
+line; not one disagrees.** The 70 unverifiable lines sit on documents absent
+from the outstanding-SO export, which by definition only covers open orders — an
+honest limit of the evidence, not a defect.
+
+Distribution, all four locations resolving: KL 9,454 / PG 3,508 / SRW 722 /
+SBH 223.
+
+The backfill script now refuses to fill anything AutoCount does not confirm, and
+writes an explicit id list rather than a predicate, so the guarantee holds for
+the next run rather than resting on this one having been lucky.
+
+### 11.3 Sofa stock: imported, and the status axis moved
+
+D6 said no sofa lot carries a `batch_no`, so `findCoveringBatch` can never match
+and every sofa line stays PENDING. Confirmed, and fixed.
+
+Scrutiny before applying, because the cap is the whole safety argument:
+
+- **The cap is still exactly right.** Sofa whole-unit totals in the 2026-08-09
+  snapshot and the live 2026-08-11 book are **identical** — 76 units, 22 item
+  codes, 31 cells, zero differing codes.
+- **The arithmetic closes.** 48 accepted builds + 28 units with no receiving
+  document behind them (showroom display, already-delivered receipts) = **76**,
+  AutoCount's exact total.
+- **No double-count.** The ERP's 20 pre-existing un-batched sofa lots are all
+  `NNNN-1S` THL single-seaters seeded by the cutover; **zero** existing lot
+  carries a multi-compartment code (`-1A(`, `-2A(`, `-CNR`, `-1NA`, `-L(LHF)`).
+  The SKU sets are disjoint, so nothing is stacked on stock already there.
+- 12 `SOFA UNPARSED` placeholder builds excluded, 9 over-cap builds dropped,
+  every one printed with its PO and SO.
+
+**Applied**: 103 lots / 103 units across 46 batches, each an `ADJUSTMENT`
+carrying `batch_no = source PO number`. This is a lot-OPENING, not a reversal, so
+the "close the lot the ADJUSTMENT opened" step of the 0088/0198 pattern does not
+apply — the new lot is the intended outcome. Verified by an independent re-read:
+the next dry-run reported `already opened by an earlier run: 103` and
+`LOTS TO CREATE: 0`.
+
+Then the canonical allocator, dry-run first and committed second:
+`linesFlipped=70 ordersAdvanced=30 **ordersRegressed=0**`.
+
+| | before | after |
+|---|---|---|
+| sofa lines READY | **0** | **70** |
+| sofa lines PENDING | **272** | **202** |
+| sofa lots carrying a `batch_no` | 0 of 20 | 103 of 123 |
+| SO headers READY_TO_SHIP | 187 | **217** |
+| SO headers CONFIRMED | 332 | 302 |
+
+Both figures were read by two independent instruments — the allocator's own
+per-line diff and the census — and they agree exactly.
+
+The 202 still PENDING are sofa sets no *documented* receipt covers: the 28
+unbacked AutoCount units, the 12 placeholder builds, and sets whose PO has not
+been received. They are pending because the goods are not evidenced, which is
+the correct answer rather than a remaining defect.
+
+### 11.4 The checker's own exclusion was manufacturing an 85-unit gap
+
+The per-warehouse run reported +149 units ERP-over-AutoCount. **77 of those
+units are not a discrepancy at all — they are the checker refusing to look.**
+
+`check-stock-vs-autocount.mjs` excluded AutoCount rows whose **ItemGroup** is
+`SOFA`. AutoCount files 41 codes there; only 22 are whole sets. The other 19 —
+`DSL-SQUARE PILLOW`, `AMN-LONG PILLOW`, `RDS-SGABELLO`, `DSL-STOOL 1`,
+`LV-3068 BOLSTER`, the `THL-xxxx` single-seaters, 85 units — are accessories, and
+`autocount-erp-mapping-1561.csv` says exactly that in its category column.
+`import-ac-stock-balance.mjs` excludes on **that** column, so it imported all 85
+units. The ERP holds them; the checker then dropped the AutoCount side of the
+same cells and called the remainder a surplus.
+
+| | units |
+|---|---|
+| reported as ERP-only across 12 cells | +85 |
+| actually present on both sides, excluded by the filter | **77** |
+| genuine residual (`SQUARE PILLOW @ BALAKONG`, ERP 46 vs AutoCount 38) | **+8** |
+
+Eleven of the twelve cells reconcile **exactly** once the excluded codes are
+summed.
+
+**What the fix does to the headline is worth stating precisely, because the
+obvious guess is wrong.** Removing the filter does not subtract 77 from the net
+— it adds the missing rows to *both* sides. Measured across the two prod runs:
+AutoCount 9,641 -> 9,706 (+65) and ERP 9,790 -> 9,863 (+73), so the net moves
+**+149 -> +157**. That +8 difference is exactly the genuine residual predicted
+above, arriving independently. The gap the filter was inventing was never in the
+net; it was in the **ERP-only** bucket, where 12 cells claimed AutoCount held
+nothing at all.
+
+This is D7 one layer up — D7 excluded accessories by matching `/SOFA/` against
+the item CODE, this excluded them by matching `SOFA` against the item GROUP. The
+invariant worth keeping: **a reconciler's exclusion must be the same predicate as
+the importer's.** If the importer brought a row in, the ERP holds it and it must
+be compared, or the check manufactures the discrepancy it exists to find. Fixed;
+the checker now excludes on the binding CSV's category and reports how many units
+it compares despite an `ItemGroup` of `SOFA`.
+
+### 11.5 Opening the sofa stock exposed a second, opposite asymmetry
+
+The sofa exclusion was **one-sided**. AutoCount's whole-sofa rows were held out;
+the ERP's per-COMPARTMENT stock was not, so every compartment cell sat in the
+comparison with nothing to match against. Harmless while the ERP held no sofa
+stock — and no longer harmless the moment 11.3 opened 103 compartment lots. The
+very next run:
+
+| | before the sofa import | after | after the symmetry fix |
+|---|---|---|---|
+| cells compared | 988 | 1,053 | 976 |
+| **ERP-only cells** | 21 | **78** | **1** |
+| AGREE | 910 | 917 | 917 |
+| DISAGREE | 34 | 35 | 35 |
+
+A representative phantom row:
+`8030-1A(RHF) @ BALAKONG WAREHOUSE: AutoCount - vs ERP 5`. There is no
+`8030-1A(RHF)` in AutoCount and there never will be — AutoCount holds one
+`DSL-8030 SOFA`.
+
+Fixed by excluding on `scm.mfg_products.category = 'SOFA'` on the ERP side too,
+holding out 77 cells / 123 units and reporting the figure. Verified on prod:
+**ERP-only 78 -> 1**, and `CUTOVER ADJUSTMENT ONLY` collapses from 83 cells /
+136 units to **6 cells / 13 units**.
+
+**917 of 976 cells now agree (94%)**, and every unit of the remaining +157 sits
+in a class that already has a name:
+
+| cause | cells | units |
+|---|---|---|
+| MIGRATION CUT-OFF — AutoCount traded after the seeding snapshot | 28 | 83 |
+| NO ERP MOVEMENT — AutoCount negatives the ERP cannot represent (D4) | 20 | 50 |
+| KNOWN DOUBLE-SHIP — SO-2606-019 (D1) | 5 | 14 |
+| CUTOVER ADJUSTMENT ONLY — present at seeding | 6 | 13 |
+
+Nothing in the balance axis is now unexplained.
+
+**Three variants of one mistake, in one file, in one week.** D7 excluded
+accessories by matching `/SOFA/` against the item CODE; 11.4 excluded them by
+matching `SOFA` against the item GROUP; this one excluded sofa on the AutoCount
+side only. The invariant: **an exclusion must use the same predicate as the
+importer, and must be symmetric.** Applied to one side of a comparison, it does
+not narrow the comparison — it fabricates a difference.
+
+### 11.6 Still open after this work
+
+| item | state |
+|---|---|
+| D1 double-ship on SO-2606-019 | still pending the owner; the reversal must restore the original lots, write the balancing ADJUSTMENT, **then close the lot that ADJUSTMENT opens** |
+| D4 AutoCount physical negatives | 20 cells / 50 units, all AutoCount oversells the ERP cannot represent; owner decision |
+| 90 of the 103 new sofa lots carry cost 0 | the build's price rides its lead compartment by design; `backfill-zero-cost-lots.mjs` owns the fallback and has not been run |
+| D7's 205 `SOFA PILLOW` units | still absent from the ERP — `import-ac-stock-balance.mjs` skips them; narrow the filter and re-run (it is delta-based, so it tops up) |
+| `ready-no-open-lots` lens: 59 lines | unchanged before and after, and **every one is a `SVC-*` service line** on 2990. Service lines have no lots by construction, so this is a false-positive class in the lens, not a defect |
+| the 12 placeholder sofa builds | `SOFA UNPARSED`; a human must decode them before `PLACEHOLDER=1` is safe |
+| status axis: 126 of 2,723 orders disagree | was 151 before the sofa work; the recompute moved **25 orders into agreement** (AGREE 2,572 -> 2,597). The rest are `READY => (blank)` / `READY => ACC` shapes that need the same per-order treatment |
 
 ---
 

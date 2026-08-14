@@ -21,6 +21,18 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "service_cases.create", resource: "Service Cases", verb: "create", label: "Log service cases",     description: "Create a case (but not edit it afterward — for sales who only log complaints)" },
   { key: "service_cases.write",  resource: "Service Cases", verb: "write",  label: "Edit service cases",   description: "Create and update ASSR cases" },
   { key: "service_cases.manage", resource: "Service Cases", verb: "manage", label: "Manage service cases", description: "Triage, assign, schedule logistics for ASSR cases" },
+  /* DECLARED 2026-08-13. `routes/assr.ts:2773` has gated POST /:id/approve on
+     this key all along, and it was absent from this array — so PERMISSION_KEYS
+     never contained it, it could not appear in the roles matrix, and
+     requirePermission admitted only holders of the literal string or `*`. In
+     practice: cost approval was accidentally Owner/IT-only, and no amount of
+     clicking in Team > Positions could change that.
+
+     Declaring it is a ZERO behaviour change today — everyone who could approve
+     still can — but the gate becomes grantable instead of silently absolute.
+     Its only other declaration was in the dead D1 tree
+     (db/migrations/014_qms_roles.sql:40). */
+  { key: "service_cases.approve", resource: "Service Cases", verb: "manage", label: "Approve service cost", description: "Approve the quoted cost on an ASSR case (POST /api/assr/:id/approve)" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
   // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance

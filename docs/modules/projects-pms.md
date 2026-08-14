@@ -14,6 +14,16 @@
 
 # Module: Projects / PMS
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — the exhibitions-and-events ERP: the project list, the
 calendar, venues, the checklist workflow, project finance, and the hard link
 from a Sales Order back to the fair it was written at. Same structure as
@@ -125,6 +135,35 @@ its existing-by-name upsert to the caller's company so it can't hijack another
 company's same-named row. `PATCH`/`DELETE /venues/:id` carry the same
 `activeCompanySql(c)` guard on their WHERE; PATCH returns **404** on a scoped miss.
 
+**Checklist TEMPLATES carry that same lock since PG mig 0292** (owner decision
+2026-08-13: *应该按公司分开*). They were the odd ones out — company-BLIND on the
+read *and* the write side, i.e. one shared master both companies edited — while
+`project_brands` and `project_venues`, in the same router and stamped by the same
+mig 0093, were already split. The templates are a PER-COMPANY master now:
+
+- **Reads.** `GET /checklist-templates` filters on `activeCompanySql(c, "t.company_id")`.
+  `GET /sections-distinct` and `GET /task-titles-distinct` resolve their
+  "newest active template" `MAX(t.id)` *inside* the company — company-blind, they
+  handed one company the other's stage names whenever the other owned the higher id.
+- **Template id in the URL** (`/checklist-templates/:id/...`) resolves through
+  `findTemplateInCompany(c, id)` and answers **404** on a miss — the same answer as
+  "no such template", deliberately, because confirming another company's id exists
+  is itself a leak.
+- **Child id in the URL** (`items/:itemId`, `sections/:sectionId`) is scoped by the
+  row's own `company_id` exactly as `PATCH /venues/:id` is, and returns **404** on a
+  scoped miss instead of a silent `ok`.
+- **Creates** resolve via `requireActiveCompanyId(c)` and **refuse with
+  `company_unresolved` (409)** rather than falling through to the `NOT NULL DEFAULT
+  <HOUZS>` column default, then stamp `company_id` — *and* re-check the parent
+  template, because a stamp is not a predicate: stamping the new item says nothing
+  about whose template it was hung under.
+
+Not covered, deliberately: `project_event_types.default_template_id`, the pointer
+the clone-on-create path (`services/projects.ts::instantiateChecklistFromEventType`)
+follows into a template. `project_event_types` carries **no `company_id` at all** —
+mig 0093 did not stamp it — so there is nothing to scope it by. Making event types
+per-company is a separate owner decision, not an implementation detail to invent.
+
 A venue carries an optional free-text `size` column (PG mig 0222) — the owner
 writes a physical area (`"12,000 sqft"`) or a hall label (`"Hall 3"`), so it is
 `text`, not a number. It is read in `GET /venues`, and accepted on `POST`
@@ -211,11 +250,40 @@ here, and it is highly regular:**
 | Reads of lookups | `requirePageAccess("projects")` | `GET /organizers` `:887`, `GET /venues` `:939`, `GET /sections-distinct` `:869` |
 | Calendar | `requirePageAccess("projects.calendar")` | `GET /calendar/events` `:3756` |
 | Money reads | `requirePageAccess("projects.finances")` | `GET /cost-rates` `:559`, `GET /finance/by-project` `:2001`, `GET /finance/lines` `:2209`, `GET /analytics/profitability`, `GET /analytics/profitability/drill` (L2 months / L3 projects drill-down) |
-| Ordinary writes | `requirePermission("projects.write")` | ~61 routes — finance lines, payments, stock transfers, defects, team, sales attendees, attachments, sections |
-| Admin writes | `requirePermission("projects.manage")` | ~29 routes — event types, brands, cost rates, archive/unarchive, checklist templates, CSV import |
+| Ordinary writes | `requirePermission("projects.write")` | finance lines, payments, stock transfers, defects, team, sales attendees, attachments, sections. Current count is in `docs/generated/route-capability-matrix.csv` — do not type it here |
+| Admin writes | `requirePermission("projects.manage")` | event types, brands, cost rates, archive/unarchive, checklist templates, CSV import. Same — read the generated matrix |
 | Checklist ticking | `requireAnyPermission(["projects.write","projects.checklist.tick"])` | `PATCH /checklist/:itemId` `:2792`, `/status` `:2843`, `/review` `:2887`, attachments `:3071`, `:3170`, `:3215` |
 | Chat | `requireAnyPermission(["projects.write","projects.chat"])` | `POST /:id/notes` `:1832` |
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
+
+**`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
+caller (2026-08-14).** The `activeCompanySql` predicate used to sit inside the
+`isScopedProjectUser` branch, with a comment recording the rest as "deferred,
+tracked separately" — which meant that for the majority of `projects.write`
+holders (anyone not scope-to-PIC) no company predicate was evaluated anywhere on
+the path, and `patchFinance`'s `UPDATE project_finance … WHERE project_id = ?`
+reached the other company. `patchFinance` also CREATES the row when it is
+missing, so a cross-company id with no snapshot got one written rather than
+falling through to "No changes", and `recomputeAutoCostLines` then ran on it.
+The project is now loaded scoped first, for everyone, and the PIC rule is applied
+to the row that load returned; out of company answers `404 Not found`, the same
+as a nonexistent id.
+
+**The P&L drill-down applies the same filters as its total (2026-08-14).**
+`backend/src/routes/finance.ts` builds one `FROM … WHERE` fragment per source
+(`projectCostFrom`, `serviceCostFrom`) and both `GET /pnl` and
+`GET /pnl/bucket` interpolate it. The drill-down previously re-typed the
+predicate and dropped both `company_id` and the `projects.archived_at IS NULL`
+join, so the row list you get by clicking a cost bucket could not sum to the
+bucket. If you add a filter, add it to the fragment.
+
+**`GET /finance/by-project` date semantics** (owner decision 2026-08-13): the
+`date_from`/`date_to` range filters the SUMs *and* the rows — a project with no
+non-archived line inside the window is dropped from the result, not rendered as
+a zero row. With no range set, every project matching the other filters still
+surfaces (upcoming events with no lines yet stay visible). Before this it
+filtered only the SUMs, so a 2026 date filter listed 2025 fairs as RM 0.00 rows
+— which read as "no data" and made search + date look like they didn't combine.
 
 ### Profitability analytics — rental column + L1→L4 drill-down
 
@@ -298,8 +366,16 @@ project the schedule dropped) is flagged as a possible postpone/cancel to check.
 
 The owner's FAIR REPORT is one `.xlsx` worksheet PER EVENT (`<date><BRAND>@<VENUE>`,
 per-order rows). Page `frontend/src/pages/FairReportFill.tsx` (route
-`/fair-report-fill`, nav "Fair Report Fill" under Projects, gated `projects.finances`
-+ finance-viewer) reads it in-browser with SheetJS and calls:
+`/fair-report-fill`, nav "Fair Report Fill" under Projects) reads it in-browser
+with SheetJS and calls:
+
+> The finance gate is on the two ENDPOINTS, not on the page. The route carries
+> only `<PageGuard page="projects">` (`frontend/src/App.tsx:488`) — the plain
+> page key, not `projects.finances`; both handlers then call `denyFinance(c)` on
+> top of their permission, and that is what keeps the money out. This paragraph
+> used to say the page itself was gated `projects.finances`, which would have a
+> reader looking for a frontend gate that is not there.
+
 - `POST /projects/fair-report/match` (`projects.read`) — parses each sheet via the
   **unit-tested pure `backend/src/services/agents/fair-report-parse.ts`** (revenue =
   SELLING, `cogs_matt_sofa` = MATTRESS, `cogs_bedframe` = BEDFRAME, `cogs_accessories`
@@ -315,11 +391,12 @@ per-order rows). Page `frontend/src/pages/FairReportFill.tsx` (route
 Autonomy: this is the human-in-loop path (owner uploads → picks project → applies). A
 scheduled auto-fill gated by the PMS agent's `agent_controls.stage` is the planned
 follow-up. Only these three product-COGS categories + `sales` come from the detail
-sheets; `rental`/`setup` come from the setup invoice (Job E, not built).
+sheets; `rental`/`setup` come from the setup invoice (Job E — built and shipped; see §2 and `frontend/src/pages/SetupInvoiceFill.tsx`).
 
-**That split is the module's central rule and it is exact: every read is gated by
-a POSITION-derived page-access level; every write is gated by a ROLE permission
-string.** See §5.
+**That split is the module's central rule and its shape, but it is not an
+invariant — two routes break it in opposite directions:** `POST /fair-report/match`
+is a read gated by a ROLE permission (`projects.read`), and `POST /:id/read` is a
+write gated by a page-access level. See §5.
 
 Related routes elsewhere:
 - `backend/src/routes/projects_print.ts:124` `GET /:id` — **no middleware gate**;
@@ -367,10 +444,13 @@ Two things happen here that are easy to miss:
    fetch). These power the opt-in Revenue / COGS / GP / GP% / NP / Margin%
    columns in the desktop list chooser; GP / NP / percent are derived
    client-side (`Projects.tsx` column defs) from the raw sums so the numbers
-   match the Finance tab (`/finance/by-project`). For any non-director sales
-   user every one of these money fields is blanked **before the response is
-   written** (`financeHiddenForUser`). The money never reaches the client,
-   rather than being hidden in the UI.
+   match the Finance tab (`/finance/by-project`). Every one of these money fields
+   is blanked **before the response is written** (`financeHiddenForUser`) for
+   ANY caller who has a position and is not a finance viewer — sales, logistics,
+   ops and purchasing alike, not just sales. Finance viewer = DIRECTOR, or any
+   holder of `projects.finance.view` (`pmsAccess.ts:335-356`). A position-less
+   legacy user keeps the money. It never reaches the client, rather than being
+   hidden in the UI.
 3. **`my_pending_titles` — the caller's own pending work, per row.** Crew
    callers always get their open DRIVER-badged task titles (`'|'`-joined)
    attached to each row; with `my_pending=1` every role-label lane caller gets
@@ -412,21 +492,27 @@ Two things happen here that are easy to miss:
    `project_checklist_attachment_actions` timeline, whose statuses are now
    **`done` | `replace`** (the old `ongoing` is retired; legacy rows read as
    "fresh"). Two actors, two lanes:
-   - **Stage 1 — the Storekeeper Supervisor (Shukor)** is the reviewer. His
-     lane is `pending_defect_review` (`routes/projects.ts` lane switch keys on
+   - **Stage 1 — TWO reviewers, split by the project's STATE (owner 2026-08-11).**
+     Projects whose state is in `DEFECT_REVIEW_REGION_STATES` — Pulau Pinang,
+     Kelantan, Terengganu, Perak (`routes/projects.ts:3726`) — route to the Ops
+     Exec (Nancy), keyed on **`role_name === "ops exec"`**; every other state
+     routes to the Storekeeper Supervisor (Shukor), keyed on
      **`position_name === "Storekeeper Supervisor"`**, NOT role_name — his role
      is the shared "Storekeeper", which would otherwise cage him into the DRIVER
-     lane). The lane is deliberately **not** crew-scoped: `assigned_user_id` is
-     suppressed for it, so he reviews defects on EVERY event, not just his
-     crewed ones. Its predicate (`services/projects.ts`, `pendingOr`) is a live
+     lane. Both share the `pending_defect_review` lane (`:1072-1087`,
+     `:1106-1108`). Neither lane is crew-scoped: `assigned_user_id` is
+     suppressed for it, so each reviews defects on EVERY event in their arm, not
+     just their crewed ones. Its predicate (`services/projects.ts`, `pendingOr`) is a live
      defect attachment whose LATEST action is `NOT IN ('done','replace')` — a
      fresh upload. Chip: a constant `Review Defect Items`.
    - **Stage 2 — the Purchaser (Sim / Farra, role `Purchaser`)** only sees a
      defect once Shukor ESCALATES it: the PURCHASER defect arm now matches
      LATEST action `= 'replace'` (was `<> 'done'`). They close it with `done`.
      Both purchasers share the lane (role-keyed), either can clear it.
-   - **Endpoint gate** (`POST /checklist/attachments/:attId/actions`): reviewer
-     (Storekeeper Supervisor) OR purchaser/BD OR `*`/`projects.manage`; `replace`
+   - **Endpoint gate** (`POST /checklist/attachments/:attId/actions`):
+     `requireAnyPermission(["projects.write","projects.checklist.tick"])`
+     (`:4273-4275`), then inline — reviewer (Storekeeper Supervisor OR Ops Exec)
+     OR purchaser/BD OR `*`/`projects.manage`; `replace`
      is reviewer/admin-only (a purchaser cannot re-escalate). Both stages, both
      surfaces (`Projects.tsx` `TaskAttachmentRow` + `mobile/MobilePMS.tsx`
      `DefectFileActions`), gate the buttons on the attachment's latest status.
@@ -465,7 +551,9 @@ const seeAll =
 - `scope === null` (an unscoped non-admin: logistics, ops, purchasing) also sees
   everything — owner ruling 2026-07-06, restoring behaviour that the
   2026-07-05 assignment-scoping had removed (`:3785-3790`).
-- `crewScoped` (helpers, storekeepers) **drops out of the see-all lane** and gets
+- `crewScoped` (helpers, storekeepers, storekeeper supervisors — **and drivers**,
+  owner 2026-07-23, on THIS route only: `crewScoped = isCrewScopedUser(user) ||
+  isScopedDriver`, `:4880-4886`) **drops out of the see-all lane** and gets
   a crew-assignment arm instead — owner ruling 2026-07-21 (`:3791-3793`).
 
 Non-see-all callers get OR'd arms: crew (6 FK columns plus a
@@ -519,9 +607,11 @@ Enforcement: `requirePageAccess` (`backend/src/middleware/auth.ts:414-437`) read
 preserves the URL (`:72`).
 
 **A page-access level of `edit` grants no write.** Every `requirePageAccess(...)`
-in `routes/projects.ts` uses the default `minLevel="partial"` (rank 1) and
-appears **only on GET routes**; every mutating route uses `requirePermission` /
-`requireAnyPermission` against the role permission set. So
+in `routes/projects.ts` uses the default `minLevel="partial"` (rank 1), and all
+but one sit on GET routes; every other mutating route uses `requirePermission` /
+`requireAnyPermission` against the role permission set. **The exception is
+`POST /:id/read`** (`:2581`), a mark-as-read upsert into `project_reads` gated
+only by `requirePageAccess("projects.list")`. So
 `projects.list = edit` lets you read, and nothing more. (There is no permission
 key spelled `projects:edit`; the colon form is a page-access *level*, not a key.)
 
@@ -550,7 +640,7 @@ one-hop line (`:137`), **empty brand list** (`:143`), **project with no brand**
 brands sees nothing, which forces admins to configure department brands
 explicitly.
 
-`PIC_GRACE_DAYS = 4` (`:86`) — a scoped PIC keeps a project until 4 days after it
+`PIC_GRACE_DAYS = 30` (`projectAcl.ts:80`) — widened from 4 on 2026-07-31 ("karjiun cannot see project"): the defect-upload and purchaser loop run well past four days, and the PIC must stay on the event while they do. A scoped PIC keeps a project until 30 days after it
 ends, then it drops out of their list and detail. The predicate is
 `scopeNotExpiredSql` (`:91`); unscoped roles are unaffected.
 
@@ -591,8 +681,13 @@ and are pinned by tests.
 
 ### Permission keys that do not mean what their labels say
 
-- **`stock_transfer.approve` and `agreement.approve` are dead.** Zero non-declaration
-  references in `backend/src`. `routes/projects.ts:747-757` explains it:
+- **`stock_transfer.approve` is dead; `agreement.approve` is NOT.**
+  `stock_transfer.approve` has zero non-declaration references in `backend/src`.
+  `agreement.approve` no longer gates a checklist item, but `getPmsAccess` grants
+  the WF_SENSITIVE section (Agreement / Quotation) to any role holding it
+  (`services/pmsAccess.ts:255-261`, owner 2026-07-29), so a non-director BD can
+  see the document they approve. `routes/projects.ts:747-757` explains the
+  checklist half:
   `projects.approve` is the only value ever written to
   `project_checklist.required_perm`. Worse, granting one used to **break** the
   holder — a live incident on 2026-07-16 where taking the approver branch
@@ -600,7 +695,8 @@ and are pinned by tests.
   fix was to hard-code `GATING_APPROVE_PERMS = ["projects.approve"]` (`:764`).
   Both keys remain toggleable switches in Team > Positions.
 - **`projects.read` is labelled "See the Projects tab and open project detail
-  pages" and does neither.** No route in `routes/projects.ts` is gated on it —
+  pages" and does neither.** Exactly one route in `routes/projects.ts` is gated
+  on it — `POST /fair-report/match` (`:701`). Reading the Projects tab is not —
   reading the Projects tab is `requirePageAccess("projects.list")`, a
   position-derived level. What `projects.read` actually gates is
   `/api/finance/pnl` + `/pnl/bucket` (`finance.ts:220`, `:390`), inbox filtering
@@ -723,7 +819,7 @@ The whole block is **non-fatal** (`:3185-3187`): no lookup failure may ever bloc
 a sale.
 
 **Consumer** — the Fair / Sales Report, `backend/src/scm/routes/reports.ts`.
-Three stages (`stage=so | do | invoice`, `:590-592`), every stage anchored on the
+Four stages (`stage=so | do | invoice | pnl`, `scm/lib/fair-report.ts:26-27`; `pnl` is management-only, same as do/invoice), every stage anchored on the
 fair via `project_id` (`:595`, filter `:673`), with `resolveProjects` reading
 `public.projects` for name and period (`:702-713`) and `resolveFairRate` walking
 fair → brand → `project_cost_rates` (`:770-773`). Access is enforced **per stage**
@@ -733,7 +829,9 @@ by `fairReportAccess` (`backend/src/scm/lib/fair-report.ts:79`, called
 - ordinary salespeople → 403 on every stage;
 - **Sales Director → `stage=so` only** (403 on do + invoice);
 - **management** → all stages, where management is `isFinanceViewer AND NOT a
-  Sales Director` = `{*, Super Admin, Finance Manager}`. Deliberately not
+  Sales Director` — `{*, Super Admin, Finance Manager}` **plus any role granted
+  `projects.finance.view`**, so handing out that key also hands over the DO,
+  invoice and P&L stages. The set is not closed. Deliberately not
   `canViewScmFinance` raw, because that cohort *includes* the Sales Director and
   would hand him the two stages the owner reserved (`reports.ts:600-606`).
 
@@ -843,7 +941,8 @@ indexes only.
 | DIRECTOR positions (`Super Admin`, `Sales Director`, `Finance Manager`) | **every** project's full detail (`projectAcl.ts:5-11`) | whole calendar (`projects.ts:3779-3784`) | yes, if `projects.finances` level allows | per their role permissions |
 | Unscoped non-admin staff (logistics, ops, purchasing) | unfiltered | whole calendar (`:3785-3790`) | per page level | per role |
 | Scoped Sales rep | PIC one-hop **AND** department brand **AND** within `PIC_GRACE_DAYS` of the end date, OR on the Sales Attending list | their assigned venues/projects only — **no grace predicate here** | money columns are blanked server-side (`projects.ts:845-853`) | per role |
-| Crew (Driver, Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`:837-841`) | only events they are crewed on (`:3791-3793`) | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Crew (Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`CREW_SCOPED_POSITIONS`, `:3720`) | only events they are crewed on (`:3791-3793`) | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Driver | **not** forced on the LIST — drivers are crew-scoped on the CALENDAR only (`:4880-4886`) | only events they are crewed on, calendar | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
 | Anyone holding `projects.write` | escapes crew scoping entirely (`:2820`) | | | |
 
 Enforcement points, in one place:

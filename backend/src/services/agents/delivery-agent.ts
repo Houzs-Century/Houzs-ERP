@@ -53,6 +53,7 @@ import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readine
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
+import { DO_STATUSES as SHARED_DO_STATUSES } from '../../scm/shared/do-shipped-states';
 import {
   loadRegionConfig,
   stateToRegions,
@@ -190,7 +191,7 @@ type SoHeaderRow = {
   status: string | null; delivery_state: string | null;
   customer_state: string | null; customer_country: string | null;
   customer_delivery_date: string | null; amended_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   local_total_centi: number | null;
 };
 
@@ -204,7 +205,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
      delivery_state / amended_delivery_date are NOT in the payment-totals view). */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, internal_expected_dd, local_total_centi')
+      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_centi')
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
@@ -212,7 +213,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   );
   if (soErr) throw new Error(`delivery-agent pool load failed: ${soErr.message}`);
   const soRows = (soRowsRaw ?? []).filter(
-    (r) => r.customer_delivery_date != null || r.internal_expected_dd != null,
+    (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
   const docNos = soRows.map((r) => s(r.doc_no)).filter(Boolean);
   if (docNos.length === 0) return { today, regionCfg, pool: [] };
@@ -535,8 +536,12 @@ export interface DeliveryBriefData {
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-/** The DO lifecycle (delivery-orders-mfg.ts state machine) — pipeline buckets. */
-const DO_STATUSES = ['DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'];
+/* The DO lifecycle — pipeline buckets. IMPORTED from the state machine's own
+   declaration (scm/shared/do-shipped-states.ts, which delivery-orders-mfg.ts
+   reads for its PATCH status guard), because the copy that used to sit here had
+   quietly lost COMPLETED: the pipeline counted eight of the nine legal statuses
+   and reported the missing bucket as absent rather than as uncounted. */
+const DO_STATUSES: readonly string[] = SHARED_DO_STATUSES;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function collectDoStatusCounts(sb: any): Promise<Record<string, number>> {

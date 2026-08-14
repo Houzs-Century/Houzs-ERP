@@ -114,6 +114,10 @@ import {
   citiesInState,
   postcodesInCity,
   countryForState,
+  resolvePostcode,
+  resolveCityState,
+  allCities,
+  allPostcodes,
 } from '../../vendor/scm/lib/localities-queries';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
@@ -301,7 +305,7 @@ type SoHeader = {
   hub_id: string | null;
   hub_name: string | null;
   customer_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   /* POS "Proceed" timestamp (migration 0110). Auto-stamped server-side when the
      SO first enters IN_PRODUCTION (the POS "Proceed" action). Read-only here —
      surfaced as "Proceed Date" in the Order Info card so the coordinator can
@@ -590,7 +594,7 @@ export const SalesOrderDetail = () => {
   /* Fix 2 (micro-perf) — Variant-completeness check memoized; derives only
      when items or the processing-date toggle changes. 2026-06-04: delegates
      to the shared so-variant-rule (alias-aware, matches the server 409). */
-  const requireVariants = !!header?.internal_expected_dd;
+  const requireVariants = !!header?.processing_date;
   const incompleteVariantLines = useMemo(() => {
     if (!requireVariants) return [];
     return items
@@ -760,6 +764,25 @@ export const SalesOrderDetail = () => {
     setIsEditing(false);
   };
 
+  /* Leaving edit mode has to leave the EDIT ROUTE too, not just flip a flag.
+     SalesOrderDetailV2 is a thin router that renders THIS component whenever
+     `?edit=1` is on the URL, so `setIsEditing(false)` alone left the operator
+     on this legacy ledger — a visibly different page from the V2 detail they
+     pressed Edit on, at the same address, with no way back to it except the
+     browser's own Back (owner 2026-08-10: "按 Cancel 出來不一樣的頁面").
+     Dropping the param hands them back to SalesOrderDetailV2ReadOnly.
+
+     `replace` because the editor URL is a mode, not a place: V2's goEdit
+     PUSHED `?edit=1` onto the history, so replacing it here collapses the pair
+     instead of stacking a second detail entry that Back would have to walk
+     through twice.
+
+     NOT called on the amendment path — a submitted amendment deliberately
+     stays on this page to show its raised-amendment notice. */
+  const returnToDetail = () => {
+    if (docNo) navigate(`/scm/sales-orders/${docNo}`, { replace: true });
+  };
+
   const enterEdit  = () => { setSaveError(null); setIsEditing(true); };
   const cancelEdit = () => {
     customerCardRef.current?.reset();
@@ -767,6 +790,7 @@ export const SalesOrderDetail = () => {
     // The seed/clear effect wipes editingDrafts + addingDraft when isEditing
     // flips to false, discarding any uncommitted line edits.
     endEditSession();
+    returnToDetail();
   };
 
   /* Whole-order Save — persists the order in one shot:
@@ -823,7 +847,7 @@ export const SalesOrderDetail = () => {
     // Variants are only mandatory once a processing date is set: with a date
     // the order is committed to production and purchasing needs the full spec.
     // No processing date = still a draft, so allow saving with gaps.
-    if (header?.internal_expected_dd) {
+    if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),
         ...(addingDraft ? [addingDraft] : []),
@@ -922,6 +946,9 @@ export const SalesOrderDetail = () => {
       .then(() => {
         setSavingOrder(false);
         endEditSession();
+        // Same exit as Cancel — a completed Save is done with the edit route.
+        // (The amendment path below deliberately stays put.)
+        returnToDetail();
       })
       .catch((e) => {
         setSavingOrder(false);
@@ -2687,9 +2714,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   //   - poDocNo (Customer PO #)   → "customer PO 不需要"
   //   - targetDate                → replaced by Processing + Delivery Date
   // PR #140 — add list:
-  //   - processingDate (= internal_expected_dd column, just renamed for UI)
+  //   - processingDate
   //   - customerDeliveryDate
-  // The DB column `internal_expected_dd` stays — only the label changes.
+  // #140 renamed only the LABEL to "Processing Date"; the column stayed
+  // `internal_expected_dd` for another three months and cost several incidents.
+  // Mig 0284 finished the job: field, payload key and column are one word.
   /* PR-A — initialFormFor() is the single source-of-truth for what the
      local form looks like when reset (Cancel) or when the header reloads
      after a successful Save. Keeps the snapshot + reset paths consistent. */
@@ -2726,7 +2755,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: h.emergency_contact_name ?? '',
     emergencyContactPhone: h.emergency_contact_phone ?? '',
     emergencyContactRelationship: h.emergency_contact_relationship ?? '',
-    processingDate: h.internal_expected_dd ?? '',
+    processingDate: h.processing_date ?? '',
     customerDeliveryDate: h.customer_delivery_date ?? '',
     note: h.note ?? '',
     /* Commander 2026-05-27 cascade — seeded from the persisted value so we
@@ -2769,10 +2798,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     emergencyContactName: f.emergencyContactName,
     emergencyContactPhone: f.emergencyContactPhone,
     emergencyContactRelationship: f.emergencyContactRelationship,
-    /* PR #140 — Processing Date persists to internal_expected_dd column
-       (renamed in the UI per commander 2026-05-26: "internal expected date
-       是 Hookka 用的"). targetDate field dropped. */
-    internalExpectedDd: f.processingDate || null,
+    /* Processing Date persists to the processing_date column — the same word
+       on the form, in this payload and in Postgres since mig 0284 (commander
+       2026-05-26: "internal expected date 是 Hookka 用的"; #140 changed the
+       label, 0284 changed the name underneath it). targetDate field dropped. */
+    processingDate: f.processingDate || null,
     customerDeliveryDate: f.customerDeliveryDate || null,
     note: f.note,
     /* Commander 2026-05-27 (Fix 5) — persist the auto-resolved sales location
@@ -2896,6 +2926,46 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
     [localityRows, form.state, form.city],
   );
+  /* START ANYWHERE — the same reverse resolution SalesOrderNew and MobileNewSO
+     have had. With no State picked, City and Postcode offer the full
+     cross-state pool so the operator can choose one FIRST and let the State
+     (and through it the Sales Location) resolve back from it. With a State
+     picked these fall through to the state-scoped lists above, so the forward
+     cascade is unchanged.
+
+     This page never had it: City stayed disabled until State and Postcode until
+     City, which on an EDIT means re-deriving an address the operator can already
+     read off the order. The resolvers and their tests already existed — the test
+     file even documents the SO forms as the caller — only this surface was never
+     wired, which is the desktop/mobile split CLAUDE.md warns about. */
+  const cityChoices = useMemo(
+    () => (form.state ? cities : allCities(localityRows)),
+    [form.state, cities, localityRows],
+  );
+  const postcodeChoices = useMemo(
+    () => ((form.state && form.city) ? postcodes : allPostcodes(localityRows)),
+    [form.state, form.city, postcodes, localityRows],
+  );
+  /* Set State from a resolved City, and State + City from a resolved Postcode.
+     Written in ONE setForm each so the value the operator just picked survives —
+     going through the State picker's own handler would clear it, because that
+     handler exists to reset the cascade. Only an UNAMBIGUOUS city resolves;
+     resolvePostcode returns null rather than guessing. */
+  const applyCityReverse = (nextCity: string) => {
+    const st = nextCity ? resolveCityState(localityRows, nextCity) : null;
+    setForm((s) => ({
+      ...s, city: nextCity, postcode: '',
+      state: st && st !== s.state ? st : s.state,
+    }));
+  };
+  const applyPostcodeReverse = (nextPostcode: string) => {
+    const res = nextPostcode ? resolvePostcode(localityRows, nextPostcode) : null;
+    setForm((s) => ({
+      ...s, postcode: nextPostcode,
+      state: res?.state && res.state !== s.state ? res.state : s.state,
+      city: res?.city && res.city !== s.city ? res.city : s.city,
+    }));
+  };
   /* Task #121 — Country auto-derives from the picked state. Read-only on
      the form; the API re-derives + snapshots it on PATCH. Prefer the
      header's stored customer_country (so historic SOs whose locality
@@ -2944,7 +3014,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      lock) applies to the Delivery Date so an SO can still be postponed even if
      its old delivery day has passed — only a freshly-typed past date is
      rejected. */
-  const originalProcessing = header.internal_expected_dd ?? '';
+  const originalProcessing = header.processing_date ?? '';
   const originalDelivery = header.customer_delivery_date ?? '';
   /* ...EXCEPT in amendment mode: an amendment is the sanctioned channel for
      changing exactly these frozen fields, so read-only-ing the input there left
@@ -3012,7 +3082,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      had them. Fed to the SHARED so-amendment-header helpers so desktop + mobile
      agree on what needs approval and what saves directly. */
   const lockedHeaderNow = {
-    internalExpectedDd:   form.processingDate,
+    processingDate:   form.processingDate,
     customerDeliveryDate: form.customerDeliveryDate,
     customerState:        form.state,
     postcode:             form.postcode,
@@ -3031,7 +3101,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     address2:             form.address2,
   };
   const lockedHeaderOriginal = {
-    internalExpectedDd:   header.internal_expected_dd ?? '',
+    processingDate:   header.processing_date ?? '',
     customerDeliveryDate: header.customer_delivery_date ?? '',
     customerState:        header.customer_state ?? '',
     postcode:             header.postcode ?? header.address4 ?? '',
@@ -3391,8 +3461,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Address Line 1</span>
+              {/* KEEP CHROME'S ADDRESS AUTOFILL OFF THIS BLOCK.
+                  Chrome classifies a form by its FIELDS, not one at a time, so
+                  a bare address input here makes it treat the whole group as an
+                  address form and offer its saved-address popup — which renders
+                  above the State list and makes State unpickable, and with it
+                  City and Postcode. StatePicker already sets autoComplete="off"
+                  and it was not enough: Chrome overrides `off` once the form
+                  looks like an address. An UNRECOGNISED token is what actually
+                  stops the heuristic, because it is neither a known field type
+                  nor the `off` it argues with. */}
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
@@ -3400,6 +3481,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Address Line 2</span>
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
+                autoComplete="houzs-no-autofill"
                 disabled={inputsDisabled}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
@@ -3428,11 +3510,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.city}
-                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
-                  disabled={inputsDisabled || stateLocked || !form.state}
+                  onChange={applyCityReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
-                  placeholder={form.state ? 'Pick city' : '— pick state first'}
-                  options={sortByText(cities).map((c) => ({ value: c, label: c }))}
+                  placeholder={form.state ? 'Pick city' : 'Pick city — State fills in'}
+                  options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
@@ -3443,11 +3525,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.postcode}
-                  onChange={(v) => set('postcode', v)}
-                  disabled={inputsDisabled || stateLocked || !form.city}
+                  onChange={applyPostcodeReverse}
+                  disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
-                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
-                  options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
+                  placeholder={form.city ? 'Pick postcode' : 'Pick postcode — State and City fill in'}
+                  options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>

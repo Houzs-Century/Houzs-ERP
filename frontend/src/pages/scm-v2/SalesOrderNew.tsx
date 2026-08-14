@@ -72,7 +72,7 @@ import {
 } from '../../vendor/scm/lib/so-dropdown-options-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -90,7 +90,8 @@ import {
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { formatPhone } from '@2990s/shared/phone';
-import { soDateGuardError, soSliplessPaymentError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneyCenti } from '@2990s/shared';
 
@@ -260,6 +261,10 @@ export const SalesOrderNew = () => {
      state so the cascade effect can overwrite it whenever State changes
      while still allowing future manual override. */
   const [salesLocation, setSalesLocation] = useState('');
+  /* Active company — decides whether the stock-location gate applies at all
+     (owner 2026-08-13: company 1 only). Already cached app-wide by the chrome,
+     so this costs no extra request. */
+  const branding = useBranding();
 
   // ── Emergency contact ──────────────────────────────────────────────
   const [emergencyName,  setEmergencyName]   = useState('');
@@ -454,9 +459,12 @@ export const SalesOrderNew = () => {
         amountCenti:            p.depositCenti > 0 ? p.depositCenti : 0,
         /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
            deposit's slip. Tag the draft with the receipt's R2 key so the save
-           treats the slip-required guard as satisfied (no second upload) and
-           records the deposit through the SO-create proof rather than the
-           strict per-payment slip route. */
+           records the deposit through the SO-create proof (receiptImageKey on
+           the header) rather than the per-payment slip route. This used to be
+           what satisfied the slip-required guard; that guard is gone (Owner
+           2026-08-13) but the ROUTING still matters — without the tag the row
+           would post as an ordinary payment and the receipt would never land
+           on it. */
         receiptImageKey:        payload.receiptImageKey || '',
       }]);
     }
@@ -1193,9 +1201,9 @@ export const SalesOrderNew = () => {
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
       /* Bug #3 (2026-06-24) — a receipt-backed deposit (scanned in the modal) is
-         recorded through the SO-create body's deposit fields, not the strict
-         per-payment route (which 400s without a slip session). Skip it here so
-         it isn't double-booked. */
+         recorded through the SO-create body's deposit fields, where the receipt
+         becomes its proof. `paymentIntents()` has already excluded it, so this
+         list never double-books it. */
       .map((d) => async () => {
         const { method } = labelToApi(d.methodLabel);
         const body: { docNo: string } & Record<string, unknown> = {
@@ -1211,8 +1219,10 @@ export const SalesOrderNew = () => {
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
-          /* Spec D4 — the SO payments route requires a slip; the onSave gate
-             below guarantees every amount-bearing draft carries one. */
+          /* Null when the operator attached none — the slip is OPTIONAL
+             (Owner 2026-08-13) and the route records a slip-less payment.
+             A row is posted on its AMOUNT alone; never filter this list on the
+             slip, or the payment silently never books. */
           uploadSessionId: d.slipUploadSessionId,
         };
         /* Task #122 (cascade) — replay the L2 picks per method so the
@@ -1310,7 +1320,13 @@ export const SalesOrderNew = () => {
       phones,
       location: ai.location,
       deliveryDate: deliveryDate || ai.deliveryDate,
-      processingDate: processingDate || ai.processingDate,
+      /* UNCHANGED MAPPING, made visible by the 2026-08-13 rename: the SO's
+         Processing Date (DERIVED here as Delivery − 6 weeks) is written back
+         into the slip's own `slipDate` — the day the rep wrote the slip. Those
+         are two different facts; the backend's CARRIED_NOT_INVERTED lists
+         slipDate so this never reaches the distillers. Rewiring it is a
+         behaviour change, not a rename, so it is deliberately left alone. */
+      slipDate: processingDate || ai.slipDate,
       salesRep: scanSalesperson || ai.salesRep,
       customerSoRef: customerSoNo.trim() || ai.customerSoRef,
       paymentMethod: ai.paymentMethod,
@@ -1440,25 +1456,47 @@ export const SalesOrderNew = () => {
       notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
       return;
     }
-    // Variant completeness (owner 2026-08-08, HC-SO-2607-008) — CONFIRMING
-    // requires every line's category-required axes, date or no date. With a
-    // Processing Date the full rule applies (missingRequiredVariants — a
-    // colour-KIV line blocks a date, owner 2026-07-24); a date-less confirm
-    // applies the confirm rule (missingConfirmVariantAxes — colour-KIV
-    // satisfies the fabric axis). Save as Draft still saves with gaps.
-    if (!asDraft || processingDate) {
+    /* Variant completeness is the PROCEED rule, and only the proceed rule
+       (owner 2026-08-13: "只要是没有 proceed 这一张订单，其实都不一定是需要填写
+       的，除非它是 proceed 了"). A Processing Date IS proceed, so it demands the
+       full axis list — the same rule the server applies (so-variant-check via
+       collectProcessingGateProblems), together with the address / postcode /
+       delivery-date completeness the same date requires.
+
+       It briefly ALSO ran at confirm, date or no date (2026-08-08,
+       HC-SO-2607-008). That made a salesperson unable to book a real order
+       from a real customer who had not yet picked a seat height. Removed:
+       confirm means "this is a real order", proceed means "this is
+       buildable". Save as Draft was never gated either way. */
+    if (processingDate) {
+      /* Delivery completeness is the SAME proceed rule, and the server has
+         enforced it on procDate alone since 2026-07-31 (so-save-problems.ts).
+         Check it HERE too, or a blank address — or "Fill in address later" left
+         ticked, which BLANKS the address out of the payload — comes back as a
+         bare validation_failed naming no field. */
+      const addrMissing = [
+        !debtorName.trim() ? 'customer name' : null,
+        fillAddressLater || !address1.trim() ? 'address line 1' : null,
+        fillAddressLater || !postcode.trim() ? 'postcode' : null,
+        !deliveryDate.trim() ? 'delivery date' : null,
+      ].filter(Boolean) as string[];
+      if (addrMissing.length > 0) {
+        notify({
+          title: 'A Processing Date means this order is proceeding, so it needs a delivery address.',
+          body: `Still missing: ${addrMissing.join(', ')}.`
+            + (fillAddressLater ? '\n\nUntick "Fill in address later" to enter it.' : ''),
+          tone: 'error',
+        });
+        return;
+      }
       const missOf = (l: SoLineDraft): string[] =>
-        processingDate
-          ? missingRequiredVariants(l.itemGroup, l.variants, l.itemCode)
-          : missingConfirmVariantAxes(l.itemGroup, l.variants).map((a) => a.label);
+        missingRequiredVariants(l.itemGroup, l.variants, l.itemCode);
       const variantGaps = validLines
         .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
         notify({
-          title: asDraft
-            ? 'Complete all variant selections before saving:'
-            : 'Complete all variant selections before confirming:',
+          title: 'Complete all variant selections before setting a Processing Date:',
           body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
           tone: 'error',
         });
@@ -1486,28 +1524,30 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-
-    /* Spec D4 — every SO payment must carry its own slip. The SO payments
-       route (POST /:docNo/payments) 400s a slip-less payment, so gate the
-       create here: any amount-bearing draft without a confirmed slip blocks
-       the save and tells commander which rows to fix.
-       Bug #3 (2026-06-24) — a draft seeded from a card receipt scanned in the
-       modal carries the receipt's R2 key (receiptImageKey). The receipt IS the
-       slip, so it satisfies the guard WITHOUT a second upload; it is recorded
-       through the SO-create deposit fields (order-level proof), not the strict
-       per-payment route. */
-    // Every amount-bearing payment needs a slip (a scanned receipt's R2 key
-    // counts). Shared with mobile via soSliplessPaymentError.
-    const sliplessErr = soSliplessPaymentError(
-      paymentDrafts.map((d) => ({
-        amountCenti: d.amountCenti,
-        hasSlip: !!(d.slipUploadSessionId || d.receiptImageKey),
-      })),
-    );
-    if (sliplessErr) {
-      notify({ ...sliplessErr, tone: 'error' });
+    /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
+       ship from a warehouse or AutoCount refuses the whole document. SHARED
+       with mobile via soStockLocationError; the backend is the authoritative
+       gate (422 validation_failed) and this only saves the operator a
+       round-trip with a form full of typing. Reads the SAME salesLocation the
+       create body sends, so the two can never disagree. */
+    const locationErr = soStockLocationError({
+      companyCode: branding.companyCode,
+      salesLocation,
+      state,
+      mappingsLoaded: !!stateWarehousesQ.data,
+      asDraft,
+    });
+    if (locationErr) {
+      notify({ ...locationErr, tone: 'error' });
       return;
     }
+
+    /* NO SLIP GUARD (Owner 2026-08-13) — "SalesOrder 所有的付款都不强制".
+       A payment slip is optional on every SO path now, so an amount-bearing
+       draft saves without one; the row is still POSTED (flushPaymentDrafts
+       filters on amount, never on the slip), which is the half that matters.
+       A scanned card receipt still rides along on its own path — see
+       receiptDeposit below. */
 
     /* Cascade guard (spec 1) — a chosen payment method needs its required
        sub-field(s): Merchant → Bank + Plan; Online → Sub-Type; Cash → none.
@@ -1559,13 +1599,16 @@ export const SalesOrderNew = () => {
        the gate refused the save with the amount plainly on screen — and because
        the per-payment posts happen AFTER create, the create had to succeed first
        for the money to ever land. Deadlock.
-       Counted for the GATE ONLY, server-side: it is never booked, so excluding
-       the receipt deposit here just avoids counting the same ringgit twice.
-       Only drafts that already hold a verified slip session are included — the
-       same condition flushPaymentDrafts needs to post them — so this can never
-       claim money the client is not about to record. */
-    const pendingDepositCenti = paymentDrafts
-      .filter((d) => d.amountCenti > 0 && !!d.slipUploadSessionId && d !== receiptDeposit)
+       Counted for the GATE ONLY, server-side: it is never booked. The rows are
+       exactly `paymentIntents()` — what flushPaymentDrafts is about to post,
+       which by its own filter excludes the receipt-backed deposit the create
+       body already carries — so this can neither claim money the client is not
+       about to record nor count the same ringgit twice. It used to ALSO demand
+       a slip session; once the slip became optional (Owner 2026-08-13) that
+       would have re-opened the very deadlock this field exists to close, a
+       slip-less deposit counting as RM0 against a Processing Date the operator
+       can see is paid for. */
+    const pendingDepositCenti = paymentIntents()
       .reduce((sum, d) => sum + d.amountCenti, 0);
 
     create.mutate(
@@ -1611,9 +1654,9 @@ export const SalesOrderNew = () => {
         emergencyContactName:         emergencyName  || undefined,
         emergencyContactRelationship: emergencyRel   || undefined,
         emergencyContactPhone:        emergencyPhone || undefined,
-        /* PR #121 — Processing Date → internal_expected_dd, Delivery Date →
+        /* PR #121 — Processing Date → processing_date, Delivery Date →
            customer_delivery_date. */
-        internalExpectedDd:   processingDate || undefined,
+        processingDate:   processingDate || undefined,
         customerDeliveryDate: deliveryDate   || undefined,
         note: note || undefined,
         /* Original-slip provenance — the scanned slip's R2 key (from the Scan

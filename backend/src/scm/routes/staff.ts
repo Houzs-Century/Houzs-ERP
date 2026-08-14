@@ -18,7 +18,7 @@
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm, hasHouzsPerm } from "../lib/houzs-perms";
-import { activeCompanyId, houzsCompanyId, mirrorCompanyId } from "../lib/companyScope";
+import { activeCompanyId, houzsCompanyId, mirrorCompanyId, scopeToCompany } from "../lib/companyScope";
 import { filterStaffToCompany } from "../lib/staffCompanyScope";
 import { derivePosRole } from "../lib/pos-staff-role";
 import { isSalesUser } from "../../services/pmsAccess";
@@ -452,10 +452,23 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
      the person's orders would just silently carry no venue. Fail loudly here
      instead, where someone is looking at the screen. */
   if (showroomWarehouseId) {
-    const { data: wh, error: whErr } = await supabase
+    /* company-scope: the WAREHOUSE is per-company (mig 0086 added
+       warehouses.company_id; 0087 made its code unique per company), so the
+       showroom must be one of THIS company's — an id-only check let a
+       salesperson be parked under the other company's showroom, and every
+       order they then wrote would carry that venue.
+
+       scm.staff itself is deliberately NOT company-stamped: mig 0089 lists it
+       under "shared / per-staff reference data" alongside currencies and
+       my_localities, and hr_salesperson_profiles is keyed
+       UNIQUE(company_id, staff_id) precisely because ONE staff row holds one
+       profile PER company. So the `.eq('user_id', userId)` update below is
+       correct as written and must NOT be company-filtered. Two tables, two
+       different answers, in one handler. */
+    const { data: wh, error: whErr } = await scopeToCompany(supabase
       .from("warehouses")
       .select("id, is_showroom")
-      .eq("id", showroomWarehouseId)
+      .eq("id", showroomWarehouseId), c)
       .maybeSingle();
     if (whErr) return c.json({ error: "load_failed", reason: whErr.message }, 500);
     const row = wh as Record<string, unknown> | null;

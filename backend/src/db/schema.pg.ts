@@ -383,7 +383,13 @@ export const sales_orders = pgTable("sales_orders", {
   remark2: text("remark2"),
   remark3: text("remark3"),
   remark4: text("remark4"),
-  processing_date: text("processing_date"),
+  /* AutoCount's own UDF field SO.UDF_PDate, mirrored verbatim by
+     services/pull.ts. NOT the ERP's Processing Date — that is exactly ONE
+     column, scm.mfg_sales_orders.internal_expected_dd, on a different table for
+     a different document. Renamed from `processing_date` in mig 0285 so the two
+     can never be confused again. Read by nothing today; kept because the mirror's
+     job is to be a faithful local copy of AutoCount for reconciliation. */
+  ac_udf_pdate: text("ac_udf_pdate"),
   expiry_date: text("expiry_date"),
   po_doc_no: text("po_doc_no"),
   venue: text("venue"),
@@ -634,6 +640,12 @@ export const sales_entries = pgTable("sales_entries", {
   deposit_payment_type: text("deposit_payment_type"),
   currency: text("currency").notNull().default("MYR"),
   occurred_at: text("occurred_at").notNull(),
+  /* Legacy native Sales module's own date (mig 070). NOT the SCM Sales Order's
+     Processing Date — a sales_entry has no SO row and none of the SO gates/locks.
+     The SO's Processing Date is scm.mfg_sales_orders.internal_expected_dd, and
+     that is the only column that concept may live in. Kept under this name
+     because a rename would silently drop the field from queued sales change
+     requests; see SO_FORM_TEXT_FIELDS in src/routes/sales.ts. */
   processing_date: text("processing_date"),
   delivery_date: text("delivery_date"),
   status_2: text("status_2"),

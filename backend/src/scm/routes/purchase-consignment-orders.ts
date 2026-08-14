@@ -64,10 +64,18 @@ purchaseConsignmentOrders.use('*', supabaseAuth);
    purchase_consignment_receives instead of the real grns table. Returns the
    blocking JSON, or null if the PC Order is free to edit. */
 async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string; message: string } | null> {
-  const { count } = await sb.from('purchase_consignment_receives')
+  const { count, error } = await sb.from('purchase_consignment_receives')
     .select('id', { head: true, count: 'exact' })
     .eq('purchase_consignment_order_id', pcoId)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `count ?? 0` read as "no PC Receive", which is the very
+     absence that authorises the cancel / line edit this guard exists to refuse.
+     A failed read must never read as an absence when the absence is what
+     authorises the write — so an unreadable count locks too. */
+  if (error) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this PC Order has a Consignment Receive, so it is locked for safety — try again (${error.message}).` };
+  }
   if ((count ?? 0) > 0) {
     /* "cancel it first", not "delete it": a PC Receive has no delete either
        (only PATCH /:id/cancel), so the old "delete or cancel" wording told the
@@ -278,6 +286,11 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
 //   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceCenti, bindingId? }]
 // }
 purchaseConsignmentOrders.post('/', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     insertHeader / insertWithDocNoRetry stamp the active company on that row, so
+     the id is not caller-supplied and cannot name another company's document.
+     Verified 2026-08-13 by reading the handler end to end. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
     return c.json({ error: 'invalid_json' }, 400);
@@ -378,6 +391,14 @@ purchaseConsignmentOrders.post('/', async (c) => {
   );
 
   if (hErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }

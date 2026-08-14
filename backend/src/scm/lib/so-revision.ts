@@ -1,6 +1,14 @@
 // ----------------------------------------------------------------------------
 // SO amendment apply-revision helpers — port of 2990 apps/api/src/lib/so-revision.ts.
 //
+// company-scope-file: every write in this file addresses rows by `doc_no`, which IS
+// mfg_sales_orders' PRIMARY KEY (2990s-full-schema.sql:638) and whose numbering
+// is prefix-partitioned per company (companyDocPrefix: HOUZS 'HC-', others
+// '<CODE>-'). One doc_no therefore names exactly one company's order, and the
+// mfg_sales_order_items rows are reached through that same doc_no. A company
+// predicate would be redundant here, not safer. Read 2026-08-13 when the
+// library pass of check-company-scope.mjs first surfaced these five statements.
+//
 // `applySoAmendment` is the Approve-SO gate's engine: it freezes the current SO
 // as an immutable `so_revisions` snapshot, applies the amendment's line diffs
 // (SPEC / QTY / ADD / REMOVE) to `mfg_sales_order_items`, then RE-RUNS the
@@ -48,6 +56,7 @@ import { todayMyt } from './my-time';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
+import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -595,7 +604,15 @@ export async function applySoAmendment(
      Every key is re-checked against AMENDABLE_HEADER_FIELDS — the create route
      already rejects an unlisted key, this is defence in depth on the last step
      before the write. */
-  const headerChanges = amendment.header_changes ?? null;
+  /* CANONICALISE THE STORED KEYS FIRST.
+     `header_changes` is a jsonb written at REQUEST time and read here at APPROVE
+     time — days later, across any number of deploys. The loop below `continue`s
+     on a key the allow-list does not have, so a payload-key rename would make an
+     already-pending amendment approve cleanly, audit cleanly, and never write
+     its value. Rewriting legacy spellings onto today's keys before anything
+     reads them is what stops that; it is an identity map until a rename lands.
+     See shared/so-processing-date.ts for the removal condition. */
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   const headerApplied: string[] = [];
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const headerUpdates: Record<string, unknown> = {};

@@ -44,11 +44,14 @@
  *   COMPANY        default 1
  *   FUZZY=1        also apply the codes that resolve only through the matcher
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: by design, repeatedly - it re-parses Desc2 with the current parser. It overwrites the variant keys it owns, so a value a person picked on one of those keys is replaced.
  */
 import postgres from "postgres";
 import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour, normColour } from "./lib/fabric-colour-match.mjs";
 import { buildSofaVariantPatch, mergeVariantPatch, OWNED_SOFA_KEYS } from "./lib/variant-merge.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -56,6 +59,9 @@ const CO = Number(process.env.COMPANY || 1);
 const APPLY = process.env.APPLY === "1";
 const FUZZY = process.env.FUZZY === "1";
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 
 const modelOf = (code) => {
@@ -93,12 +99,18 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group = 'sofa'
      ORDER BY p.po_number`).map((r) => ({ ...r, table: "purchase_order_items", scope: "PO" }));
 
+  /* The owner's scope rule — "如果 proceed 了的单 和 PO 就要尽量补齐" — names the
+     proceed STATE, and that state is "carries a Processing Date", held in
+     internal_expected_dd (what the UI writes, what soProcessingLocked and MRP
+     read). Selecting on proceeded_at, the IN_PRODUCTION-only stamp, skipped
+     proceeded orders that the completeness audits nonetheless hold to the full
+     bar, so the residue they report could never be closed by this sweep. */
   const so = (await sql`
     SELECT i.id, h.doc_no AS doc, i.item_code AS code, i.description2 AS d2, i.variants
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group = 'sofa'
-       AND h.proceeded_at IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r, table: "mfg_sales_order_items", scope: "SO" }));
 
   const plan = [];

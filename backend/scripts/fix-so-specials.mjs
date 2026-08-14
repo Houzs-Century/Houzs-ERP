@@ -10,6 +10,8 @@
 // Anything that still cannot be mapped is REPORTED, not written as a custom value.
 //
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: inert in practice. A run leaves picker CODES in custom_specials and mapSpecial does not map a code, so a second run plans no write - but it reads every bedframe line with specials, including ones a person has since edited.
 import postgres from "postgres";
 import { mapSpecial } from "./lib/bedframe-special-map.mjs";
 

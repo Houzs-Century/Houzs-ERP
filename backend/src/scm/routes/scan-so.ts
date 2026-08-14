@@ -3,58 +3,22 @@
 // (phone photos of Zanotti / AKEMI-style carbon-copy forms) → structured JSON
 // the Backend "Scan Order" modal turns into a prefilled New SO.
 //
-// Ported from HOOKKA's scan-po.ts (typed customer-PO PDFs) and adapted:
-//   • input is image(s) (jpeg/png/webp) or a PDF, not PDF-only;
-//   • catalog injection pulls live from Supabase Postgres (mfg_products,
-//     fabric_trackings, maintenance config sofa sizes/leg heights);
-//   • few-shot pool = the 5 most recent operator-REVIEWED so_scan_samples
-//     rows, filtered to the slip's SALESPERSON first (fall back to global),
-//     and RANKED corrected-before-accepted-as-is (see the SAMPLE_* header:
-//     both outcomes are ground truth here, but only corrected rows carry a
-//     diff, so only they feed the distillers);
-//   • per-SALESPERSON learning (vs HOOKKA's per-customer): each rep has
-//     their own handwriting/notation habits that differ per product
-//     category, so a distilled rules block (so_scan_rules, organized by
-//     SOFA / MATTRESS / BEDFRAME / ACCESSORY / SERVICE sections) is
-//     regenerated from that rep's corrected samples after every confirm;
-//   • PLUS a GLOBAL shared alias layer (reserved so_scan_rules row
-//     '__GLOBAL__'): a product-name/fabric-code alias dictionary distilled
-//     from the latest corrected samples ACROSS ALL reps ("Bamboo Cruise" /
-//     "Cruise" / "B.Cruise" → one SKU), injected into EVERY scan so one
-//     rep's corrections teach all reps. Refreshed on every confirm
-//     (fire-and-forget) and weekly (before the per-rep pass).
+// READ docs/modules/scan-to-so.md FIRST — the endpoint table, the learning loop,
+// the rule layers and their injection order, the read-scope gaps, and this
+// module's provenance + Houzs `scm`-schema adaptation all live there, kept in
+// one place so they cannot drift against a comment nobody re-reads.
 //
-// Endpoints:
-//   POST /scan-so/extract                     — multipart image(s)/pdf (+ salesperson field) → JSON + sampleId
-//   POST /scan-so/enqueue                     — same inputs; queue a BACKGROUND job that OCRs + creates a DRAFT SO
-//   GET  /scan-so/jobs/:id                    — poll a background job (status / soDocNo / error)
-//   GET  /scan-so/jobs?salesperson=           — latest 20 background jobs (optionally one rep's)
-//   POST /scan-so/jobs/clear-failed           — delete the caller's failed (status=error) jobs ('*' clears all reps')
-//   POST /scan-so/samples/:id/confirm         — store operator-reviewed JSON (+ salesperson, + accepted); auto-distills rep rules
-//   GET  /scan-so/salespeople                 — distinct reps seen across samples + rules (modal datalist)
-//   GET  /scan-so/rules/:salesperson          — view a rep's distilled rules
-//   POST /scan-so/rules/:salesperson/distill  — manually regenerate a rep's rules
-//
-// Setup:
-//   npx wrangler secret put ANTHROPIC_API_KEY
+// The few-shot pool is the 5 most recent operator-REVIEWED so_scan_samples rows,
+// filtered to the slip's SALESPERSON first (fall back to global), and RANKED
+// corrected-before-accepted-as-is — see the SAMPLE_* header below: both outcomes
+// are ground truth here, but only corrected rows carry a diff, so only they feed
+// the distillers.
 //
 // Prompt caching: the SYSTEM_PROMPT + catalog block is sent as a
 // cache_control:ephemeral prefix — identical across calls until the catalog
 // changes, so repeat scans within 5 min get the ~90% cached-input discount.
 //
-// Auth: same as mfg-sales-orders write routes — supabaseAuth on every
-// endpoint (any signed-in staff member; RLS scopes what the user client can
-// read). Sample rows are written via the service-role client so extraction
-// works even before migration 0164's RLS policy lands.
-//
-// Houzs adaptation: same plumbing as the sibling SCM routes. The 2990's
-// original built its own service client via createClient(...) defaulting to
-// the `public` schema; in Houzs the so_scan_samples / so_scan_rules /
-// mfg_products / fabric_trackings / maintenance_config_history /
-// so_dropdown_options tables live in the dedicated `scm` Postgres schema, so
-// serviceClient() here returns getSupabaseService(env) (db:{schema:'scm'}) —
-// every sb.from('...') resolves to scm.*, never public.*. The catalog read
-// uses c.get('supabase') (also scm-scoped, attached by supabaseAuth).
+// Auth: same as mfg-sales-orders write routes — supabaseAuth on every endpoint.
 // ANTHROPIC_API_KEY is OPTIONAL on the Houzs Env: when absent /extract returns
 // 503 anthropic_key_missing — it must not break the worker or tsc.
 // Crons (wired in backend/src/index.ts scheduled()): the keep-warm cron
@@ -871,9 +835,9 @@ NUMBERS — read the FULL numeric token; never truncate a multi-digit number to 
 MULTIPLE IMAGES
 ===============
 You may receive ONE HANDWRITTEN order slip (a carbon-copy form with the customer, line items, handwriting, and payment checkboxes) and ZERO, ONE, OR MORE PRINTED card-terminal payment RECEIPTS (each a thermal print: a bank name e.g. Maybank / Public Bank / CIMB, VISA / Mastercard, an APPROVAL CODE, a TOTAL amount, and often a TENURE / number of months for an EPP plan). One order can be paid across SEVERAL receipts (a deposit now + a balance, or split across two card terminals) — treat EACH printed receipt as ONE separate payment. Decide what each input image is:
-- Read the ORDER fields (customerName, address, phones, line items, deliveryDate, processingDate, salesRep) from the HANDWRITTEN slip.
+- Read the ORDER fields (customerName, address, phones, line items, deliveryDate, slipDate, salesRep) from the HANDWRITTEN slip.
 - Read the PAYMENT fields (paymentMethodMatch / bankMatch / installmentPlanMatch / approvalCode / depositRm or the receipt's amount) PREFERENTIALLY from a PRINTED receipt when one is present — the printed thermal receipt is far more accurate than the handwritten payment note. Still keep the handwritten payment note verbatim in paymentMethod. When NO receipt is present, fall back to the handwritten slip's payment note exactly as before. When a receipt and the handwriting DISAGREE (a different bank, a different amount, a different approval code), the PRINTED receipt wins for the structured fields — but you MUST state the disagreement in that field's reason (e.g. "slip writes PBB but receipt terminal is Maybank — using receipt") so the operator sees the conflict.
-- The SINGULAR payment fields (paymentMethodMatch / bankMatch / installmentPlanMatch / approvalCode / depositRm) describe the PRIMARY (first) receipt, exactly as before. In ADDITION, emit the OUTPUT "payments" array with ONE entry PER payment-receipt image (see below) — each entry carries THAT receipt's own amount, bank, method, tenure, approval code and date. When there is exactly one receipt, "payments" has one entry that matches the singular fields. When there is no receipt, "payments" is [].
+- The SINGULAR payment fields (paymentMethodMatch / bankMatch / installmentPlanMatch / approvalCode / depositRm) describe the PRIMARY (first) receipt, exactly as before. In ADDITION, emit the OUTPUT "payments" array with ONE entry PER payment-receipt image (see below) — each entry carries THAT receipt's own amount, bank, method, tenure, approval code and transaction date. When there is exactly one receipt, "payments" has one entry that matches the singular fields. When there is no receipt, "payments" is [].
 You MUST also classify every input image in the OUTPUT "images" array (see below).
 
 A reference CATALOG follows this prompt (live product SKUs, fabrics, sofa sizes, leg heights). It is the FULL master (≈1100+ SKUs) — every catalog row is "code | name". Use it for AGGRESSIVE fuzzy / keyword / substring / abbreviation matching: a slip token should resolve to the SKU whose NAME contains that token's keyword, even when the rep wrote only a fragment. Search the WHOLE catalog before giving up.
@@ -885,7 +849,7 @@ EXTRACTION RULES
 3. phones — ALL phone numbers on the slip, as raw strings exactly as written (e.g. "012-345 6789", "+6017 888 9999"). Multiple numbers are common (customer + spouse). Do NOT normalize or reformat. A phone is CRITICAL — transcribe EVERY digit, including REPEATED / doubled digits: read "01137166720" as 0-1-1-3-7-1-6-6-7-2-0 (eleven digits), NEVER collapse a doubled "66" into a single "6". A Malaysian number is 10-11 digits INCLUDING the leading trunk 0 (011-XXXX XXXX = 11 digits; 01X-XXX XXXX = 10). If your reading has FEWER than 10 digits, you almost certainly dropped or merged a digit — re-examine the handwriting (look for a doubled digit) before returning it. If a single digit is genuinely unclear, return your best reading at confidence < 0.6 and say so in the field's reason so the operator double-checks.
 4. location — the showroom / venue / branch the order was taken at, if written (often a header checkbox or stamp).
 5. deliveryDate — as written. If it is a real date, convert to YYYY-MM-DD (slips write DD/MM or DD/MM/YYYY — Malaysian day-first). If it says "TBC", "call first", "after CNY" or any non-date text, return that text verbatim.
-6. processingDate — the order/slip date if present, YYYY-MM-DD when parseable, else verbatim text, else null. The year is often omitted or scrawled: when the year is missing/unreadable, take it from the PRINTED payment receipt's date when one is present, else assume the CURRENT year — NEVER invent a distant past year (a slip is days old, not years). If even the day/month is unclear, return the verbatim text instead of a made-up date.
+6. slipDate — THE DATE WRITTEN ON THE SLIP ITSELF (the day the rep wrote the order), if present. This is the slip's own date and NOTHING else: it is NOT a delivery date, and it is NOT any internal factory / processing schedule date. YYYY-MM-DD when parseable, else verbatim text, else null. The year is often omitted or scrawled: when the year is missing/unreadable, take it from the PRINTED payment receipt's date when one is present, else assume the CURRENT year — NEVER invent a distant past year (a slip is days old, not years). If even the day/month is unclear, return the verbatim text instead of a made-up date.
 7. salesRep — the salesperson's name from the footer/header.
 8. paymentMethod — as written ("cash", "TNG", "bank transfer", "CC", deposit slips etc.). null if absent.
 9. depositRm / totalRm — RM amounts as NUMBERS (e.g. "RM 1,500" → 1500, "550.50" → 550.5). null when blank. When a PRINTED receipt is present, depositRm = the receipt's printed TOTAL/AMOUNT (the money actually charged); if the handwritten deposit differs from the receipt amount, use the RECEIPT amount and flag the mismatch (state both figures in paymentMethodMatch's reason). Never swap depositRm and totalRm — the deposit is the smaller paid-now figure, the total is the whole order.
@@ -963,7 +927,7 @@ Example: a payment note "CREDIT MBB EPP (001586)" with NO month count → paymen
 Example: a plain "CREDIT MBB (001586)" swipe with no EPP/term → paymentMethodMatch.value = Merchant, bankMatch.value = the MBB value, installmentPlanMatch.value = the "One Shot" value (a Maybank card paid through the bank with no tenure = One Shot), approvalCode = "001586".
 Example: an AEON Credit receipt "Tenure: 12 Months APPR 046501" → paymentMethodMatch.value = Merchant, bankMatch.value = the AEON value, installmentPlanMatch.value = the 12-month value (the receipt shows a 12-month tenure), approvalCode = "046501".
 
-- payments — ONE entry PER payment-receipt IMAGE, in image order, each describing THAT receipt on its OWN. imageIndex = the receipt image's "index" (the SAME index used in "images"). amountRm = the money charged on THAT receipt (its printed TOTAL / AMOUNT), as a NUMBER, null when unreadable. approvalCode / processingDate = that receipt's own approval code and printed date. paymentMethodMatch / bankMatch / onlineTypeMatch / installmentPlanMatch = that receipt's own option matches, resolved with the SAME rules and ALLOWED VALUES lists as the singular fields above (a card terminal → Merchant + its bank; a tenure line → the N-month plan, else One Shot). Do NOT sum or merge receipts: two RM 2,000 receipts are two entries of amountRm = 2000, never one of 4000. Every entry's imageIndex MUST be one of the images you classified as "payment_receipt"; NEVER emit a payments entry for the order-slip image. When there is no payment receipt, payments = [].
+- payments — ONE entry PER payment-receipt IMAGE, in image order, each describing THAT receipt on its OWN. imageIndex = the receipt image's "index" (the SAME index used in "images"). amountRm = the money charged on THAT receipt (its printed TOTAL / AMOUNT), as a NUMBER, null when unreadable. approvalCode / receiptTxnDate = that receipt's own approval code and its OWN PRINTED TRANSACTION DATE (the date the card terminal printed on THAT receipt — not the slip's date, and not any internal factory / processing schedule date). paymentMethodMatch / bankMatch / onlineTypeMatch / installmentPlanMatch = that receipt's own option matches, resolved with the SAME rules and ALLOWED VALUES lists as the singular fields above (a card terminal → Merchant + its bank; a tenure line → the N-month plan, else One Shot). Do NOT sum or merge receipts: two RM 2,000 receipts are two entries of amountRm = 2000, never one of 4000. Every entry's imageIndex MUST be one of the images you classified as "payment_receipt"; NEVER emit a payments entry for the order-slip image. When there is no payment receipt, payments = [].
 Example: an order paid by TWO card receipts — a Maybank deposit "TOTAL 1,500.00 APPR 001586" on image 1 and a Public Bank balance "TOTAL 3,200.00 APPR 778210" on image 2 → images = [{index:0,kind:"order_slip"},{index:1,kind:"payment_receipt"},{index:2,kind:"payment_receipt"}], payments = [{imageIndex:1, amountRm:1500, approvalCode:"001586", paymentMethodMatch.value = Merchant, bankMatch.value = the MBB value, installmentPlanMatch.value = the One Shot value}, {imageIndex:2, amountRm:3200, approvalCode:"778210", paymentMethodMatch.value = Merchant, bankMatch.value = the Public value, installmentPlanMatch.value = the One Shot value}]; the singular depositRm/bankMatch/approvalCode describe the FIRST receipt (image 1).
 
 OUTPUT
@@ -980,7 +944,7 @@ Return STRICT JSON, no markdown fences, no prose:
   "phones": string[],
   "location": string | null,
   "deliveryDate": string | null,
-  "processingDate": string | null,
+  "slipDate": string | null,
   "salesRep": string | null,
   "customerSoRef": string | null,
   "paymentMethod": string | null,
@@ -996,7 +960,7 @@ Return STRICT JSON, no markdown fences, no prose:
     "imageIndex": number,
     "amountRm": number | null,
     "approvalCode": string | null,
-    "processingDate": string | null,
+    "receiptTxnDate": string | null,
     "paymentMethodMatch": { "value": string, "confidence": number, "reason": string } | null,
     "bankMatch": { "value": string, "confidence": number, "reason": string } | null,
     "onlineTypeMatch": { "value": string, "confidence": number, "reason": string } | null,
@@ -1082,7 +1046,15 @@ type ExtractedSlip = {
   phones: string[];
   location: string | null;
   deliveryDate: string | null;
-  processingDate: string | null;
+  /* THE SLIP'S OWN DATE — the date the rep wrote on the handwritten order slip.
+     It is NOT the Sales Order's Processing Date (`internal_expected_dd`, the
+     factory-start date the operator keys at review) and it is NOT a receipt's
+     printed transaction date (that is ExtractedPayment.receiptTxnDate). All
+     three used to be called "processingDate", which is exactly how the wrong
+     one kept getting picked. Consumed by: the duplicate probe (same phone +
+     same slip date + same total) and, as a LAST-RESORT fallback only, the
+     payment planner's paid_at when a receipt printed no date of its own. */
+  slipDate: string | null;
   salesRep: string | null;
   // The customer's own reference number for this order (usually top-right of the
   // slip, e.g. "HC14032") — seeds the form's "Customer SO Ref" field.
@@ -1224,7 +1196,11 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
             imageIndex,
             amountRm: num(o.amountRm),
             approvalCode: str(o.approvalCode),
-            processingDate: str(o.processingDate),
+            // `processingDate` is the pre-rename key for this SAME field (the
+            // receipt's own printed transaction date). Read it as a fallback so a
+            // model echoing an older few-shot example's key still books its date
+            // instead of silently falling through to the slip date / today.
+            receiptTxnDate: str(o.receiptTxnDate) ?? str(o.processingDate),
             paymentMethodValue: optionValueOf(o.paymentMethodMatch),
             bankValue: optionValueOf(o.bankMatch),
             onlineTypeValue: optionValueOf(o.onlineTypeMatch),
@@ -1259,7 +1235,11 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
       : [],
     location: str(r.location),
     deliveryDate: str(r.deliveryDate),
-    processingDate: str(r.processingDate),
+    // `processingDate` is the pre-rename key for this SAME field (the slip's own
+    // written date). Stored so_scan_samples blobs still carry it, and those blobs
+    // are fed back verbatim as few-shot examples, so the model can echo the old
+    // key — read it as a fallback rather than losing the slip date.
+    slipDate: str(r.slipDate) ?? str(r.processingDate),
     salesRep: str(r.salesRep),
     customerSoRef: str(r.customerSoRef),
     paymentMethod: str(r.paymentMethod),
@@ -3329,8 +3309,8 @@ async function findDuplicateSo(
     const storedPhone = (parsed?.phones?.[0] ?? '').replace(/\s+/g, '');
     if (parsed && storedPhone) {
       const ref = (parsed.customerSoRef ?? '').trim().toUpperCase();
-      const slipDate = /^\d{4}-\d{2}-\d{2}$/.test((parsed.processingDate ?? '').trim())
-        ? (parsed.processingDate as string).trim()
+      const slipDate = /^\d{4}-\d{2}-\d{2}$/.test((parsed.slipDate ?? '').trim())
+        ? (parsed.slipDate as string).trim()
         : null;
       const totalCenti = typeof parsed.totalRm === 'number' && parsed.totalRm > 0
         ? Math.round(parsed.totalRm * 100)
@@ -3464,7 +3444,7 @@ async function recordScanReceiptPayments(
       onlineTypeValue: parsed.onlineTypeMatch?.value ?? null,
       installmentPlanValue: parsed.installmentPlanMatch?.value ?? null,
     },
-    slipProcessingDate: parsed.processingDate,
+    slipDate: parsed.slipDate,
     nowMs: Date.now(),
     todayStr: todayMyt(),
   });
@@ -3856,7 +3836,7 @@ function buildDraftSoBodyFromSlip(
 
   // Owner 2026-08-08 (2990-SO-2608-007, addendum #3) — a DRAFT never carries a
   // Processing Date. The previous rule here (owner 2026-07-04: slip delivery
-  // date ⇒ pin processing to TODAY) silently stamped internal_expected_dd on
+  // date ⇒ pin processing to TODAY) silently stamped processing_date on
   // scan drafts, which is wrong twice over: semantically a draft has not
   // started processing, and the date rode in WITHOUT the deposit / variant /
   // completeness gates every explicit Processing-Date write runs. Both dates
@@ -3882,7 +3862,7 @@ function buildDraftSoBodyFromSlip(
     city: (parsed.city ?? '').trim() || null,
     postcode: (parsed.postcode ?? '').trim() || null,
     // Delivery from the slip (today-or-later only); processing pinned to today.
-    internalExpectedDd: scanProcDate,
+    processingDate: scanProcDate,
     customerDeliveryDate: scanDelivDate,
     emergencyContactPhone: (parsed.phones[1] ?? '').trim()
       ? `+60${(parsed.phones[1] ?? '').replace(/\s+/g, '')}`
@@ -4089,10 +4069,10 @@ async function runScanJob(
     });
     if (
       outcome.status !== 201 &&
-      (body.internalExpectedDd != null || body.customerDeliveryDate != null)
+      (body.processingDate != null || body.customerDeliveryDate != null)
     ) {
       console.warn('[scan-job] create rejected with dates, retrying dateless:', job.id, outcome.status);
-      body.internalExpectedDd = null;
+      body.processingDate = null;
       body.customerDeliveryDate = null;
       outcome = await replay(body);
     }
@@ -4103,7 +4083,7 @@ async function runScanJob(
     // re-picks the category variants against the slip photo. Never lose the scan.
     if (outcome.status !== 201 && Array.isArray(body.items) && (body.items as unknown[]).length > 0) {
       console.warn('[scan-job] category lines rejected, retrying as loose lines:', job.id, outcome.status);
-      body.internalExpectedDd = null;
+      body.processingDate = null;
       body.customerDeliveryDate = null;
       body.items = (body.items as Array<Record<string, unknown>>).map((it) => ({
         itemCode: it.itemCode,
@@ -4234,6 +4214,9 @@ async function resolveScanUploaderStaffId(
 // pipeline in waitUntil. Same multipart contract as /extract.
 // ---------------------------------------------------------------------------
 scanSo.post('/enqueue', async (c) => {
+  /* company-scope: the by-id reads the checker attributes to this handler are
+     NOT in it — they belong to processScanQueueMessage, declared inside this
+     handler's slice. Trace in docs/modules/scan-to-so.md section 7. */
   let formData: FormData;
   try {
     formData = await c.req.formData();
@@ -4780,6 +4763,9 @@ scanSo.post('/jobs/clear-failed', async (c) => {
 // something), which is also what every pre-existing caller means.
 // ===========================================================================
 scanSo.post('/samples/:id/confirm', async (c) => {
+  /* company-scope: scm.so_scan_samples is a GLOBAL OCR TRAINING POOL, not a
+     business document — it has NO company_id column and mig 0083's sweep
+     skipped it on purpose. Trace in docs/modules/scan-to-so.md section 7. */
   const id = c.req.param('id');
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing sample id.' }, 400);
 

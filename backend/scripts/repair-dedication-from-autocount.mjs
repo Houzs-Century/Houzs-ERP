@@ -29,6 +29,8 @@
  *
  *   DATABASE_URL   required
  *   APPLY=1        write. Dry-run otherwise.
+ *
+ * RE-RUN: convergent. AutoCount's dedication is the source and does not move, so a second run writes the same link.
  */
 import fs from "node:fs";
 import zlib from "node:zlib";

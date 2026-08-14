@@ -29,6 +29,27 @@
 
 # Runbook: re-point production to the company Supabase project
 
+> ## ⚠️ THIS RUNBOOK IS HISTORICAL. DO NOT FOLLOW IT AS WRITTEN.
+>
+> **Corrected 2026-08-13.** Production has moved TWICE since this was written:
+> `xxoszhxglfgkqkokvofa` → `ctbaifabbzghtsrmpirm` → **`anogrigyjbduyzclzjgn`**,
+> which is what `backend/wrangler.toml:126` binds today (Hyperdrive config
+> `f0f9bd0d`, SG company project). `supavisor-pooler-outage-coe.md:126` already
+> flagged this document as stale and nobody acted on it.
+>
+> Why that matters more here than in any other doc: **§1 below tells the operator
+> to put a LIVE connection string into `.dev.vars` and then run the cutover
+> loader against it.** Following these steps today points a
+> `DROP TABLE … CASCADE` at a project that is no longer production — or, with a
+> pasted-in current DSN, at one that is. The loader now fail-closes on any
+> non-loopback target unless `ACK_PROD_WIPE=yes` (see
+> `prod-wipe-by-loader-coe.md`), which is the only reason this is a stale
+> document and not a live hazard.
+>
+> Keep it for the PROCEDURE — the Hyperdrive-origin-update shape is still
+> correct. Re-derive every project ref from `backend/wrangler.toml` before
+> running anything.
+
 Production currently runs on the interim Supabase project
 `xxoszhxglfgkqkokvofa`. The permanent home is the company-account project
 `ctbaifabbzghtsrmpirm` (org under hello@houzscentury.com, already on a paid

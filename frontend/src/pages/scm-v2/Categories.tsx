@@ -74,6 +74,7 @@ import { Button } from "../../components/Button";
 import { HeroImageEditor } from "../../components/scm-v2/HeroImageEditor";
 import { classifyLoadError, errMsg } from "../../components/scm-v2/PhotoGallery";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
+import { writeFailedAs } from "../../vendor/scm/lib/mutation-error";
 import { cn } from "../../lib/utils";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -158,6 +159,9 @@ function resolveIcon(name: string | null | undefined): LucideIcon {
 const useCreateCategory = () => {
   const qc = useQueryClient();
   return useMutation({
+    // silent-mutation-ok: its only consumer, CategoryForm.onSubmit, awaits
+    // createMut.mutateAsync inside try/catch and puts errMsg(e) into formError,
+    // which renders as the red panel above the Create button.
     mutationFn: (body: { id: string; label: string; icon: string; sort_order?: number }) =>
       authedFetch<{ category: CategoryWire }>("/categories", {
         method: "POST",
@@ -170,6 +174,11 @@ const useCreateCategory = () => {
 const useUpdateCategory = () => {
   const qc = useQueryClient();
   return useMutation({
+    // silent-mutation-ok: TWO consumers, both surface the refusal.
+    // CategoryForm.onSubmit awaits updateMut.mutateAsync in try/catch → formError
+    // panel; Categories.move() (Move up / Move down) passes a per-call onError on
+    // each .mutate — without it a refused reorder just left the card where it was,
+    // which is the "the button does nothing" shape this checker exists for.
     mutationFn: ({ id, ...patch }: { id: string; label?: string; icon?: string; sort_order?: number }) =>
       authedFetch<{ category: CategoryWire }>(`/categories/${id}`, {
         method: "PATCH",
@@ -182,6 +191,10 @@ const useUpdateCategory = () => {
 const useDeleteCategory = () => {
   const qc = useQueryClient();
   return useMutation({
+    // silent-mutation-ok: its only consumer, DeleteConfirm.onConfirm, awaits
+    // deleteMut.mutateAsync inside try/catch and always sets `inUse`, which
+    // renders the red "Can't delete" panel — the modal stays open on a refusal
+    // rather than closing as if it had worked.
     mutationFn: (id: string) =>
       authedFetch<{ ok: true }>(`/categories/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scm-categories"] }),
@@ -288,8 +301,12 @@ export function Categories() {
     const swapOrder =
       (swap as unknown as { sort_order?: number }).sort_order ?? idx + dir;
     // Swap the two orders so they trade places. Backend just stores them.
-    updateMut.mutate({ id: swap.id, sort_order: curOrder });
-    updateMut.mutate({ id, sort_order: swapOrder });
+    // Fire-and-forget, so the refusal has to be raised here: nothing awaits
+    // these and the grid re-renders from cache, so without onError a refused
+    // PATCH left the card exactly where it was and said nothing.
+    const onError = writeFailedAs("Category order not changed");
+    updateMut.mutate({ id: swap.id, sort_order: curOrder }, { onError });
+    updateMut.mutate({ id, sort_order: swapOrder }, { onError });
   };
 
   return (

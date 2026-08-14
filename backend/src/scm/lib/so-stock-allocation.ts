@@ -1,4 +1,11 @@
 // ----------------------------------------------------------------------------
+// company-scope-file: the `lock_key` writes in this file target
+// scm.stock_allocation_recompute_lock, which carries NO company_id — mig 0083
+// stamped 116 tables and left this one alone, deliberately. It is global
+// infrastructure: ONE recompute runs at a time across the whole system, which is
+// the entire point of the lock. There is no company to scope to, and adding one
+// would let two companies recompute concurrently over shared inventory.
+//
 // so-stock-allocation — auto-allocate live inventory to PENDING SO lines
 // (Commander 2026-05-30, B2C READY-when-stock-on-hand model).
 //
@@ -36,6 +43,7 @@ import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-se
 import { paginateAll, chunkIn } from './paginate-all';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
+import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 
 export type AllocationResult = {
   ok: boolean;
@@ -109,7 +117,12 @@ export async function recomputeSoStockAllocation(
     const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; proceeded_at: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
       .select('doc_no, status, created_at, customer_delivery_date, company_id, proceeded_at')
-      .not('status', 'in', '(CANCELLED,CLOSED,SHIPPED,DELIVERED,INVOICED,DRAFT)')
+      /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
+         eight audit scripts and mrp.ts used to re-type this same six-status
+         set under four different names, each promising in a comment to track
+         this line. SO_TERMINAL_STATES_PGREST renders byte-identically to the
+         literal it replaced. */
+      .not('status', 'in', SO_TERMINAL_STATES_PGREST)
       .order('customer_delivery_date',  { ascending: true, nullsFirst: false })
       .order('created_at',              { ascending: true })
       .range(from, to));

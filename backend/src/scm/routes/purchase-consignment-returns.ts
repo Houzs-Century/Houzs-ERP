@@ -27,8 +27,10 @@
 // Numbering: PCT-YYMM-NNN.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -42,7 +44,8 @@ import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { recomputePcoReceived } from './purchase-consignment-receives';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 
 export const purchaseConsignmentReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseConsignmentReturns.use('*', supabaseAuth);
@@ -427,6 +430,9 @@ purchaseConsignmentReturns.get('/:id/linked', async (c) => {
 });
 
 purchaseConsignmentReturns.post('/', async (c) => {
+  /* company-scope: the source PC Receive named in the body is refused when it
+     belongs to another company (isCrossCompanySource, below); the only by-id
+     write is this handler's own rollback. Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Consignment returns post immediately on create.' }, 400);
@@ -435,6 +441,22 @@ purchaseConsignmentReturns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* CROSS-COMPANY SOURCE (lib/companyScope) — the bare-create path takes the
+     source receive as a body field and everything below stamps the ACTIVE
+     company: the header, the lines, and the inventory OUT the resync books. A
+     pcReceiveId from the other company would have this company return that
+     company's consigned goods and net down its received_qty. Optional by design
+     — a manual return sends no pcReceiveId and is unaffected. */
+  if (body.pcReceiveId) {
+    const { data: srcRecv, error: srcRecvErr } = await sb.from('purchase_consignment_receives')
+      .select('receive_number, company_id').eq('id', body.pcReceiveId as string).maybeSingle();
+    if (srcRecvErr) return c.json({ error: 'lookup_failed', reason: srcRecvErr.message }, 500);
+    const src = srcRecv as { receive_number?: string | null; company_id?: number | null } | null;
+    if (src && isCrossCompanySource(src.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(src.receive_number ?? null, src.company_id, c), 409);
+    }
+  }
 
   /* Reject (don't clamp) any PC-receive-linked line that exceeds its remaining
      (qty_accepted - returned_qty) — matches the add-line + edit paths, which
@@ -541,18 +563,36 @@ purchaseConsignmentReturns.post('/', async (c) => {
 
 // Batch-convert multiple POSTED PC Receives into ONE PC Return. Aggregates all
 // qty_rejected lines across the selected receives (must share a supplier).
-purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Receive is not visible here at all; the by-id write is this handler's own
+     rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveIds?: string[]; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const receiveIds = body.pcReceiveIds ?? [];
   if (receiveIds.length === 0) return c.json({ error: 'pc_receive_ids_required' }, 400);
 
-  const { data: receives, error: recvErr } = await sb.from('purchase_consignment_receives')
-    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status')
-    .in('id', receiveIds);
+  /* SOURCE LOAD, SCOPED — the receive ids arrive in the request body, so this is
+     the read that decides what this conversion can see. Scoped, so another
+     company's receive resolves to NO ROW and falls out at
+     `pc_receives_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receive gets
+     `pc_receives_not_found` instead of "that receive belongs to 2990, switch
+     company" — the trade the PO's /:id/convert-from-so already records, taken
+     here for the same reason. */
+  const { data: receives, error: recvErr } = await scopeToCompany(sb.from('purchase_consignment_receives')
+    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
+    .in('id', receiveIds), c);
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
-  const recvList = (receives ?? []) as Array<{ id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string }>;
+  const recvList = (receives ?? []) as Array<{ id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null }>;
   if (recvList.length === 0) return c.json({ error: 'pc_receives_not_found' }, 404);
 
   const notPosted = recvList.filter((g) => g.status !== 'POSTED');
@@ -565,10 +605,13 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  const { data: items } = await sb.from('purchase_consignment_receive_items')
+  // LINE-level half of the same source document — same predicate as the header
+  // read above, because `.in('pc_receive_id', receiveIds)` is itself an id-keyed
+  // read and that is the shape this sweep exists for.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
     .select('id, pc_receive_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .in('pc_receive_id', receiveIds)
-    .gt('qty_rejected', 0);
+    .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty) — a
   // receive line can be returned across multiple PRs. Drop fully-returned lines.
   const rejectedItems = ((items ?? []) as Array<{
@@ -638,30 +681,49 @@ purchaseConsignmentReturns.post('/from-pc-receives', async (c) => {
   try { await resyncPcReturnInventory(sb, h.id, user.id); } catch { /* best-effort */ }
 
   return c.json({ id: h.id, returnNumber: h.return_number, pcReceiveCount: recvList.length, lineCount: rejectedItems.length }, 201);
-});
+};
+purchaseConsignmentReturns.post('/from-pc-receives', createPcReturnFromPcReceivesHandler);
 
 /* ── POST /from-pc-receive ──────────────────────────────────────────────
    Single-receive convert. Copies ALL of the receive's accepted lines (remaining
    only) into a NEW PC Return so the user can trim qty in the draft. */
-purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
+   are exported; the route registration below is unchanged. */
+export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's PC
+     Receive is not visible here at all; the remaining by-id statements read that
+     receive's own lines and roll back this handler's own header. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { pcReceiveId?: string; reason?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const receiveId = body.pcReceiveId;
   if (!receiveId) return c.json({ error: 'pc_receive_id_required' }, 400);
 
-  const { data: receive, error: recvErr } = await sb.from('purchase_consignment_receives')
-    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status')
-    .eq('id', receiveId).maybeSingle();
+  /* SOURCE LOAD, SCOPED — pcReceiveId arrives in the request body, so this is
+     the read that decides what this conversion can see. Scoped, so another
+     company's receive resolves to NO ROW and falls out at
+     `pc_receive_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receive gets
+     `pc_receive_not_found` instead of "that receive belongs to 2990, switch
+     company" — same trade, same reason, as the PO's /:id/convert-from-so. */
+  const { data: receive, error: recvErr } = await scopeToCompany(sb.from('purchase_consignment_receives')
+    .select('id, receive_number, supplier_id, purchase_consignment_order_id, status, company_id')
+    .eq('id', receiveId), c).maybeSingle();
   if (recvErr) return c.json({ error: 'load_failed', reason: recvErr.message }, 500);
   if (!receive) return c.json({ error: 'pc_receive_not_found' }, 404);
-  const g = receive as { id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string };
+  const g = receive as { id: string; receive_number: string; supplier_id: string; purchase_consignment_order_id: string | null; status: string; company_id?: number | null };
   if (g.status !== 'POSTED') return c.json({ error: 'pc_receive_not_posted', status: g.status }, 409);
 
-  const { data: items } = await sb.from('purchase_consignment_receive_items')
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
     .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .eq('pc_receive_id', receiveId)
-    .gt('qty_accepted', 0);
+    .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
@@ -724,7 +786,8 @@ purchaseConsignmentReturns.post('/from-pc-receive', async (c) => {
   try { await resyncPcReturnInventory(sb, h.id, user.id); } catch { /* best-effort */ }
 
   return c.json({ id: h.id, returnNumber: h.return_number }, 201);
-});
+};
+purchaseConsignmentReturns.post('/from-pc-receive', createPcReturnFromPcReceiveHandler);
 
 purchaseConsignmentReturns.patch('/:id/post', async (c) => {
   // Kept for backward compat; idempotent. POST creates PRs as POSTED.
@@ -888,12 +951,12 @@ purchaseConsignmentReturns.post('/:id/items', async (c) => {
   // PC-receive-linked line: cap qty at that receive line's remaining.
   const receiveItemId = (it.pcReceiveItemId as string) ?? null;
   if (receiveItemId) {
-    const { data: gi } = await sb.from('purchase_consignment_receive_items')
-      .select('qty_accepted, returned_qty').eq('id', receiveItemId).maybeSingle();
-    if (gi) {
-      const remaining = ((gi as { qty_accepted: number }).qty_accepted ?? 0) - ((gi as { returned_qty: number }).returned_qty ?? 0);
-      if (qtyReturned > remaining) return c.json({ error: 'qty_exceeds_remaining', requested: qtyReturned, remaining }, 409);
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_consignment_receive_items', id: receiveItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
+      requested: qtyReturned, what: 'PC Receive line',
+    });
+    if (capLock) return c.json(capLock, 409);
   }
 
   const row: Record<string, unknown> = {
@@ -1014,14 +1077,12 @@ purchaseConsignmentReturns.patch('/:id/items/:itemId', async (c) => {
   // over its accepted. headroom for THIS line = accepted - (returned - prevQty).
   const delta = qtyReturned - prevQty;
   if (receiveItemId && delta !== 0) {
-    const { data: gi } = await sb.from('purchase_consignment_receive_items')
-      .select('qty_accepted, returned_qty').eq('id', receiveItemId).maybeSingle();
-    if (gi) {
-      const accepted = (gi as { qty_accepted: number }).qty_accepted ?? 0;
-      const returned = (gi as { returned_qty: number }).returned_qty ?? 0;
-      const headroom = accepted - (returned - prevQty);
-      if (qtyReturned > headroom) return c.json({ error: 'qty_exceeds_remaining', requested: qtyReturned, remaining: headroom }, 409);
-    }
+    const capLock = await qtyCapRefusal(sb, {
+      table: 'purchase_consignment_receive_items', id: receiveItemId,
+      capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
+      requested: qtyReturned, ownPriorDraw: prevQty, what: 'PC Receive line',
+    });
+    if (capLock) return c.json(capLock, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_consignment_return_items').update(updates).eq('id', itemId), co.companyId);

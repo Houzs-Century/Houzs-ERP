@@ -34,6 +34,7 @@
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
 import { missingVariantAxes } from "./lib/variant-axes.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -42,6 +43,9 @@ const LIST = process.env.LIST !== "0";
 const CAP = Number(process.env.CAP || 60); // per-section detail cap
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const isPending = (c) => /(TBC|KIV)/i.test(c || "");
 
@@ -147,14 +151,19 @@ async function main() {
      WHERE p.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
      ORDER BY p.po_number`).map((r) => ({ ...r }));
 
+  /* "已经 proceed 了" is the STATE "this order carries a Processing Date", and
+     that date is internal_expected_dd — the column the UI writes and the only
+     one soProcessingLocked and MRP read. proceeded_at is stamped only at the
+     IN_PRODUCTION transition, so it excluded proceeded orders the owner can see
+     on screen and this audit was quietly holding them to no bar at all. */
   const soRows = (await sql`
     SELECT i.id, h.doc_no AS doc, h.linked_ac_docno AS ac, i.item_code AS code,
            i.item_group AS grp, i.description2 AS d2, i.variants, i.remark,
-           i.qty, i.photo_urls, h.proceeded_at
+           i.qty, i.photo_urls, h.${PDATE}
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe','sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   for (const [rows, label] of [[poRows, "A. PURCHASE ORDERS — every bedframe + sofa line"],

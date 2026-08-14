@@ -317,6 +317,21 @@ interface Props<T> {
    * checkbox column, render path byte-identical to before. Desktop table only
    * — the mobile card branch is untouched.
    */
+  /**
+   * The rows that survived the per-column funnels, post-sort (owner 2026-08-12).
+   * Mirrors the DataGrid prop of the same name, deliberately down to the name,
+   * so a page that swaps components does not have to relearn the contract.
+   *
+   * Exists because the column filters are CLIENT-side and were invisible above
+   * this component: a Purchase Orders list with a stuck DATE funnel showed five
+   * rows worth RM 9,112.50 under a "Sum on this page" card reading RM 164,349.70
+   * — two contradictory numbers on one screen, which reads as a broken system
+   * rather than an active filter. A page that summarises its rows needs to know
+   * which rows the operator can actually see.
+   *
+   * Pass a STABLE setter (e.g. a useState dispatch); it fires in an effect.
+   */
+  onFilteredRowsChange?: (rows: T[]) => void;
   selection?: {
     /** Currently-selected row ids (stringified `getRowKey`). */
     selectedIds: Set<string>;
@@ -609,6 +624,7 @@ function DataTableInner<T>({
   contextMenu,
   groupBy,
   selection,
+  onFilteredRowsChange,
 }: Props<T>) {
   const isSmallViewport = useSmallViewport();
   const [searchDraftPending, setSearchDraftPending] = useState(false);
@@ -1922,6 +1938,16 @@ function DataTableInner<T>({
     });
     return copy;
   }, [filteredRows, sort, allColumns, serverSort]);
+
+  /* Report what the operator can actually see (owner 2026-08-12) — see the
+     onFilteredRowsChange prop doc. In an effect, not during render, so a parent
+     that stores these in state cannot re-enter this render pass. `rows` is
+     undefined while loading; skip rather than publish an empty set, or a
+     summary card would blink to zero on every refetch. */
+  useEffect(() => {
+    if (!sortedRows) return;
+    onFilteredRowsChange?.(sortedRows);
+  }, [sortedRows, onFilteredRowsChange]);
 
   // Total column span for full-width body cells (skeleton / error / empty /
   // expansion). The chevron column (when `expandable`) adds one leading

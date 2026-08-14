@@ -19,73 +19,24 @@ import {
   type AcOutboxRow,
 } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
+/* The fake used to live here. It moved when autocount-requeue.test.ts needed
+   the same one — two copies of a fake drift, and this one earns its keep by
+   answering 42703 for a column the table does not have. */
+import { fakeSb, type Row } from './fake-postgrest';
 
-type Row = Record<string, any>;
-
-/* PostgREST stand-in over in-memory tables. Supports the shapes this module
-   uses: select/eq/neq/in/lt/order/limit/maybeSingle, insert and update.
-   `missing` names columns the table does NOT have: asking for one fails the
-   whole query with 42703 and a null body, exactly as PostgREST does — the only
-   way a test can catch a read that quietly becomes "this document has no
-   lines". */
-function fakeSb(tables: Record<string, Row[]>, missing: Record<string, string[]> = {}) {
-  const from = (table: string) => {
-    tables[table] ??= [];
-    const filters: Array<(r: Row) => boolean> = [];
-    let limitN: number | null = null;
-    let pendingInsert: Row | null = null;
-    let pendingUpdate: Row | null = null;
-    let columnError: { code: string; message: string } | null = null;
-    let wantCount = false;
-    const rows = () => {
-      const rs = tables[table].filter((r) => filters.every((f) => f(r)));
-      return limitN == null ? rs : rs.slice(0, limitN);
-    };
-    const settle = () => {
-      if (columnError) return { data: null, error: columnError };
-      /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
-         to decide whether a transfer leaves any of the parent's lines behind,
-         and a fake that answered `undefined` would make every test take the
-         refusal branch for the wrong reason. */
-      if (wantCount) return { data: null, count: rows().length, error: null };
-      if (pendingInsert) {
-        tables[table].push({ id: `row-${tables[table].length + 1}`, ...pendingInsert });
-        return { data: null, error: null };
-      }
-      if (pendingUpdate) {
-        for (const r of rows()) Object.assign(r, pendingUpdate);
-        return { data: null, error: null };
-      }
-      return { data: rows(), error: null };
-    };
-    const builder: any = {
-      select(cols?: string, opts?: { count?: string; head?: boolean }) {
-        const gone = (missing[table] ?? []).filter((c) => (cols ?? '').split(',').map((x) => x.trim()).includes(c));
-        if (gone.length) columnError = { code: '42703', message: `column ${table}.${gone[0]} does not exist` };
-        if (opts?.count) wantCount = true;
-        return builder;
-      },
-      insert(payload: Row) { pendingInsert = payload; return builder; },
-      update(patch: Row) { pendingUpdate = patch; return builder; },
-      eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
-      neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
-      in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
-      lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
-      order() { return builder; },
-      limit(n: number) { limitN = n; return builder; },
-      maybeSingle: async () => (columnError ? { data: null, error: columnError } : { data: rows()[0] ?? null, error: null }),
-      then(resolve: (v: unknown) => unknown) { return Promise.resolve(settle()).then(resolve); },
-    };
-    return builder;
-  };
-  return { from, tables } as never as { from: (t: string) => any; tables: Record<string, Row[]> };
-}
+/* The salesperson every SO fixture below is attributed to. Seeded by default
+   because a sales order that names nobody is REFUSED since 2026-08-13 — a blank
+   Agent is FK_SO_SalesAgent — and the confirm gate already forbids that shape
+   on any order that reaches the write-back. A test that wants the refusal says
+   so by passing `salesperson_id: null`, not by leaving the roster out. */
+const SALESPERSON = { id: 'staff-1', name: 'Nurul Hidayah' };
 
 /** app_config seeded to whatever the test needs the toggle to say. */
 const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missing: Record<string, string[]> = {}) =>
   fakeSb({
     app_config: value == null ? [] : [{ key: 'scm.autocount_writeback', value }],
     autocount_outbox: [],
+    staff: [{ ...SALESPERSON }],
     ...extra,
   }, missing);
 
@@ -359,7 +310,7 @@ describe('the six flows each queue their operation', () => {
 
 describe('cancel and edit against a document still sitting in the outbox', () => {
   const so = {
-    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
   };
@@ -804,7 +755,7 @@ describe('a partial conversion transfers only the lines it actually took', () =>
    not mention stays live, outstanding and transferable in the account book. */
 describe('a removed line is retired in AutoCount, never just left out', () => {
   const soHeader = {
-    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
   };
@@ -975,6 +926,110 @@ describe('the masters a document names are opened BEFORE the document is sent', 
   });
 });
 
+/* THE GO-LIVE FAILURE, 2026-08-13. Two re-queued sales orders retried four
+   times each and the live book answered `Foreign Key Error (Constraint
+   Name=FK_SO_SalesAgent)`. The composer read `mfg_sales_orders.agent` and
+   nothing else; no SO form sends `body.agent`, so the column was empty on every
+   order created since the cutover; and `mastersOf` only asks for an agent when
+   the payload names one, so /ensure-masters opened nothing and the create died
+   on the foreign key. The ERP's real salesperson lives one column along. */
+describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
+  const so = {
+    doc_no: 'HC-SO-9', so_date: '2026-08-10', debtor_name: 'ACME',
+    agent: null, salesperson_id: 'staff-1',
+    sales_location: 'KL WAREHOUSE', branding: null, venue: null,
+    address1: 'A1', address2: null, address3: null, address4: null,
+    phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
+  };
+  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 1, unit_price_centi: 100 };
+
+  test('a create falls back to the name behind salesperson_id', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect(outbox(sb)[0].payload.body.Agent).toBe('Nurul Hidayah');
+  });
+
+  /* The causal step the incident turned on. /ensure-masters creates the agent
+     under EXACTLY the string in the payload, and it is skipped entirely when
+     the payload names none — so a document that carries an agent is also a
+     document whose agent gets opened. */
+  test('and /ensure-masters is therefore asked to open that agent', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
+    });
+    await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' });
+    const masters = mastersOf(outbox(sb)[0].payload.body as Record<string, unknown>);
+    expect(masters?.Agents).toEqual([{ Agent: 'Nurul Hidayah' }]);
+  });
+
+  test('an agent the ERP does hold still wins over the salesperson link', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, agent: 'KRIS' }], mfg_sales_order_items: [{ ...soItem }],
+    });
+    await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' });
+    expect(outbox(sb)[0].payload.body.Agent).toBe('KRIS');
+  });
+
+  /* An EDIT is not refused for this — the account book already holds a value
+     and /edit applies only the keys it is GIVEN, so omitting Agent leaves the
+     book's own. But when the ERP DOES know the salesperson, the edit says so:
+     that is D8's rule, now reading both columns. */
+  test('an edit sends the fallback too, and omits Agent when neither source answers', async () => {
+    const linked = { ...so, linked_ac_docno: 'SO-000021' };
+    const keyed = { ...soItem, linked_ac_dtlkey: 991 };
+    const withStaff = withFlag('1', {
+      mfg_sales_orders: [{ ...linked }], mfg_sales_order_items: [{ ...keyed }],
+    });
+    await enqueueEdit(withStaff as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
+    expect((outbox(withStaff)[0].payload.body.Header as Record<string, unknown>).Agent)
+      .toBe('Nurul Hidayah');
+
+    resetWritebackFlagCache();
+    const without = withFlag('1', {
+      mfg_sales_orders: [{ ...linked, salesperson_id: null }],
+      mfg_sales_order_items: [{ ...keyed }],
+    });
+    await enqueueEdit(without as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' });
+    expect(outbox(without)[0].payload.body.Header).not.toHaveProperty('Agent');
+  });
+
+  /* THE BOTH-EMPTY CASE. Sending "" is what caused the incident, and the
+     document cannot land either way — FK_SO_SalesAgent is deterministic. So the
+     create is refused into a `skipped` row an operator can read and the
+     re-queue tool can retry, instead of four silent 500s in a log on the
+     AutoCount host. */
+  test('neither source: nothing is queued, and the refusal is written down', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, salesperson_id: null }],
+      mfg_sales_order_items: [{ ...soItem }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('refused, nothing sent (MissingAgentError)');
+    expect(row.last_error).toContain('FK_SO_SalesAgent');
+    /* Never `pending`: the drain would take an empty body straight to the
+       account book. */
+    expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  /* A staff table the ERP cannot read is not an order with no salesperson.
+     Saying so would send the operator after a salesperson that is already
+     there. */
+  test('an unreadable staff row is a compose failure, not a missing salesperson', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
+    }, { staff: ['name'] });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('compose failed, nothing sent');
+    expect(row.last_error).toContain('42703');
+  });
+});
+
 /* D8: a create sent the salesperson, the sales location, the document date and
    the three UDFs; an edit sent none of them, so changing any one on a live
    order never reached AutoCount. The account book takes all of them on /edit -
@@ -1029,7 +1084,7 @@ describe('an edit carries the fields a create carries', () => {
    complete. */
 describe('a line the ERP just added is declared, never inferred', () => {
   const so = {
-    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, sales_location: 'KL',
+    doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
   };
@@ -1098,7 +1153,7 @@ describe('every document the ERP creates carries the ERP number', () => {
   test('a create still sends its own number, unchanged', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{
-        doc_no: 'HC-SO-9', so_date: null, debtor_name: 'A', agent: null, sales_location: 'KL',
+        doc_no: 'HC-SO-9', so_date: null, debtor_name: 'A', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
         branding: null, venue: null, address1: null, address2: null, address3: null,
         address4: null, phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
       }],
@@ -1203,5 +1258,85 @@ describe('a document opens every master it names — warehouse and dropdowns too
   test('no UDF block, no options — nothing is invented from an absent field', () => {
     const m = mastersOf({ Details: [{ ItemCode: 'A', Location: 'KL' }] }) as { UdfOptions: unknown[] };
     expect(m.UdfOptions).toEqual([]);
+  });
+});
+
+/* Regression: HC-SO-2608-001, 2026-08-13. The first real sales order saved
+   after the write-back was switched on was refused —
+
+     refused, nothing sent (ItemCodeError): line 1 — ERP item code '9028-1S'
+     maps to 2 AutoCount items and the document names no supplier to choose
+     between them
+
+   — and the documented remedy, a supplier SKU binding, could not be applied.
+   bindingsFor was handed the RAW line codes ('9028-1A(LHF)', '9028-2A(RHF)')
+   while resolveAcItemCode looked the binding up by the collapsed base code
+   ('9028-1S'), so the map never contained the key that was asked for. Four
+   sofa models in the cutover map are ambiguous this way (9028, 9058, 5152,
+   5080); until this, every sales order containing one of them was refused
+   with no possible fix. */
+describe('a sofa resolves through the binding recorded for its model', () => {
+  const sofaSo = {
+    doc_no: 'HC-SO-SOFA', so_date: '2026-08-13', debtor_name: 'LIM',
+    agent: null, salesperson_id: 'staff-1',
+    sales_location: 'KL WAREHOUSE', branding: null, venue: null,
+    address1: null, address2: null, address3: null, address4: null,
+    phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
+  };
+  /* Two compartments of one build, exactly as the ERP stores them: the price
+     sits on the first row and the same Desc2 on both, which is what lets D9
+     fold them into a single line carrying '9028-1S'. */
+  const compartments = ['1A(LHF)', '2A(RHF)'].map((comp, i) => ({
+    doc_no: 'HC-SO-SOFA',
+    item_code: `9028-${comp}`,
+    item_group: 'sofa',
+    description: `SOFA 9028 ${comp}`,
+    description2: '1A(LHF) + 2A(RHF) (28")',
+    qty: 1,
+    unit_price_centi: i === 0 ? 399000 : 0,
+    location: 'KL',
+  }));
+
+  test('with NO binding at all it now sends, one line per compartment', async () => {
+    /* This refused outright until 2026-08-13: 9028-1S is two brand items in the
+       cutover map and a sales order names no creditor. A create no longer folds
+       the build, so each compartment goes in under its own code and
+       /ensure-masters opens them on first use. */
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      supplier_material_bindings: [],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).not.toBe('skipped');
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
+  });
+
+  test('a binding on the COMPARTMENT is found and the document sends', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...sofaSo }],
+      mfg_sales_order_items: compartments.map((l) => ({ ...l })),
+      /* The row an operator can actually create: the ERP model code on the
+         left, the account book's item on the right. Before the fix this row
+         existed and changed nothing, because the query never asked for it. */
+      /* Keyed by the code the line actually carries. Before 2026-08-13 the
+         resolver was handed a synthesised '9028-1S' that no ERP line held, and
+         bindingsFor queried the raw codes — so the two never met and the
+         override could not fire for any sofa. */
+      supplier_material_bindings: [{
+        company_id: 1, material_code: '9028-1A(LHF)', material_kind: 'mfg_product',
+        supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
+      }],
+    });
+    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).not.toBe('skipped');
+    expect(row.op).toBe('create_so');
+    /* The bound line takes the AutoCount code the binding named; the other
+       keeps its own. */
+    expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
+      .toEqual(['AMN-SF9028 SOFA', '9028-2A(RHF)']);
   });
 });

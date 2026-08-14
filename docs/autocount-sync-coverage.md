@@ -37,6 +37,64 @@
 
 # ERP -> AutoCount sync: coverage, gaps, and the build plan
 
+> ## SUPERSEDED IN ITS CONCLUSIONS — read this box before you quote anything below
+>
+> **Every line of this box was checked against SOURCE on `main` or read from
+> production on 2026-08-12** — the C# service and the TypeScript outbox, not another
+> document. That distinction is the whole point: this file was one day old, reads as
+> authoritative, and was quoted back as current fact when its headline conclusions
+> had already been fixed in code.
+>
+> **How to answer "where does this stand" without trusting any .md, including this
+> one:** read `backend/scripts/autocount-service/AcSyncService.cs` (the AutoCount
+> half) and `backend/src/scm/lib/autocount-outbox.ts` (the ERP half); run
+> `.github/workflows/autocount-outbox-health.yml` for whether anything has ever been
+> sent, and `backfill-ac-line-keys.yml` with `apply=0` for line-identity coverage.
+> Documents describe intent and history well and go stale about state within days.
+>
+> | This document says | Verified on 2026-08-12 |
+> |---|---|
+> | §0 Blocker 2: create returns only `DocNo`, so an edit appends duplicate lines | **FIXED.** Every create/convert route now answers with the created line keys — `Ok(docNo, CreatedLines(dtlTable, docNo))`, `AcSyncService.cs`, reading `DtlKey`/`ItemCode`/`Desc2` straight from the book's detail table |
+> | §0 Blocker 2: `/edit` treats a keyless line as new (`AddDetail`) | **FIXED.** `Edit` makes a pre-pass over every line before touching the document and `throw`s `REFUSED: line N ... carries no DtlKey and does not declare IsNewLine` — the append is unreachable, not merely discouraged (`AcSyncService.cs`, PRs #1935 + #1945) |
+> | §0 Blocker 2: the ERP has nowhere to put a returned key | **CLOSED, both halves.** `autocount-outbox.ts:1696` writes `linked_ac_dtlkey` per row after a create, and refuses to store rather than guess when the returned `Desc2` disagrees with the ERP's or a repeated `ItemCode` cannot be told apart |
+> | §0 Blocker 1: no non-destructive way to retire a line | **BUILT**, and by the mechanism this document recommended: `Retire:true` sets `Qty = 0` + `Transferable = false` + a `[ERP-CANCELLED]` marker in `Desc2`. The ERP reads the line's `DtlKey` BEFORE deleting the row (`retiredLineOf`, `autocount-outbox.ts`) so the removal can be named |
+> | §1.1: the write-back is "NOT WIRED, NOT DEPLOYED, NOT CONFIGURED"; `AC_SYNC_URL` commented out | **False now.** `AC_SYNC_URL` is set (`backend/wrangler.toml:42`, PR #2030) and the tunnel answers: unauthenticated `POST /health` -> `401 {"ok":false,"error":"bad key"}` |
+> | §1.4: PR #1855 is OPEN, the ERP half is unmerged | **Merged** 2026-08-10 |
+> | §0: `create-po` cannot satisfy AutoCount's agent foreign key | **Fixed IN THE SOURCE.** `/ensure-masters` now opens a `PurchaseAgent` through `PurchaseAgentCommand` — a different master, table and FK from the sales agent it used to reuse (`AcSyncService.cs`). **Whether the host is running a build that contains it cannot be established from this repository**: the exe lives on the office machine and `/health` needs a key. Do not restate a deployment claim you have not observed |
+>
+> **The line identity that all of the above depends on — measured, not quoted.**
+> `backfill-ac-line-keys.mjs` against production, DRY-RUN, 2026-08-12:
+>
+> | | ERP lines | already keyed | backfill can still set | no AutoCount counterpart |
+> |---|---|---|---|---|
+> | SO | 13,916 | 12,904 (92.7%) | **1** | **986** |
+> | PO | 873 | 273 (31.3%) | **0** | **600** |
+>
+> The number that matters is the last column, and no document had drawn attention to
+> it: those lines are **not waiting for a backfill run** — the backfill has nothing
+> left to give them. They have no counterpart in the book, so under the keyless-line
+> guard an `/edit` of those documents is REFUSED. Safe, and blocked. For PO that is
+> most of the file. Re-run the workflow before quoting these; they move with the data.
+>
+> **Is the write-back live?** That is a question about the database, so it has no
+> durable answer in a document. Run
+> `.github/workflows/autocount-outbox-health.yml`; it reads the
+> `scm.app_config -> scm.autocount_writeback` flag itself and prints the queue by
+> status, with the reason and remedy for each `skipped` row.
+>
+> **CORRECTED 2026-08-14.** This paragraph used to read: *"the DB toggle … is
+> still `off`, and `scm.autocount_outbox` still holds zero rows of any status —
+> verified 2026-08-12 … **No ERP document has ever reached AutoCount.**"* All
+> three sentences were falsified the next day. BUG-HISTORY's 2026-08-13 entry
+> (top of file, "Fixing the cause of a refused write-back did not bring the
+> document back") records `HC-SO-2608-001` (`ItemCodeError`) and `HC-SO-2608-002`
+> (`MissingLocationError`) sitting in `scm.autocount_outbox` as `skipped`. A row
+> cannot exist with the flag off — `backend/src/scm/lib/autocount-outbox.ts:192`
+> gates every enqueue on `isWritebackEnabled`. The lesson is the one this
+> document already stated two lines above and then broke itself: *"Re-run the
+> workflow before quoting these; they move with the data."* A doc may name the
+> tool that answers a live-data question. It may not cache the answer.
+
 **Assessment date: 2026-08-11.** Scope: the owner's go-live blocker #1 —
 
 > "我们的 Sales Order、PO、DO、GR、PI、SI 等所有单据,无论是我打开后进行 Convert
@@ -157,7 +215,7 @@ The mechanism ships dark. See §1.
 | # | What | Transport | State |
 |---|---|---|---|
 | 1 | **Legacy read middleware** — `AutoCountClient`, `backend/src/services/autocount.ts:39` | `https://it-houzs.dev/` (`backend/wrangler.toml:15`), Cloudflare-proxied to the office | **LIVE.** Inbound pulls on (`AUTOCOUNT_SYNC_DISABLED = "false"`, `wrangler.toml:24`). Its own two write methods are hard-off by a compile-time constant `AUTOCOUNT_WRITES_DISABLED = true` (`autocount.ts:28`) |
-| 2 | **Cutover analysis path** — direct SQL to `10.147.17.100,55500` over ZeroTier via pyodbc | ZeroTier from a workstation | Read-only, ad hoc, not a runtime path. Appears nowhere in the repo |
+| 2 | **Reconciliation path** — direct SQL to `10.147.17.100,55500` over ZeroTier | ZeroTier, from a machine on the office network | Read-only, not a runtime path — **but it is NOT "ad hoc" and it does NOT "appear nowhere in the repo", which is what this row used to say.** Corrected 2026-08-12 by grepping the tree: it is the transport for at least six committed tools — `export-ac-cancel-parity.py`, `export-ac-fidelity-truth.py`, `export-ac-item-location-balance.py`, `check-cancel-parity.mjs`, `check-stock-vs-autocount.mjs`, `repair-dedication-from-autocount.mjs`. Their own headers say why they cannot run in CI: a GitHub runner is not on that network. **This is the answer to "does ZeroTier matter": not for the sync, which goes over the Cloudflare tunnel, but every ERP-vs-account-book comparison depends on it** |
 | 3 | **The write-back** — `AcSyncService.cs`, the .NET 4 service driving the licensed 2.2 SDK on the AutoCount host | `AC_SYNC_URL`, **commented out** at `backend/wrangler.toml:34` | **NOT WIRED, NOT DEPLOYED, NOT CONFIGURED** |
 
 A correction worth recording, because a merged PR body asserts otherwise: PR #1898's
@@ -408,6 +466,15 @@ rule deliberately — the downstream lock, `backend/src/scm/lib/downstream-lock.
 (#1855), enforcing the owner's own 2026-08-10 instruction
 ("已经转到下游的单据, AutoCount 不许取消/改动"). Good: the two systems refuse the same
 things for the same reasons.
+
+**Corrected 2026-08-13.** That statement was true of the intent and not quite true of
+the code: the lock's child counts dropped their PostgREST `error`, so a read that
+FAILED folded to "nothing downstream" and the cancel went through — the exact
+divergence ("一边取消一边没取消") this section is about, arriving through the guard
+rather than through the push. Fixed in `sweep/swallowed-error`: an unreadable count
+now refuses with `downstream_check_failed`. The four route-local clones of the same
+guard (PC Order, CO, PC Receive, Consignment Note) carried it too and are fixed with
+it.
 
 **The failure case the owner named — "一边取消一边没取消".** Today, with the wiring
 merged and enabled, an ERP cancel whose push fails would retry six times
