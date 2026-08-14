@@ -74,6 +74,15 @@ deploy failed six times before anyone looked. `notify-failed-release` ran and
 succeeded on both failures — so the notification path fired and still nobody
 saw it, which is its own finding.
 
+**Two gates then charged this fix for the file it had to touch**, and both were
+right to, so the fix was made to cost nothing rather than to argue: the union
+change is a one-for-one line swap with its pointer as a trailing comment, so
+`Projects.tsx` is the same 15,003 lines it was on main and the size ratchet has
+nothing to charge. The lint ratchet flagged one NEW floating promise at `:558`
+— `addNew()` in an onChange, landed by someone else past a non-required check —
+fixed as `void addNew()`, the idiom already used at `:2116` and `:7691`, rather
+than re-baselined.
+
 **Ref** - `fix/task-history-kinds`, 2026-08-14
 
 ## A delivery order that lost its link to the sales order made MRP order the goods a second time [high]
