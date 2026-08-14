@@ -16,6 +16,8 @@
 //   3. OHANA bindings stay untouched otherwise (fallback supplier).
 //
 // DRY-RUN default; APPLY=1 writes. One transaction, count-verified.
+//
+// RE-RUN: convergent. Mirrors the same bindings and the same is_main_supplier flag from the same source.
 import postgres from "postgres";
 
 const APPLY = process.env.APPLY === "1";

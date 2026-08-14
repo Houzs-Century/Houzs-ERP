@@ -35,8 +35,8 @@ export type SoHeaderFieldPolicy = {
    row-for-row and in order. `reason` is prose and is NOT drift-tested. */
 export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
   {
-    column: 'internal_expected_dd',
-    payloadKey: 'internalExpectedDd',
+    column: 'processing_date',
+    payloadKey: 'processingDate',
     label: 'Processing Date',
     cls: 'CONTROLLED',
     reason: 'The lock boundary itself, and the date the supplier works to.',

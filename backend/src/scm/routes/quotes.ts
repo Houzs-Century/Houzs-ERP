@@ -176,6 +176,17 @@ quotes.post('/', async (c) => {
 
 // PATCH /quotes/:id — update an OPEN quote's cart in place (company-scoped).
 // Customer name/phone are intentionally left untouched (the cart is what changes).
+/* NO PER-SALESPERSON ROW SCOPE ON THE WRITES, DELIBERATELY — owner decision
+   2026-08-13, asked directly.
+
+   The LIST (:83-95) is row-scoped to the caller's own + downline via
+   resolveSalesScopeIds, and this PATCH and the cancel below are not: with the
+   id, any rep may edit or cancel a colleague's quote. An audit flagged the
+   asymmetry as a defect; the owner's answer is that reps do amend each other's
+   quotes and that is how the shop works. Company scope and the area guard still
+   apply.
+
+   Recorded here so the next audit does not re-open it. */
 quotes.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');

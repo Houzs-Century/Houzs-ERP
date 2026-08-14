@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import rawSdk from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
 import rawGrn from '../src/scm/routes/grns.ts?raw';
@@ -113,7 +114,12 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
   });
 
   test('GRN cancel queues a cancel', () => {
-    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' } });");
+    /* End anchor is a PREFIX of the response, like the PO and DO cases above:
+       the handler now spreads a `cancelErrors` array into that same c.json, and
+       an anchor pinned to the whole statement failed on the wording while the
+       wiring it exists to protect was untouched. The window still ends at the
+       response, so an enqueue that slipped past the 200 would still be caught. */
+    const tail = between(grnSource, 'await recomputePoReceived(sb, lineList.map', "return c.json({ grn: data ?? { id, status: 'CANCELLED' }");
     expect(tail).toContain('enqueueCancel(sb, {');
     expect(tail).toContain("docType: 'GR'");
   });
@@ -121,14 +127,17 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
   test('every SO mutation path queues an edit — header, line add/edit/delete, and the variant/SKU swaps', () => {
     // Header CAS save.
     expect(between(soSource, 'header saved but edit lease was no longer ours', 'version: savedVersion,'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
     // Line add / edit / delete.
     expect(between(soSource, 'post-line-add failed', 'return c.json({ item: data }, 201);'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
     expect(between(soSource, 'post-line-patch failed', 'return c.json({ ok: true });'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo');
+    /* The delete also RETIRES the removed line in AutoCount — without naming it
+       the account book keeps it live, because /edit applies only the lines it
+       is given. See autocountWritebackCells.test.ts for the all-six version. */
     expect(between(soSource, 'post-line-delete failed', 'return c.body(null, 204);'))
-      .toContain('queueAcSoEdit(c, docNo)');
+      .toContain('queueAcSoEdit(c, docNo, retire)');
     /* Variant / SKU changes. These run inside runScmPgCommand, so the queue
        call must sit OUTSIDE the transaction and fire only on a 2xx. */
     for (const route of ['tbc-update', 'tbc-swap', 'tbc-swap-sofa']) {
@@ -146,7 +155,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     expect(between(poSource, "catch { /* don't fail the edit on a counter recount */ }", 'return c.json({ ok: true });'))
       .toContain('queueAcPoEdit(c, poId)');
     expect(between(poSource, "catch { /* line already deleted", 'return c.body(null, 204);'))
-      .toContain('queueAcPoEdit(c, poId)');
+      .toContain('queueAcPoEdit(c, poId, retire)');
   });
 
   test('the SO and PO routers use the SHARED downstream lock, not a private copy', () => {
@@ -168,5 +177,49 @@ describe('the drain is wired to the cron', () => {
     expect(slot).toContain('drainAutoCountOutbox(env)');
     expect(slot).toContain('[cron ac-writeback] FAILED');
     expect(slot).toContain('.catch((e) => console.error("[cron ac-writeback]", e))');
+  });
+});
+
+/* The sofa branch of POST /:docNo/items inserted its compartment rows and
+   RETURNED - past the hook, queueing nothing. Adding a sofa to an order
+   AutoCount already holds never reached the account book at all. Same shape as
+   the guard-with-no-else class in BUG-HISTORY: an early return past the hook,
+   which a test that only greps the file as a whole cannot see. */
+test('the SOFA add-line branch queues an edit before it returns, and declares its rows', () => {
+  const branch = rawSo.slice(
+    rawSo.indexOf('const firstRow = (moduleData ?? [])[0]'),
+    rawSo.indexOf('return c.json({ item: firstRow }, 201);'),
+  );
+  expect(branch.length).toBeGreaterThan(0);
+  expect(branch).toContain('queueAcSoEdit(c, docNo');
+  /* Declared, not inferred: the ids come from the rows this insert returned. */
+  expect(branch).toContain('moduleData');
+});
+
+/* The SDK has NO un-cancel: CancelDocument is a command, not a flag, and a
+   whole-file grep of the reflected surface for uncancel / Cancelled:Boolean /
+   set_Cancelled returns nothing. So an ERP un-cancel has no push - it would
+   leave the document live here and cancelled there, which is the divergence the
+   owner named. Refusing is the only option that cannot silently diverge. */
+describe('a cancel that reached AutoCount is final', () => {
+  test('the SDK really has no un-cancel — the premise, not an assumption', () => {
+    expect(/uncancel|set_Cancelled|Cancelled:Boolean/i.test(rawSdk)).toBe(false);
+    /* And the one thing it DOES have is a command. */
+    expect(rawSdk).toContain('CancelDocument');
+  });
+
+  test('the SO status route refuses to leave CANCELLED once linked_ac_docno is set', () => {
+    const h = rawSo.slice(rawSo.indexOf("mfgSalesOrders.patch('/:docNo/status'"));
+    const guard = h.slice(0, h.indexOf('const currentVersion'));
+    expect(guard).toContain('cancel_is_final');
+    expect(guard).toContain("fromNorm === 'CANCELLED'");
+    expect(guard).toContain('linked_ac_docno');
+  });
+
+  test('the PO reopen route refuses the same way', () => {
+    const h = rawPo.slice(rawPo.indexOf("mfgPurchaseOrders.patch('/:id/reopen'"));
+    const guard = h.slice(0, h.indexOf('cannot_reopen'));
+    expect(guard).toContain('cancel_is_final');
+    expect(guard).toContain('linked_ac_docno');
   });
 });

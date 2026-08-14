@@ -38,53 +38,72 @@ import stockTransfers from '../src/scm/routes/stock-transfers.ts?raw';
    the batch, with no PostgreSQL CI coverage for the scm path — would not be
    reviewable.
 
-   THIS TEST IS A RATCHET, NOT A TARGET. It pins the exact inventory. Converting
-   a call site (count moves from `inline` to `durable`) or adding a new one both
-   fail this test, which forces the follow-up PR to state which line it changed
-   instead of letting the numbers drift quietly. Follow-up work: convert by
-   module, highest count first (grns 6, mfg-sales-orders 8), each with its own
-   move to `runScmPgCommand`.
+   A THIRD CATEGORY, ADDED 2026-08-10: DEFERRED. The SO header PATCH now calls
+   `deferAllocationRecompute`, which runs the same best-effort sweep under
+   `ctx.waitUntil` instead of awaiting it, because that one global sweep was 10
+   of the 10.6 seconds an operator waited to change a delivery date. Deferred
+   sits with INLINE on the durability axis, NOT with DURABLE: same call, same
+   crash window, no queue row, no retry. It is tracked separately only so this
+   ledger cannot report a latency change as a durability change — reading
+   "inline: 33" without the deferred column would look like a call site was
+   made safe when nothing about its guarantee moved.
+
+   THIS TEST IS A RATCHET, NOT A TARGET. It pins the exact inventory. Moving a
+   call site between any two columns, or adding one, fails this test, which
+   forces the follow-up PR to state which line it changed instead of letting the
+   numbers drift quietly. Follow-up work: convert by module, highest count first
+   (grns 6, mfg-sales-orders 7), each with its own move to `runScmPgCommand`.
    ══════════════════════════════════════════════════════════════════════════ */
 
 const INLINE = 'await recomputeSoStockAllocation(sb';
 const DURABLE = 'await scheduleStockAllocationAfterCommand(';
+const DEFERRED = 'deferAllocationRecompute(c, sb';
 
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
 /** Every module that triggers an allocation recompute, with its exact split. */
-const LEDGER: Array<{ module: string; source: string; inline: number; durable: number }> = [
-  { module: 'lib/consignment-loaner.ts', source: consignmentLoaner, inline: 2, durable: 0 },
-  { module: 'routes/consignment-notes.ts', source: consignmentNotes, inline: 1, durable: 0 },
-  { module: 'routes/consignment-returns.ts', source: consignmentReturns, inline: 1, durable: 0 },
-  { module: 'routes/delivery-orders-mfg.ts', source: deliveryOrdersMfg, inline: 3, durable: 0 },
-  { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 3, durable: 0 },
-  { module: 'routes/grns.ts', source: grns, inline: 6, durable: 0 },
-  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0 },
-  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 8, durable: 3 },
-  { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0 },
-  { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 1, durable: 0 },
-  { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 3, durable: 0 },
-  { module: 'routes/so-amendments.ts', source: soAmendments, inline: 0, durable: 1 },
-  { module: 'routes/stock-takes.ts', source: stockTakes, inline: 2, durable: 0 },
-  { module: 'routes/stock-transfers.ts', source: stockTransfers, inline: 2, durable: 0 },
+const LEDGER: Array<{
+  module: string; source: string; inline: number; durable: number; deferred: number;
+}> = [
+  { module: 'lib/consignment-loaner.ts', source: consignmentLoaner, inline: 2, durable: 0, deferred: 0 },
+  { module: 'routes/consignment-notes.ts', source: consignmentNotes, inline: 1, durable: 0, deferred: 0 },
+  { module: 'routes/consignment-returns.ts', source: consignmentReturns, inline: 1, durable: 0, deferred: 0 },
+  { module: 'routes/delivery-orders-mfg.ts', source: deliveryOrdersMfg, inline: 3, durable: 0, deferred: 0 },
+  { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 3, durable: 0, deferred: 0 },
+  { module: 'routes/grns.ts', source: grns, inline: 6, durable: 0, deferred: 0 },
+  { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
+  { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 7, durable: 3, deferred: 1 },
+  { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
+  { module: 'routes/purchase-consignment-returns.ts', source: purchaseConsignmentReturns, inline: 1, durable: 0, deferred: 0 },
+  { module: 'routes/purchase-returns.ts', source: purchaseReturns, inline: 3, durable: 0, deferred: 0 },
+  { module: 'routes/so-amendments.ts', source: soAmendments, inline: 0, durable: 1, deferred: 0 },
+  { module: 'routes/stock-takes.ts', source: stockTakes, inline: 2, durable: 0, deferred: 0 },
+  { module: 'routes/stock-transfers.ts', source: stockTransfers, inline: 2, durable: 0, deferred: 0 },
 ];
 
 describe('durable allocation coverage is stated honestly', () => {
   for (const entry of LEDGER) {
-    test(`${entry.module}: ${entry.durable} durable / ${entry.inline} inline`, () => {
+    test(`${entry.module}: ${entry.durable} durable / ${entry.inline} inline / ${entry.deferred} deferred`, () => {
       expect(count(entry.source, INLINE), `${entry.module} inline recompute call count changed`)
         .toBe(entry.inline);
       expect(count(entry.source, DURABLE), `${entry.module} durable enqueue count changed`)
         .toBe(entry.durable);
+      expect(count(entry.source, DEFERRED), `${entry.module} deferred recompute count changed`)
+        .toBe(entry.deferred);
     });
   }
 
   test('the totals match the documented scope: 4 durable of 38 triggers', () => {
     const durable = LEDGER.reduce((sum, entry) => sum + entry.durable, 0);
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
+    const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
     expect(durable).toBe(4);
-    expect(inline).toBe(34);
-    expect(durable + inline).toBe(38);
+    expect(inline).toBe(33);
+    expect(deferred).toBe(1);
+    /* The trigger count is unchanged: deferring one moved it between columns,
+       it did not remove it. 34 are still best-effort (33 inline + 1 deferred). */
+    expect(inline + deferred).toBe(34);
+    expect(durable + inline + deferred).toBe(38);
   });
 
   test('the code says out loud that the other triggers are still best-effort', () => {

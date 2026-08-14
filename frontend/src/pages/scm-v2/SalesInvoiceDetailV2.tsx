@@ -589,6 +589,10 @@ export function SalesInvoiceDetailV2() {
   // Persisted SI payment row → the shared PaymentsTable draft shape.
   const apiToDraft = useCallback(
     (p: NonNullable<typeof paymentsQ.data>[number]): PaymentDraft => {
+      /* `credit` and `installment` deliberately fall through to "Merchant" —
+         owner 2026-08-13, asked directly. An audit flagged it as a mislabel and
+         I changed it; the owner reverted the call. Left as a note so the next
+         reader does not re-open it. */
       const methodLabel =
         p.method === "cash" ? "Cash" : p.method === "transfer" ? "Online" : "Merchant";
       const installmentLabel =

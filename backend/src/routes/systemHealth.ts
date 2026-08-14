@@ -294,7 +294,12 @@ app.get("/ledger", requirePermission("*"), async (c) => {
   }
   try {
     const sb = getSupabaseService(c.env);
-    const { asOf, issueCount, issues } = await reconcileLedger(sb);
+    /* null = ALL COMPANIES, on purpose. This is the cross-company integrity
+       count; the per-company report is the operator-facing /reconcile route.
+       Written out rather than omitted so the two modes are distinguishable at
+       the call site — an omitted argument reads the same whether the author
+       meant "every company" or never knew there was a choice. */
+    const { asOf, issueCount, issues } = await reconcileLedger(sb, null);
     return c.json({
       check: "inventory_ledger_integrity",
       label: "Inventory ledger integrity",
@@ -317,6 +322,103 @@ app.get("/ledger", requirePermission("*"), async (c) => {
       issueCount: 0,
       error: e?.message || "ledger reconcile failed",
     });
+  }
+});
+
+// ── AutoCount migration reconciliation ─────────────────────────────
+// The daily 02:00 cron refreshes the PO mirrors and the ac_snapshot_* staging
+// tables unattended. These three routes exist because the migration cleanup is
+// an interactive job: somebody is sitting there asking "is it clean yet?" and
+// cannot wait until 02:00 to find out. Owner-only (`*`) — they wipe-and-reload
+// mirrors Finance reads.
+
+// One number per question, so "is the data clean yet?" stops being a matter of
+// opinion. Every count is a diff between what AutoCount has and what the ERP
+// has; clean = all of them zero.
+//
+// mirror_po_outstanding_lines is a plain COUNT(*), NOT a count of
+// is_outstanding = 1. The middleware's /getOutstanding filters to
+// "Qty - TransferedQty > 0", so every row in `purchase_orders` is outstanding
+// by construction and the pull leaves that legacy column NULL — the predicate
+// would report 0 on a perfectly good pull, which is precisely the silent zero
+// this endpoint exists to stop.
+//
+// No "--" comments inside the SQL: d1-compat splits statements and a line
+// comment swallows what follows it.
+app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
+  try {
+    const row = await c.env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM ac_snapshot_sales_orders)                       AS snapshot_so,
+         (SELECT MAX(snapshot_at) FROM ac_snapshot_sales_orders)               AS snapshot_so_at,
+         (SELECT COUNT(*) FROM ac_snapshot_sales_orders WHERE region_route IS NULL)
+                                                                               AS snapshot_so_filtered_out,
+         (SELECT COUNT(*) FROM sales_orders)                                   AS mirror_so,
+         (SELECT COUNT(*) FROM scm.mfg_sales_orders)                           AS erp_so,
+         (SELECT COUNT(*) FROM ac_snapshot_sales_orders a
+            WHERE NOT EXISTS (SELECT 1 FROM scm.mfg_sales_orders e
+                               WHERE e.linked_ac_docno = a.doc_no))            AS so_missing_from_erp,
+         (SELECT COUNT(*) FROM scm.mfg_sales_orders e
+            WHERE COALESCE(e.linked_ac_docno,'') <> ''
+              AND NOT EXISTS (SELECT 1 FROM ac_snapshot_sales_orders a
+                               WHERE a.doc_no = e.linked_ac_docno))            AS so_link_not_in_autocount,
+         (SELECT COUNT(*) FROM ac_snapshot_purchase_orders)                    AS snapshot_po,
+         (SELECT MAX(snapshot_at) FROM ac_snapshot_purchase_orders)            AS snapshot_po_at,
+         (SELECT COUNT(*) FROM purchase_order_docs)                            AS mirror_po_docs,
+         (SELECT COUNT(*) FROM purchase_orders)                                AS mirror_po_outstanding_lines,
+         (SELECT COUNT(*) FROM scm.purchase_orders p
+            WHERE COALESCE(p.linked_ac_docno,'') <> ''
+              AND NOT EXISTS (SELECT 1 FROM ac_snapshot_purchase_orders a
+                               WHERE a.doc_no = p.linked_ac_docno))            AS po_link_not_in_autocount`
+    ).first<Record<string, number | string | null>>();
+
+    const snapshotSo = Number(row?.snapshot_so ?? 0);
+    return c.json({
+      check: "autocount_migration_reconcile",
+      label: "AutoCount migration reconciliation",
+      // Without a snapshot there is no denominator, so the honest answer is
+      // "unknown" — never "ok". That distinction is the entire point of this
+      // endpoint: a silent zero used to read as "clean".
+      status: snapshotSo === 0 ? "unknown" : "ok",
+      snapshotTaken: snapshotSo > 0,
+      counts: row ?? {},
+    });
+  } catch (e: any) {
+    return c.json({
+      check: "autocount_migration_reconcile",
+      label: "AutoCount migration reconciliation",
+      status: "unknown",
+      snapshotTaken: false,
+      error: e?.message || "reconcile query failed",
+    });
+  }
+});
+
+// Refresh both PO mirrors now. Docs first, then lines — the doc pull is what
+// Finance reads, so it gets the fresher data if the second call fails.
+app.post("/autocount/po-pull", requirePermission("*"), async (c) => {
+  try {
+    const { runPOPull, runPODocsPull } = await import("../services/po");
+    const docs = await runPODocsPull(c.env, "MANUAL");
+    const lines = await runPOPull(c.env, "MANUAL");
+    return c.json({ docs, lines });
+  } catch {
+    // Plain-language rule: never surface raw exception text to the user.
+    return c.json({ error: "Couldn't reach AutoCount to refresh purchase orders. Try again shortly." }, 502);
+  }
+});
+
+// Rebuild the unfiltered staging snapshot. Writes only ac_snapshot_*, so this
+// is the safe one to re-run whenever a fresh denominator is wanted.
+app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
+  try {
+    const { runSOSnapshot, runPOSnapshot } = await import("../services/acSnapshot");
+    const so = await runSOSnapshot(c.env, "MANUAL");
+    const po = await runPOSnapshot(c.env, "MANUAL");
+    return c.json({ so, po });
+  } catch {
+    // Plain-language rule: never surface raw exception text to the user.
+    return c.json({ error: "Couldn't reach AutoCount to build the snapshot. Try again shortly." }, 502);
   }
 });
 

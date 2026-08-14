@@ -12,6 +12,8 @@
 // rows of the same code — the import inserted them in DtlKey order, so line_no
 // order and DtlKey order agree.
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert. Only lines with no linked_ac_dtlkey are stamped, and the stamp is what the key tests.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -104,10 +106,27 @@ async function main() {
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
   await run("SO lines", soRows, soAc, "mfg_sales_order_items");
 
-  const poRows = await sql`SELECT i.id, i.material_code AS code, NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS ac
-    FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL`;
-  await run("PO lines", poRows, poAc, "purchase_order_items");
+  /* THE PO HALF IS RETIRED — repair-migrated-po-lines.mjs owns purchase-order
+     linked_ac_dtlkey now, and two writers with different rules would fight.
+     An earlier version of this comment said the PO half had never run, so
+     nothing was lost. THAT IS NO LONGER TRUE and the correction matters more
+     than the retirement: on 2026-08-10 this script ran against PRODUCTION in
+     APPLY mode (workflow run 31416597720) and wrote 275 purchase-order line
+     keys — `PO lines: erp lines 864; to set 275; already set 0; no AC match
+     589`. Retiring it stops the 276th, it does not undo the 275. Those rows are
+     AUDITED, not overwritten, by repair-migrated-po-lines.mjs, which reports
+     every one whose stored key disagrees with the key it derives.
+     The rule retired here is the weaker one:
+       - it matched on (DocNo, ERP item code), which cannot tell apart two PO
+         lines of the same code, where the repair splits them on (qty, Desc2)
+         and REFUSES what that does not separate;
+       - it zipped by line_no, which it selected as `NULL::int` for PO rows, so
+         the sort was a no-op and the pairing was whatever order postgres
+         happened to return — not reproducible between runs;
+       - it had no notion of a sofa line fanning out into compartment rows.
+     The SO half above is untouched and still the only writer for SO lines. */
+  log("PO lines: skipped — repair-migrated-po-lines.mjs is the single writer for purchase-order linked_ac_dtlkey.");
+  void poAc;
 
   if (!APPLY) log("DRY-RUN — set APPLY=1 to write.");
   await sql.end();

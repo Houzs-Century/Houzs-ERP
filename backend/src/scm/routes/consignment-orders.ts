@@ -18,6 +18,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   buildVariantSummary, comboChargedPrices, type SofaComboRow, type SofaPriceTier,
@@ -32,6 +33,7 @@ import { todayMyt } from '../lib/my-time';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { signSoItemPhotoUrl, soItemPhotoBindings } from '../lib/r2';
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
+import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -50,11 +52,13 @@ import {
 import {
   checkAllowedOptions,
   loadProductAndModel,
+  variantCheckUnavailableResponse,
 } from '../lib/allowed-options-check';
 import { findIncompleteVariantLines } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date gate failures into one response (owner
    2026-07-18) — mirrors the SO path. Pure — no I/O. */
 import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+import { soDatePairCascadeColumns, soDatePairRefusal } from '../shared/so-processing-date';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -76,14 +80,59 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
   // A Consignment Order's downstream is a Consignment Note (consignment_delivery_orders
   // keyed on consignment_so_doc_no) — NOT the real delivery_orders/sales_invoices
   // tables (those never reference a CS- doc number, so the lock silently never fired).
-  const { count: noteCount } = await sb.from('consignment_delivery_orders')
+  const { count: noteCount, error: noteErr } = await sb.from('consignment_delivery_orders')
     .select('id', { head: true, count: 'exact' })
     .eq('consignment_so_doc_no', coDocNo)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `noteCount ?? 0` read as "no Consignment Note", which is the
+     absence that authorises the line edit / CANCELLED transition this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (noteErr) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Consignment Order has a Consignment Note, so it is locked for safety — try again (${noteErr.message}).` };
+  }
   if ((noteCount ?? 0) > 0) {
     return { error: 'co_has_downstream', message: 'Consignment Order has a Consignment Note — cancel it first to edit' };
   }
   return null;
+}
+
+/* ── Write-side own/downline guard (owner 2026-08-13: "要,和销售订单一致") ──────
+   The direct mirror of mfg-sales-orders' selfScopedSalesBlocked; the two must
+   keep reading alike, so a difference here is a bug, not a style.
+
+   TWO DIMENSIONS, and neither replaces the other. Company is checked FIRST and
+   for EVERYONE: the salesperson dimension answers "is this MY order" and returns
+   false straight away for a view-all tier, which is useless for tenancy.
+
+   The company half DEGRADES on an UNRESOLVED company rather than failing closed
+   — the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
+   SENTINEL"). Failing closed would lock every user out of every CO write during
+   a Hyperdrive cold start, and it costs no strictness: every caller also runs
+   requireActiveCompanyId + scopeToCompanyId, which refuse an unresolved company.
+
+   Identity comes off the context as houzsUser.id, NOT the bridge-pinned scm.staff
+   uuid on user.id, so it matches the reads. Returns TRUE => block, and the caller
+   answers 404, indistinguishable from a nonexistent doc_no. A missing CO also
+   returns TRUE (fail closed). Exported so a test can drive it directly. */
+export async function selfScopedConsignmentBlocked(c: any, docNo: string): Promise<boolean> {
+  const sb = c.get('supabase');
+
+  // 1. Tenancy — every tier, view-all included. Degrading, per the note above.
+  const { data: owned, error: ownedErr } = await scopeToCompany(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), c).maybeSingle();
+  if (ownedErr || !owned) return true;
+
+  // 2. Salesperson — only for the self-scoped tier.
+  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
+  const { data, error } = await sb
+    .from('consignment_sales_orders')
+    .select('salesperson_id')
+    .eq('doc_no', docNo)
+    .maybeSingle();
+  if (error || !data) return true; // fail closed — unknown/unreadable doc is out of scope
+  const sp = (data as { salesperson_id?: number | string | null }).salesperson_id;
+  return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
 }
 
 /* Identity + value columns a downstream DO / SI snapshots. Frozen on the CO
@@ -128,15 +177,17 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
   }));
 }
 
+/* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, local_total_centi, balance_centi, ' +
   'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, ' +
   'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
-  'currency, status, remark2, remark3, remark4, note, processing_date, sales_exemption_expiry, ' +
+  /* See "WHY A CONSTANT" in shared/so-processing-date.ts. */
+  'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
-  'customer_state, customer_country, customer_delivery_date, internal_expected_dd, linked_do_doc_no, ' +
+  'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
@@ -216,18 +267,24 @@ const deriveCountryFromState = async (
 };
 
 /* Sales/shipping Location (warehouse) follows the customer's State. Returns the
-   warehouse code for the state, or null when unmapped. */
+   warehouse code for the state, or null when unmapped.
+
+   COMPANY-SCOPED, like the mfg-SO twin. `state` stopped being a global key at
+   mig 0092, which made scm.state_warehouse_mappings UNIQUE on
+   `(company_id, state)`. Unscoped, this either stamps the OTHER company's
+   warehouse onto Sales Location, or — once both companies map the same state —
+   matches two rows, so `.maybeSingle()` errors (PGRST116) into the discarded
+   `error` and the field silently stops deriving at all. */
 const deriveSalesLocationFromState = async (
   sb: any,
   state: string | null | undefined,
+  c: any,
 ): Promise<string | null> => {
   if (!state) return null;
   const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await sb
-    .from('state_warehouse_mappings')
-    .select('warehouse_id')
-    .eq('state', key)
-    .maybeSingle();
+  const { data: m } = await scopeToCompany(
+    sb.from('state_warehouse_mappings').select('warehouse_id').eq('state', key), c,
+  ).maybeSingle();
   const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
   if (!whId) return null;
   const { data: w } = await sb
@@ -507,7 +564,7 @@ consignmentOrders.get('/mine', async (c) => {
       .from('consignment_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
-        'customer_delivery_date, internal_expected_dd, status, payment_method, approval_code, note, so_date, created_at, ' +
+        'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'total_revenue_centi, line_count, deposit_centi',
       )
       .eq('salesperson_id', myStaffId)
@@ -638,6 +695,15 @@ consignmentOrders.get('/:docNo', async (c) => {
   return c.json({ salesOrder, items });
 });
 
+/* NO selfScopedConsignmentBlocked HERE, deliberately — the phrase the exemption
+   test greps for. The guard answers "is this EXISTING doc mine", and a create
+   has no target row, so calling it would refuse every create.
+
+   OPEN, for the owner: mfg-sales-orders gates `salesperson_id` on
+   `scm.so.attribute_other` and OVERRIDES a self-scoped caller's chosen
+   salespersonId; this path takes `body.salespersonId` verbatim, so a scoped rep
+   can book a NEW consignment order under someone else's name. That changes who
+   gets paid and is a different control from the row scope ruled on above. */
 consignmentOrders.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -660,20 +726,17 @@ consignmentOrders.post('/', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* CO composition rules (mirror the SO create path):
-       1. Processing Date + Delivery Date are all-or-nothing.
-       2. SOFA is exclusive among MAIN products (sofa / bedframe / mattress).
-       3. All MATTRESS lines must share ONE brand. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
   {
-    const procDate  = (body.internalExpectedDd  as string | null | undefined) || null;
+    const procDate  = (body.processingDate as string | null | undefined) || null;
     const delivDate = (body.customerDeliveryDate as string | null | undefined) || null;
-    /* must-pair stays a short-circuit (structurally-incomplete date pair). */
-    if (Boolean(procDate) !== Boolean(delivDate)) {
-      return c.json({
-        error: 'processing_delivery_must_pair',
-        reason: 'Processing Date and Delivery Date must be set together (or both left empty).',
-      }, 400);
-    }
+    /* must-pair stays a short-circuit (structurally-incomplete date pair), and
+       the predicate is shared/so-processing-date's so the CO paths cannot drift
+       from the SO paths. Every date on a create is new — no originals. */
+    const coCreatePairRefusal = soDatePairRefusal({
+      nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
+    });
+    if (coCreatePairRefusal) return c.json(coCreatePairRefusal, 400);
     /* Aggregate the rest (variants / past-date / processing-≤-delivery) into ONE
        response — mirrors the SO create path. No deposit gate on the consignment
        mirror, so `deposit` is omitted. All dates are new on create. */
@@ -767,7 +830,9 @@ consignmentOrders.post('/', async (c) => {
     if (!it) continue;
     const code = String(it.itemCode ?? '');
     if (!code) continue;
-    const { product, model } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, code, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const err = checkAllowedOptions(
       product,
       model,
@@ -914,6 +979,7 @@ consignmentOrders.post('/', async (c) => {
     (await deriveSalesLocationFromState(
       sb,
       (body.customerState as string | null | undefined) ?? null,
+      c,
     ));
 
   const { error: hErr } = await insertWithDocNoRetry<{ doc_no: string }>(
@@ -970,7 +1036,7 @@ consignmentOrders.post('/', async (c) => {
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
     customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
-    internal_expected_dd: (body.internalExpectedDd as string) ?? null,
+    processing_date: (body.processingDate as string) ?? null,
     customer_so_no: (body.customerSoNo as string) ?? null,
     customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
@@ -1022,7 +1088,7 @@ consignmentOrders.post('/', async (c) => {
   captureIfSet('localTotalCenti', total);
   captureIfSet('paymentMethod', body.paymentMethod);
   captureIfSet('depositCenti', body.depositCenti);
-  captureIfSet('internalExpectedDd', body.internalExpectedDd);
+  captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
@@ -1042,6 +1108,10 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only CANCEL / re-status their OWN CO. Ahead of the
+     downstream lock below, so an out-of-scope caller gets 404 rather than being
+     told the order has a Consignment Note: a refusal must not leak existence. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { status?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
@@ -1116,6 +1186,8 @@ consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only re-price a line on their OWN CO. This verb WRITES MONEY.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { overridePriceSen?: number; reason?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const newPrice = Number(body.overridePriceSen ?? 0);
@@ -1167,6 +1239,10 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only amend their OWN CO. `salespersonId` is in the map
+     below, so without this a rep could REASSIGN another rep's order to
+     themselves; `depositCenti` is money. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -1192,7 +1268,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
     ['customerDeliveryDate', 'customer_delivery_date'],
-    ['internalExpectedDd', 'internal_expected_dd'],
+    ['processingDate', 'processing_date'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -1249,6 +1325,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
       const derived = await deriveSalesLocationFromState(
         sb,
         body['customerState'] as string | null,
+        c,
       );
       if (derived) updates['sales_location'] = derived;
     }
@@ -1263,7 +1340,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
   /* Processing Date set → every non-cancelled line must carry its category-
      required variants. Collected (not returned) — aggregated with the date rules
      below. */
-  if (body['internalExpectedDd'] !== undefined && body['internalExpectedDd'] !== null && body['internalExpectedDd'] !== '') {
+  if (body['processingDate'] !== undefined && body['processingDate'] !== null && body['processingDate'] !== '') {
     const { data: liveItems } = await scopeToCompanyId(sb
       .from('consignment_sales_order_items')
       .select('id, item_code, item_group, variants, cancelled')
@@ -1279,22 +1356,35 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const beforeCols = map.map(([, snake]) => snake).concat(['status']).join(', ');
   const { data: before } = await scopeToCompanyId(sb.from('consignment_sales_orders').select(beforeCols).eq('doc_no', docNo), co.companyId).maybeSingle();
 
-  /* Processing & Delivery Date may only be today or a future date, BUT an
-     already-past value the edit does NOT change is grandfathered through. The
-     helper re-derives past-date + processing-≤-delivery from the effective +
-     original dates and folds in the variant offenders collected above. */
+  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
+  /* Set when clearing the Processing Date also clears a Delivery Date the
+     request never named — read by the line-level cascade after the write. */
+  let coCascadedDeliveryClear = false;
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const proc = body['internalExpectedDd'];
+    const proc = body['processingDate'];
     const deliv = body['customerDeliveryDate'];
-    const origProc = (beforeRow?.['internal_expected_dd'] as string | null) ?? null;
+    const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;
     const effDeliv = typeof deliv === 'string' ? (deliv || null) : origDeliv;
+    /* The pair rule — see "THE CO HEADER PATCH" in shared/so-processing-date.ts. */
+    const coCascadeCols = soDatePairCascadeColumns({
+      procCleared: typeof proc === 'string' && (proc || null) === null && !!origProc,
+      delivInPatch: typeof deliv === 'string',
+      origDeliv,
+    });
+    for (const col of coCascadeCols) updates[col] = null;
+    coCascadedDeliveryClear = coCascadeCols.length > 0;
+    const effDelivAfterCascade = coCascadedDeliveryClear ? null : effDeliv;
+    const coPairRefusal = soDatePairRefusal({
+      nextProc: effProc, nextDeliv: effDelivAfterCascade, origProc, origDeliv,
+    });
+    if (coPairRefusal) return c.json(coPairRefusal, 400);
     const coProblems = collectProcessingGateProblems({
       procDate: effProc,
-      delivDate: effDeliv,
+      delivDate: effDelivAfterCascade,
       todayMY,
       origProcDate: origProc,
       origDelivDate: origDeliv,
@@ -1329,8 +1419,11 @@ consignmentOrders.patch('/:docNo', async (c) => {
 
   /* Master-follower cascade. When the header's customer_delivery_date changes,
      every non-overridden line picks up the new date. Best-effort. */
-  if (body['customerDeliveryDate'] !== undefined) {
-    const newDate = body['customerDeliveryDate'] as string | null;
+  if (body['customerDeliveryDate'] !== undefined || coCascadedDeliveryClear) {
+    /* A cascaded clear has no body value to read — the header column was set to
+       null above, so the lines must follow it, or MRP keeps ordering by a line
+       date the header no longer holds. */
+    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)
@@ -1537,6 +1630,8 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only add a line to their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
@@ -1560,7 +1655,9 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const variantsObj = (it.variants as MfgItemForRecompute['variants']) ?? null;
   /* allowed_options check on add-item. */
   {
-    const { product, model } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeStr, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1686,6 +1783,8 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only edit a line on their OWN CO. This verb WRITES MONEY.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
@@ -1718,7 +1817,9 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   const shouldRecompute = it.variants !== undefined || it.unitPriceCenti !== undefined || it.itemCode !== undefined;
 
   if (it.variants !== undefined || it.itemCode !== undefined) {
-    const { product, model } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    const { product, model, lookupError } = await loadProductAndModel(sb, itemCodeAfter, activeCompanyId(c));
+    // A failed catalog read is ignorance, not permission — refuse, don't skip the gate.
+    if (lookupError) return c.json(variantCheckUnavailableResponse(lookupError), 409);
     const aoErr = checkAllowedOptions(
       product,
       model,
@@ -1872,6 +1973,8 @@ consignmentOrders.delete('/:docNo/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only delete a line from their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   /* Tier 2 downstream-lock — line-delete is blocked once a DO / SI exists. */
   const childLock = await coHasDownstream(sb, docNo);
@@ -1954,6 +2057,8 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
   }
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only attach a photo to a line on their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: item, error: itemErr } = await scopeToCompanyId(sb
     .from('consignment_sales_order_items')
@@ -2037,15 +2142,34 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
     return c.json({ photoKey, photoUrl: signedUrl, thumbUrl, expiresAt }, 201);
   } catch (e) {
-    const photoUrl = `/consignment-orders/${docNo}/items/${itemId}/photos/${encodeURIComponent(photoKey)}`;
-    // eslint-disable-next-line no-console
-    console.warn('[co-item-photo] signing failed, falling back to proxy:', e);
-    return c.json({ photoKey, photoUrl }, 201);
+    /* Upload succeeded and the row is inserted — never lose it. Hand back the
+       proxy path. Same inert-fallback fix as the SO upload route: `mode` lets
+       the client branch on the contract instead of sniffing the string. */
+    const basePath = `/consignment-orders/${docNo}/items/${itemId}`;
+    const reason = e instanceof Error ? e.message : String(e);
+    warnSigningFailedOnce('co-item-photo', reason);
+    return c.json(
+      {
+        photoKey,
+        mode: 'proxy',
+        photoUrl: photoProxyPath(basePath, photoKey),
+        thumbProxyPath: photoProxyPath(basePath, thumbKeyFor(photoKey)),
+        expiresAt: null,
+        reason,
+      },
+      201,
+    );
   }
 });
 
-// Refresh a signed GET URL for an existing key.
-consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c) => {
+/* Refresh a signed GET URL for an existing key.
+   NO selfScopedConsignmentBlocked HERE, nor on the proxy GET below: both are
+   READS and the owner's ruling covered the WRITE verbs. They keep their company
+   scope. The residual is a same-company rep reading another rep's line photo,
+   which needs BOTH the line uuid and the exact crypto.randomUUID() photo key —
+   handed out only by GET /:docNo, which IS salesperson-scoped. The SO's proxy
+   read DOES carry the guard, so this asymmetry is known, not overlooked. */
+export const consignmentItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
@@ -2069,13 +2193,29 @@ consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', async (c)
     // WO-7: signed thumb sibling. Pre-existing photos have no thumb object —
     // the frontend's <img> onError falls back to signedUrl on the 404.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
-    return c.json({ signedUrl, thumbUrl, expiresAt });
+    const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
+    return c.json(payload);
   } catch (e) {
-    return c.json({ error: 'signing_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+    /* 2026-08-10: R2 S3 creds unset in prod => signing throws for every photo.
+       Fall back to the proxy route below rather than 500. See
+       scm/lib/photoProxyFallback.ts for why this is not returned as
+       `signedUrl`. */
+    return c.json(
+      proxyFallbackPayload(
+        'co-item-photo',
+        `/consignment-orders/${docNo}/items/${itemId}`,
+        photoKey,
+        e,
+      ),
+    );
   }
-});
+};
 
-// Proxy GET (fallback for clients holding proxy URLs).
+consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey/signed', consignmentItemPhotoSignedHandler);
+
+/* Proxy GET (fallback for clients holding proxy URLs).
+   NO selfScopedConsignmentBlocked HERE — see the note on the /signed handler
+   above, which this route backs up and whose authorization it must match. */
 consignmentOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
@@ -2127,6 +2267,8 @@ consignmentOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => 
   }
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Self-scoped sales may only remove a photo from a line on their OWN CO.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: item } = await scopeToCompanyId(sb
     .from('consignment_sales_order_items')
@@ -2202,8 +2344,12 @@ consignmentOrders.get('/:docNo/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -2218,6 +2364,9 @@ consignmentOrders.post('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* Self-scoped sales may only record a payment against their OWN CO. This verb
+     WRITES MONEY into the ledger GET /:docNo/payments already scopes on read. */
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: so } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), co.companyId).maybeSingle();
   if (!so) return c.json(NOT_THIS_COMPANY, 404);
@@ -2277,6 +2426,8 @@ consignmentOrders.delete('/:docNo/payments/:id', async (c) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  // Own CO only. Deleting a receipt re-opens the balance, so this writes money.
+  if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: row } = await scopeToCompanyId(sb.from('consignment_sales_order_payments').select('*').eq('id', id), co.companyId).maybeSingle();
   if (!row) return c.json(NOT_THIS_COMPANY, 404);

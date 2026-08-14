@@ -1,5 +1,15 @@
 # Module: Scan to Sales Order (OCR)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 Per-module technical doc — a phone photo of a handwritten showroom slip becomes
 a DRAFT Sales Order, and the operator's corrections train the next scan. Same
 structure as [`sales-order.md`](./sales-order.md).
@@ -104,7 +114,7 @@ plus `scanSo.use('*', supabaseAuth)` (`scan-so.ts:99`). Full public prefix is
 | POST | `/enqueue` | `:4172` | multipart slip + receipt photos → durable job → `202 { job_id, status:"queued" }` |
 | GET | `/jobs` | `:4610` | latest 20 jobs, optional `?salesperson=`; also runs the stale-job reaper |
 | GET | `/jobs/:id` | `:4639` | poll one job; also runs the reaper |
-| POST | `/jobs/clear-failed` | `:4677` | delete the caller's `status='error'` rows (`*` clears every rep's) |
+| POST | `/jobs/clear-failed` | `:4677` | delete the caller's `status='error'` rows **in the active company** (`*` clears every rep's, same company) |
 | POST | `/extract` | `:2967` | the blocking client-driven path — kept as mobile's fallback |
 | POST | `/samples/:id/confirm` | `:4718` | store the operator-reviewed JSON; triggers the distillers |
 | GET | `/salespeople` | `:2269` | distinct reps across samples + rules (the modal datalist) |
@@ -127,6 +137,69 @@ reads a card-terminal / EPP receipt into a payment row. It is
 
 For the machine-generated route inventory see
 [`docs/generated/route-capability-matrix.csv`](../generated/route-capability-matrix.csv).
+
+---
+
+## 2b. Three different dates, three different names (2026-08-13)
+
+Until 2026-08-13 this module used the word **`processingDate` for three
+unrelated facts**, which is how the wrong one kept getting picked. They are now
+named for what they are, and nothing about which value flows where changed:
+
+| Name | What it is | Where it lives | Where it goes |
+|---|---|---|---|
+| `ExtractedSlip.slipDate` | **the handwritten slip's own date** — the day the rep wrote the order | OCR output, `scan-so.ts` extraction rule 6 | the duplicate probe (same phone + same slip date + same total), and the payment planner's **fallback** date |
+| `ExtractedPayment.receiptTxnDate` | **a card terminal's printed transaction date** — the swipe date on ONE printed receipt | OCR output, `scan-so.ts` `payments[]` | `planReceiptPayments` → `resolvePaidAt` → the payment-ledger row's **`paid_at`** |
+| `processingDate` | **the Sales Order's Processing Date** — the factory-start date | `scm.mfg_sales_orders.processing_date` (named `internal_expected_dd` until mig 0286, 2026-08-13) | the SO itself; the operator keys it at review |
+
+Only the third one is still called `processingDate`. If you are reading a date
+off a slip photo or a receipt photo, it is **not** that field.
+
+- The planner's precedence is `receiptTxnDate` → `slipDate` → today, each
+  clamped by `resolvePaidAt` to `[today−60d, today+7d]`
+  (`scan-receipt-plan.ts`). The SO's Processing Date is **not an input to the
+  planner at all** — it does not appear in `PlanReceiptPaymentsInput`.
+- The sibling `scan-payment` prompt calls its equivalent of `receiptTxnDate`
+  **`paidAt`**, because that route emits the ledger value directly. Here the two
+  must stay distinct: `ExtractedPayment.receiptTxnDate` is the raw OCR read,
+  `PlannedReceiptPayment.paidAt` is the clamped value actually booked.
+- **Back-compat:** stored `so_scan_samples.extracted` / `corrected` blobs written
+  before the rename still carry the old `processingDate` key, and those blobs are
+  fed back verbatim as few-shot examples — so the model can echo the old key.
+  `normalizeSlip` reads `slipDate ?? processingDate` and
+  `receiptTxnDate ?? processingDate` for exactly that reason. Do not remove those
+  fallbacks until the sample pool has fully rolled over.
+
+### Known mismatch, NOT fixed by the rename — latent, not live
+
+The two surfaces seed the **SO's** Processing Date from different facts:
+
+- **Mobile** — `MobileNewSO.tsx` seeds its `procDate` state from
+  `scanPrefill.slipDate`, i.e. **the day the rep wrote the slip**, which is not
+  a factory-start date at all.
+- **Desktop** — `SalesOrderNew.tsx` derives it as **Delivery − 6 weeks**
+  (`PROCESSING_LEAD_DAYS = 42`), floored at today, and never reads the slip's
+  date. Its own comment already says "a scanned slip may carry a Delivery date
+  but never a Processing date".
+
+**Neither is reachable today**, which is why this is a write-up and not a fix:
+
+- `MobileNewSO`'s `scanPrefill` prop is **never supplied** — the screen union in
+  `MobileApp.tsx:83` declares it, but neither `setScreen({t:"new-so"})` call site
+  passes it. The live mobile scan path is `createDraftFromPrefill`, which sends
+  `processingDate: null` outright (`MobileNewSO.tsx:476`). Note the stale
+  COMMENT twenty lines further down at `:730` still says `internalExpectedDd:
+  null` — this bullet used to be written off that comment rather than off the
+  code, which is how it outlived the rename.
+- Desktop's `soScanPrefill` sessionStorage handoff has a **reader and no
+  writer** — `ScanOrderModal` became a pure `/enqueue` surface (§4).
+
+So the wrong-value seed is **latent**: it fires the moment someone re-wires
+either handoff, which is exactly the kind of reconnection this module has done
+before. Both paths also invert the SO's Processing Date back into the slip's
+`slipDate` when building a `corrected` learning blob; that is inert because
+`slipDate` is in `CARRIED_NOT_INVERTED` (§4), so the key never reaches a
+distiller. The rename made all of this legible; it changed none of it.
 
 ---
 
@@ -193,17 +266,36 @@ Malaysian addresses; **postcode is the driver** (`:222`, and
 untouched. The geocoded state is seeded into `addressStateMatch` so the
 never-invent validator can check it against the live locality list (`:2911-2916`).
 
-### Duplicate handling — warn, never block
+### Duplicate handling — A blocks at upload, B only warns
 
 Migration `0068_scan_dedup.sql` documents the two rules: **A (image)** — the same
 photo SHA-256 as a sample from the last 30 days whose job already minted an SO;
 **B (content)** — a non-cancelled SO with the same normalised phone AND (same
-customer SO ref, or same slip date + same grand total). A suspected duplicate
-**still creates the DRAFT**; the note is prefixed `POSSIBLE DUPLICATE of <doc_no>`
-and `scan_jobs.duplicate_of` carries the original. Owner ruling, quoted at
-`scan-so.ts:4193-4197`: this was already opened, whether to open it again is the
-person's decision. The client re-sends the identical upload with `force=1` after
-the operator confirms.
+customer SO ref, or same slip date + same grand total). They are enforced
+**differently**, and only B is warn-never-block:
+
+- **A is a synchronous HARD REJECT in `POST /enqueue`** — `409 duplicate_slip`,
+  nothing written and nothing queued (owner 2026-07-04, `scan-so.ts:4296-4318`).
+  Fail-OPEN: if the lookup itself errors the upload queues normally. The client
+  re-sends the identical upload with `force=1` after the operator confirms
+  "create anyway", which skips the reject entirely (`:4269-4274`).
+- **B stays a soft warning inside the job** — the DRAFT is still created and
+  `scan_jobs.duplicate_of` is stamped with the original (`:4044-4045`). A genuine
+  repeat order is legal.
+
+The SO note is **never** prefixed with the warning. Owner standing rule
+(`:4060-4065`): the note carries only the customer's handwritten remark, so the
+duplicate signal rides `scan_jobs.duplicate_of` (the mobile Scan card's
+"Duplicate of <doc>" pill) and the private scan announcement, whose body gets
+`This looks like a possible duplicate of <doc_no>.` (`:4171`).
+
+> The code carries **two owner rulings that point opposite ways** and does not
+> reconcile them: `:4263-4265` quotes 2026-07-15 "this was already opened;
+> whether to open again is the person's decision — don't be too strict" as
+> WARN-not-BLOCK, directly above the 2026-07-04 hard reject it describes as
+> policy. Shipped behaviour is unambiguous — reject unless `force=1`. Which
+> ruling the owner intends to stand is an OWNER DECISION, not readable from the
+> tree (UNVERIFIED as of 2026-08-13).
 
 ---
 
@@ -235,8 +327,13 @@ The split exists because the two consumers want opposite things:
 - **The few-shot pool shows the model GOOD OUTPUT.** There both outcomes are
   equally true, and corrected-only was a **biased sample of the AI's own
   failures**: while the edit-gate was the only writer, the pool could contain
-  only slips the AI got wrong. It reads both, ranked corrected-first
-  (`:2598`, `:2605-2626`).
+  only slips the AI got wrong. **Status RANKS this pool, it does not filter it**
+  (2026-08-05, `:2638-2648`): the only predicate is `corrected IS NOT NULL`, and
+  status is used solely to sort `CONFIRMED` ahead of the rest (`goldFirst`,
+  `:2657-2660`). It used to be gated on `status IN (CONFIRMED, ACCEPTED)`, and
+  because `status` is free text with no CHECK constraint, any row whose status
+  was missing, legacy or merely spelled differently was silently deleted from
+  the model's memory — production had exactly that.
 
 **So: a zero-diff confirm teaches the DISTILLERS nothing, but it does still
 teach the few-shot pool.** That is the precise statement. The confirm handler
@@ -300,8 +397,10 @@ carried across untouched and contributes **no diff**. The list is in code as
 | Carried, never inverted | Because |
 |---|---|
 | `locationMatch` / `location` | the create core's venue-by-active-project autofill resolves a venue the slip never named |
-| `remarks` | the dedup path prefixes the note with `POSSIBLE DUPLICATE of <doc_no>` |
+| `remarks` | still carried, but the reason recorded beside it in code (`scan-sample-review.ts:88-89` — "the dedup path prefixes the note") is **stale**: the pipeline never writes into the SO note (§3). Whether `remarks` should now become invertible is an owner call, not readable from the tree |
 | `processingDate` | a DRAFT never carries a Processing Date (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo |
+| `slipDate` (the SLIP'S OWN date — **not** the SO's Processing Date; see §2b) | the SO has no column for it, and the SO's Processing Date is a **different fact**. A DRAFT never carries a Processing Date at all (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo. Inverting the SO's factory-start date back into `slipDate` would teach the model to read it off the slip's date line |
+
 | `priceRmGuess` | the create core **reprices** every goods line — `unit_price_centi` is the catalog's figure, not a correction |
 | `installmentPlanMatch` | the header stores an integer month count; the pool's label spelling is unrecoverable, and inventing one breaks the never-invent rule |
 | `onlineTypeMatch` | there is no `online_type` column on the SO header (it lives on the payment ledger row) |
@@ -345,30 +444,35 @@ Guards worth knowing:
 
 ### There is no live UI path that produces a `CONFIRMED` sample
 
-Read this before you plan work on the learning loop. Every claim here was
-grepped repo-wide at `8f8427ed`.
+Read this before you plan work on the learning loop. Re-grepped repo-wide on
+2026-08-13; the conclusion still holds, the mechanism has moved.
 
-`POST /scan-so/samples/:id/confirm` has exactly **two** callers —
-`frontend/src/pages/scm-v2/SalesOrderNew.tsx:1320` and
-`frontend/src/mobile/MobileNewSO.tsx:1392` — and both are gated on the same
-guard, `if (!fromScan || !scanSampleId || !scanAiOriginal) return;`
-(`SalesOrderNew.tsx:1217`, `MobileNewSO.tsx:1327`). Neither gate can open today:
+`POST /scan-so/samples/:id/confirm` has exactly **two** callers, both now
+routed through the shared `postScanLearningSample`
+(`vendor/scm/lib/scan-learning.ts:75`) rather than a raw fetch —
+`SalesOrderNew.tsx:1362` and `MobileNewSO.tsx:1459`. Each is behind three early
+returns in `maybeLearnFromScan`: `!fromScan` (silent), then `!scanSampleId` and
+`!scanAiOriginal`, which now **report** the skip through `reportClientError`
+instead of vanishing (`scan-learning.ts:57-66`; `SalesOrderNew.tsx:1257-1259`,
+`MobileNewSO.tsx:1380-1385`). The `fromScan` gate cannot open today:
 
 - **Desktop.** `fromScan` is `searchParams.get('fromScan') === '1'`
-  (`SalesOrderNew.tsx:374`), and the prefill is read from
-  `sessionStorage[SCAN_PREFILL_KEY]` (`:389`). Nothing navigates with
-  `?fromScan=1` — the string appears only inside `SalesOrderNew.tsx` itself — and
-  nothing **writes** `SCAN_PREFILL_KEY`: the only four hits repo-wide are the
-  export (`ScanOrderModal.tsx:88`), the import, the read and the removal.
+  (`SalesOrderNew.tsx:380`), and the prefill is read from the scoped handoff
+  store, `readScmHandoff<ScanPrefill>('soScanPrefill')` (`:393-394`) — the
+  `sessionStorage[SCAN_PREFILL_KEY]` this doc used to cite no longer exists
+  anywhere in `frontend/src`. Nothing navigates with `?fromScan=1` (the string
+  appears only in `SalesOrderNew.tsx`'s own comment), and nothing **writes**
+  `soScanPrefill`: its only hits are the key registry
+  (`lib/scmHandoffStorage.ts:17`), the read, the removal, and a test regex.
   `ScanOrderModal` stopped calling `/extract` when it became a pure enqueue
-  surface (`ScanOrderModal.tsx:174`), and the prefill writer went with it.
-- **Mobile.** `fromScan = !!scanPrefill` (`MobileNewSO.tsx:838`), and
-  `scanPrefill` arrives as a screen prop (`MobileApp.tsx:74`, `:641`). The only
-  two `setScreen({ t: "new-so", ... })` call sites are `MobileApp.tsx:611`
-  (`mode:"edit"`) and `:749` (`mode:"new"`); neither supplies it. MobileScan
+  surface, and the prefill writer went with it.
+- **Mobile.** `fromScan = !!scanPrefill` (`MobileNewSO.tsx:873`), and
+  `scanPrefill` arrives as a screen prop (`MobileApp.tsx:83`, `:710`). The only
+  two `setScreen({ t: "new-so", ... })` call sites are `MobileApp.tsx:678`
+  (`mode:"edit"`) and `:822` (`mode:"new"`); neither supplies it. MobileScan
   instead calls the **headless** `createDraftFromPrefill`
-  (`MobileNewSO.tsx:415`, its only caller is `MobileScan.tsx:826`), which POSTs
-  `/mfg-sales-orders` and nothing else (`MobileNewSO.tsx:464-476`).
+  (`MobileNewSO.tsx:436`, its only caller is `MobileScan.tsx:929`), which POSTs
+  `/mfg-sales-orders` and nothing else.
 
 So the only live writer into the learning pool is `noteScanDraftAccepted`.
 
@@ -501,7 +605,12 @@ Two sibling documents:
   including the "quirks that CONFLICT" cue) at `:1751`, `:1755`. **B6** shipped
   *differently* from the proposal: there is no `is_gold` column and no operator
   "mark as gold" control — the ranking is status-based (`goldFirst`,
-  `:2595-2599`). **B7** (supplier-doc OCR) does not exist. Its §C
+  `:2595-2599`). **B7**'s premise ("Houzs has no supplier/GRN scan") is now half
+  stale: a supplier-document scanner DID land as
+  `backend/src/scm/routes/scan-lorry-invoice.ts` (a workshop quotation/invoice →
+  repair record, mig 0241 — one synchronous `/extract`, no job row, no learning,
+  writes nothing). It is not the GRN/PI goods-line scan B7 was written for, and
+  B7's borrow-list was never applied to it. Its §C
   ("upstream changes that are traps") is still current and is the thing to read
   before touching the prompt.
 - **`docs/ocr-payment-spec.md`** covers the sibling `scan-payment` receipt OCR,
@@ -569,7 +678,7 @@ Postgres shim (`personalNotice.ts:94-111`), not to any scm table.
 |---|---|---|
 | Unauthenticated | nothing | `/api/*` auth wall, then `supabaseAuth` on every route (`scan-so.ts:99`) |
 | Any signed-in user whose position holds **at least `view`** on `scm.sales.orders` | scan: `warm`, `enqueue`, `extract`, `slip-upload`, poll jobs, confirm samples | `scm/index.ts:516` — `scmAreaGuard("scm.sales.orders", { writeLevel: "view" })` |
-| Owner / `*` | everything, plus `clear-failed` across every rep | `area-guard.ts:122-126` (wildcard bypass); `scan-so.ts:4681-4683` |
+| Owner / `*` | everything, plus `clear-failed` across every rep — still only within the active company | `area-guard.ts:122-126` (wildcard bypass); `scan-so.ts:4751-4763` (the delete carries `.eq('company_id', activeCompanyId(c))` for every caller) |
 | A rep | clear only their **own** failed job rows | `scan-so.ts:4693` — `ilike` on the caller's normalised name, taken from `user_metadata.name` |
 
 `writeLevel: 'view'` is deliberate and dated 2026-07-04 (`scm/index.ts:510-515`):
@@ -604,6 +713,27 @@ per-user check anywhere in this router**:
 None of this leaks order *content* through the jobs endpoints (the payload is
 status / doc-no / error / image keys), but do not assume per-rep or
 cross-company isolation here.
+
+### Two company-scope verdicts recorded here, not re-derived (2026-08-13)
+
+Both are annotated `// company-scope:` in `backend/src/scm/routes/scan-so.ts` so
+`backend/scripts/check-company-scope.mjs` stays green; the reasoning is here.
+
+- **`POST /enqueue` — the by-id reads the checker attributes to it are not in
+  it.** The checker's handler slice runs from one route registration to the
+  next, and `processScanQueueMessage` is declared in between. That function is a
+  QUEUE CONSUMER, invoked by the Workers runtime with the jobId this endpoint
+  itself enqueued, never with a caller-supplied id; it selects `company_id` off
+  the job row and carries it forward. Verified 2026-08-13 by locating the
+  enclosing function of each reported line.
+- **`POST /samples/:id/confirm` — `scm.so_scan_samples` is a GLOBAL OCR TRAINING
+  POOL, not a business document.** Verified 2026-08-13 against its `CREATE TABLE`
+  in `backend/src/db/migrations-pg/0023_so_scan_samples.sql` and every later
+  ALTER (0023's own `salesperson`, 0033's `image_key`): it has **no `company_id`
+  column**, and mig 0083's bulk `company_id` sweep deliberately skipped it. The
+  pool is keyed by SALESPERSON, with a reserved `'__GLOBAL__'` row holding the
+  cross-rep product alias dictionary; distilling rules per company would split
+  the training set that makes the extractor work. Same shape as `my_localities`.
 
 ### Desktop and mobile files that must change together
 
@@ -671,13 +801,46 @@ cross-company isolation here.
 - `scan_jobs.so_doc_no` unindexed (see §6).
 - Both poll endpoints run the stale-job reaper on **every** call, so reaper cost
   scales with the number of open Scan screens.
-- Test coverage is thin: `backend/tests/scanReceiptPlan.test.ts` and
+- Test coverage is thin: `backend/tests/scanReceiptPlan.test.ts`,
+  `backend/tests/scanSlipPhone.test.ts` (the slip path's phone normalisation) and
   `backend/src/scm/lib/scan-sample-review.test.ts` (the learning-loop feed) are
-  the only scan tests, and `e2e/specs/` has no scan spec. Nothing covers the
-  pipeline itself — `runScanJob`, `buildDraftSoBodyFromSlip`, `validateSlip`.
+  the only tests for this module — `backend/tests/scanLorryInvoice.test.ts` is
+  the sibling workshop-document scanner, not this one — and `e2e/specs/` holds
+  only `smoke` + `assr-lifecycle`, no scan spec. Nothing covers the pipeline
+  itself — `runScanJob`, `buildDraftSoBodyFromSlip`, `validateSlip`.
 
 The only measured numbers in the tree are the compression figure above and the
 catalog size. The "60-110s real-slip OCR calls" range quoted throughout comes
 from `wrangler.toml:124-129` and `scan-so.ts:4312` — statements in comments, not
 a benchmark. **No end-to-end latency or accuracy benchmark for this module exists
 anywhere in `docs/`.**
+
+---
+
+## 9. Provenance and the Houzs adaptation
+
+Ported from HOOKKA's `scan-po.ts` (typed customer-PO PDFs) and adapted:
+
+- input is image(s) (jpeg / png / webp) or a PDF, not PDF-only;
+- catalog injection pulls live from Supabase Postgres (`mfg_products`,
+  `fabric_trackings`, maintenance-config sofa sizes / leg heights);
+- learning is per-SALESPERSON rather than HOOKKA's per-customer: each rep has
+  their own handwriting and notation habits that differ per product category, so
+  a distilled rules block (`so_scan_rules`, organized by SOFA / MATTRESS /
+  BEDFRAME / ACCESSORY / SERVICE sections) is regenerated from that rep's
+  corrected samples after every confirm.
+
+**Same plumbing as the sibling SCM routes, and this is the part that differs
+from the 2990 original.** That original built its own service client via
+`createClient(...)` defaulting to the `public` schema. In Houzs the
+`so_scan_samples` / `so_scan_rules` / `mfg_products` / `fabric_trackings` /
+`maintenance_config_history` / `so_dropdown_options` tables live in the
+dedicated `scm` Postgres schema, so `serviceClient()` returns
+`getSupabaseService(env)` with `db: { schema: 'scm' }` — every `sb.from('...')`
+resolves to `scm.*`, never `public.*`. The catalog read uses
+`c.get('supabase')`, also scm-scoped, attached by `supabaseAuth`.
+
+Sample rows are written via the **service-role** client so extraction works even
+before migration 0164's RLS policy lands.
+
+Secret setup: `npx wrangler secret put ANTHROPIC_API_KEY`.

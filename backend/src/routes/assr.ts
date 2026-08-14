@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
+import { assrOpenStageSql } from "../services/assrStages";
 import {
   createAssrCase,
   getAssrDetail,
@@ -37,9 +38,16 @@ import {
   allowedCompanyIds,
   allowedCompaniesSql,
   activeCompanyId,
+  type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
+/* Row-level case visibility + the creditor strip. Lives in services/ so the
+   PRINT route can apply the SAME rule — see assrVisibility.ts. */
+import {
+  assrUnrestricted, assrVisibleUserIds, assrVisibleAgentNames,
+  assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields,
+} from "../services/assrVisibility";
 import { notifyServiceCaseResponsible } from "../services/assrNotify";
 import { isSalesUser, isDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
@@ -62,6 +70,8 @@ const app = new Hono<{ Bindings: Env }>();
 // first path segment is not the numeric case id (/attachments/:attId,
 // /activity/:actId, /creditors/create, /resync-so/:docNo) are not matched by
 // these patterns and are tracked as a follow-up (they need a parent-case lookup).
+// /bulk/* is a fifth miss of the same kind — worse, because those ids arrive in
+// the BODY, so ONE call reached every case. They carry the predicate themselves.
 const enforceCaseScope: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (c.req.method === "GET") return next();
   const id = Number(c.req.param("id"));
@@ -127,8 +137,12 @@ function requireServiceCaseAccess(
 // "" / [] / undefined when the companies master is unresolved (pre-migration /
 // D1 test mirror / cold-start), so legacy single-company SQL runs unchanged.
 //
-// Exported for backend/tests/assrCompanyScope.test.ts.
-export function assrCompanySql(c: Context<any>, col = "company_id"): string {
+/* Exported for backend/tests/assrCompanyScope.test.ts AND for routes/search.ts,
+   which kept its own copy and drifted — global search and /api/assr answered the
+   same rep differently. Takes CompanyScopeCtx, not Context<any>: all it needs is
+   a `get`, and demanding a whole Hono Context is what pushes a caller into
+   re-implementing it locally. */
+export function assrCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   return allowedCompaniesSql(c, col);
 }
 // `number[] | undefined` — `undefined` = company context unresolved (degrade to
@@ -145,51 +159,6 @@ function assrCompanyIds(c: Context<any>): number[] | undefined {
 // backend/tests/assrCompanyScope.test.ts.
 export function assrCreateCompanyId(c: Context<any>): number | undefined {
   return activeCompanyId(c) ?? houzsCompanyId(c);
-}
-
-// ── Row-level visibility (owner spec 2026-07) ─────────────────
-// Full view = `*` wildcard (Owner / IT Admin) or `service_cases.manage`
-// (the existing admin-tier ASSR key — no new permission invented), OR a
-// director by STABLE ORG FIELD (Owner/IT `*`, Super Admin, Sales Director,
-// Finance Manager) — owner rule "Director sees ALL". Everyone else sees only
-// cases they CREATED or are ASSIGNED TO (plus their users.manager_id downline,
-// full depth — services/orgScope.ts), AND legacy cases whose free-text
-// sales_agent matches a downline member's name (assrVisibleAgentNames).
-//
-// This tier predicate is shared by the id-scope and the agent-name-scope
-// resolvers so the two can never disagree on who is unrestricted.
-function assrUnrestricted(user: AuthUser | undefined): boolean {
-  const granted = user?.permissions_set ?? user?.permissions ?? [];
-  return (
-    hasPermission(granted, "*") ||
-    hasPermission(granted, "service_cases.manage") ||
-    isDirectorUser(user)
-  );
-}
-
-async function assrVisibleUserIds(c: {
-  get(key: "user"): unknown;
-  env: Env;
-}): Promise<number[] | undefined> {
-  const user = c.get("user") as AuthUser | undefined;
-  if (assrUnrestricted(user)) return undefined; // unrestricted
-  if (user?.id == null) return []; // fail closed, never open
-  return subtreeUserIds(c.env, Number(user.id));
-}
-
-// Companion to assrVisibleUserIds for the LEGACY free-text `sales_agent` field:
-// the display names of the caller's reporting subtree. OLD cases predate the
-// created_by/assigned_to id linkage, so a scoped salesperson (and their upline)
-// reach their own old cases only by name. undefined = unrestricted (same tier
-// as the id resolver); [] = no resolvable identity (fail closed).
-async function assrVisibleAgentNames(c: {
-  get(key: "user"): unknown;
-  env: Env;
-}): Promise<string[] | undefined> {
-  const user = c.get("user") as AuthUser | undefined;
-  if (assrUnrestricted(user)) return undefined; // unrestricted
-  if (user?.id == null) return []; // fail closed, never open
-  return subtreeAgentNames(c.env, Number(user.id));
 }
 
 // Raw-SQL twin of pushVisibilityScope (services/assr.ts), which serves the
@@ -673,7 +642,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
     // definition the breach / aging queries use).
     c.env.DB.prepare(
       `SELECT COUNT(*) as count FROM assr_cases
-      WHERE stage != 'completed' AND archived_at IS NULL${coBare}${visBare.sql}`
+      WHERE ${assrOpenStageSql()} AND archived_at IS NULL${coBare}${visBare.sql}`
     )
       .bind(...visBare.binds)
       .first<{ count: number }>(),
@@ -721,7 +690,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
     c.env.DB.prepare(
       `SELECT COUNT(*) as count
        FROM assr_cases c
-      WHERE c.stage != 'completed'
+      WHERE ${assrOpenStageSql("c")}
         ${periodAnd}${coC}${visC.sql}
         AND julianday('now') - julianday(
               COALESCE(
@@ -748,7 +717,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
        FROM assr_cases c
        JOIN assr_stage_history h
               ON h.assr_id = c.id AND h.exited_at IS NULL
-      WHERE c.stage != 'completed'
+      WHERE ${assrOpenStageSql("c")}
         AND c.archived_at IS NULL
         ${periodAnd}${coC}${visC.sql}
         AND h.target_days IS NOT NULL AND h.target_days > 0
@@ -839,28 +808,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
 });
 
 // ── List ──────────────────────────────────────────────────────
-
-// Supplier identity (creditor fields) is office + supplier-portal only
-// (Nick 2026-07-15: 这个我要 office, supplier 看到而已) — sales-scoped
-// callers get case payloads without it. assrVisibleUserIds() returning
-// undefined marks an unrestricted (office) caller; an id list marks a
-// sales-scoped one. Dual-named keys because the PG driver camelCases
-// result columns.
-const CREDITOR_KEYS = [
-  "creditor_code", "creditorCode",
-  "creditor_name", "creditorName",
-  "creditor_email", "creditorEmail",
-  "creditor_phone", "creditorPhone",
-  "creditor_mobile", "creditorMobile",
-  "creditor_attention", "creditorAttention",
-  "creditor_source", "creditorSource",
-] as const;
-function stripCreditorFields(row: Record<string, any> | null | undefined): void {
-  if (!row) return;
-  for (const k of CREDITOR_KEYS) {
-    if (k in row) delete row[k];
-  }
-}
 
 app.get("/", requireServiceCaseAccess(), async (c) => {
   const assignedToParam = c.req.query("assigned_to");
@@ -1048,9 +995,9 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
             cr.email        AS email,
             cr.phone1       AS phone,
             COUNT(*) AS total,
-            SUM(CASE WHEN c.stage != 'completed' THEN 1 ELSE 0 END) AS open,
+            SUM(CASE WHEN ${assrOpenStageSql("c")} THEN 1 ELSE 0 END) AS open,
             SUM(CASE WHEN c.stage  = 'completed' THEN 1 ELSE 0 END) AS closed,
-            SUM(CASE WHEN c.stage != 'completed'
+            SUM(CASE WHEN ${assrOpenStageSql("c")}
                       AND c.deadline_at IS NOT NULL
                       AND datetime('now') > c.deadline_at THEN 1 ELSE 0 END) AS breached,
             MAX(c.updated_at) AS last_activity_at
@@ -1070,7 +1017,7 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
 
   const unassigned = await c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) AS open
+            SUM(CASE WHEN ${assrOpenStageSql()} THEN 1 ELSE 0 END) AS open
        FROM assr_cases
       WHERE archived_at IS NULL AND (creditor_code IS NULL OR creditor_code = '')${assrCompanySql(c)}${visBare.sql}`
   )
@@ -1110,16 +1057,30 @@ async function bulkRun(
   return { ok, failed };
 }
 
+/* COMPANY SCOPE ON THE BULK WRITES.
+
+   enforceCaseScope (top of this file) CANNOT reach these: it is mounted on
+   "/:id{[0-9]+}" and "/:id{[0-9]+}/*", so it fires only when the first path
+   segment is the numeric case id. These three are /bulk/..., their ids arrive in
+   the BODY, and ids are sequential integers — so one call reached the other
+   company's cases wholesale while the detail GET 404s the same case. The client
+   is service-role (RLS bypassed, mig 0061), so the route predicate is the only
+   boundary.
+
+   assrCompanySql is the SAME helper the reads use, and it emits "" when the
+   company context is unresolved, so single-company installs are unchanged. */
+
 app.post("/bulk/archive", requirePermission("service_cases.manage"), async (c) => {
   const userId = (c as any).get?.("userId") ?? null;
   const body = await c.req.json<{ ids?: number[] }>();
   const ids = (body.ids || []).filter((n) => Number.isInteger(n));
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
     await c.env.DB.prepare(
       `UPDATE assr_cases
           SET archived_at = datetime('now'), archived_by = ?, updated_at = datetime('now')
-        WHERE id = ? AND archived_at IS NULL`
+        WHERE id = ? AND archived_at IS NULL${coSql}`
     )
       .bind(userId, id)
       .run();
@@ -1131,11 +1092,12 @@ app.post("/bulk/unarchive", requirePermission("service_cases.manage"), async (c)
   const body = await c.req.json<{ ids?: number[] }>();
   const ids = (body.ids || []).filter((n) => Number.isInteger(n));
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
     await c.env.DB.prepare(
       `UPDATE assr_cases
           SET archived_at = NULL, archived_by = NULL, updated_at = datetime('now')
-        WHERE id = ? AND archived_at IS NOT NULL`
+        WHERE id = ? AND archived_at IS NOT NULL${coSql}`
     )
       .bind(id)
       .run();
@@ -1151,12 +1113,16 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
   const ids = [...new Set((body.ids || []).filter((n) => Number.isInteger(n)))];
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
   const assigneeId = body.assigned_to ?? null;
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
-    await c.env.DB.prepare(
-      `UPDATE assr_cases SET assigned_to = ?, updated_at = datetime('now') WHERE id = ?`
+    const res = await c.env.DB.prepare(
+      `UPDATE assr_cases SET assigned_to = ?, updated_at = datetime('now') WHERE id = ?${coSql}`
     )
       .bind(assigneeId, id)
       .run();
+    /* Out of scope -> no row moved. Stop rather than log an assignment that did
+       not happen; bulkRun collects the throw as this id's per-item error. */
+    if (!res.meta.changes) throw new Error("Not found");
     await c.env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
        VALUES (?, 'assignment', NULL, ?, 'bulk', ?)`
@@ -1358,7 +1324,7 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
       const counts = await c.env.DB.prepare(
         `SELECT LOWER(doc_no) AS k,
                 COUNT(*) AS case_count,
-                SUM(CASE WHEN stage IS NULL OR stage <> 'completed' THEN 1 ELSE 0 END) AS open_case_count
+                SUM(CASE WHEN ${assrOpenStageSql()} THEN 1 ELSE 0 END) AS open_case_count
            FROM assr_cases
           WHERE archived_at IS NULL
             AND LOWER(doc_no) IN (${placeholders})${assrCompanySql(c, "company_id")}
@@ -1490,7 +1456,7 @@ app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
     .map(() => `LOWER(COALESCE(sales_agent, '')) LIKE ?`)
     .join(" OR ");
   const rows = await c.env.DB.prepare(
-    `SELECT id, assr_no, stage, status, priority, doc_no,
+    `SELECT id, assr_no, stage, status, priority, doc_no, ref_no,
             customer_name, phone, complained_date, deadline_at,
             complaint_issue, item_code, sales_agent
        FROM assr_cases
@@ -1605,29 +1571,9 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
      detail behavior). Dual-read camelCase ?? snake_case — the PG driver
      camelCases result columns. */
   const visibleIds = await assrVisibleUserIds(c);
-  if (visibleIds !== undefined) {
-    const row = (detail as { case?: Record<string, unknown> }).case ?? (detail as Record<string, unknown>);
-    const createdBy = Number((row as any).createdBy ?? (row as any).created_by ?? NaN);
-    const assignedTo = Number((row as any).assignedTo ?? (row as any).assigned_to ?? NaN);
-    // Co-assignee (assigned_to_2) — the LIST scopes on it too (services/assr.ts),
-    // so a co-assignee who sees the case in their list must be able to open it.
-    const assignedTo2 = Number((row as any).assignedTo2 ?? (row as any).assigned_to_2 ?? NaN);
-    let inScope =
-      (Number.isFinite(createdBy) && visibleIds.includes(createdBy)) ||
-      (Number.isFinite(assignedTo) && visibleIds.includes(assignedTo)) ||
-      (Number.isFinite(assignedTo2) && visibleIds.includes(assignedTo2));
-    if (!inScope) {
-      // Legacy agent-name reach — mirrors the list scope so an old case that
-      // shows in the salesperson's list (matched on sales_agent) also opens.
-      const agent = String((row as any).salesAgent ?? (row as any).sales_agent ?? "")
-        .trim()
-        .toLowerCase();
-      if (agent) {
-        const names = await assrVisibleAgentNames(c);
-        inScope = names === undefined || names.some((n) => agent.includes(n));
-      }
-    }
-    if (!inScope) return c.json({ error: "Not found" }, 404);
+  {
+    const row = (detail as { case?: Record<string, any> }).case ?? (detail as Record<string, any>);
+    if (!(await assrCaseRowInScope(c as any, row))) return c.json({ error: "Not found" }, 404);
   }
   /* Supplier identity is office + supplier-portal only — see
      stripCreditorFields above. */
@@ -1766,7 +1712,7 @@ app.post(
            FROM assr_cases c
            JOIN assr_items i ON i.assr_id = c.id
           WHERE c.archived_at IS NULL
-            AND (c.stage IS NULL OR c.stage <> 'completed')
+            AND ${assrOpenStageSql("c")}
             AND c.doc_no = ?
             AND i.item_code IN (${placeholders})${assrCompanySql(c, "c.company_id")}`,
       )
@@ -2164,6 +2110,8 @@ async function setArchived(
 }
 
 // Case — archive/unarchive. Manager-level (service_cases.manage).
+// No predicate here BY DESIGN: the path is /<numeric id>/archive, so
+// enforceCaseScope has already run caseInCallerScope — company AND row scope.
 app.post("/:id/archive", requirePermission("service_cases.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -2333,8 +2281,8 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     `SELECT
         COUNT(*) as total,
         SUM(CASE WHEN stage = 'completed' THEN 1 ELSE 0 END) as closed,
-        SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) as open_count,
-        SUM(CASE WHEN stage != 'completed' AND deadline_at IS NOT NULL
+        SUM(CASE WHEN ${assrOpenStageSql()} THEN 1 ELSE 0 END) as open_count,
+        SUM(CASE WHEN ${assrOpenStageSql()} AND deadline_at IS NOT NULL
                   AND datetime('now') > deadline_at THEN 1 ELSE 0 END) as breached,
         SUM(CASE WHEN quality_review_passed = 1 THEN 1 ELSE 0 END) as qa_passed,
         AVG(CASE WHEN stage = 'completed' AND closed_at IS NOT NULL
@@ -2378,7 +2326,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .all();
 
   // Case Duration buckets — mirrors the legacy Excel "Case Duration"
-  // tile. All counts are *open* cases (stage != 'completed') bucketed by
+  // tile. All counts are *open* cases (${assrOpenStageSql()}) bucketed by
   // age since complaint date. The buckets are non-overlapping so the
   // sum + still-younger-than-2wks == opening_count.
   //
@@ -2386,17 +2334,17 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // (matching the Excel formula `monthly_case/month (last 4 month data)`).
   const caseDuration = await c.env.DB.prepare(
     `SELECT
-        SUM(CASE WHEN stage != 'completed' THEN 1 ELSE 0 END) AS opening_count,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN ${assrOpenStageSql()} THEN 1 ELSE 0 END) AS opening_count,
+        SUM(CASE WHEN ${assrOpenStageSql()}
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 30
                  THEN 1 ELSE 0 END) AS over_1_month,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN ${assrOpenStageSql()}
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 21
                   AND julianday('now') - julianday(complained_date) < 30
                  THEN 1 ELSE 0 END) AS over_3_weeks,
-        SUM(CASE WHEN stage != 'completed'
+        SUM(CASE WHEN ${assrOpenStageSql()}
                   AND complained_date IS NOT NULL
                   AND julianday('now') - julianday(complained_date) >= 14
                   AND julianday('now') - julianday(complained_date) < 21
@@ -2471,7 +2419,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
             cr.company_name as name,
             COUNT(DISTINCT a.id) as total_cases,
             SUM(CASE WHEN a.stage = 'completed' THEN 1 ELSE 0 END) as closed_cases,
-            SUM(CASE WHEN a.stage != 'completed' AND a.deadline_at IS NOT NULL
+            SUM(CASE WHEN ${assrOpenStageSql("a")} AND a.deadline_at IS NOT NULL
                       AND datetime('now') > a.deadline_at THEN 1 ELSE 0 END) as breached,
             AVG(CASE WHEN a.satisfaction_rating IS NOT NULL
                       THEN a.satisfaction_rating END) as avg_rating,
@@ -2578,7 +2526,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push("c.stage = 'pending_review'");
       break;
     case "aging":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND julianday('now') - julianday(
               COALESCE(
                 (SELECT MAX(a.created_at)
@@ -2591,13 +2539,13 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
             ) > 3`);
       break;
     case "breach_now":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at`);
       break;
     case "open_now":
     case "opening_count":
-      conds.push("c.stage != 'completed'");
+      conds.push(assrOpenStageSql("c"));
       break;
     case "total_period":
       conds.push(`COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
@@ -2606,7 +2554,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(`c.stage = 'completed' AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
       break;
     case "breach_period":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND c.deadline_at IS NOT NULL
         AND datetime('now') > c.deadline_at
         AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
@@ -2615,18 +2563,18 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
       conds.push(`c.quality_review_passed = 1 AND COALESCE(c.complained_date, c.created_at) >= date('now', '-${sinceDays} days')`);
       break;
     case "over_1_month":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 30`);
       break;
     case "over_3_weeks":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 21
         AND julianday('now') - julianday(c.complained_date) < 30`);
       break;
     case "over_2_weeks":
-      conds.push(`c.stage != 'completed'
+      conds.push(`${assrOpenStageSql("c")}
         AND c.complained_date IS NOT NULL
         AND julianday('now') - julianday(c.complained_date) >= 14
         AND julianday('now') - julianday(c.complained_date) < 21`);

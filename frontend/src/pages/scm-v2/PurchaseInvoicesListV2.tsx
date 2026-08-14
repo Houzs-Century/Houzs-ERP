@@ -37,6 +37,7 @@ import {
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../../vendor/scm/lib/flow-queries";
 import { ListPager } from "../../components/ListPager";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { PullToRefresh } from "../../components/PullToRefresh";
@@ -652,19 +653,25 @@ export function PurchaseInvoicesListV2() {
     cancelled: 0,
   };
 
-  // Money KPIs are summed over the CURRENT page only (paginated contract has no
-  // full-set money sums), so their cards are labelled "on this page".
+  /* The rows the TABLE is showing — the server page minus whatever the
+     per-column funnels hide (owner 2026-08-13, following the Purchase Orders
+     fix). See hooks/useVisibleRows for why summarising the server page put two
+     contradictory numbers on one screen. */
+  const visible = useVisibleRows(rows);
+
+  // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
+  // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let billed = 0;
     let owed = 0;
     let paid = 0;
-    for (const r of rows) {
+    for (const r of visible.rows) {
       billed += totalOf(r);
       owed += outstandingOf(r);
       paid += paidOf(r);
     }
     return { billed, owed, paid };
-  }, [rows]);
+  }, [visible.rows]);
 
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
@@ -1003,11 +1010,16 @@ export function PurchaseInvoicesListV2() {
         </div>
 
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
+          {/* Every tile describes the rows ON SCREEN and says so while a column
+              funnel narrows them (owner 2026-08-13). The count tile switches
+              SOURCE, not just wording: `total` is the server's full match count
+              and contradicts the table the moment a client-side funnel hides
+              part of the page. */}
           <StatCard
             pending={statsPending}
             label="Total PIs"
-            value={total.toLocaleString("en-MY")}
-            subtitle="All matching PIs"
+            value={(visible.filtered ? visible.rows.length : total).toLocaleString("en-MY")}
+            subtitle={visible.filtered ? "Filtered · shown below" : "All matching PIs"}
             rail="bg-primary"
             active
           />
@@ -1015,14 +1027,16 @@ export function PurchaseInvoicesListV2() {
             pending={statsPending}
             label="Billed"
             value={fmtRm(money.billed)}
-            subtitle="Sum on this page"
+            subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
             rail="bg-accent"
           />
           <StatCard
             pending={statsPending}
             label="Owed"
             value={fmtRm(money.owed)}
-            subtitle="Balance owed · on this page"
+            subtitle={
+              visible.filtered ? "Balance owed · filtered" : "Balance owed · on this page"
+            }
             tone="error"
             rail="bg-err"
           />
@@ -1030,7 +1044,7 @@ export function PurchaseInvoicesListV2() {
             pending={statsPending}
             label="Paid"
             value={fmtRm(money.paid)}
-            subtitle="Cash out · on this page"
+            subtitle={visible.filtered ? "Cash out · filtered" : "Cash out · on this page"}
             tone="success"
             rail="bg-synced"
           />
@@ -1109,6 +1123,8 @@ export function PurchaseInvoicesListV2() {
               <DataTable<PiRow>
                 tableId="purchase-invoices-v2"
                 rows={rows}
+                /* Feeds the stat strip so the tiles describe what is on screen. */
+                onFilteredRowsChange={visible.onFilteredRowsChange}
                 loading={listLoading}
                 error={error ? (error as Error).message ?? "Failed to load" : null}
                 columns={columns}

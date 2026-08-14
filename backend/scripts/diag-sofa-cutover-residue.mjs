@@ -71,6 +71,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,6 +82,9 @@ const LIST = process.env.LIST !== "0";
 const CAP = Number(process.env.CAP || 25);
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const modelOf = (code) => { const c = norm(code); const d = c.indexOf("-"); const b = d < 0 ? c : c.slice(0, d); return SOFA_MODEL_ALIAS[b] || b; };
@@ -117,7 +121,10 @@ async function main() {
 
   /* Same two populations as check-sofa-bedframe-completeness.mjs, so section A
      is comparable to its numbers line for line: EVERY sofa/bedframe PO line,
-     and sofa/bedframe SO lines on orders that have been PROCEEDED. */
+     and sofa/bedframe SO lines on orders that have been PROCEEDED.
+     PROCEEDED is read off internal_expected_dd, in step with that script — the
+     Processing Date the UI writes, not the IN_PRODUCTION-only proceeded_at
+     stamp. The two must move together or "line for line" stops being true. */
   const poRows = (await sql`
     SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS po_hdr_id, p.linked_ac_docno AS ac,
            UPPER(COALESCE(p.status::text, '')) AS po_status, COALESCE(p.notes, '') AS po_notes,
@@ -135,7 +142,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
      WHERE h.company_id = ${CO} AND i.item_group IN ('bedframe', 'sofa')
-       AND h.proceeded_at IS NOT NULL
+       AND h.${PDATE} IS NOT NULL
      ORDER BY h.doc_no, i.line_no`).map((r) => ({ ...r }));
 
   /* Sections B/C/D need EVERY sofa/bedframe SO line, proceeded or not, because

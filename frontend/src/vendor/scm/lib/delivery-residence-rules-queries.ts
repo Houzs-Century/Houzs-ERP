@@ -11,6 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type ResidenceRuleRow = {
   id: string;
@@ -70,6 +71,7 @@ export function useUpdateDeliveryResidenceRule() {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: RULES_KEY }),
+    onError: writeFailed,
   });
 }
 

@@ -433,15 +433,16 @@ export function recomputeFromSnapshot(
   /* D4 (Chairman 2026-05-30, Q1) — AUTHORITATIVE selling recompute + drift
      reject. The Master Account store (mfg_products.sell_price_sen, Phase-1
      migration 0109) is the customer-facing selling base; add any director-set
-     selling surcharges (breakdown.unitPriceSen — 0 today). On a catalog line we
+     selling surcharges (`sellingSurchargesSen` below). On a catalog line we
      charge that authoritative price and flag drift > 0.5% so the route returns
      HTTP 400 (CLAUDE.md non-negotiable).
 
        • SOFA is EXCLUDED from this sell_price_sen catalog path — its selling is
          recomputed from per-Model module-SKU prices just below (SOFA-SELLING-
-         PLAN). A sofa we can't price there keeps the operator's manual price.
-       • A line with no sell_price_sen (custom / special order) has no
-         authoritative figure → trust the operator.
+         PLAN), which since 2026-08-11 carries the SAME surcharges. A sofa we
+         can't price there keeps the operator's manual price.
+       • A line with neither sell_price_sen NOR a priced surcharge (custom /
+         special order) has no authoritative figure → trust the operator.
        • A client price of 0 means "not provided" (e.g. the backend SO editor
          couldn't resolve it client-side) → fill the authoritative price, no
          drift (driftThresholdExceeded returns false for client 0 vs server>0). */
@@ -458,8 +459,36 @@ export function recomputeFromSnapshot(
     ? Math.round(pwpBaseSen)
     : null;
   const effectiveBaseSen = pwpBase ?? sellBaseSen;
-  const authoritativeSellingSen = effectiveBaseSen + breakdown.unitPriceSen;
-  const hasAuthoritativeSelling = category !== 'SOFA' && effectiveBaseSen > 0;
+
+  /* Owner 2026-08-11 ("让收费追上成本") — CHARGE the selling surcharges the COST
+     path already books. `computeMfgLinePrice` pins its selling base at 0
+     (Commander 2026-05-29: the product price tables are COST), so this
+     subtraction IS the Σ of the director-authored selling surcharges —
+     specials / divan / leg / total-height — and nothing else. It is the exact
+     mirror of the sofa build's `costSurchargesSen` below, which is why the two
+     sides can no longer disagree about the same add-on. Written as a
+     subtraction rather than as `breakdown.unitPriceSen` so that if the selling
+     base ever stops being 0 this cannot silently start double-charging it. */
+  const sellingSurchargesSen = breakdown.unitPriceSen - breakdown.basePriceSen;
+
+  /* A MIGRATED document must never be re-priced by this engine (owner ruling
+     "A", enforced for the amendment path by #1954). 'including-zero' is the
+     marker the amendment path derives from `linked_ac_docno IS NOT NULL`, and
+     it is load-bearing HERE: 10,856 of 13,909 migrated lines are priced 0, so
+     the `sellingSurchargesSen > 0` arm added below is exactly the arm that
+     would hand those lines a computed price. The final trust overwrite already
+     restores the stored price, but the arm is made structurally inert under the
+     migrated marker as well, so the new behaviour cannot reach them even if a
+     future caller reorders that overwrite. */
+  const isMigratedTrust = trustOperatorSelling === 'including-zero';
+  const chargeableSurchargesSen = isMigratedTrust ? 0 : sellingSurchargesSen;
+
+  const authoritativeSellingSen = effectiveBaseSen + chargeableSurchargesSen;
+  /* A line whose product carries sell_price_sen = 0 used to be exempt from the
+     whole authoritative path, so a priced add-on on it was costed and never
+     charged. A priced surcharge is itself an authoritative figure. */
+  const hasAuthoritativeSelling =
+    category !== 'SOFA' && (effectiveBaseSen > 0 || chargeableSurchargesSen > 0);
 
   /* SOFA-SELLING-PLAN (Chairman 2026-05-31) — a configurator sofa arrives as
      ONE line carrying variants.cells + variants.depth. Recompute its
@@ -583,10 +612,18 @@ export function recomputeFromSnapshot(
       : lineCombos;
     const sofaSellingSen = computeSofaSellingSen(sofaCells as Cell[], sofaDepth, sofaModulePrices, effectiveCombos);
     if (sofaSellingSen > 0) {
-      // Server has authoritative per-Model module SELLING prices for this build,
-      // + the SELLING fabric-tier Δ (migration 0124); the POS adds the same Δ so
-      // the gate matches. Δ = 0 with default data (no tier / no config set).
-      const authoritativeSofaSen = sofaSellingSen + fabricAddonCenti + extraSen;
+      /* Server has authoritative per-Model module SELLING prices for this build,
+         + the SELLING fabric-tier Δ (migration 0124); the POS adds the same Δ so
+         the gate matches. Δ = 0 with default data (no tier / no config set).
+
+         + `chargeableSurchargesSen` (owner 2026-08-11): the sofa build was the
+         one authoritative branch that dropped the line's selling surcharges,
+         while the cost branch above re-adds its own `costSurchargesSen` on top
+         of Σ module costs. A priced sofa special add-on was therefore costed
+         and never charged — it could only ever reduce margin. Σ modules is the
+         BASE here, exactly as Σ module costs is the base there, so the
+         surcharges belong on top of it on both sides. */
+      const authoritativeSofaSen = sofaSellingSen + chargeableSurchargesSen + fabricAddonCenti + extraSen;
       drift = driftThresholdExceeded(manualUnitSelling, authoritativeSofaSen);
       unitToPersistSen = authoritativeSofaSen;
     } else {
@@ -675,7 +712,7 @@ export function recomputeFromSnapshot(
    `.maybeSingle()` below single by construction rather than by luck. */
 
 /** Load a single product row from mfg_products by code, within one company. */
-export async function loadProductByCode(sb: any, code: string, companyId?: number | null): Promise<ProductRowLite | null> {
+export async function loadProductByCode(sb: any, code: string, companyId: number | null | undefined): Promise<ProductRowLite | null> {
   if (!code) return null;
   let q = sb
     .from('mfg_products')
@@ -697,7 +734,7 @@ export async function loadProductByCode(sb: any, code: string, companyId?: numbe
  *  2026-06-06): the SO create path used to issue one product lookup per line and
  *  a 6-item order blew the CF Workers per-request subrequest cap; every per-line
  *  read on that path must stay O(1) in queries. */
-export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>, companyId?: number | null): Promise<Map<string, ProductRowLite>> {
+export async function loadProductsByCodes(sb: any, codes: Array<string | null | undefined>, companyId: number | null | undefined): Promise<Map<string, ProductRowLite>> {
   const uniq = Array.from(new Set(codes.map((c) => (c ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
   let q = sb
@@ -755,7 +792,7 @@ export async function loadModelSofaModulePrices(
   sb: any,
   baseModel: string | null | undefined,
   depth: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
   let q = sb
@@ -788,7 +825,7 @@ export async function loadModelSofaModulePrices(
 export async function loadModelSofaModuleCosts(
   sb: any,
   baseModel: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModulePriceSen | null> {
   if (!baseModel) return null;
   let q = sb
@@ -817,7 +854,7 @@ export async function loadModelSofaModuleCosts(
 export async function loadModelSofaModuleCostRows(
   sb: any,
   baseModel: string | null | undefined,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaModuleCostRowLite[] | null> {
   if (!baseModel) return null;
   let q = sb
@@ -916,7 +953,7 @@ export async function loadFabricSellingTiersByIds(
 }
 
 /** Load the singleton fabric-tier add-on Δ config (whole MYR). Missing → all 0. */
-export async function loadFabricTierAddonConfig(sb: any, companyId?: number | null): Promise<FabricTierAddonConfig> {
+export async function loadFabricTierAddonConfig(sb: any, companyId: number | null | undefined): Promise<FabricTierAddonConfig> {
   // Key by company_id (each company has one row; 2990's is id=100001, not 1).
   // When companyId is unresolved (single-company fallback) read the sole row.
   let q = sb
@@ -1030,8 +1067,13 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 export async function recomputeOneLine(
   sb: any,
   item: MfgItemForRecompute,
-  cachedConfig?: MaintenanceConfig | null,
-  companyId?: number | null,
+  /* Key required, value still nullable — TypeScript forbids a required
+     parameter after an optional one, and `companyId` below is the one that must
+     not be omissible. Passing `null`/`undefined` here keeps the old behaviour
+     (load the config on demand); what is no longer possible is dropping BOTH
+     and silently re-pricing against every company's catalogue. */
+  cachedConfig: MaintenanceConfig | null | undefined,
+  companyId: number | null | undefined,
   opts?: { trustOperatorSelling?: TrustSelling },
 ): Promise<RecomputedLine> {
   const config = cachedConfig ?? await loadMaintenanceConfig(sb);

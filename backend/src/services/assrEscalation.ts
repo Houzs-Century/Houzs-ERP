@@ -1,11 +1,21 @@
 import type { Env } from "../types";
 import { sendEmail, publicUrl } from "./email";
+import { assrOpenStageSql } from "./assrStages";
 
 /**
  * SLA escalation sweep. Marks open cases as "escalated" once they've
- * been past their deadline for more than 24 hours. Two guards:
+ * been past their deadline for more than 24 hours. Three guards:
  *   - only stamps cases that don't already have escalated_at set
- *   - skips closed cases
+ *   - skips CLOSED cases — BOTH terminal stages, via assrOpenStageSql. This used
+ *     to be a hand-written predicate naming only `completed`, which let every
+ *     VOIDED case keep escalating: the cron stamped escalated_at, wrote an
+ *     activity row and emailed the assignee plus every service_cases.manage
+ *     holder about a case somebody had closed precisely so it would stop
+ *     demanding attention. (The literal is not quoted here on purpose —
+ *     `tests/assrOpenStageNoHandCopies.test.ts` bans it from this file.)
+ *   - skips ARCHIVED cases. Archiving is the other way a case leaves the
+ *     workload, and it was not checked either, so an archived case past its
+ *     deadline mailed the same people.
  * Logs each escalation to assr_activity so the timeline shows it.
  *
  * When emails are enabled (RESEND_API_KEY + email.assr_sla_escalation),
@@ -21,7 +31,8 @@ export async function runSlaEscalation(env: Env): Promise<{ escalated: number }>
             u.email as assignee_email, u.name as assignee_name
        FROM assr_cases c
        LEFT JOIN users u ON u.id = c.assigned_to
-      WHERE c.stage != 'completed'
+      WHERE ${assrOpenStageSql("c")}
+        AND c.archived_at IS NULL
         AND c.deadline_at IS NOT NULL
         AND c.escalated_at IS NULL
         AND julianday('now') - julianday(c.deadline_at) >= 1`

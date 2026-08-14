@@ -538,9 +538,16 @@ async function main() {
       SELECT source_doc_type, COUNT(*)::int AS n, COALESCE(SUM(ABS(qty)),0)::numeric AS q
         FROM scm.inventory_movements WHERE source_doc_id = ${d.id}::uuid GROUP BY source_doc_type`;
     log(`     movements referencing this DO by ANY source_doc_type: ${anyMove.length ? anyMove.map((m) => `${m.source_doc_type}=${m.n} (qty ${m.q})`).join(", ") : "NONE"}`);
+    /* qty <> 0 throughout Section D. A line retired under the owner's Option B
+       (docs/migrated-do-duplicate-lines.md) keeps its row and holds quantity 0,
+       so several retired rows on one document GROUP WITH EACH OTHER at 0 and a
+       naive duplicate detector reports the repair as a fresh defect - which is
+       exactly what happened on run 31454888561, where the five zeroed
+       HC-DO-007525 rows came back as "1 document, 4 surplus lines". A zero
+       contributes nothing to any delivered sum; it is not a duplicate. */
     const dl = await sql`
       SELECT item_code, qty, so_item_id::text AS so_item_id, COUNT(*)::int AS copies
-        FROM scm.delivery_order_items WHERE delivery_order_id = ${d.id}::uuid
+        FROM scm.delivery_order_items WHERE delivery_order_id = ${d.id}::uuid AND qty <> 0
        GROUP BY item_code, qty, so_item_id HAVING COUNT(*) > 1`;
     for (const x of dl) log(`     EXACT-DUPLICATE line: ${x.item_code} qty=${x.qty} x${x.copies} copies (so_item_id ${x.so_item_id ? x.so_item_id.slice(0, 8) : "NULL"})`);
   }
@@ -549,7 +556,7 @@ async function main() {
     SELECT d.migrated_no_stock AS mig, COUNT(DISTINCT d.id)::int AS docs, SUM(t.extra)::int AS extra_lines
       FROM scm.delivery_orders d
       JOIN (SELECT delivery_order_id, item_code, qty, so_item_id, COUNT(*) - 1 AS extra
-              FROM scm.delivery_order_items
+              FROM scm.delivery_order_items WHERE qty <> 0
              GROUP BY delivery_order_id, item_code, qty, so_item_id HAVING COUNT(*) > 1) t
         ON t.delivery_order_id = d.id
      WHERE d.company_id = 1 GROUP BY d.migrated_no_stock`;
@@ -561,7 +568,7 @@ async function main() {
     SELECT COUNT(*)::int AS n
       FROM scm.inventory_movements m
      WHERE m.source_doc_type = 'DO' AND m.source_doc_id IN (
-       SELECT DISTINCT delivery_order_id FROM scm.delivery_order_items
+       SELECT DISTINCT delivery_order_id FROM scm.delivery_order_items WHERE qty <> 0
         GROUP BY delivery_order_id, item_code, qty, so_item_id HAVING COUNT(*) > 1)`;
   log(`  inventory movements posted by ANY duplicated-line DO: ${dupMoves[0].n}`);
 
@@ -579,7 +586,7 @@ async function main() {
       JOIN (SELECT delivery_order_id, item_code, qty, so_item_id,
                    COUNT(*)::int AS copies,
                    ARRAY_AGG(id::text ORDER BY id) AS ids
-              FROM scm.delivery_order_items
+              FROM scm.delivery_order_items WHERE qty <> 0
              GROUP BY delivery_order_id, item_code, qty, so_item_id
             HAVING COUNT(*) > 1) t ON t.delivery_order_id = d.id
      WHERE d.company_id = ${1}

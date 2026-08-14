@@ -700,7 +700,16 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
             uhs1.name as setup_helper_1_name,
             uhs2.name as setup_helper_2_name,
             uhd1.name as dismantle_helper_1_name,
-            uhd2.name as dismantle_helper_2_name
+            uhd2.name as dismantle_helper_2_name,
+            -- Crew phone numbers (owner 2026-08-12): the printed Event Summary
+            -- lists each driver / helper with their contact, so the sheet is
+            -- usable on site without opening the ERP.
+            ud1.phone as setup_driver_phone,
+            ud2.phone as dismantle_driver_phone,
+            uhs1.phone as setup_helper_1_phone,
+            uhs2.phone as setup_helper_2_phone,
+            uhd1.phone as dismantle_helper_1_phone,
+            uhd2.phone as dismantle_helper_2_phone
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN users u1 ON u1.id = p.created_by
@@ -1367,6 +1376,12 @@ export interface ListProjectsFilters {
    *  timeline entry is neither 'done' nor 'replace' — i.e. a fresh upload the
    *  reviewer has not triaged yet. Not a checklist item; own predicate. */
   pending_defect_review?: boolean;
+  /** Two-warehouse defect-review split (owner 2026-08-11). The canonical states
+   *  that route to Nancy (Ops Exec); Shukor takes everything else. With
+   *  `pending_defect_review_exclude` the arm keeps projects whose state is NOT
+   *  in this list (Shukor); without it, only those in the list (Nancy). */
+  pending_defect_review_states?: string[];
+  pending_defect_review_exclude?: boolean;
   /** Multi-company (mig-pg 0093): the ACTIVE company (activeCompanyId(c)).
    *  When set the list is isolated to that company; undefined (company
    *  context unresolved — pre-migration / D1 test mirror) = no predicate. */
@@ -1599,12 +1614,16 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // sets status='done', which already drops it everywhere. No binds.
   const NOT_IN_REVIEW = `COALESCE(pc.review_status, '') NOT IN ('pending_review', 'amended')`;
   if (f.pending_label === "PURCHASER") {
-    // Purchaser staging (owner 2026-07-21):
-    //   - Stock Out Transfer Record unlocks once the Display Floor Plan is done.
-    //   - Exchange List + Stock In Transfer Record unlock once ANY Defect List
-    //     (Setup/Dismantle pair since 2026-07-29) is done OR has an upload —
-    //     sales/drivers complete by uploading, and the owner wants the
-    //     purchaser chasing replacements as soon as defects are filed.
+    // Purchaser staging:
+    //   - Stock Out Transfer Record unlocks once the Display Floor Plan is done
+    //     (owner 2026-07-21).
+    //   - Exchange List + Stock In Transfer Record now surface on their OWN due
+    //     date for EVERY event (owner 2026-08-11) — no longer gated on a defect
+    //     first existing. So at the end of each event the purchaser (Sim/Farra)
+    //     sees both; they click N/A when none is needed, or upload/complete the
+    //     task. Until one of those, the item stays 'pending' and keeps showing
+    //     here. (Uploading a reviewable doc auto-submits it, so NOT_IN_REVIEW
+    //     then drops it to the approver — it leaves the purchaser lane either way.)
     //   - Every other PURCHASER task surfaces on its own due date.
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
@@ -1617,15 +1636,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                        OR EXISTS (SELECT 1 FROM project_checklist fp
                                    WHERE fp.project_id = p.id
                                      AND fp.title = 'Display Floor Plan'
-                                     AND (fp.status = 'done' OR fp.review_status = 'approved')))
-                  AND (pc.title NOT IN ('Exchange List', 'Stock In Transfer Record')
-                       OR EXISTS (SELECT 1 FROM project_checklist dl
-                                   WHERE dl.project_id = p.id
-                                     AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
-                                     AND (dl.status = 'done' OR dl.review_status = 'approved'
-                                          OR EXISTS (SELECT 1 FROM project_checklist_attachments da
-                                                      WHERE da.item_id = dl.id
-                                                        AND da.archived_at IS NULL)))))`
+                                     AND (fp.status = 'done' OR fp.review_status = 'approved'))))`
     );
     pendingBinds.push(dueToday);
     // Defect ACTIONING (owner 2026-07-29; two-stage 2026-08-07): a defect-list
@@ -1676,8 +1687,17 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
       d.setUTCDate(d.getUTCDate() - 30);
       return d.toISOString().slice(0, 10);
     })();
+    // Region routing (owner 2026-08-11): Nancy sees only the region states,
+    // Shukor everything else — including projects with a NULL/blank state.
+    const stateBinds = f.pending_defect_review_states ?? [];
+    const statePh = stateBinds.map(() => "?").join(",");
+    const stateClause = stateBinds.length
+      ? f.pending_defect_review_exclude
+        ? ` AND (p.state IS NULL OR p.state NOT IN (${statePh}))`
+        : ` AND p.state IN (${statePh})`
+      : "";
     pendingOr.push(
-      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
+      `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?${stateClause}
         AND EXISTS (SELECT 1 FROM project_checklist dl
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
@@ -1688,7 +1708,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                                  WHERE act.attachment_id = da.id
                                  ORDER BY act.id DESC LIMIT 1), '') NOT IN ('done', 'replace')))`
     );
-    pendingBinds.push(reviewSince);
+    pendingBinds.push(reviewSince, ...stateBinds);
   }
   if (f.pending_title) {
     pendingOr.push(
@@ -2120,6 +2140,19 @@ export async function patchFinance(
     }
   }
   if (!sets.length) return false;
+  // UPSERT (owner 2026-08-12 "why i cant save?"): this was UPDATE-only, so a
+  // project with NO project_finance row could never be given a Total Sales or
+  // rental — the UPDATE matched 0 rows, `changes > 0` was false and the route
+  // answered 400 "No changes", which reads as "nothing to save" rather than
+  // "there was nowhere to save it". 368 live projects were in that state (rows
+  // are created with the project, so copies/imports that skipped it were
+  // silently unwritable). Create the row first, then update it.
+  await env.DB.prepare(
+    `INSERT INTO project_finance (project_id)
+     SELECT ? WHERE NOT EXISTS (SELECT 1 FROM project_finance WHERE project_id = ?)`
+  )
+    .bind(projectId, projectId)
+    .run();
   sets.push("updated_at = datetime('now')", "updated_by = ?");
   binds.push(userId, projectId);
   const r = await env.DB.prepare(

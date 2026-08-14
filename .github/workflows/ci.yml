@@ -46,6 +46,13 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The release-discipline ratchet compares the grandfather ledger to
+          # the one at the merge base, and `git merge-base` needs the history
+          # to reach one. With depth 1 it cannot, and the step below FAILS
+          # rather than quietly skipping — a ratchet that cannot see its
+          # baseline is not a ratchet.
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -59,14 +66,160 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
+      # The AutoCount write-back composes against two GENERATED files: the
+      # cutover item map (D10) and the real Desc2 sofa corpus the collapse tests
+      # run on (D9). Both are compiled from backend/scripts/data/ because the
+      # backend suite runs in workerd and cannot read the filesystem. Refreshing
+      # an export without regenerating them would leave the composer resolving
+      # against last month's account book while the suite stayed green.
+      - run: npm run audit:ac-item-map
+      - run: npm run audit:ac-sofa-corpus
+      # ── The three defect-class checks (2026-08-13) ────────────────────────
+      # Each exists because the same class kept coming back. They are PR gates,
+      # NEVER deploy gates: audit:routes as a deploy gate jammed production
+      # twice, and a check that can block a release is a check someone disables.
+      #
+      # --strict fails on the HEADLINE bucket only, on purpose:
+      #   company-scope   -> WRITE findings (read-side ones are listed, not gated)
+      #   silent-mutations-> SILENT (CAUGHT and UNRESOLVED are listed, not gated)
+      #   shared-mirrors  -> DIVERGED (COSMETIC and NO-OVERLAP are listed)
+      # Gating on the raw counts would fail on legitimate code and get switched
+      # off, which is how the previous generation of checks died.
+      #
+      # No `npm ci` needed for the frontend one: all three are dependency-free
+      # (node:fs / node:path only) so they run before any install.
+      # company-scope IS --strict now. It was report-only from 2026-08-13, when
+      # correcting the checker (it had counted a helper NAME appearing anywhere
+      # in a handler as scoping) took the honest count from 0 to 20 unscoped
+      # writes and gating would have failed every PR on a backlog nobody had
+      # judged yet. That backlog is judged: 0 WRITE findings over 1019 handlers,
+      # every one either fixed or read and annotated. Gating it now is what
+      # stops the twentieth from coming back.
+      - run: node scripts/check-company-scope.mjs --strict
+      - run: node scripts/check-shared-mirrors.mjs --strict
+      - run: node ../frontend/scripts/check-silent-mutations.mjs --strict
+      # docs-drift is the fourth: the docs make CHECKABLE claims (file paths,
+      # migration numbers, permission keys, npm scripts) and this repo has a
+      # documented history of those rotting unnoticed for months. --strict gates
+      # on its CERTAIN half only; the advisory half (line numbers, key-shaped
+      # prose) is printed and never fails a PR.
+      - run: node scripts/check-docs-drift.mjs --strict
+      # The fifth: a document conversion never crosses a company. Eleven
+      # conversions existed and SEVEN were unguarded, because the rule was
+      # written three different ways under three different names and nothing
+      # could tell guarded from unguarded. One primitive now
+      # (crossCompanySourceRefusal), and this asserts every conversion route
+      # reaches it. That is the part that survives the session.
+      - run: node scripts/check-conversion-guards.mjs --strict
+      # The sixth, and the only one that is not a bug in a checker but a SHAPE
+      # no checker was built for: a 200 that CARRIES a failure. These mutations
+      # RESOLVE — no exception, onError never fires — and the ledger's failure
+      # rides in the body as movementErrors / cancelErrors / reversalErrors. Eight
+      # route files produced movementErrors and three frontend files read it;
+      # cancelErrors and reversalErrors had ZERO readers, one of them a field
+      # THIS branch had just started emitting, which made that fix half a feature.
+      - run: node ../frontend/scripts/check-inband-failures.mjs --strict
+
+
+      # ---- the bug-class gates (docs/bug-classes.md) ------------------------
+      # Each one below replaces a rule that lived in prose and was reproduced
+      # anyway. They are filesystem-only, need no database, and together add a
+      # few seconds to a job that already spends 26s on typecheck alone.
+      #
+      # A pre-serialized value bound to a json/jsonb parameter. Six occurrences
+      # in 15 days, one COE, 22 hand-written warnings in backend/ — and two live
+      # violations still on main when this was added, one of them written by the
+      # repair script for the damage. docs/jsonb-double-encoding-coe.md.
+      - run: npm run audit:jsonb-binds
+      # A read whose failure is discarded (`const { data }` with no `error`,
+      # `.catch(() => {})`). Ratchet, not ban: 954 sites predate it. It is here
+      # because the class GREW from 785 to 954 in the four weeks after it was
+      # declared fixed, and nothing counted.
+      - run: npm run audit:swallowed-reads
+      # A parameter that decides — companyId, itemCode, soItemId, the
+      # idempotency key — declared `?:`, so omitting it is spelled the same as
+      # having nothing to say. Seven recorded occurrences.
+      - run: npm run audit:decision-params
+      # Every generator whose output is committed still RUNS. The codebase map
+      # generator crashed silently for three weeks (2026-08-12) and the map
+      # rotted while every dashboard stayed green.
+      - run: npm run audit:generators
+      # Searched columns have trigram indexes. Wired here and NOT in either
+      # deploy workflow, deliberately: this check is a static approximation and
+      # a false positive must cost a conversation, never a deploy. Until
+      # 2026-08-13 both of its exit paths were exit 0 and it was in no workflow
+      # at all — it could not fail, and nobody ran it.
+      - run: npm run audit:trgm
+
+      # tests/generated/ is the collapsed baseline+migrations that
+      # tests/setup.ts applies instead of replaying the history per test file.
+      # A migration merged without regenerating it would leave the whole suite
+      # asserting against a schema production does not have — green, and
+      # meaningless. Cheap (~2s) and it belongs here, in the job that fails
+      # fastest.
+      - run: npm run audit:test-schema
+      # RUN EXPLICITLY, do not rely on `pretest`. This suite is wired as
+      # `pretest` in package.json, which npm fires for `npm test` and for nothing
+      # else — and since the light/workers split this job runs `test:light` while
+      # backend-tests runs `test:workers`, so `npm test` is never invoked in
+      # backend CI at all. The only one left in this workflow belongs to the
+      # FRONTEND job.
+      #
+      # TWO SESSIONS FOUND THIS INDEPENDENTLY ON THE SAME AFTERNOON, which is the
+      # measure of how invisible it was. For one afternoon these ~100 checks
+      # silently stopped running — and two of them were ALREADY FAILING against
+      # changes made in the same PR that stopped them. Among the orphaned: the
+      # route-drift gate, the PostgREST shim contract, and the ASSR /bulk scope
+      # guard.
+      #
+      # Same class this repo keeps finding: a check that cannot run reports
+      # nothing, and reads as a pass. Named explicitly so a future rename of the
+      # test script cannot orphan them again silently. ~0.4s.
+      - run: npm run test:scale-contract
+
+      # The two artefacts a revert cannot undo: a migration, which pg-migrate
+      # applies to prod on the next push to main and records by filename AND
+      # CHECKSUM, verifying every already-applied file on each run (checked in
+      # backend/scripts/pg-migrate.mjs, 2026-08-14) - so an applied migration
+      # cannot be edited at all, not even to add a comment,
+      # and a repair script that has already run. The gate is a RATCHET —
+      # today's tree is grandfathered in
+      # backend/scripts/release-discipline-grandfathered.json, a NEW script
+      # must comply, and the grandfathered count prints on every run.
+      #
+      # Its own logic is tested by node:test, which neither vitest project
+      # collects, so it is run explicitly here. A checker nobody runs is not a
+      # checker.
+      - run: npm run test:release-discipline
+      - run: npm run audit:release-discipline
+      # The no-growth half. Separate step so a git-plumbing failure is
+      # obviously not a discipline failure, and so the gate above still stands
+      # if this one ever has to be looked at.
+      #
+      # On a `pull_request` event the checkout is the MERGE with main, so
+      # `merge-base HEAD FETCH_HEAD` resolves to main's tip — the list this
+      # change is actually adding to. If main shrinks the list while a branch is
+      # open, the branch has to update before its own entries stop looking new;
+      # the ruleset already requires branches to be up to date to merge.
+      - name: The grandfather list may only shrink
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          npm run audit:release-discipline -- --ratchet-against FETCH_HEAD
       - run: npm run typecheck
+      # The 221-file pure-logic suite. It lives here, in the job that already
+      # finishes in about a minute, because it takes ~7 SECONDS — it used to be
+      # spread across the four workerd shards below at ~1.76s of startup per
+      # file. Not sharded: sharding 7s of work across runners costs more in
+      # checkout than it saves.
+      - run: npm run test:light
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
-  # workerd worker (`singleWorker: true` in backend/vitest.config.ts). That is
+  # workerd worker (`singleWorker: true` in backend/vitest.config.mts). That is
   # deliberate and load-bearing: at full concurrency this pool collapses with
   # 50-65 of 66 files "failing", ZERO AssertionErrors, and 100+ `[vitest-worker]:
   # Timeout calling "onTaskUpdate"` — the worker cannot reach the main thread.
-  # See the long comment in vitest.config.ts. Do NOT speed this up by raising
+  # See the long comment in vitest.config.mts. Do NOT speed this up by raising
   # in-process parallelism; that is the exact thing that breaks it.
   #
   # So we shard across SEPARATE RUNNERS instead. `--shard=i/n` slices the
@@ -75,14 +228,27 @@ jobs:
   # worker at the same concurrency it uses today. Nothing about the pool config
   # changes; there are just fewer files per pool.
   #
-  # Why 4: per-shard cost is ~28s fixed (checkout + setup-node + cached npm ci)
-  # plus 334s/N of tests. N=2 -> 3m17s, N=3 -> 2m21s, N=4 -> 1m54s,
-  # N=6 -> 1m26s. Going 3->4 buys 27s for one more runner; 4->6 buys only 28s
-  # more for two more runners, by which point fixed overhead is a third of the
-  # job. 4 is the knee, and 112/4 = 28 files per shard exactly.
+  # Why 4 — ORIGINAL sizing, against a 112-file / 334s suite: per-shard cost is
+  # ~28s fixed (checkout + setup-node + cached npm ci) plus 334s/N of tests.
+  # N=2 -> 3m17s, N=3 -> 2m21s, N=4 -> 1m54s, N=6 -> 1m26s. 4 was the knee, and
+  # 112/4 = 28 files per shard exactly.
+  #
+  # THAT SIZING IS STALE — as of 2026-08-13 the suite is 277 files and one
+  # shard runs ~380s, not the ~114s budgeted above. Read the numbers above as
+  # history, not as the current shape, and re-measure before reasoning from
+  # them. Two things that look obvious here are not:
+  #
+  #   - Shard count does NOT free runner slots. 4x440s and 2x880s occupy the
+  #     same runner-seconds; sharding trades latency for slots at fixed total
+  #     cost, so cutting it does nothing for a saturated pool.
+  #   - The cost is NOT the SQL. Measured inside the pool, the old per-file
+  #     migration replay was 391ms of a ~2s/file setup; the rest is workerd
+  #     startup, paid 277 times because vitest.config.mts runs files serially.
+  #
+  # Full working: docs/ci-capacity-coe.md.
   #
   # Sharding is by file-path hash, not by measured duration, so the slowest
-  # shard runs somewhat above the 84s mean. Budget ~2-2.5min wall.
+  # shard runs somewhat above the mean.
   backend-tests:
     runs-on: ubuntu-latest
     strategy:
@@ -93,7 +259,14 @@ jobs:
       # `backend` roll-up below still fails if any shard fails.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        # 2, not 4. This job now runs ONLY the files that need the Workers
+        # runtime — 44 of the 265 that used to be here, ~99s in total — because
+        # the other 221 moved to `test:light` in backend-typecheck above. Two
+        # shards put each at ~50s, which is already below the fixed
+        # checkout+install overhead; a third would buy seconds and cost a slot
+        # the account does not have (see docs/ci-capacity-coe.md on the 20-job
+        # ceiling).
+        shard: [1, 2]
     defaults:
       run:
         working-directory: backend
@@ -107,7 +280,12 @@ jobs:
       - run: npm ci
       # job-total is the matrix size, so the shard count follows the matrix
       # automatically and index/count can never drift apart.
-      - run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+      # `test:workers`, not `test`. `npm test` now runs the light suite AND the
+      # workers suite, and `npm test -- --shard=...` appends the flag to the
+      # LAST command only — so every shard would re-run all 221 light files to
+      # shard the 44 workers ones. Same append trap documented for `pretest` in
+      # docs/SCALE-PERFORMANCE-HARNESS.md, one script along.
+      - run: npm run test:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
   # Roll-up so the backend gate keeps ONE stable check name. Before this PR the
   # required-looking check was `backend`; after the split the real work lives in
@@ -135,7 +313,16 @@ jobs:
     # The full 100k evidence run is deliberately PR-only. GitHub emits both a
     # push and pull_request event for an open branch; running this job twice
     # would spend twice the time without adding an independent environment.
-    if: github.event_name == 'pull_request'
+    #
+    # `merge_group` is included because the merge queue is the tree that
+    # actually reaches main, and a queue whose gate is weaker than the PR gate
+    # is worse than no queue: it would let a change through on evidence
+    # gathered against a different tree. Without this line the job simply never
+    # runs once the queue is switched on — silently, since a job that does not
+    # run reports nothing. See docs/ci-capacity-coe.md.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -216,7 +403,45 @@ jobs:
       - run: npm ci
       - run: npm run test:pg
 
-  frontend:
+  # The frontend gate, split three ways.
+  #
+  # It used to be ONE job doing everything in series, and once backend-tests
+  # dropped from ~380s to ~141s it became the slowest job in the run — which
+  # means it became the number that decides how long a PR waits. Measured
+  # 2026-08-13 on run 31711430092: build 86s, typecheck 68s, test 66s,
+  # playwright install 27s, perf-local 14s, merge-base rebuild 8s, everything
+  # else under 5s. ~285s of wall clock, all of it serial, none of it dependent
+  # on the step before it except through `tsc`.
+  #
+  # Split, the critical path is the LONGEST of the three rather than their sum.
+  # `frontend` stays as a roll-up so the required status check keeps its name —
+  # same pattern as `backend` above, and for the same reason.
+  frontend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check:test-focus
+      - run: npm run typecheck
+      - run: npm test
+      # Zero-dependency node:test checks for the two gate scripts' own logic.
+      # Not part of `npm test` (vitest only collects src/**), so they are run
+      # explicitly here — a checker nobody runs is not a checker.
+      - run: node --test scripts/check-bundle-verdict.mjs
+      # `tsc --noEmit` against this tsconfig ("files": [] + references) resolves
+      # zero inputs and exits 0 on a tree full of type errors. The typecheck
+      # script above was exactly that until 2026-08-01. Pin the shape.
+      - run: node --test scripts/check-typecheck-gate.test.mjs
+
+  frontend-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -235,32 +460,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run check:test-focus
-      - run: npm run typecheck
-      - run: npm test
-      # Zero-dependency node:test checks for the two gate scripts' own logic.
-      # Not part of `npm test` (vitest only collects src/**), so they are run
-      # explicitly here — a checker nobody runs is not a checker.
-      - run: node --test scripts/check-bundle-verdict.mjs
-      - run: npm run build
-
-      # Build the MERGE BASE and measure it, so the budget gate can report this
-      # change's own growth instead of an absolute total that main can exhaust
-      # on an unrelated PR's behalf.
-      #
-      # On a `pull_request` event GitHub builds the MERGE with main, so the PR
-      # inherits whatever main's bundle currently is. Without this baseline the
-      # gate fails whichever PR happens to run after main spends the budget —
-      # on 2026-07-21 that was a DOCS-ONLY PR (#873, `docs/mockups/pdf/*`, zero
-      # source files) failing by 0.1 KB. See frontend/scripts/lib/bundle-verdict.mjs.
-      #
-      # `merge-base HEAD origin/main` is right for both triggers: on the PR
-      # merge ref it resolves to main's tip (the thing the merge added to), and
-      # on a branch push it resolves to where the branch left main.
-      #
-      # continue-on-error: a baseline is an improvement to the report, never a
-      # new way to fail. If this step cannot produce numbers the gate falls back
-      # to absolute ceilings and SAYS SO in its output.
+      # `npx vite build`, NOT `npm run build`. That script is `tsc -b && vite
+      # build`, and `tsc -b` is exactly what frontend-checks already ran — in
+      # one job the second call was free because the build info was cached, but
+      # on a separate runner it is a full 68s re-typecheck for no extra gate.
+      # A type error still fails the run, it just fails in frontend-checks.
+      - run: npx vite build
       - name: Measure the merge base (bundle baseline)
         id: bundle-baseline
         continue-on-error: true
@@ -294,18 +499,98 @@ jobs:
       # Fail the build if THIS CHANGE made the bundle materially heavier (see
       # the script for the rules + rationale). Cheap, and the thing that
       # actually keeps first paint fast.
+      # Fail the build if THIS CHANGE made the bundle materially heavier (see
+      # the script for the rules + rationale). Cheap, and the thing that
+      # actually keeps first paint fast.
       - run: node scripts/check-bundle-size.mjs --baseline /tmp/bundle-baseline.json
       # Exercise the emitted service worker, including stale-chunk and offline
       # shell behavior. This catches deploy-cache regressions without relying on
       # flaky wall-clock or an external environment.
       - run: npm run check:sw
       - run: npm run test:smoke-script
+
+  frontend-perf:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
       # Non-skippable local Chromium proof for 10k list geometry/search state.
       # This suite starts its own Vite lab and never depends on staging data,
       # credentials, network timing, or optional environment variables.
       - run: npm run typecheck:perf-local
+      # The browser is ~27s of download on every run and changes only when the
+      # Playwright dependency does, so it is keyed on the lockfile.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
       - run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # `--with-deps` installs OS packages too, and those are NOT in the cached
+      # directory, so a cache hit still needs the system half.
+      - run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
       - run: npm run test:perf-local
+
+  # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
+  # dependencies — so adding it costs the queue a few seconds, not a runner
+  # slot's worth of install. See scripts/lib/file-size-ratchet.mjs for the rules.
+  #
+  # This does NOT try to split the 39 files already over 2,000 lines. It records
+  # what each one already is and refuses to let it grow, so the problem stops
+  # getting worse while the refactors happen (or do not) on their own schedule.
+  file-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The "ceilings may only fall" check reads the manifest as it exists on
+          # the MERGE BASE. Without history there is no merge base, the check
+          # cannot run, and --require-base below turns that into a visible
+          # failure instead of a quiet downgrade.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # actions/checkout leaves no remote-tracking ref for main on a PR run, and
+      # the gate resolves its base as `origin/main`. Create it explicitly rather
+      # than relying on a default that has changed between checkout majors.
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - run: node --test scripts/check-file-size-ratchet.mjs
+      # --require-base: if the merge base cannot be resolved the gate FAILS
+      # rather than passing with the ratchet half-disabled.
+      - run: node scripts/check-file-size.mjs --require-base
+
+  # Roll-up so the required status check keeps the name `frontend`. Branch
+  # protection lists `frontend` by name; without this the split would make the
+  # required check disappear and NO pull request could ever merge again.
+  #
+  # `if: always()` plus explicit result assertions, for the reason spelled out
+  # on the `backend` roll-up: a skipped check is not a failed check.
+  frontend:
+    needs: [frontend-checks, frontend-build, frontend-perf]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert all frontend jobs succeeded
+        run: |
+          echo "frontend-checks: ${{ needs.frontend-checks.result }}"
+          echo "frontend-build:  ${{ needs.frontend-build.result }}"
+          echo "frontend-perf:   ${{ needs.frontend-perf.result }}"
+          [ "${{ needs.frontend-checks.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-build.result }}" = "success" ] || exit 1
+          [ "${{ needs.frontend-perf.result }}" = "success" ] || exit 1
 
   e2e-contract:
     runs-on: ubuntu-latest

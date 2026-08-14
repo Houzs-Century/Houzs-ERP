@@ -11,6 +11,8 @@
 // Positive deltas insert stock (trigger creates lots at the given cost).
 // Negative deltas are REPORT-ONLY unless NEG=1 (they consume FIFO lots).
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: inert by construction. It writes delta = AutoCount balance MINUS ERP on-hand, so once the two agree the delta is zero and no movement is written.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";

@@ -1440,10 +1440,13 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         Only the SO-route batching page (SalesOrderNew) sets
                         slipUpload; DO / SI / consignment pages do NOT, so their
                         tables render no uploader (the endpoint doesn't accept
-                        one). Required-marked ("Slip *") when rendered here. */}
+                        one). NOT required-marked: the slip is optional on the
+                        new-SO path too (Owner 2026-08-13), so the asterisk went
+                        with the rule — the SAVED-mode uploader above has never
+                        carried one since 2026-07-13. */}
                     {!isSaved && (props as DraftModeProps).slipUpload && (
                       <SlipUploadField
-                        required
+                        required={false}
                         disabled={locked}
                         onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                         onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}

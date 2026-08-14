@@ -45,7 +45,7 @@ describe('resolveExpectedBatchBySoItem — H1 dead-PO filter', () => {
       purchase_order_items: [poi('so-1', 'po-1', '2026-06-01')],
       purchase_orders: [po('po-1', 'PO-2606-001', 'CANCELLED')],
     });
-    const out = await resolveExpectedBatchBySoItem(sb, ['so-1']);
+    const out = await resolveExpectedBatchBySoItem(sb, ['so-1'], { onMultiPo: 'latest' });
     expect(out.has('so-1')).toBe(false);
   });
 
@@ -54,7 +54,7 @@ describe('resolveExpectedBatchBySoItem — H1 dead-PO filter', () => {
       purchase_order_items: [poi('so-1', 'po-1', '2026-06-01')],
       purchase_orders: [po('po-1', 'PO-2606-001', 'DRAFT')],
     });
-    const out = await resolveExpectedBatchBySoItem(sb, ['so-1']);
+    const out = await resolveExpectedBatchBySoItem(sb, ['so-1'], { onMultiPo: 'latest' });
     expect(out.has('so-1')).toBe(false);
   });
 
@@ -63,7 +63,7 @@ describe('resolveExpectedBatchBySoItem — H1 dead-PO filter', () => {
       purchase_order_items: [poi('so-1', 'po-1', '2026-06-01')],
       purchase_orders: [po('po-1', 'PO-2606-001', 'SUBMITTED', '2026-07-20')],
     });
-    const out = await resolveExpectedBatchBySoItem(sb, ['so-1']);
+    const out = await resolveExpectedBatchBySoItem(sb, ['so-1'], { onMultiPo: 'latest' });
     expect(out.get('so-1')).toEqual({ poNumber: 'PO-2606-001', eta: '2026-07-20' });
   });
 
@@ -80,7 +80,7 @@ describe('resolveExpectedBatchBySoItem — H1 dead-PO filter', () => {
         po('po-dead', 'PO-2606-002', 'CANCELLED'),
       ],
     });
-    const out = await resolveExpectedBatchBySoItem(sb, ['so-1']);
+    const out = await resolveExpectedBatchBySoItem(sb, ['so-1'], { onMultiPo: 'latest' });
     expect(out.get('so-1')?.poNumber).toBe('PO-2606-001');
     expect(out.get('so-1')?.multiPo).toBeUndefined();
   });
@@ -98,14 +98,38 @@ describe('resolveExpectedBatchBySoItem — H3 multi-live-PO', () => {
     ],
   };
 
-  test("default ('latest', movement paths) stays deterministic — most recent live PO", async () => {
-    const out = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1']);
+  test("'latest' (movement paths) stays deterministic — most recent live PO", async () => {
+    const out = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'latest' });
     expect(out.get('so-1')?.poNumber).toBe('PO-2606-002');
   });
 
   test("'block' (guard/offer paths) refuses to pick — poNumber null + multiPo", async () => {
     const out = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'block' });
     expect(out.get('so-1')).toEqual({ poNumber: null, eta: null, multiPo: true });
+  });
+
+  /* The mode is REQUIRED — omitting it used to mean 'latest', so H3 (refuse an
+     ambiguous batch) applied only to the callers that opted in. These two tests
+     are what fails without the parameter: the modes disagree on the SAME
+     fixture, so no default can be right for both, and the directive below stops
+     being used the moment the parameter goes back to optional
+     (optional-param-noop sweep 2026-08-13). */
+  test('the two modes disagree on the same line — so neither can be a silent default', async () => {
+    const latest = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'latest' });
+    const block = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'block' });
+    expect(latest.get('so-1')?.poNumber).toBe('PO-2606-002');
+    expect(block.get('so-1')?.poNumber).toBeNull();
+    expect(latest.get('so-1')?.poNumber).not.toBe(block.get('so-1')?.poNumber);
+  });
+
+  test('omitting the mode is a COMPILE error (pins the parameter as required)', () => {
+    // Never invoked: the point is that the call does not compile. Making the
+    // parameter optional again leaves the directive unused, which
+    // `npm run typecheck` reports as TS2578 — the alarm the itemCode
+    // half-application never got.
+    // @ts-expect-error
+    const omitted = () => resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1']);
+    expect(omitted).toBeInstanceOf(Function);
   });
 
   test('two links into the SAME PO are not "multi-PO"', async () => {

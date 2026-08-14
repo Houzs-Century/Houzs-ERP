@@ -43,7 +43,9 @@
    - TBC / KIV is not a miss. It means the customer has not chosen yet, which is
      a real state of the order; those lines are counted and left blank.
 
-   DRY-RUN by default; APPLY=1 writes. */
+   DRY-RUN by default; APPLY=1 writes.
+
+   RE-RUN: inert. The UPDATE re-asserts that fabricId, colourId and fabricCode are all still empty, so a colour picked by a person is never overwritten. */
 import postgres from "postgres";
 import { parseSofa, SOFA_MODEL_ALIAS } from "./lib/parse-sofa.mjs";
 import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";

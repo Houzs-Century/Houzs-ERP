@@ -39,7 +39,7 @@ function input(over: Partial<PlanReceiptPaymentsInput>): PlanReceiptPaymentsInpu
       onlineTypeValue: null,
       installmentPlanValue: null,
     },
-    slipProcessingDate: over.slipProcessingDate ?? null,
+    slipDate: over.slipDate ?? null,
     nowMs: over.nowMs ?? NOW,
     todayStr: over.todayStr ?? TODAY,
   };
@@ -49,7 +49,7 @@ const receipt = (imageIndex: number, amountRm: number | null, extra: Partial<Ext
   imageIndex,
   amountRm,
   approvalCode: null,
-  processingDate: null,
+  receiptTxnDate: null,
   paymentMethodValue: 'Merchant',
   bankValue: 'MBB',
   onlineTypeValue: null,
@@ -158,16 +158,35 @@ describe('planReceiptPayments — receipt count', () => {
     expect(rows[0].slipKey).toBe('scan-slips/s1-receipt');
   });
 
-  test('per-receipt date drives paidAt; an out-of-window date clamps to today', () => {
+  test("the receipt's own printed transaction date drives paidAt; an out-of-window date clamps to today", () => {
     const rows = planReceiptPayments(input({
       receiptIndices: [1, 2],
       payments: [
-        receipt(1, 100, { processingDate: '2026-07-15' }),   // in window
-        receipt(2, 200, { processingDate: '2015-09-17' }),   // absurd past → today
+        receipt(1, 100, { receiptTxnDate: '2026-07-15' }),   // in window
+        receipt(2, 200, { receiptTxnDate: '2015-09-17' }),   // absurd past → today
       ],
     }));
     expect(rows[0].paidAt).toBe('2026-07-15');
     expect(rows[1].paidAt).toBe(TODAY);
+  });
+
+  /* THREE DIFFERENT DATES, and only two of them may ever reach paid_at. The
+     card terminal's printed transaction date is the money date and wins; the
+     SLIP'S OWN written date is the fallback when a receipt printed none. The
+     Sales Order's Processing Date (internal_expected_dd) is a THIRD fact and is
+     not an input to this planner at all — it never appears in
+     PlanReceiptPaymentsInput, which is the point of the rename. */
+  test("the slip's own date is the fallback only, and never beats the receipt's", () => {
+    const rows = planReceiptPayments(input({
+      receiptIndices: [1, 2],
+      slipDate: '2026-07-10',
+      payments: [
+        receipt(1, 100, { receiptTxnDate: '2026-07-15' }), // receipt printed one → it wins
+        receipt(2, 200, { receiptTxnDate: null }),         // none printed → slip date
+      ],
+    }));
+    expect(rows[0].paidAt).toBe('2026-07-15');
+    expect(rows[1].paidAt).toBe('2026-07-10');
   });
 });
 
