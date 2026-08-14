@@ -168,7 +168,7 @@ Total: 1020 route registrations across 135 files.
 - L3283  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
-- L1168  GET    /
+- L1170  GET    /
 - L1896  GET    /customers
 - L1971  GET    /my-mtd
 - L2012  GET    /mine
@@ -1239,7 +1239,7 @@ Total: 1020 route registrations across 135 files.
 - L56  GET    /
 
 ## backend/src/routes/projects_print.ts  (1)
-- L189  GET    /:id
+- L336  GET    /:id
 
 ## backend/src/routes/search.ts  (1)
 - L268  GET    /
