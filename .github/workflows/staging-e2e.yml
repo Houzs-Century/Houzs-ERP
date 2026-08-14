@@ -53,6 +53,42 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/e2e/package-lock.json
       - run: npm ci
+      # What build is this suite about to prove?
+      #
+      # On 2026-08-12 this workflow was found to have reported `success` every
+      # night for two weeks against a staging stack last deployed 2026-07-29 —
+      # 775 commits and 59 production migrations behind `main`. Every assertion
+      # was true; none of them were about current code, and nothing in a green
+      # run said so. See docs/staging-bench-rot-coe.md.
+      #
+      # This does NOT fail the run. The suite proves an ENVIRONMENT, and while
+      # Deploy (Staging) is deliberately paused a red nightly would just be the
+      # permanently-red workflow the pause was correct to remove. It makes the
+      # answer carry its own subject: every green run now states the commit it
+      # was green ABOUT.
+      - name: Report which build staging is running
+        shell: bash
+        run: |
+          api="${{ vars.STAGING_E2E_API_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}"
+          tested="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
+          health=$(curl -fsS --max-time 20 "$api/health" || echo '{}')
+          deployed=$(printf '%s' "$health" | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')
+
+          {
+            echo "### Staging build under test"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Worker \`/health\` | \`$health\` |"
+            echo "| Deployed commit | \`${deployed:-unknown}\` |"
+            echo "| Suite checked out | \`$tested\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$deployed" ]; then
+            echo "::warning title=Staging build is unidentifiable::/health returned no GIT_SHA, so a green run here cannot say which commit it proved. Deploy (Staging) stamps it via --var GIT_SHA; if it is absent, staging has not been deployed by that workflow since the stamp was added."
+          elif [ "$deployed" != "$tested" ]; then
+            echo "::warning title=Staging is not running the commit this suite tested::deployed=$deployed tested=$tested. The assertions below are true about the DEPLOYED build, not about the checked-out source."
+          fi
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
         env:

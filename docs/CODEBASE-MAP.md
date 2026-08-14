@@ -19,9 +19,24 @@ and the derived desktop/mobile destination pairing.
 > into this file** — a number typed here is a number that will be wrong.
 
 Regenerate: `node backend/scripts/gen-codebase-map.mjs`.
-Check for drift: `npm --prefix backend run audit:map`. That check is deliberately
-NOT a CI or deploy gate — a stale doc must never stop a deploy (the sibling
-`audit:routes` gate is a gate, and it jammed prod twice in one day; see BUG-HISTORY).
+Check for drift: `npm --prefix backend run audit:map`.
+
+**Gated in PR CI, never in `deploy.yml`** — since 2026-08-12, and the split is
+the whole point. Both failure modes are real and they pull in opposite
+directions:
+
+- *Gated on the deploy* is how `audit:routes` jammed production twice in one day.
+  A stale doc must never stop a release.
+- *Gated nowhere* is how this very file's data rotted: from 2026-07-22 to
+  2026-08-12 the generator crashed on every invocation (`#925` renamed the vitest
+  config it read by hardcoded name), so `audit:map` crashed with it and the facts
+  file stood frozen at its first and only generation — 116 production migrations
+  behind by the end. Over the same period `route-capability-matrix.csv`, which
+  IS gated, stayed byte-perfect.
+
+A PR check is the shape that survives both: it stops the drift at the point
+someone can fix it, and it cannot wedge a deploy. `docs/staging-bench-rot-coe.md`
+carries the class.
 
 ---
 
@@ -416,6 +431,11 @@ re-check the cited file rather than trusting the line.
   `node backend/scripts/generate-route-capability-matrix.mjs --locations` when you
   need the line number (line numbers are deliberately kept out of the compared
   artifact — see the script header).
+- `docs/TESTING-RATCHET.md` — the measured coverage number for each area, which of
+  them is enforced on a PR and which weekly, and the arithmetic that decided the
+  split (instrumenting `src/scm/routes` costs the backend suite ~20s per test
+  file). Read it before assuming an area is covered: §6 says which are thin and
+  which of those is dangerous.
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
 - **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**

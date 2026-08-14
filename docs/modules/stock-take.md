@@ -1,3 +1,7 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. “Never stamp user.id” is not absolute: stock-takes.ts:637,:941 deliberately fall back to user.id when the mig-0066 staff bridge resolves nothing (keeps the FK satisfied).
+
 # Module: Stock Take (SCM warehouse)
 
 Per-module technical doc for the cycle-count document — `scm.stock_takes` +

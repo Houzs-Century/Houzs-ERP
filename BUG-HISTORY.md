@@ -38,6 +38,66 @@ already did. There is no longer a "preset mode" a click has to escape from.
 the first paint. That is the design — it is the only way a narrowed view survives
 a reload. What changed is that the toolbar now admits one is on.
 
+## The coverage ratchet cannot see the repo's `node:test` suites, so it reports well-tested modules as untested [medium]
+
+**Symptom** — `coverage-ratchet` failed on this PR for three rounds with a
+regression nobody caused:
+
+```
+FAIL backend/scripts/lib:
+  - line coverage fell to 53.84% from a floor of 63.29% (1430/2656 lines).
+  - 15 files have NO test executing them, up from 12.
+```
+
+**Root cause (traced, not guessed)** — the merged coverage report is produced by
+**vitest only**: `backend`'s `test:coverage:light` + `test:coverage:workers`, and
+`frontend`'s `test:coverage`. Vitest does not execute `node:test` files. This
+repo keeps a whole second suite in that runner — `backend/tests/*.node.mjs`, run
+in CI by `npm run test:scale-contract` and `npm run test:release-discipline` —
+and a third in `vitest.pg.config.ts`, which declares no `coverage` block at all,
+so `npm run test:pg` never emits a report.
+
+On 2026-08-13 three new modules landed in `backend/scripts/lib`, each *with* a
+thorough `node:test` suite that runs on every PR:
+
+| module | lines | its test | measured by `node --test --experimental-test-coverage` |
+| --- | ---: | --- | ---: |
+| `release-discipline.mjs` | 231 | `tests/releaseDiscipline.node.mjs`, 43 cases | 98.60% lines |
+| `jsonb-bind-scan.mjs` | 125 | `tests/jsonbBindScan.node.mjs` | 95.53% lines |
+| `swallowed-read-scan.mjs` | 51 | `tests/swallowedReadScan.node.mjs` | 100.00% lines |
+
+407 lines, all of them exercised in CI, all of them reported by the gate as zero
+lines covered and three files with no test at all. The percentage did not fall
+because coverage fell; it fell because the denominator grew by 407 lines the
+instrument is blind to. Eleven of the fifteen files the gate names in this area
+are the same artefact — the full list, with the runner that covers each, is in
+`docs/TESTING-RATCHET.md` §6. Four genuinely have no test anywhere:
+`sqlite-default-to-pg.mjs`, `scm-area-keys.mjs`, `bedframe-special-map.mjs`,
+`classify-tests.mjs`.
+
+**Fix** — the floors for `backend/scripts/lib` were re-baselined deliberately,
+`--update --allow-drop`, to 53.74% / 15: that is what the instrument measures,
+and pretending otherwise leaves a permanently red check that the next person
+routes around. **The blind spot itself is NOT closed here.** Closing it is a
+design choice with three real options, written out in `docs/TESTING-RATCHET.md`
+§6 along with the one-line command that proves a module is covered
+(`cd backend && node --experimental-test-coverage --test tests/*.node.mjs`) —
+the smallest is a `testedElsewhere` list in `coverage-baseline.json` beside the
+existing `knownAbsent`, each entry naming the harness, so "files with NO test"
+means that again.
+
+**Class** — same family as #2161 directly below: a gate whose *measurement* is
+narrower than the property it claims to enforce. The two failure directions are
+opposite and both cost. #2161's proxies were too narrow and let violations
+through silently; this one's is too narrow and fails work that is correct, which
+is the mode that gets a gate deleted. A ratchet that goes red on a PR whose
+author did nothing wrong burns its own authority, and this one is not yet a
+required check partly because of it. Expect a recurrence on the next
+`scripts/lib` module that lands with a `node:test` suite.
+
+**Ref** — #2143. Gate under test: itself.
+
+=======
 ## Migrated purchase lines were priced by inference, and 318 item codes have a price that varies by PO [high]
 
 **Symptom.** 10,372 migrated purchase-order lines carried no unit price. The
@@ -2536,6 +2596,35 @@ reading the current code, not by trusting the review's own write-up.
   and the PIC rule is applied to the row that load returned. Out of company reads
   as "Not found", the same answer as a nonexistent id.
 - **Ref** — this PR, 2026-08-14. `backend/src/routes/projects.ts`.
+## The sharded-script guard names a script, so it fails on the next rename — third time in one day [medium]
+
+**Symptom** - `npm run test:scale-contract` red on a branch whose only crime was
+adding `--coverage` to the script CI shards. `pretest` gates `npm test`, and
+`deploy.yml` runs `npm test -- --shard=...`, so a false failure here blocks the
+backend deploy.
+
+**Root cause (traced, not guessed)** - the guard exists to stop an `&&` chain
+swallowing `--shard` (npm appends run args to the LAST command). It expressed
+that by naming the script: first `assert.equal(pkg.scripts.test, "vitest run")`,
+then — after #2131 split the suite and #2146 repaired the guard — `assert.equal(
+pkg.scripts["test:workers"], "vitest run")`. Both are literals about a CARRIER
+that keeps moving. Every rename that satisfied the rule perfectly was reported
+as a violation: `test` -> `test:workers` (#2146), `test:workers` ->
+`test:coverage:workers` (the coverage ratchet). Three false failures in one day,
+each one able to block a deploy.
+
+**Fix** - read the script name OUT of `ci.yml`'s shard line and assert THAT
+script contains no `&&`. The invariant is now stated once, about whichever
+carrier ci.yml actually uses, and the next rename needs no edit. Mutation-
+verified: pointing ci.yml at `test` (the `&&` chain) fails with the offending
+script printed; restoring it passes 83/83.
+
+**Lesson** - a guard that pins a literal fails on the improvement it exists to
+encourage. Derive the literal from the file you are guarding, and assert the
+property. #2146 fixed the instance an hour earlier and the same shape came back
+on the next PR — which is the definition of not having fixed the class.
+
+**Ref** - 2026-08-14, alongside the coverage ratchet.
 
 ## The sofa purchase orders were never dedicated, and the delivery dates were lost to a renamed key [high]
 
@@ -2925,7 +3014,6 @@ the only side that broke - the difference was in the call, not in the module.
 
 **Ref** - `fix/ac-convert-headless`, 2026-08-12. Compiles clean locally (48,128
 bytes); NOT yet exercised against the live book - the swap must run on the host.
-
 ## The stock-location gate left "New order from catalogue" unable to raise ANY company-1 order [high]
 
 **Symptom** - on company 1 (Houzs Century), every cart built on
@@ -3671,6 +3759,66 @@ when the truth moved. Import it, or pin it with a test - a citation is not a
 mechanism.
 
 **Ref** - PR sweep/duplicated-list-drift, 2026-08-13.
+## BUG CLASS - unverified-completeness-claim: "every call site", unchecked [high]
+
+**The shape** - a PR asserts it covered a whole POPULATION — "every desktop +
+mobile call site", "all four arms", "system-wide", "everywhere" — and it did
+not. The claim is prose, so nothing reads it: `tsc` cannot see it, vitest
+cannot see it, and a reviewer who could check it would have to re-derive the
+population by hand, which is the work the sentence was written to save them.
+The claim is believed exactly because it is confident, and the half of the
+population nobody enumerated keeps the old behaviour.
+
+This is the FIRST-ORDER version of `optional-param-noop` below. That class is
+about the compiler being unable to enumerate call sites; this one is about the
+AUTHOR not enumerating them either, and saying otherwise.
+
+**Worked example** - PR #1763, as traced in the entry below: thirteen call
+sites, five untouched, the sentence "every desktop + mobile call site", and four
+days of DIVAN ONLY lines demanding a mattress Gap. Note that the false claim
+lived in the PR BODY, not the title — the title says only "DIVAN ONLY lines do
+not require a mattress Gap". Any check that reads titles alone misses it.
+
+**How common** - the detector in `scripts/lib/completeness-claim.mjs`, run over
+all 3,231 commits reachable from `origin/main` **as of 2026-08-13**, fires on 30
+titles (0.9%) and 438 title-or-body messages (13.6%): roughly one merged PR in
+seven makes a claim of this shape. Before this gate, none of them was checkable.
+Those figures are a snapshot of that date and will drift; re-run the detector
+over `git log` before quoting them.
+
+**The remedy** - `.github/workflows/completeness-claim.yml`. When a PR title or
+body claims completeness, the body must carry a fenced block tagged
+`enumeration` holding the command that ENUMERATES the population and that
+command's output:
+
+````
+```enumeration
+$ git grep -n "missingVariantAxes(" -- backend/src frontend/src
+backend/src/scm/lib/so-variant-check.ts:56:    const missing = ...
+...
+```
+````
+
+CI **re-runs the command against the PR head and diffs the output**. That last
+part is the whole design: a pasted list can be stale or invented, so the check
+reproduces it rather than trusting it. The author's own sentence becomes a test,
+and the diff names the members of the population the PR did not cover.
+
+The command is never handed to a shell — a PR body is untrusted input written by
+anyone who can open a PR. It is tokenised in-process and restricted to
+`grep` / `rg` / `git grep` / `git ls-files` / `node -e` one-liners over this
+checkout, with a per-program flag allowlist (`rg --pre`, `rg -z`, `rg -L`, and
+any option before a git subcommand are refused by name), a scrubbed environment
+so no secret is reachable, `--permission --allow-fs-read=<repo>` for node, and a
+60s timeout. See the header of `scripts/check-completeness-claim.mjs`.
+
+**The escape, and why it is loud** - a PR may carry the label
+`completeness-not-claimed`. The check then passes, prints the offending phrases
+back with their line numbers, and asks for the wording to be changed. It waives
+the PROOF, not the problem: the sentence is still in the PR and a reader six
+months from now will still read it as a promise.
+
+**Ref** - `completeness-gate`, 2026-08-13
 
 ## BUG CLASS - optional-param-noop: an optional argument that decides something [high]
 
@@ -3685,8 +3833,19 @@ and applies only where somebody remembered to reach it.
 (`backend/src/scm/shared/so-variant-rule.ts`). PR #1763 (2026-08-09) added the
 DIVAN ONLY gap exemption keyed on it and declared "itemCode threaded through the
 backend gate and every desktop + mobile call site". It was not: the parameter
-arrived as `itemCode?: string | null`, two sites did not pass it, and those lines
-went on demanding a mattress Gap for a product that has none for FOUR DAYS. The
+arrived as `itemCode?: string | null`, and FIVE of the thirteen call sites that
+existed at that commit did not pass it —
+`git grep -n "missingVariantAxes(\|missingConfirmVariantAxes(" 4f30a063 -- backend/src frontend/src`
+lists all thirteen, and these five carry only two arguments:
+`scm/lib/so-confirm-gate.ts:116`, `scm/shared/inventory-adjustment.ts:38`,
+`pages/scm-v2/SalesOrderNew.tsx:1419`,
+`pages/scm-v2/SalesOrderNewFromProducts.tsx:273`, and
+`vendor/shared/inventory-adjustment.ts:42`. (This entry said "two" until
+2026-08-13; the count was never enumerated, which is the same failure as the
+claim it describes.) The backend confirm gate — the one that blocks a Processing
+Date — was among them and was not closed until #2072 on 2026-08-13, so those
+lines went on demanding a mattress Gap for a product that has none for FOUR
+DAYS. The
 2026-08-10 exemption for adjustable beds / trundle combos / double-decker bunks
 was half-applied through the same hole. `git blame` shows the two halves of one
 ternary, one updated and one not, four lines apart. The full trace is in the
@@ -4184,6 +4343,273 @@ because the only symptom was a console line on a page that otherwise worked.
 
 ---
 
+
+## Cross-tenant stock-transfer cancel, and a per-company report that returned both companies [high]
+
+**Symptom** - two holes of the same class, found 2026-08-13 by an external
+full-module code audit and each verified against the source before being touched.
+
+1. `PATCH /stock-transfers/:id/cancel` had no company scoping anywhere: the
+   before-read was `.eq('id', id)` and the CANCELLED flip was
+   `.update(...).eq('id', id).neq('status','CANCELLED')`. A caller in company A
+   holding company B's transfer UUID could cancel B's POSTED transfer — and the
+   handler then calls `reverseMovements(sb, 'STOCK_TRANSFER', id, ...)`, so B's
+   stock moved back. **This is a WRITE**, unlike the seven read-side `/:id/linked`
+   leaks fixed the day before.
+2. `GET /inventory/reconcile` called `reconcileLedger(sb)` with no second
+   argument, so the operator-facing report returned BOTH companies' GRN, DO,
+   transfer and consignment document numbers and statuses.
+
+**Root cause (traced, not guessed)** - both are missed call sites, not missing
+mechanisms. The 2026-07-22 owner audit scoped every sibling flow;
+`stock-takes.ts:437-440` carries that fix with a comment naming this exact class
+("the sibling /cancel /reverse /post already do requireActiveCompanyId; align")
+— the stock-transfer cancel was simply never aligned. And `reconcileLedger`
+(`scm/lib/reconcile-ledger.ts:46-51`) has ALWAYS taken `companyId?`, with its
+own comment stating the operator endpoint is per-company "so the report can't
+surface the other company's doc numbers"; only `systemHealth.ts:297` is meant to
+run cross-company. The guard existed and the caller skipped it.
+
+**Fix** - the cancel now takes `requireActiveCompanyId` and scopes BOTH the
+before-read and the flip, returning `NOT_THIS_COMPANY` (404) on a foreign id;
+`/reconcile` passes `activeCompanyId(c)`. Verified: backend typecheck clean,
+companyScopeHardening passes (16 tests).
+
+**What this is really about** - the day before, a documentation sweep found 7
+cross-company leaks and I reported "7 bugs, none in the money path, this is not
+a bad system". That was a statement about what MY question could find. A sweep
+that asks "do the docs match the code" surfaces documentation defects; it does
+not go looking for missed guards. The audit that asked "find the bugs" returned
+**56 cross-company scope misses, 27 of them high**. Same codebase, same day,
+different question. **The size of a finding set is a property of the question,
+not of the system** — and a clean result from one lens must never be reported as
+a verdict on the whole.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## The route-locator generator read a mention of `/api/*` as an opening block comment [medium]
+
+**Symptom** - `docs/generated/route-locator.md` reported "986 route registrations
+across 128 files". The tree holds 1,021 across 136. Eight whole route files were
+absent, including `so-mirror.ts` (a pre-auth 2990 mirror) and `public-images.ts`
+(a pre-auth R2 proxy) — exactly the kind of endpoint someone greps this artifact
+to find.
+
+**Root cause (traced, not guessed)** - `stripComments` in
+`gen-route-locator.mjs` cut the `//` line comment LAST, after testing for a
+`/*` block opener. So a line like `// Mounted at '/api/sync/so-mirror' ...
+above the /api/* wall` had its `/api/*` read as an opening block comment;
+`inBlock` then stayed true to end of file and every route below it vanished. The
+five SCM routers found this way (`addons`, `maintenance-config`, `pos-cart`,
+`public-images`, `so-mirror`) all carry a header comment mentioning a wildcard
+path. Proved by re-running the generator's own `stripComments` over each file
+and printing the first line it swallowed.
+
+**Fix** - cut the line comment before looking for `/*`. Regenerated: 986 -> 1021
+registrations, 128 -> 136 files.
+
+**What this is really about** - the artifact was regenerated earlier the same day
+and reported as repaired in `docs/staging-bench-rot-coe.md`. Regenerating proved
+the generator RAN; nobody checked that its output matched the tree. A generated
+file can be current and wrong at once, and "I regenerated it" is not the same
+claim as "it is correct". The sibling check that would have caught it —
+comparing the artifact's file list against the routers on disk — did not exist
+and still does not.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## Every /:id/linked endpoint resolved another company's documents [high]
+
+**Symptom** - the Smart Buttons fan-out (`GET /:id/linked`) returned the linked
+GRN / invoice / return / receive numbers for ANY document id, regardless of which
+company the caller was in. Seven endpoints, one shape.
+
+**Root cause (traced, not guessed)** - on every one of the seven SCM routers that
+expose `/:id/linked`, the list and detail reads are company-scoped
+(`scopeToCompany`) and the writes use the strict
+`requireActiveCompanyId` + `scopeToCompanyId` pair — but the `/linked` read was
+written as a bare `.eq('id', id)` with no scope at all. Two of the module guides
+(`purchase-return.md` §6, `purchase-consignment-order.md` §7) claimed "every read
+is company-scoped", which is how it survived review: the doc asserted a guard the
+code never had.
+
+The guide-verification sweep reported TWO leaky endpoints because two agents each
+saw only their own router. Grepping `get('/:id/linked'` across
+`backend/src/scm/routes` found **seven**: grns, mfg-purchase-orders,
+purchase-consignment-orders, purchase-consignment-receives,
+purchase-consignment-returns, purchase-invoices, purchase-returns.
+
+**Fix** - all seven scoped. Five read an anchor row by id and now wrap it in
+`scopeToCompany`; two (mfg-purchase-orders, purchase-consignment-orders) only fan
+out by parent id, so they gained an explicit ownership check before the fan-out,
+answering 404 — an unreachable row must not confirm its own existence.
+Verified: backend typecheck clean; companyScopeHardening + assrCompanyScope pass
+(24 tests); all seven re-grepped and each now carries `scopeToCompany` inside its
+handler.
+
+**Exposure** - low but real: ids are UUIDs, so this needed a leaked or guessed id
+rather than enumeration. It returned document NUMBERS and ids, not amounts.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## A voided service case still escalated, still emailed, and still counted as open [high]
+
+**Symptom** - a case closed as `voided` (the terminal alt-outcome added
+2026-07-29) kept behaving as if it were open: the daily 02:00 SLA sweep escalated
+it and emailed its assignee, it inflated the "active backlog" tile and every
+ageing bucket, and it sat in assignees' inboxes and overdue lists.
+
+**Root cause (traced, not guessed)** - `voided` was added to the Stage union and
+`statusForStage` maps it to "Closed" (`services/assr.ts:63-67,:88`), but every
+consumer predicate still spelled "open" as `stage != 'completed'`. Grep found
+**twelve** such predicates, not the two the audit first reported:
+`assrEscalation.ts` (the escalation WHERE), `routes/assr.ts` x9 (backlog count,
+period counts, stage-history join, per-creditor open/breached, unassigned,
+breached tile, the three ageing buckets, per-agent breached) and
+`routes/inbox.ts` x3 (my-cases, overdue, stuck-in-stage).
+
+**Fix** - all twelve now read `stage NOT IN ('completed', 'voided')`. The
+`= 'completed'` counters that define "closed" were deliberately LEFT ALONE:
+folding voided into them changes what those tiles mean, which is a product
+decision, not a bug fix. Verified: backend typecheck clean; assrCompanyScope,
+assrSearch, assrCreateCategory and assrEscalation suites pass (21 tests); zero
+`stage != 'completed'` left in `backend/src`.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## Composed mail validated and stored Cc/Bcc, then never sent them [high]
+
+**Symptom** - a staff member composes a mail in Mail Center with Cc or Bcc
+recipients. The thread renders them as recipients, but they never receive the
+mail. No error anywhere: the send succeeds for To.
+
+**Root cause (traced, not guessed)** - POST /compose collects and validates
+ccList/bccList (mail-center.ts) and stores ccAddresses on the message row, but
+the sendEmail call passed only to/subject/html/text/purpose/from/replyTo/
+companyCode/attachments - no cc, no bcc. The reply path passes both, so only
+compose was affected. Found by the 2026-08-12 module-guide code-read sweep
+(the guide claimed "a single Resend call carrying arrays" for all sends);
+verified by reading the call site, then fixed.
+
+**Fix** - compose's sendEmail now passes cc/bcc in the reply path's exact shape.
+Verified: backend typecheck clean. Still open (own task): attachment-bearing
+sends do not set outboxRetry:false, so a failed attachment send is re-drained
+body-only by the */5 cron.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-12
+
+---
+
+## A COE named the wrong root cause because it quoted a repo comment instead of the run history [medium]
+
+**Symptom** - the staging COE, the roadmap, `deploy-staging.yml` and a
+BUG-HISTORY entry all stated that the Staging `CLOUDFLARE_API_TOKEN` had been
+failing "since the day it was set, 2026-07-01". The owner rejected it on sight:
+*"staging environment 怎么可能没有 set 过 cloudflare"*, *"之前 staging 都没问题的"*.
+
+**Root cause (traced, not guessed)** - `deploy-staging.yml`'s trigger comment,
+written 2026-07-31, inferred the start date from the secret's `updated_at`
+(2026-07-01) plus the fact that the workflow was failing. Nobody opened the run
+list. `gh run list --workflow deploy-staging.yml` shows Deploy (Staging)
+succeeding on that same token for four weeks — last success run 30470280714,
+2026-07-29 16:20 UTC — and the first failure, run 30518266259 at 2026-07-30
+06:00, already carries `Invalid access token [code: 9109]`. The credential died
+on Cloudflare's side; the GitHub secret was never touched.
+
+The COE then quoted that comment as evidence and built a **"ruled out"** row on
+it, marking "the token was working and was revoked recently" as REFUTED — the
+one thing that was actually true. The contradiction was already inside the same
+document (it stated the last good deploy as 2026-07-29, four weeks after the
+date it claimed the token had never worked) and was explained away with an
+invented earlier credential rather than chased.
+
+**Fix** - corrected in all four places, with the old claim left visible rather
+than silently overwritten, since a wrong "ruled out" row is what stops the next
+person re-checking. Added as lesson 3 of the COE: *an inherited note is not
+evidence — copy the CHECK, not the conclusion.*
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
+## The codebase-map generator died 11 hours after it was written, and froze the inventory for three weeks [medium]
+
+**Symptom** - `docs/generated/codebase-map-facts.md` — the artifact
+`CODEBASE-MAP.md` defers to precisely because generated numbers "cannot drift" —
+claimed 122 route modules, 164 pg migrations and a highest migration of `0163`.
+The tree held 135 route modules, 279 pg `.sql` files and `0281`. The file that
+exists to be authoritative about migrations was missing 116 of them.
+
+**Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
+`backend/vitest.config.ts` by hardcoded name, to derive table 2's "read by
+backend vitest" column. `#925` (2026-07-22 10:03) renamed that file to
+`vitest.config.mts` as part of a toolchain upgrade. `#963` had written the
+generator at 2026-07-21 22:28 — so it crashed with `ENOENT` from **eleven hours
+and thirty-five minutes after it was born**, before writing any output. It had
+produced exactly one generation, and that generation stood as current.
+
+Nothing caught it because `audit:map` IS the same script with `--check`, so the
+drift check crashed identically — and it is documented as deliberately NOT a CI
+or deploy gate, for the good reason that a stale doc must never block a deploy.
+The control case confirms the mechanism rather than contradicting it:
+regenerating all three artifacts found `route-capability-matrix.csv` and its
+summary byte-identical, because `audit:routes` gates them; the two that had
+rotted, `codebase-map-facts.md` and `route-locator.md`, are exactly the two
+nothing gates.
+
+**Fix** - the generator resolves the vitest config across `.mts` / `.ts` / `.js`
+and, if none exists, exits with a message naming the candidates instead of an
+ENOENT stack — so the next rename says which filename to add rather than silently
+freezing the inventory. Both stale artifacts regenerated. Class and lesson in
+`docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
+## Staging carried no build stamp, so two weeks of green nightly E2E proved a two-week-old build [high]
+
+**Symptom** - `Staging E2E (smoke)` reported `success` every night from at least
+2026-08-04 to 2026-08-11, ~90s each, running real login / SO-list / company-
+isolation proofs. Staging had not been built from `main` since **2026-07-29
+16:20 UTC**, by then 775 commits and 59 production migrations behind. Every
+assertion was true and none of them were about current code.
+
+**Root cause (traced, not guessed)** - two independent facts had to meet.
+(1) The Staging `CLOUDFLARE_API_TOKEN` **worked for four weeks and then died**:
+last successful deploy 2026-07-29 16:20 UTC (run 30470280714), first failure
+2026-07-30 06:00 (run 30518266259), already carrying `Invalid access token
+[code: 9109]` while the GitHub secret's `updated_at` stayed 2026-07-01 — so the
+credential was revoked or expired on Cloudflare's side. On 2026-07-31 `main` was
+correctly removed from the trigger so the permanent red would stop training
+people to ignore red — after which the workflow simply stopped being invoked,
+because the `staging` branch it still triggers on last moved 2026-07-14.
+(2) `staging-e2e.yml` also runs on a nightly `schedule`, which needs no deploy.
+It pointed at the still-running old stack and passed. Nothing made the gap
+visible: prod stamps `--var GIT_SHA:${{ github.sha }}` and has a watchdog
+comparing it to `main` every 15 minutes, but `deploy-staging.yml` never added
+the stamp, so staging `/health` answered `{"ok":true,"sha":null}`. Reproduced on
+demand: run 31566944717, dispatched from `main` on 2026-08-12, passed typecheck,
+tests and build and failed at `cloudflare/wrangler-action` — the token is still
+bad.
+
+**Fix** - `deploy-staging.yml` now stamps `--var GIT_SHA`, and `staging-e2e.yml`
+reports the deployed commit against the commit it checked out, warning when they
+differ or when the stamp is absent. Deliberately a warning, not a failure: the
+suite proves an environment, and failing it while the deploy is paused would
+recreate the permanently-red workflow the pause was right to remove. Restoring
+`main` to the trigger is blocked on the owner issuing a new token. Full write-up
+and the ruled-out theories: `docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
 ## A shebang made a test suite unparseable on Windows only, and one error was counted as two failing files [low]
 
 **Symptom** - `npx vitest run tests/soFeeLineRepairRow.test.ts` failed on every
@@ -5341,6 +5767,123 @@ the refusal class explicitly.
 **Ref** - PR (feat/ac-writeback-sofa-collapse), 2026-08-11. Closes contract
 divergences D9 and D10.
 
+## Migration 0294 promised migrated invoices spend no customer credit, and nothing enforced it [medium]
+
+**Symptom** - a migrated Sales Invoice mirrors an invoice AutoCount already
+raised and already settled in its own book. Migration 0280's column COMMENT
+promised "apply NO customer credit", because paying one out of the customer's ERP
+credit balance spends a real balance a second time - the customer silently loses
+money still owed to them, and the applied credit is indistinguishable from a
+genuine one afterwards. No code enforced that promise.
+
+**Root cause (traced, not guessed)** - the guard was written for the two money
+paths that were obvious (`postSiRevenue`, `postPiAccounting`) and the credit path
+was described in the migration comment but never coded. It looked safe because
+all three reachable callers of `applyCustomerCreditToSi` happen to miss migrated
+invoices today - and every one of those is an ACCIDENT of the current shape, not
+a rule:
+
+```
+sales-invoices.ts:1164  POST /            create refuses a migrated source
+sales-invoices.ts:1462  POST /from-dos    create refuses a migrated source
+sales-invoices.ts:2295  PATCH status      requires prevStatus DRAFT; converter writes SENT
+```
+
+This is the same shape as migration 0276, which shipped a COMMENT saying "never
+post movements for it" that nothing in the running system honoured. A promise
+living only in a comment is the thing this ledger exists to stop.
+
+**Fix** - the guard now lives INSIDE `applyCustomerCreditToSi`
+(`backend/src/scm/lib/customer-credits.ts`), which re-reads the header, so every
+caller is covered by construction rather than every call site being remembered. A
+failed read REFUSES (`migrated_check_failed`) rather than proceeding blind:
+fail-closed leaves the credit standing and the invoice merely unpaid, which an
+operator can see and re-drive, while fail-open spends a balance that cannot be
+un-spent. Migration 0280's comment now names the enforcement point, and states
+what is deliberately NOT stopped - a payment recorded against a migrated invoice
+behaves normally, and cancelling it still turns the paid amount into credit,
+because that money moved in THIS book.
+
+Counterfactual, both numbers: with the fix `customer-credits.test.ts` is
+**35 pass / 0 fail**; strip the guard block and it is **33 pass / 2 fail**
+(`migrated SI -> applies nothing`, `a failed migrated read REFUSES`). The third
+test in the group - an ordinary SI still applies credit - passes BOTH ways on
+purpose: it is the control proving the guard is not a blanket off switch.
+
+**Ref** - PR #1975 `feat/migrated-chain-invoices`, 2026-08-11.
+
+## The migrated-invoice refusal guarded three convert paths and there are eight [high]
+
+**Symptom** - a goods receipt or delivery order carried over from AutoCount could
+still be turned into an invoice by hand, even after `refuseMigratedSources` was
+added. Nothing about it would be visible afterwards: the invoice would carry an
+ERP number instead of AutoCount's, post a journal entry for money AutoCount had
+already booked, and enqueue a write-back that creates a SECOND invoice in the
+live AED_HOUZS book. It would also consume the source line's invoiceable
+quantity, so the mistake could not be corrected without cancelling the invoice.
+
+**Root cause (traced, not guessed)** - the refusal was written on the three paths
+that take a WHOLE document (`POST /from-grn`, `POST /from-grn-items`,
+`POST /from-dos`). Five more paths reach the same lines holding only a line id or
+a delivery id, and each one bypassed the rule entirely:
+
+```
+purchase-invoices.ts  POST /                        lines carry grnItemId
+purchase-invoices.ts  POST /:id/items               line carries grnItemId
+sales-invoices.ts     POST /                        lines carry doItemId, body carries deliveryOrderId
+sales-invoices.ts     POST /:id/items               line carries doItemId
+sales-invoices.ts     POST /:id/items/from-do/:doId takes a whole delivery id
+```
+
+A fence with an open gate beside it is not a fence.
+
+**Fix** - both routers resolve the source document from the line id first, then
+apply the SAME `refuseMigratedSources` rule, so a caller cannot pick a softer
+door. A FAILED lookup refuses rather than proceeds (`ok: false` -> 500): a guard
+that fails open is not a guard. `backend/tests/migratedConvertGuard.node.mjs`
+pins all eight paths, asserts the refusal comes BEFORE the AutoCount enqueue (a
+refusal after it is no refusal at all), and asserts the GL suppression lives
+inside `postPiAccounting` / `postSiRevenue` rather than at their call sites, so
+every caller is covered by construction. It runs in `test:scale-contract`, which
+is `pretest`.
+
+Counterfactuals, both numbers: with the fix **4 pass / 0 fail**; strip the SI
+guards **1 pass / 3 fail**; strip the PI guards **2 pass / 2 fail**; strip the
+`postSiRevenue` suppression **3 pass / 1 fail**.
+
+**Ref** - PR for `feat/migrated-chain-invoices`, 2026-08-11.
+
+## A merged migrated invoice took its supplier / debtor from whichever source document sorted first [high]
+
+**Symptom** - one AutoCount invoice routinely spans several of our documents, and
+the mirrored ERP invoice merges them. The merged header carries exactly ONE
+supplier / debtor, and the writer took it from `plan.sourceDocNos[0]` - i.e. from
+document-number sort order. If the sources disagreed, the invoice would be
+billed to the wrong party with a total that reconciles perfectly, which is the
+worst shape a wrong value can have.
+
+**Root cause (traced, not guessed)** - this is not an edge case. Measured
+read-only against live AED_HOUZS on 2026-08-11:
+
+```
+grToPi: invoices covering >1 source document = 309 of 4789
+doToIv: invoices covering >1 source document = 568 of 9245
+```
+
+`planMigratedInvoices` grouped purely by AutoCount invoice number and never
+compared the parties behind the group.
+
+**Fix** - rule 5 in `backend/src/scm/lib/migrated-chain.ts`: each source carries a
+`partyKey` (supplier on a receipt, debtor on a delivery) and a group whose
+sources disagree is refused as `party_disagrees_across_sources`, checked BEFORE
+the total gate and not buyable with the `allowTotalMismatch` override. A source
+with no recorded party does not manufacture a disagreement. On today's
+production data the rule fires on 0 documents - it is a guard against a shape the
+data can take, not a repair of one it already has.
+
+Counterfactual: **32 pass / 0 fail** with the rule, **29 pass / 3 fail** without.
+
+**Ref** - PR for `feat/migrated-chain-invoices`, 2026-08-11.
 ## The cutover stock import dropped every NEGATIVE AutoCount balance row, leaving the ERP permanently higher [low]
 
 **Symptom** - the stock truth check reported `VERDICT BALANCE: DIVERGES` on 35

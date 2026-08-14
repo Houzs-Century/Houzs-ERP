@@ -36,14 +36,14 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
 | `backend/src/routes/logs.ts` | 1 | 66 |
-| `backend/src/routes/mail-center.ts` | 21 | 2323 |
+| `backend/src/routes/mail-center.ts` | 21 | 2329 |
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
 | `backend/src/routes/notifications.ts` | 1 | 241 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
 | `backend/src/routes/pos.ts` | 8 | 332 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5290 |
+| `backend/src/routes/projects.ts` | 109 | 5294 |
 | `backend/src/routes/projects_print.ts` | 1 | 1212 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
@@ -59,7 +59,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2282 |
-| `backend/src/scm/routes/accounting.ts` | 11 | 733 |
+| `backend/src/scm/routes/accounting.ts` | 11 | 757 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -120,14 +120,14 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 709 |
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1323 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1125 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2460 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2541 |
 | `backend/src/scm/routes/purchase-returns.ts` | 13 | 1611 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1252 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 522 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2576 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2672 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
@@ -163,25 +163,25 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 291 | `0293_scm_compartment_tier_override_company_key.sql` (0293) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 292 | `0294_scm_migrated_invoices.sql` (0294) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1296 files, 539757 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1302 files, 541591 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 14875 |
+| `frontend/src/pages/Projects.tsx` | 14937 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
 | `frontend/src/pages/ServiceCases.tsx` | 8855 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5679 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
-| `backend/src/routes/projects.ts` | 5290 |
+| `backend/src/routes/projects.ts` | 5294 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
@@ -192,7 +192,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
-| `backend/src/services/projects.ts` | 3173 |
+| `backend/src/services/projects.ts` | 3189 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3016 |
 
 ## 4. Frontend desktop routes

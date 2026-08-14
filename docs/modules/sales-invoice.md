@@ -56,7 +56,7 @@ Desktop routes: `frontend/src/App.tsx:658-661`, behind
 
 **The accounting fan-out is the distinguishing feature of this hook file.** Every
 mutation that can move revenue also invalidates the ledger queries —
-`['journal-entries']`, `['account-balances']`, `['ar-aging']` — see
+`['journal-entries']`, `['account-balances']`, `['ar-aging']` — EXCEPT `useAppendDoToSalesInvoice`, which invalidates the first two but NOT `['ar-aging']` (`sales-invoice-queries.ts:206-215`, read 2026-08-12) even though its endpoint posts revenue on a non-draft SI (`sales-invoices.ts` append handler) — the exact staleness gap this paragraph warns about, live in one of the four hooks. See
 `useCreateSalesInvoice` (`:89-92`), `useUpdateSalesInvoiceStatus` (`:105-111`),
 `useConvertDosToSi` (`:186-189`) and `useAppendDoToSalesInvoice` (`:207-210`).
 A new SI mutation that forgets those three keys leaves the Accounting screens
@@ -264,6 +264,43 @@ The **quantity** an SI consumes is the DO line's remaining invoiceable pool
 
 ---
 
+## 5a. Carried-over deliveries cannot be invoiced by hand
+
+A delivery order flagged `migrated_no_stock` (migration 0276) was carried over
+from AutoCount at the 2026-08 cutover, and AutoCount already raised its sales
+invoice. Every path that can attach one to an invoice refuses it with **409
+`migrated_source_document`**:
+
+| path | how it reaches the delivery |
+|---|---|
+| `POST /from-dos` | delivery ids from the picks |
+| `POST /` | `body.deliveryOrderId`, or a line's `doItemId` |
+| `POST /:id/items` | the line's `doItemId` |
+| `POST /:id/items/from-do/:doId` | the delivery id in the path |
+
+One migrated document anywhere in the pick refuses the WHOLE invoice — a partial
+invoice cannot carry AutoCount's number, so the pick is never silently narrowed
+to the ordinary rows. A failed source lookup returns 500 rather than proceeding:
+a guard that fails open is not a guard.
+
+The invoices for those deliveries are written by
+`backend/scripts/create-migrated-invoices.mjs`, numbered
+`HC-<AutoCount's invoice number>`, flagged `migrated_no_stock` on
+`scm.sales_invoices` (migration 0280). Such an invoice posts **no** revenue
+journal — `postSiRevenue` reads the flag on its own header and returns
+`{ ok: true, status: 'migrated_source' }` before writing anything, so every
+caller is covered rather than every call site. `revenue.posted` is `false` and
+there is no `jeNo`; that is success, not failure.
+
+It also spends **no customer credit**. `applyCustomerCreditToSi` re-reads the
+header and returns `{ applied: 0, reason: 'migrated_source' }` — paying a
+carried-over invoice out of the customer's ERP balance would spend a real
+balance a second time, on paperwork AutoCount already settled. A failed read
+refuses (`migrated_check_failed`) rather than proceeding. What is deliberately
+NOT blocked: a payment an operator records against a migrated invoice behaves
+normally, and cancelling it still turns the paid amount into credit — that money
+moved in THIS book and is ours to account for.
+
 ## 6. What locks and when
 
 The governing rule is in the file header (`:16-27`) and implemented as
@@ -313,7 +350,7 @@ Everything is integer sen.
 | `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
 | `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
 | `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi` | header | Derived by `recomputeTotals` (`:264`); `total_centi` is what the GL posts. |
-| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set. |
+| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
 | per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_centi`, `local_total_centi` and `paid_centi` are NOT gated — everyone sees what is owed. |
 | `amount_centi` | `sales_invoice_payments` | The ledger rows `paid_centi` sums. |
 
@@ -372,6 +409,12 @@ Watch as data grows:
   of invoices.
 - AR aging (`/outstanding/summary`) is called out in
   `docs/perf-optimization-plan.md` §G9 as the server-snapshot candidate as debtor
+  count grows. **That candidate SHIPPED and this paragraph outlived it** (read
+  2026-08-12): `GET /outstanding/summary?snapshot=1` serves the materialized
+  view `scm.mv_ar_aging` (`outstanding.ts:135-161`, migration
+  `0152_scm_mv_ar_aging.sql`), refreshed nightly by the `0 2` cron
+  (`index.ts` REFRESH MATERIALIZED VIEW CONCURRENTLY). The live query stays
+  the default; the snapshot is opt-in and only honoured with no date range.
   data grows.
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission

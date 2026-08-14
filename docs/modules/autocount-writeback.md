@@ -261,6 +261,34 @@ then correct it, which is visible to whoever is looking at AutoCount.
 `skipped` and queues nothing. Creating a document in a live account book only to
 cancel it is not a no-op to the people using that book.
 
+### A CARRIED-OVER document must never be enqueued at all
+
+`enqueueConvert` has none of the "already in AutoCount" protection its
+`enqueueSoCreate` / `enqueuePoCreate` siblings have — both of those bail when the
+parent already carries a `linked_ac_docno`. Convert has no such check, and every
+document carried over at the 2026-08 cutover carries a `linked_ac_docno`, so
+`dispatchOne` would resolve a real `FromDocNo` and push a `gr_to_pi` /
+`do_to_iv` transfer for an invoice the live AED_HOUZS book **already holds**. The
+result is a duplicate invoice in the owner's real accounts, and nothing on the
+ERP side looks wrong afterwards.
+
+The refusal therefore sits IN FRONT of the enqueue, in the route handler, not
+inside the outbox: all eight paths that can attach a migrated goods receipt or
+delivery to an invoice call `refuseMigratedSources`
+(`src/scm/lib/migrated-chain.ts`) and return 409 before any enqueue is reached.
+`backend/tests/migratedConvertGuard.node.mjs` asserts the ORDER, not merely the
+presence — a refusal placed after the enqueue is no refusal at all.
+
+Invoices for carried-over documents are written by
+`backend/scripts/create-migrated-invoices.mjs`, which enqueues nothing by
+construction. They carry `migrated_no_stock = true` (migration 0294), the same
+predicate 0276 gave `scm.grns` and `scm.delivery_orders`.
+
+Note the asymmetry worth remembering: `scm.grns.linked_ac_docno` holds the
+**PO's** AutoCount number, not the receipt's, despite migration 0276's own
+comment. A convert transfer pushed from a migrated GRN would therefore also name
+the wrong source document.
+
 ### What each side is composed FROM
 
 | Payload field | ERP source |
