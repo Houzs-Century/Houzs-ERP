@@ -49,10 +49,22 @@ test("a generator that produced nothing still fails, with exit 2", () => {
 test("neither check exits 1 on drift alone", () => {
   /* The narrow property: inside the checkOnly branch, the only process.exit(1)
      left must be guarded by --strict. Read as source rather than executed,
-     because executing them needs the whole repo and this must stay cheap. */
+     because executing them needs the whole repo and this must stay cheap.
+
+     SLICED FROM THE BRANCH, not from the declaration. This read
+     `src.indexOf("checkOnly")`, which is the `const checkOnly = …` line near the
+     top — so "the check path" was every line in the file after line ~19, and the
+     assertion did not match its own comment. Measured 2026-08-14: it failed a
+     `process.exit(1)` that refuses an UNKNOWN `<!-- area: -->` tag, ~140 lines
+     ABOVE the branch. That exit is right and must stay: the deadlock this test
+     exists to prevent comes from DRIFT, which another author's merge causes, and
+     a malformed tag is in the diff of whoever wrote it. `if (checkOnly)` is
+     asserted to exist first, so a rename cannot silently empty the slice. */
   for (const g of GENERATORS) {
     const src = read(g);
-    const body = src.slice(src.indexOf("checkOnly"));
+    const at = src.indexOf("if (checkOnly)");
+    assert.ok(at >= 0, `${g}: no \`if (checkOnly)\` branch found — this guard is reading the wrong shape, not passing.`);
+    const body = src.slice(at);
     for (const m of body.matchAll(/process\.exit\(1\)/g)) {
       const before = body.slice(Math.max(0, m.index - 400), m.index);
       assert.match(before, /--strict/, `${g}: an exit(1) in the check path that --strict does not guard`);
