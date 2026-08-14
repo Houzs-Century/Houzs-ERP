@@ -588,6 +588,15 @@ export const ConsignmentNoteNew = () => {
               onChange={(patch) => updateLine(line.rid, patch)}
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
+              /* Downstream document: the items were already specified on the
+              originating order and their variants ride in with them, so they
+              are NOT re-required here. Same rule DeliveryOrderNewV2 states
+              for the DO. Verified 2026-08-13: this document's server does no
+              variant enforcement at all (findIncompleteVariantLines appears
+              0 times in its route), so the default `= true` was pure
+              client-side invention - a red ring and a ` *` for a field the
+              backend never asked for. */
+              variantsRequired={false}
             />
           ))}
           <button type="button" onClick={addLine}

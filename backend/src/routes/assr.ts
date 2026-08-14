@@ -38,6 +38,7 @@ import {
   allowedCompanyIds,
   allowedCompaniesSql,
   activeCompanyId,
+  type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds, subtreeAgentNames } from "../services/orgScope";
@@ -69,6 +70,8 @@ const app = new Hono<{ Bindings: Env }>();
 // first path segment is not the numeric case id (/attachments/:attId,
 // /activity/:actId, /creditors/create, /resync-so/:docNo) are not matched by
 // these patterns and are tracked as a follow-up (they need a parent-case lookup).
+// /bulk/* is a fifth miss of the same kind — worse, because those ids arrive in
+// the BODY, so ONE call reached every case. They carry the predicate themselves.
 const enforceCaseScope: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (c.req.method === "GET") return next();
   const id = Number(c.req.param("id"));
@@ -134,8 +137,12 @@ function requireServiceCaseAccess(
 // "" / [] / undefined when the companies master is unresolved (pre-migration /
 // D1 test mirror / cold-start), so legacy single-company SQL runs unchanged.
 //
-// Exported for backend/tests/assrCompanyScope.test.ts.
-export function assrCompanySql(c: Context<any>, col = "company_id"): string {
+/* Exported for backend/tests/assrCompanyScope.test.ts AND for routes/search.ts,
+   which kept its own copy and drifted — global search and /api/assr answered the
+   same rep differently. Takes CompanyScopeCtx, not Context<any>: all it needs is
+   a `get`, and demanding a whole Hono Context is what pushes a caller into
+   re-implementing it locally. */
+export function assrCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   return allowedCompaniesSql(c, col);
 }
 // `number[] | undefined` — `undefined` = company context unresolved (degrade to
@@ -1050,16 +1057,30 @@ async function bulkRun(
   return { ok, failed };
 }
 
+/* COMPANY SCOPE ON THE BULK WRITES.
+
+   enforceCaseScope (top of this file) CANNOT reach these: it is mounted on
+   "/:id{[0-9]+}" and "/:id{[0-9]+}/*", so it fires only when the first path
+   segment is the numeric case id. These three are /bulk/..., their ids arrive in
+   the BODY, and ids are sequential integers — so one call reached the other
+   company's cases wholesale while the detail GET 404s the same case. The client
+   is service-role (RLS bypassed, mig 0061), so the route predicate is the only
+   boundary.
+
+   assrCompanySql is the SAME helper the reads use, and it emits "" when the
+   company context is unresolved, so single-company installs are unchanged. */
+
 app.post("/bulk/archive", requirePermission("service_cases.manage"), async (c) => {
   const userId = (c as any).get?.("userId") ?? null;
   const body = await c.req.json<{ ids?: number[] }>();
   const ids = (body.ids || []).filter((n) => Number.isInteger(n));
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
     await c.env.DB.prepare(
       `UPDATE assr_cases
           SET archived_at = datetime('now'), archived_by = ?, updated_at = datetime('now')
-        WHERE id = ? AND archived_at IS NULL`
+        WHERE id = ? AND archived_at IS NULL${coSql}`
     )
       .bind(userId, id)
       .run();
@@ -1071,11 +1092,12 @@ app.post("/bulk/unarchive", requirePermission("service_cases.manage"), async (c)
   const body = await c.req.json<{ ids?: number[] }>();
   const ids = (body.ids || []).filter((n) => Number.isInteger(n));
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
     await c.env.DB.prepare(
       `UPDATE assr_cases
           SET archived_at = NULL, archived_by = NULL, updated_at = datetime('now')
-        WHERE id = ? AND archived_at IS NOT NULL`
+        WHERE id = ? AND archived_at IS NOT NULL${coSql}`
     )
       .bind(id)
       .run();
@@ -1091,12 +1113,16 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
   const ids = [...new Set((body.ids || []).filter((n) => Number.isInteger(n)))];
   if (!ids.length) return c.json({ error: "ids[] required" }, 400);
   const assigneeId = body.assigned_to ?? null;
+  const coSql = assrCompanySql(c);
   const result = await bulkRun(ids, async (id) => {
-    await c.env.DB.prepare(
-      `UPDATE assr_cases SET assigned_to = ?, updated_at = datetime('now') WHERE id = ?`
+    const res = await c.env.DB.prepare(
+      `UPDATE assr_cases SET assigned_to = ?, updated_at = datetime('now') WHERE id = ?${coSql}`
     )
       .bind(assigneeId, id)
       .run();
+    /* Out of scope -> no row moved. Stop rather than log an assignment that did
+       not happen; bulkRun collects the throw as this id's per-item error. */
+    if (!res.meta.changes) throw new Error("Not found");
     await c.env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
        VALUES (?, 'assignment', NULL, ?, 'bulk', ?)`
@@ -2084,6 +2110,8 @@ async function setArchived(
 }
 
 // Case — archive/unarchive. Manager-level (service_cases.manage).
+// No predicate here BY DESIGN: the path is /<numeric id>/archive, so
+// enforceCaseScope has already run caseInCallerScope — company AND row scope.
 app.post("/:id/archive", requirePermission("service_cases.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);

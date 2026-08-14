@@ -45,6 +45,38 @@ import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
+import { canViewScmFinance } from '../lib/houzs-perms';
+
+/* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
+   不到成本".
+
+   This router imported nothing from houzs-perms. Its only gate was
+   scmAreaGuard("scm.warehouse.inventory") at VIEW level, and Storekeeper /
+   Storekeeper Supervisor hold exactly that (services/positionPolicy.ts) — while
+   the same policy sets `canSeeMargin: false` for them. That flag was WRITTEN and
+   nothing enforced it, which is the "a written level sitting inert" trap this
+   repo documents twice.
+
+   Every sibling surface over the same numbers already gates: reports.ts:512 and
+   entity-audit-log.ts:97 on canViewScmFinance, mfg-products on
+   canViewScmProductCost, and /sofa-combos was deliberately denied openRead for
+   precisely this reason.
+
+   Quantity, location, batch and movement history stay visible to everyone with
+   the area — only cost, value, margin and supplier pricing are withheld. */
+const INVENTORY_FINANCE_KEYS = [
+  'unit_cost_sen', 'total_cost_sen', 'value_sen', 'cost_sen', 'avg_cost_sen',
+  'main_supplier_price_centi', 'margin_sen', 'unit_cost_centi',
+] as const;
+
+/** Drop the finance columns from a row set. Caller decides WHETHER. */
+function stripInventoryFinance<T extends Record<string, unknown>>(rows: T[]): T[] {
+  return rows.map((r) => {
+    const out = { ...r } as Record<string, unknown>;
+    for (const k of INVENTORY_FINANCE_KEYS) delete out[k];
+    return out as T;
+  });
+}
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
 inventory.use('*', supabaseAuth);
@@ -908,7 +940,11 @@ inventory.get('/movements', async (c) => {
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ movements: data ?? [] });
+  /* Movement HISTORY stays visible to everyone with the area — what moved,
+     when, where, in what quantity, is warehouse work. Only the cost columns
+     (unit_cost_sen / total_cost_sen) are withheld. */
+  const movements = (data ?? []) as Array<Record<string, unknown>>;
+  return c.json({ movements: canViewScmFinance(c) ? movements : stripInventoryFinance(movements) });
 });
 
 /* ── FIFO lots drilldown for one product ─────────────────────────────── */
@@ -924,7 +960,10 @@ inventory.get('/lots/:productCode', async (c) => {
   q = scopeToCompany(q, c); // FIFO lots are per-company (both table + view carry company_id).
   const { data, error } = await q.order('received_at', { ascending: true });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ lots: data ?? [] });
+  /* Lot drilldown: qty, batch, received date and warehouse are operational and
+     stay; unit_cost_sen is not. */
+  const lots = (data ?? []) as Array<Record<string, unknown>>;
+  return c.json({ lots: canViewScmFinance(c) ? lots : stripInventoryFinance(lots) });
 });
 
 /* ── Batch availability (Stage 2 — Commander 2026-05-31) ──────────────────
@@ -1045,6 +1084,10 @@ inventory.get('/batches', async (c) => {
 
 /* ── COGS stream ─────────────────────────────────────────────────────── */
 inventory.get('/cogs', async (c) => {
+  // Cost of goods sold — finance by definition.
+  if (!canViewScmFinance(c)) {
+    return c.json({ error: 'forbidden', message: "You don't have permission to see cost of goods sold." }, 403);
+  }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
   const productCode = c.req.query('productCode');
@@ -1068,6 +1111,10 @@ inventory.get('/cogs', async (c) => {
 
 /* ── Inventory valuation (qty × cost) ────────────────────────────────── */
 inventory.get('/value', async (c) => {
+  // Pure valuation — nothing here is non-finance, so refuse rather than strip.
+  if (!canViewScmFinance(c)) {
+    return c.json({ error: 'forbidden', message: "You don't have permission to see inventory valuation." }, 403);
+  }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
   // PostgREST's 1000-row cap silently truncated the valuation — page through so

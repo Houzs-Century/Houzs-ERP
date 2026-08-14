@@ -273,13 +273,39 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
   classified the residue, #1960 established that the array-shaped
   `custom_specials` are correct codes and stopped offering to delete them. No
   measured after-count is recorded here, so this item stays open.
+
+  **The tools those PRs left in the tree — re-read 2026-08-13.** #1944's repair
+  is `backend/scripts/repair-custom-specials-double-encoded.mjs` +
+  `.github/workflows/repair-custom-specials-double-encoded.yml`, DRY-RUN by
+  default, `APPLY=1` to write. It sets the column to **NULL rather than
+  decoding it back**, for the reasons written into its own header (`:13-34`):
+  `custom_specials` is a derived cache the pricing recompute overwrites
+  wholesale, the pre-encoding value was already the wrong shape (a bare
+  `string[]` of slip phrases, not `Array<{description, surchargeSen}>`), the
+  owner ruled on 2026-08-11 that migrated lines must not reprice, and NULL
+  cannot make a report show the WRONG specials. #1953/#1960's census is a
+  SECOND script, `backend/scripts/census-custom-specials-arrays.mjs`, where
+  `APPLY=1` alone is inert and the only writable class (`text[]`) additionally
+  needs `APPLY_TEXT=1` — the switch where the owner's answer gets recorded. The
+  `variants.specials` half is claimed clean by a named re-run of
+  `backfill-specials-into-variants.mjs` (run `31419290223`, cited in the repair
+  script at `repair-custom-specials-double-encoded.mjs:32-34`).
+
+  **What the repository can and cannot settle.** It CAN settle that the
+  `custom_specials` half was applied: `BUG-HISTORY.md` records *"#1944 NULLed
+  the 478 `custom_specials` values"* and cites read-only prod run
+  `31428435434` for the census that followed. It CANNOT settle a post-repair
+  COUNT for either half — that needs a workflow run history or a live read —
+  which is why this stays Deferred.
+
 - **`public.mfg_sales_order_items` shadowing `scm.`** with `public` ahead of
   `scm` on the search_path. Nothing hit it today because everything is
   schema-qualified. Decision owner: the owner / IT, as a schema cleanup.
 - **Every other `res.count`-only writer in `backend/scripts`.** #1938 fixed the
-  reporting in the scripts it touched. There are ~50 scripts using `sql.begin`;
-  any that report success from a command tag can mislead the same way even
-  without this encoding bug.
+  reporting in the scripts it touched. There are **76** scripts using
+  `sql.begin` (re-counted 2026-08-13; this line said ~50); any that report
+  success from a command tag can mislead the same way even without this
+  encoding bug.
 
 ## Lessons
 

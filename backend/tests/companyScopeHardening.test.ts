@@ -16,7 +16,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { postGrnHandler } from '../src/scm/routes/grns';
-import { cancelPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
+import { cancelPaymentVoucherHandler, postPaymentVoucherHandler } from '../src/scm/routes/payment-vouchers';
 import { postStockTakeHandler } from '../src/scm/routes/stock-takes';
 import { postPurchaseInvoiceHandler } from '../src/scm/routes/purchase-invoices';
 import { patchSalesInvoiceStatusHandler } from '../src/scm/routes/sales-invoices';
@@ -97,6 +97,7 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
   });
   app.patch('/grns/:id/post', postGrnHandler as never);
   app.post('/payment-vouchers/:id/cancel', cancelPaymentVoucherHandler as never);
+  app.post('/payment-vouchers/:id/post', postPaymentVoucherHandler as never);
   app.patch('/stock-takes/:id/post', postStockTakeHandler as never);
   app.patch('/purchase-invoices/:id/post', postPurchaseInvoiceHandler as never);
   app.patch('/sales-invoices/:id/status', patchSalesInvoiceStatusHandler as never);
@@ -163,6 +164,48 @@ describe('item 4 — PV cancel (reverses the GL entry)', () => {
     const res = await harness(t, CO_A).app.request('/payment-vouchers/pv-a/cancel', { method: 'POST' });
     expect(res.status).toBe(200);
     expect(t.payment_vouchers.find((p) => p.id === 'pv-a')!.status).toBe('CANCELLED');
+  });
+});
+
+/* ── Item 4b — PV POST: the OTHER half of the same door ───────────────────────
+   Item 4 above hardened the CANCEL. The POST was left unscoped and stayed that
+   way until 2026-08-13, because it is registered by name
+   (`paymentVouchers.post('/:id/post', postPaymentVoucherHandler)`) and the
+   scope checker's named-handler resolution was silently dead — a lost backslash
+   made its regex unmatchable, so it scanned the wrong function body and
+   reported nothing here. Posting writes a balanced journal entry into the
+   voucher's company ledger, so this is the money half. */
+describe('item 4b — PV post (writes the GL entry)', () => {
+  const pvs = (): Row[] => [
+    { id: 'pv-a', pv_number: 'PV-A-2', company_id: CO_A, status: 'DRAFT', total_centi: 100, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'A', currency: 'MYR', exchange_rate: 1 },
+    { id: 'pv-b', pv_number: 'PV-B-2', company_id: CO_B, status: 'DRAFT', total_centi: 900, credit_account_code: '1000', voucher_date: '2026-08-13', payee_name: 'B', currency: 'MYR', exchange_rate: 1 },
+  ];
+  const lines = (): Row[] => [
+    { pv_id: 'pv-a', line_no: 1, description: 'a', debit_account_code: '5000', amount_centi: 100 },
+    { pv_id: 'pv-b', line_no: 1, description: 'b', debit_account_code: '5000', amount_centi: 900 },
+  ];
+
+  test("A cannot post B's voucher — it stays DRAFT and writes NO journal entry", async () => {
+    const t = { payment_vouchers: pvs(), payment_voucher_lines: lines(), journal_entries: [] as Row[] };
+    const res = await harness(t, CO_A).app.request('/payment-vouchers/pv-b/post', { method: 'POST' });
+    expect(res.status).toBe(404);
+    expect(t.payment_vouchers.find((p) => p.id === 'pv-b')!.status).toBe('DRAFT');
+    // The row status alone would not catch a refusal that still touched the GL.
+    expect(t.journal_entries).toHaveLength(0);
+  });
+
+  test('A CAN still post its own voucher', async () => {
+    const t = { payment_vouchers: pvs(), payment_voucher_lines: lines(), journal_entries: [] as Row[] };
+    const res = await harness(t, CO_A).app.request('/payment-vouchers/pv-a/post', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(t.payment_vouchers.find((p) => p.id === 'pv-a')!.status).toBe('POSTED');
+  });
+
+  test('an unresolved company refuses rather than posting across all companies', async () => {
+    const t = { payment_vouchers: pvs(), payment_voucher_lines: lines(), journal_entries: [] as Row[] };
+    const res = await harness(t, undefined).app.request('/payment-vouchers/pv-a/post', { method: 'POST' });
+    expect(res.status).toBe(409);
+    expect(t.payment_vouchers.every((p) => p.status === 'DRAFT')).toBe(true);
   });
 });
 

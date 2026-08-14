@@ -5,11 +5,11 @@ import { escapeForOr } from "../scm/lib/postgrest-search";
 import {
   activeCompanySql,
   allowedCompaniesSql,
-  houzsCompanySql,
   scopeToCompany,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
-import { isDirectorUser, isSalesUser } from "../services/pmsAccess";
+// The ONE definition of ASSR's company scope — see the note above its use below.
+import { assrCompanySql } from "./assr";
 
 /**
  * Global search across the workspace.
@@ -105,18 +105,22 @@ export function searchPattern(raw: string, postgrest = false): string | null {
   return [...term].length === 1 ? `${term}%` : `%${term}%`;
 }
 
-// ASSR company pin — MUST stay in sync with routes/assr.ts assrCompanySql().
-// Service Cases are a HOUZS-only module: rank-and-file Sales are PINNED to
-// HOUZS (never see 2990 cases), while office / backend / directors run one
-// cross-company portal and widen to their allowed set. Returns the same
-// three-state fragment as its primitives — "" when the company context is
-// unresolved (legacy single-company), a match-nothing predicate when the
-// caller is resolved but restricted, never fail open.
-function assrCompanySql(c: CompanyScopeCtx): string {
-  const user = c.get("user") as Parameters<typeof isSalesUser>[0];
-  const pinsToHouzs = isSalesUser(user) && !isDirectorUser(user);
-  return pinsToHouzs ? houzsCompanySql(c) : allowedCompaniesSql(c);
-}
+/* ASSR company scope — now IMPORTED from routes/assr.ts rather than copied.
+   This was a local copy carrying the comment "MUST stay in sync with
+   routes/assr.ts assrCompanySql()", and it had NOT stayed in sync. It still
+   pinned rank-and-file Sales to HOUZS via houzsCompanySql, which emits
+   `AND company_id = <houzsId>` REGARDLESS of the caller's grants. The owner
+   removed that pin on 2026-07-20 — assr.ts records the decision trail:
+   "Service Cases now follow the caller's GRANTED companies like the rest of the
+   SCM portal — no ASSR-specific role pin."
+
+   So the same person got two different answers: /api/assr showed a 2990 rep
+   their own cases, while global SEARCH showed them HOUZS cases they hold no
+   grant for and hid their own. A cross-company disclosure and a blind spot from
+   one stale copy.
+
+   Sharing the function is the fix; a comment asking two files to agree is not a
+   mechanism. Verified 2026-08-13 against assr.ts:131. */
 
 /**
  * The search itself, callable WITHOUT the HTTP layer. The route below is a thin

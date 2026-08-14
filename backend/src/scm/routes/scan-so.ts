@@ -3,58 +3,22 @@
 // (phone photos of Zanotti / AKEMI-style carbon-copy forms) → structured JSON
 // the Backend "Scan Order" modal turns into a prefilled New SO.
 //
-// Ported from HOOKKA's scan-po.ts (typed customer-PO PDFs) and adapted:
-//   • input is image(s) (jpeg/png/webp) or a PDF, not PDF-only;
-//   • catalog injection pulls live from Supabase Postgres (mfg_products,
-//     fabric_trackings, maintenance config sofa sizes/leg heights);
-//   • few-shot pool = the 5 most recent operator-REVIEWED so_scan_samples
-//     rows, filtered to the slip's SALESPERSON first (fall back to global),
-//     and RANKED corrected-before-accepted-as-is (see the SAMPLE_* header:
-//     both outcomes are ground truth here, but only corrected rows carry a
-//     diff, so only they feed the distillers);
-//   • per-SALESPERSON learning (vs HOOKKA's per-customer): each rep has
-//     their own handwriting/notation habits that differ per product
-//     category, so a distilled rules block (so_scan_rules, organized by
-//     SOFA / MATTRESS / BEDFRAME / ACCESSORY / SERVICE sections) is
-//     regenerated from that rep's corrected samples after every confirm;
-//   • PLUS a GLOBAL shared alias layer (reserved so_scan_rules row
-//     '__GLOBAL__'): a product-name/fabric-code alias dictionary distilled
-//     from the latest corrected samples ACROSS ALL reps ("Bamboo Cruise" /
-//     "Cruise" / "B.Cruise" → one SKU), injected into EVERY scan so one
-//     rep's corrections teach all reps. Refreshed on every confirm
-//     (fire-and-forget) and weekly (before the per-rep pass).
+// READ docs/modules/scan-to-so.md FIRST — the endpoint table, the learning loop,
+// the rule layers and their injection order, the read-scope gaps, and this
+// module's provenance + Houzs `scm`-schema adaptation all live there, kept in
+// one place so they cannot drift against a comment nobody re-reads.
 //
-// Endpoints:
-//   POST /scan-so/extract                     — multipart image(s)/pdf (+ salesperson field) → JSON + sampleId
-//   POST /scan-so/enqueue                     — same inputs; queue a BACKGROUND job that OCRs + creates a DRAFT SO
-//   GET  /scan-so/jobs/:id                    — poll a background job (status / soDocNo / error)
-//   GET  /scan-so/jobs?salesperson=           — latest 20 background jobs (optionally one rep's)
-//   POST /scan-so/jobs/clear-failed           — delete the caller's failed (status=error) jobs ('*' clears all reps')
-//   POST /scan-so/samples/:id/confirm         — store operator-reviewed JSON (+ salesperson, + accepted); auto-distills rep rules
-//   GET  /scan-so/salespeople                 — distinct reps seen across samples + rules (modal datalist)
-//   GET  /scan-so/rules/:salesperson          — view a rep's distilled rules
-//   POST /scan-so/rules/:salesperson/distill  — manually regenerate a rep's rules
-//
-// Setup:
-//   npx wrangler secret put ANTHROPIC_API_KEY
+// The few-shot pool is the 5 most recent operator-REVIEWED so_scan_samples rows,
+// filtered to the slip's SALESPERSON first (fall back to global), and RANKED
+// corrected-before-accepted-as-is — see the SAMPLE_* header below: both outcomes
+// are ground truth here, but only corrected rows carry a diff, so only they feed
+// the distillers.
 //
 // Prompt caching: the SYSTEM_PROMPT + catalog block is sent as a
 // cache_control:ephemeral prefix — identical across calls until the catalog
 // changes, so repeat scans within 5 min get the ~90% cached-input discount.
 //
-// Auth: same as mfg-sales-orders write routes — supabaseAuth on every
-// endpoint (any signed-in staff member; RLS scopes what the user client can
-// read). Sample rows are written via the service-role client so extraction
-// works even before migration 0164's RLS policy lands.
-//
-// Houzs adaptation: same plumbing as the sibling SCM routes. The 2990's
-// original built its own service client via createClient(...) defaulting to
-// the `public` schema; in Houzs the so_scan_samples / so_scan_rules /
-// mfg_products / fabric_trackings / maintenance_config_history /
-// so_dropdown_options tables live in the dedicated `scm` Postgres schema, so
-// serviceClient() here returns getSupabaseService(env) (db:{schema:'scm'}) —
-// every sb.from('...') resolves to scm.*, never public.*. The catalog read
-// uses c.get('supabase') (also scm-scoped, attached by supabaseAuth).
+// Auth: same as mfg-sales-orders write routes — supabaseAuth on every endpoint.
 // ANTHROPIC_API_KEY is OPTIONAL on the Houzs Env: when absent /extract returns
 // 503 anthropic_key_missing — it must not break the worker or tsc.
 // Crons (wired in backend/src/index.ts scheduled()): the keep-warm cron
@@ -4250,6 +4214,9 @@ async function resolveScanUploaderStaffId(
 // pipeline in waitUntil. Same multipart contract as /extract.
 // ---------------------------------------------------------------------------
 scanSo.post('/enqueue', async (c) => {
+  /* company-scope: the by-id reads the checker attributes to this handler are
+     NOT in it — they belong to processScanQueueMessage, declared inside this
+     handler's slice. Trace in docs/modules/scan-to-so.md section 7. */
   let formData: FormData;
   try {
     formData = await c.req.formData();
@@ -4796,6 +4763,9 @@ scanSo.post('/jobs/clear-failed', async (c) => {
 // something), which is also what every pre-existing caller means.
 // ===========================================================================
 scanSo.post('/samples/:id/confirm', async (c) => {
+  /* company-scope: scm.so_scan_samples is a GLOBAL OCR TRAINING POOL, not a
+     business document — it has NO company_id column and mig 0083's sweep
+     skipped it on purpose. Trace in docs/modules/scan-to-so.md section 7. */
   const id = c.req.param('id');
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing sample id.' }, 400);
 

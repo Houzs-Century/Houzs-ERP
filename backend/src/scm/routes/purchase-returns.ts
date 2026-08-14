@@ -13,7 +13,7 @@
 //   PATCH  /purchase-returns/:id/cancel     — → CANCELLED (if not completed)
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
@@ -31,7 +31,8 @@ import {
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
+  isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import {
   checkStockAvailability,
   shortStockResponse,
@@ -39,6 +40,7 @@ import {
   type StockShortage,
 } from '../lib/check-stock-availability';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
+import { recordEntityAudit } from '../lib/entity-audit';
 
 export const purchaseReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseReturns.use('*', supabaseAuth);
@@ -111,14 +113,38 @@ async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number)
      recomputeGrnReceived. `_delta` is ignored (kept for call-site compatibility);
      every caller already mutated the PR rows BEFORE calling, so the live sum is
      authoritative. */
-  const { data: prLines } = await sb.from('purchase_return_items')
+  /* The ERROR is the signal, never the emptiness — the same rule the mirror this
+     docblock names (recomputeGrnInvoiced, purchase-invoices.ts) already follows
+     on all three of its reads. `?? []` cannot tell a failed read from a GRN line
+     with no live PR lines, and the two mean opposite things here: the recount
+     below turns an empty result into `returned_qty = 0`, which RELEASES the GRN
+     line — the same goods become returnable again AND the PI over-bill headroom
+     (qty_accepted - invoiced_qty - returned_qty) re-opens, with nothing raised.
+     A GRN line whose PR lines have genuinely all gone resolves error === null
+     with data === [] and MUST still fall through to that release; that is the
+     recount model working. Nothing is written above this point. */
+  const { data: prLines, error: prLinesErr } = await sb.from('purchase_return_items')
     .select('qty_returned, purchase_return_id')
     .eq('grn_item_id', grnItemId);
+  if (prLinesErr) {
+    /* eslint-disable-next-line no-console */
+    console.error('[adjustGrnReturnedQty] PR line read failed — returned_qty left unchanged:', grnItemId, prLinesErr.message);
+    return;
+  }
   const rows = (prLines ?? []) as Array<{ qty_returned: number; purchase_return_id: string }>;
   const prIds = [...new Set(rows.map((r) => r.purchase_return_id).filter(Boolean))];
   const cancelled = new Set<string>();
   if (prIds.length > 0) {
-    const { data: prs } = await sb.from('purchase_returns').select('id, status').in('id', prIds);
+    /* Same rule, opposite direction: an empty `cancelled` from a FAILED read
+       reads as "no return here is cancelled", so a cancelled PR's qty is counted
+       as still returned and the GRN line stays consumed against a return that
+       was voided. */
+    const { data: prs, error: prsErr } = await sb.from('purchase_returns').select('id, status').in('id', prIds);
+    if (prsErr) {
+      /* eslint-disable-next-line no-console */
+      console.error('[adjustGrnReturnedQty] PR status read failed — returned_qty left unchanged:', grnItemId, prsErr.message);
+      return;
+    }
     for (const p of (prs ?? []) as Array<{ id: string; status: string }>) {
       if ((p.status ?? '').toUpperCase() === 'CANCELLED') cancelled.add(p.id);
     }
@@ -131,7 +157,15 @@ async function adjustGrnReturnedQty(sb: any, grnItemId: string, _delta?: number)
   if (!gi) return;
   const accepted = (gi as { qty_accepted: number }).qty_accepted ?? 0;
   const next = Math.min(accepted, Math.max(0, returned)); // clamp [0, accepted]
-  await sb.from('grn_items').update({ returned_qty: next }).eq('id', grnItemId);
+  const { error: updErr } = await sb.from('grn_items').update({ returned_qty: next }).eq('id', grnItemId);
+  if (updErr) {
+    /* A rejected UPDATE left returned_qty STALE with nothing logged, and it is
+       read by two integrity gates (PO re-open + PI over-bill headroom). Do not
+       recount the PO off a GRN line we failed to move. */
+    /* eslint-disable-next-line no-console */
+    console.error('[adjustGrnReturnedQty] returned_qty update failed — GRN line left STALE:', grnItemId, updErr.message);
+    return;
+  }
   // Returning goods nets down the parent PO line's received_qty (re-opens for a
   // replacement shipment). Recount it from live GRN lines.
   const poItemId = (gi as { purchase_order_item_id: string | null }).purchase_order_item_id;
@@ -197,15 +231,21 @@ purchaseReturns.get('/:id', async (c) => {
 // For a PR: the parent GRN + parent PO (both nullable on purchase_returns).
 purchaseReturns.get('/:id/linked', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
-  const { data, error } = await sb
-    .from('purchase_returns')
-    .select(`
-      id,
-      grn:grns(id, grn_number),
-      purchase_order:purchase_orders(id, po_number)
-    `)
-    .eq('id', id)
-    .maybeSingle();
+  /* Company-scoped like every other read on this router. Without it a caller in
+     one company could resolve ANOTHER company's purchase return to its GRN and
+     PO numbers by id — the only read here that skipped the scope (found
+     2026-08-12 by code read; the module guide claimed scoping that was absent). */
+  const { data, error } = await scopeToCompany(
+    sb
+      .from('purchase_returns')
+      .select(`
+        id,
+        grn:grns(id, grn_number),
+        purchase_order:purchase_orders(id, po_number)
+      `)
+      .eq('id', id),
+    c,
+  ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
   // Supabase typegen returns joined rows as arrays even for to-one FKs.
@@ -459,7 +499,13 @@ async function checkPrStockAvailability(
    single-line delta movement so add/increase = more OUT, reduce/delete =
    compensating IN. deltaQty>0 → OUT (more goods leave to supplier); deltaQty<0
    → IN (goods come back). Resolves the line's source-GRN warehouse exactly
-   like the create path. Best-effort: never throws (mirrors writeMovements). */
+   like the create path. Best-effort: never throws (mirrors writeMovements).
+
+   RETURNS the create path's `movementErrors` shape — `string[]`, one
+   `OUT|IN <returnNumber>: <reason>` per failure, exactly what
+   writePurchaseReturnMovements produces. It used to return void, so the
+   three line verbs had nothing to report even though the failure was known
+   here; see their response comments. */
 async function writePrLineDeltaMovement(
   sb: any,
   args: {
@@ -469,16 +515,26 @@ async function writePrLineDeltaMovement(
             material_name: string | null; item_group?: string | null; variants?: VariantAttrs | null };
     deltaQty: number;
   },
-) {
-  if (!args.deltaQty) return;
+): Promise<string[]> {
+  if (!args.deltaQty) return [];
+  const isOut = args.deltaQty > 0;
+  const dir = isOut ? 'OUT' : 'IN';
+  /* Set the moment writeMovements confirms the insert. A throw AFTER that point
+     comes from a best-effort follow-up (retro-cost, SO re-allocation), and
+     reporting it as a failed stock write would be a different lie than the one
+     being fixed — the ledger did move. */
+  let wrote = false;
   try {
     const lineWh = await resolvePrLineWarehouses(
       sb, [{ id: args.line.id, grn_item_id: args.line.grn_item_id ?? null }], args.headerGrnId, args.companyId,
     );
     const warehouseId = lineWh.get(args.line.id) ?? null;
-    if (!warehouseId) return;
+    /* No warehouse resolved → no movement is ATTEMPTED, and the create path
+       drops the same line silently (writePurchaseReturnMovements filters it out
+       and reports nothing). Same concept, same shape: do not invent a second
+       error class here. */
+    if (!warehouseId) return [];
     const variantKey = computeVariantKey(args.line.item_group, args.line.variants ?? null);
-    const isOut = args.deltaQty > 0;
     // Batch: resolve THIS line's OWN dye-lot deterministically from its source GRN
     // line's PO (grn_item_id → purchase_order_item_id → PO number). Not a .limit(1)
     // bucket lookup, which could grab a sibling line's batch when two lines of the
@@ -521,20 +577,70 @@ async function writePrLineDeltaMovement(
       performed_by: args.userId,
       notes: isOut ? 'PR line added/increased' : 'PR line reduced/removed — reversing return',
     }];
-    await writeMovements(sb, deltaRows, (prHeader as { company_id?: number | null } | null)?.company_id ?? null);
+    /* The result is READ, not dropped. writeMovements NEVER THROWS — it logs and
+       returns `{ ok:false, reason }` (lib/inventory-movements.ts:188, "Never
+       throws — returns true/false so callers can log without rolling back the
+       post") — so the try/catch wrapping this whole function catches NOTHING
+       from it. Discarding the result left the line edit fully applied
+       (qty_returned, grn_items.returned_qty, the refund rollup) with the
+       compensating stock movement missing and every caller answering 201/200:
+       precisely the desync this function was written to end. The create path in
+       this same file already captures it (:394) and its comment says why. */
+    const movementCompanyId = (prHeader as { company_id?: number | null } | null)?.company_id ?? null;
+    const res = await writeMovements(sb, deltaRows, movementCompanyId);
+    if (!res.ok) {
+      /* eslint-disable-next-line no-console */
+      console.error('[pr-line-delta] stock movement NOT written — PR line changed, inventory did not:',
+        args.returnNumber, 'line', args.line.id, dir, Math.abs(args.deltaQty), res.reason ?? 'unknown');
+      /* Two durable traces, neither of which rolls the edit back — the shape the
+         DO resync (delivery-orders-mfg.ts, resyncInventoryForDo) took from the
+         GRN recount precedent (grns.ts postGrnAndRollup): a RECOUNT_FAILED row
+         on the document's own trail, plus movementErrors on the response. The
+         edit STANDS; an edit must not be rolled back for a ledger hiccup. */
+      try {
+        await recordEntityAudit(sb, {
+          entityType: 'PURCHASE_RETURN',
+          entityId: args.prId,
+          entityDocNo: args.returnNumber,
+          action: 'RECOUNT_FAILED',
+          companyId: movementCompanyId ?? args.companyId ?? null,
+          source: 'writePrLineDeltaMovement',
+          note:
+            `Line change committed on this return but its ${dir} delta movement ` +
+            `(qty ${Math.abs(args.deltaQty)}, line ${args.line.id}) was NOT written: ${res.reason ?? 'unknown'}. ` +
+            `The ledger does not reflect this change until /inventory/reconcile repairs it.`,
+        });
+      } catch { /* the trail is the backstop, not another way to lose the edit */ }
+      return [`${dir} ${args.returnNumber}: ${res.reason ?? 'unknown'}`];
+    }
+    wrote = true;
     /* Oversell retro-cost (0154) — a REVERSING delta is an IN: the goods never
        went back to the supplier, so they re-open a lot a prior "ship anyway" DO
        can be costed from. Wired 2026-07-29; before that only a GRN reconciled
-       (COE §2). The OUT direction is filtered out by the helper. Best-effort. */
+       (COE §2). The OUT direction is filtered out by the helper. Best-effort.
+       Gated on the write having landed, like all four sibling call sites
+       (purchase-consignment-returns :199, purchase-consignment-receives :207,
+       consignment-notes :379, consignment-returns :383) — there is no arriving
+       lot to reconcile against when the IN was refused. */
     await reconcileUncostedAfterIn(sb, deltaRows, args.userId);
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-pr-line-delta failed:', e); }
-  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pr-line-delta] movement failed:', e); }
+    return [];
+  } catch (e) {
+    /* eslint-disable-next-line no-console */
+    console.error('[pr-line-delta] movement failed:', e);
+    /* Reported only when the write was never confirmed — see `wrote` above. */
+    return wrote ? [] : [`${dir} ${args.returnNumber}: ${(e as Error)?.message ?? 'unknown'}`];
+  }
 }
 
 purchaseReturns.post('/', async (c) => {
+  /* company-scope: the source GRN is checked against the active company below
+     (header grnId AND every line's grn_item_id, via isCrossCompanySource), and
+     the only by-id write is the ROLLBACK of the header this handler inserted
+     moments earlier. Verified 2026-08-13. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'DRAFT was removed in migration 0078 — PRs post immediately on create.' }, 400);
@@ -543,6 +649,22 @@ purchaseReturns.post('/', async (c) => {
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* CROSS-COMPANY SOURCE (lib/companyScope) — the bare-create path takes the
+     source GRN as a body field, and everything below stamps the ACTIVE company:
+     the header, the lines (stampCompany), and the inventory OUT
+     (writePurchaseReturnMovements uses the PR header's company). A grnId from
+     the other company therefore produces this company's return against that
+     company's receipt. Optional by design — a genuinely manual return sends no
+     grnId, resolves to no source, and is unaffected. */
+  if (body.grnId) {
+    const { data: srcGrn } = await sb.from('grns')
+      .select('grn_number, company_id').eq('id', body.grnId as string).maybeSingle();
+    const src = srcGrn as { grn_number?: string | null; company_id?: number | null } | null;
+    if (src && isCrossCompanySource(src.company_id, c)) {
+      return c.json(crossCompanyConversionBlocked(src.grn_number ?? null, src.company_id, c), 409);
+    }
+  }
 
   /* "Manual lines (no grnItemId) stay uncapped" — true, and the same back door
      the delivery side had. An unlinked line on a return that NAMES a GRN still
@@ -576,9 +698,25 @@ purchaseReturns.post('/', async (c) => {
     .filter((x): x is string => !!x))];
   const remainingByGrnItem = new Map<string, number>();
   if (preGrnItemIds.length > 0) {
+    /* The parent GRN rides the embed for the cross-company guard: these
+       grn_item ids are caller-supplied, and adjustGrnReturnedQty writes
+       returned_qty on whichever company owns them while the return itself is
+       stamped with the ACTIVE company. The header-level grnId check above only
+       covers the note the return NAMES; a line can point somewhere else. */
     const { data: giRows } = await sb.from('grn_items')
-      .select('id, qty_accepted, returned_qty').in('id', preGrnItemIds);
-    for (const r of (giRows ?? []) as Array<{ id: string; qty_accepted: number; returned_qty: number }>) {
+      .select('id, qty_accepted, returned_qty, grn:grns!inner ( grn_number, company_id )').in('id', preGrnItemIds);
+    type GiRow = {
+      id: string; qty_accepted: number; returned_qty: number;
+      grn?: { grn_number?: string | null; company_id?: number | null } | Array<{ grn_number?: string | null; company_id?: number | null }> | null;
+    };
+    const giList = (giRows ?? []) as unknown as GiRow[];
+    const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
+    const foreign = giList.find((g) => isCrossCompanySource(parentOf(g)?.company_id, c));
+    if (foreign) {
+      const p = parentOf(foreign);
+      return c.json(crossCompanyConversionBlocked(p?.grn_number ?? null, p?.company_id, c), 409);
+    }
+    for (const r of giList) {
       remainingByGrnItem.set(r.id, Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)));
     }
   }
@@ -694,19 +832,36 @@ purchaseReturns.post('/', async (c) => {
 
 // Batch-convert multiple POSTED GRNs into ONE Purchase Return. Aggregates
 // all qty_rejected lines across the selected GRNs (must share a supplier).
-purchaseReturns.post('/from-grns', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and createPcReturnFromPcReceivesHandler
+   are exported; the route registration below is unchanged. */
+export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's GRN
+     is not visible here at all; the by-id write is this handler's own rollback. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnIds?: string[]; reason?: string; notes?: string; confirmShortStock?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnIds = body.grnIds ?? [];
   if (grnIds.length === 0) return c.json({ error: 'grn_ids_required' }, 400);
 
-  // Load GRNs to verify same supplier + POSTED state.
-  const { data: grns, error: grnErr } = await sb.from('grns')
-    .select('id, grn_number, supplier_id, purchase_order_id, status')
-    .in('id', grnIds);
+  /* SOURCE LOAD, SCOPED — the grnIds arrive in the request body, so this is the
+     read that decides which receipts this conversion can see. Scoped, so another
+     company's GRN id resolves to NO ROW and falls out at `grns_not_found`.
+     REPLACED an isCrossCompanySource loop that ran right after this load and can
+     no longer fire: grnList, and the GRN-item read further down (keyed on the
+     same grnIds), now contain only this company's rows.
+
+     THE COST: a hand-crafted request naming the other company's receipt gets
+     `grns_not_found` instead of "that receipt belongs to 2990, switch company" —
+     the same trade the PO's /:id/convert-from-so records, and taken for the same
+     reason: naming the other company would require an UNSCOPED read of a
+     document this handler otherwise never touches. */
+  const { data: grns, error: grnErr } = await scopeToCompany(sb.from('grns')
+    .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
+    .in('id', grnIds), c);
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
-  const grnList = (grns ?? []) as Array<{ id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string }>;
+  const grnList = (grns ?? []) as Array<{ id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null }>;
   if (grnList.length === 0) return c.json({ error: 'grns_not_found' }, 404);
 
   const notPosted = grnList.filter((g) => g.status !== 'POSTED');
@@ -719,11 +874,14 @@ purchaseReturns.post('/from-grns', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  // Load rejected items across all GRNs.
-  const { data: items } = await sb.from('grn_items')
+  /* Load rejected items across all GRNs. LINE-level half of the same source
+     document — same predicate as the header read above, because
+     `.in('grn_id', grnIds)` is itself an id-keyed read and that is the shape
+     this sweep exists for. */
+  const { data: items } = await scopeToCompany(sb.from('grn_items')
     .select('id, grn_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .in('grn_id', grnIds)
-    .gt('qty_rejected', 0);
+    .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty, 0106) —
   // a GRN line can be returned across multiple PRs. Drop lines already fully
   // returned. We return min(qty_rejected, remaining).
@@ -827,7 +985,8 @@ purchaseReturns.post('/from-grns', async (c) => {
   const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, primaryGrnId, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, grnCount: grnList.length, lineCount: rejectedItems.length, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+purchaseReturns.post('/from-grns', createPurchaseReturnFromGrnsHandler);
 
 /* ── POST /from-grn ─────────────────────────────────────────────────────
    Single-GRN convert (GRN list right-click "Convert to PR"). Unlike
@@ -836,25 +995,44 @@ purchaseReturns.post('/from-grns', async (c) => {
    then trim qty in the PR draft. Returns the created PR's { id } to navigate to.
 
    Body: { grnId, reason?, notes? }  →  201 { id, returnNumber }. */
-purchaseReturns.post('/from-grn', async (c) => {
+/* Exported so the company-scope tests can drive it without the supabaseAuth
+   bridge, which cannot run in the vitest harness. Same reason
+   createPurchaseInvoiceFromGrnHandler and createPcReturnFromPcReceiveHandler
+   are exported; the route registration below is unchanged. */
+export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: both source reads below are SCOPED, so another company's GRN
+     is not visible here at all; the remaining by-id statements read that same
+     GRN's own lines and roll back this handler's own header. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnId?: string; reason?: string; notes?: string; confirmShortStock?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const grnId = body.grnId;
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
 
-  const { data: grn, error: grnErr } = await sb.from('grns')
-    .select('id, grn_number, supplier_id, purchase_order_id, status')
-    .eq('id', grnId).maybeSingle();
+  /* SOURCE LOAD, SCOPED — grnId arrives in the request body, so this is the read
+     that decides what this conversion can see. Scoped, so another company's GRN
+     resolves to NO ROW and falls out at `grn_not_found`.
+     REPLACED an isCrossCompanySource comparison that sat right after this load
+     and can no longer fire.
+
+     THE COST: a hand-crafted request naming the other company's receipt gets
+     `grn_not_found` instead of "that receipt belongs to 2990, switch company" —
+     same trade, same reason, as the PO's /:id/convert-from-so: naming the other
+     company would require an UNSCOPED read of a document this handler otherwise
+     never touches. */
+  const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
+    .select('id, grn_number, supplier_id, purchase_order_id, status, company_id')
+    .eq('id', grnId), c).maybeSingle();
   if (grnErr) return c.json({ error: 'load_failed', reason: grnErr.message }, 500);
   if (!grn) return c.json({ error: 'grn_not_found' }, 404);
-  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string };
+  const g = grn as { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; company_id?: number | null };
   if (g.status !== 'POSTED') return c.json({ error: 'grn_not_posted', status: g.status }, 409);
 
-  const { data: items } = await sb.from('grn_items')
+  // LINE-level half of the same source document, under the same predicate.
+  const { data: items } = await scopeToCompany(sb.from('grn_items')
     .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
     .eq('grn_id', grnId)
-    .gt('qty_accepted', 0);
+    .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
@@ -941,7 +1119,8 @@ purchaseReturns.post('/from-grn', async (c) => {
   await recomputePrTotals(sb, h.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
-});
+};
+purchaseReturns.post('/from-grn', createPurchaseReturnFromGrnHandler);
 
 purchaseReturns.patch('/:id/post', async (c) => {
   /* PR-DRAFT-removal — kept for backward compat; idempotent. POST handler
@@ -1001,6 +1180,10 @@ purchaseReturns.patch('/:id/complete', async (c) => {
 export const cancelPurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const user = c.get('user');
+  /* Surfaced in the response, the way the create path already surfaces
+     movementErrors. A cancel that only PARTLY reversed its stock must not
+     report a clean 200. */
+  const reversalErrors: string[] = [];
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
@@ -1042,6 +1225,22 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
   // Best-effort; never un-cancel on a movement failure.
   try {
     const rev = await reverseMovements(sb, 'PURCHASE_RETURN', id, user.id);
+    /* PARTIAL FAILURE IS REPORTED. reverseMovements inserts row by row on
+       purpose ("so a single collision doesn't abort the whole reversal",
+       inventory-movements.ts:571) and returns { ok, reversed, skipped, failed,
+       reason }. Only `reversed > 0` was read, so reversed:3 / failed:2 entered
+       the branch below and the handler returned a clean 200 - the cancel
+       reported success while part of the stock never came back.
+
+       The cancel still STANDS (a ledger hiccup must not un-cancel a document);
+       what changes is that the caller is told. */
+    if (!rev.ok) {
+      reversalErrors.push(
+        `Stock reversal incomplete: ${rev.reversed} reversed, ${rev.failed} failed` +
+        (rev.reason ? ` (${rev.reason})` : '') +
+        '. The return is cancelled; run /inventory/reconcile to repair the ledger.',
+      );
+    }
     if (rev.reversed > 0) {
       /* PR cancel reversed stock IN → may unlock PENDING SOs. Re-walk. */
       try {
@@ -1062,7 +1261,10 @@ export const cancelPurchaseReturnHandler = async (c: any) => {
     }
   } catch { /* best-effort */ }
 
-  return c.json({ purchaseReturn: { id, status: 'CANCELLED' } });
+  return c.json({
+    purchaseReturn: { id, status: 'CANCELLED' },
+    ...(reversalErrors.length ? { reversalErrors } : {}),
+  });
 };
 purchaseReturns.patch('/:id/cancel', cancelPurchaseReturnHandler);
 
@@ -1109,7 +1311,7 @@ async function prLineLock(sb: any, prId: string): Promise<{ error: string; messa
   return null;
 }
 
-purchaseReturns.post('/:id/items', async (c) => {
+export const addPurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1210,12 +1412,13 @@ purchaseReturns.post('/:id/items', async (c) => {
   /* Audit fix #5 — write the inventory OUT for the newly added line. Without
      this, adding a line to a POSTED PR touched returned_qty + money but never
      the physical stock, leaving inventory permanently over the books. */
+  let movementErrors: string[] = [];
   if (qtyReturned > 0) {
     const { data: hdr } = await sb.from('purchase_returns')
       .select('return_number, grn_id').eq('id', prId).maybeSingle();
     const inserted = data as unknown as { id: string } | null;
     if (hdr && inserted?.id) {
-      await writePrLineDeltaMovement(sb, {
+      movementErrors = await writePrLineDeltaMovement(sb, {
         prId,
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1233,11 +1436,17 @@ purchaseReturns.post('/:id/items', async (c) => {
       });
     }
   }
-  return c.json({ item: data }, 201);
-});
+  /* REPORTED, not discarded — the same `movementErrors: string[]` the CREATE
+     path (POST /) returns. This returned a clean 201 while the line's stock OUT
+     was refused, so qty_returned, grn_items.returned_qty and the refund rollup
+     all moved with no compensating movement and the operator was told it
+     worked. The line STAYS (best-effort ledger, as everywhere on these paths). */
+  return c.json({ item: data, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
+};
+purchaseReturns.post('/:id/items', addPurchaseReturnItemHandler);
 
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_returned. ── */
-purchaseReturns.patch('/:id/items/:itemId', async (c) => {
+export const patchPurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id'); const itemId = c.req.param('itemId');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1307,13 +1516,14 @@ purchaseReturns.patch('/:id/items/:itemId', async (c) => {
   /* Audit fix #5 — write the compensating inventory movement for the qty
      change. delta>0 → more goods leave (OUT); delta<0 → goods come back (IN).
      Uses the effective (possibly edited) material identity. */
+  let movementErrors: string[] = [];
   if (delta !== 0) {
     const { data: hdr } = await sb.from('purchase_returns')
       .select('return_number, grn_id').eq('id', prId).maybeSingle();
     if (hdr) {
       const effGroup = (it.itemGroup ?? (prev as { item_group?: string | null }).item_group) as string | null | undefined;
       const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as VariantAttrs | null | undefined;
-      await writePrLineDeltaMovement(sb, {
+      movementErrors = await writePrLineDeltaMovement(sb, {
         prId,
         returnNumber: (hdr as { return_number: string }).return_number,
         headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1331,11 +1541,16 @@ purchaseReturns.patch('/:id/items/:itemId', async (c) => {
       });
     }
   }
-  return c.json({ ok: true });
-});
+  /* REPORTED, not discarded — same field, same shape as the CREATE path (POST /).
+     A qty edit that moved qty_returned, returned_qty and the refund while its
+     compensating movement was refused used to answer a clean 200. The edit
+     STANDS; the operator is told, and the trail carries a RECOUNT_FAILED row. */
+  return c.json({ ok: true, movementErrors: movementErrors.length ? movementErrors : undefined });
+};
+purchaseReturns.patch('/:id/items/:itemId', patchPurchaseReturnItemHandler);
 
 /* ── DELETE /:id/items/:itemId — remove a line + recompute header. ── */
-purchaseReturns.delete('/:id/items/:itemId', async (c) => {
+export const deletePurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
@@ -1351,6 +1566,7 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
   if (!line) return c.json(NOT_THIS_COMPANY, 404);
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
+  let movementErrors: string[] = [];
   if (line) {
     const l = line as { qty_returned: number; grn_item_id: string | null; material_code: string; material_name: string | null; item_group: string | null; variants: VariantAttrs | null };
     // Release: decrement returned_qty by the deleted line's qty (helper clamps ≥0).
@@ -1364,7 +1580,7 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
       const { data: hdr } = await sb.from('purchase_returns')
         .select('return_number, grn_id').eq('id', prId).maybeSingle();
       if (hdr) {
-        await writePrLineDeltaMovement(sb, {
+        movementErrors = await writePrLineDeltaMovement(sb, {
           prId,
           returnNumber: (hdr as { return_number: string }).return_number,
           headerGrnId: (hdr as { grn_id: string | null }).grn_id ?? null,
@@ -1384,5 +1600,12 @@ purchaseReturns.delete('/:id/items/:itemId', async (c) => {
     }
   }
   await recomputePrTotals(sb, prId);
-  return c.body(null, 204);
-});
+  /* 200 + body, not 204. A deleted line reverses its return with a compensating
+     IN, and a refused IN left the goods deducted for good while the response
+     said 204 No Content — a status that cannot carry the failure at all. Every
+     sibling line-delete already answers 200 `{ ok, movementErrors? }`
+     (consignment-notes.ts, consignment-returns.ts, delivery-returns.ts), and
+     authedFetch parses a JSON 200 the same way it swallowed the 204. */
+  return c.json({ ok: true, movementErrors: movementErrors.length ? movementErrors : undefined });
+};
+purchaseReturns.delete('/:id/items/:itemId', deletePurchaseReturnItemHandler);

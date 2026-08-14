@@ -254,15 +254,15 @@
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
-      "reads": 13,
+      "reads": 12,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 54,
+      "reads": 51,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
-      "reads": 37,
+      "reads": 36,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-rate-cards.ts": {
@@ -298,7 +298,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 52,
+      "reads": 51,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -374,11 +374,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/purchase-invoices.ts": {
-      "reads": 38,
+      "reads": 35,
       "catches": 0
     },
     "backend/src/scm/routes/purchase-returns.ts": {
-      "reads": 28,
+      "reads": 27,
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {

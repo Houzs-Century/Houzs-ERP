@@ -320,9 +320,16 @@ if (check) {
     fs.readFile(OUT_DDL, "utf8").catch(() => null),
     fs.readFile(OUT_SEED, "utf8").catch(() => null),
   ]);
+  // Compare CONTENT, not line endings. Git hands a Windows checkout CRLF while
+  // the generator always builds LF, so a raw !== reported both files stale on
+  // every Windows run — for a tree where nothing under src/db/migrations/ had
+  // changed at all. It passes on Linux CI, which makes it the expensive kind of
+  // wrong: the local gate says regenerate, regenerating produces a byte-identical
+  // file, and `git diff` shows nothing to explain it.
+  const eol = (s) => (s === null ? null : s.replace(/\r\n/g, "\n"));
   const stale = [];
-  if (haveDdl !== ddlOut) stale.push(path.relative(backendRoot, OUT_DDL));
-  if (haveSeed !== seedOut) stale.push(path.relative(backendRoot, OUT_SEED));
+  if (eol(haveDdl) !== eol(ddlOut)) stale.push(path.relative(backendRoot, OUT_DDL));
+  if (eol(haveSeed) !== eol(seedOut)) stale.push(path.relative(backendRoot, OUT_SEED));
   if (stale.length) {
     console.error(
       `Test schema snapshot is stale: ${stale.join(", ")}\n` +

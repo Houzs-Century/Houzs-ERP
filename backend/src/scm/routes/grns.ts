@@ -2,6 +2,7 @@
 // PO → GRN → Purchase Invoice. On POST, qty_received rolls up to PO items.
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
@@ -33,34 +34,27 @@ import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
-  isCrossCompanySource, crossCompanyConversionBlocked,
+  isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 
-/* CROSS-COMPANY GUARD for the three GRN create paths. Each stamps the ACTIVE
-   company on the new GRN and mints under the ACTIVE company's doc prefix, while
-   loading its source purchase order(s) by primary key with no company
-   predicate. Receiving another company's PO here would post the stock IN — and
-   the resulting cost — into the active company's inventory and books.
+/* CROSS-COMPANY GUARD for the bare-create POST /, whose `purchaseOrderId` is an
+   OPTIONAL body field on a path that also serves manual, PO-less receipts — so
+   there is no single source read to scope. That path stamps the ACTIVE company
+   on the new GRN and mints under the ACTIVE company's prefix, so receiving
+   another company's PO would post the stock IN, and its cost, into the active
+   company's inventory and books.
 
    Returns the refusal payload for the first offending PO, or null when every
-   referenced PO belongs to the active company (or the company is unresolved,
-   which degrades to allowed exactly like the rest of the scoping helpers). */
+   referenced PO belongs to the active company (unresolved degrades to allowed,
+   like the rest of the scoping helpers). The two declared converters
+   (/from-pos, /from-po-items) no longer use it: they scope their source reads,
+   so a cross-company PO is not visible to them at all. */
 async function firstCrossCompanyPo(
   sb: any,
   c: any,
   poIds: Array<string | null | undefined>,
 ): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  const ids = [...new Set(poIds.filter((p): p is string => !!p))];
-  if (ids.length === 0) return null;
-  const { data, error } = await sb.from('purchase_orders')
-    .select('id, po_number, company_id').in('id', ids);
-  if (error) return { loadError: error.message };
-  for (const p of (data ?? []) as Array<{ po_number: string; company_id: number | null }>) {
-    if (isCrossCompanySource(p.company_id, c)) {
-      return { blocked: crossCompanyConversionBlocked(p.po_number, p.company_id, c) };
-    }
-  }
-  return null;
+  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
 }
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -906,9 +900,17 @@ export async function recomputePoReceived(
       const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
       recvByPoi.set(r.purchase_order_item_id, (recvByPoi.get(r.purchase_order_item_id) ?? 0) + Math.max(0, net));
     }
-    await Promise.all([...recvByPoi.entries()].map(([poiId, recv]) =>
+    /* CHECK THE WRITES. supabase-js RESOLVES on a rejected write rather than
+       throwing, so a row refused by a constraint never reaches the catch below:
+       discarding `{ data, error }` here made this function return { ok: true }
+       and report `recountError: undefined` on a recount that did not happen. */
+    const itemWrites = await Promise.all([...recvByPoi.entries()].map(([poiId, recv]) =>
       sb.from('purchase_order_items').update({ received_qty: recv }).eq('id', poiId),
     ));
+    const itemErr = itemWrites.find((r: { error?: { message?: string } | null }) => r?.error);
+    if (itemErr) {
+      return { ok: false, reason: `received_qty write failed: ${itemErr.error?.message ?? 'unknown'}` };
+    }
 
     // 2. Re-evaluate each touched PO's status from its (now-recounted) lines.
     const { data: poiRows } = await sb.from('purchase_order_items')
@@ -929,7 +931,13 @@ export async function recomputePoReceived(
       const patch: Record<string, unknown> = { status: newStatus, updated_at: new Date().toISOString() };
       // Stamp received_at on first full receipt, preserve it if already set, clear on regression.
       patch.received_at = fully ? (prevReceivedAt ?? new Date().toISOString()) : null;
-      await sb.from('purchase_orders').update(patch).eq('id', poId).neq('status', 'CANCELLED');
+      // Checked for the same reason as the received_qty writes above: unchecked,
+      // the PO stays RECEIVED (or SUBMITTED) under a clean-looking recount.
+      const { error: poErr } = await sb.from('purchase_orders')
+        .update(patch).eq('id', poId).neq('status', 'CANCELLED');
+      if (poErr) {
+        return { ok: false, reason: `PO status write failed for ${poId}: ${poErr.message ?? 'unknown'}` };
+      }
     }
     return { ok: true };
   } catch (e) {
@@ -983,6 +991,14 @@ async function grnReverseWouldGoNegative(
   // Sum the qty we'd reverse OUT per (product_code, variant_key) bucket.
   const needByBucket = new Map<string, { product_code: string; variant_key: string; need: number }>();
   for (const l of lines) {
+    /* SERVICE lines never entered inventory, so they cannot be reversed out of
+       it. The POST path skips them and this guard did not, which made a
+       landed-cost GRN impossible to cancel: a freight line produces no IN, so
+       onHand 0 < need 1 and the cancel returned 409 grn_consumed_downstream,
+       naming a cause that does not exist. It also blocked the warehouse relocate
+       and the line's own deletion. Counting it as stock is a live hazard too:
+       the movement build below would write an OUT for a non-stock SKU. */
+    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.material_code })) continue;
     const qty = Number(l.qty_accepted ?? 0);
     if (qty <= 0) continue;
     const variant_key = computeVariantKey(l.item_group, l.variants ?? null);
@@ -1515,12 +1531,15 @@ grns.get('/:id', async (c) => {
 // ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
 // For a GRN: the parent PO + downstream PIs + PRs.
 grns.get('/:id/linked', async (c) => {
+  /* Company-scoped like every other read on this router: without it a caller in
+     one company resolves ANOTHER company's GRN to its linked document numbers by
+     id. The same gap existed on all seven /:id/linked endpoints. */
   const sb = c.get('supabase'); const id = c.req.param('id');
 
   const [grnRes, piRes, prRes] = await Promise.all([
-    sb.from('grns')
+    scopeToCompany(sb.from('grns')
       .select('id, purchase_order_id, purchase_order:purchase_orders(id, po_number)')
-      .eq('id', id)
+      .eq('id', id), c)
       .maybeSingle(),
     sb.from('purchase_invoices')
       .select('id, invoice_number, status, invoice_date')
@@ -1870,17 +1889,25 @@ grns.post('/', async (c) => {
 // all POs. Pre-fills qty_received + qty_accepted with the outstanding qty
 // (po_item.qty - po_item.received_qty) per line. Returns the new GRN's id
 // so the UI can navigate to its detail page for review.
-grns.post('/from-pos', async (c) => {
+/* Exported so the company-scope tests can drive it without supabaseAuth, which
+   cannot run in the vitest harness. The registration below is unchanged. */
+export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { purchaseOrderIds?: string[]; deliveryNoteRef?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const poIds = body.purchaseOrderIds ?? [];
   if (poIds.length === 0) return c.json({ error: 'po_ids_required' }, 400);
 
-  // Load POs to verify same supplier + grab po_number for traceability.
-  const { data: pos, error: poErr } = await sb.from('purchase_orders')
+  /* SOURCE LOAD, SCOPED — purchaseOrderIds arrive in the request body, so this
+     read is what the conversion can see. Another company's PO id resolves to NO
+     ROW and falls out at `pos_not_found` below, which is also why the
+     firstCrossCompanyPo refusal that used to stand here can no longer fire.
+     THE COST: that request gets `pos_not_found` rather than "belongs to 2990,
+     switch company" — naming the other company needs an UNSCOPED read this
+     handler otherwise never makes. Same trade as /:id/convert-from-so. */
+  const { data: pos, error: poErr } = await scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, supplier_id, status, currency')
-    .in('id', poIds);
+    .in('id', poIds), c);
   if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
   const poList = (pos ?? []) as Array<{ id: string; po_number: string; supplier_id: string; status: string; currency?: string | null }>;
   if (poList.length === 0) return c.json({ error: 'pos_not_found' }, 404);
@@ -1889,12 +1916,6 @@ grns.post('/from-pos', async (c) => {
      that are still open for receipt. Without this a DRAFT / CANCELLED /
      already-RECEIVED PO could be converted to a GRN and write stock IN. Mirrors
      the 409 `/from-po-items` already enforces per pick. */
-  {
-    const x = await firstCrossCompanyPo(sb, c, poIds);
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x) return c.json(x.blocked, 409);
-  }
-
   const notReceivable = poList.find((p) => !isReceivablePoStatus(p.status));
   if (notReceivable) {
     return c.json({ error: 'po_not_receivable', poId: notReceivable.id, status: notReceivable.status }, 409);
@@ -1906,14 +1927,17 @@ grns.post('/from-pos', async (c) => {
   }
   const supplierId = [...supplierIds][0]!;
 
-  // Load PO items with outstanding qty (+ variant fields for PR #44).
-  const { data: items } = await sb.from('purchase_order_items')
+  // Load PO items with outstanding qty (+ variant fields for PR #44). SCOPED —
+  // the LINE-level half of the same source document. Redundant after the scoped
+  // header read, and kept: an id-keyed read is its own entry point.
+  const { data: items, error: itemsErr } = await scopeToCompany(sb.from('purchase_order_items')
     .select('id, purchase_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_centi, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi, unit_cost_centi, delivery_date, ' +
       // Migration 0180 — revised dates so the GRN line carries the EFFECTIVE date.
       'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
-    .in('purchase_order_id', poIds);
+    .in('purchase_order_id', poIds), c);
+  if (itemsErr) return c.json({ error: 'lookup_failed', reason: itemsErr.message }, 500);
   const itemList = ((items ?? []) as unknown as Array<{
     id: string; purchase_order_id: string; material_kind: string; material_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_centi: number;
@@ -2100,7 +2124,8 @@ grns.post('/from-pos', async (c) => {
   const movementErrors = postRes.ok ? postRes.movementErrors : undefined;
   const recountError = postRes.ok ? postRes.recountError : undefined;
   return c.json({ id: h.id, grnNumber: h.grn_number, poCount: poList.length, lineCount: itemList.length, movementErrors: movementErrors?.length ? movementErrors : undefined, recountError }, 201);
-});
+};
+grns.post('/from-pos', createGrnFromPosHandler);
 
 export const postGrnHandler = async (c: any) => {
   /* Confirm transition (DRAFT → POSTED) — this is where the GRN commits.
@@ -2211,16 +2236,28 @@ grns.patch('/:id/post', postGrnHandler);
    atomically (per-doc; best-effort across docs).
 
    Returns { created: [{ id, grnNumber, purchaseOrderId, poNumber, lineCount }], total }. */
-grns.post('/from-po-items', async (c) => {
+/* Exported so the company-scope tests can drive it without supabaseAuth, which
+   cannot run in the vitest harness. The registration below is unchanged. */
+export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
+  /* company-scope: the only by-id write here is the ROLLBACK of the header this
+     handler just inserted; the insert stamps the active company, so the id is
+     not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ poItemId: string; qty: number }>; notes?: string; receivedDate?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const picks = body.picks ?? [];
   if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
 
-  // Load every selected PO item with its parent PO header.
+  /* SOURCE LOAD, SCOPED — the picked PO LINES are where the caller's ids enter,
+     so this read is what the conversion can see. Another company's poItemId
+     resolves to NO ROW and falls out at the per-pick `item_not_found` below; the
+     parent PO rides the `!inner` embed, so it cannot arrive from outside the
+     company either. That is also why the firstCrossCompanyPo refusal that used
+     to stand below the validation loop can no longer fire.
+     THE COST: `item_not_found` rather than "belongs to 2990, switch company" —
+     same trade as /:id/convert-from-so. */
   const ids = picks.map((p) => p.poItemId);
-  const { data: itemsData, error: itemsErr } = await sb
+  const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('purchase_order_items')
     .select(`
       id, purchase_order_id, material_kind, material_code, material_name,
@@ -2231,7 +2268,7 @@ grns.post('/from-po-items', async (c) => {
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, purchase_location_id, currency )
     `)
-    .in('id', ids);
+    .in('id', ids), c);
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
@@ -2266,12 +2303,6 @@ grns.post('/from-po-items', async (c) => {
     if (!isReceivablePoStatus(row.po.status)) {
       return c.json({ error: 'po_not_receivable', poItemId: p.poItemId, status: row.po.status }, 409);
     }
-  }
-
-  {
-    const x = await firstCrossCompanyPo(sb, c, itemList.map((r) => r.purchase_order_id));
-    if (x && 'loadError' in x) return c.json({ error: 'load_failed', reason: x.loadError }, 500);
-    if (x) return c.json(x.blocked, 409);
   }
 
   /* One probe for the whole batch, not one per bucket: every bucket below writes
@@ -2507,7 +2538,8 @@ grns.post('/from-po-items', async (c) => {
   }
 
   return c.json({ created, total: created.length }, 201);
-});
+};
+grns.post('/from-po-items', createGrnsFromPoItemsHandler);
 
 /* ── PATCH /:id/cancel — cancel a GRN + reverse its receipt ─────────────────
    Commander 2026-05-29 — the GRN module is a Confirmed-clone of the PO module,
@@ -2522,6 +2554,10 @@ grns.post('/from-po-items', async (c) => {
    movement/rollback failure does not un-cancel the GRN.
    NOTE: grns has no cancelled_at column, so we set status + updated_at only. */
 grns.patch('/:id/cancel', async (c) => {
+  /* Surfaced in the response, like the POST path's movementErrors/recountError.
+     The GRN stays CANCELLED either way; what changes is that a failed reversal
+     or recount no longer reports a clean 200. */
+  const cancelErrors: string[] = [];
   const id = c.req.param('id');
   const sb = c.get('supabase');
   const user = c.get('user');
@@ -2645,6 +2681,10 @@ grns.patch('/:id/cancel', async (c) => {
          Manual lines (no PO link) stay un-batched → plain FIFO, as before. */
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
       const movements = lineList
+        /* Mirrors the POST filter. Without it the cancel writes an OUT for a
+           freight line that never had an IN — a permanent negative on-hand for a
+           non-stock SKU. */
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .map((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
@@ -2666,7 +2706,17 @@ grns.patch('/:id/cancel', async (c) => {
           };
         });
       if (movements.length > 0) {
-        await writeMovements(sb, movements, activeCompanyId(c));
+        /* CHECKED. writeMovements NEVER THROWS — it logs and returns {ok:false}
+           — so the enclosing best-effort catch caught nothing, and discarding the
+           result left phantom received stock on the shelf behind a 200. The
+           CANCEL audit row records the cancel, never the failed reversal. */
+        const wrote = await writeMovements(sb, movements, activeCompanyId(c));
+        if (!wrote.ok) {
+          cancelErrors.push(
+            `Stock reversal FAILED (${movements.length} row(s)): ${wrote.reason ?? 'unknown'}. ` +
+            'The GRN is cancelled but its received stock is still on hand — run /inventory/reconcile.',
+          );
+        }
         /* GRN cancel pulled stock back out → other READY SOs that relied on
            this stock may need to regress. Re-walk allocation. Best-effort. */
         try {
@@ -2687,9 +2737,20 @@ grns.patch('/:id/cancel', async (c) => {
   // (b) Recount received_qty on each linked PO item from live GRN lines — this
   //     cancelled GRN's lines now drop out, auto-releasing the PO + re-evaluating
   //     its status.
+  /* recomputePoReceived RETURNS its outcome and never throws, so discarding the
+     result — and relying on the catch — left POs holding received goods with
+     received_qty untouched, traced only by a console line nobody keeps. */
   try {
-    await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
-  } catch { /* best-effort */ }
+    const recount = await recomputePoReceived(sb, lineList.map((it) => it.purchase_order_item_id));
+    if (!recount.ok) {
+      cancelErrors.push(
+        `PO recount FAILED: ${recount.reason ?? 'unknown'}. The GRN is cancelled but its PO lines ` +
+        'still show the goods as received — reopen and re-save the PO, or run the recount.',
+      );
+    }
+  } catch (e) {
+    cancelErrors.push(`PO recount threw: ${(e as Error)?.message ?? 'unknown'}`);
+  }
 
   const { data } = await sb.from('grns').select(HEADER).eq('id', id).maybeSingle();
 
@@ -2705,7 +2766,7 @@ grns.patch('/:id/cancel', async (c) => {
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ grn: data ?? { id, status: 'CANCELLED' } });
+  return c.json({ grn: data ?? { id, status: 'CANCELLED' }, ...(cancelErrors.length ? { cancelErrors } : {}) });
 });
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -2719,6 +2780,16 @@ grns.patch('/:id/cancel', async (c) => {
 /* ── PATCH /:id — header update (mirror PO's PATCH /:id) ── */
 grns.patch('/:id', async (c) => {
   const id = c.req.param('id');
+  /* company-scope: prove the GRN is ours BEFORE anything below touches it. Every
+     write keys on the caller-supplied uuid, so the status and downstream guards
+     are real but company-blind — and a header write can relocate stock. */
+  {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      c.get('supabase').from('grns').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -2777,7 +2848,29 @@ grns.patch('/:id', async (c) => {
       const consumedLock = await grnReverseWouldGoNegative(sb, oldWh, lineList);
       if (consumedLock) return c.json(consumedLock, 409);
       const batchByItem = await resolvePoBatchByItem(sb, lineList.map((it) => it.purchase_order_item_id));
+
+      /* THE ORIGINAL LANDED COST, read back from this GRN's own IN movements.
+         Pricing the IN below at `toMyrSen(unit_price_centi, rate)` — the BASE
+         cost — while the receipt opened its lots at the LANDED cost (base +
+         allocated freight) consumes at landed and re-opens at base, so the
+         capitalised freight leaves inventory value permanently; on a container
+         GRN that is the whole freight bill. Re-reading the movement beats
+         recomputing the allocation: it is the basis those units actually entered
+         at, and it survives a change to the allocation rule. */
+      const { data: priorIns, error: priorInsErr } = await sb.from('inventory_movements')
+        .select('product_code, variant_key, unit_cost_sen')
+        .eq('source_doc_type', 'GRN')
+        .eq('source_doc_id', id)
+        .eq('movement_type', 'IN');
+      if (priorInsErr) return c.json({ error: 'lookup_failed', reason: priorInsErr.message }, 500);
+      const landedByBucket = new Map<string, number>();
+      for (const m of ((priorIns ?? []) as Array<{ product_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
+        const cost = Number(m.unit_cost_sen ?? 0);
+        if (cost > 0) landedByBucket.set(`${m.product_code}::${m.variant_key ?? ''}`, cost);
+      }
+
       const movements = lineList
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
@@ -2789,7 +2882,16 @@ grns.patch('/:id', async (c) => {
           };
           return [
             { ...base, movement_type: 'OUT' as const, warehouse_id: oldWh, notes: 'GRN warehouse changed — out of old warehouse' },
-            { ...base, movement_type: 'IN' as const, warehouse_id: newWh, unit_cost_sen: toMyrSen(Number(it.unit_price_centi ?? 0), c0?.exchange_rate ?? 1), notes: 'GRN warehouse changed — into new warehouse' },
+            {
+              ...base,
+              movement_type: 'IN' as const,
+              warehouse_id: newWh,
+              // Landed cost from the original IN; base only when there is no
+              // prior movement to read (a pre-0154 GRN, or a zero-cost line).
+              unit_cost_sen: landedByBucket.get(`${it.material_code}::${variant_key}`)
+                ?? toMyrSen(Number(it.unit_price_centi ?? 0), c0?.exchange_rate ?? 1),
+              notes: 'GRN warehouse changed — into new warehouse',
+            },
           ];
         });
       if (movements.length > 0) {
@@ -2916,6 +3018,22 @@ grns.post('/:id/items', async (c) => {
 
   const sb = c.get('supabase');
   const user = c.get('user');
+  /* company-scope: PROVE THE PARENT GRN FIRST — the gate PATCH /:id opens with.
+     A STAMP IS NOT A PREDICATE: the insert below stamps activeCompanyId(c),
+     which says who was typing, not whose GRN was loaded. Every read here keys on
+     `grnId` alone and the client is service-role (RLS bypassed, mig 0061), so
+     another company's GRN id was accepted — their receipt carrying our stamp,
+     their header re-totalled, their inventory IN and their PO's received_qty.
+     Refused BEFORE the child-lock and status probes, so an out-of-company id
+     cannot be used to ask whether that GRN exists. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: grnOwn, error: grnOwnErr } = await scopeToCompanyId(
+    sb.from('grns').select('id').eq('id', grnId), co.companyId,
+  ).maybeSingle();
+  if (grnOwnErr) return c.json({ error: 'lookup_failed', reason: grnOwnErr.message }, 500);
+  if (!grnOwn) return c.json(NOT_THIS_COMPANY, 404);
+
   // GRN child-lock: a GRN with any downstream PI/PR is read-only.
   const childLock = await grnHasDownstream(sb, grnId);
   if (childLock) return c.json(childLock, 409);
@@ -3017,7 +3135,9 @@ grns.post('/:id/items', async (c) => {
     /* migration 0280 — see the create path: this insert is a whitelist too. */
     ...zeroCostAckColumns(it, user.id),
   };
-  const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  /* co.companyId, not activeCompanyId(c): the parent GRN was proved above, so
+     the line is stamped with the header's owner, not with the switcher. */
+  const { data, error } = await sb.from('grn_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
   /* Bug #3/#11 — POST-INSERT over-receipt verification. The pre-check above is a
@@ -3144,6 +3264,16 @@ grns.post('/:id/items', async (c) => {
 /* ── PATCH /:id/items/:itemId — partial line update. qty → qty_received. ── */
 grns.patch('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
+  // company-scope: prove the parent GRN. Editing a line re-costs it and rolls
+  // the PO's received_qty back up — both are writes on the other company's data
+  // if the parent is not ours.
+  {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      c.get('supabase').from('grns').select('id').eq('id', grnId), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -3431,6 +3561,14 @@ grns.patch('/:id/items/:itemId', async (c) => {
 grns.delete('/:id/items/:itemId', async (c) => {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase'); const user = c.get('user');
+  // company-scope: prove the parent GRN — same reasoning as the line PATCH.
+  {
+    const { data: own, error: ownErr } = await scopeToCompany(
+      sb.from('grns').select('id').eq('id', grnId), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
+  }
 
   // Same strict company gate as the line PATCH — a delete reverses stock too.
   const co = requireActiveCompanyId(c);

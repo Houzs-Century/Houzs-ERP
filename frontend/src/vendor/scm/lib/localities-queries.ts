@@ -20,6 +20,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export interface LocalityRow {
   id?: string;
@@ -195,6 +196,7 @@ export const useDeleteLocality = () => {
     mutationFn: (id: string) =>
       authedFetch(`/localities/${id}`, { method: 'DELETE' }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['my_localities'] }); },
+    onError: writeFailed,
   });
 };
 

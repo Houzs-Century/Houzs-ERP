@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
@@ -103,6 +104,7 @@ export const useCreateJournalEntry = () => {
       qc.invalidateQueries({ queryKey: ['journal-entries'] });
       qc.invalidateQueries({ queryKey: ['account-balances'] });
     },
+    onError: writeFailedAs('Journal entry not created'),
   });
 };
 
@@ -118,6 +120,7 @@ export const usePostJournalEntry = () => {
       qc.invalidateQueries({ queryKey: ['gl-entries'] });
       qc.invalidateQueries({ queryKey: ['account-balances'] });
     },
+    onError: writeFailedAs('Journal entry not posted'),
   });
 };
 

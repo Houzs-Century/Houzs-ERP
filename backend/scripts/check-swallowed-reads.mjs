@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanErrorlessReads, scanBareCatches } from './lib/swallowed-read-scan.mjs';
 
@@ -52,7 +52,10 @@ function* walk(dir, ext) {
 const actual = {};
 for (const { dir, ext } of ROOTS) {
   for (const file of walk(dir, ext)) {
-    const rel = relative(REPO, file);
+    // Forward slashes, always. The baseline JSON is written by CI on Linux, so
+    // its 126 keys are posix; relative() hands back backslashes on Windows and
+    // every ceiling lookup missed, reporting the whole tree as 153 NEW sites.
+    const rel = relative(REPO, file).split(sep).join('/');
     if (isTest(rel)) continue;
     const text = readFileSync(file, 'utf8');
     const reads = scanErrorlessReads(text).length;

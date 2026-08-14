@@ -64,7 +64,7 @@ import {
 /* SO-SKU spec P3 — a POS sofa build splits into per-compartment module lines
    (SO-2606-018 reference shape). Pure decomposition in shared; the build-level
    recompute + drift gate stay authoritative for the money. */
-import { splitSofaBuildIntoModuleLines } from '../shared/so-sofa-split';
+import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../shared/so-sofa-split';
 /* SO line ORDER rules (Loo 2026-06-12) — persisted row order: mains
    (sofa/mattress/bedframe) first, accessories after, services last; within a
    rank the cart order is preserved. Shared with the Backend PDF + POS print
@@ -697,15 +697,36 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    NOT the pinned scm.staff uuid on user.id). Returns TRUE ⇒ block (the caller
    answers 404, indistinguishable from a nonexistent doc_no). A missing SO also
    returns TRUE (fail closed). */
+/* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
+
+   TWO dimensions. The salesperson one answers "is this MY order" and returns
+   false immediately for a view-all tier - correct for its own question, and
+   useless for tenancy, since a view-all caller holding the other company's
+   doc_no passed every caller of this guard, four money-writing payment verbs
+   included. So COMPANY is checked FIRST and for everyone. It belongs here
+   rather than in each handler: 18 callers share it, and the 19th gets it free. */
 async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
-  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const sb = c.get('supabase');
+
+  /* 1. Tenancy - every tier, view-all included. scopeToCompany DEGRADES when the
+     company is UNRESOLVED and must NOT fail closed: unresolved means the
+     companies master could not be read (pre-migration, D1 test mirror,
+     Hyperdrive cold start), and refusing there locks every user out of all 18
+     handlers. See "THE ALLOW-LIST SENTINEL" in companyScope.ts. */
+  const { data: owned, error: ownedErr } = await scopeToCompany(
+    sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
+    c,
+  ).maybeSingle();
+  if (ownedErr || !owned) return true;
+
+  // 2. Salesperson - only for the self-scoped tier.
+  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const { data, error } = await sb
     .from('mfg_sales_orders')
     .select('salesperson_id')
     .eq('doc_no', docNo)
     .maybeSingle();
-  if (error || !data) return true; // fail closed — unknown/unreadable doc is out of scope
+  if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
   const sp = (data as { salesperson_id?: number | string | null }).salesperson_id;
   return salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, sp);
 }
@@ -4384,6 +4405,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
            `depth` alias here does NOT change the geometry. */
         const { cells: _cells, ...sharedVariants } =
           canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
+        /* SPREAD THE DISCOUNT ACROSS THE MODULES, never dump it on module 0.
+           The discount is validated against the WHOLE BUILD's unit price, but
+           module 0 carries only its share, so a build-level discount larger than
+           that share made the row total NEGATIVE (senOrZero passes negatives
+           through) — and every downstream document clamps with
+           Math.max(0, ...), so the discount was silently DELETED and the order
+           invoiced for MORE than it was sold. The item PATCH below already
+           refuses such a row, so it could be created but not edited.
+
+           distributeBuildDiscount is exact (residue on the last line) and each
+           share is `discount * unit_i / SUM(unit)`, so with the gate above
+           (`discount <= qty * SUM(unit)`) every share is <= `qty * unit_i`, the
+           invariant that PATCH enforces. The header total is computed BEFORE the
+           split, so it is unchanged. */
+        const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
         const moduleRows = split.map((s, i) => {
           const moduleVariants: Record<string, unknown> = {
             ...sharedVariants,
@@ -4393,7 +4429,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             y: s.y,
             rot: s.rot,
           };
-          const moduleLineTotal = senOrZero((qty * s.unitPriceSen) - (i === 0 ? discount : 0));
+          const moduleLineTotal = senOrZero((qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0));
           const moduleLineCost = senOrZero(qty * s.unitCostSen);
           const row = {
             ...baseRow,
@@ -4401,7 +4437,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             description: s.description,
             description2: buildVariantSummary('sofa', moduleVariants) || null,
             unit_price_centi: s.unitPriceSen,
-            discount_centi: i === 0 ? discount : 0,
+            discount_centi: moduleDiscounts[i] ?? 0,
             total_centi: moduleLineTotal,
             total_inc_centi: moduleLineTotal,
             balance_centi: moduleLineTotal,
@@ -7796,7 +7832,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      `addLinePwpClaimed` for rollback on a subsequent insert failure. */
   let addLinePwpBaseSen: number | null = null;
   let addLinePwpSofaComboIds: string[] | null = null;
-  let addLinePwpClaimed: { code: string; prevStatus: string } | null = null;
+  let addLinePwpClaimed: { code: string; companyId: number; prevStatus: string } | null = null;
   const addLinePwpCode = String((variantsObj as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim();
   if (addLinePwpCode) {
     /* PWP reward qty lock (Loo 2026-06-12) — a reward line must be exactly 1
@@ -7818,8 +7854,19 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        AVAILABLE voucher redeemable. */
     const addLineOwnerStaffId =
       (await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id)) ?? '';
+    /* mig 0188 re-keyed pwp_codes on (company_id, code), so `.eq('code', ...)`
+       alone means "whichever company's row comes back first" on the path that
+       BURNS the voucher. */
+    const pwpCompanyId = activeCompanyId(c);
+    if (pwpCompanyId == null) {
+      return c.json({
+        error: 'company_unresolved',
+        message: 'Cannot tell which company this order belongs to right now. Reload and try again.',
+      }, 409);
+    }
     const pwpClaimResult = await claimPwpForSingleLine(sb, {
       code: addLinePwpCode,
+      companyId: pwpCompanyId,
       docNo,
       itemCode: productLite?.code ?? itemCodeStr,  // resolved catalog SKU — matches create audit
       product: {
@@ -8066,6 +8113,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
          ran on the raw it.variants. */
       const { cells: _cells, freeItem: _clientFreeItem, ...sharedVariants } =
         canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
+      // Spread across the modules - see the create path. On module 0 the row goes
+      // NEGATIVE and downstream Math.max(0, ...) then deletes the discount.
+      const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
       const moduleRows = split.map((s, i) => {
         const moduleVariants: Record<string, unknown> = {
           ...sharedVariants,
@@ -8079,7 +8129,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
              the split build, exactly mirroring the create-path behaviour. */
           ...(addLineFreeItem ? { freeItem: addLineFreeItem } : {}),
         };
-        const moduleLineTotal = (qty * s.unitPriceSen) - (i === 0 ? discount : 0);
+        const moduleLineTotal = (qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0);
         const moduleLineCost = qty * s.unitCostSen;
         return {
           ...baseRow,
@@ -8091,7 +8141,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
           description: s.description,
           description2: buildVariantSummary('sofa', moduleVariants) || null,
           unit_price_centi: s.unitPriceSen,
-          discount_centi: i === 0 ? discount : 0,
+          discount_centi: moduleDiscounts[i] ?? 0,
           total_centi: moduleLineTotal,
           total_inc_centi: moduleLineTotal,
           balance_centi: moduleLineTotal,
@@ -8964,7 +9014,25 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   const qty = Number(prev.qty);
   const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
-  const newTotal = (qty * newUnit) - Number(prev.discount_centi ?? 0);
+  /* The unit price just MOVED and the stored discount did not. newUnit is
+     clamped at 0, newTotal is not, so a variant edit that LOWERS the price drives
+     the line total NEGATIVE — and downstream Math.max(0, ...) then deletes the
+     discount and over-bills. REJECT, do not normalize: the price-override path
+     in this file already sets that house rule (discount invariant:
+     0 <= discount <= qty * unit), and silently shrinking a discount changes the
+     money without telling anyone. */
+  const prevDiscount = Number(prev.discount_centi ?? 0);
+  if (prevDiscount > qty * newUnit) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `This change lowers the unit price to ${(newUnit / 100).toFixed(2)}, and the line already carries a ` +
+        `${(prevDiscount / 100).toFixed(2)} discount — which no longer fits. Reduce the discount first, then re-apply this change.`,
+      discount: prevDiscount,
+      max: qty * newUnit,
+    }, 422);
+  }
+  const newTotal = (qty * newUnit) - prevDiscount;
   const newUnitCost = Math.max(0, Number(prev.unit_cost_centi ?? 0) + costDeltaCenti);
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     variants: nextVariants,
@@ -9288,6 +9356,19 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
 
   const qty = Number(prev.qty);
   const discount = Number(prev.discount_centi ?? 0);
+  // Same invariant as the price-override path and the variant edit above: a SWAP
+  // to a cheaper SKU must not strand a discount that no longer fits, because the
+  // negative total is then clamped away downstream.
+  if (discount > qty * unitSen) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `That product is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `Reduce the discount first, then swap the product.`,
+      discount,
+      max: qty * unitSen,
+    }, 422);
+  }
   const newTotal = (qty * unitSen) - discount;
   const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
   if (newTotal < prevTotal && await isPosTabletCaller(c)) {
@@ -9809,6 +9890,18 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     ? recomputed.unit_cost_sen
     : await snapshotUnitCostSen(sb, newCode, 0, c);
   const discount = Number(prev.discount_centi ?? 0);
+  // Same invariant as :6199 / the variant edit / the product swap — a sofa
+  // exchange to a cheaper build must not strand a discount that no longer fits.
+  if (discount > qty * unit) {
+    return c.json({
+      error: 'discount_exceeds_new_price',
+      message:
+        `That build is cheaper than the line's ${(discount / 100).toFixed(2)} discount allows. ` +
+        `Reduce the discount first, then exchange the sofa.`,
+      discount,
+      max: qty * unit,
+    }, 422);
+  }
   const newBuildTotal = (qty * unit) - discount;
   const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
   if (posTablet && newBuildTotal < oldBuildTotal) {
@@ -9998,11 +10091,14 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   let rows: Array<Record<string, unknown>>;
   if (split && split.length > 0) {
     const { cells: _cells, ...sharedVariants } = persistVariants;
+    // Spread across the modules - see the create path. On module 0 the row goes
+    // NEGATIVE and downstream Math.max(0, ...) then deletes the discount.
+    const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
     rows = split.map((s, i) => {
       const moduleVariants: Record<string, unknown> = {
         ...sharedVariants, buildKey: newBuildKey, cellIndex: s.cellIndex, x: s.x, y: s.y, rot: s.rot,
       };
-      const moduleLineTotal = (qty * s.unitPriceSen) - (i === 0 ? discount : 0);
+      const moduleLineTotal = (qty * s.unitPriceSen) - (moduleDiscounts[i] ?? 0);
       const moduleLineCost = qty * s.unitCostSen;
       return {
         ...baseRow,
@@ -10010,7 +10106,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         description: s.description,
         description2: buildVariantSummary('sofa', moduleVariants) || null,
         unit_price_centi: s.unitPriceSen,
-        discount_centi: i === 0 ? discount : 0,
+        discount_centi: moduleDiscounts[i] ?? 0,
         total_centi: moduleLineTotal,
         total_inc_centi: moduleLineTotal,
         balance_centi: moduleLineTotal,
@@ -10560,6 +10656,12 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const docNo = c.req.param('docNo');
   const itemId = c.req.param('itemId');
   const photoKey = decodeURIComponent(c.req.param('photoKey'));
+
+  /* The `i.doc_no !== docNo` check below compares two CALLER-supplied values, so
+     it proves nothing about whose SO this is. Run the same shared guard the
+     sibling /:docNo routes use, or a guessed item uuid serves another company's
+     product photos out of R2. */
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   if (!c.env.SO_ITEM_PHOTOS) {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
@@ -11358,6 +11460,9 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
    and the UI falls back to the order slip. */
 mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const id = c.req.param('id');
+  // Same reasoning as the item-photo route: the so_doc_no match below compares
+  // two caller-supplied values. A payment SLIP is a bank record — gate it.
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   const { data: row, error } = await sb
     .from('mfg_sales_order_payments')
     .select('so_doc_no, slip_key')
