@@ -7272,6 +7272,147 @@ invisible.
 
 **Ref** — 2026-08-10, PR #1903 (feat/restamp-sofa-colours).
 
+## An AGGREGATED GrQty was read as a per-line received quantity, inflating received_qty on migrated PO lines [high]
+
+**Symptom** — 65 migrated `scm.purchase_order_items` rows in production carry
+`received_qty > qty`: a line ordered 1 and received 2. That is a permanent
+NEGATIVE outstanding, and no report surfaces it — the over-receipt detectors all
+work off GRN lines, and these rows have no GRN behind them at all.
+
+**Root cause (traced, not guessed)** — the two AutoCount PO exports do not carry
+the same thing, and the code treated them as synonyms.
+`ac-outstanding-po.json.gz` carries `PODTL.TransferedQty`, which is per PO LINE
+(`data/autocount-refetch-po.sql` selects it straight off the detail row).
+`ac-so-linked-pos.json.gz` carries `GrQty`, which is **aggregated on
+(DocNo + ItemCode)** — on a document holding two lines of one ItemCode, every one
+of those lines reports the DOCUMENT's total. `import-ac-so-linked-pos.mjs:167`
+read it per line:
+
+```js
+const recv = Math.round(Number(l.GrQty ?? 0));
+```
+
+and `lib/po-line-topup-core.mjs:86` inherited the same assumption as
+`acNum(r.TransferedQty ?? r.GrQty)`.
+
+The export proves it against itself, with no database access needed: all 38
+`(DocNo,ItemCode)` groups holding 2+ lines carry an IDENTICAL `GrQty` on every
+line (an aggregate cannot vary inside its own group); 59 lines carry
+`GrQty > Qty`, impossible for one line, and **all 59** sit on such a group, ZERO
+on a single-line group; PO-008944 holds two `DSL-8050 SOFA` lines of Qty 2 and
+Qty 1 and reports `GrQty 3` on both — their sum. Confirmed against live AutoCount
+in review (read-only ODBC, the 738 merged DtlKeys joined to PODTL): 60 of 738
+disagree with `PODTL.TransferedQty`, **always inflated**, and 0 disagree wherever
+`TransferedQty` supplied the value. `GRDTL.FromDocDtlKey` is NULL in this book,
+so recovering a per-line figure by joining GR details is impossible;
+`PODTL.TransferedQty` is the only correct source.
+
+**Fix** — one shared rule in `lib/po-line-topup-core.mjs` (`resolveReceivedQty`),
+called by both the importer and the top-up so they cannot drift: `TransferedQty`
+is taken; a `GrQty` of exactly zero is taken (a sum of non-negative receipts at
+zero forces every member to zero — arithmetic, not trust); a `GrQty` above zero
+yields NO quantity and the line is reported. `received_qty` is
+`NOT NULL DEFAULT 0` (migration 0090), so there is no blank column to write —
+the top-up WITHHOLDS the whole family and the importer REFUSES the whole
+document, both loudly. Whole, not the determinate half: a half-written family is
+what every later run reports as "partial" and never completes, so a partial write
+here is permanent. `data/autocount-refetch-so-linked-po.sql` is the read-only
+re-export that fixes the data properly.
+
+The tempting rule — "the group holds one line, so the aggregate IS that line" —
+is deliberately NOT implemented, though it would cover 333 more lines. It rests
+on the export holding every line of that ItemCode on that document, and nothing
+available here can establish that: the two exports never overlap on a received
+line (0 of the 179 shared DtlKeys have `GrQty > 0`), so the repo cannot check it
+even once. Group size is reported as diagnosis, never consulted as permission.
+
+**The class, for next time** — a column name is not a contract. `GrQty` and
+`TransferedQty` both read as "how many arrived", and the comment that used to sit
+above them said "They mean the same thing." Before reading any quantity per line,
+check whether it VARIES within the group it would have been aggregated on; a
+column that is constant across a group of differing quantities is an aggregate.
+The cheapest tell is the impossible value: `received > ordered` on a single line
+is arithmetic that cannot happen, and 59 of them were sitting in the file.
+
+**Not repaired here** — the 65 existing production rows are a SEPARATE repair
+owned by another lane. This change stops the source of them; it rewrites nothing.
+
+**Ref** — PR #1906, 2026-08-11.
+
+## Document-level idempotency stranded 60 purchase-order lines, and the completeness check reported zero [high]
+
+**Symptom** — `check-cutover-completeness.mjs` reported `PO 407 = 407 MISSING 0`
+while 35 AutoCount purchase-order LINES had no ERP row at all — 60 rows once the
+sofa lines are decomposed, on 31 purchase orders. 25 of those documents are the
+MIXED ones (a sofa line riding alongside a non-sofa line); 6 more are
+bedframe-only shortfalls on documents the SO-linked import created. The
+documents were all present. The lines were not.
+
+**Root cause (traced, not guessed)** — both PO importers are idempotent at
+DOCUMENT level. `import-ac-outstanding-po.mjs:205-208`:
+
+```js
+const nums = built.map((o) => o.poNo);
+const existing = new Set();          // SELECT po_number ... WHERE po_number = ANY(...)
+const todo = built.filter((o) => !existing.has(o.poNo));
+```
+
+Two APPLY runs without `SOFA=1` created 123 documents (98 pure non-sofa + 25
+mixed). The `SOFA=1` run then saw those 123 documents already present and skipped
+them WHOLE: its own log reads `POs to import: 160; already imported: 123; to
+insert: 37` / `inserted POs=37 items=76`. The sofa lines riding the 25 mixed
+documents were never written, and re-running can never repair it — the next run
+says `already imported: 160; to insert: 0`. `import-ac-so-linked-pos.mjs:132`
+has the identical shape, which is where the 6 bedframe documents come from.
+
+The check could not see any of it because it compared document-number SETS
+(`:51-58`) and nothing else. A document-level guard and a document-level check
+share one blind spot, so they agreed with each other and both were wrong.
+
+**Fix** — `backend/scripts/topup-ac-po-lines.mjs` + workflow
+`topup-ac-po-lines.yml` diff the AutoCount exports against
+`scm.purchase_order_items` line by line and insert only what is missing (DRY-RUN
+by default). It never creates a document, never changes a status, never posts an
+inventory movement, and it reuses `lib/parse-sofa.mjs` rather than growing a
+second decoder. `check-cutover-completeness.mjs` gains section 1b, which counts
+lines per document and names the shortfall — built on the SAME
+`lib/po-line-topup-core.mjs` the repair writes from, so the check and the repair
+cannot drift apart.
+
+**Two things the first prod DRY-RUN corrected, which is why it is DRY-RUN
+first** — the strongest handle, `linked_ac_dtlkey`, arrived in migration 0273
+(#1819) while this was being written and is not yet applied to production; it is
+nullable by design and `backfill-ac-line-keys` matches on (DocNo + ERP code),
+which cannot reach a sofa compartment whose code is `${model}-{piece}`. So it is
+used where it exists, set on every row this repair writes, and never relied on
+alone. Below it, lines are matched on `supplier_sku`. But 225 of the 862 migrated
+PO lines carry NO `supplier_sku` at all, written by neither importer —
+`apply-sofa-compartment-corrections.mjs:212-217` is one such writer, inserting a
+corrected compartment by SELECTing from the source row without carrying the
+column. Zero of those 225 duplicate a with-sku row's code on the same PO, so they
+are real AutoCount lines, unlabelled: matching on `supplier_sku` alone called 183
+of them missing, and applying that would have written 183 duplicates into
+production. They are now claimed by `material_code` (sofa: by model prefix), and
+the repair is ALL-OR-NOTHING per ItemCode — zero rows present is repaired, some
+rows present is reported and left alone, because a half-written sofa build is
+just as likely a build somebody corrected by hand.
+
+The same DRY-RUN discipline caught the check's own first draft lying: counting
+every AutoCount SO line called 243 lines missing on 65 orders, when production
+deliberately holds only the OUTSTANDING lines of an order (SO-000013: 8 AutoCount
+lines, 7 fully transferred, exactly the 1 untransfered line in the ERP). Against
+the right denominator the SO side is short by 1 line, on SO-011384.
+
+**The class, for next time** — **an idempotency key coarser than the thing it
+protects will silently skip work, and a check written at the same altitude will
+agree with it.** Two APPLY runs of one importer with different flags is not two
+runs of the same import: the second one's unit of work was the LINE, and the
+guard only knew about the DOCUMENT. Where a document is written in stages — a
+flag, a later round, a re-export — the completeness check has to count what the
+stages write, not what they are grouped into.
+
+**Ref** — 2026-08-10, PR `fix/po-line-level-topup`.
+
 ## Five hand-copied colour matchers, and the weakest one is what production stored [high]
 
 **Symptom** — 138 migrated sofa/bedframe lines carry no resolved fabric while
