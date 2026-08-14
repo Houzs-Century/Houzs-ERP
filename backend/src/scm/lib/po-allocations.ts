@@ -14,6 +14,8 @@
 //     the printable sub-number (PO-2606-001-01, -02, ...) never gaps.
 // ----------------------------------------------------------------------------
 
+import { buildVariantSummary } from '../shared/variant-summary';
+
 export type AllocationRow = { id: string; seq: number; qty: number; so_item_id: string | null };
 
 export type AllocationRefusal = {
@@ -129,4 +131,41 @@ export function planStockRelease(
   const remaining = Math.max(0, Number(lineQty ?? 0) - allocated);
   if (remaining <= 0) return null;
   return { seq: existing.length + 1, qty: remaining };
+}
+
+// ── Spec match (owner 2026-08-08) ───────────────────────────────────────────
+// The allocation picker/gate used to match on the bare item CODE only, so a PO
+// line for XAMMAR-2A(LHF) offered EVERY same-code SO line regardless of fabric,
+// colour or the SEAT/LEG/SPECIAL spec — "if the spec doesn't match, how are
+// there so many available?" (owner, live on 2990-PO-2608). A consolidated PO
+// line may only be attributed to an SO line that is the SAME PRODUCT: same code
+// AND same variant summary.
+//
+// The signature is buildVariantSummary(item_group, variants) — the SAME string
+// the PO-vs-SO drift compare already builds (mfg-purchase-orders spec drift),
+// so PO and SO are compared apples-to-apples. It carries fabric + colour +
+// supplier fabric code + SEAT/LEG/DIVAN/GAP/SPECIAL, and NO dye-lot field:
+// owner ruling 2026-08-08 was match fabric+spec, exclude dye-lot — which this
+// satisfies by construction (a dye-lot is assigned at receipt, not at SO time,
+// so requiring it would wrongly drop every not-yet-lotted SO line).
+
+/** Normalise a spec summary for equality: collapse whitespace, uppercase.
+    Empty (no variants either side) matches empty — a plain no-variant line is
+    still allocatable to another plain no-variant line of the same code. */
+export function specSignature(
+  itemGroup: string | null | undefined,
+  variants: Record<string, unknown> | null | undefined,
+): string {
+  return buildVariantSummary(itemGroup, variants).replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+/** PURE. Do a PO line and a candidate SO line describe the SAME product —
+    same variant summary? Item-code equality is checked by the caller (the
+    query already filters on it); this adds the spec dimension the owner asked
+    for. Dye-lot is deliberately NOT part of the signature. */
+export function specMatches(
+  a: { itemGroup: string | null | undefined; variants: Record<string, unknown> | null | undefined },
+  b: { itemGroup: string | null | undefined; variants: Record<string, unknown> | null | undefined },
+): boolean {
+  return specSignature(a.itemGroup, a.variants) === specSignature(b.itemGroup, b.variants);
 }
