@@ -164,8 +164,8 @@ and the three checkers print their own buckets.
 | cross-company WRITE findings | **0** — all 25 fixed or read-and-annotated; the 11 that remained at the end were each opened and are false positives for four different reasons, one of which would have become a bug if fixed |
 | silent failure, backend (§D) | **closed**, all nine |
 | silent failure, frontend | **0 SILENT**; 41 UNRESOLVED reported as unresolved, not as a pass |
-| permission gates (§C) | **closed** — GL, inventory cost, AR reconciliation gated; quotes left open by owner decision |
-| money (§B) | B1/B2/B3/B5/B6 fixed — B6 by mig 0286, in the direction the owner chose. **B4 is the only one left**, and it is one workflow click from an answer rather than an open question |
+| permission gates (§C) | **closed** — GL, inventory cost, AR reconciliation gated. Quotes (C6) were left UNGATED *because the owner decided that*, not while waiting for him to: reps amend each other's quotes and that is how the shop works. The old wording here read "left open by owner decision", which a later reader took to mean an open question and re-raised it |
+| money (§B) | **all six done.** B6 by mig 0286 in the direction the owner chose; B4 closed 2026-08-14 — the workflow was clicked, production returned 23 part-ringgit combo prices of 163, and the engine now carries sen end to end. What read as a business judgement was a defect |
 | COEs | 8 corrected — several described code that no longer exists |
 | module guides | all 27 now say their line numbers are indicative and point at the generated locator; one UNDECLARED permission key found and declared |
 | rule mirrors | 0 DIVERGED |

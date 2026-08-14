@@ -15,12 +15,54 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 > | This README says | The code says | Authority |
 > |---|---|---|
 > | Data store is **Cloudflare D1 (SQLite)** | D1 was **removed 2026-06-13**; there is no `env.DB` binding in prod. Supabase Postgres via Hyperdrive (`[[hyperdrive]]` in `backend/wrangler.toml`) | `CLAUDE.md`, `docs/CODEBASE-MAP.md` §4 |
-> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (**284 files, to `0286_*`**, counted 2026-08-14) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
-> | "No backend/frontend unit tests exist yet" | **169** test files under `backend/tests/` (293 across all of `backend/`), run by vitest in CI | `docs/CODEBASE-MAP.md` §1 |
+> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `backend/src/db/migrations-pg/` is what reaches production; `backend/src/db/migrations/` is the D1/test tree only. **No count is written here on purpose** — the one that was ("284 files, to `0286_*`", dated the day it was written) was wrong within hours. `ls backend/src/db/migrations-pg/*.sql \| wc -l` | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
+> | "No backend/frontend unit tests exist yet" | There are hundreds, run by vitest in CI. **No count here either** — the numbers that were (169 / 293) were both stale. `find backend -name '*.test.ts' -not -path '*/node_modules/*' \| wc -l` | `docs/CODEBASE-MAP.md` §1 |
 > | The Modules table (Overview, Orders, PO, ASSR, Projects, Logistics, Team, Settings) | Omits **`/scm/*` entirely** — the vendored SCM supply-chain surface is the largest part of the app | `docs/CODEBASE-MAP.md` §2-3 |
 >
 > **Start at [`docs/README.md`](docs/README.md)** — it maps every doc to the one thing
 > it is authoritative for.
+
+---
+
+## What a commit owes the documentation
+
+The recurring failure in this repo is not a wrong doc. It is a **change that
+shipped and the doc that described it did not move**. This section is the single
+list, and every row says who enforces it — because a rule nobody enforces is a
+rule that lasts until the next busy afternoon.
+
+Read the **Enforced by** column carefully. Only two contexts can block a merge:
+`backend-typecheck` and `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`).
+Everything else REPORTS. A red `working-agreement` does not stop anyone.
+
+### Always, for every change
+
+| You changed | You owe | Enforced by | Blocks a merge? |
+|---|---|---|---|
+| Fixed a bug of any size | one entry at the top of [`BUG-HISTORY.md`](BUG-HISTORY.md): **Symptom → Root cause (traced, not guessed) → Fix → Ref**, with a severity tag | `working-agreement.yml`, when the title, branch or a body heading reads as a fix and code changed | **No** — it reports. Label `no-bug-history-needed` waives it, and the waiver is printed |
+| A module's SURFACE — a route, a permission string, a status value, a required-field flip, a lock | the matching [`docs/modules/<module>.md`](docs/modules/), in the SAME PR | `working-agreement.yml` | **No** — reports. Label `no-guide-change` |
+| Anything under `backend/src/db/migrations-pg/` | a `-- REVERSAL:` line in the file, plus `Reversal:` and `Verified against:` lines in the PR body | `working-agreement.yml` rule 3 + `audit:release-discipline` for the file itself | the file's note **YES** (release-discipline is inside `backend-typecheck`); the PR-body lines, no |
+| A route added, moved or re-gated | `docs/generated/route-capability-matrix.csv` — regenerate, never hand-edit | `npm run audit:routes` | **YES** |
+| A new/edited script under `backend/scripts` that WRITES | MODE/APPLY gate defaulting to plan, a CONFIRM phrase, a fresh-connection SHAPE verification, and a `RE-RUN:` header line | `npm run audit:release-discipline` | **YES** |
+| A doc that names a path, a `mig NNNN`, a permission key or an `npm run` | that the thing actually exists, or a `[gone]` / `[planned]` / `[external]` marker | `check-docs-drift.mjs --strict` | **YES**, on its CERTAIN half |
+
+### When it applies
+
+| You changed | You owe | Enforced by |
+|---|---|---|
+| An outage, data at risk, a fault that RECURRED, or anything that made the system feel unreliable | `docs/<subject>-coe.md` — date, trigger in staff's words, root cause traced with the tool that proved it, fixes per PR, **what was ruled OUT**, deferred items with their owner, lessons | **Nothing.** An incident is a judgement call, not a diff shape. This one is on you |
+| The shape of the tree — files split, moved, or grown | `npm --prefix backend run audit:map` and `audit:route-locator` | **Nothing runs their `--check` in CI.** Both were found stale on `main` on 2026-08-14. Treat them as hints and regenerate before quoting a line number |
+| A rule module under `backend/src/scm/shared` | the frontend mirror, identically | `check-shared-mirrors.mjs --strict` |
+| A module's surface, an architectural decision, the data model, or the roadmap | the Obsidian wiki under `Houzs ERP/` | **Nothing** — and the MCP is user-scope, so most sessions cannot reach it. If it is absent, say so rather than working around it |
+| Anything at all | that you did not write a NUMBER you now own | **Nothing.** Date it inline ("as of 2026-08-14, 291 files") or make it generated. The banner at the top of this README is what happens otherwise — two of its four figures were stale within a day of being written |
+
+### The order that actually works
+
+1. **Before**: read `docs/modules/<module>.md` and the `BUG-HISTORY.md` entries for that subsystem. Both exist so you do not have to read the whole system.
+2. **While**: pick the migration number at MERGE time by re-listing the tree, not when you branch.
+3. **After the code, before the PR**: the rows above. In the same PR — a follow-up PR is the thing that never comes.
+4. **After merge**: confirm the deploy's `backend` job says **`success`, not `skipped`**. Required checks gate the MERGE; **nothing gates the deploy**. `skipped` on `backend` is a failed deploy, and it has cost this repo two hours once and thirty minutes twice.
+
 
 ---
 
