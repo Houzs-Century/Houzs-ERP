@@ -989,6 +989,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   const eventTypeParam = c.req.query("event_type_id");
   const yearParam = c.req.query("year");
   const monthParam = c.req.query("month");
+  const fromParam = c.req.query("from");
+  const toParam = c.req.query("to");
   const user = c.get("user");
   const scope = getProjectScope(user);
   // "My pending tasks" filter — map the caller's role to the task scope
@@ -1131,6 +1133,8 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     // (4-digit year / 1-12 month) and binds them individually.
     year: yearParam || undefined,
     month: monthParam || undefined,
+    from: fromParam || undefined,
+    to: toParam || undefined,
     page: parseInt(c.req.query("page") || "1", 10),
     per_page: parseInt(c.req.query("per_page") || "50", 10),
     include_archived: c.req.query("include_archived") === "1",
@@ -4221,6 +4225,17 @@ app.put(
     )
       .bind(itemId, key, fileName, contentType, body.byteLength, user?.id ?? null, caption)
       .run();
+    // Per-item history — record the upload as a comment so the task history
+    // panel shows "Uploaded X.pdf · Sim · 06/08 10:34" alongside approve/reject.
+    // Owner 2026-07-20: without this, the reviewer sees the Approve button reappear
+    // after a re-upload with no explanation of WHY, then wonders "no new file
+    // was uploaded but why approval reappear?". The comment closes that gap.
+    await c.env.DB.prepare(
+      `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
+       VALUES (?, 'upload', ?, ?)`
+    )
+      .bind(itemId, fileName, user?.id ?? null)
+      .run();
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`
@@ -4281,6 +4296,13 @@ app.delete(
         );
       }
     }
+    // Fetch item_id + filename BEFORE archiving so we can log the removal to
+    // the per-item history panel (owner 2026-07-20 — see the upload sibling).
+    const rmMeta = await c.env.DB.prepare(
+      `SELECT item_id, file_name FROM project_checklist_attachments WHERE id = ?`
+    )
+      .bind(attId)
+      .first<{ item_id: number; file_name: string }>();
     // Soft archive — keep the row + R2 object so an accidental delete
     // can be reversed if anyone notices in time.
     await c.env.DB.prepare(
@@ -4290,6 +4312,14 @@ app.delete(
     )
       .bind(attId)
       .run();
+    if (rmMeta) {
+      await c.env.DB.prepare(
+        `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
+         VALUES (?, 'remove', ?, ?)`
+      )
+        .bind(rmMeta.item_id, rmMeta.file_name, user?.id ?? null)
+        .run();
+    }
     return c.json({ ok: true });
   }
 );

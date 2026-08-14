@@ -1,6 +1,14 @@
 # 2990 → Houzs full mirror — design
 
-**Status:** design only, pending owner sign-off. No production code exists for anything below.
+**Status: PHASES 1-3 ARE SHIPPED AND MOUNTED. This banner said "design only,
+no production code exists" long after they were live** — read the tree, not this
+line. Five receivers are mounted at `backend/src/index.ts:256,260,265,271,272`
+(`so-mirror`, `amendment-mirror`, `customer-mirror`, `staff-mirror`,
+`warehouse-mirror`); §3.2's command channel is `scm/lib/amendment-command.ts`,
+drained on cron at `index.ts:517`; §4's table shipped as mig
+`0127_scm_sync_command.sql`. Risk **R3** further down, still described as "a
+latent bug in production today", is what `customer-mirror.ts` was built to
+close.
 **Date:** 2026-07-16
 **Scope (owner-decided):** 全部一次性解決 — mirror the whole system, in one go, actionable
 ("houzs 的可以啊 可是要开2990的公司啊" — 2990 data tags to the 2990 company; you switch

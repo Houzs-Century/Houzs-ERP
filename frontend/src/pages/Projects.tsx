@@ -45,6 +45,7 @@ import {
   ClipboardList,
   DollarSign,
   Wrench,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "../components/Layout";
@@ -188,6 +189,10 @@ interface ProjectRow {
   active_section_name?: string | null;
   sections_total?: number;
   sections_complete?: number;
+  // Populated only when a real section is picked in the Status filter (owner
+  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
+  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
+  section_tasks_map?: string | null;
 }
 
 interface ProjectDetail {
@@ -434,7 +439,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -555,7 +560,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
@@ -1039,6 +1044,90 @@ const PROJECTS_LIST_FILTER_KEYS = [
  *  grouped (the task filter groups by checklist section); pass one group with a
  *  null name for a flat list. Selection is a string[] the caller comma-joins
  *  into the URL. */
+// Date-range filter (owner 2026-08-11) — a From/To picker chip that replaces the
+// old year + month dropdowns. Two native date inputs; the list scopes to events
+// overlapping the window (start <= to AND end >= from).
+function DateRangeFilter({
+  from,
+  to,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const fmt = (d: string) => {
+    if (!d) return "…";
+    const [y, m, day] = d.split("-");
+    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
+    return `${parseInt(day, 10)} ${mon} ${y}`;
+  };
+  const active = !!(from || to);
+  return (
+    <div className="relative" ref={boxRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-8 max-w-[240px] items-center gap-1.5 rounded-md border bg-surface px-2 text-[12px]",
+          active ? "border-accent font-semibold text-accent" : "border-border text-ink",
+        )}
+      >
+        <Calendar size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{active ? `${fmt(from)} – ${fmt(to)}` : "All dates"}</span>
+        <ChevronDown size={13} className="shrink-0 opacity-70" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-9 z-30 w-[250px] rounded-md border border-border bg-surface p-3 shadow-slab">
+          <div className="mb-2 flex items-center justify-between border-b border-border-subtle pb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-ink-muted">Date range</span>
+            {active && (
+              <button type="button" onClick={() => onChange("", "")} className="text-[10.5px] font-semibold text-ink-secondary hover:text-err">
+                Clear
+              </button>
+            )}
+          </div>
+          <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
+            From
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => onChange(e.target.value, to)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+          <label className="block text-[11px] font-semibold text-ink-secondary">
+            To
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => onChange(from, e.target.value)}
+              className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MultiSelectFilter({
   placeholder,
   groups,
@@ -1049,7 +1138,7 @@ function MultiSelectFilter({
   panelWidth = "w-[280px]",
 }: {
   placeholder: string;
-  groups: { name: string | null; options: { value: string; label: string }[] }[];
+  groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[];
   selected: string[];
   onChange: (next: string[]) => void;
   title?: string;
@@ -1150,13 +1239,73 @@ function MultiSelectFilter({
                     checked={selected.includes(o.value)}
                     onChange={() => toggle(o.value)}
                   />
-                  <span className="truncate">{o.label}</span>
+                  <span className="flex-1 truncate">{o.label}</span>
+                  {typeof o.count === "number" && (
+                    <span className="shrink-0 tabular-nums text-[11px] text-ink-muted">
+                      {o.count}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Per-project task badges for the Status (section) filter (owner 2026-08-14).
+// Reads the backend section_tasks_map ("title=status=due" joined by "|") and
+// renders one pill per task in the chosen section: DONE (green), OVERDUE (red,
+// with days late) or PENDING (amber). Overdue first, then pending, then done.
+// Renders nothing unless a real section is picked (the map is absent otherwise),
+// so the default project list is unchanged.
+function SectionTaskBadges({ map }: { map?: string | null }) {
+  if (!map) return null;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+  const tasks = map
+    .split("|")
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split("=");
+      const title = parts[0] ?? "";
+      const status = parts[1] ?? "";
+      const due = parts[2] ?? "";
+      let kind: "done" | "overdue" | "pending";
+      let daysLate = 0;
+      if (status === "done") kind = "done";
+      else if (due && due < today) {
+        kind = "overdue";
+        daysLate = Math.max(1, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000));
+      } else kind = "pending";
+      return { title, kind, daysLate };
+    });
+  if (!tasks.length) return null;
+  const rank = { overdue: 0, pending: 1, done: 2 } as const;
+  tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || b.daysLate - a.daysLate);
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tasks.map((t, i) => (
+        <span
+          key={i}
+          title={t.title}
+          className={cn(
+            "inline-flex max-w-[170px] items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold",
+            t.kind === "done"
+              ? "border border-synced/40 bg-synced/15 text-synced"
+              : t.kind === "overdue"
+                ? "border border-err/40 bg-err/15 text-err"
+                : "border border-amber-500 bg-amber-100 text-amber-800",
+          )}
+        >
+          <span className="truncate">{t.title}</span>
+          {t.kind === "overdue" && <span className="shrink-0 font-mono">{t.daysLate}d</span>}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1182,6 +1331,10 @@ function ProjectsListView() {
   const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
   const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
+  // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
   // Ticked values per filter (owner 2026-08-07 multi-select). The raw comma
   // strings above are what go on the wire; these arrays drive the checkboxes.
   const sectionList = useMemo(() => csvParam(section), [section]);
@@ -1208,6 +1361,7 @@ function ProjectsListView() {
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
   const setTaskPending = (v: string) => patchParams({ task: v, page: "1" });
   const setStatus = (v: string) => patchParams({ status: v, page: "1" });
+  const setDateRange = (f: string, t: string) => patchParams({ from: f, to: t, page: "1" });
   const setPhase = (v: string) => patchParams({ phase: v, page: "1" });
   const setPage = (n: number) => patchParams({ page: String(n) });
 
@@ -1292,6 +1446,8 @@ function ProjectsListView() {
           brand: restrictedCohort ? undefined : brand || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
+          from: restrictedCohort ? undefined : from || undefined,
+          to: restrictedCohort ? undefined : to || undefined,
           section: restrictedCohort ? undefined : section || undefined,
           task_pending: restrictedCohort ? undefined : taskPending || undefined,
           phase: restrictedCohort && phase ? phase : undefined,
@@ -1310,7 +1466,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -1351,6 +1507,8 @@ function ProjectsListView() {
             brand: restrictedCohort ? undefined : brand || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
+            from: restrictedCohort ? undefined : from || undefined,
+            to: restrictedCohort ? undefined : to || undefined,
             section: restrictedCohort ? undefined : section || undefined,
             task_pending: restrictedCohort ? undefined : taskPending || undefined,
             phase: restrictedCohort && phase ? phase : undefined,
@@ -1459,13 +1617,15 @@ function ProjectsListView() {
     "/api/projects/task-titles-distinct",
     () => api.get("/api/projects/task-titles-distinct"),
   );
-  // Task options grouped by checklist section, for the multi-select popover.
-  const taskGroups = useMemo(() => {
-    const g: Record<string, { value: string; label: string }[]> = {};
+  // Task COUNT per checklist section — shown beside each section in the Status
+  // filter (owner 2026-08-14: "section titles only with task counts").
+  const sectionCounts = useMemo(() => {
+    const c: Record<string, number> = {};
     for (const t of taskTitles.data?.data ?? []) {
-      (g[t.section ?? "Other"] ||= []).push({ value: t.title, label: t.title });
+      const s = t.section ?? "Other";
+      c[s] = (c[s] ?? 0) + 1;
     }
-    return Object.entries(g).map(([name, options]) => ({ name, options }));
+    return c;
   }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
@@ -1504,6 +1664,7 @@ function ProjectsListView() {
               )}
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
+            <SectionTaskBadges map={r.section_tasks_map} />
           </div>
         );
       },
@@ -1621,7 +1782,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1799,7 +1960,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -1887,12 +2048,13 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Section filter — a DROPDOWN since 2026-08-05 (owner: "need to add
-            drop down for pc"). The pill row spanned the full width and left no
-            room for the task filter beside it; the options are identical. */}
+        {/* Status filter (owner 2026-08-14: "all section word change to status,
+            remove current status dropdown"). One section-level dropdown; each
+            option carries how many tasks that section holds. The old task-title
+            "Status" dropdown that used to sit beside it is gone. */}
         <MultiSelectFilter
-          placeholder="All sections"
-          title="Filter by the tasklist section an event is currently in"
+          placeholder="Status"
+          title="Filter by tasklist section"
           summary={(n) => `${n} sections`}
           selected={sectionList}
           onChange={(next) => setSection(next.join(","))}
@@ -1900,26 +2062,23 @@ function ProjectsListView() {
             {
               name: null,
               options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({ value: s, label: s })),
+                ...(sectionsList.data?.data ?? []).map((s) => ({
+                  value: s,
+                  label: s,
+                  count: sectionCounts[s],
+                })),
                 { value: "__done", label: "Completed" },
               ],
             },
           ]}
         />
-        {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
-            "make it can click multiple choice. and once export will export what
-            already tick only"). Tick any number of tasks; the list keeps events
-            where AT LEAST ONE ticked task is still open, and the export gains
-            one column per ticked task. */}
-        <MultiSelectFilter
-          placeholder="Status"
-          title="Tick the tasks that are still not completed"
-          summary={(n) => `${n} tasks not completed`}
-          panelWidth="w-[320px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskGroups}
-        />
+        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
+            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
+            actually filtered by tasks-not-yet-completed, so the owner saw two
+            'status' controls on the toolbar (this + the real "All statuses"
+            one right below) and asked to drop this. Kept the setTaskPending
+            state wiring untouched so a link with ?task_pending=... still works
+            and a future re-introduction under a clearer label is one line away. */}
         <MultiSelectFilter
           placeholder="All brands"
           summary={(n) => `${n} brands`}
@@ -1929,40 +2088,7 @@ function ProjectsListView() {
             { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
           ]}
         />
-        <MultiSelectFilter
-          placeholder="All years"
-          summary={(n) => `${n} years`}
-          panelWidth="w-[160px]"
-          selected={yearList}
-          onChange={(next) => setYear(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: (() => {
-                const y = new Date().getFullYear();
-                const out: { value: string; label: string }[] = [];
-                for (let i = y + 1; i >= y - 4; i--) out.push({ value: String(i), label: String(i) });
-                return out;
-              })(),
-            },
-          ]}
-        />
-        <MultiSelectFilter
-          placeholder="All months"
-          summary={(n) => `${n} months`}
-          panelWidth="w-[180px]"
-          selected={monthList}
-          onChange={(next) => setMonth(next.join(","))}
-          groups={[
-            {
-              name: null,
-              options: [
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December",
-              ].map((label, i) => ({ value: String(i + 1), label })),
-            },
-          ]}
-        />
+        <DateRangeFilter from={from} to={to} onChange={setDateRange} />
         <MultiSelectFilter
           placeholder="All statuses"
           title="Filter by project status"
@@ -1979,7 +2105,7 @@ function ProjectsListView() {
             dropdown keeps its own in-panel "Clear (n)"; this resets them all
             together so the owner doesn't have to open each one. Shown only when
             at least one dropdown is active. Search + My-pending are left alone. */}
-        {(section || taskPending || brand || year || month || status) && (
+        {(section || taskPending || brand || from || to || status) && (
           <button
             type="button"
             onClick={() =>
@@ -1989,11 +2115,13 @@ function ProjectsListView() {
                 brand: "",
                 year: "",
                 month: "",
+                from: "",
+                to: "",
                 status: "",
                 page: "1",
               })
             }
-            title="Untick every filter dropdown"
+            title="Clear every filter"
             className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2 text-[12px] font-semibold text-ink-secondary hover:border-err hover:text-err"
           >
             <X size={13} />
@@ -2921,7 +3049,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -4271,6 +4399,7 @@ export function buildProjectsCalendarModel({
   brand,
   status,
   organizer,
+  q = "",
   showTasks,
   expandAll,
 }: {
@@ -4283,6 +4412,10 @@ export function buildProjectsCalendarModel({
   brand: string;
   status: string;
   organizer: string;
+  /** Free-text search — matches venue/organizer/brand/project code/name/event
+   *  type. Empty string = no filter. Defaults to "" so callers pre-dating the
+   *  search box (tests) still pass. */
+  q?: string;
   showTasks: boolean;
   expandAll: boolean;
 }) {
@@ -4291,10 +4424,31 @@ export function buildProjectsCalendarModel({
   const matchesStatus = (project: CalendarProject): boolean =>
     !status || (project.status || "").toLowerCase() === status;
 
+  // Free-text search — case-insensitive, matches ANY of the visible/label
+  // fields so someone typing "mid valley" finds every event with that venue
+  // regardless of casing. Owner 2026-07-20.
+  const needle = q.trim().toLowerCase();
+  const matchesQuery = (project: CalendarProject): boolean => {
+    if (!needle) return true;
+    const hay = [
+      project.code,
+      project.name,
+      project.venue ?? "",
+      project.organizer ?? "",
+      project.brand ?? "",
+      project.state ?? "",
+      project.event_type_name ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(needle);
+  };
+
   const projects = allProjects.filter((project) => {
     if (brand && project.brand !== brand) return false;
     if (!matchesStatus(project)) return false;
     if (organizer && (project.organizer || "") !== organizer) return false;
+    if (!matchesQuery(project)) return false;
     return true;
   });
   const projectById = new Map(projects.map((project) => [project.id, project] as const));
@@ -4302,6 +4456,9 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
+        // With a search: only render tasks whose parent project passed the
+        // filter — keeps the view consistent (task chips beside their bar).
+        if (needle && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })
     : [];
@@ -4431,6 +4588,12 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
+  // 2026-07-20 — free-text search (matches venue / organizer / brand /
+  // project code / event title). Owner: "where is search button on calender?".
+  "q",
+  // Also removed the 'Tasks' toggle button from the toolbar the same day
+  // — the personal pref key `projects:cal:showTasks` in localStorage is
+  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -4469,6 +4632,10 @@ function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
+  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
+  // collision with the useQuery result later in this component that already
+  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
+  const search = params.get("q") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
   function patchParams(patch: Record<string, string>) {
@@ -4482,6 +4649,7 @@ function ProjectsCalendarView() {
   const setBrand = (v: string) => patchParams({ brand: v });
   const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
+  const setSearch = (v: string) => patchParams({ q: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
   // on the legend, not data filters), so they stay in localStorage per
@@ -4689,6 +4857,7 @@ function ProjectsCalendarView() {
         brand,
         status,
         organizer,
+        q: search,
         showTasks,
         expandAll,
       }),
@@ -4702,6 +4871,7 @@ function ProjectsCalendarView() {
       brand,
       status,
       organizer,
+      search,
       showTasks,
       expandAll,
     ],
@@ -4843,6 +5013,31 @@ function ProjectsCalendarView() {
 
         {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Owner 2026-07-20 — "where is search button on calender?".
+              Free-text search across venue / organizer / brand / project code
+              / event title. Live-filters both the bars and any task chips
+              beside them. URL-persisted (?q=) so a Ctrl+F5 keeps the search. */}
+          <label className="relative inline-flex h-8 items-center">
+            <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search venue, organizer, brand…"
+              className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
+              title="Search events on the calendar"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
+                title="Clear search"
+              >
+                <X size={11} />
+              </button>
+            )}
+          </label>
           <select
             value={brand}
             onChange={(e) => setBrand(e.target.value)}
@@ -4907,18 +5102,10 @@ function ProjectsCalendarView() {
               );
             }}
           />
-          <button
-            onClick={() => setShowTasks(!showTasks)}
-            className={cn(
-              "inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              showTasks
-                ? "border-primary/40 bg-primary-soft text-primary-ink"
-                : "border-border bg-surface text-ink-muted hover:text-ink"
-            )}
-            title="Toggle task chips"
-          >
-            {showTasks ? <Check size={12} /> : <Circle size={12} />} Tasks
-          </button>
+          {/* Tasks toggle button removed 2026-07-20 per owner request
+              ("remove button task"). Task chips still render when the
+              projects:cal:showTasks localStorage pref is true (default false);
+              a one-line re-add of this <button> restores the toggle if needed. */}
           <button
             onClick={() => setShowHolidays(!showHolidays)}
             className={cn(
@@ -6890,7 +7077,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -7169,7 +7356,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -7463,6 +7650,12 @@ function TaskAttachmentRow({
     }
   }
   const isImage = (attachment.content_type ?? "").startsWith("image/");
+  // Owner 2026-07-20: PDFs get an inline first-page preview too, using the
+  // browser's built-in PDF viewer via <embed>. No pdfjs dep needed and no
+  // bundle weight; every modern browser + iOS/Android WebView renders it.
+  const isPdf =
+    (attachment.content_type ?? "").includes("pdf") ||
+    attachment.file_name.toLowerCase().endsWith(".pdf");
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // Per-photo remark (owner 2026-07-16): each attachment carries its own caption.
@@ -7484,12 +7677,18 @@ function TaskAttachmentRow({
     }
   }
 
+  // Fetch a blob URL for anything we can preview inline (images AND PDFs) so
+  // the same effect handles cleanup + revocation on unmount for both.
+  const wantsInlinePreview = isImage || isPdf;
   useEffect(() => {
-    if (!isImage) return;
+    if (!wantsInlinePreview) return;
     let cancelled = false;
     let revoke: string | null = null;
     api
-      .fetchBlobUrl(`/api/projects/attachments/${attachment.r2_key}`)
+      .fetchBlobUrl(
+        `/api/projects/attachments/${attachment.r2_key}`,
+        isPdf ? "application/pdf" : undefined,
+      )
       .then((url) => {
         if (cancelled) {
           URL.revokeObjectURL(url);
@@ -7505,7 +7704,7 @@ function TaskAttachmentRow({
       cancelled = true;
       if (revoke) URL.revokeObjectURL(revoke);
     };
-  }, [attachment.r2_key, isImage]);
+  }, [attachment.r2_key, wantsInlinePreview, isPdf]);
 
   async function download() {
     try {
@@ -7551,6 +7750,29 @@ function TaskAttachmentRow({
               draggable={false}
             />
           </button>
+        ) : isPdf && thumbUrl ? (
+          // Native browser PDF viewer — shows page 1 inline. Wrapped in a
+          // click-through overlay so the PDF's own scrollbars don't swallow
+          // the click; the label + click always opens the full doc in a tab.
+          <div
+            className="relative block max-w-full overflow-hidden rounded border border-border bg-surface"
+            title="Click to open the full document"
+          >
+            <embed
+              src={`${thumbUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+              type="application/pdf"
+              className="pointer-events-none block h-44 w-full"
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); viewInTab(); }}
+              className="absolute inset-0 flex cursor-zoom-in items-end justify-end bg-transparent p-1.5 text-[9px] font-semibold text-ink-muted opacity-0 transition hover:bg-black/5 hover:opacity-100"
+            >
+              <span className="rounded bg-surface/95 px-1.5 py-0.5 shadow-sm">
+                Open PDF
+              </span>
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -8851,7 +9073,11 @@ function DocRow({
             // approve/reject *decision trail* stays in the Approval
             // column; the remark text itself belongs here.
             const remarkComments = comments
-              .filter((c) => c.kind !== "submit" && c.body)
+              // Remarks column shows human-typed notes only. Excludes:
+              // - 'submit' (empty ping, always body=null anyway)
+              // - 'upload' / 'remove' (system audit lines, filename is the body
+              //   but belongs in the History column, not Remarks — owner 2026-07-20).
+              .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
               .slice()
               .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
             if (!item.notes && remarkComments.length === 0)
@@ -8898,22 +9124,43 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): the approve/reject
-                  record. 'submit' entries are hidden as noise. */}
+              {/* Chronological history (oldest → newest): every action on this
+                  task — uploads, removes, approves, rejects. 'submit' entries
+                  (the internal "hey reviewer, this is ready" ping) are hidden
+                  as noise; the upload comment right next to it says the same
+                  thing with better context (the filename). Owner 2026-07-20:
+                  seeing "Uploaded X · Sim · 06/08 10:34" + "Removed old.pdf ·
+                  Sim · 06/08 10:33" removes the confusion about why the
+                  Approve button reappeared after a re-upload. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
                     .filter((c) => c.kind !== "submit")
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-                    .map((c) => (
-                      <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
-                        <span className={cn("font-semibold", commentKindColor(c.kind))}>
-                          {commentKindLabel(c.kind)}
-                        </span>{" "}
-                        · {c.user_name || "—"} · {formatDateTime(c.created_at)}
-                      </div>
-                    ))}
+                    .map((c) => {
+                      // Upload/remove comments carry the filename in `body`;
+                      // approve/reject leave body null (the decision itself is
+                      // the whole story).
+                      const showFile = (c.kind === "upload" || c.kind === "remove") && c.body;
+                      return (
+                        <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
+                          <span className={cn("font-semibold", commentKindColor(c.kind))}>
+                            {commentKindLabel(c.kind)}
+                          </span>
+                          {showFile && (
+                            <>
+                              {" "}
+                              <span className="max-w-[220px] truncate align-baseline text-ink">
+                                {c.body}
+                              </span>
+                            </>
+                          )}
+                          {" · "}
+                          {c.user_name || "—"} · {formatDateTime(c.created_at)}
+                        </div>
+                      );
+                    })}
                 </div>
               )}
               {/* Approve/Reject visibility. The control appears once a file is
@@ -9500,12 +9747,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }
@@ -9919,10 +10166,10 @@ function ChecklistRow({
           keeps this simple remark box. Falls away the moment a file is added. */}
       {expanded && (!attachments || attachments.length === 0) && (
         <div className="mt-2 border-t border-border pt-2">
-          {comments.filter((c) => c.kind !== "submit" && c.body).length > 0 && (
+          {comments.filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body).length > 0 && (
             <div className="mb-2 space-y-1">
               {comments
-                .filter((c) => c.kind !== "submit" && c.body)
+                .filter((c) => c.kind !== "submit" && c.kind !== "upload" && c.kind !== "remove" && c.body)
                 .map((c) => (
                   <div key={c.id} className="rounded bg-bg/60 px-2 py-1 text-[10.5px] whitespace-pre-wrap break-words">
                     <span className={cn("font-semibold", commentKindColor(c.kind))}>
@@ -9972,6 +10219,10 @@ function commentKindLabel(k: string): string {
       return "Marked amended";
     case "approve":
       return "Approved";
+    case "upload":
+      return "Uploaded";
+    case "remove":
+      return "Removed";
     default:
       return "Note";
   }
@@ -9980,11 +10231,13 @@ function commentKindLabel(k: string): string {
 function commentKindColor(k: string): string {
   switch (k) {
     case "reject":
+    case "remove":
       return "text-err";
     case "approve":
       return "text-synced";
     case "submit":
     case "amend":
+    case "upload":
       return "text-accent";
     default:
       return "text-ink";

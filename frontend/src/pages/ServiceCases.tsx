@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, type ReactNode } from "react";
+import { NEXT_STAGE, STAGE_FUNNEL_DESC } from "./serviceCaseStages";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams, useNavigate, useParams, Navigate } from "react-router-dom";
 import {
@@ -165,14 +166,6 @@ const NCR_OPTIONS = [
 // Return Visit → no item pickup / supplier pickup / item ready) are
 // honored by the service-admin manually picking the correct next
 // stage from the dropdown — this map only seeds the primary button.
-const NEXT_STAGE: Record<string, { stage: AssrStage; label: string }> = {
-  pending_review:           { stage: "pending_solution",         label: "Move to Solution" },
-  pending_solution:         { stage: "under_verification",       label: "Start Verification" },
-  under_verification:       { stage: "pending_supplier_pickup",  label: "Hand to Supplier" },
-  pending_supplier_pickup:  { stage: "pending_item_ready",       label: "Mark Item Ready" },
-  pending_item_ready:       { stage: "pending_delivery_service", label: "Arrange Delivery" },
-  pending_delivery_service: { stage: "completed",                label: "Close Case" },
-};
 
 // ── Cases-surface view modes ──────────────────────────────────
 // The Cases surface can be read three ways. "list" is the dense,
@@ -715,6 +708,14 @@ function CasesView({
       getValue: (r) => r.delivery_order || r.do_numbers,
     },
     {
+      key: "po_no",
+      filterable: true,
+      label: "PO No",
+      // The customer's purchase-order reference on the case (Nico 2026-08-14).
+      render: (r) => <span className="font-mono text-xs">{r.po_no || "—"}</span>,
+      getValue: (r) => r.po_no,
+    },
+    {
       key: "customer_name",
       filterable: true,
       label: "Customer",
@@ -1212,16 +1213,6 @@ function CasesView({
 // One-line captions under the Stage-funnel filter cards (Nick
 // 2026-07-23: 每个 stage 下面加 description, e.g. Verification → QC
 // issue inspection). Same wording as the detail Workflow funnel.
-const STAGE_FUNNEL_DESC: Record<string, string> = {
-  pending_review: "New case — first review",
-  under_verification: "Inspect & verify the issue",
-  pending_solution: "Decide fix & assign supplier",
-  pending_supplier_pickup: "Item with supplier for repair",
-  pending_item_ready: "Repair done — QC check",
-  pending_delivery_service: "Schedule return delivery",
-  completed: "Closed & rated",
-};
-
 type StageFunnelRow = { stage: string; total: number; breached: number };
 type AssrSummary = {
   total?: number;

@@ -1290,6 +1290,10 @@ export interface ListProjectsFilters {
   year?: number | string;
   /** Month(s) 1-12 on start_date. Single number or comma-separated list. */
   month?: number | string;
+  /** Date range (owner 2026-08-11, ISO YYYY-MM-DD) — keep events overlapping
+   *  [from, to]. Replaces the year/month dropdowns in the UI. Either may be blank. */
+  from?: string;
+  to?: string;
   state?: string;
   /** Active tasklist section name (mig 050). When set, the list only
    *  returns projects whose lowest-sort_order section with open tasks
@@ -1509,6 +1513,18 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   if (monthList.length) {
     where.push(`strftime('%m', p.start_date) IN (${monthList.map(() => "?").join(",")})`);
     binds.push(...monthList);
+  }
+  // Date range (owner 2026-08-11) — keep events that OVERLAP [from, to]. Either
+  // bound may be blank; hand-edited URLs that aren't ISO YYYY-MM-DD are ignored.
+  const rangeFrom = typeof f.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.from) ? f.from : "";
+  const rangeTo = typeof f.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.to) ? f.to : "";
+  if (rangeFrom) {
+    where.push(`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`);
+    binds.push(rangeFrom);
+  }
+  if (rangeTo) {
+    where.push(`substr(p.start_date, 1, 10) <= ?`);
+    binds.push(rangeTo);
   }
   if (f.state) {
     where.push("p.state = ?");
@@ -2015,6 +2031,27 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // SELECT-list binds come BEFORE the WHERE binds in prepare() order.
   const taskPendingBinds = taskPendingList.length ? [...taskPendingList] : [];
 
+  // Part 3 of the Status-filter rework (owner 2026-08-14): when a REAL section
+  // is picked, hand back that section's tasks per project so each row can show
+  // a coloured badge per task (done / pending / overdue). Format is
+  // 'title=status=due' ('|'-joined); the checklist titles carry no '=' so the
+  // client splits cleanly, due is a bare YYYY-MM-DD or empty. 'na' tasks are out
+  // of scope. Section names are BOUND, never interpolated. Empty when no real
+  // section is picked, so the extra scan only runs for the filtered view.
+  const reportSections = csvList(f.section).filter((s) => s !== "__done" && s !== "__none");
+  const sectionTasksCols = reportSections.length
+    ? `,
+            (SELECT group_concat(
+                      c5.title || '=' || c5.status || '=' || COALESCE(substr(c5.due_date, 1, 10), ''),
+                      '|')
+               FROM project_checklist c5
+               JOIN project_checklist_sections s5 ON s5.id = c5.section_id
+              WHERE c5.project_id = p.id
+                AND s5.name IN (${reportSections.map(() => "?").join(",")})
+                AND c5.status != 'na') as section_tasks_map`
+    : "";
+  const sectionTasksBinds = reportSections.length ? [...reportSections] : [];
+
   const rows = await env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand,
             p.start_date, p.end_date,
@@ -2083,7 +2120,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND (c.status IN ('done', 'na')
                      OR EXISTS (SELECT 1 FROM project_checklist_attachments a
                                  WHERE a.item_id = c.id
-                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}${taskPendingCols}
+                                   AND a.archived_at IS NULL))) as sales_tasks_done${pendingTitlesCol}${taskPendingCols}${sectionTasksCols}
        FROM projects p
        LEFT JOIN project_event_types et ON et.id = p.event_type_id
        LEFT JOIN project_finance pf ON pf.project_id = p.id
@@ -2106,7 +2143,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
      ${orderBy}
      LIMIT ? OFFSET ?`
   )
-    .bind(...taskPendingBinds, ...binds, perPage, offset)
+    .bind(...taskPendingBinds, ...sectionTasksBinds, ...binds, perPage, offset)
     .all();
 
   return {
@@ -2354,7 +2391,7 @@ export async function setChecklistStatus(
 export async function addChecklistComment(
   env: Env,
   itemId: number,
-  kind: "note" | "submit" | "reject" | "amend" | "approve",
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove", // upload/remove written as raw SQL by routes/projects.ts, bypassing here; mirror in pages/Projects.tsx, guarded by tests/checklistCommentKinds.test.ts
   body: string | null,
   userId: number
 ) {
