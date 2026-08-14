@@ -150,9 +150,22 @@ out to be all of it. So `soSalesLocation` does both: pass the value through when
 the map does not know it, and fall back to the stock location the document's own
 LINES resolve to when there is none at all. The line fallback opens no master —
 `requireLocation` has already refused any line with no location, and `mastersOf`
-is collecting that same code off the line. An order with no live line at all is
-refused by name (`MissingSalesLocationError`) rather than losing the document to
-`FK_SO_SalesLocation`.
+is collecting that same code off the line.
+
+**BE PRECISE ABOUT WHAT THAT BUYS, because the after-run says 21 of 115 STILL
+send nothing.** The line fallback rescues none of them, and the report was made
+to say why rather than leave the number hanging:
+
+| | |
+|---|---|
+| **13** | have NO live line at all — nothing to sell, so no warehouse to inherit. `MissingSalesLocationError` |
+| **8** | have lines carrying no `warehouse_id`. `MissingLocationError`, which already refused them before this change |
+
+So the gain here is **not** "21 orders now write". It is that a document with no
+location is a `skipped` outbox row naming its remedy instead of `""` sent into
+`FK_SO_SalesLocation`, six retries and a lost document — and that the pass-through
+half now protects the unmapped case, which production does not exhibit today but
+`deriveSalesLocationFromState` can produce any time a warehouse code changes.
 
 | step | fact |
 |---|---|
@@ -216,17 +229,35 @@ the answer to *"venue 对齐了吗"*.
 
 **Fixed:** `soBranding` reads the header, then the first live LINE's own
 `branding` — the value the detail page has been showing as
-`first_item_branding` all along — and passes an unmapped brand through.
-`branding` joined `SO_ITEM_COLS`. **2 of 115** header-blank orders are answered
-by their lines today; the other 113 hold no brand anywhere, so there is nothing
-to send and nothing is lost.
+`first_item_branding` all along. `branding` joined `SO_ITEM_COLS`. **70 of 115**
+header-blank orders carry a line brand; **2** of those resolve to a brand the
+account book knows, and the other **68 are deliberately dropped** — see below.
+`CARRESS` and `DUNLOP` were ADDED to `BRANDING_MAP`, which takes the book-side
+drop from 7 rows to 0.
 
-**Deliberately NOT the full display rule.** `so-display-branding.ts` prefers a
-MAIN-category line, borrows `mfg_products.branding` for a blank mattress, and
-falls back to the pseudo-brand `BEDFRAME` for a bedframe-only order. The first
-two need a catalog read, which would make the composer impure; the third must
-not happen at all — `BEDFRAME` is a CATEGORY, and passing it through would open
-a category as an option in the account book's brand list.
+**AND THIS IS THE ONE FIELD THAT DOES NOT PASS THROUGH. Production refuted the
+first version of this fix.** Running the check on the branch that passed line
+branding through printed exactly what it would OPEN as brands in the licensed
+book:
+
+```
+2990s Sofa (44)   Accessories (8)   2990s Mattress (8)
+2990 (3)          Bedframe (3)      Happi.S (2)
+```
+
+Four CATEGORIES and a company name. `mfg_products.branding` — which is what
+`mfg_sales_order_items.branding` is snapshotted from — is simply not a brand
+vocabulary, so `BRANDING_MAP` is now the **one allow-list of the four** and its
+own comment says so. This is the distinction finding 1 already drew for the
+agent, arriving from the other direction: *a value with a trustworthy writer may
+pass through, a column with none may not.* The check prints the would-open list
+on every run so the decision stays reviewable — if that list ever becomes
+all-brands, it is worth revisiting.
+
+It is also why `so-display-branding.ts`'s rule is not reused wholesale: besides
+needing a catalog read (which would make the composer impure), it falls back to
+the pseudo-brand `BEDFRAME` for a bedframe-only order, and `Bedframe` is one of
+the six values above.
 
 `composeCreateSo` reads `mfg_sales_orders.branding`. No client sends it
 (`SalesOrderNew.tsx`, `MobileNewSO.tsx` both omit the key), so it is `NULL` on
@@ -478,6 +509,9 @@ Three items, and every one is a decision rather than a defect:
 | 13 (half) | pass `ref` / `docDate` at the six `enqueueConvert` call sites | six route edits with no design in them; kept out to keep one reviewable pull request. The parameter is plumbed, the composer honours it, and a test pins that |
 | 14 | map the ERP's `item_group` onto AutoCount's own groups | every newly opened item lands in `OTHER`. Which group a new product shows up under in AutoCount's reports is the owner's call, not a guess |
 | 2 (residual) | WHICH purchase agent every ERP purchase order should name | `OTHERS` is what the FK chain was debugged with and it exists in the book. If the owner wants POs attributed to a real buyer, `AC_PURCHASE_AGENT` is the one place to change, and it would then need a column on `scm.purchase_orders` and a picker |
+| new | **8 sales agents would be opened in the licensed book, and one is called `Test Sales Director`** | Not caused by this work — it is #2148's accepted "an unmapped `scm.staff` name is opened" rule, and it is only visible now because the report was fixed to measure the composer instead of the map. The 8: `Scarlett Chong Kar Yin` (38 orders), `Kah Wai` (20), `Bernard` (14), `Ltrey` (12), `Frankie Lee Boon ping` (7), `NG PENG CHUEN` (3), `Test Sales Director` (1), `Lim` (1). Two of them read as test or partial rows. The remedy is `scm.staff` hygiene or an addition to `AGENT_MAP`, not a code change, so it is the owner's |
+
+| 12 (residual) | 21 sales orders still cannot be written at all | 13 have no live line, 8 have lines with no warehouse. Both are named `skipped` rows now rather than lost documents, but they are data to fix, not code |
 
 One thing was deliberately NOT done, and it is worth stating so the next reader
 does not treat it as an oversight: **`AcSyncService.cs` was not changed except

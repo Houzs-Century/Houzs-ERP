@@ -131,7 +131,7 @@ const top = (m, n = 10) =>
  *             book, so `/ensure-masters` would CREATE them. A pass-through is
  *             only as safe as this number is small and this list is readable.
  */
-function verdict(label, rows, send, { fatal, book, map, howItFails, opensWhat }) {
+function verdict(label, rows, send, { fatal, book, howItFails, opensWhat }) {
   const missing = [];
   const values = new Map();
   for (const r of rows) {
@@ -146,29 +146,17 @@ function verdict(label, rows, send, { fatal, book, map, howItFails, opensWhat })
           ` First few: ${missing.slice(0, 6).join(", ")}`
         : " (every one of them now carries a value)."),
   );
-  /* WHAT A PASS-THROUGH WOULD OPEN. Two ways to answer it, and the difference
-     matters: where the book's own vocabulary is committed beside this script we
-     can name exactly what is NEW; where it is not (BRANDING — recorded only as
-     prose), the honest answer is the values the MAP does not know, which is an
-     over-count of the truth rather than a comfortable silence. Printing nothing
-     because the reference list is missing is how a real consequence goes
-     unreviewed. */
-  if (book) {
-    const fresh = [...values.entries()].filter(([v]) => !book.has(v.toUpperCase()));
-    const freshRows = fresh.reduce((a, [, n]) => a + n, 0);
-    notice(
-      `  OPENS ${fresh.length} new ${opensWhat} in the licensed book, on ${freshRows} order(s): ` +
-        `${fresh.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
-    );
-    return;
-  }
-  if (!map) return;
-  const unmapped = [...values.entries()].filter(([v]) => !bookSpelling(v, map));
-  const unmappedRows = unmapped.reduce((a, [, n]) => a + n, 0);
+  /* WHAT THIS FIELD OPENS, where the book's own vocabulary is committed beside
+     this script. BRANDING has no such set — its option list is recorded only as
+     prose — and it prints its own line at the call site instead, because what
+     matters there is what a pass-through WOULD open, which is the evidence its
+     allow-list rests on. */
+  if (!book) return;
+  const fresh = [...values.entries()].filter(([v]) => !book.has(v.toUpperCase()));
+  const freshRows = fresh.reduce((a, [, n]) => a + n, 0);
   notice(
-    `  MAY OPEN up to ${unmapped.length} new ${opensWhat} on ${unmappedRows} order(s) — these are the ` +
-      `values ${"the map"} does not know, and this book's option list is not committed here, so some ` +
-      `may already exist: ${unmapped.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
+    `  OPENS ${fresh.length} new ${opensWhat} in the licensed book, on ${freshRows} order(s): ` +
+      `${fresh.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
   );
 }
 
@@ -394,19 +382,19 @@ try {
     verdict(
       "BRANDING (soBranding: header, else the lines -> UDF BRANDING)",
       unlinked,
-      (r) => bookSpellingOrOwn(
+      /* bookSpelling, not bookSpellingOrOwn: BRANDING_MAP is an allow-list,
+         because the ERP column behind it holds categories. The MAY OPEN line
+         below is what proved that and is kept so it stays proved. */
+      (r) => bookSpelling(
         blank(r.branding) ? lineBrandByDoc.get(r.doc_no) ?? null : r.branding,
         BRANDING_MAP,
       ),
       {
         fatal: false,
-        /* The book's BRANDING option list is recorded only as prose in
-           autocount-so-writeback-mappings.json, so there is no set to say what
-           is NEW. Falling back to "what the map does not know" over-counts
-           rather than staying silent — see verdict(). */
+        /* No OPENS line: nothing unmapped is sent, so nothing is opened. What
+           a pass-through WOULD have opened is printed below instead, because
+           that list is the evidence the allow-list decision rests on. */
         book: null,
-        map: BRANDING_MAP,
-        opensWhat: "BRANDING option(s)",
         howItFails: "udf() drops a null, so the BRANDING UDF is never written.",
       },
     );
@@ -418,6 +406,28 @@ try {
       `  ${headerBlank} of ${unlinked.length} carry NO header branding at all; ${rescued} of those ` +
         `are answered by the LINES (mfg_sales_order_items.branding, snapshotted from the catalog) — ` +
         `the value the detail page shows as first_item_branding.`,
+    );
+    /* WHY BRANDING_MAP IS AN ALLOW-LIST AND THE OTHER THREE ARE NOT.
+       Printed every run so the decision stays reviewable and cannot rot into a
+       habit: these are the values a pass-through would OPEN as brands in the
+       licensed book. On 2026-08-14 four of the six were CATEGORIES and one was
+       a company name. If this list ever becomes all-brands, the decision is
+       worth revisiting; while it is not, the allow-list is what stops
+       `Bedframe` becoming a brand in AutoCount forever. */
+    const wouldOpen = new Map();
+    for (const r of unlinked) {
+      const raw = blank(r.branding) ? lineBrandByDoc.get(r.doc_no) ?? null : r.branding;
+      if (blank(raw) || bookSpelling(raw, BRANDING_MAP)) continue;
+      const k = String(raw).trim();
+      wouldOpen.set(k, (wouldOpen.get(k) ?? 0) + 1);
+    }
+    const wouldOpenRows = [...wouldOpen.values()].reduce((a, b) => a + b, 0);
+    notice(
+      `  NOT PASSED THROUGH — a pass-through would open ${wouldOpen.size} BRANDING option(s) in the ` +
+        `licensed book on ${wouldOpenRows} order(s), and these are them: ` +
+        `${top(wouldOpen, 12) || "none"}. BRANDING_MAP is deliberately an ALLOW-LIST for this reason ` +
+        `(see its comment); location and venue do pass through, because their columns are vocabularies ` +
+        `of the right kind and this one is not.`,
     );
   }
 

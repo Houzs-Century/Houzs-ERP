@@ -53,6 +53,7 @@ import {
   BRANDING_MAP,
   VENUE_MAP,
   AC_PURCHASE_AGENT,
+  bookSpelling,
   bookSpellingOrOwn,
   resolveAcAgent,
   soBranding,
@@ -1562,7 +1563,9 @@ function soEditHeader(
   if (h.so_date) out.DocDate = String(h.so_date);
 
   const udf: Record<string, string> = {};
-  const branding = bookSpellingOrOwn(soBranding((h.branding as string) ?? null, lines), BRANDING_MAP);
+  /* bookSpelling, NOT bookSpellingOrOwn: BRANDING_MAP is the one allow-list of
+     the four, because the ERP column behind it holds CATEGORIES. */
+  const branding = bookSpelling(soBranding((h.branding as string) ?? null, lines), BRANDING_MAP);
   if (branding) udf.BRANDING = branding;
   const venue = bookSpellingOrOwn((h.venue as string) ?? null, VENUE_MAP);
   if (venue) udf.VENUE = venue;

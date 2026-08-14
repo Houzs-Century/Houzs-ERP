@@ -71,10 +71,28 @@ export const VENUE_MAP: Record<string, string> = {
   'KSL CITY MALL': 'KSL CITY MALL JOHOR SOLO',
 };
 
-/** ERP branding -> AutoCount BRANDING UDF option. HOUZS added to AC 2026-08-06. */
+/**
+ * ERP branding -> AutoCount BRANDING UDF option. HOUZS added to AC 2026-08-06.
+ *
+ * THIS MAP IS AN ALLOW-LIST, and it is the only one of the four that is.
+ * Location and venue pass an unmapped value through for `/ensure-masters` to
+ * open; branding must NOT, because its ERP source is not a brand vocabulary.
+ * `mfg_sales_order_items.branding` is snapshotted from `mfg_products.branding`,
+ * and measured against production on 2026-08-14 the values that map does not
+ * know are `2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8),
+ * `2990` (3), `Bedframe` (3), `Happi.S` (2) — four CATEGORIES and a company
+ * name. Passing those through would write categories into the account book's
+ * BRAND list, permanently, which is the same objection that keeps the display
+ * rule's `BEDFRAME` pseudo-brand out of here.
+ *
+ * `CARRESS` and `DUNLOP` are added because they are the opposite case: real
+ * brands in the live book's OWN history (7 SOs) that this map was simply never
+ * told about. That is what a spelling map is for.
+ */
 export const BRANDING_MAP: Record<string, string> = {
   AKEMI: 'AKEMI', DUNLOPILLO: 'DUNLOPILLO', ERGOTEX: 'ERGOTEX',
   MYLATEX: 'MYLATEX', HOUZS: 'HOUZS', ZANOTTI: 'ZANOTTI', NONE: 'NONE',
+  CARRESS: 'CARRESS', DUNLOP: 'DUNLOP',
 };
 
 const norm = (s: string | null | undefined): string =>
@@ -131,6 +149,14 @@ export function bookSpelling(
  * `mastersOf` names the field, so every use of this function is paired with an
  * `/ensure-masters` entry — including on the EDIT path, which reads the same
  * values out of `body.Header`.
+ *
+ * AND THE SOURCE COLUMN HAS TO BE A VOCABULARY OF THE RIGHT KIND. Three of the
+ * four maps use this; `BRANDING_MAP` does not, and its own comment says why —
+ * the ERP column behind it holds categories, so a pass-through would open
+ * `Bedframe` and `Accessories` as brands. Same distinction `resolveAcAgent`
+ * draws for the raw `agent` text: a value with a trustworthy writer may pass
+ * through, a column with none may not. Check what the column actually holds
+ * before adding a fifth caller.
  */
 export function bookSpellingOrOwn(
   value: string | null | undefined,
@@ -907,7 +933,9 @@ export function composeCreateSo(
     Attention: header.debtor_name,
     ...soInvoiceAddress(header),
     UDF: udf({
-      BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
+      /* bookSpelling, NOT bookSpellingOrOwn — the map is an allow-list here.
+         See BRANDING_MAP. */
+      BRANDING: bookSpelling(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
       PDate: acUdfDate(header.processing_date),

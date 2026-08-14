@@ -69,9 +69,24 @@ Reading code would not have caught that; re-running the check did.
 - `soCustomerRef`, `soBranding`, `soInvoiceAddress`, `soSalesLocation` — one
   named function per field, each reading where the ERP actually keeps the value;
   five columns added to `SO_HEADER_COLS` and `branding` to `SO_ITEM_COLS`.
+- **BRANDING is the one field that does NOT pass through, and production is what
+  decided that.** The first version of this fix did pass it through; running the
+  check against production printed the six values it would open as brands in the
+  licensed book — `2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress`
+  (8), `2990` (3), `Bedframe` (3), `Happi.S` (2). Four categories and a company
+  name: `mfg_products.branding` is not a brand vocabulary, so `BRANDING_MAP`
+  became an allow-list and the check prints that list every run. `CARRESS` and
+  `DUNLOP` were ADDED to it instead — real brands in the book's own history that
+  the map had simply never been told about, which is what a spelling map is for.
 - The header `SalesLocation` falls back to the stock location the document's own
   LINES resolve to, which opens no master: `requireLocation` has already refused
   a line without one, so `mastersOf` is collecting that code off the line anyway.
+  **This does not make the 21 writable** — the after-run says so plainly, and the
+  report was extended to say why: 13 have no live line at all
+  (`MissingSalesLocationError`) and 8 have lines with no `warehouse_id`
+  (`MissingLocationError`, which already refused them). The gain is a named
+  skipped row instead of a document lost to a foreign key, plus a pass-through
+  that covers the unmapped case production does not exhibit today.
 - Every PO names `AC_PURCHASE_AGENT` (`OTHERS`), and a supplier with no code is
   REFUSED (`MissingCreditorError`) rather than sent blank — the `MissingAgentError`
   precedent, applied twice more.

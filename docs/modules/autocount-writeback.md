@@ -828,7 +828,7 @@ column, the composer reads another, and nothing opens it on the AutoCount side.*
 | AutoCount field | reads | why not the obvious column |
 |---|---|---|
 | `ToPONo` | `po_doc_no` ?? `customer_po` ?? `customer_so_no` (`soCustomerRef`) | PR #140 dropped the Customer PO card, so nothing writes the first two and the operator's reference lands in the third |
-| `BRANDING` | header `branding`, else the first live LINE's `branding` (`soBranding`) | the header column is NULL on every ERP-created order; the form has never had the field, and the detail page derives `first_item_branding` from the lines for that reason |
+| `BRANDING` | header `branding`, else the first live LINE's `branding` (`soBranding`), **through the map only** | the header column is NULL on every ERP-created order; the form has never had the field, and the detail page derives `first_item_branding` from the lines for that reason |
 | `InvAddr3` / `InvAddr4` | `address3` / `address4`, else `postcode` + `city`, then `customer_state` (`soInvoiceAddress`) | only the cutover import ever wrote `address3` / `address4`. FIVE ERP fields into FOUR numbered lines is the one decision here, and it lives in that function's doc comment |
 | `SalesLocation` | `sales_location`, else the stock location the LINES resolve to (`soSalesLocation`) | `deriveSalesLocationFromState` returns null for an order with no customer state, and a blank is `FK_SO_SalesLocation` |
 | `VENUE` | `venue`, kept as-is when the map does not know it | venue is deliberately free text — "every roadshow hall is a one-off" (mig 0229) — against a 7-entry map |
@@ -843,10 +843,26 @@ only deleted it. Two functions now, named after what their `null` means:
 | | |
 |---|---|
 | `bookSpelling(v, map)` | the book's own spelling, or `null` = *the book has never heard of this*. Kept for the AGENT, where `null` genuinely has to refuse: `mfg_sales_orders.agent` is free text holding bare uuids and "Unassigned" in production, and `/ensure-masters` opens an agent under exactly the string it is given (§7n) |
-| `bookSpellingOrOwn(v, map)` | the book's spelling, else the ERP's own value verbatim for `/ensure-masters` to open. `null` only when the ERP has nothing at all. Used for location, venue and branding |
+| `bookSpellingOrOwn(v, map)` | the book's spelling, else the ERP's own value verbatim for `/ensure-masters` to open. `null` only when the ERP has nothing at all. Used for **location and venue** |
 
 **A pass-through is only safe where the master gets opened**, which is why
 `mastersOf`'s edit blindness (§7e) had to be fixed in the same change.
+
+**AND ONLY WHERE THE SOURCE COLUMN IS A VOCABULARY OF THE RIGHT KIND.**
+`BRANDING_MAP` is the one ALLOW-LIST of the four, and production decided that
+rather than taste: the first version of this fix passed line branding through,
+and the check reported what it would open as brands in the licensed book —
+`2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8), `2990` (3),
+`Bedframe` (3), `Happi.S` (2). Four categories and a company name.
+`mfg_products.branding`, which the line column is snapshotted from, is not a
+brand list. So branding goes through `bookSpelling` alone, `CARRESS` and
+`DUNLOP` were added to the map because they ARE real book brands it had not been
+told about, and the check prints the would-open list every run so the decision
+stays reviewable.
+
+This is finding 1's rule arriving from the other direction: **a value with a
+trustworthy writer may pass through, a column with none may not.** Before adding
+a fifth caller of `bookSpellingOrOwn`, look at what the column actually holds.
 
 ## 7e. The masters a document names are opened first
 

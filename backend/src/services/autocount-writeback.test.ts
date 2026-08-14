@@ -428,9 +428,29 @@ describe('BRANDING — the header column is empty on every ERP-created order (fi
       .toBe('AKEMI');
   });
 
-  test('a brand the map has never heard of reaches the book (CARRESS, DUNLOP)', () => {
+  /* CARRESS and DUNLOP are real brands in the live book's own history that the
+     map was never told about, so they were ADDED to it — the thing a spelling
+     map is for. They are not passed through; see the next test for why. */
+  test('the two brands the book holds and the map did not are now mapped', () => {
     expect(composeCreateSo({ ...header, branding: 'CARRESS' }, [line()], SALESPERSON, opts).UDF.BRANDING)
       .toBe('CARRESS');
+    expect(composeCreateSo({ ...header, branding: 'dunlop' }, [line()], SALESPERSON, opts).UDF.BRANDING)
+      .toBe('DUNLOP');
+  });
+
+  /* BRANDING_MAP IS THE ONE ALLOW-LIST OF THE FOUR, and production is what
+     decided that. Running the field-alignment check on the branch that first
+     passed branding through reported the six values it would OPEN as brands in
+     the licensed book: `2990s Sofa` (44 orders), `Accessories` (8),
+     `2990s Mattress` (8), `2990` (3), `Bedframe` (3), `Happi.S` (2). Four are
+     CATEGORIES and one is a company name — `mfg_products.branding` is simply
+     not a brand vocabulary. Sending nothing costs a UDF that stays empty;
+     passing through costs a category that is a brand in AutoCount forever. */
+  test('a value the map does not know is DROPPED, not opened as a brand', () => {
+    for (const notABrand of ['Bedframe', 'Accessories', '2990s Sofa', '2990s Mattress']) {
+      const p = composeCreateSo({ ...header, branding: notABrand }, [line()], SALESPERSON, opts);
+      expect(p.UDF.BRANDING, notABrand).toBeUndefined();
+    }
   });
 
   /* A CANCELLED line is not on the document AutoCount is being sent, so its
