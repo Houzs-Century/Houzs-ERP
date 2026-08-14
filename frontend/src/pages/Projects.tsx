@@ -434,7 +434,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // upload/remove are server-written: routes/projects.ts:4235,:4318
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -555,7 +555,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
@@ -1714,7 +1714,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1892,7 +1892,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -1999,20 +1999,13 @@ function ProjectsListView() {
             },
           ]}
         />
-        {/* Outstanding-TASK filter (owner 2026-08-05; MULTI-select 2026-08-07:
-            "make it can click multiple choice. and once export will export what
-            already tick only"). Tick any number of tasks; the list keeps events
-            where AT LEAST ONE ticked task is still open, and the export gains
-            one column per ticked task. */}
-        <MultiSelectFilter
-          placeholder="Status"
-          title="Tick the tasks that are still not completed"
-          summary={(n) => `${n} tasks not completed`}
-          panelWidth="w-[320px]"
-          selected={taskPendingList}
-          onChange={(next) => setTaskPending(next.join(","))}
-          groups={taskGroups}
-        />
+        {/* Outstanding-TASK filter — hidden 2026-07-20 (owner: "REMOVE DROPDOWN
+            STATUS BUTTON"). The label 'Status' was misleading — the dropdown
+            actually filtered by tasks-not-yet-completed, so the owner saw two
+            'status' controls on the toolbar (this + the real "All statuses"
+            one right below) and asked to drop this. Kept the setTaskPending
+            state wiring untouched so a link with ?task_pending=... still works
+            and a future re-introduction under a clearer label is one line away. */}
         <MultiSelectFilter
           placeholder="All brands"
           summary={(n) => `${n} brands`}
@@ -2983,7 +2976,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -6952,7 +6945,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -7231,7 +7224,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -9622,12 +9615,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }

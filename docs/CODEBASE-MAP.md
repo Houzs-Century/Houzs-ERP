@@ -398,11 +398,15 @@ re-check the cited file rather than trusting the line.
   #   SESSION_FALLBACK_ENABLED = "false"   # off — strict fail-closed revocation
   #   SESSION_FALLBACK_ENABLED = "true"    # on  — bounded outage fallback
   # then deploy from a branch rebased on origin/main:
-  cd backend && npx wrangler deploy
+  # DO NOT. `docs/emergency-deploy.md:3,8` — the script is the ONLY sanctioned
+  # way, and a bare deploy is unstamped, so deploy-watchdog.yml:73 classifies the
+  # Worker as `rogue` and force-redeploys from main on its */15 cron.
+  node scripts/emergency-deploy.mjs
 
   # Emergency, without editing the tree (overrides the var for this deploy only;
   # the next deploy from main reverts to whatever wrangler.toml says):
-  cd backend && npx wrangler deploy --var SESSION_FALLBACK_ENABLED:false
+  # DO NOT — same reason. There is no sanctioned one-off var override; change
+  # wrangler.toml and deploy, or use the emergency script.
   ```
 
   Off means the code path is not taken: with the var off, neither the fallback

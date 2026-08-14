@@ -35,7 +35,6 @@
     "db:migrate:baseline": "node scripts/migrate.mjs --baseline",
     "test:light": "vitest run --config vitest.light.config.mts",
     "test:workers": "vitest run",
-    "gen:test-projects": "node scripts/gen-test-projects.mjs",
     "audit:test-projects": "node scripts/audit-test-projects.mjs",
     "audit:jsonb-binds": "node scripts/check-jsonb-binds.mjs",
     "audit:swallowed-reads": "node scripts/check-swallowed-reads.mjs",

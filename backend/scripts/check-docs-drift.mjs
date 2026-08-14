@@ -83,12 +83,13 @@ const docFiles = [
 /* ── The facts the docs are checked AGAINST, read from the tree ───────────── */
 
 const migrationNumbers = new Set();
+const migrationFiles = new Set();
 for (const tree of ["migrations-pg", "migrations"]) {
   const dir = path.join(repoRoot, "backend", "src", "db", tree);
   if (!fs.existsSync(dir)) continue;
   for (const f of fs.readdirSync(dir)) {
     const m = /^(\d{3,4})_/.exec(f);
-    if (m) migrationNumbers.add(String(Number(m[1])));
+    if (m) { migrationNumbers.add(String(Number(m[1]))); migrationFiles.add(f); }
   }
 }
 
@@ -189,6 +190,15 @@ const FILE_REF =
    basename is unique in the tree, otherwise skipped rather than guessed. */
 const BARE_LINE_REF = /\b([A-Za-z0-9_\-.]+\.(?:ts|tsx|mjs|sql|md)):(\d{2,6})\b/g;
 const MIG_REF = /\b(?:mig|migration)\s+(\d{3,4})\b/gi;
+/* A migration named in FULL. The bare-number check cannot catch the worst case
+   in this repo, which is not a dangling reference but one that still RESOLVES —
+   to the wrong migration. Numbers get taken: a branch renumbers past upstream,
+   the doc keeps the old number, and that number is now somebody else's file.
+   `one-sided-rules-coe.md` cited `0284_scm_pos_cart_company_key.sql` after it
+   became `0289_*`, while `0284` is now `0284_retire_consignment_proceeded_at.sql`
+   — a column DROP. The NUMBER existed, so this checker passed it. A filename
+   cannot be silently reassigned, so when a doc writes one, check the filename. */
+const MIG_FILE_REF = /\b(\d{3,4}_[a-z0-9_]+\.sql)\b/g;
 const PERM_REF = /`(scm\.[a-z0-9_.]+|[a-z]+\.[a-z0-9_.]+)`/g;
 const NPM_REF = /\bnpm(?:\s+--prefix\s+\S+)?\s+run\s+([A-Za-z0-9:_-]+)/g;
 
@@ -305,6 +315,25 @@ for (const file of docFiles) {
     for (const m of line.matchAll(MIG_REF)) {
       claimsChecked++;
       if (!migrationNumbers.has(String(Number(m[1])))) at("missing-migration", `mig ${m[1]} has no file in either migration tree`);
+    }
+    // 3b. Migrations named in FULL — the renumber trap. See MIG_FILE_REF.
+    for (const m of line.matchAll(MIG_FILE_REF)) {
+      claimsChecked++;
+      if (migrationFiles.has(m[1])) continue;
+      const num = /^(\d{3,4})_/.exec(m[1])?.[1];
+      const taken = [...migrationFiles].find((f) => f.startsWith(`${num}_`));
+      /* ADVISORY, and that is a decision rather than a cop-out. This cannot
+         tell a doc RECORDING history from a doc telling you where to look, and
+         most hits are the former: MIGRATION-RETIREMENTS.md is about retired
+         migrations by definition, docs/archive/ is archived by definition, and
+         a BUG-HISTORY entry naming the number a migration carried on the day it
+         broke something is CORRECT. Gating would fail every PR on 54 findings
+         until 54 files were edited, and a check that does that gets switched
+         off — which this repo has already watched happen. Reported so a reader
+         can see it; judged by the reader. */
+      at("renamed-migration", taken
+        ? `${m[1]} does not exist — ${num} is now ${taken}, so this reference RESOLVES to a different migration`
+        : `${m[1]} has no file in either migration tree`, true);
     }
     // 4. Permission keys. Only checked when the catalogue parsed at all, and
     //    only for the scm.* / dotted shape the routes gate on.
