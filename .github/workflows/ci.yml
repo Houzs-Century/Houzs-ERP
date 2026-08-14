@@ -355,6 +355,89 @@ jobs:
           [ "${{ needs.backend-typecheck.result }}" = "success" ] || exit 1
           [ "${{ needs.backend-tests.result }}" = "success" ] || exit 1
 
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
+  # no "lint" script in any of the seven package.json files — while backend/src
+  # and frontend/src carried 514 hand-written `eslint-disable` comments that had
+  # never suppressed anything, because nothing ever ran.
+  #
+  # Its own job and NOT a step inside `backend`/`frontend`, for the reason
+  # backend-typecheck was split out of backend-tests: a lint finding is reported
+  # in ~1 minute instead of behind 334s of tests it does not depend on. It also
+  # keeps the two apps' verdicts separate — `lint (backend)` and
+  # `lint (frontend)` — so one app's ratchet cannot hide the other's.
+  #
+  # `npm run lint` is scripts/lint-ratchet.mjs, not a bare eslint: every rule is
+  # a WARNING and the ratchet is the gate (a per-file ceiling that may only
+  # fall). It prints the per-rule ceiling->now table on every run, pass or fail,
+  # so a green job is evidence the check RAN and not merely that nothing tripped.
+  #
+  # Do NOT make this a required status check until it has run green on a few
+  # merges. Adding it to the ruleset is a separate, deliberate step.
+  lint:
+    runs-on: ubuntu-latest
+    # FRONTEND ENFORCES. BACKEND REPORTS. Deliberate, with a written exit
+    # condition — read it before "fixing" the backend leg.
+    #
+    # The backend ratchet is 16 file/rule pairs over ceiling, and every one is
+    # debt MAIN grew while this PR waited, not something this PR wrote. Twelve
+    # are @typescript-eslint/no-unnecessary-condition in the money routes
+    # (consignment, delivery, GRN, purchase-invoices, sales-invoices), and they
+    # are NOT safe to "fix" by deleting the condition. Worked example,
+    # scm/routes/consignment-notes.ts:294 —
+    #
+    #     const noteNo = (header as { do_number: string }).do_number ?? noteId;
+    #
+    # eslint calls the `??` unnecessary because the hand-written `as` cast
+    # promises a non-null string. The cast is a LIE: `header` came from a
+    # `sb: any` supabase read and the column is nullable. That `??` is the only
+    # thing standing between a null and a document number used for inventory
+    # resync. Deleting it to green a linter would put a real bug in a money path.
+    #
+    # The real fix is upstream — honest types instead of `any` + casts — and it
+    # is NOT available today: backend/src/db/schema.pg.ts contains ZERO of the
+    # SCM money tables, so there is nothing to derive types FROM, and
+    # hand-writing them from migration DDL is the same guess in a new costume.
+    # The schema file's own header names the prerequisite: `drizzle-kit pull`
+    # against the live database.
+    #
+    # So: land the linter, enforce it where it is clean, and make the backend
+    # leg advisory rather than leave a permanent red X — a check that is always
+    # red is a check everyone learns to ignore, which is the exact failure the
+    # ratchet exists to prevent. The findings still print in the log.
+    #
+    # REMOVE continue-on-error WHEN schema.pg.ts covers the SCM tables from
+    # `drizzle-kit pull`, the money routes are typed off it, and
+    # `npm --prefix backend run lint` is green. Not before.
+    #
+    # The suppression is `--advisory` ON THE SCRIPT, not `continue-on-error` on
+    # the job. Measured 2026-08-14: continue-on-error stops the workflow failing
+    # but GitHub still publishes the job's check run as FAILURE, so the red X
+    # survives and the wallpaper problem is not solved. --advisory makes the
+    # verdict where the verdict is made. Hard errors — ESLint missing, config
+    # broken — are NEVER advisory, so a gate that did not execute still fails.
+    strategy:
+      # Both legs always run: seeing which app moved is the whole point, and a
+      # cancelled sibling would report as neither pass nor fail.
+      fail-fast: false
+      matrix:
+        app: [backend, frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      # Backend reports, frontend enforces. A developer running
+      # `npm --prefix backend run lint` locally still gets exit 1 and the truth;
+      # only this leg, in CI, is told to report instead of fail.
+      - run: npm run lint ${{ matrix.app == 'backend' && '-- --advisory' || '' }}
+
   # EVERY area against its floor, from ONE merged report.
   #
   # It has to be its own job because the inputs are produced by three different

@@ -85,24 +85,24 @@ Total: 1020 route registrations across 135 files.
 - L4076  PATCH  /sections/:sectionId
 - L4111  DELETE /sections/:sectionId
 - L4128  PUT    /:id/sections/reorder
-- L4557  POST   /:id/defects
-- L4593  PATCH  /defects/:defectId
-- L4603  DELETE /defects/:defectId
-- L4613  PUT    /:id/defects/photo
-- L4629  POST   /:id/sales-reports
-- L4661  DELETE /sales-reports/:reportId
-- L4670  PUT    /:id/sales-reports/upload
-- L4687  POST   /:id/sales-reports/resync
-- L4694  DELETE /checklist/:itemId
-- L4705  POST   /:id/team
-- L4724  DELETE /team/:teamId
-- L4739  POST   /:id/sales-attendees
-- L4826  PUT    /:id/attachments
-- L4872  GET    /attachments/:key{.+}
-- L4884  POST   /attachments/:attId/archive
-- L4898  PATCH  /attachments/:attId
-- L4938  GET    /calendar/events
-- L5118  POST   /import/csv
+- L4583  POST   /:id/defects
+- L4619  PATCH  /defects/:defectId
+- L4629  DELETE /defects/:defectId
+- L4639  PUT    /:id/defects/photo
+- L4655  POST   /:id/sales-reports
+- L4687  DELETE /sales-reports/:reportId
+- L4696  PUT    /:id/sales-reports/upload
+- L4713  POST   /:id/sales-reports/resync
+- L4720  DELETE /checklist/:itemId
+- L4731  POST   /:id/team
+- L4750  DELETE /team/:teamId
+- L4765  POST   /:id/sales-attendees
+- L4852  PUT    /:id/attachments
+- L4898  GET    /attachments/:key{.+}
+- L4910  POST   /attachments/:attId/archive
+- L4924  PATCH  /attachments/:attId
+- L4964  GET    /calendar/events
+- L5144  POST   /import/csv
 
 ## backend/src/routes/assr.ts  (61)
 - L300  GET    /settings
@@ -169,47 +169,47 @@ Total: 1020 route registrations across 135 files.
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
 - L1170  GET    /
-- L1896  GET    /customers
-- L1971  GET    /my-mtd
-- L2012  GET    /mine
-- L2192  GET    /:docNo/slip-url
-- L2290  GET    /cross-category-eligibility
-- L2313  GET    /cross-category-match
-- L2367  GET    /customer-search
-- L2484  GET    /active-venue
-- L2538  GET    /:docNo
-- L2935  GET    /:docNo/items
-- L3032  GET    /customer-credit/:debtorCode
-- L3097  POST   /backfill-warehouses
-- L5569  POST   /
-- L5655  POST   /recompute-allocation
-- L5664  PATCH  /:docNo/status
-- L6038  DELETE /:docNo
-- L6130  GET    /:docNo/audit-log
-- L6148  GET    /:docNo/status-changes
-- L6164  GET    /:docNo/revisions
-- L6175  GET    /:docNo/price-overrides
-- L6187  POST   /:docNo/items/:itemId/override
-- L7404  PATCH  /:docNo
-- L7664  POST   /:docNo/items
-- L8259  PATCH  /:docNo/items/:itemId
-- L8711  DELETE /:docNo/items/:itemId
-- L9110  POST   /:docNo/items/:itemId/tbc-update
-- L9581  POST   /:docNo/items/:itemId/tbc-swap
-- L10399  POST   /:docNo/items/:itemId/tbc-swap-sofa
-- L10444  POST   /:docNo/items/:itemId/photos
-- L10639  GET    /:docNo/items/:itemId/photos/:photoKey/signed
-- L10654  GET    /:docNo/items/:itemId/photos/:photoKey
-- L10703  DELETE /:docNo/items/:itemId/photos/:photoKey
-- L10799  GET    /:docNo/payments
-- L10957  POST   /:docNo/payments
-- L11145  PATCH  /:docNo/payments/:id
-- L11356  DELETE /:docNo/payments/:id
-- L11461  GET    /:docNo/payments/:id/slip-url
-- L11515  POST   /:docNo/payments/:id/slip
-- L11612  GET    /debtors/search
-- L11642  PATCH  /:docNo/items/:itemId/stock-status
-- L11767  POST   /:docNo/amendments
+- L1897  GET    /customers
+- L1972  GET    /my-mtd
+- L2013  GET    /mine
+- L2193  GET    /:docNo/slip-url
+- L2291  GET    /cross-category-eligibility
+- L2314  GET    /cross-category-match
+- L2368  GET    /customer-search
+- L2485  GET    /active-venue
+- L2539  GET    /:docNo
+- L2936  GET    /:docNo/items
+- L3033  GET    /customer-credit/:debtorCode
+- L3098  POST   /backfill-warehouses
+- L5570  POST   /
+- L5656  POST   /recompute-allocation
+- L5665  PATCH  /:docNo/status
+- L6039  DELETE /:docNo
+- L6131  GET    /:docNo/audit-log
+- L6149  GET    /:docNo/status-changes
+- L6165  GET    /:docNo/revisions
+- L6176  GET    /:docNo/price-overrides
+- L6188  POST   /:docNo/items/:itemId/override
+- L7405  PATCH  /:docNo
+- L7665  POST   /:docNo/items
+- L8260  PATCH  /:docNo/items/:itemId
+- L8712  DELETE /:docNo/items/:itemId
+- L9111  POST   /:docNo/items/:itemId/tbc-update
+- L9582  POST   /:docNo/items/:itemId/tbc-swap
+- L10400  POST   /:docNo/items/:itemId/tbc-swap-sofa
+- L10445  POST   /:docNo/items/:itemId/photos
+- L10640  GET    /:docNo/items/:itemId/photos/:photoKey/signed
+- L10655  GET    /:docNo/items/:itemId/photos/:photoKey
+- L10704  DELETE /:docNo/items/:itemId/photos/:photoKey
+- L10800  GET    /:docNo/payments
+- L10958  POST   /:docNo/payments
+- L11146  PATCH  /:docNo/payments/:id
+- L11357  DELETE /:docNo/payments/:id
+- L11462  GET    /:docNo/payments/:id/slip-url
+- L11516  POST   /:docNo/payments/:id/slip
+- L11613  GET    /debtors/search
+- L11643  PATCH  /:docNo/items/:itemId/stock-status
+- L11768  POST   /:docNo/amendments
 
 ## backend/src/routes/agent-console.ts  (33)
 - L119  GET    /status
@@ -681,12 +681,12 @@ Total: 1020 route registrations across 135 files.
 - L293  POST   /batch-import
 - L492  DELETE /:id
 - L495  GET    /:id
-- L913  PATCH  /:id
-- L920  POST   /:id/activate-one-shot
-- L963  GET    /:id/price-history
-- L998  GET    /:id/suppliers
-- L1171  POST   /:id/price-changes
-- L1218  GET    /:id/price-changes
+- L915  PATCH  /:id
+- L922  POST   /:id/activate-one-shot
+- L965  GET    /:id/price-history
+- L1000  GET    /:id/suppliers
+- L1173  POST   /:id/price-changes
+- L1220  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2273  GET    /salespeople
@@ -710,8 +710,8 @@ Total: 1020 route registrations across 135 files.
 - L234  GET    /:id/hero-meta
 - L277  POST   /
 - L335  PATCH  /:id
-- L459  DELETE /:id
-- L462  PATCH  /:id/hero-meta
+- L462  DELETE /:id
+- L465  PATCH  /:id/hero-meta
 
 ## backend/src/scm/routes/pos-pools.ts  (10)
 - L108  GET    /mfg-catalog
@@ -960,11 +960,11 @@ Total: 1020 route registrations across 135 files.
 - L211  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L428  GET    /
-- L1584  GET    /geo
-- L1887  GET    /:docNo/lines
-- L1991  PATCH  /:type/:id/fields
-- L2296  PATCH  /:type/:id/schedule
+- L429  GET    /
+- L1582  GET    /geo
+- L1885  GET    /:docNo/lines
+- L1989  PATCH  /:type/:id/fields
+- L2294  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
 - L256  POST   /

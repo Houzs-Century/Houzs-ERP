@@ -433,7 +433,10 @@ export const deleteCategoryHandler = async (c: Context<{ Bindings: Env; Variable
     return c.json({
       error: 'category_in_use',
       count: count ?? 0,
-      sample_models: (refs ?? []).map((r) => (r as { model_code: string }).model_code),
+      // `refs` is an array here: the `if (refsErr) return` above is what makes it
+      // one. A `?? []` would put back the same fold-a-failed-read-into-nothing
+      // shape the comment above says was the bug.
+      sample_models: refs.map((r) => (r as { model_code: string }).model_code),
     }, 409);
   }
 
