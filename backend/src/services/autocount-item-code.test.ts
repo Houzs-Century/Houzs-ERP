@@ -22,6 +22,7 @@ import {
 import { AC_ITEM_MAP_TSV } from './autocount-item-map';
 import { AC_SOFA_CORPUS } from './autocount-sofa-corpus';
 import {
+  MissingCreditorError,
   SofaCollapseError,
   composeCreatePo,
   composeCreateSo,
@@ -313,13 +314,21 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
     );
     expect(po.Details[0].ItemCode).toBe('AC-FROM-B');
 
-    // with no creditor there is nothing to choose with, so it takes our own code
-    const blind = composeCreatePo(
+    /* With no creditor there is nothing to choose with, so the line takes our
+       own code. Asserted through composeDetails rather than composeCreatePo,
+       because a purchase order with no creditor code is now REFUSED before it
+       gets this far — CreatePo assigns CreditorCode directly and "" is
+       FK_PO_Creditor (audit 2026-08-14, finding 4). The resolution rule under
+       test is the same one either way. */
+    const { details } = composeDetails([line({ item_code: 'SHARED-CODE' })], {
+      itemIndex: index, supplierCode: null,
+    });
+    expect(details[0].ItemCode).toBe('SHARED-CODE');
+    expect(() => composeCreatePo(
       { po_number: 'PO-1', creditor_code: null, creditor_name: null } as never,
       [line({ item_code: 'SHARED-CODE' })],
       { itemIndex: index },
-    );
-    expect(blind.Details[0].ItemCode).toBe('SHARED-CODE');
+    )).toThrow(MissingCreditorError);
   });
 });
 

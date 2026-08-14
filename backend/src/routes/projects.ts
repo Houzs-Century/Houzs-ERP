@@ -6,6 +6,15 @@ import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-rep
 import { buildFileBlocks } from "../services/vision-blocks";
 import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-reconcile";
 import {
+  DEFECT_REVIEW_REGION_STATES,
+  approverBrandBlocked,
+  isCrewScopedUser,
+  isDefectRegionState,
+  roleLabelAdmits,
+  salesDirectorMayAttach,
+} from "../services/projectGates";
+import { detectFloorplanSize, isFloorplanTitle } from "../services/floorplanSize";
+import {
   createProject,
   patchProject,
   getProjectDetail,
@@ -3378,182 +3387,22 @@ app.delete("/phase-photos/:photoId", async (c) => {
 // can correct it — this is an assist, not an authority.
 // ArrayBuffer -> base64. Workers expose no Node Buffer; the chunked loop keeps
 // stack usage bounded on multi-MB plans (same approach as scan-so's toBase64).
-function arrayBufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(
-      null,
-      Array.from(bytes.subarray(i, Math.min(i + chunk, bytes.length))),
-    );
-  }
-  return btoa(binary);
-}
-
-const FLOORPLAN_SIZE_PROMPT = `You are reading an exhibition/mall BOOTH FLOOR PLAN for Houzs Century.
-
-Return ONLY minified JSON, no prose:
-{"total_sqm": <number|null>, "method": "<explicit_total|dimensions|booth_count|none>", "evidence": "<short quote of what you read>", "booth_count": <number|null>, "confidence": "<high|medium|low>"}
-
-How to decide total_sqm, in priority order:
-1. explicit_total — the plan states a total area for OUR booth ("72 sqm", "72 m2", "72m²", "SIZE: 72"). Use it verbatim.
-2. dimensions — the plan gives our booth's width x depth in metres ("8m x 9m", "8 x 9"). total_sqm = width * depth.
-3. booth_count — the plan only identifies booth NUMBERS/units for us (e.g. "195-202 (8 BOOTH)", or 8 highlighted cells). A Houzs standard booth is 3m x 3m = 9 m², so total_sqm = booth_count * 9. Set booth_count.
-4. none — you cannot tell. total_sqm must be null. NEVER guess.
-
-Rules:
-- Measure OUR booth only (usually highlighted/coloured/labelled Houzs, AKEMI, ZANOTTI, ERGOTEX), never the whole hall.
-- Units are metres. If a dimension is clearly in feet, convert (1 ft = 0.3048 m) and say so in evidence.
-- Round total_sqm to a whole number when it is within 0.5 of one.
-- confidence: high = you read a clear total or clear dimensions; medium = derived from booth count or a partly legible label; low = anything shakier. If low and you are not reasonably sure, prefer total_sqm null.`;
-
+// Floorplan size reading (owner 2026-08-04) lives in services/floorplanSize.ts
+// — the prompt, the per-kind size ceilings and the write policy are the parts
+// worth reading, and they do not belong in a route file.
 app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  const apiKey = c.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return c.json({ error: "Reading floorplans isn't configured on this server." }, 503);
   const user = c.get("user");
-  const project = await c.env.DB.prepare(
-    `SELECT id, size_sqm, booth_no FROM projects WHERE id = ?`
-  )
-    .bind(id)
-    .first<{ id: number; size_sqm: number | null; booth_no: string | null }>();
-  if (!project) return c.json({ error: "Not found" }, 404);
-
-  // Newest live attachment on a Display Floor Plan item (title tolerates the
-  // "Display Floor Plan" / "Blank Floorplan" naming both used in templates).
-  const att = await c.env.DB.prepare(
-    `SELECT a.r2_key, a.file_name, a.content_type
-       FROM project_checklist_attachments a
-       JOIN project_checklist pc ON pc.id = a.item_id
-      WHERE pc.project_id = ?
-        AND a.archived_at IS NULL
-        AND (pc.title LIKE 'Display Floor Plan%' OR pc.title LIKE 'Blank Floorplan%')
-      ORDER BY a.uploaded_at DESC, a.id DESC
-      LIMIT 1`
-  )
-    .bind(id)
-    .first<{ r2_key: string; file_name: string; content_type: string | null }>();
-  if (!att) return c.json({ error: "No floorplan uploaded yet." }, 400);
-
-  const obj = await c.env.POD_BUCKET.get(att.r2_key);
-  if (!obj) return c.json({ error: "The floorplan file is missing from storage." }, 404);
-  const buf = await obj.arrayBuffer();
-  const mime = (att.content_type || obj.httpMetadata?.contentType || "").toLowerCase();
-  // Images go as image blocks; PDFs as a document block (both supported by the
-  // model the scan pipeline already uses).
-  const isPdf = mime.includes("pdf") || /\.pdf$/i.test(att.file_name);
-  const isImage = /^image\/(jpeg|png|webp|gif)$/.test(mime) || /\.(jpe?g|png|webp|gif)$/i.test(att.file_name);
-  if (!isPdf && !isImage) {
-    return c.json({ error: "Only image or PDF floorplans can be read." }, 400);
-  }
-  // Per-kind ceilings: the API caps an IMAGE block near 5MB, while a PDF
-  // document block may be much larger (the 32MB request budget is the real
-  // limit, and base64 inflates ~33%, so 12MB of PDF is about 16MB on the wire).
-  // A venue master floorplan PDF routinely exceeds 5MB — the flat 5MB cap
-  // rejected them outright (project 187, verified 2026-08-05).
-  const maxBytes = isPdf ? 12 * 1024 * 1024 : 5 * 1024 * 1024;
-  if (buf.byteLength > maxBytes) {
-    return c.json(
-      {
-        error: `That floorplan is too large to read (${Math.round(buf.byteLength / 1024 / 1024)}MB; limit ${
-          maxBytes / 1024 / 1024
-        }MB for ${isPdf ? "PDFs" : "images"}). Please type the size in.`,
-      },
-      400,
-    );
-  }
-  const b64 = arrayBufferToBase64(buf);
-  const fileBlock = isPdf
-    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
-    : {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: /png$/i.test(mime) || /\.png$/i.test(att.file_name)
-            ? "image/png"
-            : /webp/i.test(mime) ? "image/webp" : "image/jpeg",
-          data: b64,
-        },
-      };
-  const hint = project.booth_no
-    ? `\n\nThe operator recorded our booth number(s) as: ${project.booth_no}. Use it to identify OUR booth and, if it names a count, to sanity-check booth_count.`
-    : "";
-
-  let parsed: {
-    total_sqm: number | null;
-    method?: string;
-    evidence?: string;
-    booth_count?: number | null;
-    confidence?: string;
-  } | null = null;
-  try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 400,
-        messages: [
-          {
-            role: "user",
-            content: [fileBlock, { type: "text", text: FLOORPLAN_SIZE_PROMPT + hint }],
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(45_000),
-    });
-    if (!resp.ok) {
-      const detail = await resp.text().catch(() => "");
-      console.error("[floorplan-size] anthropic", resp.status, detail.slice(0, 300));
-      return c.json({ error: "Couldn't read the floorplan just now. Please try again." }, 502);
-    }
-    const data = await resp.json<{ content?: { type: string; text?: string }[] }>();
-    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-  } catch (e) {
-    console.error("[floorplan-size] failed", e);
-    return c.json({ error: "Couldn't read the floorplan just now. Please try again." }, 502);
-  }
-
-  const raw = parsed?.total_sqm;
-  const detected = typeof raw === "number" && isFinite(raw) && raw > 0 && raw < 100_000
-    ? Math.round(raw * 100) / 100
-    : null;
-  const overwrite = c.req.query("overwrite") === "1";
-  const hadValue = project.size_sqm != null && Number(project.size_sqm) > 0;
-  let applied = false;
-  if (detected != null && (!hadValue || overwrite)) {
-    await c.env.DB.prepare(`UPDATE projects SET size_sqm = ? WHERE id = ?`).bind(detected, id).run();
-    applied = true;
-    await logProjectActivity(
-      c.env,
-      id,
-      "floorplan_size_detected",
-      hadValue ? String(project.size_sqm) : null,
-      String(detected),
-      `Read from ${att.file_name} (${parsed?.method ?? "?"}${parsed?.evidence ? `: ${parsed.evidence}` : ""})`,
-      user?.id ?? null,
-    );
-  }
-  return c.json({
-    ok: true,
-    detected_sqm: detected,
-    applied,
-    skipped_reason: detected == null ? "not_found" : applied ? null : "already_set",
-    previous_sqm: project.size_sqm ?? null,
-    method: parsed?.method ?? "none",
-    evidence: parsed?.evidence ?? null,
-    booth_count: parsed?.booth_count ?? null,
-    confidence: parsed?.confidence ?? "low",
-    source_file: att.file_name,
+  // ?overwrite=1 forces (the manual "Auto" button); ?overwrite=auto refreshes a
+  // value a previous read wrote but leaves a hand-typed one alone.
+  const ow = c.req.query("overwrite");
+  const result = await detectFloorplanSize(c.env, id, {
+    overwrite: ow === "auto" ? "auto" : ow === "1",
+    userId: user?.id ?? null,
   });
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+  return c.json(result);
 });
 
 app.post("/:id/finance/resync", requirePermission("projects.write"), async (c) => {
@@ -3796,100 +3645,9 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
   return c.json({ ok: true });
 });
 
-// Owner 2026-07-21: helpers/storekeepers are CREW-SCOPED — they may view/edit
-// only events they're crewed on (setup/dismantle FK slots or the per-lorry
-// crew JSON). Matched on the EXACT position name (never \b substrings —
-// position names are owner-editable free text; see the pmsAccess note).
-// Drivers intentionally stay unscoped (owner kept them see-all).
-const CREW_SCOPED_POSITIONS = new Set(["helper", "storekeeper", "storekeeper supervisor"]);
-// Two-warehouse defect-review split (owner 2026-08-11). Projects in these
-// (canonical, Title-Case) states go to Nancy (Ops Exec) for clean-or-replace;
-// every other state goes to Shukor (Storekeeper Supervisor). Both escalate a
-// Replace to the purchaser (Sim / Farra). "Penang" canonicalises to "Pulau
-// Pinang" (mig 0175), so match that spelling.
-const DEFECT_REVIEW_REGION_STATES = ["Pulau Pinang", "Kelantan", "Terengganu", "Perak"];
-function isCrewScopedUser(user: { position_name?: string | null; permissions?: string[]; permissions_set?: Set<string> | string[] } | null | undefined): boolean {
-  if (!user) return false;
-  const granted = (user as any).permissions_set ?? user.permissions;
-  if (hasPermission(granted, "*") || hasPermission(granted, "projects.write")) return false;
-  return CREW_SCOPED_POSITIONS.has((user.position_name ?? "").trim().toLowerCase());
-}
-
-// Does the task's role badge admit this user's role? Exact match, plus:
-// DRIVER-badged field tasks (Setup/Dismantle Image) are worked by the whole
-// crew interchangeably — helpers/storekeepers are not individually assigned
-// to events (last-minute swaps), so they edit the driver part too (owner
-// 2026-07-16). Tasks are never badged HELPER/STOREKEEPER.
-/** BRAND-SCOPED APPROVAL (owner 2026-08-10: "kris approve stock out transfer
- *  akemi and ergotex only, for zanotti peter approve").
- *
- *  Returns a 403 Response when the caller holds the approval key but is
- *  configured for specific brands and THIS item's project isn't one of them;
- *  null when the decision may proceed. An approver with NO `user_brands` rows
- *  (Peter, HQ, the owner) is unrestricted — so this narrows only the people it
- *  is explicitly configured for and can never lock out an existing approver.
- *  Reuses `user_brands`, the per-user brand allow-list the app already keeps;
- *  it does not affect what an unscoped director can SEE (getProjectScope only
- *  applies brand_scope to scope_to_pic reps). */
-async function approverBrandBlocked(
-  env: Env,
-  userId: number | null | undefined,
-  itemId: number,
-): Promise<{ brands: string[]; brand: string } | null> {
-  if (!userId) return null;
-  const rows = await env.DB.prepare(
-    `SELECT brand FROM user_brands WHERE user_id = ?`
-  )
-    .bind(userId)
-    .all<{ brand: string }>();
-  const brands = (rows.results ?? [])
-    .map((r) => (r.brand ?? "").trim())
-    .filter(Boolean);
-  if (brands.length === 0) return null; // unrestricted approver
-  const proj = await env.DB.prepare(
-    `SELECT p.brand FROM project_checklist pc
-       JOIN projects p ON p.id = pc.project_id
-      WHERE pc.id = ?`
-  )
-    .bind(itemId)
-    .first<{ brand: string | null }>();
-  const brand = (proj?.brand ?? "").trim();
-  if (brand && brands.some((b) => b.toUpperCase() === brand.toUpperCase())) return null;
-  return { brands, brand };
-}
-
-/** Owner 2026-08-10: "kris can upload fill in floorplan". The Filled Floorplan
- *  is the competitor-research plan the Sales Director annotates, but the row is
- *  badged SALES PIC, so the role-badge rule blocked a view-only Sales Director
- *  (no projects.write). Narrow exception: the Sales Director POSITION may
- *  attach to / remove from that ONE document. Everything else still obeys the
- *  badge — this does not open the other SALES PIC deliverables. */
-function salesDirectorMayAttach(
-  title: string | null | undefined,
-  positionName: string | null | undefined,
-): boolean {
-  const pos = (positionName ?? "").trim().toLowerCase();
-  if (pos !== "sales director") return false;
-  return /^filled floor\s*plan/i.test((title ?? "").trim());
-}
-
-function roleLabelAdmits(
-  label: string | null | undefined,
-  roleName: string | null | undefined,
-): boolean {
-  const r = (roleName ?? "").trim().toUpperCase();
-  if (!r) return false;
-  // A combined badge ("SALES PIC & DRIVER" — the Defect List Setup/Dismantle
-  // pair, owner 2026-07-29) admits every listed role; each part keeps the
-  // DRIVER → helper/storekeeper extension.
-  return (label ?? "")
-    .toUpperCase()
-    .split("&")
-    .some((part) => {
-      const l = part.trim();
-      return !!l && (l === r || (l === "DRIVER" && (r === "HELPER" || r === "STOREKEEPER")));
-    });
-}
+// Checklist people-rules (crew scoping, brand-scoped approval, the Sales
+// Director floorplan exception, the two-warehouse defect split) live in
+// services/projectGates.ts — see the header there.
 
 // Status transitions (pending/done/na/blocked). Enforces required_perm
 // — if the item specifies one (e.g. 'projects.approve' for the
@@ -4252,6 +4010,24 @@ app.put(
         owner.title,
         user?.id,
       );
+      // Floorplan uploaded → read the m² and fill the Size box, server-side
+      // (owner 2026-08-14: "button auto beside size i need to click manually?
+      // once display floorplan uploaded make sure auto read the measurement and
+      // fill in size box"). It ran in the DESKTOP upload handler only, so a
+      // mobile upload never triggered it. Doing it here covers every client —
+      // desktop, mobile, paste — and any future one.
+      //
+      // waitUntil: the model call takes seconds and must not hold the upload
+      // response. "auto" leaves a hand-typed size alone but refreshes one a
+      // previous read wrote, so re-uploading a corrected plan updates the box.
+      if (isFloorplanTitle(owner.title)) {
+        const uid = user?.id ?? null;
+        const pid = owner.project_id;
+        const run = detectFloorplanSize(c.env, pid, { overwrite: "auto", userId: uid }).catch((e) =>
+          console.warn("[floorplan-size] auto-read failed", pid, e),
+        );
+        c.executionCtx?.waitUntil?.(run);
+      }
     }
     return c.json(
       {
@@ -4419,12 +4195,35 @@ app.post(
       );
     }
     const att = await c.env.DB.prepare(
-      `SELECT a.id FROM project_checklist_attachments a
+      `SELECT a.id, p.state
+         FROM project_checklist_attachments a
+         JOIN project_checklist pc ON pc.id = a.item_id
+         JOIN projects p ON p.id = pc.project_id
         WHERE a.id = ? AND a.archived_at IS NULL`
     )
       .bind(attId)
-      .first<{ id: number }>();
+      .first<{ id: number; state: string | null }>();
     if (!att) return c.json({ error: "Not found" }, 404);
+    // Region routing is a RULE, not a UI hint (owner 2026-08-14: "sabah sarawak
+    // defect under shukor ya not nancy"). My Pending and the frontend buttons
+    // already split by state, but this route accepted a stamp from either
+    // reviewer on any project — so a mis-tap or a stale tab could still close a
+    // Sarawak defect as Nancy. Each reviewer may act only on their own states;
+    // admins and the purchaser/BD closing an escalation are unaffected.
+    if (!isAdmin && isReviewer && !isPurchaser) {
+      const inRegion = isDefectRegionState(att.state);
+      const mine = role === "ops exec" ? inRegion : !inRegion;
+      if (!mine) {
+        return c.json(
+          {
+            error: inRegion
+              ? "This state is reviewed by the Ops Exec, not the Storekeeper Supervisor"
+              : "This state is reviewed by the Storekeeper Supervisor, not the Ops Exec",
+          },
+          403,
+        );
+      }
+    }
     // Optional remark — an empty string is a legitimate save (owner spec).
     const remark =
       typeof body.remark === "string" && body.remark.trim()

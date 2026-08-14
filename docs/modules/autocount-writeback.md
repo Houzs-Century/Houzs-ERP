@@ -787,9 +787,11 @@ This was the ERP declining to speak.
 | field | source | shape |
 |---|---|---|
 | `Agent` | the salesperson, resolved by §7n | header |
-| `SalesLocation` | `sales_location` through `LOCATION_MAP` | header |
+| `SalesLocation` | `sales_location` through `LOCATION_MAP`, then kept as-is | header |
 | `DocDate` | `so_date` | header |
-| `BRANDING` / `VENUE` / `ToPONo` | `branding` / `venue` / `po_doc_no` | **nested `UDF` object** |
+| `DebtorName` / `Attention` / `Ref` / `Phone1` | `debtor_name` / `ref` / `phone` | header |
+| `InvAddr1..4` | the address, packed by §7o | header |
+| `BRANDING` / `VENUE` / `ToPONo` | §7o — the lines' brand, the venue, the customer reference | **nested `UDF` object** |
 
 `UDF` is nested because that is the only place the service reads it
 (`ApplyUdf` -> `Dict(h, "UDF")`); a flat `SOUDF_*` key at header level is
@@ -799,6 +801,68 @@ silently ignored.
 header loop is `ContainsKey`-gated and `Str` turns a present-but-null into `""`,
 so `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
 the account book has". Same rule as the line-level Location, one level up.
+
+**That rule was WRITTEN HERE and not applied to eight of the keys** until
+2026-08-14. `DebtorName`, `Attention`, `Ref`, `Phone1` and the four `InvAddr`
+lines were emitted as `x ?? null` regardless, so every edit of a sales order
+blanked whatever the account book held wherever the ERP's column was empty — on
+production that is `ref` on 112 of 115 unpushed orders and `address3` /
+`address4` on 94. The same shape was in all four `DOWNSTREAM[*].header`
+builders.
+
+It is now enforced by CONSTRUCTION rather than by remembering: one `present()`
+helper strips every blank key at the single place a header is built, it wraps
+`soEditHeader`, the four downstream builders and the PO edit, and
+`AcDownstreamSpec.header` is typed `Record<string, string>` so putting a `null`
+back is a compile error. **A create and an edit are asymmetric on purpose:** a
+create MUST send a `SalesLocation` (there is nothing to preserve and a foreign
+key to satisfy, so it falls back to the lines), an edit simply says nothing.
+
+## 7o. Five fields the ERP keeps somewhere other than where the composer looked
+
+The write-back's own recurring bug class, swept end to end on 2026-08-14 —
+`docs/autocount-field-alignment-audit.md` has the trace and the production
+number for each. The pattern every time: **the ERP holds the value in one
+column, the composer reads another, and nothing opens it on the AutoCount side.**
+
+| AutoCount field | reads | why not the obvious column |
+|---|---|---|
+| `ToPONo` | `po_doc_no` ?? `customer_po` ?? `customer_so_no` (`soCustomerRef`) | PR #140 dropped the Customer PO card, so nothing writes the first two and the operator's reference lands in the third |
+| `BRANDING` | header `branding`, else the first live LINE's `branding` (`soBranding`), **through the map only** | the header column is NULL on every ERP-created order; the form has never had the field, and the detail page derives `first_item_branding` from the lines for that reason |
+| `InvAddr3` / `InvAddr4` | `address3` / `address4`, else `postcode` + `city`, then `customer_state` (`soInvoiceAddress`) | only the cutover import ever wrote `address3` / `address4`. FIVE ERP fields into FOUR numbered lines is the one decision here, and it lives in that function's doc comment |
+| `SalesLocation` | `sales_location`, else the stock location the LINES resolve to (`soSalesLocation`) | `deriveSalesLocationFromState` returns null for an order with no customer state, and a blank is `FK_SO_SalesLocation` |
+| `VENUE` | `venue`, kept as-is when the map does not know it | venue is deliberately free text — "every roadshow hall is a one-off" (mig 0229) — against a 7-entry map |
+
+**THE MAPS ARE SPELLING CORRECTIONS, NOT AN ALLOW-LIST.** `AGENT_MAP`,
+`LOCATION_MAP`, `VENUE_MAP` and `BRANDING_MAP` record how the live book spells a
+value it already holds (`SUTERA MALL` -> `SUTERA MALL SOLO`). Measured against
+the book's own vocabularies, **every target all four can emit is already a
+master there** — so dropping what they had not heard of protected nothing and
+only deleted it. Two functions now, named after what their `null` means:
+
+| | |
+|---|---|
+| `bookSpelling(v, map)` | the book's own spelling, or `null` = *the book has never heard of this*. Kept for the AGENT, where `null` genuinely has to refuse: `mfg_sales_orders.agent` is free text holding bare uuids and "Unassigned" in production, and `/ensure-masters` opens an agent under exactly the string it is given (§7n) |
+| `bookSpellingOrOwn(v, map)` | the book's spelling, else the ERP's own value verbatim for `/ensure-masters` to open. `null` only when the ERP has nothing at all. Used for **location and venue** |
+
+**A pass-through is only safe where the master gets opened**, which is why
+`mastersOf`'s edit blindness (§7e) had to be fixed in the same change.
+
+**AND ONLY WHERE THE SOURCE COLUMN IS A VOCABULARY OF THE RIGHT KIND.**
+`BRANDING_MAP` is the one ALLOW-LIST of the four, and production decided that
+rather than taste: the first version of this fix passed line branding through,
+and the check reported what it would open as brands in the licensed book —
+`2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8), `2990` (3),
+`Bedframe` (3), `Happi.S` (2). Four categories and a company name.
+`mfg_products.branding`, which the line column is snapshotted from, is not a
+brand list. So branding goes through `bookSpelling` alone, `CARRESS` and
+`DUNLOP` were added to the map because they ARE real book brands it had not been
+told about, and the check prints the would-open list every run so the decision
+stays reviewable.
+
+This is finding 1's rule arriving from the other direction: **a value with a
+trustworthy writer may pass through, a column with none may not.** Before adding
+a fifth caller of `bookSpellingOrOwn`, look at what the column actually holds.
 
 ## 7e. The masters a document names are opened first
 
@@ -819,6 +883,22 @@ master derived from anything else could differ from the one the document
 actually references. It dedupes by item code and **skips a retired line**, which
 is addressed by a DtlKey AutoCount itself issued and therefore names nothing new.
 
+**AN EDIT KEEPS ITS HEADER ONE LEVEL DOWN, and `mastersOf` used to miss it
+entirely.** A create payload is flat; an edit is
+`{DocType, DocNo, Header{…, UDF{…}}, Lines[]}`, so `body.Agent`,
+`body.SalesLocation`, `body.CreditorCode` and `body.UDF` were all read at a level
+where an edit has none of them and only the line items were ever opened. That was
+harmless for exactly as long as the edit sent nothing the book already lacked —
+and it stopped being harmless the moment venue and location were allowed through
+unmapped, so both landed in the same change (2026-08-14). Every key is now read
+through one accessor that falls back to `body.Header`.
+
+One thing had to come with it: **a PO edit carries no `CreditorCode` at all**
+(`composePoState` sends only `CreditorName` and `Description`), and that field
+was the sales/purchase discriminator. It now also reads `DocType`, because
+opening an agent in the wrong table reports success and refuses the document
+anyway — the 2026-08-12 finding, in one line.
+
 **If the masters cannot be opened, the document is NOT sent.** A row that
 half-populated a live account book is worse than a row that waited.
 
@@ -828,7 +908,7 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | | |
 |---|---|
 | It never EDITS an existing master | An item's costing method or a debtor's credit limit is Finance's, not the sync's. Existing masters are reported as `existed` and left alone |
-| It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human |
+| It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human. **`EnsureMasters`'s own header comment used to deny this**; the code was right and the text was corrected on 2026-08-14. What the decision costs, re-measured that day: **19 of 25 `scm.warehouses` codes are in neither `LOCATION_MAP` nor the book's location list**, so the first document naming one opens a new stock location in a licensed book. That is the LINE path and it has behaved this way since go-live; the header's `SalesLocation` falls back to the code its own line already carries, so it opens nothing extra |
 | The ERP never ASKS for a DEBTOR | `EnsureMasters` HAS a Debtors branch (`AcSyncService.cs:574-592`) and would open one if sent; the narrowing is the ERP's — `mastersOf` emits no `Debtors` array (`autocount-outbox.ts:1496-1499`, `:1576-1583`). Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 | It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
 | It DOES add a BRANDING / VENUE option | Owner 2026-08-11. **Read, append, write back the whole set** — see below |
@@ -1001,14 +1081,36 @@ enqueued, so the both-empty shape is unreachable from the UI. The composer's
 refusal is the backstop for the paths that are not that gate — imports, the 2990
 mirror, an API caller passing `{salespersonId: null}` explicitly.
 
-### Still open: a PURCHASE order has no agent at all
+### A PURCHASE order has no agent — so it names a CONSTANT
 
-`readPoHeader` hardcodes `agent: null`, because `scm.purchase_orders` has no
-such column and the ERP has no purchase-agent concept. So every `/create-po`
-sends `Agent: ""` into the same shape of foreign key
-(`FK_PO_PurchaseAgent`, §7m row 4). Nothing in this fix touches it: the ERP has
-no value to send, and inventing one — `OTHERS`, say — is an owner decision about
-what the account book's purchase reports will show.
+`scm.purchase_orders` still has no agent column and the ERP has no
+purchase-agent concept. That is not the problem; sending `null` for it was.
+`readPoHeader` hardcoded `agent: null`, and `CreatePo` assigns `po.Agent`
+unconditionally while `Str` turns both an absent key and a present-null into
+`""` — so all **60** unpushed purchase orders were queued to fail
+`FK_PO_PurchaseAgent` (§7m row 4), unproven on the live book only because no PO
+has been pushed yet. **Omitting the key would not have helped.**
+
+Fixed 2026-08-14: `readPoHeader` supplies `AC_PURCHASE_AGENT`, and
+`composeCreatePo` floors the field at it so a null cannot come back. `OTHERS` is
+the value the FK chain was debugged with on 2026-08-12 and it exists in
+`AED_HOUZS`; `mastersOf` routes it to `PurchaseAgents` because the payload
+carries a `CreditorCode`.
+
+**Which purchase agent the book's reports group by is still an OWNER decision.**
+`AC_PURCHASE_AGENT` in `services/autocount-writeback.ts` is the single place it
+is written down. Attributing POs to a real buyer would need a column on
+`scm.purchase_orders` and a picker, and that is the open half.
+
+### And its CREDITOR is refused rather than sent blank
+
+`CreatePo` assigns `CreditorCode` **directly** — not even wrapped in `Set` — so
+a supplier row with a blank `scm.suppliers.code`, or a PO with no `supplier_id`,
+sends `""` into `FK_PO_Creditor` and loses the whole document. `mastersOf` opens
+a creditor only for a non-empty code, so the empty case was the one nothing
+covered. `composeCreatePo` now raises `MissingCreditorError` — the same shape as
+`MissingAgentError`, and 0 of 60 purchase orders are in that shape today, so it
+is the guard for the first one rather than a repair.
 
 ## 7l. Where this module sits
 
@@ -1030,7 +1132,9 @@ against `AED_HOUZS`, each with the evidence beside it.
 | 1 | `FK_SO_SalesAgent` | SO header `Agent` | `ensure-masters` → `Agents` — but only when the payload NAMES one, which is the 2026-08-13 go-live failure (§7n) | 2026-08-11 |
 | 2 | `FK_SODTL_Location` | SO **line** `Location` | `ensure-masters` → `Locations` | 2026-08-11 |
 | 3 | `FK_Item_ItemGroup` | a NEW item being opened | `ensure-masters` → `Items[].ItemGroup` | 2026-08-12 |
-| 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`** | 2026-08-12 |
+| 4 | `FK_PO_PurchaseAgent` | PO header `Agent` | `ensure-masters` → **`PurchaseAgents`**; every PO now names `AC_PURCHASE_AGENT`, §7n | 2026-08-12 |
+| 5 | `FK_SO_SalesLocation` | SO **header** `SalesLocation` | `ensure-masters` → `Locations`; a blank falls back to the lines and an order with none is refused (§7o) | 2026-08-12 |
+| 6 | `FK_PO_Creditor` | PO header `CreditorCode` | `ensure-masters` → `Creditors`; a blank code is REFUSED, never sent (§7n) | not hit — 0 POs are in that shape |
 
 **#3 — an item cannot be opened without a group.** `ItemGroup` is a foreign key,
 not a label, so a brand-new SKU arriving from the ERP is refused on its very
@@ -1281,10 +1385,10 @@ never be mistaken for a cancel divergence.
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds |
 | `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
 | `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |
-| `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened |
+| `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened. Plus §7o's composer half: `bookSpelling` vs `bookSpellingOrOwn`, the address packing, the customer-reference chain, branding off the lines with no `BEDFRAME` pseudo-brand, the sales-location fallback, and the two new refusals (`MissingSalesLocationError`, `MissingCreditorError`) |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |
 | `src/services/autocount-item-code.test.ts` | **D10**, driven by the real 1561-row cutover map. No corpus line resolves to the WRONG item; a collapsed code refuses without a supplier and resolves with one; an unmapped line throws rather than falling back to `material_code`; one bad line refuses the whole document |
 | `tests/autocountWritebackWiring.test.ts` | That every hook is still attached to its route |
