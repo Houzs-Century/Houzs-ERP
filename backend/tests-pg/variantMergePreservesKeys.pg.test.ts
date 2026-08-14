@@ -1,7 +1,7 @@
 import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 // @ts-expect-error - plain .mjs, the shared writer for both refresh sweeps
-import { mergeVariantPatch, OWNED_SIZE_ONLY_KEYS } from '../scripts/lib/variant-merge.mjs';
+import { mergeVariantPatch, mergeReviewedVariantPatch, OWNED_SIZE_ONLY_KEYS } from '../scripts/lib/variant-merge.mjs';
 
 /* Real PostgreSQL proof that a variant refresh cannot drop a key it does not
    own, and cannot corrupt the column while writing.
@@ -213,6 +213,92 @@ describePg('variant merge against real PostgreSQL', () => {
   test('an unknown table name is refused', async () => {
     await expect(mergeVariantPatch(admin, {
       table: 'some_other_items', id: '00000000-0000-0000-0000-000000000000', patch: PATCH,
+    })).rejects.toThrow(/unknown table/);
+  });
+
+  /* ---- the REVIEWED HAND PATCH path (apply-variant-patch.mjs) --------------
+     Same COE protections, different contract: arbitrary keys are allowed
+     because the patch IS the reviewed artifact, and geometry COALESCEs because
+     a hand patch that says nothing about `gap` must not null gap. This was the
+     last script in the family merging jsonb in JavaScript - it spread
+     `row.variants` between a SELECT and an UPDATE, which is correct on key
+     preservation but has no shape guard: spreading an ARRAY column yields
+     {"0":..,"1":..}, a valid object, quietly converting a detectably damaged
+     row into an undetectably damaged one. These are the tests for that. */
+  for (const table of ['mfg_sales_order_items', 'purchase_order_items']) {
+    test(`${table}: a reviewed hand patch may set a key no sweep owns, and keeps the rest`, async () => {
+      const id = await seed(table, EXISTING);
+      const n = await mergeReviewedVariantPatch(admin, {
+        table, id,
+        // `seatHeight` and `special` are exactly what the escape hatch exists
+        // for; mergeVariantPatch would reject them, and rightly.
+        patch: { seatHeight: '30', special: ['Bracket added'], colourId: 'HAND PICKED' },
+        geometry: { gap: 3, divan: null, leg: null },
+      });
+      expect(n).toBe(1);
+
+      const row = await readRow(table, id);
+      expect(row.shape).toBe('object');
+      const v = row.variants as Record<string, unknown>;
+      expect(v.seatHeight).toBe('30');
+      expect(v.special).toEqual(['Bracket added']);
+      expect(v.colourId).toBe('HAND PICKED');
+      // untouched keys survive - the merge happened in the DATABASE
+      expect(v.fabricId).toBe('OLD FABRIC');
+      expect(v.specials).toEqual(['Nylon Fabric', 'HB Straight']);
+      expect(v.aThirteenthKeyAddedNextMonth).toEqual({ anything: true, n: 13 });
+      // COALESCE geometry: the named axis moves, the unnamed ones stay NULL
+      expect(row.gap_inches).toBe(3);
+      expect(row.divan_height_inches).toBeNull();
+      expect(row.custom_specials).toEqual(['LEAVE ME ALONE']);
+    });
+
+    test(`${table}: a reviewed hand patch never nulls a geometry axis it omits`, async () => {
+      const id = await seed(table, EXISTING);
+      await admin.unsafe(`UPDATE scm.${table} SET gap_inches = 9, divan_height_inches = 8, leg_height_inches = 1 WHERE id = $1::uuid`, [id]);
+      expect(await mergeReviewedVariantPatch(admin, {
+        table, id, patch: { size: '4x6' }, geometry: { gap: null, divan: null, leg: null },
+      })).toBe(1);
+      const row = await readRow(table, id);
+      expect(row.gap_inches).toBe(9);
+      expect(row.divan_height_inches).toBe(8);
+      expect(row.leg_height_inches).toBe(1);
+      expect((row.variants as Record<string, unknown>).size).toBe('4x6');
+    });
+
+    test(`${table}: a reviewed hand patch is REFUSED on an array variants column`, async () => {
+      /* The regression that matters. The old JavaScript spread would have
+         written {"0":{...},"1":"..."} here and reported success. */
+      const id = await seed(table, [EXISTING, 'a stringified patch from the old bug']);
+      expect(await mergeReviewedVariantPatch(admin, {
+        table, id, patch: { seatHeight: '30' }, geometry: null,
+      })).toBe(0);
+      const row = await readRow(table, id);
+      expect(row.shape).toBe('array');
+      expect((row.variants as unknown[]).length).toBe(2);
+    });
+
+    test(`${table}: a reviewed hand patch is REFUSED on a jsonb STRING column`, async () => {
+      const [seeded] = table === 'mfg_sales_order_items'
+        ? await admin`INSERT INTO scm.mfg_sales_order_items (variants)
+                      VALUES (to_jsonb(${JSON.stringify(EXISTING)}::text)) RETURNING id::text AS id`
+        : await admin`INSERT INTO scm.purchase_order_items (variants)
+                      VALUES (to_jsonb(${JSON.stringify(EXISTING)}::text)) RETURNING id::text AS id`;
+      const id = seeded.id as string;
+      expect(await mergeReviewedVariantPatch(admin, {
+        table, id, patch: { seatHeight: '30' }, geometry: null,
+      })).toBe(0);
+      expect((await readRow(table, id)).shape).toBe('string');
+    });
+  }
+
+  test('a reviewed hand patch that is not a plain object is refused before SQL', async () => {
+    const id = await seed('mfg_sales_order_items', EXISTING);
+    await expect(mergeReviewedVariantPatch(admin, {
+      table: 'mfg_sales_order_items', id, patch: ['not', 'an', 'object'],
+    })).rejects.toThrow(/must be a plain object/);
+    await expect(mergeReviewedVariantPatch(admin, {
+      table: 'some_other_items', id, patch: { a: 1 },
     })).rejects.toThrow(/unknown table/);
   });
 });
