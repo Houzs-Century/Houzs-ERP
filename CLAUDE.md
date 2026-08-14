@@ -672,6 +672,23 @@ Not generic narrative.
   context leaves the guard active; `scopeToCompanyId` in
   `scm/lib/companyScope.ts` states this rule in full). See **BUG CLASS
   optional-param-noop** at the top of `BUG-HISTORY.md`.
+- **If you write "every call site", PROVE it in the PR body.** Claiming a whole
+  population — "every desktop + mobile call site", "all four arms",
+  "system-wide", "everywhere" — makes
+  `.github/workflows/completeness-claim.yml` require a fenced ` ```enumeration `
+  block holding the command that ENUMERATES that population and its output. CI
+  re-runs the command against the PR head and fails on any difference, so a
+  pasted list cannot be stale or invented. Allowed commands are `grep`, `rg`,
+  `git grep`, `git ls-files` and `node -e` one-liners over this checkout;
+  nothing goes through a shell. Two populations need two blocks. If the words
+  were not meant as a claim, reword them — say what you DID cover ("the three
+  desktop call sites") — or add the `completeness-not-claimed` label, which
+  waives the proof and then prints the wording back and asks you to change it.
+  This exists because PR #1763's body said "every desktop + mobile call site"
+  and five of its thirteen call sites did not get the argument; see **BUG CLASS
+  unverified-completeness-claim** at the top of `BUG-HISTORY.md`. As of
+  2026-08-13 the detector fires on 13.6% of merged commit messages — roughly one
+  PR in seven makes a claim of this shape; re-measure before quoting that.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw
