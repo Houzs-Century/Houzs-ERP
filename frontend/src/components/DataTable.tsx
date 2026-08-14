@@ -38,6 +38,7 @@ import {
   type DrawerColumn,
 } from "./ColumnsDrawer";
 import { withSingleActive } from "./LayoutSection";
+import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -832,19 +833,8 @@ function DataTableInner<T>({
     });
   }
 
-  /* Column funnels are sticky and INVISIBLE from anywhere but the header that
-     carries them: a colleague who ticked one value months ago sees a short list
-     for good, reads it as missing records, and reports a data bug (owner
-     2026-08-14, a Purchaser seeing 5 of 60 POs — the same account showed all 60
-     on another machine, because the funnel lives in localStorage). So the toolbar
-     Reset counts them as filters too, and clearing drops them. Pages keep owning
-     their own pills/params via `resetFilters`; this is the part only the table
-     can see. */
-  const colFiltersActive = useMemo(
-    () => Object.values(colFilters).some((values) => values.length > 0),
-    [colFilters]
-  );
-  const resetActive = colFiltersActive || (resetFilters?.active ?? false);
+  // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
+  const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
   function handleResetFilters() {
     if (colFiltersActive) setColFilters({});
     resetFilters?.onReset();
@@ -1291,58 +1281,18 @@ function DataTableInner<T>({
     return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
 
-  /* The prefs that reproduce what is on screen right now, for the moment a
-     gesture has to end the baseline. Order comes along or the columns would snap
-     from the preset's arrangement back to definition order the instant the
-     baseline lifts. */
-  function materializeBaseline() {
-    const movable = allColumns.filter((c) => !c.alwaysVisible);
-    return {
-      order: movable.map((c) => c.key),
-      hidden: new Set(movable.filter((c) => effectiveHidden.has(c.key)).map((c) => c.key)),
-      shown: new Set(
-        movable.filter((c) => c.defaultHidden && !effectiveHidden.has(c.key)).map((c) => c.key)
-      ),
-    };
+  /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
+     two lists below are read PAST, so a gesture that edits only them can write
+     nothing at all. `order` comes back set exactly when that baseline was banked. */
+  function writeColumnPrefs(next: ColumnPrefs) {
+    if (next.order) setOrder(next.order);
+    setHiddenList(next.hidden);
+    setShownList(next.shown);
   }
 
   function toggleColumn(key: string) {
-    const col = allColumns.find((c) => c.key === key);
-    const isHidden = effectiveHidden.has(key);
-    /* While a default layout is in play the user's lists are empty and READ PAST
-       — effectiveHidden consults the baseline instead — so writing to them below
-       would be a no-op the baseline immediately overrules. Worse, the reveal path
-       writes nothing at all for a column the preset hides that carries no
-       `defaultHidden` flag: the tick simply never lands, which is every hidden
-       column on a list whose defaults live entirely in a saved layout (owner
-       2026-08-14, GRN No un-tickable on Purchase Orders under "PO Outstanding").
-       Bake the baseline into real prefs first — exactly what applying a layout
-       does — then land the toggle on top, so there is no preset mode to escape. */
-    if (baselineLayout) {
-      const base = materializeBaseline();
-      if (isHidden) {
-        base.hidden.delete(key);
-        if (col?.defaultHidden) base.shown.add(key);
-      } else {
-        base.hidden.add(key);
-        base.shown.delete(key);
-      }
-      setOrder(base.order);
-      setHiddenList([...base.hidden]);
-      setShownList([...base.shown]);
-      return;
-    }
-    if (isHidden) {
-      // Reveal: drop from userHidden, and (if defaultHidden) add to shown.
-      setHiddenList((prev) => prev.filter((k) => k !== key));
-      if (col?.defaultHidden) {
-        setShownList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      }
-    } else {
-      // Hide: add to userHidden, drop from shown.
-      setHiddenList((prev) => (prev.includes(key) ? prev : [...prev, key]));
-      setShownList((prev) => prev.filter((k) => k !== key));
-    }
+    const seen = { hidden: hiddenList, shown: shownList };
+    writeColumnPrefs(toggleColumnPrefs(allColumns, effectiveHidden, key, seen, !!baselineLayout));
   }
 
   function resetVisibility() {
@@ -1513,17 +1463,8 @@ function DataTableInner<T>({
     [allColumns, effectiveHidden, resolveWidth, pinnedSet, pinnedRightSet]
   );
 
-  /** Every column on. Writes the shown-list explicitly so a `defaultHidden`
-   *  column stays on afterwards rather than snapping back on the next mount. */
   function showAllColumns() {
-    const movable = allColumns.filter((c) => !c.alwaysVisible);
-    /* Same baseline trap as toggleColumn: on a list whose hidden columns come
-       only from the default layout, both writes below are no-ops and Show all
-       does nothing. Writing the order ends the baseline (and keeps the preset's
-       arrangement) so the empty hidden-list is the one that counts. */
-    if (baselineLayout) setOrder(materializeBaseline().order);
-    setHiddenList([]);
-    setShownList(movable.filter((c) => c.defaultHidden).map((c) => c.key));
+    writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
   /** Back to the active layout: its columns, its order, its widths. */
@@ -2383,11 +2324,8 @@ function DataTableInner<T>({
               />
             </div>
           )}
-          {/* Rendered unconditionally: a sticky column funnel is reason enough
-              to offer a Reset, on the ~23 lists that pass no `resetFilters` too.
-              The button hides itself while nothing is active. */}
           <ResetFiltersButton
-            active={resetActive}
+            active={colFiltersActive || (resetFilters?.active ?? false)}
             onReset={handleResetFilters}
             label={resetFilters?.label}
           />

@@ -44,7 +44,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
 | `backend/src/routes/projects.ts` | 109 | 5290 |
-| `backend/src/routes/projects_print.ts` | 1 | 1247 |
+| `backend/src/routes/projects_print.ts` | 1 | 1212 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
 | `backend/src/routes/sales.ts` | 13 | 1217 |
@@ -101,7 +101,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1218 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4545 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
@@ -169,7 +169,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1294 files, 539270 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1296 files, 539757 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -183,7 +183,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
 | `backend/src/routes/projects.ts` | 5290 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4545 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
