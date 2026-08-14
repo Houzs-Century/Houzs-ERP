@@ -4632,7 +4632,10 @@ function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
-  const q = params.get("q") || "";
+  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
+  // collision with the useQuery result later in this component that already
+  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
+  const search = params.get("q") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
   function patchParams(patch: Record<string, string>) {
@@ -4646,7 +4649,7 @@ function ProjectsCalendarView() {
   const setBrand = (v: string) => patchParams({ brand: v });
   const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
-  const setQ = (v: string) => patchParams({ q: v });
+  const setSearch = (v: string) => patchParams({ q: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
   // on the legend, not data filters), so they stay in localStorage per
@@ -4854,7 +4857,7 @@ function ProjectsCalendarView() {
         brand,
         status,
         organizer,
-        q,
+        q: search,
         showTasks,
         expandAll,
       }),
@@ -4868,7 +4871,7 @@ function ProjectsCalendarView() {
       brand,
       status,
       organizer,
-      q,
+      search,
       showTasks,
       expandAll,
     ],
@@ -5018,16 +5021,16 @@ function ProjectsCalendarView() {
             <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
             <input
               type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search venue, organizer, brand…"
               className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
               title="Search events on the calendar"
             />
-            {q && (
+            {search && (
               <button
                 type="button"
-                onClick={() => setQ("")}
+                onClick={() => setSearch("")}
                 className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
                 title="Clear search"
               >
