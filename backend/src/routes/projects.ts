@@ -4419,12 +4419,37 @@ app.post(
       );
     }
     const att = await c.env.DB.prepare(
-      `SELECT a.id FROM project_checklist_attachments a
+      `SELECT a.id, p.state
+         FROM project_checklist_attachments a
+         JOIN project_checklist pc ON pc.id = a.item_id
+         JOIN projects p ON p.id = pc.project_id
         WHERE a.id = ? AND a.archived_at IS NULL`
     )
       .bind(attId)
-      .first<{ id: number }>();
+      .first<{ id: number; state: string | null }>();
     if (!att) return c.json({ error: "Not found" }, 404);
+    // Region routing is a RULE, not a UI hint (owner 2026-08-14: "sabah sarawak
+    // defect under shukor ya not nancy"). My Pending and the frontend buttons
+    // already split by state, but this route accepted a stamp from either
+    // reviewer on any project — so a mis-tap or a stale tab could still close a
+    // Sarawak defect as Nancy. Each reviewer may act only on their own states;
+    // admins and the purchaser/BD closing an escalation are unaffected.
+    if (!isAdmin && isReviewer && !isPurchaser) {
+      const inRegion = DEFECT_REVIEW_REGION_STATES.some(
+        (s) => s.toLowerCase() === (att.state ?? "").trim().toLowerCase(),
+      );
+      const mine = role === "ops exec" ? inRegion : !inRegion;
+      if (!mine) {
+        return c.json(
+          {
+            error: inRegion
+              ? "This state is reviewed by the Ops Exec, not the Storekeeper Supervisor"
+              : "This state is reviewed by the Storekeeper Supervisor, not the Ops Exec",
+          },
+          403,
+        );
+      }
+    }
     // Optional remark — an empty string is a legitimate save (owner spec).
     const remark =
       typeof body.remark === "string" && body.remark.trim()
