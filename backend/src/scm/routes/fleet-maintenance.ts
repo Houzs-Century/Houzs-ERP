@@ -231,42 +231,19 @@ type DocView = ReturnType<typeof shapeDoc> | ReturnType<typeof flatDoc>;
 const inHouseLorries = (sb: { from: (t: string) => { select: (cols: string) => any } }, cols: string) =>
   sb.from("lorries").select(cols).eq("active", true).or("is_internal.is.null,is_internal.eq.true");
 
-/* UNIFIED FLEET — why nothing in this module scopes a row read to the company.
-   Referenced by the `// company-scope:` annotations on the by-id writers below.
+/* UNIFIED FLEET — nothing here scopes a row to the company; the
+   `// company-scope:` annotations on the by-id writers below point at this note.
 
-   CORRECTED 2026-08-13. This paragraph said "scm.lorries has NO company_id".
-   That is FALSE — mig 0083 stamps it, and lorries.ts:182 writes it on insert.
-   The CONCLUSION is unchanged and the fleet really is unified; the premise was
-   simply wrong, and a wrong premise is how the opposite mistake gets made next
-   time. (Counting company_id columns has now produced the wrong answer on these
-   very tables in BOTH directions.)
+   The authority is the migration header plus the READ path, NOT the column list.
+   company_id EXISTS on these tables (mig 0083 stamps it), but migs 0202, 0203,
+   0204 and 0238 each say it is "STAMPED on insert for provenance but NOT used to
+   scope reads" — "one shared lorry fleet across ALL companies". GET /dashboard
+   matches, reading every row with no predicate, so scoping only the WRITERS
+   would leave the dashboard listing a row that PATCH/DELETE then 404s. The gate
+   that IS real is requireHouzsPerm("fleet.write").
 
-   The real reason is what the DDL SAYS, not which columns it has: migs 0202
-   (compliance vault), 0203 (plans, mileage), 0204 (breakdowns, work orders,
-   parts, components) and 0238 each state that company_id is STAMPED ON INSERT
-   FOR PROVENANCE BUT NOT USED TO SCOPE READS — "one shared lorry fleet across
-   ALL companies" (lorries.ts). Every table this module owns is a CHILD of that
-   master. Mig 0202 (compliance vault), 0203 (plans, mileage), 0204 (breakdowns,
-   work orders, parts, components), 0238
-   (attachments). Their shared wording:
-
-     "COMPANY SCOPE - ... NOT a hard scope. The fleet is UNIFIED across companies
-      (scm.lorries has no company_id). company_id is STAMPED on insert for
-      provenance but NOT used to scope reads."
-
-   So the column EXISTING is not evidence of scoping here — reading the column
-   list gives the wrong answer, and the DDL's own header gives the right one.
-   The read side matches: GET /dashboard pulls every vault doc, plan, breakdown,
-   work order and part with no company predicate. Adding one to the WRITERS
-   alone would be worse than either choice made consistently: the dashboard
-   would still list the row while PATCH/DELETE on it 404'd.
-
-   The gate that IS real here is `requireHouzsPerm("fleet.write")` on the flat
-   fleet.write permission, which is what the module was mounted top-level to get.
-
-   The exception, and the reason this note names it: scm.workshops IS per-company
-   (UNIQUE (company_id, code) — mig 0241), and its handlers DO filter on
-   activeCompanyId. Do not read this note as "the whole file is exempt". */
+   EXCEPTION: scm.workshops IS per-company (mig 0241) and its handlers DO filter
+   on activeCompanyId. */
 
 type Lorry = {
   id: string;
@@ -1103,23 +1080,12 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
 // Also SYNCS the denormalized flat expiry column on scm.lorries from the latest
 // vault row of that type, so the existing Fleet compliance strip keeps working.
 fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"), async (c) => {
-  /* company-scope: unified fleet — see the UNIFIED FLEET note above inHouseLorries.
-     Verified 2026-08-13 against the narrower question a WRITE deserves: can this
-     row's company stamp DISAGREE with the parent lorry's, and does that
-     disagreement corrupt anything? It CAN differ (`activeCompanyId(c)` here vs
-     scm.lorries.company_id from mig 0083), and it does not matter, because
-     NOTHING READS EITHER STAMP. mig 0202's own header: "company_id here is
-     STAMPED on insert but NOT used to scope reads — a lorry's compliance must be
-     visible wherever the lorry is. Nullable + no FK". Confirmed mechanically:
-     across all 7 read sites of lorry_compliance_documents (one in
-     scm/lib/fleet-availability.ts, six in this file — grep
-     `from("lorry_compliance_documents")`) not one selects, filters or groups on
-     company_id; every one keys on lorry_id. `cost_centi` is likewise
-     never rolled up per company, so no money is attributed by the stamp. The two
-     stamps answer two different questions (who registered the lorry / who filed
-     this renewal); making them agree would be inventing a rule the DDL declines
-     to have. Do NOT add a predicate here — it would hide a HOUZS-registered
-     lorry's road tax from the 2990 dispatcher driving it. */
+  /* company-scope: unified fleet — see the UNIFIED FLEET note above
+     inHouseLorries. This stamp can disagree with the parent lorry's and it does
+     not matter: none of the 7 read sites of lorry_compliance_documents selects,
+     filters or groups on company_id — every one keys on lorry_id — and
+     cost_centi is never rolled up per company. A predicate here would hide a
+     HOUZS-registered lorry's road tax from the 2990 dispatcher driving it. */
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
 

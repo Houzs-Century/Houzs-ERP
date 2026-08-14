@@ -54,6 +54,47 @@ the `/scm/drivers` route was retired on 2026-07-17 in favour of the Drivers
 section of `/scm/fleet` (`App.tsx:593-599`, `Sidebar.tsx:518-523`). Do not
 re-add it.
 
+### Mobile run-sheet — the v2 job card (`MobileDeliveryPlanning.tsx`)
+
+The owner's v2 mobile design turns each delivery stop into a full JOB CARD run
+sheet: a Today / Tomorrow / History day view, a per-stop card (seq badge coloured
+by state, customer, kind / house-type chips, a time window, house type, item
+list, balance to collect) and a per-stop DETAIL (tracking timeline Start →
+Arrive → Done, Call + Navigate, Emergency contact, balance block, item list, and
+for Setup jobs a photo group + 3D floor-plan attach), plus a late banner.
+
+It is wired to the **same** `GET /delivery-planning` the desktop board uses. The
+route returns `{ orders, counts, regions }`; the mobile screen drops the region /
+state chips and splits `orders` into three day-buckets by their effective
+delivery date:
+
+- **Today** — effective delivery date == today
+- **Tomorrow** — effective delivery date == tomorrow
+- **History** — delivered, OR effective delivery date in the past
+
+Anything further out (and not delivered) is left off the driver run-sheet; the
+desktop board owns long-range planning.
+
+v2 has three stop KINDS (delivery / service / project); the
+`/delivery-planning` feed is Sales-Order deliveries only, so every stop renders
+as the v2 DELIVERY job card. **The service / project variants are intentionally
+not built — there is no backend source for them.**
+
+Per-stop actions map to the REAL DO status machine on the latest
+(non-DRAFT / CANCELLED) delivery order for the SO:
+
+| Action | Call | Note |
+|---|---|---|
+| Start / Mark arrived | `PATCH /delivery-orders-mfg/:id/status { status: 'IN_TRANSIT' }` | DOs are created at DISPATCHED, so goods are already OUT; `IN_TRANSIT` is inventory-idempotent and just flips the pill to "On the way". |
+| POD complete | `PATCH /delivery-orders-mfg/:id/status { status: 'DELIVERED' }` | Stamps `delivered_at`, behind an in-app `useConfirm`. The FULL photo / signature POD capture lives behind `onOpen(doc)`. |
+
+A stop with no DO yet cannot be started or completed here — it deep-links to the
+SO via `onOpen` so the office cuts the DO first.
+
+**REAL-DATA DISCIPLINE:** fields the backend does NOT provide (emergency contact,
+move type, per-item spec, sales-rep contact, 3D floor plan) are omitted, never
+invented. Money is balance-only and never NaN.
+
 ### Trips = Delivery Time Arrangement — the board IS the page
 
 

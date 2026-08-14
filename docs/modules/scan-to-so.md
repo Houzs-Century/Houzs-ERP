@@ -711,6 +711,27 @@ None of this leaks order *content* through the jobs endpoints (the payload is
 status / doc-no / error / image keys), but do not assume per-rep or
 cross-company isolation here.
 
+### Two company-scope verdicts recorded here, not re-derived (2026-08-13)
+
+Both are annotated `// company-scope:` in `backend/src/scm/routes/scan-so.ts` so
+`backend/scripts/check-company-scope.mjs` stays green; the reasoning is here.
+
+- **`POST /enqueue` — the by-id reads the checker attributes to it are not in
+  it.** The checker's handler slice runs from one route registration to the
+  next, and `processScanQueueMessage` is declared in between. That function is a
+  QUEUE CONSUMER, invoked by the Workers runtime with the jobId this endpoint
+  itself enqueued, never with a caller-supplied id; it selects `company_id` off
+  the job row and carries it forward. Verified 2026-08-13 by locating the
+  enclosing function of each reported line.
+- **`POST /samples/:id/confirm` — `scm.so_scan_samples` is a GLOBAL OCR TRAINING
+  POOL, not a business document.** Verified 2026-08-13 against its `CREATE TABLE`
+  in `backend/src/db/migrations-pg/0023_so_scan_samples.sql` and every later
+  ALTER (0023's own `salesperson`, 0033's `image_key`): it has **no `company_id`
+  column**, and mig 0083's bulk `company_id` sweep deliberately skipped it. The
+  pool is keyed by SALESPERSON, with a reserved `'__GLOBAL__'` row holding the
+  cross-rep product alias dictionary; distilling rules per company would split
+  the training set that makes the extractor work. Same shape as `my_localities`.
+
 ### Desktop and mobile files that must change together
 
 | Change | Desktop | Mobile |
@@ -790,3 +811,33 @@ catalog size. The "60-110s real-slip OCR calls" range quoted throughout comes
 from `wrangler.toml:124-129` and `scan-so.ts:4312` — statements in comments, not
 a benchmark. **No end-to-end latency or accuracy benchmark for this module exists
 anywhere in `docs/`.**
+
+---
+
+## 9. Provenance and the Houzs adaptation
+
+Ported from HOOKKA's `scan-po.ts` (typed customer-PO PDFs) and adapted:
+
+- input is image(s) (jpeg / png / webp) or a PDF, not PDF-only;
+- catalog injection pulls live from Supabase Postgres (`mfg_products`,
+  `fabric_trackings`, maintenance-config sofa sizes / leg heights);
+- learning is per-SALESPERSON rather than HOOKKA's per-customer: each rep has
+  their own handwriting and notation habits that differ per product category, so
+  a distilled rules block (`so_scan_rules`, organized by SOFA / MATTRESS /
+  BEDFRAME / ACCESSORY / SERVICE sections) is regenerated from that rep's
+  corrected samples after every confirm.
+
+**Same plumbing as the sibling SCM routes, and this is the part that differs
+from the 2990 original.** That original built its own service client via
+`createClient(...)` defaulting to the `public` schema. In Houzs the
+`so_scan_samples` / `so_scan_rules` / `mfg_products` / `fabric_trackings` /
+`maintenance_config_history` / `so_dropdown_options` tables live in the
+dedicated `scm` Postgres schema, so `serviceClient()` returns
+`getSupabaseService(env)` with `db: { schema: 'scm' }` — every `sb.from('...')`
+resolves to `scm.*`, never `public.*`. The catalog read uses
+`c.get('supabase')`, also scm-scoped, attached by `supabaseAuth`.
+
+Sample rows are written via the **service-role** client so extraction works even
+before migration 0164's RLS policy lands.
+
+Secret setup: `npx wrangler secret put ANTHROPIC_API_KEY`.

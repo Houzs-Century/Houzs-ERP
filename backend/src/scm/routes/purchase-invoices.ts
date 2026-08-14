@@ -793,10 +793,8 @@ purchaseInvoices.get('/:id', async (c) => {
   const [h, i] = await Promise.all([
     /* grn embed (owner 2026-07-23: "PI need show Do number") — the source GRN's
        doc no + the supplier's delivery-note ref surface on the PI detail. */
-    /* Scoped like this document's own GET /:id/linked (hardened in the same
-       pass): the detail read carried no company predicate, so a uuid opened the
-       other company's purchase invoice — supplier, amounts and the source GRN
-       with it. */
+    /* Company-scoped: unscoped, a uuid opened the other company's purchase
+       invoice — supplier, amounts and the source GRN with it. */
     scopeToCompany(sb.from('purchase_invoices').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), grn:grns(id, grn_number, delivery_note_ref)`).eq('id', id), c).maybeSingle(),
     sb.from('purchase_invoice_items').select(ITEM).eq('purchase_invoice_id', id).order('created_at'),
   ]);
@@ -903,10 +901,8 @@ purchaseInvoices.get('/:id', async (c) => {
 // LINES for the full set and keep `grn`/`purchaseOrder` as the primary for
 // callers that still expect one.
 purchaseInvoices.get('/:id/linked', async (c) => {
-  /* Company-scoped like every other read on this router. Without it a caller in
-     one company could resolve ANOTHER company's purchase invoice to its linked document
-     numbers by id. All seven /:id/linked endpoints shared this gap (found
-     2026-08-12 by code read; two module guides claimed scoping that was absent). */
+  /* Company-scoped: unscoped, an id resolves ANOTHER company's invoice to its
+     linked document numbers. All seven /:id/linked endpoints shared this gap. */
   const sb = c.get('supabase'); const id = c.req.param('id');
   const { data, error } = await scopeToCompany(sb
     .from('purchase_invoices')
@@ -999,11 +995,10 @@ purchaseInvoices.post('/', async (c) => {
     }
     const gids = [...wantByGrnItem.keys()];
     if (gids.length > 0) {
-      /* The parent GRN rides the embed for the cross-company guard below: these
-         grn_item ids come from the request body, and every write this handler
-         makes downstream (recomputeGrnInvoiced on the GRN line, recostForPi on
-         its lots) lands on whichever company owns them, while the invoice itself
-         is stamped `activeCompanyId(c)`. */
+      /* The parent GRN rides the embed for the guard below: these grn_item ids
+         come from the request body, and the downstream writes
+         (recomputeGrnInvoiced, recostForPi) land on whoever owns them while the
+         invoice is stamped activeCompanyId(c). */
       const { data: giRows } = await sb.from('grn_items')
         .select('id, qty_accepted, invoiced_qty, returned_qty, grn:grns!inner ( grn_number, company_id )').in('id', gids);
       type GiRow = {
@@ -1012,13 +1007,9 @@ purchaseInvoices.post('/', async (c) => {
       };
       const giList = (giRows ?? []) as unknown as GiRow[];
       const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
-      {
-        const foreign = giList.find((g) => isCrossCompanySource(parentOf(g)?.company_id, c));
-        if (foreign) {
-          const p = parentOf(foreign);
-          return c.json(crossCompanyConversionBlocked(p?.grn_number ?? null, p?.company_id, c), 409);
-        }
-      }
+      // isCrossCompanySource is false for a null company_id, so a hit is never null.
+      const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
+      if (foreign) return c.json(crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c), 409);
       const byId = new Map<string, { qty_accepted: number; invoiced_qty: number; returned_qty: number }>(
         giList.map((g) => [g.id, g]),
       );
@@ -1308,15 +1299,10 @@ purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 // status: paid_centi == total → PAID, paid_centi > 0 && < total → PARTIALLY_PAID.
 purchaseInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
-  /* company-scope: this records MONEY PAID against a supplier invoice. The
-     optimistic-concurrency loop below guards against two payments racing on the
-     same PI; nothing guarded against the PI belonging to the other company. */
-  {
-    const { data: own } = await scopeToCompany(
-      sb.from('purchase_invoices').select('id').eq('id', id), c,
-    ).maybeSingle();
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+  /* company-scope: this records MONEY PAID. The concurrency loop below guards
+     two payments racing on the same PI, never whose PI it is. */
+  const { data: own } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (!own) return c.json({ error: 'not_found' }, 404);
   let body: { amountCenti?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const amount = Number(body.amountCenti ?? 0);
@@ -1379,25 +1365,16 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
   return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
 });
 
-/* Exported for the same reason postPurchaseInvoiceHandler is: the supabaseAuth
-   bridge cannot run in the vitest harness, so the scope test mounts the handler
-   on a bare Hono app with a fake PostgREST client. */
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const cancelPurchaseInvoiceHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  /* Scoped before the load, and on every statement below it. CANCELLING is the
-     heaviest write this document has: it reverses the AP/GL entry
-     (reversePiAccounting, keyed off invoice_number), releases the source GRN
-     lines' invoiced_qty so the same goods can be billed again, re-costs the
-     lots/DO/SI behind them, and queues an AutoCount cancel for that company's
-     account book. The service-role client bypasses RLS (mig 0061 enabled it
-     with NO policies), so this route's own predicate is the ONLY boundary —
-     and it named just the id, so a company-A caller holding a company-B
-     invoice uuid voided company B's supplier invoice, with nothing in B to say
-     who did it. The two siblings on either side of it were already scoped:
-     PATCH /:id/post resolves the company first (:1180) and PATCH /:id/payment
-     probes ownership before recording money (:1288). Cancel is the same door
-     and was the one left unlocked. */
+  /* Scoped before the load, and on every statement below it. Cancel is the
+     heaviest write this document has: it reverses the AP/GL entry, releases the
+     source GRN lines' invoiced_qty so the goods can be billed again, re-costs
+     the lots/DO/SI behind them and queues an AutoCount cancel. The service-role
+     client bypasses RLS (mig 0061 enabled it with NO policies), so this route's
+     own predicate is the ONLY tenant boundary. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
@@ -1559,15 +1536,10 @@ purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
    computeGrnFlags, recostForPi), so they are multi-GRN correct unchanged.
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
-/* Exported so the company-scope tests can drive it without the supabaseAuth
-   bridge, which cannot run in the vitest harness. Same reason
-   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
-   are exported; the route registration below is unchanged. */
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
-  /* company-scope: the only by-id write here is the ROLLBACK — the header this
-     handler inserted moments earlier is deleted when the child insert fails.
-     The insert stamps the active company, so the id is not caller-supplied.
-     Verified 2026-08-13. */
+  /* company-scope: the only by-id write here is the ROLLBACK of the header this
+     handler just inserted, so that id is not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: {
     picks?: Array<{ grnItemId: string; qty: number }>;
@@ -1580,19 +1552,13 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const picks = body.picks ?? [];
   if (picks.length === 0) return c.json({ error: 'picks_required' }, 400);
 
-  /* SOURCE LOAD, SCOPED — the picked GRN LINES are where the caller's ids enter,
-     so this read is what the conversion can see. Scoped, so another company's
-     grnItemId resolves to NO ROW and falls out at the per-pick `item_not_found`
-     below; the parent GRN rides the `!inner` embed, so it cannot arrive from
-     outside the company either.
-     REPLACED an isCrossCompanySource comparison that sat in that validation loop
-     and can no longer fire.
-
-     THE COST: a hand-crafted request naming the other company's GRN line gets
-     `item_not_found` (with the id) instead of "that receipt belongs to 2990,
-     switch company" — the trade the PO's /:id/convert-from-so records, taken here
-     for the same reason: naming the other company would need an UNSCOPED read
-     this handler otherwise never makes. */
+  /* SOURCE LOAD, SCOPED — the caller's grn_item ids enter here, so this read is
+     what the conversion can see: another company's line resolves to NO ROW and
+     falls out at the per-pick `item_not_found` below, and the parent GRN rides
+     the `!inner` embed so it cannot arrive from outside the company either.
+     THE COST is the message — `item_not_found` rather than "that receipt belongs
+     to 2990, switch company", because naming the other company needs an UNSCOPED
+     read this handler otherwise never makes. */
   const ids = picks.map((p) => p.grnItemId);
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('grn_items')
@@ -1855,8 +1821,7 @@ purchaseInvoices.post('/from-grn-items', createPurchaseInvoicesFromGrnItemsHandl
    from-grn-items but scoped to one whole GRN and returns a single id.
 
    Body: { grnId }  →  201 { id, invoiceNumber }. */
-/* Exported so the company-scope tests can drive it without the supabaseAuth
-   bridge, which cannot run in the vitest harness. */
+// Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
 export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { grnId?: string };
@@ -1864,17 +1829,10 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const grnId = body.grnId;
   if (!grnId) return c.json({ error: 'grn_id_required' }, 400);
 
-  /* SOURCE LOAD, SCOPED — grnId arrives in the request body, so this is the read
-     that decides what this conversion can see. Scoped, so another company's GRN
-     resolves to NO ROW and falls out at `grn_not_found`.
-     REPLACED an isCrossCompanySource comparison that sat right after this load
-     and can no longer fire.
-
-     THE COST: a hand-crafted request naming the other company's receipt gets
-     `grn_not_found` instead of "that receipt belongs to 2990, switch company" —
-     the same trade the PO's /:id/convert-from-so records, and taken for the same
-     reason: naming the other company would require an UNSCOPED read of a
-     document this handler otherwise never touches. */
+  /* SOURCE LOAD, SCOPED — grnId arrives in the body, so this read decides what
+     the conversion can see: another company's GRN resolves to NO ROW and falls
+     out at `grn_not_found`. THE COST is the message, because naming the other
+     company needs an UNSCOPED read this handler otherwise never makes. */
   const { data: grn, error: grnErr } = await scopeToCompany(sb.from('grns')
     .select('id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, company_id')
     .eq('id', grnId), c).maybeSingle();
@@ -1913,23 +1871,12 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      can't subtract the full discount twice. */
   const discFor = (it: GrnLine & { _remaining: number }) =>
     Math.round(Number(it.discount_centi ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
-  /* CLAMP INSIDE THE SUM, exactly like the sibling /from-grn-items path
-     (:1637, "clamp each line before summing so a discount > qty×price can't
-     drive the PI subtotal negative"). This path summed UNCLAMPED while writing
-     CLAMPED lines (:1858), so the header total and Σ line_total_centi
-     disagreed by the un-clamped excess.
-
-     The premise is real, not theoretical: grns.ts:1695 reads
-     `Number(it.discountCenti ?? 0)` with NO upper bound and stores it raw at
-     :1708 — only line_total_centi is clamped there too (:1711, and the same at
-     :1932). So a GRN line can genuinely carry discount_centi > qty × unit.
-
-     Concretely: GRN with A qty 1 @ RM100 disc 0, and B qty 1 @ RM10 disc RM30.
-     Lines written: 10000 and max(0, 1000-3000)=0, Σ = RM100. Header was
-     10000 + (1000-3000) = RM80. total_centi is what AP pays from and what
-     computePiSettlement clamps against, so the invoice reached PAID RM20 short
-     of its own lines. (recomputePiTotals re-derives from line_total_centi, so a
-     later line edit healed it — the two figures disagreed only until then.) */
+  /* CLAMP EACH LINE BEFORE SUMMING, like the sibling /from-grn-items path. The
+     lines written below are clamped at 0, so an unclamped sum leaves the header
+     total_centi SHORT of Σ line_total_centi — and total_centi is what AP pays
+     from and what computePiSettlement clamps against. A GRN line really can
+     carry discount_centi > qty × unit: grns.ts stores discountCenti unbounded
+     and clamps only line_total_centi. */
   const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_centi - discFor(it)), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
@@ -2046,12 +1993,8 @@ purchaseInvoices.post('/from-grn', createPurchaseInvoiceFromGrnHandler);
 purchaseInvoices.patch('/:id', async (c) => {
   const id = c.req.param('id');
   // company-scope: the header write below keys on the caller's uuid alone.
-  {
-    const { data: own } = await scopeToCompany(
-      c.get('supabase').from('purchase_invoices').select('id').eq('id', id), c,
-    ).maybeSingle();
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+  const { data: own } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
+  if (!own) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -2154,23 +2097,13 @@ purchaseInvoices.post('/:id/items', async (c) => {
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
-  /* company-scope: prove the PARENT invoice first — the SAME probe the three
-     sibling line verbs in this file already run (PATCH /:id, PATCH
-     /:id/items/:itemId, DELETE /:id/items/:itemId). ADD was the one left out,
-     and it is the heaviest of the four: it raises the invoice total
-     (recomputePiTotals), consumes a GRN line (recomputeGrnInvoiced), re-splits
-     the landed freight, re-costs the lots / DO / SI, and queues an AutoCount PI
-     edit. `company_id: activeCompanyId(c)` on the inserted LINE is a stamp, not
-     a predicate — it tagged the new line as this company's while hanging it off
-     the other company's invoice, which is exactly what made the damage silent.
-     piLocked below reads by id too and returns null on a miss ("let the
-     handler's own load surface 404") — this handler had no load. */
-  {
-    const { data: own } = await scopeToCompany(
-      sb.from('purchase_invoices').select('id').eq('id', piId), c,
-    ).maybeSingle();
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+  /* company-scope: prove the PARENT invoice first, like the three sibling line
+     verbs. `company_id: activeCompanyId(c)` on the inserted LINE is a STAMP, not
+     a predicate — it tags the new line as ours while hanging it off the other
+     company's invoice. piLocked below returns null on a miss, so it is not a
+     load either. */
+  const { data: own } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  if (!own) return c.json({ error: 'not_found' }, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
@@ -2296,15 +2229,10 @@ purchaseInvoices.post('/:id/items', async (c) => {
 purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
   /* company-scope: prove the PARENT invoice first. The M10 note below scopes the
-     LINE to this PI — which proves the pair belongs together, never whose it is,
-     since both ids come from the caller. Editing a PI line re-costs lots and
-     re-syncs the GL. */
-  {
-    const { data: own } = await scopeToCompany(
-      c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c,
-    ).maybeSingle();
-    if (!own) return c.json({ error: 'not_found' }, 404);
-  }
+     LINE to this PI, which proves the pair belongs together, never whose it is —
+     both ids come from the caller. */
+  const { data: own } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  if (!own) return c.json({ error: 'not_found' }, 404);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -2445,17 +2373,12 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
   const piId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
-  // Same company gate as the line PATCH — see the note there. Both halves, in
-  // the same order: resolve the company strictly, THEN prove the parent PI.
-  // Deleting a line rolls the source GRN's invoiced_qty back and re-costs lots.
+  // Same company gate as the line PATCH: resolve the company strictly, THEN
+  // prove the parent PI.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  {
-    const { data: own } = await scopeToCompanyId(
-      sb.from('purchase_invoices').select('id').eq('id', piId), co.companyId,
-    ).maybeSingle();
-    if (!own) return c.json(NOT_THIS_COMPANY, 404);
-  }
+  const { data: own } = await scopeToCompanyId(sb.from('purchase_invoices').select('id').eq('id', piId), co.companyId).maybeSingle();
+  if (!own) return c.json(NOT_THIS_COMPANY, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);

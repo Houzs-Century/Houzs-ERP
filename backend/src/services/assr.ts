@@ -1675,20 +1675,10 @@ export interface ListAssrFilters {
    *  Only consulted for the scoped tier (visible_to_user_ids defined). */
   visible_agent_names?: string[];
   /** Multi-company: the company ids ASSR is scoped to. EVERY caller — including
-   *  rank-and-file sales — passes their GRANTED set (`assrCompanySql` in
-   *  routes/assr.ts is `allowedCompaniesSql`).
-   *
-   *  This doc used to say the route passes `houzsCompanyIds(c)` — a single
-   *  `[houzsId]` — for rank-and-file sales (owner 2026-07-16). The owner
-   *  REVERSED that on 2026-07-20 when 2990 started raising service cases on the
-   *  merged platform; the dated trail is at routes/assr.ts:113. A stale copy of
-   *  this exact rule in routes/search.ts is what made global search and /api/assr
-   *  answer the same rep differently, so the wording is corrected here rather
-   *  than left to be re-read as current.
-   *
-   *  `undefined` = unresolved (pre-migration, D1 test mirror, cold-start) → no
-   *  predicate, single-company behaviour. `[]` = the caller is granted no active
-   *  company → matches nothing. NOT interchangeable. */
+   *  rank-and-file sales — passes their GRANTED set. `undefined` = unresolved →
+   *  no predicate; `[]` = granted nothing → matches nothing. NOT interchangeable.
+   *  The HOUZS pin this used to describe was removed 2026-07-20; the trail and
+   *  what a stale copy of it cost are in docs/modules/service-case.md. */
   allowed_company_ids?: number[];
 }
 

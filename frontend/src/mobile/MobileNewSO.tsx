@@ -84,43 +84,15 @@ import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
  * MobileNewSO — mobile New / Edit Sales Order as ONE single scrolling form
- * (owner rejected the 5-step wizard 2026-07-03). Every section — Customer,
- * Order info, Items, Payment — renders stacked in a single scroll with ONE
- * primary action at the bottom (Save draft / Create Sales Order / Save
- * Changes). Both NEW and EDIT are single-form.
+ * (owner rejected the 5-step wizard 2026-07-03). Both NEW and EDIT are
+ * single-form, one primary action at the bottom.
  *
- * WIRED TO THE REAL BACKEND (unchanged contract):
- *   • CREATE  POST  /mfg-sales-orders            (new / edit-draft) → { docNo }
- *   • EDIT    PATCH /mfg-sales-orders/:docNo      (header fields only)
- *   • ITEMS   POST/PATCH/DELETE /mfg-sales-orders/:docNo/items
- *   • PHOTOS  POST  /mfg-sales-orders/:docNo/items/:id/photos (per-line photo)
- *   • PREFILL GET   /mfg-sales-orders/:docNo      (header + items)
- *             GET   /mfg-sales-orders/:docNo/payments
- *   • PAY     POST  /mfg-sales-orders/:docNo/payments (slip-backed rows)
- *   • VENUE   GET   /mfg-sales-orders/active-venue (derived venue)
- * The backend recomputes honest pricing and mints the doc_no server-side, so we
- * never send a doc_no and money crosses the wire as *_centi integers.
- *
- * CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
- * SoLineCard uses (NOT hardcoded arrays):
- *   • Fabrics  ← useFabricColoursActive() + fabric_library series via
- *               useFabricLibrary(); the Fabric picker is a SEARCHABLE modal
- *               (700+ colours) not a native <select>.
- *   • Sofa     Seat height ← maintenanceConfig.sofaSizes
- *              Leg height  ← maintenanceConfig.sofaLegHeights
- *   • Bedframe Gap   ← maintenanceConfig.gaps
- *              Divan ← maintenanceConfig.divanHeights
- *              Leg   ← maintenanceConfig.legHeights
- *              totalHeight (= divan + leg + gap) is COMPUTED into the variants
- *              blob for the backend, but no longer shown (owner: hide it).
- * Per-SKU allowed_options (Modular ON/OFF) filter every pool via
- * useModelAllowedOptionsByCode, exactly as SoLineCard does. The REQUIRED axes
- * per category are the shared so-variant-rule; Save is blocked when any line is
- * missing a required axis.
- *
- * Sofa follower-line inherit (mirror desktop SoLineCard inheritVariantsByCategory
- * + overriddenKeys): follower sofa/bedframe lines inherit the FIRST same-category
- * line's variants, BUT a manually-changed follower value WINS.
+ * The backend contract this screen is wired to, and the category-aware variant
+ * pools (which real hook feeds each axis, the per-SKU allowed_options filter,
+ * the sofa follower-line inherit rule) are in docs/modules/sales-order.md under
+ * "Mobile New / Edit SO is ONE single scrolling form". They are shared with the
+ * desktop SoLineCard, so changing one here without the other is the recurring
+ * two-surface bug this repo keeps paying for.
  * ------------------------------------------------------------------------- */
 
 type Mode = "new" | "edit" | "edit-draft";
@@ -1273,20 +1245,12 @@ export function MobileNewSO({
   const emailErr = emailProvided && !emailFormatOk; // only an error when a BAD email is typed
   const dateXorErr = Boolean(procDate) !== Boolean(delivDate); // set together or both empty
 
-  /* Address-required rule — the delivery address is optional by default (name +
-     phone are the only required customer fields). A PROCESSING DATE makes it
-     required: that date is the proceed signal, and a proceeding order has to be
-     deliverable.
-
-     It used to read `procDate && delivDate` (owner 2026-07-03). Corrected 2026-08-13
-     on the owner's own words: "只要是 proceed 的单，它都必须填；如果没有 proceed，
-     就不需要必填。就是 processing date。电话、电脑都一样的." The old AND was not
-     merely stricter or looser — it disagreed with the SERVER, which has required
-     the address on procDate alone since 2026-07-31
-     (shared/so-save-problems.ts: `if (facts.procDate && facts.completeness)`,
-     and it demands the delivery date in the same breath). So a procDate with no
-     delivDate showed no required-field marks here and was then refused on save.
-     Desktop SalesOrderNew had no rule at all; all three now agree. */
+  /* Address-required rule — optional by default; a PROCESSING DATE makes it
+     required, because that date is the proceed signal and a proceeding order
+     has to be deliverable. It used to read `procDate && delivDate`, which
+     DISAGREED with the server (required on procDate alone since 2026-07-31),
+     so the marks stayed off and the save was then refused. Do not re-add the
+     AND: docs/modules/sales-order.md, "The client-side address marks". */
   const addressRequired = Boolean(procDate);
   const missingAddress = addressRequired
     ? [

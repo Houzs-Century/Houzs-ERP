@@ -22,45 +22,13 @@ import "./mobile.css";
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
  *
- * The owner's v2 mobile design turns each delivery stop into a full
- * JOB CARD run-sheet: a Today / Tomorrow / History day view, a per-stop
- * card (seq badge coloured by state, customer, kind/house-type chips, a
- * time window, house type, item list, balance to collect) and a per-stop
- * DETAIL (tracking timeline Start → Arrive → Done, Call + Navigate,
- * Emergency contact, balance block, item list, and for Setup jobs a
- * photo group + 3D floor-plan attach), plus a late banner.
- *
- * Wired to the SAME GET /delivery-planning the desktop board uses. The
- * route returns { orders, counts, regions }; we drop the region/state
- * chips and split `orders` into three day-buckets by their effective
- * delivery date:
- *   · Today    — effective delivery date == today
- *   · Tomorrow — effective delivery date == tomorrow
- *   · History  — delivered, OR effective delivery date in the past
- * Anything further out (and not delivered) is left off the driver
- * run-sheet; the desktop board owns long-range planning.
- *
- * v2 has three stop KINDS (delivery / service / project); the backend
- * /delivery-planning feed is Sales-Order deliveries only, so every stop
- * renders as the v2 DELIVERY job card. The service/project variants are
- * intentionally not built — there is no backend source for them.
- *
- * Per-stop actions map to the REAL DO status machine on the latest
- * (non-DRAFT/CANCELLED) delivery order for the SO:
- *   · Start / Mark arrived  → PATCH /delivery-orders-mfg/:id/status
- *                             { status: 'IN_TRANSIT' }
- *     (DOs are created at DISPATCHED, so goods are already OUT; IN_TRANSIT
- *      is inventory-idempotent and just flips the pill to "On the way".)
- *   · POD complete          → PATCH /delivery-orders-mfg/:id/status
- *                             { status: 'DELIVERED' }  (stamps delivered_at,
- *                             behind an in-app useConfirm). The FULL photo /
- *                             signature POD capture lives behind onOpen(doc).
- * A stop with no DO yet can't be started/completed here — it deep-links to
- * the SO via onOpen so the office cuts the DO first.
- *
- * REAL-DATA DISCIPLINE: fields the backend does NOT provide (emergency
- * contact, move type, per-item spec, sales-rep contact, 3D floor plan)
- * are omitted, never invented. Money is balance-only and never NaN.
+ * The design (day buckets, the job-card anatomy, which stop KINDS are
+ * deliberately not built, how each per-stop action maps onto the real DO
+ * status machine, and the real-data discipline that keeps invented fields
+ * off the card) is documented in docs/modules/delivery-tms.md, under
+ * "Mobile run-sheet — the v2 job card". Read it before adding a field:
+ * most of what a driver asks for here has no backend source, and the rule
+ * is to omit it, never to invent it.
  * ------------------------------------------------------------------ */
 
 type Bucket = "PENDING_DELIVERY" | "PENDING_SCHEDULE" | "OVERDUE" | "DELIVERED";

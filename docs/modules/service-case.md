@@ -394,6 +394,32 @@ Watch as data grows:
 **The backend is the authority. Nothing on the frontend re-derives the rule —
 where it does today, that is called out below as a divergence, not a pattern.**
 
+### Company scope: there is NO Houzs pin, and there has not been since 2026-07-20
+
+`assrCompanySql` (`backend/src/routes/assr.ts`) is `allowedCompaniesSql` — it
+consults no role. EVERY caller, rank-and-file sales included, is scoped to the
+companies they are GRANTED.
+
+It was not always so. Until 2026-07-20 the rule pinned rank-and-file sales to
+HOUZS alone; the owner reversed it when 2990 began raising service cases on the
+merged platform, and PR #934 deleted `assrPinsToHouzs()` and the
+`houzsCompanySql` branch outright.
+
+**What that reversal cost, because it is the reason this section exists.** #934
+changed the rule in `assr.ts` and its own test, and missed TWO other places
+holding a copy: a private `assrCompanySql` inside `routes/search.ts`, and the
+frozen expectation in `tests/searchScope.test.ts`. So global search and
+`/api/assr` answered the SAME REP DIFFERENTLY for three weeks — a 2990 rep was
+shown HOUZS cases and NOT shown their own — and neither copy looked wrong,
+because the stale test asserted the stale copy's behaviour and both agreed.
+Both are removed; `search.ts` now imports the one function.
+
+The three-state sentinel applies as everywhere else: `undefined` = unresolved
+(pre-migration, D1 test mirror, cold start) → no predicate at all; `[]` = the
+caller is granted no active company → matches nothing. They are NOT
+interchangeable, and collapsing the first into the second is a cross-company
+leak while collapsing the second into the first is an empty-list outage.
+
 ### Route admission (who gets THROUGH)
 
 Two gates, deliberately different:

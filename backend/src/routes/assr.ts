@@ -63,10 +63,8 @@ const app = new Hono<{ Bindings: Env }>();
 // first path segment is not the numeric case id (/attachments/:attId,
 // /activity/:actId, /creditors/create, /resync-so/:docNo) are not matched by
 // these patterns and are tracked as a follow-up (they need a parent-case lookup).
-// /bulk/archive|unarchive|assign were a fifth miss of the same kind — worse,
-// because their ids come from the BODY, so ONE call reached every case in the
-// table. They now carry the company predicate in the handler itself — see the
-// COMPANY SCOPE ON THE BULK WRITES note above app.post("/bulk/archive").
+// /bulk/* is a fifth miss of the same kind — worse, because those ids arrive in
+// the BODY, so ONE call reached every case. They carry the predicate themselves.
 const enforceCaseScope: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (c.req.method === "GET") return next();
   const id = Number(c.req.param("id"));
@@ -133,15 +131,10 @@ function requireServiceCaseAccess(
 // D1 test mirror / cold-start), so legacy single-company SQL runs unchanged.
 //
 /* Exported for backend/tests/assrCompanyScope.test.ts AND for routes/search.ts,
-   which used to keep its own copy. That copy still applied the HOUZS pin removed
-   here on 2026-07-20, so global search and /api/assr answered the same rep
-   differently. Sharing the function is what stops that recurring; a comment
-   asking two files to agree is not a mechanism.
-
-   Typed CompanyScopeCtx rather than Context<any> for the same reason
-   companyScope.ts gives for its own helpers: what this needs from a context is
-   a `get`, and demanding a whole Hono Context makes it request-only, which is
-   what pushes callers into re-implementing it locally. */
+   which kept its own copy and drifted — global search and /api/assr answered the
+   same rep differently. Takes CompanyScopeCtx, not Context<any>: all it needs is
+   a `get`, and demanding a whole Hono Context is what pushes a caller into
+   re-implementing it locally. */
 export function assrCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   return allowedCompaniesSql(c, col);
 }
@@ -1124,28 +1117,18 @@ async function bulkRun(
   return { ok, failed };
 }
 
-/* COMPANY SCOPE ON THE BULK WRITES (2026-08-13 audit).
+/* COMPANY SCOPE ON THE BULK WRITES.
 
-   THE enforceCaseScope GUARD (top of this file) CANNOT REACH THESE. enforceCaseScope is mounted on
-   "/:id{[0-9]+}" and "/:id{[0-9]+}/*", so it fires only when the FIRST path
-   segment is the numeric case id. These three are /bulk/..., and their ids
-   arrive in the BODY — every single-case write is covered by the middleware and
-   these were not. Its own comment lists the routes it misses (/attachments,
-   /activity, /creditors/create, /resync-so) and /bulk/* is not among them, so
-   the gap was not even on the follow-up list.
+   enforceCaseScope (top of this file) CANNOT reach these: it is mounted on
+   "/:id{[0-9]+}" and "/:id{[0-9]+}/*", so it fires only when the first path
+   segment is the numeric case id. These three are /bulk/..., their ids arrive in
+   the BODY, and ids are sequential integers — so one call reached the other
+   company's cases wholesale while the detail GET 404s the same case. The client
+   is service-role (RLS bypassed, mig 0061), so the route predicate is the only
+   boundary.
 
-   What that allowed: the detail `GET /:id{[0-9]+}` refuses a case outside
-   assrCompanyIds(c) with a 404 — its comment says an out-of-scope case must be
-   indistinguishable from a nonexistent id — while POST /bulk/archive {"ids":
-   [1..N]} from a caller granted only one company archived, unarchived or
-   reassigned the OTHER company's cases wholesale. Ids are sequential integers,
-   so nothing had to be discovered first. The DB client is service-role (RLS
-   bypassed, mig 0061), so the route predicate is the only boundary.
-
-   assrCompanySql is the SAME helper the reads use, so the two cannot drift, and
-   it emits "" when the company context is unresolved — single-company installs
-   are byte-identical. Row-level visibility is unchanged: all three already
-   require service_cases.manage, which is the unrestricted tier (assrUnrestricted). */
+   assrCompanySql is the SAME helper the reads use, and it emits "" when the
+   company context is unresolved, so single-company installs are unchanged. */
 
 app.post("/bulk/archive", requirePermission("service_cases.manage"), async (c) => {
   const userId = (c as any).get?.("userId") ?? null;
@@ -1197,9 +1180,8 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
     )
       .bind(assigneeId, id)
       .run();
-    /* Out of company scope -> no row moved. Stop here rather than logging an
-       assignment that did not happen and notifying someone about a case they
-       cannot open. bulkRun collects the throw as this id's per-item error. */
+    /* Out of scope -> no row moved. Stop rather than log an assignment that did
+       not happen; bulkRun collects the throw as this id's per-item error. */
     if (!res.meta.changes) throw new Error("Not found");
     await c.env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
@@ -2208,10 +2190,8 @@ async function setArchived(
 }
 
 // Case — archive/unarchive. Manager-level (service_cases.manage).
-// No company predicate here BY DESIGN: the path is /<numeric id>/archive, so
-// enforceCaseScope (top of this file) has already run caseInCallerScope on it — company
-// AND row visibility. Adding a second, narrower copy of half that rule is the
-// duplicated-rule pattern this file's own guard comment exists to prevent.
+// No predicate here BY DESIGN: the path is /<numeric id>/archive, so
+// enforceCaseScope has already run caseInCallerScope — company AND row scope.
 app.post("/:id/archive", requirePermission("service_cases.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);

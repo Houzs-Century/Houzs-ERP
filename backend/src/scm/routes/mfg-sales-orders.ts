@@ -863,32 +863,20 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    returns TRUE (fail closed). */
 /* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
 
-   TWO dimensions, and the company one was missing until 2026-08-13. The
-   salesperson dimension answers "is this MY order" and returns false straight
-   away for a view-all tier (director / office / *). That is correct for its own
-   question and useless for tenancy: a view-all user in company A holding a
-   company B doc_no sailed through every caller of this guard - including all
-   four SO payment verbs, which WRITE money. The doc_no lookups below were also
-   unscoped, so `.eq('doc_no', docNo)` matched the other company's order.
-
-   Company is checked FIRST and for everyone, view-all included. Fixing it here
-   rather than in each handler is deliberate: 18 callers share this, and a 19th
-   written next month gets the guard for free - per-handler patching is what let
-   this class survive four separate audits. */
+   TWO dimensions. The salesperson one answers "is this MY order" and returns
+   false immediately for a view-all tier - correct for its own question, and
+   useless for tenancy, since a view-all caller holding the other company's
+   doc_no passed every caller of this guard, four money-writing payment verbs
+   included. So COMPANY is checked FIRST and for everyone. It belongs here
+   rather than in each handler: 18 callers share it, and the 19th gets it free. */
 async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
   const sb = c.get('supabase');
 
-  /* 1. Tenancy - every tier, view-all included.
-
-     DEGRADES when the company is UNRESOLVED, it does not fail closed. That is
-     the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
-     SENTINEL"): undefined means companyContext could not read the companies
-     master - pre-migration, the D1 test mirror, a Hyperdrive cold start - and
-     consumers MUST drop the predicate so single-company Houzs serves unchanged.
-     A first draft of this guard returned true here; that would have locked every
-     user out of all 18 handlers during a cold start, which is the app-wide
-     outage that comment warns about. scopeToCompany (non-strict) is the flavour
-     that implements the contract, so use it rather than hand-rolling. */
+  /* 1. Tenancy - every tier, view-all included. scopeToCompany DEGRADES when the
+     company is UNRESOLVED and must NOT fail closed: unresolved means the
+     companies master could not be read (pre-migration, D1 test mirror,
+     Hyperdrive cold start), and refusing there locks every user out of all 18
+     handlers. See "THE ALLOW-LIST SENTINEL" in companyScope.ts. */
   const { data: owned } = await scopeToCompany(
     sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
     c,
@@ -4584,29 +4572,20 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
            `depth` alias here does NOT change the geometry. */
         const { cells: _cells, ...sharedVariants } =
           canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
-        /* SPREAD THE DISCOUNT ACROSS THE MODULES, don't dump it on module 0.
-           The line discount was validated against the WHOLE BUILD's unit price
-           (`discI > qtyI * unitI` above), but module 0 carries only its own
-           share of that price — so a legitimate build-level discount larger
-           than the first module's share made that row's total NEGATIVE, and
-           senOrZero (`Number.isFinite(v) ? v : 0`) passes negatives through.
+        /* SPREAD THE DISCOUNT ACROSS THE MODULES, never dump it on module 0.
+           The discount is validated against the WHOLE BUILD's unit price, but
+           module 0 carries only its share, so a build-level discount larger than
+           that share made the row total NEGATIVE (senOrZero passes negatives
+           through) — and every downstream document clamps with
+           Math.max(0, ...), so the discount was silently DELETED and the order
+           invoiced for MORE than it was sold. The item PATCH below already
+           refuses such a row, so it could be created but not edited.
 
-           Every downstream document then CLAMPED the negative away —
-           `Math.max(0, (qty * unit) - discount)` at delivery-orders-mfg.ts:4016
-           (SO->DO convert), :3673, :4872, and sales-invoices.ts:374 — so the
-           discount was silently deleted rather than carried. A 4-module RM8,000
-           build with an RM3,000 discount ordered at RM5,000 and INVOICED at
-           RM6,000.
-
-           Proof it was never intended: this same file's item PATCH (:8439)
-           re-validates the discount against the MODULE's unit price and 422s,
-           so such a row can be created but not edited.
-
-           distributeProportionally is exact (residue on the last line), and
-           because each share is `discount * unit_i / SUM(unit)` while the gate
-           above guarantees `discount <= qty * SUM(unit)`, every share is
-           <= `qty * unit_i` — precisely the invariant :8439 enforces. The
-           header total is computed BEFORE the split, so it is unchanged. */
+           distributeBuildDiscount is exact (residue on the last line) and each
+           share is `discount * unit_i / SUM(unit)`, so with the gate above
+           (`discount <= qty * SUM(unit)`) every share is <= `qty * unit_i`, the
+           invariant that PATCH enforces. The header total is computed BEFORE the
+           split, so it is unchanged. */
         const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
         const moduleRows = split.map((s, i) => {
           const moduleVariants: Record<string, unknown> = {
@@ -7968,12 +7947,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
        AVAILABLE voucher redeemable. */
     const addLineOwnerStaffId =
       (await resolveOwnerStaffId(sb, c.get('houzsUser')?.id, user.id)) ?? '';
-    /* The voucher lookup and its claiming UPDATE were addressed by code alone.
-       That was safe while `code` was the PRIMARY KEY; mig 0188 re-keyed
-       pwp_codes (company_id, code) so each company owns its own code space, and
-       from then on `.eq('code', ...)` meant "whichever company's row comes back
-       first" on the path that BURNS the voucher. Same activeCompanyId every
-       other load in this handler already uses. */
+    /* mig 0188 re-keyed pwp_codes on (company_id, code), so `.eq('code', ...)`
+       alone means "whichever company's row comes back first" on the path that
+       BURNS the voucher. */
     const pwpCompanyId = activeCompanyId(c);
     if (pwpCompanyId == null) {
       return c.json({
@@ -8230,9 +8206,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
          ran on the raw it.variants. */
       const { cells: _cells, freeItem: _clientFreeItem, ...sharedVariants } =
         canonicalizeVariants('sofa', (it.variants as Record<string, unknown> | null) ?? {});
-      /* Spread across the modules - see the create path for the full trace. Dumping
-         the build-level discount on module 0 drove that row NEGATIVE, and every
-         downstream Math.max(0, ...) then deleted it, invoicing MORE than the order. */
+      // Spread across the modules - see the create path. On module 0 the row goes
+      // NEGATIVE and downstream Math.max(0, ...) then deletes the discount.
       const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
       const moduleRows = split.map((s, i) => {
         const moduleVariants: Record<string, unknown> = {
@@ -9133,17 +9108,12 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   const qty = Number(prev.qty);
   const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
   /* The unit price just MOVED and the stored discount did not. newUnit is
-     clamped at 0; newTotal was not, so a variant edit that lowers the price
-     (a fabric moving PRICE_3 -> PRICE_1 gives a negative sellingDeltaCenti)
-     drove the line total NEGATIVE — and every downstream document clamps that
-     away with Math.max(0, ...), so the discount was silently deleted and the
-     customer over-billed. Same failure the sofa-build split had.
-
-     REJECT, don't normalize — the house rule this file already set for exactly
-     this invariant on the price-override path (:6199, audit 2026-06-11 C-2:
-     "reject an override price that would push the line total negative
-     (discount invariant: 0 <= discount <= qty × unit)"). Silently shrinking the
-     discount would change the money without telling anyone. */
+     clamped at 0, newTotal is not, so a variant edit that LOWERS the price drives
+     the line total NEGATIVE — and downstream Math.max(0, ...) then deletes the
+     discount and over-bills. REJECT, do not normalize: the price-override path
+     in this file already sets that house rule (discount invariant:
+     0 <= discount <= qty * unit), and silently shrinking a discount changes the
+     money without telling anyone. */
   const prevDiscount = Number(prev.discount_centi ?? 0);
   if (prevDiscount > qty * newUnit) {
     return c.json({
@@ -9479,9 +9449,9 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
 
   const qty = Number(prev.qty);
   const discount = Number(prev.discount_centi ?? 0);
-  // Same invariant as the price-override path (:6199) and the variant edit
-  // above: a product SWAP to a cheaper SKU must not leave a discount that no
-  // longer fits, because the negative total is then clamped away downstream.
+  // Same invariant as the price-override path and the variant edit above: a SWAP
+  // to a cheaper SKU must not strand a discount that no longer fits, because the
+  // negative total is then clamped away downstream.
   if (discount > qty * unitSen) {
     return c.json({
       error: 'discount_exceeds_new_price',
@@ -10214,9 +10184,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   let rows: Array<Record<string, unknown>>;
   if (split && split.length > 0) {
     const { cells: _cells, ...sharedVariants } = persistVariants;
-    /* Spread across the modules - see the create path for the full trace. Dumping
-       the build-level discount on module 0 drove that row NEGATIVE, and every
-       downstream Math.max(0, ...) then deleted it, invoicing MORE than the order. */
+    // Spread across the modules - see the create path. On module 0 the row goes
+    // NEGATIVE and downstream Math.max(0, ...) then deletes the discount.
     const moduleDiscounts = distributeBuildDiscount(discount, qty, split.map((s) => Number(s.unitPriceSen) || 0));
     rows = split.map((s, i) => {
       const moduleVariants: Record<string, unknown> = {
@@ -10781,12 +10750,10 @@ mfgSalesOrders.get('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
   const itemId = c.req.param('itemId');
   const photoKey = decodeURIComponent(c.req.param('photoKey'));
 
-  /* The `i.doc_no !== docNo` check below proves the item belongs to the SO in
-     the URL — and BOTH come from the caller, so it proves nothing about whose
-     SO that is. Run the same shared guard its eighteen sibling /:docNo routes
-     use: company first (scopeToCompany, degrading), then the salesperson row
-     scope. Without it a guessed item uuid served another company's product
-     photos out of R2. */
+  /* The `i.doc_no !== docNo` check below compares two CALLER-supplied values, so
+     it proves nothing about whose SO this is. Run the same shared guard the
+     sibling /:docNo routes use, or a guessed item uuid serves another company's
+     product photos out of R2. */
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   if (!c.env.SO_ITEM_PHOTOS) {

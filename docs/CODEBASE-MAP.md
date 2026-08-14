@@ -38,13 +38,9 @@ Two independently deployed apps in one repo, plus two small side services.
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |
 
 `deploy.yml` splits by changed path, so a frontend-only push does not redeploy the
-Worker. The backend job runs `audit:routes`, `audit:job-types`,
-`audit:work-order-states` and `typecheck`, then `pg-migrate.mjs` against
-production, then deploys, then smoke-checks. `npm test` is NOT a step in that job
-any more — the suite moved to a sharded `backend-tests` matrix, and the deploy job
-asserts `needs.backend-tests.result == 'success'` before doing anything, because a
-SKIPPED dependency is not a failed one (`deploy.yml:186-192`). **Migrations run
-before the Worker goes live and on every deploy** — which is why a single broken
+Worker. The backend job runs `audit:routes`, `typecheck`, `test`, then
+`pg-migrate.mjs` against production, then deploys, then smoke-checks. **Migrations
+run before the Worker goes live and on every deploy** — which is why a single broken
 migration file blocks all deploys, not just its own.
 
 ## 2. Backend — what each area is for
@@ -101,15 +97,9 @@ migration file blocks all deploys, not just its own.
   `vendor/scm/lib/*-queries.ts`.
 - `src/mobile/` — the phone app (§7). A first-class surface, not a responsive tweak.
 - `src/portal/` — the tokenised customer-facing case portal.
-- `src/api/client.ts` — hand-rolled fetch client: bearer token, retry with backoff
-  (this is what survives Hyperdrive cold starts), short in-memory SWR cache,
-  cross-tab invalidation. **Mutations are retried in exactly one case**, so do not
-  reason as if they never are: a COLD-POOL 503 (`isColdPool503`, `client.ts:329` —
-  body matches "briefly unavailable / warming up / try again in a moment") is
-  raised by the connection layer BEFORE the handler or DB is touched, so the
-  request provably never executed and replaying it cannot double-write. That path
-  retries any method up to `COLD_POOL_RETRIES = 4` (`client.ts:476`). A plain 503
-  retries for GET only (`:470`); every other 4xx/5xx surfaces as-is.
+- `src/api/client.ts` — hand-rolled fetch client: bearer token, GET-only retry with
+  backoff (this is what survives Hyperdrive cold starts), short in-memory SWR cache,
+  cross-tab invalidation. Mutations are never retried.
 
 ## 4. Traps
 
@@ -146,21 +136,11 @@ an `scm.staff` UUID, while the native tree carries the Houzs bigint user id. Rou
 that need the Houzs user (agent console, inbox busting) are deliberately mounted
 OUTSIDE `/api/scm` for exactly this reason.
 
-**Retired on DESKTOP only — `/scm/drivers` is still live on mobile.**
-`frontend/src/pages/scm-v2/Drivers.tsx` has no importer and the desktop route is
-deliberately not mounted (`App.tsx:683`; the Drivers section lives inside
-`/scm/fleet`). But the path is NOT dead: `MobileApp.tsx:192` maps `/scm/drivers`
-and `:346` ships a live menu row for it, because mobile's "fleet" module is
-LORRIES ONLY (`MODULE_CONFIGS.fleet`) and does not merge drivers the way the
-desktop Fleet page does — so on a phone this is the only driver surface, and the
-row carries `gateVia: "/scm/delivery-maintenance"` to keep the gate it lost with
-the desktop nav entry. The reasoning is written out at `MobileApp.tsx:326-345`.
-Treat "retired" as a per-surface claim here, never a global one.
-
-A file existing is still not evidence a feature is live; check BOTH `App.tsx` and
-`MobileApp.tsx` for the route. The house rule is "off, not hidden": a gated
-feature has no nav entry, no mounted route and no query firing — on the surface
-where it is off.
+**Retired but still on disk.** `frontend/src/pages/scm-v2/Drivers.tsx` has no
+importer and `/scm/drivers` is deliberately not mounted (the Drivers section lives
+inside `/scm/fleet`). A file existing is not evidence a feature is live; check
+`App.tsx` for the route. The house rule is "off, not hidden": a gated feature has no
+nav entry, no mounted route and no query firing.
 
 **Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
 `docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
@@ -175,7 +155,19 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-- **`frontend/src/pages/Projects.tsx` (~14,900 lines)** — the entire events ERP in
+> Sizes were typed inline here until 2026-08-13 and had rotted exactly as this
+> file's header warns: `Projects.tsx` was labelled "~12,400 lines" against a real
+> 14,867, and `mfg-sales-orders.ts` "~10,400" against 12,094. They are gone rather
+> than refreshed — a number typed here is a number that will be wrong again.
+
+**These files may no longer grow.** `scripts/file-size-ceilings.json` records what
+each one already is, and `npm run check:file-size` fails CI if any exceeds its
+recorded ceiling — see [`docs/repo-hygiene.md`](./repo-hygiene.md). Nothing forces
+them to be SPLIT; the ratchet only stops the problem getting worse, and a ceiling
+may only fall. If you are adding to one of these, put the new code in its own
+module: that is now the path of least resistance, by design.
+
+- **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
   helpers, `Projects()` (the shell), `ProjectsListView`, `ProjectsFinancesView`,
   `ProjectsAnalyticsView`, `ProjectsCalendarView` (with its popovers and day modal),
@@ -183,7 +175,7 @@ facts file; the point here is the shape of each file so you can jump.
   strip, stage stepper, tasklist sections, documents, checklist rows, stock
   transfers, and the logistics crew/schedule editors at the very bottom. Grep the
   component name, then read around it.
-- **`backend/src/scm/routes/mfg-sales-orders.ts` (~12,000 lines)** — the Sales Order
+- **`backend/src/scm/routes/mfg-sales-orders.ts`** — the Sales Order
   module, and the pricing-critical one. Top third: the guards and gate helpers
   (`soHasDownstream`, `soProcessingLocked`, `soStatusTransitionError`,
   `gateSoFinance`) and the validation helpers. Middle: `createSalesOrderCore` and the
@@ -191,19 +183,19 @@ facts file; the point here is the shape of each file so you can jump.
   calls, so never reimplement a create beside it. Then header PATCH and delivery-fee
   re-derivation, then item CRUD with `recomputeTotals`, then per-line photos, then
   payments (`recordSoPaymentRow`), then the debtor lookup at the end.
-- **`frontend/src/pages/ServiceCases.tsx` (~8,000 lines)** — ASSR. `ServiceCases()`
+- **`frontend/src/pages/ServiceCases.tsx`** — ASSR. `ServiceCases()`
   and the list/board/calendar views first, then `CreatePanel`, then `DetailContent`
   and the exported `ServiceCaseDetail`, then the detail's parts: stage rows,
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
-- **`frontend/src/pages/scm-v2/Products.tsx` (~5,500 lines)** — tabbed: `SkuMasterTab`
+- **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
   (with its virtualised row list and inline price editors) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
-- **`frontend/src/pages/Team.tsx` (~5,200 lines)** — user management. `Team()` shell,
+- **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
   `MembersTab`, `MemberDetail` / `MemberCard` / `EditMemberPanel`, brands panel, then
   `OrgChartTab` and its drag-and-drop machinery at the bottom.
-- **`backend/src/scm/routes/scan-so.ts` (~4,800 lines)** — see §6. Anthropic plumbing
+- **`backend/src/scm/routes/scan-so.ts`** — see §6. Anthropic plumbing
   and catalog loading first, then prompt construction and cache warming, then slip
   normalisation and validation, then the sample/rule distillation layer, then the
   route handlers.
@@ -236,15 +228,7 @@ and doubles as the payment slip upload. `MobileScan.tsx` is the phone front end.
 
 **Announcements.** Office notices with acknowledgement receipts.
 `backend/src/routes/announcements.ts` (reading is open to every signed-in user and
-audience-filtered server-side). The write gate is `requirePermissionOrSalesDirector
-("announcements.write")` — ADDITIVE, so a Sales Director passes WITHOUT holding the
-permission (`middleware/auth.ts:207`), which is the point of that helper. And
-`announcements.write` does not gate every write: **`POST /:id/ack` has no
-permission gate at all** (`announcements.ts:1222`), deliberately — an
-acknowledgement receipt has to be writable by exactly the people who cannot
-compose.
-
-The surfaces: desktop
+audience-filtered server-side; `announcements.write` gates every write), desktop
 `pages/Announcements.tsx` plus the `components/AnnouncementBanner.tsx` pop-up over
 the shared `useAnnouncementBanner.ts` hook, and on mobile `MobileAnnouncements.tsx`
 + `MobileAnnouncementPopup.tsx` + `MobileAnnouncementMedia.tsx` with
@@ -261,43 +245,16 @@ pre-auth, secret-guarded receivers called by the 2990 database itself. They are
 mounted at the top level, outside `/api/scm`, and are separate routes on purpose so
 one mirror stalling cannot wedge the others.
 
-**Fleet Maintenance & Compliance (through Phase 3).** Route `/api/fleet-maintenance`
+**Fleet Maintenance & Compliance (Phase 1).** Route `/api/fleet-maintenance`
 (`backend/src/scm/routes/fleet-maintenance.ts`), page
 `frontend/src/pages/FleetHealth.tsx` at `/fleet-health`, gated by the flat
 `fleet.read` / `fleet.write` permissions (via `requireHouzsPerm`). It BUILDS ON
 the existing SCM fleet master — `scm.lorries` IS the vehicle master; it reuses
 `scm.lorry_maintenance` (out-of-service windows), `scm.lorry_service_records`
 (mileage / next service / repair cost), `scm.drivers` (`drivers.vehicle` = plate)
-and `scm.warehouses` (region). Phase 1 added ONE table,
-`scm.lorry_compliance_documents` (mig 0202): the compliance vault with append-only
-renewal history + the doc types the flat columns can't hold (APAD, cross-border,
-PUSPAKOM result). **That is no longer the whole module.** Later phases added nine
-more: `lorry_maintenance_plans` + `lorry_mileage_readings` (0203),
-`lorry_work_orders` + `lorry_work_order_parts` + `lorry_breakdown_cases` +
-`lorry_components` + `lorry_component_events` (0204),
-`lorry_compliance_attachments` (0238), and the workshop master (0241).
-
-**Company scoping here has two exceptions and one false premise — read this before
-copying the pattern.** The nine LORRY tables stamp `company_id` on insert and none
-is read for scoping; the fleet really is unified, and `GET /dashboard` reads every
-row with no predicate (`fleet-maintenance.ts:635-649`). But:
-
-- **`scm.workshops` (0241) IS company-scoped**, unlike everything else in this
-  module — `GET /workshops` and `PATCH /workshops/:id` both filter
-  `.eq("company_id", activeCompanyId(c))` (`fleet-maintenance.ts:2060`, `:2136`).
-  The blanket "nothing here scopes" rule does not cover it.
-- **`scm.lorries` DOES have a `company_id` column.** The comment at
-  `fleet-maintenance.ts:234` and three migration headers justify the unified fleet
-  with "scm.lorries has NO company_id", and that premise is false: mig
-  `0083_multicompany_company_id.sql:313` added it, backfilled it to HOUZS, set it
-  NOT NULL, gave it an FK to `public.companies(id)` and indexed it, and
-  `lorries.ts:182` stamps it on insert. The CONCLUSION still holds — `lorries.ts:227`
-  says the column is "stamped on insert but NOT used to scope reads" — but do not
-  repeat the reason, because the next person will check the column and conclude the
-  code is broken. This is the exact trap `CLAUDE.md` records as having given the
-  wrong answer twice in opposite directions.
-
-It syncs the
+and `scm.warehouses` (region). The ONE new table is `scm.lorry_compliance_documents`
+(mig 0202): the compliance vault with append-only renewal history + the doc types
+the flat columns can't hold (APAD, cross-border, PUSPAKOM result). It syncs the
 existing flat `road_tax_expiry`/`insurance_expiry`/`puspakom_expiry` columns on
 `scm.lorries` as the denormalized "current" value so the old Fleet strip keeps
 working. Mounted OUTSIDE `/api/scm` (top-level) with `supabaseAuth`, so the gate is
@@ -366,18 +323,11 @@ screen.
 
 ## 8. Switches and states worth knowing before you debug
 
-Most of these are verified against the tree; if you are reading this long after
-2026-07-21, re-check the cited file rather than trusting the line.
-
-**Two of them are not in the tree at all.** `scm.write_freeze` and
-`scm.autocount_writeback` are ROWS in `scm.app_config`, so no amount of reading
-source settles their current value — only the named read-only workflow does. They
-are marked UNVERIFIED below and re-checking them is not optional.
+Each verified against the tree; if you are reading this long after 2026-07-21,
+re-check the cited file rather than trusting the line.
 
 - **SCM writes are FROZEN for Houzs right now.** `scm.app_config` key
-  `scm.write_freeze` held `'1'` when this was written (UNVERIFIED as of
-  2026-08-13: this is a live DB row, not source — read it before relying on it),
-  and `scm/lib/write-freeze.ts` (mounted ahead of
+  `scm.write_freeze` holds `'1'`, and `scm/lib/write-freeze.ts` (mounted ahead of
   every SCM sub-router) refuses every non-GET on `/api/scm/*` for company 1.
   Company 2 (2990) is unaffected — the value is a company id list, not a boolean.
   If an SCM write "mysteriously" 503s with `error: write_frozen`, this is why,
@@ -394,8 +344,7 @@ are marked UNVERIFIED below and re-checking them is not optional.
   That constant does **not** gate the ERP -> AutoCount WRITE-BACK, which is a
   different service (`AcSyncService` on the AutoCount host) reached through
   `AC_SYNC_URL` — set since PR #2030 — and gated instead by the DB toggle
-  `scm.app_config` -> `scm.autocount_writeback`, `'off'` when this was written
-  (UNVERIFIED as of 2026-08-13: live DB row, not source). Reading the
+  `scm.app_config` -> `scm.autocount_writeback`, still `'off'`. Reading the
   constant alone and concluding "nothing can reach AutoCount" is the mistake this
   wording invited; `docs/autocount-integration-map.md` is the map.
 - **Cost/margin display** is env-gated by `COSTING_DISPLAY_ENABLED`, parsed by

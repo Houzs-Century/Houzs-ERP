@@ -173,8 +173,12 @@ function lineCount(rel) {
    match as App.ts and package.json as package.js — the checker then reported 72
    present files as missing. Longest alternative first, plus a trailing boundary
    so a partial extension cannot match at all. */
+   COMPRESSED SUFFIXES are part of the name. `ac-fidelity-so-headers.json.gz`
+   matched as `.json` and was reported missing while the real file sat right
+   there — the extension list stopped one dot short. `(?:\.gz)?` after the
+   alternation, and the boundary below still refuses a partial match. */
 const FILE_REF =
-  /\b((?:backend|frontend|docs|scripts|tasks)\/[A-Za-z0-9_\-./]+\.(?:tsx|ts|mts|mjs|cjs|jsx|json|js|sql|md|yaml|yml|css|html|csv|toml))(?![A-Za-z0-9])(?::(\d+))?/g;
+  /\b((?:backend|frontend|docs|scripts|tasks)\/[A-Za-z0-9_\-./]+\.(?:tsx|ts|mts|mjs|cjs|jsx|json|js|sql|md|yaml|yml|css|html|csv|toml)(?:\.gz)?)(?![A-Za-z0-9])(?::(\d+))?/g;
 /* A file:line where the file part carries no directory — resolved only if the
    basename is unique in the tree, otherwise skipped rather than guessed. */
 const BARE_LINE_REF = /\b([A-Za-z0-9_\-.]+\.(?:ts|tsx|mjs|sql|md)):(\d{2,6})\b/g;

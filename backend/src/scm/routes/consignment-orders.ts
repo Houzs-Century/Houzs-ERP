@@ -98,45 +98,28 @@ async function coHasDownstream(sb: any, coDocNo: string): Promise<{ error: strin
 }
 
 /* ── Write-side own/downline guard (owner 2026-08-13: "要,和销售订单一致") ──────
-   The direct mirror of mfg-sales-orders' selfScopedSalesBlocked. This file is a
-   /mfg-sales-orders clone and the two must end up looking alike; if this stops
-   reading like that one, the difference is a bug, not a style.
-
-   THE DEFECT IT CLOSES. The CO READ paths already hold a rep to their OWN +
-   reporting-downline orders via salesDocOutOfScope (GET /:docNo, /audit-log,
-   /payments). Every WRITE carried COMPANY scope and nothing else, so a scoped
-   salesperson could PATCH / cancel / re-line / repay / reassign ANY consignment
-   order by enumerable doc_no — including BOTH payment verbs, which write money.
-   Word for word the hole the SO closed on itself.
+   The direct mirror of mfg-sales-orders' selfScopedSalesBlocked; the two must
+   keep reading alike, so a difference here is a bug, not a style.
 
    TWO DIMENSIONS, and neither replaces the other. Company is checked FIRST and
-   for EVERYONE, view-all included: the salesperson dimension answers "is this MY
-   order" and returns false straight away for a view-all tier, which is right for
-   its own question and useless for tenancy. Salesperson is checked second, and
-   only for the self-scoped tier.
+   for EVERYONE: the salesperson dimension answers "is this MY order" and returns
+   false straight away for a view-all tier, which is useless for tenancy.
 
-   The company half DEGRADES when the company is UNRESOLVED rather than failing
-   closed — the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
-   SENTINEL"): undefined means companyContext could not read the companies master
-   (pre-migration, the D1 test mirror, a Hyperdrive cold start). Failing closed
-   here would lock every user out of every CO write during a cold start. That
-   costs nothing in strictness: every caller of this guard ALSO runs
-   requireActiveCompanyId + scopeToCompanyId on its own statements, which is the
-   STRICT flavour and refuses an unresolved company on its own.
+   The company half DEGRADES on an UNRESOLVED company rather than failing closed
+   — the repo's three-state contract (companyScope.ts, "THE ALLOW-LIST
+   SENTINEL"). Failing closed would lock every user out of every CO write during
+   a Hyperdrive cold start, and it costs no strictness: every caller also runs
+   requireActiveCompanyId + scopeToCompanyId, which refuse an unresolved company.
 
-   Reads sb / env / the REAL Houzs caller id off the context, so it speaks the
-   same identity vocabulary as the reads (houzsUser.id, NOT the bridge-pinned
-   scm.staff uuid on user.id). Returns TRUE => block; the caller answers 404,
-   indistinguishable from a nonexistent doc_no. A missing CO also returns TRUE
-   (fail closed). Exported so a test can drive it directly. */
+   Identity comes off the context as houzsUser.id, NOT the bridge-pinned scm.staff
+   uuid on user.id, so it matches the reads. Returns TRUE => block, and the caller
+   answers 404, indistinguishable from a nonexistent doc_no. A missing CO also
+   returns TRUE (fail closed). Exported so a test can drive it directly. */
 export async function selfScopedConsignmentBlocked(c: any, docNo: string): Promise<boolean> {
   const sb = c.get('supabase');
 
   // 1. Tenancy — every tier, view-all included. Degrading, per the note above.
-  const { data: owned } = await scopeToCompany(
-    sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo),
-    c,
-  ).maybeSingle();
+  const { data: owned } = await scopeToCompany(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), c).maybeSingle();
   if (!owned) return true;
 
   // 2. Salesperson — only for the self-scoped tier.
@@ -316,17 +299,12 @@ const deriveCountryFromState = async (
 /* Sales/shipping Location (warehouse) follows the customer's State. Returns the
    warehouse code for the state, or null when unmapped.
 
-   COMPANY-SCOPED, like the mfg-SO twin this was copied from
-   (mfg-sales-orders.ts deriveSalesLocationFromState). `state` stopped being a
-   global key at migration 0092, which added `company_id NOT NULL` to
-   scm.state_warehouse_mappings and rebuilt its UNIQUE as
-   `(company_id, state)` — its header says the table "was never company-scoped
-   at all". The unscoped lookup here therefore had two failure modes and both
-   are wrong: with only the other company's row present it stamped THAT
-   company's warehouse onto this order's Sales Location, and once both
-   companies map the same state `.maybeSingle()` matches two rows, errors
-   (PGRST116) into the discarded `error`, and the field silently stops deriving
-   at all. */
+   COMPANY-SCOPED, like the mfg-SO twin. `state` stopped being a global key at
+   mig 0092, which made scm.state_warehouse_mappings UNIQUE on
+   `(company_id, state)`. Unscoped, this either stamps the OTHER company's
+   warehouse onto Sales Location, or — once both companies map the same state —
+   matches two rows, so `.maybeSingle()` errors (PGRST116) into the discarded
+   `error` and the field silently stops deriving at all. */
 const deriveSalesLocationFromState = async (
   sb: any,
   state: string | null | undefined,
@@ -335,11 +313,7 @@ const deriveSalesLocationFromState = async (
   if (!state) return null;
   const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
   const { data: m } = await scopeToCompany(
-    sb
-      .from('state_warehouse_mappings')
-      .select('warehouse_id')
-      .eq('state', key),
-    c,
+    sb.from('state_warehouse_mappings').select('warehouse_id').eq('state', key), c,
   ).maybeSingle();
   const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
   if (!whId) return null;
@@ -751,18 +725,15 @@ consignmentOrders.get('/:docNo', async (c) => {
   return c.json({ salesOrder, items });
 });
 
-/* NO selfScopedConsignmentBlocked HERE, deliberately. The guard answers "is this
-   EXISTING doc mine"; a create has no target row to load, so there is nothing for
-   it to decide and calling it would only refuse every create.
+/* NO selfScopedConsignmentBlocked HERE, deliberately — the phrase the exemption
+   test greps for. The guard answers "is this EXISTING doc mine", and a create
+   has no target row, so calling it would refuse every create.
 
-   What create does NOT have, and the SO does: an attribution self-lock.
-   mfg-sales-orders gates `salesperson_id` on the `scm.so.attribute_other`
-   permission and OVERRIDES a self-scoped caller's chosen salespersonId with their
-   own staff uuid; this path takes `body.salespersonId` verbatim (below), so a
-   scoped rep can book a NEW consignment order under someone else's name. That is
-   a different control from the row scope the owner ruled on ("要,和销售订单一致"
-   was about reaching an existing order), and it changes who gets paid, so it is
-   left for the owner rather than decided here. Recorded, not silently skipped. */
+   OPEN, for the owner: mfg-sales-orders gates `salesperson_id` on
+   `scm.so.attribute_other` and OVERRIDES a self-scoped caller's chosen
+   salespersonId; this path takes `body.salespersonId` verbatim, so a scoped rep
+   can book a NEW consignment order under someone else's name. That changes who
+   gets paid and is a different control from the row scope ruled on above. */
 consignmentOrders.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1171,9 +1142,8 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   /* Self-scoped sales may only CANCEL / re-status their OWN CO. Ahead of the
-     downstream lock below so an out-of-scope caller is refused as 404 rather
-     than told the order has a Consignment Note — an authorization refusal must
-     not wear a conflict's clothes (the SO's own 2026-07-22 lesson). */
+     downstream lock below, so an out-of-scope caller gets 404 rather than being
+     told the order has a Consignment Note: a refusal must not leak existence. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { status?: string; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -1302,9 +1272,9 @@ consignmentOrders.patch('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Self-scoped sales may only amend their OWN CO. `salespersonId` is in the
-     map below, so without this a scoped rep could REASSIGN another rep's order
-     to themselves — and `depositCenti` is money. */
+  /* Self-scoped sales may only amend their OWN CO. `salespersonId` is in the map
+     below, so without this a rep could REASSIGN another rep's order to
+     themselves; `depositCenti` is money. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2210,15 +2180,12 @@ consignmentOrders.post('/:docNo/items/:itemId/photos', async (c) => {
 });
 
 /* Refresh a signed GET URL for an existing key.
-   NO selfScopedConsignmentBlocked HERE, and the same goes for the proxy GET
-   below. Both are READS, and the owner's ruling was scoped to the WRITE verbs;
-   the company dimension they already carry (scopeToCompany, which the SO's own
-   /signed twin still lacks) is untouched. The residual is a same-company rep
-   reading another rep's line photo — and to reach it they need BOTH the line's
-   uuid and the exact crypto.randomUUID() photo key, which only GET /:docNo hands
-   out and that read IS salesperson-scoped. The SO's PROXY read does carry the
-   guard, so this is a KNOWN asymmetry between the twins, written down rather than
-   left silent: closing it is an owner call, not a defect fix. */
+   NO selfScopedConsignmentBlocked HERE, nor on the proxy GET below: both are
+   READS and the owner's ruling covered the WRITE verbs. They keep their company
+   scope. The residual is a same-company rep reading another rep's line photo,
+   which needs BOTH the line uuid and the exact crypto.randomUUID() photo key —
+   handed out only by GET /:docNo, which IS salesperson-scoped. The SO's proxy
+   read DOES carry the guard, so this asymmetry is known, not overlooked. */
 export const consignmentItemPhotoSignedHandler = async (c: any) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
@@ -2415,8 +2382,7 @@ consignmentOrders.post('/:docNo/payments', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   /* Self-scoped sales may only record a payment against their OWN CO. This verb
-     WRITES MONEY, and the ledger it writes is what GET /:docNo/payments — already
-     salesperson-scoped — reads back. */
+     WRITES MONEY into the ledger GET /:docNo/payments already scopes on read. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: so } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('doc_no').eq('doc_no', docNo), co.companyId).maybeSingle();
@@ -2477,8 +2443,7 @@ consignmentOrders.delete('/:docNo/payments/:id', async (c) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Self-scoped sales may only delete a payment from their OWN CO. This verb
-     WRITES MONEY — deleting a receipt re-opens the balance. */
+  // Own CO only. Deleting a receipt re-opens the balance, so this writes money.
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
   const { data: row } = await scopeToCompanyId(sb.from('consignment_sales_order_payments').select('*').eq('id', id), co.companyId).maybeSingle();

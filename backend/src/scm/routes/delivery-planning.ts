@@ -2022,12 +2022,9 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   // Resolve the SO doc_no + the target DO id (latest non-DRAFT/CANCELLED).
   let soDocNo: string | null = null;
   let doId: string | null = null;
-  /* COMPANY GATE for the whole handler. Everything below keys off soDocNo /
-     doId, and both used to be taken straight from the caller-supplied :id (or
-     from an unscoped read of it), so a caller in company A holding a company-B
-     doc number or DO uuid could rewrite B's delivery fields — substatus, dates,
-     driver, POD — and the SO History would record it as a legitimate edit.
-     Resolve the document ONCE, scoped, and refuse before any write. */
+  /* COMPANY GATE for the whole handler: everything below keys off soDocNo /
+     doId, both taken from the caller-supplied :id. Resolve the document ONCE,
+     scoped, and refuse before any write. */
   if (type === 'so') {
     const { data: own } = await scopeToCompany(
       sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
@@ -2173,25 +2170,19 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
          from the so_doc_no lookup and a scoped read never protects the write
          that follows it (MULTICOMPANY-MODULE-MAP rule 1).
 
-         UNSETTLED, deliberately left visible: the gate at the top of this
-         handler resolves the document with `scopeToCompany` (ACTIVE company),
-         which is NARROWER than this line, so today the widening cannot actually
-         admit a second company — the gate has already refused it. That gate is
-         the newer of the two and was not in conflict, so it stands; but
-         MULTICOMPANY-MODULE-MAP.md rule 3 and its SHARED list both say Delivery
-         Planning is one unified board across companies, which is what this line
-         was written for. Whoever settles it should change the GATE, not this
-         predicate. */
+         UNSETTLED, left visible: the gate at the top of this handler is
+         scopeToCompany (ACTIVE company), NARROWER than this line, so the
+         widening cannot admit a second company today. But
+         MULTICOMPANY-MODULE-MAP.md rule 3 says Delivery Planning is one unified
+         board across companies, which is what this line was written for.
+         Whoever settles it should change the GATE, not this predicate. */
       const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
-        /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-           Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-           0061 enabled RLS on every scm table with NO policies, and the SCM client is
-           the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-           getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-           42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-           permission check and do NOT treat it as scoping: the only boundary is this
-           route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
+        /* DEAD BRANCH, here and at every other 42501 site in this file. 42501 is
+           Postgres permission-denied (RLS), and RLS cannot fire here: mig 0061
+           enabled it with NO policies and the SCM client is SERVICE-ROLE, which
+           bypasses RLS. No scm function raises 42501 either. Not a permission
+           check and not scoping — the only boundary is this route's predicate. */
         if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
         return c.json({ error: 'update_failed', reason: error.message }, 500);
       }

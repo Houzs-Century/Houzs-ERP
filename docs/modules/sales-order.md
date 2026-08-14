@@ -27,6 +27,51 @@ structure applies to PO / DO / SI / GRN (they are near-identical clones).
 | Mobile list | `frontend/src/mobile/MobileSalesOrders.tsx` | Card list (bottom "Orders" tab). |
 | Mobile new/edit | `frontend/src/mobile/MobileNewSO.tsx` | 2600-line screen, **lazy-loaded** (PR #426). |
 
+#### Mobile New / Edit SO is ONE single scrolling form
+
+`MobileNewSO.tsx` renders new **and** edit as one single scrolling form — the
+owner rejected the 5-step wizard on 2026-07-03. Every section (Customer, Order
+info, Items, Payment) stacks in a single scroll with ONE primary action at the
+bottom: Save draft / Create Sales Order / Save Changes.
+
+It is wired to the real backend on the **unchanged** contract:
+
+| Purpose | Call |
+|---|---|
+| CREATE (new / edit-draft) | `POST /mfg-sales-orders` → `{ docNo }` |
+| EDIT (header fields only) | `PATCH /mfg-sales-orders/:docNo` |
+| ITEMS | `POST` / `PATCH` / `DELETE /mfg-sales-orders/:docNo/items` |
+| PHOTOS (per line) | `POST /mfg-sales-orders/:docNo/items/:id/photos` |
+| PREFILL | `GET /mfg-sales-orders/:docNo` (header + items), `GET /mfg-sales-orders/:docNo/payments` |
+| PAY (slip-backed rows) | `POST /mfg-sales-orders/:docNo/payments` |
+| VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
+
+The backend recomputes honest pricing and mints the `doc_no` server-side, so the
+client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
+
+**CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
+`SoLineCard` uses, never hardcoded arrays:**
+
+- **Fabrics** ← `useFabricColoursActive()` + `fabric_library` series via
+  `useFabricLibrary()`. The Fabric picker is a SEARCHABLE modal (700+ colours),
+  not a native `<select>`.
+- **Sofa** — Seat height ← `maintenanceConfig.sofaSizes`; Leg height ←
+  `maintenanceConfig.sofaLegHeights`.
+- **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
+  `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
+  `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
+  backend, but no longer shown (owner: hide it).
+
+Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
+`useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
+per category are the shared `so-variant-rule`; Save is blocked when any line is
+missing a required axis.
+
+**Sofa follower-line inherit** mirrors desktop `SoLineCard`'s
+`inheritVariantsByCategory` + `overriddenKeys`: follower sofa / bedframe lines
+inherit the FIRST same-category line's variants, BUT a manually-changed follower
+value WINS.
+
 #### The `?edit=1` fork, and why leaving edit must leave the URL
 
 `/scm/sales-orders/:docNo` is ONE route (`App.tsx`). `SalesOrderDetailV2` is a
@@ -612,6 +657,27 @@ column; both companies reported zero split **when measured on 2026-08-13**. Mig
 `0286` then renamed that column `internal_expected_dd` → `processing_date` on
 `scm.mfg_sales_orders` and on the consignment twin. `proceeded_at` is now
 stop-writing / stop-reading ahead of a drop, not a second fact.
+
+#### The client-side address marks — all three surfaces now say the same thing (2026-08-13)
+
+The delivery address is **optional by default** (name + phone are the only
+required customer fields). A **PROCESSING DATE makes it required**: that date is
+the proceed signal, and a proceeding order has to be deliverable. Owner, in his
+own words: *"只要是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。
+就是 processing date。电话、电脑都一样的."*
+
+Before 2026-08-13 the three surfaces disagreed:
+
+| Surface | Rule it applied | Effect |
+|---|---|---|
+| Server (`so-save-problems.ts`, since 2026-07-31) | `if (facts.procDate && facts.completeness)` — required on `procDate` alone, and it demands the DELIVERY DATE in the same breath | the authority |
+| `MobileNewSO.tsx` | `procDate && delivDate` (owner 2026-07-03) | a Processing Date with no Delivery Date showed **no required-field marks**, then the save was refused |
+| `SalesOrderNew.tsx` (desktop) | no rule at all | a blank address (or "Fill in address later" still ticked, which BLANKS the address out of the payload) produced a bare `validation_failed` from the round trip with no idea which field |
+
+The mobile `AND` was not merely stricter or looser — it **disagreed with the
+server**. All three now key on the Processing Date alone, and the desktop page
+names the missing fields (customer name, address line 1, postcode, delivery
+date) before it sends, with an explicit hint to untick "Fill in address later".
 
 #### The surfaces that read this date by NAME, not by binding
 

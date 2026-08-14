@@ -1737,11 +1737,10 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
   const allKeys = new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()]);
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  /* Qty REDUCTIONS handled by fn_return_do_units_at_cost (0286) rather than by a
-     row in `writes` — the function writes its own balancing IN because restoring
-     the lots and writing that row have to be one transaction. Collected here and
-     run before the batch insert so a failure can fall back to the legacy blended
-     row instead of leaving the reduction unposted. */
+  /* Qty REDUCTIONS go through fn_return_do_units_at_cost (0286), not through
+     `writes`: the function writes its own balancing IN, and restoring the lots
+     and writing that row must be one transaction. Collected here so a failure
+     can fall back to the legacy blended row. */
   const returns: Array<{
     warehouse_id: string; product_code: string; variant_key: string;
     batch_no: string | null; qty: number; correction_seq: number;
@@ -1784,24 +1783,14 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
         ...(batch_no ? { batch_no } : {}),
       });
     } else {
-      /* delta < 0 — operator reduced a line qty or deleted a line. Give stock back
-         AT ORIGINAL COST (owner decision 2026-08-13, audit ledger B6).
-
-         fn_return_do_units_at_cost (0286) walks this bucket's
-         inventory_lot_consumptions newest-first and returns each unit to the lot
-         that actually paid for it, then writes its own balancing IN at cost 0 —
-         the value is back in the original lots, so a second priced lot here would
-         double-count it. Restoring the lot and writing that row must be one
-         transaction, which is why it is a function and not a row in `writes`.
-
-         The fallback below is the OLD behaviour: one IN at the weighted average
-         of the bucket's OUTs. It blends costed with uncosted units — a "ship
-         anyway" oversell leaves short units at total_cost_sen 0, so returning 4 of
-         an OUT of 10 where 6 cost 100 sen and 4 cost nothing hands back 60
-         sen/unit, wrong in one direction or the other every time. It is kept
-         ONLY for a database that has not applied 0286 yet: a reduction that
-         posts no movement at all would leave shipped stock permanently deducted,
-         which is worse than an imprecise cost. */
+      /* delta < 0 — a line qty was reduced or the line deleted. Give the stock
+         back AT ORIGINAL COST: fn_return_do_units_at_cost (0286) returns each
+         unit to the lot that paid for it and writes its own balancing IN at
+         cost 0, so a priced row here would double-count the value.
+         The fallback is the old blended-average IN, which mixes costed with
+         uncosted units ("ship anyway" leaves short units at cost 0) and is wrong
+         either way. Kept only for a database without 0286, where posting nothing
+         would leave shipped stock permanently deducted. */
       const unit_cost_sen = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
       returns.push({
         warehouse_id, product_code, variant_key, batch_no,
@@ -1825,18 +1814,14 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
     }
   }
 
-  /* Run the qty RETURNS first (0286). Each call restores that bucket's original
-     lots and writes its own balancing IN, so a bucket that succeeds contributes
-     nothing to `writes`; one that fails falls back to the legacy blended row,
-     which then rides the same batch insert (and the same RECOUNT_FAILED trail)
-     as everything else. Returns are independent per bucket, so a failure on one
-     must not abandon the others — hence the per-bucket try. */
-  /* Buckets the RPC gave stock back to. They are NOT in `writes` (the function
-     wrote its own IN), but they DID re-open lots, so they must still reach
-     reconcileUncostedAfterIn — a restored lot can retro-cost an earlier "ship
-     anyway" OUT exactly as a fresh IN can — and they must still count as "the
-     ledger changed" for the restamp/allocation steps below. Gating those on
-     `writes.length` alone would silently skip every reduction the fn handled. */
+  /* Run the qty RETURNS first (0286): a bucket that succeeds contributes nothing
+     to `writes`, one that fails falls back to its blended row. Per-bucket try —
+     the buckets are independent, so one failure must not abandon the rest.
+     rpcHandled holds the buckets that succeeded. They are NOT in `writes`, but
+     they DID re-open lots, so they must still reach reconcileUncostedAfterIn (a
+     restored lot retro-costs an earlier "ship anyway" OUT just as a fresh IN
+     does) and still count as "the ledger changed" below — gating that on
+     `writes.length` alone would skip every reduction the function handled. */
   const rpcHandled: MovOut[] = [];
   for (const r of returns) {
     let handled = false;
@@ -1944,18 +1929,11 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
    IDEMPOTENT: an existence check for a prior ADJUSTMENT row tagged with this DO's
    id skips a re-reversal. Best-effort — a movement failure never un-cancels the
    DO (audit-DLQ pattern). */
-/* Returns the movement-write failures, [] when clean — the SAME contract as its
-   sibling resyncInventoryForDo (:1786) and as increaseInventoryForReturn.
-
-   It used to return void and DISCARD writeMovements' result, which matters more
-   here than anywhere else in this file: writeMovements never throws (it logs and
-   returns {ok:false}), so the caller's best-effort try/catch caught NOTHING,
-   and the cancel response's existing `movementErrors` field was
-   left undefined. A cancelled DO whose reversal failed therefore reported a
-   clean 200 while the shipped stock stayed permanently deducted — which is the
-   exact outcome the caller's own comment says reverseInventoryForDo exists to
-   prevent. The 2026-08-05 fix that gave resyncInventoryForDo a failure trace was
-   applied to that twin and not to this one. */
+/* Returns the movement-write failures, [] when clean — the SAME contract as
+   resyncInventoryForDo and increaseInventoryForReturn. writeMovements NEVER
+   THROWS (it logs and returns {ok:false}), so a caller's best-effort try/catch
+   catches nothing: discarding this result is how a cancelled DO whose reversal
+   failed returned a clean 200 with the shipped stock still deducted. */
 async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
   // Idempotency guard — has this DO already been reversed? Reversal rows are
   // tagged source_doc_type='ADJUSTMENT' + this DO's id. They may be ADJUSTMENT
@@ -2086,10 +2064,9 @@ async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performed
       const reason = wrote.reason ?? 'unknown';
       /* eslint-disable-next-line no-console */
       console.error(`[do-reverse] reversal movements FAILED for DO ${deliveryOrderId}: ${reason}`);
-      /* Same shape as the resync twin above and the GRN recount precedent: the
-         cancel STANDS (a ledger hiccup must never un-cancel a DO), and the trail
-         records that the stock did not come back, so /inventory/reconcile and a
-         human have something to find. */
+      /* The cancel STANDS — a ledger hiccup must never un-cancel a DO — and the
+         trail records that the stock did not come back, so /inventory/reconcile
+         and a human have something to find. */
       try {
         await recordEntityAudit(sb, {
           entityType: 'DELIVERY_ORDER',
@@ -3085,22 +3062,17 @@ deliveryOrdersMfg.get('/deliverable-so-lines', async (c) => {
    `/:id` param route below — same reason as /deliverable-so-lines above. */
 /** Load a source SO header for conversion, scoped to the SOURCE company.
  *
- *  Shares its column list (SO_CONVERT_HEADER) with the form preview
- *  GET /so-source/:docNo, so preview and commit can never copy different fields.
+ *  Shares its column list (SO_CONVERT_HEADER) with the preview
+ *  GET /so-source/:docNo, so preview and commit cannot copy different fields.
  *
- *  NOT scoped to the ACTIVE company, and that is the whole point of this route:
- *  POST /from-sos is the one conversion that legitimately runs across the
- *  switcher (shared Delivery Planning queue), so scoping this read to the active
- *  company would hide the very document the caller is converting. It is not
- *  unscoped either — `sourceCompanyId` is the company the picked SO LINES
- *  resolved to, so the header can only ever be the header of the lines being
- *  shipped, and header and lines cannot come from two different books.
- *
- *  `sourceCompanyId` is a REQUIRED positional argument for the same reason
- *  scopeToCompanyId's id is: an omitted scope must not compile. `undefined` is
- *  the three-state sentinel's UNRESOLVED state (pre-migration rows with no
- *  company_id) and degrades to no predicate, exactly as the rest of
- *  scm/lib/companyScope.ts does. */
+ *  Scoped to the SOURCE company, not the ACTIVE one: POST /from-sos legitimately
+ *  runs across the switcher (the shared Delivery Planning queue), so an
+ *  active-company predicate would hide the very document being converted.
+ *  `sourceCompanyId` is the company the picked SO LINES resolved to, so header
+ *  and lines can never come from two different books. REQUIRED, not optional, so
+ *  an omitted scope does not compile; `undefined` is the UNRESOLVED sentinel
+ *  (pre-migration rows) and degrades to no predicate, as elsewhere in
+ *  companyScope.ts. */
 async function loadSoHeaderForConversion(
   sb: ReturnType<typeof getSupabaseService>,
   docNo: string,
@@ -3375,15 +3347,11 @@ deliveryOrdersMfg.post('/', async (c) => {
        so a cross-company SO reached only through a line's soItemId — with no
        header soDocNo at all — is caught too.
 
-       THE MULTI-SO POST /from-sos PATH IS DELIBERATELY NOT GUARDED THIS WAY, and
-       that difference is the whole point of the two routes. It serves the shared
-       Delivery Planning queue, so it INHERITS the source SO's company —
-       resolving it once and stamping it on the DO, its lines, its doc number,
-       its warehouse lookups, its audit row and its AutoCount book. THIS route is
-       the plain per-company create: it stamps the ACTIVE company below, so for
-       it a cross-company source really would re-company the order, and it
-       refuses. Same rule ("a conversion never RE-COMPANIES a document"), two
-       correct implementations of it. */
+       POST /from-sos is deliberately NOT guarded this way: it serves the shared
+       Delivery Planning queue and INHERITS the source SO's company onto the DO,
+       its lines, its doc number, its warehouses, its audit row and its AutoCount
+       book. THIS route stamps the ACTIVE company below, so for it a
+       cross-company source really would re-company the order. */
     const soDocNos = [...new Set(refDocNos.filter((d): d is string => !!d))];
     if (soDocNos.length > 0) {
       const { data: soCoRows, error: soCoErr } = await sb
@@ -3852,28 +3820,21 @@ function buildItemRow(
         One DO line per pick (qty = picked qty, so_item_id = soItemId).
      4. recomputeTotals + deductInventoryForDo (both idempotent).
 
-   ── THIS IS THE ONE CONVERSION THAT CROSSES COMPANIES, AND IT INHERITS ──
-   Every other converter in this codebase holds "a conversion never crosses a
-   company" by SCOPING its source read to the active company. This one must not:
-   Delivery Planning is a single queue shared by both companies, so a Houzs
-   dispatcher converting a 2990 sales order is the normal working day, and a
-   scoped read makes that order invisible to him. The rule the exception keeps is
-   the one that protects the books — the destination never CLAIMS the document:
-   a 2990 SO produces a 2990 DO, under 2990's prefix, with 2990's stock, on
-   2990's audit timeline and in 2990's AutoCount book. `doCompanyId` below is
-   that decision, resolved once and used everywhere. The reason the rule is
-   stated as "never re-company" rather than "never cross" is written up in
-   scm/lib/companyScope.ts (isCrossCompanySource), and
-   scripts/check-conversion-guards.mjs verifies it per route. */
-/* Exported so the company-scope tests can drive it without the supabaseAuth
-   bridge, which cannot run in the vitest harness. Same reason
-   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
-   are exported; the route registration below is unchanged. */
+   ── THE ONE CONVERSION THAT CROSSES COMPANIES, AND IT INHERITS ──
+   Every other converter scopes its source read to the active company. This one
+   must not: Delivery Planning is one queue shared by both companies, so a scoped
+   read would hide the 2990 order a Houzs dispatcher came to convert. The rule it
+   still keeps is that the destination never CLAIMS the document — a 2990 SO
+   produces a 2990 DO, under 2990's prefix, with 2990's stock, on 2990's audit
+   timeline and in 2990's AutoCount book. `doCompanyId` below is that decision,
+   resolved once. See companyScope.ts (isCrossCompanySource);
+   check-conversion-guards.mjs verifies it per route. */
+/* Exported so the company-scope tests can drive it without supabaseAuth, which
+   cannot run in the vitest harness. The registration below is unchanged. */
 export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
-  /* company-scope: the only by-id write here is the ROLLBACK — the header this
-     handler inserted moments earlier is deleted when the child insert fails.
-     The insert stamps the SOURCE company, so the id is not caller-supplied.
-     Verified 2026-08-13. */
+  /* company-scope: the only by-id write here is the ROLLBACK of the header this
+     handler just inserted; the insert stamps the SOURCE company, so the id is
+     not caller-supplied. */
   const sb = c.get('supabase'); const user = c.get('user');
   let body: { picks?: Array<{ soItemId?: string; qty?: number }>; confirmShortStock?: boolean; warehouseId?: string; asDraft?: boolean; dropShip?: boolean };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -3928,22 +3889,17 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
      guards, the warehouse resolution, the stock check, the doc-number prefix,
      the header stamp, the line stamps, the audit row and the AutoCount book.
 
-     Resolving it once is the fix, not a tidy-up. This handler used to inherit
-     the source company on the DO HEADER and its doc number while passing
-     `activeCompanyId(c)` to the warehouse resolution, the stock/allocation
-     lookups and the sofa-set checks — so a 2990 order converted by a Houzs
-     dispatcher was checked against HOUZS warehouses and HOUZS's product
-     catalogue, and its lines were stamped HOUZS under a 2990 header. The
-     document said 2990 and the goods came out of the wrong building.
+     Mixing it with `activeCompanyId(c)` checks a 2990 order against HOUZS
+     warehouses and HOUZS's catalogue, and stamps its lines HOUZS under a 2990
+     header.
 
      THREE STATES, the same sentinel as allowedCompanyIds:
       · exactly one company across the picks -> that is the source company;
       · a NULL company_id anywhere (pre-migration row) -> UNRESOLVED, degrade to
-        the active company, which is what single-company Houzs has always done;
+        the active company;
       · more than one company -> REFUSED. One delivery order posts to ONE set of
-        books; merging two companies' orders into it has no correct stamp, no
-        correct prefix and no correct warehouse. The picker cannot produce this
-        (one customer, one company) so no operator reaches it. */
+        books, so a mixed pick has no correct stamp, prefix or warehouse. The
+        picker cannot produce it (one customer, one company). */
   const sourceCompanies = new Set<number>();
   let sourceCompanyMissing = false;
   for (const r of pickedRows) {
@@ -4031,10 +3987,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
      force-grab (confirmShortStock waives soft stock, NOT the no-batch rule). */
   let dropShipped = false;
   {
-    /* doCompanyId, not the active one: the sofa guard resolves the product's
-       category out of THAT company's catalogue. Asked as Houzs about a 2990
-       sofa, mfg_products answers nothing, the line stops looking like a sofa and
-       the dye-lot rule silently does not apply. */
+    /* doCompanyId, not the active one: the guard reads the product's category
+       from THAT company's catalogue. Asked as Houzs about a 2990 sofa,
+       mfg_products answers nothing and the dye-lot rule silently stops applying. */
     const sofaOffenders = await findSofaLinesWithoutCompleteBatch(sb, sortedPicks.map((line) => ({
       itemCode: line.itemCode,
       itemGroup: line.itemGroup ?? null,
@@ -4080,12 +4035,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     qty: pickQtyById.get(line.soItemId) ?? 0,
   }));
   /* doCompanyId throughout: the goods leave the SOURCE company's warehouses, so
-     the pre-flight has to ask about those. Passing the active company here is
-     how a 2990 order came to be measured against a Houzs building — the same
-     "the check and the movement measured two different warehouses" failure
-     checkDoStockAvailability's own header records, one company over.
-     deductInventoryForDo re-resolves from the persisted DO header, which carries
-     doCompanyId, so the check and the OUT now read one company. */
+     the pre-flight must ask about those. deductInventoryForDo re-resolves from
+     the persisted DO header, which carries doCompanyId, so the check and the OUT
+     read one company — see checkDoStockAvailability's header for what a
+     disagreement costs. */
   const lineWarehouses = await resolveDoLineWarehouses(
     sb,
     stockLines.map((l) => ({ id: l.lineRef, so_item_id: l.soItemId })),
@@ -4147,14 +4100,10 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   const emPhoneRaw = head.emergency_contact_phone as string | null;
   const today = todayMyt();
 
-  // Mint the DO number under the company this DO WILL BE — a 2990 order cut from
-  // the shared Delivery Planning queue becomes `2990-DO-2608-001`, whoever is at
-  // the switcher. THIS DOES SPAN COMPANIES, deliberately: it is what keeps the
-  // books straight, because the destination never claims the document as its own
-  // (see the source-company block above and companyScope.ts's inherit note).
-  // Derived from doCompanyId rather than from head.company_id so the prefix and
-  // the company_id stamp below read the ONE resolved value and cannot drift.
-  // undefined (unresolved) -> nextNum falls back to the active company's prefix.
+  // Mint under the company this DO WILL BE: a 2990 order cut from the shared
+  // queue becomes `2990-DO-2608-001` whoever is at the switcher. From
+  // doCompanyId, not head.company_id, so the prefix and the company_id stamp
+  // below read the ONE resolved value. undefined -> the active company's prefix.
   //
   // docPrefixForCode, NOT a local copy of the rule: this line used to inline
   // `code !== 'HOUZS' ? code + '-' : ''`, and a second copy of a numbering rule
@@ -4165,13 +4114,11 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   const { data: doHeader, error: hErr } = await insertWithDocNoRetry<{ id: string; do_number: string }>(
     () => nextNum(sb, c, srcPrefix),
     (doNumber) => sb.from('delivery_orders').insert({
-    /* multi-company: INHERIT the source SO's company (doCompanyId), which for
-       this route can genuinely differ from the active one — a 2990 order
-       converted while browsing as Houzs stays a 2990 delivery order, on 2990's
-       books, drawing 2990's stock. The DO LINES below stamp the SAME value, so
-       header and lines cannot disagree; they used to, because the header
-       inherited while the lines went through stampCompany (= the ACTIVE
-       company). */
+    /* multi-company: INHERIT the source SO's company (doCompanyId), which on this
+       route can differ from the active one — a 2990 order converted while
+       browsing as Houzs stays a 2990 delivery order on 2990's books, drawing
+       2990's stock. The DO LINES below stamp the SAME value, so header and lines
+       cannot disagree. */
     company_id: doCompanyId,
     do_number: doNumber,
     /* so_doc_no has a FK to mfg_sales_orders(doc_no) → one valid doc. The full
@@ -4265,10 +4212,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       committed_variant_key: commitments.has(line.soItemId)
         ? (commitments.get(line.soItemId)?.variantKey ?? '') : null,
       committed_batch_strict: commitments.get(line.soItemId)?.strictBatch === true,
-      /* The SAME value the header inherited — NOT stampCompany, which stamps the
-         ACTIVE company by contract and is therefore wrong on the one route whose
-         document may belong to the other company. Omitted entirely when
-         unresolved, matching stampCompany's own degrade. */
+      /* The SAME value the header inherited. NOT stampCompany: that stamps the
+         ACTIVE company by contract, which is wrong on the one route whose
+         document may belong to the other one. Omitted when unresolved. */
       ...(doCompanyId != null ? { company_id: doCompanyId } : {}),
     };
   });
@@ -4310,10 +4256,9 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   /* Past both compensating branches (items-insert rollback, race-conflict
      rollback) — the DO is permanent from here. Written after recomputeTotals so
      localTotalCenti is the rolled-up figure. */
-  /* The ACTOR stays the caller — this row records who cut the DO, and on this
-     route that is legitimately someone from the other company. The COMPANY is
-     the document's (doCompanyId): the entry belongs on the 2990 delivery order's
-     timeline, not on Houzs's. */
+  /* ACTOR is the caller (who cut the DO — on this route legitimately someone
+     from the other company); COMPANY is the document's, so the entry lands on
+     the 2990 delivery order's timeline, not on Houzs's. */
   await recordDoCreate(
     sb, c.get('houzsUser'), doCompanyId, dh.id, doRows.length,
     `Converted from Sales Order${docNos.length === 1 ? '' : 's'} ${docNos.join(', ')}`,
@@ -4475,14 +4420,12 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
     .upsert(crewRow, { onConflict: 'do_id' })
     .select(crewSnapshotCols).maybeSingle();
   if (crewErr) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
+    /* DEAD BRANCH, here and at every other 42501 site in this file. 42501 is
+       Postgres permission-denied (RLS), and RLS cannot fire here: mig 0061
+       enabled it with NO policies, and the SCM client is the SERVICE-ROLE client
+       (db/supabase.ts getSupabaseService), which bypasses RLS. Do NOT read this
+       as a permission check or as scoping — the only boundary is this route's
+       own predicate. */
     if (crewErr.code === '42501') return c.json({ error: 'forbidden', reason: crewErr.message }, 403);
     return c.json({ error: 'crew_save_failed', reason: crewErr.message }, 500);
   }
@@ -4637,10 +4580,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
 
   /* The BEFORE half of every from->to pair recorded after the DO write below.
      Read after the guards so a rejected PATCH costs nothing. */
-  /* The `activeCompanyId(c)` twenty lines below is NOT a guard — it is a
-     fallback for the audit row's companyId field, and reading it as one is
-     precisely how check-company-scope was fooled into passing this handler
-     while it wrote by uuid alone. The predicate is HERE. */
+  /* The predicate is HERE. The `activeCompanyId(c)` further down is NOT a guard
+     — it is the fallback for the audit row's companyId field, and reading it as
+     one is how this handler passed a scope check while writing by uuid alone. */
   const { data: beforeRow } = await scopeToCompanyId(sb.from('delivery_orders')
     .select(DO_AUDIT_SELECT).eq('id', id), co.companyId).maybeSingle();
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
@@ -4748,12 +4690,10 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
   /* so_doc_no is selected for the unlinked-line guard below — adding a line by
      hand is the other way an SO's own item lands on its DO without consuming
      the order's quantity. */
-  /* company-scope: prove the PARENT DO — the same gate the line PATCH (:4780)
-     and DELETE (:5073) already carry. This ADD path was the one left unscoped,
-     so company A holding B's DO uuid could push a line onto B's delivery; the
-     insert below stamps the ACTIVE company, and on an already-shipped DO the
-     resync moves B's stock out. company_id was already selected here and read
-     only by the audit row, never as a predicate. */
+  /* company-scope: prove the PARENT DO, the gate the line PATCH and DELETE
+     already carry. Without it company A holding B's DO uuid pushes a line onto
+     B's delivery stamped with A's company, and on a shipped DO the resync moves
+     B's stock out. The selected company_id feeds the audit row, not a predicate. */
   const { data: header } = await scopeToCompany(
     sb.from('delivery_orders')
       .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id), c,
@@ -4945,10 +4885,10 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
 
 deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
-  /* company-scope: prove the PARENT DO first. Every write below keys on
-     (itemId, delivery_order_id) and both come from the caller, so without this
-     the pair only proved they belong together — never whose they are. Editing a
-     line re-prices it, re-binds its batch and re-syncs inventory. */
+  /* company-scope: prove the PARENT DO first. The (itemId, delivery_order_id)
+     pair every write below keys on is caller-supplied: it proves the two belong
+     together, never whose they are. A line edit re-prices, re-binds its batch
+     and re-syncs inventory. */
   {
     const { data: own } = await scopeToCompany(
       sb.from('delivery_orders').select('id').eq('id', id), c,
@@ -5338,16 +5278,12 @@ deliveryOrdersMfg.get('/:id/payments', async (c) => {
      salesperson's payment ledger by enumerating ids. Out-of-scope /
      missing → 404. Directors/view-all bypass. */
   {
-    /* THE PARENT IS THE ONLY GATE THERE CAN BE. scm.delivery_order_payments has
-       no company_id of its own — it is scoped THROUGH its parent DO
-       (delivery_order_id -> delivery_orders.company_id), confirmed against prod
-       by scripts/diag-do-payments.mjs, which is also why the 2990 importer
-       skipped the table ("SKIP delivery_order_payments: no company_id"). That
-       contract only holds if the parent read is scoped, and it was not: all
-       three payment endpoints (this GET, the POST and the DELETE below) reached
-       the DO by uuid alone. The salesperson scope underneath is a different
-       axis — it bounds WHICH PERSON, never which company, and anyone with
-       view-all passes it untouched. */
+    /* THE PARENT IS THE ONLY GATE THERE CAN BE: scm.delivery_order_payments has
+       no company_id of its own, so it is scoped THROUGH its parent DO
+       (delivery_order_id -> delivery_orders.company_id) — a contract that only
+       holds if the parent read is scoped. The salesperson scope below is a
+       different axis: it bounds WHICH PERSON, never which company, and view-all
+       passes it untouched. */
     const { data: hdr } = await scopeToCompany(
       sb.from('delivery_orders').select('salesperson_id').eq('id', id), c,
     ).maybeSingle();
@@ -5433,10 +5369,9 @@ deliveryOrdersMfg.post('/:id/payments', async (c) => {
 
 deliveryOrdersMfg.delete('/:id/payments/:paymentId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const paymentId = c.req.param('paymentId');
-  /* company-scope: through the parent DO. The mismatch check below only proves
-     the payment belongs to the DO in the URL — it says nothing about whose DO
-     that is, so on its own it let one company delete a money record off the
-     other's delivery. See the note on GET /:id/payments above. */
+  /* company-scope: through the parent DO. The mismatch check below proves the
+     payment belongs to the DO in the URL, never whose DO that is. See the note
+     on GET /:id/payments above. */
   const { data: doc } = await scopeToCompany(
     sb.from('delivery_orders').select('id').eq('id', id), c,
   ).maybeSingle();
@@ -5687,11 +5622,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      the reversal actually lands. Idempotent (ADJUSTMENT existence check) +
      best-effort (a movement failure never un-cancels the DO). */
   if (toStatus === 'CANCELLED') {
-    /* REPORTED, not just best-effort. The response below already carries a
-       movementErrors field; on the cancel branch it was never populated, so a
-       failed reversal returned a clean 200 and the stock stayed deducted with
-       nobody told. The catch stays (an unexpected throw must not un-cancel), but
-       the ordinary failure path now has somewhere to go. */
+    /* REPORTED, not just best-effort: the response already carries
+       movementErrors and on this branch it was never populated. The catch stays
+       — an unexpected throw must not un-cancel the DO. */
     try {
       movementErrors.push(...(await reverseInventoryForDo(sb, id, user.id)));
     } catch (e) {
