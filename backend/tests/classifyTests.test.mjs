@@ -19,7 +19,7 @@
 // behaviour we would prefer, so tightening the rule is a deliberate change that
 // has to come here first.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from 'vitest';
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -85,7 +85,7 @@ test("only .test.ts is collected; helpers and node:test files are not", async ()
   const root = await fixture({
     "tests/a.test.ts": `import { describe } from "vitest";\n`,
     "tests/helper.ts": `export const x = 1;\n`,
-    "tests/b.node.mjs": `import test from "node:test";\n`,
+    "tests/b.node.mjs": `import { test } from 'vitest';\n`,
   });
   const { workers, light } = await classifyTests(root);
   assert.deepEqual([...workers, ...light], ["tests/a.test.ts"]);

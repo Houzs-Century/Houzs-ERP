@@ -2,7 +2,7 @@
 // Every case below is written from the direction that matters: the only inputs
 // allowed to return `false` are the two loopback names, and everything else —
 // including garbage — must come back 'require'.
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { pgSslMode } from '../scripts/lib/pg-ssl-mode.mjs';
 

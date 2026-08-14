@@ -626,7 +626,7 @@ A refutation is a result. These are the ones that would otherwise be re-chased:
 
 ### M5. Two tests that could not have failed
 
-- `tests/assrCaseScopeGuard.node.mjs` was written and **would never have run**:
+- `tests/assrCaseScopeGuard.test.mjs` was written and **would never have run**:
   `.node.mjs` files match neither vitest config and execute only through
   `test:scale-contract`, which lists its files explicitly. Added there.
 - `tests/autocountWritebackCells.test.ts` broke on a RENAME, not a regression:

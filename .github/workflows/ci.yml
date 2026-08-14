@@ -184,7 +184,12 @@ jobs:
       # Same class this repo keeps finding: a check that cannot run reports
       # nothing, and reads as a pass. Named explicitly so a future rename of the
       # test script cannot orphan them again silently. ~0.4s.
-      - run: npm run test:scale-contract
+      # test:scale-contract is GONE, and so is the pretest that ran it. Those
+      # seventeen files were `node --test`, whose runs contribute NOTHING to the
+      # merged coverage report — so twelve genuinely-tested scripts/lib modules
+      # read to the coverage ratchet as having no test at all. They are ordinary
+      # vitest files now (`*.test.mjs`, node:assert kept, only the `test` import
+      # swapped) and run in the light project above, where they are MEASURED.
 
       # The two artefacts a revert cannot undo: a migration, which pg-migrate
       # applies to prod on the next push to main and records by filename AND

@@ -33,7 +33,14 @@ async function* walk(dir) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) yield* walk(full);
-    else if (/\.test\.ts$/.test(entry.name)) yield full;
+    /* `.test.mjs` too. A test written against node:test used to live as
+       `*.node.mjs` and run under `node --test`, which contributes NOTHING to the
+       merged coverage report — both halves of it come from vitest. So twelve
+       genuinely-tested modules in scripts/lib read to the coverage ratchet as
+       having no test at all, and its no-test floor was measuring the runner
+       rather than the testing. Collected here instead; the files keep their
+       `node:assert` and only swap the `test` import. */
+    else if (/\.test\.(ts|mjs)$/.test(entry.name)) yield full;
   }
 }
 

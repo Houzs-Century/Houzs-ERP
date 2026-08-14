@@ -3,7 +3,7 @@
 //
 // The shim builds SQL text, so it is tested by handing it a fake tagged-template
 // client that records what it was asked to run. No database is involved.
-import test from "node:test";
+import { test } from 'vitest';
 import assert from "node:assert/strict";
 import { pgrestShim } from "../scripts/lib/pgrest-shim.mjs";
 

@@ -104,9 +104,9 @@ thorough `node:test` suite that runs on every PR:
 
 | module | lines | its test | measured by `node --test --experimental-test-coverage` |
 | --- | ---: | --- | ---: |
-| `release-discipline.mjs` | 231 | `tests/releaseDiscipline.node.mjs`, 43 cases | 98.60% lines |
-| `jsonb-bind-scan.mjs` | 125 | `tests/jsonbBindScan.node.mjs` | 95.53% lines |
-| `swallowed-read-scan.mjs` | 51 | `tests/swallowedReadScan.node.mjs` | 100.00% lines |
+| `release-discipline.mjs` | 231 | `tests/releaseDiscipline.test.mjs`, 43 cases | 98.60% lines |
+| `jsonb-bind-scan.mjs` | 125 | `tests/jsonbBindScan.test.mjs` | 95.53% lines |
+| `swallowed-read-scan.mjs` | 51 | `tests/swallowedReadScan.test.mjs` | 100.00% lines |
 
 407 lines, all of them exercised in CI, all of them reported by the gate as zero
 lines covered and three files with no test at all. The percentage did not fall
@@ -256,7 +256,7 @@ switched on by ambient configuration, whereas a stray `PGSSL=disable` in the
 wrong environment file would silently downgrade a production connection. Against
 the real DSN the value is `'require'` — byte-identical to the old behaviour.
 
-**Test.** `backend/tests/pgSslMode.node.mjs`, wired into `test:scale-contract`.
+**Test.** `backend/tests/pgSslMode.test.mjs`, wired into `test:scale-contract`.
 The cases that carry the weight are the near-misses, all of which must still
 require TLS: `localhost.evil.com`, `notlocalhost`, `127.0.0.1.evil.com`,
 `127.0.0.2`, and a production host carrying `?host=localhost`. A hostname is
@@ -1301,7 +1301,7 @@ has. `backfill-so-dates.mjs`'s refusal list is now built from the constants,
 current spellings **and** legacy; the probe counts only columns the catalog
 proved are there and names which one it counted.
 
-**Why the new test walks the directory.** `tests/soProcessingDateOneName.node.mjs`
+**Why the new test walks the directory.** `tests/soProcessingDateOneName.test.mjs`
 is `node:test`, run by `npm run test:scale-contract`, and it reads
 `backend/scripts` off disk — so a script written tomorrow is covered by code
 that already exists. Comments are stripped before matching: the rename is a
@@ -1470,7 +1470,7 @@ AutoCount line's price reached the same ERP row through the code-blind key.
 
 **Fix** — the decision moved out of the script into
 `backend/scripts/lib/po-cost-plan.mjs`, where it runs with no database and is
-unit-tested (`tests/poCostPlan.node.mjs`, wired into `test:scale-contract`).
+unit-tested (`tests/poCostPlan.test.mjs`, wired into `test:scale-contract`).
 Every key now carries the item code, by three routes, most exact first:
 `linked_ac_dtlkey` (migration 0273, a 1:1 identity); `supplier_sku`, which holds
 the RAW AutoCount `ItemCode` because `import-ac-outstanding-po.mjs` stores
@@ -1511,7 +1511,7 @@ The binding sequence is therefore: merge, then dispatch the workflow at
 `apply=1` writes — and only then dispatch `apply=1`.
 
 What IS measured in CI, on the real committed snapshot rather than by hand, is
-the collision the fix removes: `tests/poCostPlan.node.mjs` re-derives from
+the collision the fix removes: `tests/poCostPlan.test.mjs` re-derives from
 `scripts/data/ac-po-line-costs.json.gz` that the pre-fix `(PoNo, Desc2)` key
 yields 170 keys of which 9 merge more than one item code, that adding the item
 code splits them apart, and that PO-009826 and PO-009802 are among them. That
@@ -1632,7 +1632,7 @@ them, whose diffs nobody could read either.
 (`npm run typecheck`, which in the frontend is `tsc -b`; `npx tsc --noEmit`
 there resolves zero inputs and would have proved nothing).
 
-**The check** — `backend/tests/noNulBytesInSource.node.mjs`, in
+**The check** — `backend/tests/noNulBytesInSource.test.mjs`, in
 `npm run test:scale-contract`. It walks `git ls-files`, refuses to pass if the
 listing returns implausibly few files, and fails on any tracked source file
 carrying a NUL.
@@ -1643,7 +1643,7 @@ diff, so review and audit both silently see nothing.
 
 **The check caught itself first.** Its own `git ls-files -z` split was written
 with the raw separator, so the very first CI run of the gate failed on the gate:
-`backend/tests/noNulBytesInSource.node.mjs (first at byte 1943 of 2878)`. That is
+`backend/tests/noNulBytesInSource.test.mjs (first at byte 1943 of 2878)`. That is
 the strongest evidence it works, and it is why the escape — not the byte — has
 to be the habit: even the person writing the rule reached for the byte.
 
@@ -1674,7 +1674,7 @@ now reports those rows in their own line — *the owner's own 12 catalogue
 series, left exactly as he dictated* — instead of mixing them into the
 unparseable bucket.
 
-**The check** — `backend/tests/catalogueSeriesOneList.node.mjs`, wired into
+**The check** — `backend/tests/catalogueSeriesOneList.test.mjs`, wired into
 `npm run test:scale-contract`. It fails on the tree as it was (2 of 5 tests),
 and it asserts three things a comment cannot: both derivers import the shared
 list; a series the SEED declares is one the shared list holds, so the seed
@@ -2761,7 +2761,7 @@ cannot drift apart again. And the zip's tie-break sorted a serial `id` with
 sofa's compartment rows across different AutoCount lines; it sorts numerically
 now.
 
-**Guards, each proven by breaking it** (`tests/acPoLineRepair.node.mjs`, 24
+**Guards, each proven by breaking it** (`tests/acPoLineRepair.test.mjs`, 24
 tests, all passing): disable the coin-flip refusal -> **3 fail** (18/21 before
 the cross-product tests were added); drop the `sameProduct` gate so `base` is a
 blanket attempt again -> **1 fails** (23/24); restore the `localeCompare` row
@@ -2782,7 +2782,7 @@ write is a silent dependency, and JavaScript will not tell you when it breaks.*
 Reading a renamed key produced `undefined`, which flowed all the way into a
 `NULL` column with no error, no warning and no failing test — the same shape as
 the five-copies-of-findColour entry above, one layer earlier. The guard is
-`tests/acPoLineRepair.node.mjs`, which asserts the accessor still resolves on
+`tests/acPoLineRepair.test.mjs`, which asserts the accessor still resolves on
 every row of the COMMITTED snapshots (917 rows). A fixture would never have
 caught this, because a fixture carries whatever key the test author typed;
 revert the accessor to `DelivDate` and that test fails 338 + 579 times. The
@@ -4091,7 +4091,7 @@ the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first, whic
 every synthetic row sets to the same leg date. So the field was write-only on
 those rows and nulling it is behaviour-identical.
 
-**Left loud on purpose.** `tests/scaleRouteDrift.node.mjs` `deepEqual`s a
+**Left loud on purpose.** `tests/scaleRouteDrift.test.mjs` `deepEqual`s a
 hard-coded column list against the route's `HEADER` expression - it is the
 tripwire and it is meant to fail; note it appends `, proceeded_at,
 paid_total_centi, balance_centi_live` as its own literal, so retiring
@@ -5882,7 +5882,7 @@ A fence with an open gate beside it is not a fence.
 **Fix** - both routers resolve the source document from the line id first, then
 apply the SAME `refuseMigratedSources` rule, so a caller cannot pick a softer
 door. A FAILED lookup refuses rather than proceeds (`ok: false` -> 500): a guard
-that fails open is not a guard. `backend/tests/migratedConvertGuard.node.mjs`
+that fails open is not a guard. `backend/tests/migratedConvertGuard.test.mjs`
 pins all eight paths, asserts the refusal comes BEFORE the AutoCount enqueue (a
 refusal after it is no refusal at all), and asserts the GL suppression lives
 inside `postPiAccounting` / `postSiRevenue` rather than at their call sites, so
