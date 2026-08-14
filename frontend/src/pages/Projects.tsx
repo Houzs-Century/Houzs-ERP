@@ -189,6 +189,10 @@ interface ProjectRow {
   active_section_name?: string | null;
   sections_total?: number;
   sections_complete?: number;
+  // Populated only when a real section is picked in the Status filter (owner
+  // 2026-08-14). Tasks of that section: 'title=status=due' pairs joined by '|',
+  // where due is a bare YYYY-MM-DD or empty. Drives the per-project task badges.
+  section_tasks_map?: string | null;
 }
 
 interface ProjectDetail {
@@ -1134,7 +1138,7 @@ function MultiSelectFilter({
   panelWidth = "w-[280px]",
 }: {
   placeholder: string;
-  groups: { name: string | null; options: { value: string; label: string }[] }[];
+  groups: { name: string | null; options: { value: string; label: string; count?: number }[] }[];
   selected: string[];
   onChange: (next: string[]) => void;
   title?: string;
@@ -1235,13 +1239,73 @@ function MultiSelectFilter({
                     checked={selected.includes(o.value)}
                     onChange={() => toggle(o.value)}
                   />
-                  <span className="truncate">{o.label}</span>
+                  <span className="flex-1 truncate">{o.label}</span>
+                  {typeof o.count === "number" && (
+                    <span className="shrink-0 tabular-nums text-[11px] text-ink-muted">
+                      {o.count}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Per-project task badges for the Status (section) filter (owner 2026-08-14).
+// Reads the backend section_tasks_map ("title=status=due" joined by "|") and
+// renders one pill per task in the chosen section: DONE (green), OVERDUE (red,
+// with days late) or PENDING (amber). Overdue first, then pending, then done.
+// Renders nothing unless a real section is picked (the map is absent otherwise),
+// so the default project list is unchanged.
+function SectionTaskBadges({ map }: { map?: string | null }) {
+  if (!map) return null;
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate(),
+  ).padStart(2, "0")}`;
+  const tasks = map
+    .split("|")
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split("=");
+      const title = parts[0] ?? "";
+      const status = parts[1] ?? "";
+      const due = parts[2] ?? "";
+      let kind: "done" | "overdue" | "pending";
+      let daysLate = 0;
+      if (status === "done") kind = "done";
+      else if (due && due < today) {
+        kind = "overdue";
+        daysLate = Math.max(1, Math.round((Date.parse(today) - Date.parse(due)) / 86_400_000));
+      } else kind = "pending";
+      return { title, kind, daysLate };
+    });
+  if (!tasks.length) return null;
+  const rank = { overdue: 0, pending: 1, done: 2 } as const;
+  tasks.sort((a, b) => rank[a.kind] - rank[b.kind] || b.daysLate - a.daysLate);
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {tasks.map((t, i) => (
+        <span
+          key={i}
+          title={t.title}
+          className={cn(
+            "inline-flex max-w-[170px] items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold",
+            t.kind === "done"
+              ? "border border-synced/40 bg-synced/15 text-synced"
+              : t.kind === "overdue"
+                ? "border border-err/40 bg-err/15 text-err"
+                : "border border-amber-500 bg-amber-100 text-amber-800",
+          )}
+        >
+          <span className="truncate">{t.title}</span>
+          {t.kind === "overdue" && <span className="shrink-0 font-mono">{t.daysLate}d</span>}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1553,13 +1617,15 @@ function ProjectsListView() {
     "/api/projects/task-titles-distinct",
     () => api.get("/api/projects/task-titles-distinct"),
   );
-  // Task options grouped by checklist section, for the multi-select popover.
-  const taskGroups = useMemo(() => {
-    const g: Record<string, { value: string; label: string }[]> = {};
+  // Task COUNT per checklist section — shown beside each section in the Status
+  // filter (owner 2026-08-14: "section titles only with task counts").
+  const sectionCounts = useMemo(() => {
+    const c: Record<string, number> = {};
     for (const t of taskTitles.data?.data ?? []) {
-      (g[t.section ?? "Other"] ||= []).push({ value: t.title, label: t.title });
+      const s = t.section ?? "Other";
+      c[s] = (c[s] ?? 0) + 1;
     }
-    return Object.entries(g).map(([name, options]) => ({ name, options }));
+    return c;
   }, [taskTitles.data]);
 
   const columns: Column<ProjectRow>[] = [
@@ -1598,6 +1664,7 @@ function ProjectsListView() {
               )}
             </span>
             {r.venue && <span className="text-[10px] text-ink-muted">{r.venue}</span>}
+            <SectionTaskBadges map={r.section_tasks_map} />
           </div>
         );
       },
@@ -1981,12 +2048,13 @@ function ProjectsListView() {
           </div>
         ) : (
         <>
-        {/* Section filter — a DROPDOWN since 2026-08-05 (owner: "need to add
-            drop down for pc"). The pill row spanned the full width and left no
-            room for the task filter beside it; the options are identical. */}
+        {/* Status filter (owner 2026-08-14: "all section word change to status,
+            remove current status dropdown"). One section-level dropdown; each
+            option carries how many tasks that section holds. The old task-title
+            "Status" dropdown that used to sit beside it is gone. */}
         <MultiSelectFilter
-          placeholder="All sections"
-          title="Filter by the tasklist section an event is currently in"
+          placeholder="Status"
+          title="Filter by tasklist section"
           summary={(n) => `${n} sections`}
           selected={sectionList}
           onChange={(next) => setSection(next.join(","))}
@@ -1994,7 +2062,11 @@ function ProjectsListView() {
             {
               name: null,
               options: [
-                ...(sectionsList.data?.data ?? []).map((s) => ({ value: s, label: s })),
+                ...(sectionsList.data?.data ?? []).map((s) => ({
+                  value: s,
+                  label: s,
+                  count: sectionCounts[s],
+                })),
                 { value: "__done", label: "Completed" },
               ],
             },
@@ -4560,7 +4632,10 @@ function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
-  const q = params.get("q") || "";
+  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
+  // collision with the useQuery result later in this component that already
+  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
+  const search = params.get("q") || "";
   // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
   // lands on the same month.
   function patchParams(patch: Record<string, string>) {
@@ -4574,7 +4649,7 @@ function ProjectsCalendarView() {
   const setBrand = (v: string) => patchParams({ brand: v });
   const setStatus = (v: string) => patchParams({ status: v });
   const setOrganizer = (v: string) => patchParams({ organizer: v });
-  const setQ = (v: string) => patchParams({ q: v });
+  const setSearch = (v: string) => patchParams({ q: v });
 
   // showTasks / showHolidays are personal display prefs (checkbox toggles
   // on the legend, not data filters), so they stay in localStorage per
@@ -4782,7 +4857,7 @@ function ProjectsCalendarView() {
         brand,
         status,
         organizer,
-        q,
+        q: search,
         showTasks,
         expandAll,
       }),
@@ -4796,7 +4871,7 @@ function ProjectsCalendarView() {
       brand,
       status,
       organizer,
-      q,
+      search,
       showTasks,
       expandAll,
     ],
@@ -4946,16 +5021,16 @@ function ProjectsCalendarView() {
             <Search size={12} className="pointer-events-none absolute left-2 text-ink-muted" />
             <input
               type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               placeholder="Search venue, organizer, brand…"
               className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-6 text-[11px] text-ink-secondary outline-none transition-colors hover:border-primary/40 focus:border-primary focus:ring-2 focus:ring-primary/15"
               title="Search events on the calendar"
             />
-            {q && (
+            {search && (
               <button
                 type="button"
-                onClick={() => setQ("")}
+                onClick={() => setSearch("")}
                 className="absolute right-1 flex h-5 w-5 items-center justify-center rounded text-ink-muted hover:bg-bg/50 hover:text-ink"
                 title="Clear search"
               >
