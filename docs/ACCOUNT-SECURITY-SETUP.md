@@ -80,14 +80,26 @@ deletes objects is unrecoverable without this.
 
 ## 5. Branch protection on `main` (GitHub org admin)
 
-Right now a push to `main` auto-deploys to prod with no gate. This is documented in
-`CLAUDE.md`. Needs repo-admin rights (the working account has `admin:false`).
+**DONE — 2026-07-31. Do not follow the steps that used to be here.**
 
-- GitHub → repo **Settings** → **Branches** → add a rule for `main`:
-  - Require status checks: `backend-typecheck` + `frontend`
-  - Require branches to be up to date
-  - Do **not** require approvals (blocks automated merges), do **not** include
-    administrators (keep an emergency escape hatch).
+`main` carries the `main-protection` RULESET: `deletion`, `non_fast_forward`,
+`required_status_checks` (contexts `backend-typecheck` + `frontend`, strict) and
+`pull_request`. Verify with:
+
+```
+gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
+```
+
+Not `/branches/main/protection` — that endpoint reports CLASSIC protection only
+and answers **404** for a ruleset, which is how this section came to say "no
+gate", and to cite `CLAUDE.md` for it while `CLAUDE.md` says the opposite.
+
+The removed steps prescribed exactly the live configuration, so following them
+achieved nothing — except the last one, which was actively harmful: *"do not
+include administrators (keep an emergency escape hatch)"* would ADD a bypass
+actor. The live ruleset has `bypass_actors: null` and `current_user_can_bypass:
+"never"` — nobody can force a merge, including the owner. That is the property;
+do not trade it away for an escape hatch nobody has needed.
 
 ## 6. Cloudflare WAF + Bot Fight Mode (mostly free)
 

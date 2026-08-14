@@ -28,7 +28,7 @@ the remaining action** — because the biggest remaining gaps are not in the cod
 |---|---|---|---|
 | Production DB wiped or encrypted | Stolen deploy/DB credential → `DROP`/`TRUNCATE`, or ransomware | Supabase daily backups + **PITR** (restore to the second) | Backups on; **PITR enabled 2026-07-23** ✓ |
 | A destructive script re-runs against prod | `load-d1-dump`/`copy-pg`/`db:reset` pointed at prod | Fail-closed guards (allow-list, ACK required) | Fixed — PR #1081 (merge pending) |
-| Unreviewed / malicious deploy to prod | Push to `main` auto-deploys; no gate | Branch protection + required reviewers | **NOT DONE — owner (GitHub org admin)** |
+| Unreviewed / malicious deploy to prod | ~~Push to `main` auto-deploys; no gate~~ | Branch protection + required checks | **DONE 2026-07-31** — `main-protection` ruleset, `bypass_actors: null`. Required approvals is 0 by choice, so a PR is forced but a review is not |
 | R2 files (PODs, payment slips, photos) deleted/overwritten | Bad script or ransomware hits the `houzs-erp` bucket | R2 object versioning | **NOT DONE — owner (Cloudflare acct holding the bucket)** |
 | Code lost | Laptop ransomed / disk dies | GitHub holds full history (1991+ commits) | Inherent ✓ — re-clone restores it. Protect the GitHub **account** with MFA |
 
