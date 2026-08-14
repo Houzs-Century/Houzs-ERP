@@ -434,14 +434,7 @@ interface ProjectDefect {
 interface ChecklistComment {
   id: number;
   item_id: number;
-  /* "upload" / "remove" are written by PUT /checklist/:itemId/attachments and its
-     delete sibling, as RAW SQL — `INSERT INTO project_checklist_comments (…)
-     VALUES (?, 'upload', ?, ?)` — which never passes through addChecklistComment,
-     the one typed helper for this column. So the backend compiled while emitting
-     two values no type here admitted, and the filters that deliberately EXCLUDE
-     them from the Remarks column read to tsc as comparisons that can never be
-     true. Widen both together or this drifts again: backend/src/services/projects.ts. */
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove";
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
   body: string | null;
   user_name: string | null;
   created_at: string;
@@ -562,7 +555,7 @@ function OrganizerPicker({
         if (v === SENTINEL_NEW) {
           // Don't commit the sentinel — open the prompt and let it
           // call onChange with the actual new name.
-          addNew();
+          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
           return;
         }
         onChange(v || null);
