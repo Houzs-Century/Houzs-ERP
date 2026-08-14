@@ -1,3 +1,13 @@
+// @vitest-project light
+//
+// ^ NOT optional, and not a preference. This file is the classifier's own test,
+// so its fixtures contain `cloudflare:test` and `env.DB` — the exact strings the
+// classifier scans for. Without the declaration it classifies ITSELF into the
+// workerd pool, where `fs.mkdtemp` does not exist, and the pool does not fail the
+// file: it dies, and all seven tests below are reported as neither passed nor
+// failed ("Test Files 15 passed (16)", measured 2026-08-14). Deleting this line
+// does not turn a test red. It turns it invisible.
+//
 // What decides whether a backend test file runs on a plain node runner or in
 // the workerd pool, pinned.
 //
@@ -19,7 +29,7 @@
 // behaviour we would prefer, so tightening the rule is a deliberate change that
 // has to come here first.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from 'vitest';
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -85,7 +95,7 @@ test("only .test.ts is collected; helpers and node:test files are not", async ()
   const root = await fixture({
     "tests/a.test.ts": `import { describe } from "vitest";\n`,
     "tests/helper.ts": `export const x = 1;\n`,
-    "tests/b.node.mjs": `import test from "node:test";\n`,
+    "tests/b.node.mjs": `import { test } from 'vitest';\n`,
   });
   const { workers, light } = await classifyTests(root);
   assert.deepEqual([...workers, ...light], ["tests/a.test.ts"]);
@@ -127,11 +137,47 @@ test("a binding inside a STRING still counts, and comment-looking strings do not
   assert.deepEqual(light, ["tests/b.test.ts"], "a string containing /* must not eat the file");
 });
 
+/* THE SELF-REFERENCE, and why an override exists at all. A content rule cannot
+   classify a file whose content is ABOUT the content rule. Proven red first: with
+   the declaration ignored, the fixture below lands in workers. */
+test("an explicit @vitest-project declaration beats the text scan", async () => {
+  const root = await fixture({
+    "tests/a.test.mjs": `// @vitest-project light\nimport fs from "node:fs/promises";\nconst fx = \`import { env } from "cloudflare:test";\`;\n`,
+    "tests/b.test.ts": `// @vitest-project workers\nimport { describe } from "vitest";\n`,
+  });
+  const { workers, light, declared } = await classifyTests(root);
+  assert.deepEqual(light, ["tests/a.test.mjs"], "declared light despite the cloudflare:test fixture");
+  assert.deepEqual(workers, ["tests/b.test.ts"], "declaration can also force workerd");
+  assert.deepEqual(declared, ["tests/a.test.mjs", "tests/b.test.ts"]);
+});
+
+/* The hole the window closes. Without it the override is the same bug one level
+   up: a fixture that CONTAINS a declaration would declare on the real file's
+   behalf, and this classifier's own test is full of such fixtures. */
+test("a declaration below the imports is body text, not a directive", async () => {
+  const root = await fixture({
+    "tests/a.test.ts": `import { describe } from "vitest";\nconst fx = \`// @vitest-project workers\`;\n`,
+    "tests/b.test.ts": `import { env } from "cloudflare:test";\nconst fx = \`// @vitest-project light\`;\n`,
+  });
+  const { workers, light, declared } = await classifyTests(root);
+  assert.deepEqual(declared, [], "nothing below the first import declares anything");
+  assert.deepEqual(light, ["tests/a.test.ts"], "the text scan still decides");
+  assert.deepEqual(workers, ["tests/b.test.ts"]);
+});
+
 test("the real backend tree classifies, and the split is not degenerate", async () => {
-  const { workers, light } = await classifyTests(backendRoot);
+  const { workers, light, declared } = await classifyTests(backendRoot);
   assert.ok(workers.length > 0, "some files genuinely need workerd");
   assert.ok(light.length > workers.length, "the light project must be the larger half");
-  for (const p of [...workers, ...light]) assert.match(p, /\.test\.ts$/);
+  /* `.mjs` as well as `.ts` since BUG-HISTORY #2180: a node:test file contributed
+     nothing to the merged coverage report, so those suites became vitest files
+     and the walk widened to collect them. */
+  for (const p of [...workers, ...light]) assert.match(p, /\.test\.(ts|mjs)$/);
   assert.equal(new Set([...workers, ...light]).size, workers.length + light.length,
     "a file must land in exactly one project");
+  /* PINNED so an override can never accumulate quietly. An override is a claim
+     that no content rule can judge this file; there is exactly one such file, and
+     a second one arriving should be argued for in a diff, not discovered later. */
+  assert.deepEqual(declared, ["tests/classifyTests.test.mjs"],
+    "only the classifier's own test may override its own rule");
 });

@@ -198,17 +198,17 @@ Only **four** of those genuinely have none:
 
 | file the gate calls untested | actually tested by | in which runner | line % under that runner |
 |---|---|---|---:|
-| `release-discipline.mjs` | `tests/releaseDiscipline.node.mjs` | `node:test`, `npm run test:release-discipline` (ci.yml) | 98.60% |
-| `route-matrix-diff.mjs` | `tests/routeMatrixDrift.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
-| `jsonb-bind-scan.mjs` | `tests/jsonbBindScan.node.mjs` | `node:test`, `test:scale-contract` | 95.53% |
-| `po-cost-plan.mjs` | `tests/poCostPlan.node.mjs` | `node:test`, `test:scale-contract` | 97.91% |
+| `release-discipline.mjs` | `tests/releaseDiscipline.test.mjs` | `node:test`, `npm run test:release-discipline` (ci.yml) | 98.60% |
+| `route-matrix-diff.mjs` | `tests/routeMatrixDrift.test.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `jsonb-bind-scan.mjs` | `tests/jsonbBindScan.test.mjs` | `node:test`, `test:scale-contract` | 95.53% |
+| `po-cost-plan.mjs` | `tests/poCostPlan.test.mjs` | `node:test`, `test:scale-contract` | 97.91% |
 | `id-restamp-exec.mjs` | `tests-pg/idRestampExec.pg.test.ts` | vitest **pg project**, `npm run test:pg` — a third config whose report is never merged | — |
-| `ac-po-line-match.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 95.10% |
-| `swallowed-read-scan.mjs` | `tests/swallowedReadScan.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
-| `so-line-dedication.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
-| `ac-po-line.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
-| `ac-line-key-audit.mjs` | `tests/acPoLineRepair.node.mjs` | `node:test`, `test:scale-contract` | 96.15% |
-| `catalogue-series.mjs` | `tests/catalogueSeriesOneList.node.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `ac-po-line-match.mjs` | `tests/acPoLineRepair.test.mjs` | `node:test`, `test:scale-contract` | 95.10% |
+| `swallowed-read-scan.mjs` | `tests/swallowedReadScan.test.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `so-line-dedication.mjs` | `tests/acPoLineRepair.test.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `ac-po-line.mjs` | `tests/acPoLineRepair.test.mjs` | `node:test`, `test:scale-contract` | 100.00% |
+| `ac-line-key-audit.mjs` | `tests/acPoLineRepair.test.mjs` | `node:test`, `test:scale-contract` | 96.15% |
+| `catalogue-series.mjs` | `tests/catalogueSeriesOneList.test.mjs` | `node:test`, `test:scale-contract` | 100.00% |
 | `sqlite-default-to-pg.mjs` | **nothing** | — | — |
 | `scm-area-keys.mjs` | **nothing** | — | — |
 | `bedframe-special-map.mjs` | **nothing** | — | — |
