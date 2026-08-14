@@ -1714,7 +1714,7 @@ function ProjectsListView() {
       key: "size_sqm",
       label: "Size (sqm)",
       align: "right",
-      render: (r) => (r.size_sqm != null ? `${r.size_sqm} m²` : "—"),
+      render: (r) => (r.size_sqm != null ? `${r.size_sqm} sqm` : "—"),
       getValue: (r) => r.size_sqm,
     },
     {
@@ -1892,7 +1892,7 @@ function ProjectsListView() {
       // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
-          {r.venue_size != null ? `${r.venue_size} m²` : "—"}
+          {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
         </span>
       ),
       getValue: (r) => r.venue_size ?? null,
@@ -2983,7 +2983,7 @@ function FinanceListView() {
     },
     {
       key: "rent_per_sqm",
-      label: "Rent / m²",
+      label: "Rent / sqm",
       align: "right",
       defaultHidden: true,
       render: (r) =>
@@ -6952,7 +6952,7 @@ function DetectSizeButton({
           const r = await detectFloorplanSize(projectId, true);
           if (r.detected_sqm != null) {
             toast?.success(
-              `Read ${r.detected_sqm} m² from ${r.source_file}${
+              `Read ${r.detected_sqm} sqm from ${r.source_file}${
                 r.confidence && r.confidence !== "high" ? ` (${r.confidence} confidence — please check)` : ""
               }`,
             );
@@ -7231,7 +7231,7 @@ function ProjectSpecStrip({
           )}
         </SpecCell>
         {editing && (<>
-        <SpecCell label="Size · m²">
+        <SpecCell label="Size · sqm">
           <div className="flex items-center gap-1.5">
             <SpecTextField
               editing={editing}
@@ -9562,12 +9562,12 @@ function ChecklistRow({
           const r = await detectFloorplanSize(projectId);
           if (r.applied && r.detected_sqm != null) {
             toast?.success(
-              `Size read from the floorplan: ${r.detected_sqm} m²${
+              `Size read from the floorplan: ${r.detected_sqm} sqm${
                 r.confidence !== "high" ? " (please double-check)" : ""
               }`,
             );
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
-            toast?.info?.(`Floorplan reads ${r.detected_sqm} m² — the size box already has a value, left as is.`);
+            toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
         } catch { /* silent: the upload itself succeeded */ }
       }
