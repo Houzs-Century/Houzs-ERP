@@ -872,6 +872,12 @@ const rotateEdges = (edges: EdgeType[], rot: Rot): EdgeType[] => {
 export const cellEdges = (cell: Cell): EdgeType[] => {
   // Structural fallback: a Maintenance-renamed code that kept its family +
   // orientation tokens derives its arm sides from the family representative.
+  // mirror-ok: cellEdges - the ONLY difference from the backend copy is the
+  // type annotation below; the logic is byte-identical. Checked 2026-08-13 by
+  // backend/scripts/check-shared-mirrors.mjs, which reports it as DIVERGED
+  // because it compares bodies without stripping type annotations — stripping
+  // them would also hide a real signature change, so the exemption is named
+  // here instead.
   // HOUZS VENDOR — explicit `| undefined` annotation. The source compiles under
   // 2990s's noUncheckedIndexedAccess (which already widens the index reads to
   // `… | undefined`); Houzs's tsconfig has strict but not that flag, so `base`

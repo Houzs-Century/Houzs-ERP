@@ -4,12 +4,32 @@ Internal operations platform for Houzs Century — AutoCount sync, procurement t
 
 ---
 
+> ## ⚠️ Parts of this README are out of date. Trust the code-backed docs instead.
+>
+> This file and [`docs/CODEBASE-MAP.md`](docs/CODEBASE-MAP.md) / [`CLAUDE.md`](CLAUDE.md)
+> disagree about several things. **Where they disagree, the map and `CLAUDE.md` are
+> right** — each claim below was checked against the tree on 2026-08-13. This banner
+> is deliberately a pointer, not a rewrite: the README is being corrected section by
+> section, and a silent merge would have hidden which half was wrong.
+>
+> | This README says | The code says | Authority |
+> |---|---|---|
+> | Data store is **Cloudflare D1 (SQLite)** | D1 was **removed 2026-06-13**; there is no `env.DB` binding in prod. Supabase Postgres via Hyperdrive (`[[hyperdrive]]` in `backend/wrangler.toml`) | `CLAUDE.md`, `docs/CODEBASE-MAP.md` §4 |
+> | Migrations are `001_*.sql … 036_*.sql` in `backend/src/db/migrations/` | **Two trees.** `migrations-pg/` (**284 files, to `0286_*`**, counted 2026-08-14) is what reaches production; `migrations/` (147 files) is the D1/test tree only | `CLAUDE.md` § Migrations, `docs/CODEBASE-MAP.md` §4 |
+> | "No backend/frontend unit tests exist yet" | **169** test files under `backend/tests/` (293 across all of `backend/`), run by vitest in CI | `docs/CODEBASE-MAP.md` §1 |
+> | The Modules table (Overview, Orders, PO, ASSR, Projects, Logistics, Team, Settings) | Omits **`/scm/*` entirely** — the vendored SCM supply-chain surface is the largest part of the app | `docs/CODEBASE-MAP.md` §2-3 |
+>
+> **Start at [`docs/README.md`](docs/README.md)** — it maps every doc to the one thing
+> it is authoritative for.
+
+---
+
 ## Stack
 
 | Layer | Tech | Lives in |
 |-------|------|----------|
 | Worker runtime | Cloudflare Workers + [Hono](https://hono.dev) | `backend/src/index.ts` |
-| Data store | Cloudflare D1 (SQLite) | `backend/src/db/` |
+| Data store | **Supabase Postgres via Cloudflare Hyperdrive.** D1 is test-only (removed from prod 2026-06-13) | `backend/src/db/client.ts` (`getDb` → `drizzle-orm/postgres-js`); binding is `[[hyperdrive]]` in `backend/wrangler.toml` |
 | Blob store | Cloudflare R2 (proof-of-delivery photos, signatures, payment proofs) | R2 bucket `houzs-erp` |
 | SPA | React 18 + Vite + TypeScript + Tailwind | `frontend/` |
 | SPA hosting | Cloudflare Pages | `frontend/wrangler.toml` |
@@ -25,6 +45,17 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 
 ## Modules
 
+> **⚠️ Corrected 2026-08-14. Six of the ten rows below are routes that NO LONGER
+> EXIST.** `grep 'path="…"' frontend/src/App.tsx` returns nothing for `/orders`,
+> `/delivery-orders`, `/po`, `/logistics`, `/trips` or `/fleet` — they went in
+> the strip-to-core cutover, and their function now lives under the `/scm/*`
+> surface this table omits entirely. Surviving from this table: `/`, `/assr`,
+> `/projects`, `/team`, `/settings`, `/profile`. The banner at the top of this
+> file faulted the table only for the OMISSION; the dead rows are the bigger
+> problem, because a route that is listed reads as a route that exists.
+> `docs/CODEBASE-MAP.md` §2–3 and `docs/generated/codebase-map-facts.md` carry
+> the real desktop route table.
+
 | Module | Route | Perm | What it does |
 |--------|-------|------|--------------|
 | **Overview** | `/` | — | Daily briefing. Inbox (tasks, reviews, blockers, this-week), KPI ribbon, cross-module P&L calendar, pipeline snapshot. |
@@ -38,9 +69,9 @@ The Worker is the single HTTP entry point — the SPA calls it over CORS. AutoCo
 | **Settings** | `/settings` | `settings.manage` | Tabs: Connection, Sync (filtered cron + full refresh), Email (Resend channel toggles), Activity Log (execution history across all jobs). |
 | **Profile** | `/profile` | — | Password change, session, display name. |
 
-### Driver sub-app
+### Driver sub-app — REMOVED
 
-Driver-only users (holding `trips.read.own` without `trips.read.all` or `sales_orders.read`) are auto-redirected from `/` into the mobile shell at `/driver`. Pages: `DriverHome` (today's trip), `DriverTrip` (stop-by-stop POD capture), `DriverProfile` (clock-in, earnings, salary).
+**Corrected 2026-08-14: there is no `/driver` route.** `DriverHome`, `DriverTrip` and `DriverProfile` are gone; this section described a shell that no longer ships. The mobile surface is `frontend/src/mobile/` — see `docs/CODEBASE-MAP.md` for the desktop/mobile pairing.
 
 ### Public (no login) surfaces
 
@@ -148,11 +179,34 @@ Create the first owner account with `wrangler d1 execute …` or the bootstrap r
 
 Configured in `backend/wrangler.toml → [triggers] crons`. Dispatched by `backend/src/index.ts → scheduled(event, env, ctx)`.
 
-| Schedule | Job | Entrypoint |
+**Read `backend/src/index.ts → scheduled()` for the authoritative list** — three
+`event.cron` branches at `:479`, `:550`, `:635`. The table below was re-derived
+from those branches on **2026-08-14** and is a snapshot, not a binding.
+
+| Schedule | Jobs (in branch order) | Entrypoints |
 |----------|-----|------------|
-| `*/5 * * * *` | Sales-order incremental sync (`/SalesOrder/getSince` + checkpoint) | `services/sync.ts → runPull` |
-| `*/30 * * * *` | Purchase-order sync — `/PurchaseOrder/getAll` (docs) + `/PurchaseOrder/getOutstanding` (lines) | `services/po.ts → runPOPull` + `runPODocsPull` |
-| `0 2 * * *` | Daily batch — overdue auto-extension, ASSR SLA escalation, project due-date reminder emails, `/Creditor/getAll` resync, stock-items refresh (re-resolves `assr_cases.creditor_code` when upstream `MainSupplier` changes) | `services/overdue.ts`, `services/assr.ts`, `services/projects.ts`, `services/creditors.ts`, `services/stockItems.ts` |
+| `*/5 * * * *` (`:479`) | Hyperdrive keep-warm ping · durable email outbox retry · AutoCount inbound SO pull (`/SalesOrder/getSince` + checkpoint) · amendment write-back drain · ERP→AutoCount outbox drain · SO stock-allocation recompute sweep · iOS fleet-reminder push (UTC hour 0 only) · orphan payment-slip reaper | `services/pull.ts → runPull`, `drainEmailOutbox`, `drainCommands`, `drainAutoCountOutbox`, `drainStockAllocationRecompute`, `services/pushFleetReminders.ts`, the slip `reapOnce` |
+| `*/30 * * * *` (`:550`) | ASSR per-stage alert scanner · ASSR lead-time scheduled activations · agent heartbeat | `services/assrAlerts.ts → runAssrAlerts`, `runScheduledLeadTimeActivations`, `runAgentHeartbeat` |
+| `0 2 * * *` (`:635`) | ASSR SLA escalation · AutoCount DO-header mirror refresh · ASSR daily digest · project due-date reminder emails · client-error digest + 90-day sweep · idempotency-key TTL sweep · `scm.mv_ar_aging` refresh · scan-SO weekly rule distill (Sundays only) | `services/assrEscalation.ts → runSlaEscalation`, `services/doMirror.ts → runDoMirrorSync`, `services/assrAlerts.ts → runAssrDailyDigest`, `services/projectReminders.ts → runProjectDueReminders`, `services/clientErrors.ts → runClientErrorDigest`, inline SQL ×2, `scm/routes/scan-so.ts → distillAllSalespersonRules` |
+
+> **CORRECTED 2026-08-14.** Every row above was wrong. The table named
+> `services/sync.ts`, `services/po.ts`, `services/overdue.ts` and
+> `services/creditors.ts`; **none of those files exists** — `overdue.ts` and
+> `creditors.ts` were deleted by `dfa1111a` "chore: strip ERP to core modules"
+> (`git log --diff-filter=D`), and the SO pull has always lived in
+> `services/pull.ts`. It described a `*/30` purchase-order sync:
+> `grep -rn 'runPOPull\|runPODocsPull' backend/src` returns nothing — that job
+> does not exist. And it credited the daily batch with overdue auto-extension, a
+> `/Creditor/getAll` resync and a stock-items refresh; none of the three appears
+> in the `0 2 * * *` branch (`grep -n 'stockItems\|reditor\|overdue'
+> backend/src/index.ts` returns only the `routes/stockItems` import at `:49`).
+> Anyone debugging "why did the creditor code not resync" was starting from a
+> file deleted months ago — **while this same README said so 45 lines further
+> down**: *"there is no PO, creditor or overdue cron service in
+> `backend/src/services/` … Earlier versions of this table listed them as live;
+> they were not."* The AutoCount section was corrected on 2026-08-12 and the cron
+> table three screens above it was not, because nothing ties the two. That is the
+> whole failure mode in one file.
 
 Everything else runs on-demand from user actions (Refresh buttons, panel interactions, manual `Sync All`).
 
@@ -162,21 +216,26 @@ Every scheduled run writes one row to `execution_logs` (`type`, `status`, `messa
 
 ## AutoCount integration
 
-AutoCount is treated as the **system of record** for anything procurement- or finance-related. The D1 tables `sales_orders`, `purchase_orders`, `purchase_order_lines`, `purchase_order_docs_raw`, `creditors`, and `stock_items` are mirrors — refreshed on cron, read-mostly from the SPA.
+**Start at `docs/autocount-integration-map.md`** — there is more than one channel and they run in opposite directions. This section covers only the legacy READ relay; the ERP -> AutoCount write-back is a different service and is documented there.
 
-| AutoCount endpoint | Used by | Refreshed |
+**The ERP is the master.** Documents are created and edited in the ERP and pushed into AutoCount, which is a receiving end for the accounts. This section used to open by calling AutoCount "the system of record" — that was true before the cutover and is the wrong way round now.
+
+### The legacy read relay (`AUTOCOUNT_API_URL`, `it-houzs.dev`)
+
+Inbound only. Gated by `AUTOCOUNT_SYNC_DISABLED` (`wrangler.toml [vars]`, currently `"false"` = pulls ON). The client is `backend/src/services/autocount.ts`; it authenticates with `AUTOCOUNT_API_KEY` and writes a `FAILED` row to `execution_logs` on failure.
+
+| AutoCount endpoint | Used by | When |
 |-|-|-|
-| `/SalesOrder/getSince` | Orders incremental pull | `*/5` cron |
-| `/SalesOrder/getAll` | Settings → Sync → "Full Refresh" | Manual |
-| `/SalesOrder/update` | Orders delivery-field edits (push back) | On save |
-| `/PurchaseOrder/getAll` | PO documents pull | `*/30` cron |
-| `/PurchaseOrder/getOutstanding` | Outstanding lines (dashboard counts) | `*/30` cron |
-| `/PurchaseOrder/getDetail` | PO side-panel drill-down (on-demand) | Click |
-| `/Creditor/getAll` | Creditors mirror | Daily + manual |
-| `/Creditor/getSingle` | On-demand creditor refresh | Click |
-| `/StockItem/getSingle` | Service cases' `item_code → main_supplier` lookup (cached) | Daily + case save |
+| `/SalesOrder/getSince` | SO mirror into `sales_orders` (`services/pull.ts`) | `*/5` cron |
+| `/DeliveryOrder/getSince`, `/DeliveryOrder/getAll` | DO header mirror (`services/doMirror.ts`); incremental first, full dump as fallback | daily `0 2` cron |
+| `/SalesOrder/getSingle`, `/SalesOrder/getDetail` | ASSR service cases resolving their SO context | on demand |
+| `/StockItem/getSingle` | `item_code -> main_supplier` for case routing, cached in `stock_items` | on demand + refresh route |
 
-The Worker's client (`backend/src/services/autocount.ts`) prefixes every request with `AUTOCOUNT_API_URL` (`wrangler.toml [vars]`) and authenticates with `AUTOCOUNT_API_KEY` (secret). On failure it writes a `FAILED` row to `execution_logs` and returns a 500; the SPA surfaces the error via toast.
+**Everything else the client can call has no caller.** Verified against `main`, 2026-08-12: `getOverdue`, `getOutstandingPOs`, `getAllPODocs`, `getPODetail`, `getAllCreditors`, `getSingleCreditor` are all zero-callsite, and there is no PO, creditor or overdue cron service in `backend/src/services/`. Earlier versions of this table listed them as live; they were not. There are no `purchase_orders` / `creditors` refresh jobs.
+
+**The two write methods on this client are inert.** `pushSalesOrder` and `pushPODates` short-circuit on the compile-time constant `AUTOCOUNT_WRITES_DISABLED = true` and have no callers. A push path did once exist (`routes/orders.ts` called it on save) and was removed with the Orders module in the strip-to-core change — which is why older docs describe delivery-field edits pushing back. They do not.
+
+**Known defect, not yet fixed:** Settings -> Sync calls `/api/sync/status`, `/api/sync/pull` and `/api/sync/retry-errors`. Only the five `*-mirror` receivers are mounted under `/api/sync`, so those three 404. The tab's checkpoint display and both buttons are dead.
 
 ---
 
@@ -201,14 +260,20 @@ AUTOCOUNT_API_URL = "https://it-houzs.dev/"
 PUBLIC_APP_URL    = "https://erp.houzscentury.com"   # canonical domain; used to build email links
 EMAIL_FROM        = "Houzs ERP <no-reply@mail.it-houzs.dev>"
 
-[[d1_databases]]
-binding      = "DB"
-database_name = "autocount-sync"
+# The database. There is NO [[d1_databases]] binding in prod — this block used
+# to show one, and it was removed on 2026-06-13.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
 
 [[r2_buckets]]
 binding     = "POD_BUCKET"
 bucket_name = "houzs-erp"
+# plus SO_ITEM_PHOTOS, PUBLIC_ASSETS and SLIPS — see backend/wrangler.toml
 ```
+
+> Corrected 2026-08-14. The snippet above carried a copy-pasteable
+> `[[d1_databases]]` block two hundred lines below the banner that refutes it —
+> `grep -n d1_databases backend/wrangler.toml` returns nothing.
 
 ### Required secrets (`wrangler secret put`)
 
@@ -241,7 +306,9 @@ The SPA prepends this to every API call. In dev the fallback is `http://localhos
 - **`trips`, `trip_stops`, `trip_events`, `trip_drivers`** — dispatch graph. `trip_events` is append-only (clock-ins, status changes, notes).
 - **`finance_ledger`** — double-entry-ish project cost tracking feeding the Projects P&L.
 
-All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against SQLite views or ad-hoc queries — no pre-computed aggregates, since D1 handles the data volumes comfortably.
+All financial rollups (Sales P&L, PO Cost P&L, Service Cost P&L, Projects P&L, Overview) run against views or ad-hoc queries — no pre-computed aggregates.
+
+> Corrected 2026-08-14: this line said "SQLite views … since **D1** handles the data volumes comfortably". **The data store is Supabase Postgres, reached through Hyperdrive**; D1 is test-only. This is the same stale-D1 claim `CLAUDE.md` calls out as having survived a month past the cutover, still alive in the README.
 
 ---
 
@@ -287,17 +354,54 @@ npm test                                     # hits BASE_URL (default localhost)
 npm test -- --base-url=https://…             # override
 ```
 
-No backend/frontend unit tests exist yet — Vitest is the planned pick when a service grows complex enough to warrant them.
+Vitest, on both sides, and the backend suite GATES THE DEPLOY. `backend/tests/`
+holds 163 `*.test.ts` files plus colocated ones under `backend/src/`; the
+frontend has 131. Both `package.json`s define `"test": "vitest run"`, and
+`.github/workflows/deploy.yml` runs the backend suite sharded 4× as a job the
+deploy depends on. Real-Postgres integration tests live in `backend/tests-pg/`
+and run against CI's `postgres:16` service container (`npm run test:pg`); they
+SKIP rather than fail without `TEST_DATABASE_URL`.
+
+**Corrected 2026-08-14.** This line said *"No backend/frontend unit tests exist yet — Vitest is the planned pick"*. Vitest is in, and heavily: **169** test files under `backend/tests/`, **293** across all of `backend/`, **136** under `frontend/src`. CI runs them as `backend-typecheck` (the light suite) plus a two-way `backend-tests` shard matrix. See `.github/workflows/ci.yml`.
 
 ---
 
 ## Migrations discipline
 
-- Every schema change goes through a new numbered file in `backend/src/db/migrations/`.
-- Files are applied in numeric order by `npm run db:migrate`; the script tracks applied files in the `d1_migrations` table and skips them on re-run.
-- Don't edit a migration after it's been applied to prod. Write a new one.
+**There are TWO migration trees and only one reaches production.** Putting a
+change in the wrong one is the trap `CLAUDE.md` warns about by name: it ships,
+passes CI, merges — and the database never changes.
+
+- **`backend/src/db/migrations-pg/` is the LIVE tree.**
+  `.github/workflows/deploy.yml` runs `node scripts/pg-migrate.mjs` on every push
+  to `main`, so a merged file is applied to production automatically. A file that
+  fails there blocks every later migration until it is fixed.
+- **`backend/src/db/migrations/` is the older D1 / test mirror.** Kept for
+  test parity only. Production does not read it.
+- `pg-migrate` tracks applied files by FULL FILENAME, so number gaps and
+  out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the
+  number at MERGE time by re-listing the tree, not when you branch.
+- Don't edit a migration after it has been applied to prod — and note that
+  RENAMING one counts as editing: the tracker keys on the filename, so a renamed
+  applied file runs a second time against a schema it already changed.
 - SQLite can't `DROP COLUMN` when the column is referenced by an index or a foreign key. Pattern: `DROP INDEX` first, or rebuild the table (see `036_drop_legacy_suppliers.sql` for the projects-table rebuild example).
 - Use `IF EXISTS` and `IF NOT EXISTS` liberally — it keeps the migration idempotent against re-runs on half-applied state.
+
+> **Corrected 2026-08-14 — this section pointed at the DEAD tree.** It said every
+> schema change goes in `backend/src/db/migrations/` and is applied by
+> `npm run db:migrate`. That is the **D1/test** tree: a migration written there
+> ships, passes CI, merges, and **production never changes**. This is the single
+> most expensive stale claim in the file, and `docs/KNOWLEDGE-SYSTEM.md` names
+> this exact sentence as the one that cost real time.
+
+- **A schema change that must reach production goes in `backend/src/db/migrations-pg/`.** `deploy.yml` runs `node scripts/pg-migrate.mjs` on every push to `main`, so a merged file is applied to prod automatically — and a file that fails there blocks every later migration until it is fixed.
+- `backend/src/db/migrations/` is the older D1/test tree. It is NOT dead and must not be deleted (backend vitest builds an in-process D1 from it), but nothing applies it to production.
+- `pg-migrate` tracks applied files by **full filename**, so number gaps and out-of-order merges are safe; DUPLICATE numbers are what break it. Pick the number at MERGE time by re-listing the tree, not when you branch.
+- Don't edit a migration after it's been applied to prod. Write a new one. **Renaming an applied file re-runs it**, because tracking is by filename.
+- Use `IF EXISTS` / `IF NOT EXISTS` and catalog guards liberally — it keeps the migration idempotent against re-runs on half-applied state.
+- Demo/seed data does not belong in a numbered migration; put it in a one-shot `backend/scripts/seed-*.mjs`.
+
+See `CLAUDE.md` § Migrations, which is the authority for this.
 
 ---
 
@@ -306,4 +410,4 @@ No backend/frontend unit tests exist yet — Vitest is the planned pick when a s
 - `/help` surface inside the app — in-app tour + keyboard shortcuts (⌘K / `/` for search).
 - `docs/` holds architecture PDFs and module-specific guides. Check there first when something is non-obvious.
 - Cloudflare dashboard → Workers → `autocount-sync-api` → Logs for live request traces.
-- `execution_logs` table in D1 for cron / sync history (also exposed in Settings → Activity Log).
+- `execution_logs` table for cron / sync history (also exposed in Settings → Activity Log).

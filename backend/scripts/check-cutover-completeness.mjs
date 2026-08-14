@@ -20,12 +20,16 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const CO = 1;
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8"));
 
@@ -61,14 +65,18 @@ async function main() {
   /* BEDFRAME completeness = the four things the factory sheet needs: fabric
      colour, gap, divan height, leg height. A blank colour is only acceptable
      while the order has not been proceeded (owner: 那些当他们 proceed 单的时候，
-     他们会补掉的), so PROCESSED orders are counted apart. */
+     他们会补掉的), so PROCESSED orders are counted apart.
+     Proceeded is the STATE "carries a Processing Date", and that date is
+     internal_expected_dd — what the UI writes and what soProcessingLocked and
+     MRP read. proceeded_at is only the IN_PRODUCTION stamp, so it named a
+     narrower population than the rule the owner stated. */
   const bfSo = await sql`SELECT
       COUNT(*)::int total,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL)::int proc,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'colourId') IS NULL)::int proc_no_colour,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'gap') IS NULL)::int proc_no_gap,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'divanHeight') IS NULL)::int proc_no_divan,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'legHeight') IS NULL)::int proc_no_leg
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL)::int proc,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'colourId') IS NULL)::int proc_no_colour,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'gap') IS NULL)::int proc_no_gap,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'divanHeight') IS NULL)::int proc_no_divan,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'legHeight') IS NULL)::int proc_no_leg
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.item_group = 'bedframe'
       AND COALESCE(i.cancelled,false) = false AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
@@ -91,10 +99,10 @@ async function main() {
      than guessed. So count placeholders, then seat size and colour. */
   const sfSo = await sql`SELECT
       COUNT(*)::int total,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL)::int proc,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL)::int proc,
       COUNT(*) FILTER (WHERE COALESCE(i.remark,'') LIKE '%SOFA UNPARSED%')::int placeholder,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'seatHeight') IS NULL)::int proc_no_size,
-      COUNT(*) FILTER (WHERE h.proceeded_at IS NOT NULL AND (i.variants->>'colourId') IS NULL)::int proc_no_colour
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'seatHeight') IS NULL)::int proc_no_size,
+      COUNT(*) FILTER (WHERE h.${PDATE} IS NOT NULL AND (i.variants->>'colourId') IS NULL)::int proc_no_colour
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.item_group = 'sofa'
       AND COALESCE(i.cancelled,false) = false AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;

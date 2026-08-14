@@ -29,7 +29,8 @@ import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
 import { buildTransferPayload } from '../lib/stock-transfer-atomic';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix } from '../lib/companyScope';
+import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
@@ -255,6 +256,11 @@ async function writeTransferMovements(
 // PR-DRAFT-removal: row is inserted as POSTED and inventory_movements
 // are written inline. No separate /post call needed.
 stockTransfers.post('/', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     insertHeader / insertWithDocNoRetry stamp the active company on that row, so
+     the id is not caller-supplied and cannot name another company's document.
+     Verified 2026-08-13 by reading the handler end to end. */
   const sb = c.get('supabase');
   const user = c.get('user');
   let body: Record<string, unknown>;
@@ -296,6 +302,14 @@ stockTransfers.post('/', async (c) => {
       .from('stock_transfers').insert({ transfer_no: transferNo, ...headerInsert }).select(HEADER).single(),
   );
   if (hErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
@@ -404,9 +418,22 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   /* The BEFORE half of the audit pair. Read before the flip because afterwards
      the prior status is unrecoverable, and it is exactly what a reader wants:
      "this was POSTED and someone cancelled it". */
-  const { data: beforeRow } = await sb.from('stock_transfers')
-    .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
-    .eq('id', id).maybeSingle();
+  /* Company scope. This handler was missed by the 2026-07-22 owner audit that
+     scoped every sibling flow: the before-read and the CANCELLED flip were both
+     id-only, so a caller in company A holding B's transfer UUID could cancel B's
+     POSTED transfer AND drive reverseMovements over B's stock. stock-takes.ts:437
+     carries the same fix and its comment names this exact class. Found 2026-08-13
+     by a code audit, verified against both handlers before fixing. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: beforeRow } = await scopeToCompanyId(
+    sb.from('stock_transfers')
+      .select('transfer_no, status, from_warehouse_id, to_warehouse_id, company_id')
+      .eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const beforeTransfer = beforeRow as {
     transfer_no: string; status: string;
     from_warehouse_id: string | null; to_warehouse_id: string | null; company_id: number | null;
@@ -415,10 +442,18 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TRANSFER', entityId: id, action: 'CANCEL', companyId: beforeTransfer?.company_id ?? null });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { data, error } = await sb.from('stock_transfers')
-    .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
-    .eq('id', id).neq('status', 'CANCELLED')
-    .select('id, status, cancelled_at').single();
+  /* The company predicate goes on the FLIP, not only on the read above — this
+     is the statement that reverses stock, and the SCM client is service-role so
+     nothing re-checks between the two round trips. maybeSingle, not single: the
+     predicate can legitimately match zero rows (another company's transfer, or
+     a second cancel), and single() reports that as an error, so the
+     `already_cancelled` 409 below was unreachable — a repeat cancel 500'd. */
+  const { data, error } = await scopeToCompanyId(
+    sb.from('stock_transfers')
+      .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
+      .eq('id', id).neq('status', 'CANCELLED'),
+    co.companyId,
+  ).select('id, status, cancelled_at').maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data)  return c.json({ error: 'already_cancelled' }, 409);
 

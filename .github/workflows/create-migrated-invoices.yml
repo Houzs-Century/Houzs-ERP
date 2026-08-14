@@ -37,6 +37,11 @@ on:
         default: "prod"
         type: choice
         options: [staging, prod]
+      confirm:
+        description: "For mode=apply, type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: create-migrated-invoices-${{ inputs.target }}
@@ -59,6 +64,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
+          CONFIRM: ${{ inputs.confirm }}
           KIND: ${{ inputs.kind }}
 
   run-prod:
@@ -74,4 +80,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
+          CONFIRM: ${{ inputs.confirm }}
           KIND: ${{ inputs.kind }}

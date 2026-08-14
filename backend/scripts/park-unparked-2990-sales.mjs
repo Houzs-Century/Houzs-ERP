@@ -18,6 +18,8 @@
 //     backfill-so-venue-by-parking.mjs, run AFTER this.
 //
 // Env: DATABASE_URL. APPLY=1 to write (default DRY-RUN).
+//
+// RE-RUN: inert. Only staff with no showroom are parked, which the write fills.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

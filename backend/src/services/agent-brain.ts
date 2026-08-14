@@ -111,8 +111,6 @@ export async function askAgentBrain(
 // as the single-shot gather path redacts before the model call.
 // ---------------------------------------------------------------------------
 
-export const ANTHROPIC_MESSAGES_URL = ANTHROPIC_URL;
-
 /** One tool offered to the model — Anthropic's tool schema shape. */
 export interface AgentToolDef {
   name: string;

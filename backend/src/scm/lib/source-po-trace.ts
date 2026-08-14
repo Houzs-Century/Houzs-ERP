@@ -415,7 +415,10 @@ export async function resolveDoHeaderSources(
       .map((l) => l.so_item_id as string);
     let boundPoBySoItem = new Map<string, { poNumber: string | null }>();
     if (unresolvedSoIds.length > 0) {
-      try { boundPoBySoItem = await resolveExpectedBatchBySoItem(sb, unresolvedSoIds); } catch { /* fallback only */ }
+      /* 'latest' — same read-only drill-down rule as the DO detail: this
+         names a likely source PO, it never stamps a batch, so the ambiguous
+         line is better answered than blank. The stamping paths block (H3). */
+      try { boundPoBySoItem = await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' }); } catch { /* fallback only */ }
     }
     return unionLineTraces(byBucket, doLines.map((l) => ({
       docKey: l.delivery_order_id,

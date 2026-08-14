@@ -26,7 +26,7 @@ type Store = {
   creditRows: Row[]; // customer_credits balance rows for the debtor
   companyId: number | null;
   paidCenti: number;
-  /** scm.sales_invoices.migrated_no_stock for the SI under test (migration 0280). */
+  /** scm.sales_invoices.migrated_no_stock for the SI under test (migration 0294). */
   migrated: boolean;
   /** when set, the migrated pre-flight read fails with this message */
   migratedReadError: string | null;
@@ -223,7 +223,7 @@ describe('applyCustomerCreditToSi — guards (no DB touched)', () => {
   });
 });
 
-/* MIGRATED INVOICES SPEND NO CREDIT (migration 0280).
+/* MIGRATED INVOICES SPEND NO CREDIT (migration 0294).
    A migrated SI mirrors an invoice AutoCount already raised and already settled
    in its own book. Paying it from the customer's ERP credit balance spends a
    real balance a second time — the customer silently loses money still owed to

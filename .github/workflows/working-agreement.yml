@@ -1,0 +1,54 @@
+# The three MANDATORY owner rules at the top of CLAUDE.md, enforced.
+#
+# Until this workflow existed they lived only in prose, and prose is skipped by
+# whoever is in a hurry — which, at 316 commits a day, is everyone. Measured on
+# 2026-08-13: ten hand-written PRs shipped that read as fixes and changed code,
+# none of them added a BUG-HISTORY.md entry, and no check said a word.
+#
+# What it does NOT do:
+#   · It is not a required status check. It reports; the owner decides. Adding
+#     it to the `main-protection` ruleset is a separate, deliberate act.
+#   · It does not run on `merge_group`. There is no pull_request payload there,
+#     so there is no title, body or label to read — and a check that can never
+#     report would leave every queued PR pending forever (CLAUDE.md says exactly
+#     this about `backend-tests (N)`).
+#
+# `edited` and `labeled`/`unlabeled` are in the trigger list on purpose: rule 3
+# is satisfied by editing the BODY, and both escapes are satisfied by adding a
+# LABEL. Without those events the fix would never re-run the check.
+name: Working agreement
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+concurrency:
+  group: working-agreement-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  working-agreement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The gate diffs against the merge base. Without full history
+          # `git diff origin/main...HEAD` has nothing to resolve, and an empty
+          # diff is the silent pass this whole workflow exists to prevent.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # The gate's own logic, on node:test with zero dependencies — hence no
+      # `npm ci` anywhere in this job. A checker nobody runs is not a checker.
+      #
+      # A GLOB, not one named file. The named form silently skipped
+      # working-agreement.escapes.test.mjs the moment it was added — a second
+      # test file next to the first is the obvious thing to write, and it would
+      # never have run. (`node --test scripts/lib/` is NOT the fix: on node 22 a
+      # bare directory is resolved as a module and dies MODULE_NOT_FOUND.)
+      # Measured: this runs 30 tests across 2 files, and exits 1 when any fails.
+      - name: Test the gate
+        run: node --test scripts/lib/*.test.mjs
+      - name: Check the working agreement
+        run: node scripts/check-working-agreement.mjs

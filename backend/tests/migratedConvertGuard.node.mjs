@@ -47,18 +47,44 @@ const SI_SRC = "src/scm/routes/sales-invoices.ts";
 function handlers(src, routerVar) {
   const text = read(src);
   const lines = text.split(/\r?\n/);
-  const re = new RegExp(`^${routerVar}\\.(get|post|patch|put|delete)\\(\\s*'([^']+)'`);
+  const re = new RegExp(`^${routerVar}\\.(get|post|patch|put|delete)\\(\\s*'([^']+)'(.*)$`);
   const found = [];
   lines.forEach((line, i) => {
     const m = re.exec(line);
-    if (m) found.push({ key: `${m[1].toUpperCase()} ${m[2]}`, start: i });
+    if (m) found.push({ key: `${m[1].toUpperCase()} ${m[2]}`, start: i, rest: m[3] });
   });
   const out = new Map();
   found.forEach((h, idx) => {
     const end = idx + 1 < found.length ? found[idx + 1].start : lines.length;
-    out.set(h.key, lines.slice(h.start, end).join("\n"));
+    let body = lines.slice(h.start, end).join("\n");
+    /* A registration may point at a NAMED function instead of inlining the
+       handler — `post('/from-grn', createPurchaseInvoiceFromGrnHandler);`. Both
+       of these were inline when this test was written and were extracted on
+       main; slicing to the next registration then returns one line that
+       contains no guard, and every such route reads as unguarded while the
+       guard sits untouched in the function above. Follow the reference. */
+    const named = /^\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*;?\s*$/.exec(h.rest);
+    if (named) {
+      const fn = namedFunctionBody(lines, named[1]);
+      if (fn) body += "\n" + fn;
+    }
+    out.set(h.key, body);
   });
   return out;
+}
+
+/**
+ * The source of a top-level `const NAME = async (c) => {` / `async function NAME`,
+ * from its declaration to the next top-level declaration. Returns null when the
+ * name is not declared in this file, which the caller treats as "nothing extra
+ * to read" rather than as a pass.
+ */
+function namedFunctionBody(lines, name) {
+  const decl = new RegExp(`^(?:export\\s+)?(?:const\\s+${name}\\s*[:=]|async\\s+function\\s+${name}\\b|function\\s+${name}\\b)`);
+  const start = lines.findIndex((l) => decl.test(l));
+  if (start === -1) return null;
+  const nextTop = lines.findIndex((l, i) => i > start && /^(?:export\s+)?(?:const|async\s+function|function|class)\s/.test(l));
+  return lines.slice(start, nextTop === -1 ? lines.length : nextTop).join("\n");
 }
 
 /* The seven write paths that can attach a migrated goods receipt or a migrated

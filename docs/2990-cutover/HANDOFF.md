@@ -1,7 +1,9 @@
 # 2990 → Houzs Cutover — HAND-OFF
 
 > **The cutover is LIVE.** 2990 POS runs entirely on Houzs company_2 as of 2026-07-21.
-> Read `CUTOVER-PLAN.md`, `DATA-FLOW.md`, `FLIP-RUNBOOK.md` for background.
+> Read `../archive/2990-cutover/CUTOVER-PLAN.md`, `../archive/2990-cutover/DATA-FLOW.md`
+> and `../archive/2990-cutover/FLIP-RUNBOOK.md` for background — all three were
+> archived 2026-08-13 because the flip they plan happened; this file is the outcome.
 > Last updated: 2026-07-23 (branding backfill + GL import + multi-company scaling doc).
 
 ## TL;DR

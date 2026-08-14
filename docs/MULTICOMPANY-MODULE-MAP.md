@@ -9,6 +9,85 @@ Three module classes: **SEPARATE** (per-company data), **SHARED** (one copy,
 all companies), **UNIFIED-MODULE + PER-COMPANY TARGETING** (one interface, a
 company dimension decides audience/ownership).
 
+## ⚠️ THE PREDICATE IS THE ONLY ISOLATION — read this before writing a query
+
+The SCM/Houzs supabase client is the **service role**. It **bypasses RLS**.
+Migration `0061_enable_rls_scm.sql` turned RLS ON for every `scm.*` table and
+created **no policies** — which locks out anon/authenticated and changes nothing
+for this application, because "service_role bypasses RLS as a built-in
+convention" (that migration's own header). No policy is ever evaluated on an app
+request. There is **no second line of defence**. The
+`company_id` predicate that `scopeToCompany` / `scopeToCompanyId` /
+`scopeToAllowedCompanies` put on a statement is the *entire* tenant boundary.
+
+Three consequences, all learned the hard way:
+
+1. **A scoped READ does not protect the WRITE that follows it.** Nothing
+   re-checks between two PostgREST round trips. Load-then-update needs the
+   predicate on BOTH statements. "The read already 404'd it" is the reasoning
+   that left every write in the system open after the 2026-08-10 read audit.
+2. **"Reads are scoped, therefore the module is safe" is false** and this
+   document used to imply it. A module can have a perfectly scoped list and a
+   completely open `PATCH /:id`. Ownership predicates that are NOT `company_id`
+   — `so_doc_no`, `purchase_invoice_id`, `trip_id`, `lorry_id` — prove the row
+   belongs to that PARENT. They do not prove the parent is in your books.
+3. **Cross-company is not the same as unscoped.** A shared-queue module (TMS
+   trips / delivery planning / fleet) widens with `scopeToAllowedCompanies` to
+   the caller's GRANTED companies. That is still a predicate. Writing with none
+   at all lets a caller reach a company they hold no grant for.
+
+Use `maybeSingle`, not `single`, on any by-id statement carrying a company
+predicate: the predicate can legitimately match zero rows, and `single()` turns
+that honest 404 into a 500.
+
+**Measured 2026-08-13** (`.from()` write statements on tables that carry
+`company_id`, across `backend/src/scm/routes` + `backend/src/routes`): 634 write
+statements, of which **294 carried no company predicate on their own statement**.
+The unscoped-write sweep closed the directly-reachable ones and left the rest
+listed in its PR; re-measure with the same method rather than trusting this
+number after the next change.
+
+> **THE RE-MEASURE INSTRUCTION IS UNENFORCED — noted 2026-08-14.** There is no
+> committed script that performs the measurement above, so "re-measure with the
+> same method" cannot actually be followed; each attempt re-implements the
+> heuristic and gets a slightly different denominator. That is not a nit — an
+> independent replication on 2026-08-13 reproduced this denominator to within one
+> statement (633 vs 634) and then applied the same unchanged script to five
+> `git archive` snapshots. The **trend** it found is the part worth keeping:
+>
+> | tree date | unscoped / total |
+> |---|---|
+> | 2026-07-15 | 382 / 533 (72%) |
+> | 2026-08-01 | 345 / 619 (56%) |
+> | 2026-08-10 | 360 / 634 (57%) |
+> | 2026-08-12 | 359 / 631 (57%) |
+> | 2026-08-13 | 327 / 633 (52%) |
+>
+> Unscoped writes **ROSE** 345 → 359 between 08-01 and 08-12 while two dedicated
+> leak PRs (#1802, #1804 "7 more cross-company read leaks") were shipping. The
+> absolute counts over-count — `.insert(stampCompany(rows, c))` is scoped via a
+> helper, and compensating deletes on a just-minted id are safe — so trust the
+> direction, not the number.
+>
+> **Why this class does not converge: every remedy so far has been a sweep, and a
+> sweep is a snapshot.** Seventeen of them in eight weeks, visible in the PR
+> numbers alone: #625 → #632 ("third #600/#625 leak") → #637 → #639 → #640 →
+> #644 → #648 → #652 → #666 ("close the costing leak #649 missed") → #826 → #851
+> ("audit #826 items 3–9") → #878/#881 ("leaks beyond #851") → #1015 ("13
+> remaining audit endpoints") → #1802 → #1804 → #2086 ("the writes the earlier
+> audit left"). The next PR adds the 295th unscoped write with nothing objecting.
+> The SCM supabase client is the **service role**, so RLS is bypassed and the
+> predicate is the only tenant boundary.
+>
+> **The mechanical remedy, not yet built:** a lint rule (ESLint
+> `no-restricted-syntax` or a custom AST check in CI) failing any `.from(<table
+> carrying company_id>)` chained to `.update` / `.delete` / `.upsert` without
+> `company_id` / `scopeToCompany` / `stampCompany` in the same statement, with an
+> explicit allowlist for the deliberately shared masters (`currencies`,
+> `lorries`, `lorry_maintenance`, `lorry_service_records`). Until that exists,
+> treat the number above as a historical measurement and this section as a
+> description of a hazard, not of a control.
+
 ## SEPARATE (per company — scoped by company_id)
 - **SO / DO / PO / GRN / Sales Invoices / Delivery Returns / Consignment** (all docs).
 - **Procurement — Products & Maintenance**: Products, SKU Master, MRP · Stock Status,
@@ -47,6 +126,18 @@ company dimension decides audience/ownership).
     `/journal-entries`, `/gl` routes all `scopeToCompany` — every company has its
     own chart. 2990's 31 accounts were imported under `company_id=2`. See
     `MULTICOMPANY-SCALING.md`.
+  - CORRECTION (2026-08-13): the FLEET entry above ("drivers / helpers / lorries
+    (global fleet)") is right about the MASTERS and was being read as covering
+    the whole Fleet Maintenance module. It does not. `scm.lorries`,
+    `scm.drivers`, `scm.helpers`, `scm.lorry_maintenance` windows and
+    `scm.lorry_service_records` are SHARED — one vehicle, one crew roster, one
+    workshop history, deliberately visible and editable from both companies (the
+    routes now carry a comment naming that). But the Fleet Maintenance module's
+    OWN records — compliance vault + attachments, maintenance plans, mileage
+    readings, breakdown cases, work orders + parts, components + events,
+    workshops — are **SEPARATE**: they stamp `company_id` on insert and their
+    writes are `scopeToCompany`d as of the unscoped-write sweep. Their LIST reads
+    are still unscoped; that gap is open and tracked in the sweep PR.
 
 ## UNIFIED MODULE + PER-COMPANY TARGETING
 - **Team** — ONE unified interface (Members / Positions / Org Chart / Departments /

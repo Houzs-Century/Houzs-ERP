@@ -158,3 +158,36 @@ describe('DO and GRN', () => {
     expect(await grnHasDownstream(sb, 'g1')).toBeNull();
   });
 });
+
+/* The swallowed-error class (2026-08-13). These four used to read `count ?? 0`
+   and `data ?? []` off a destructure that dropped `error`, so a query that
+   FAILED arrived at the verdict as "nothing downstream" — the one absence that
+   authorises the cancel this module exists to refuse. A failed read must never
+   read as an absence when the absence is what authorises the write. */
+describe('a read that failed is not an absence', () => {
+  const brokenSb = () => ({
+    from: () => {
+      const b: Record<string, unknown> = {
+        select() { return b; },
+        eq() { return b; },
+        neq() { return b; },
+        then(resolve: (v: unknown) => unknown) {
+          return Promise.resolve({ data: null, count: null, error: { message: 'connection reset' } }).then(resolve);
+        },
+      };
+      return b;
+    },
+  }) as never;
+
+  test('an SO whose child count could not be read stays locked', async () => {
+    const refusal = await soHasDownstream(brokenSb(), 'HC-SO-1');
+    expect(refusal?.error).toBe('downstream_check_failed');
+    expect(refusal?.message).toContain('connection reset');
+  });
+
+  test('PO, DO and GRN refuse on an unreadable read too', async () => {
+    expect((await poHasDownstream(brokenSb(), 'po-1'))?.error).toBe('downstream_check_failed');
+    expect((await doHasDownstream(brokenSb(), 'do-1'))?.error).toBe('downstream_check_failed');
+    expect((await grnHasDownstream(brokenSb(), 'g1'))?.error).toBe('downstream_check_failed');
+  });
+});

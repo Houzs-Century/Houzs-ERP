@@ -1,0 +1,16 @@
+{
+  "exported_at": "2026-08-11T11:57:13",
+  "source": "AED_HOUZS live (read-only)",
+  "grain": "one row per AutoCount DtlKey; no aggregation except ac-fidelity-gr-by-po-item",
+  "counts": {
+    "so_headers": 13015,
+    "so_lines": 60939,
+    "po_headers": 9081,
+    "po_lines": 18148,
+    "do_headers": 11134,
+    "do_lines": 47329,
+    "gr_by_po_item": 15569
+  },
+  "grdtl_rows": 21001,
+  "grdtl_rows_with_line_key": 0
+}

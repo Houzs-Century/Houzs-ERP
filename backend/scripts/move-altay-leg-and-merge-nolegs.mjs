@@ -19,6 +19,8 @@
 // old pool stays readable.
 //
 // DRY-RUN by default; APPLY=1 writes.
+//
+// RE-RUN: convergent, but APPENDS a maintenance_config_history row on every run. The deletes are inert - the ids are gone.
 import { randomBytes } from "node:crypto";
 import postgres from "postgres";
 

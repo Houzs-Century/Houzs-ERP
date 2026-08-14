@@ -390,7 +390,28 @@ sofaCombos.get('/anchors', async (c) => {
     c,
   )
     .order('base_model', { ascending: true });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  /* scm.sofa_combo_anchor DOES NOT EXIST in Houzs — verified against production
+     2026-08-12 (`to_regclass('scm.sofa_combo_anchor')` = NULL), which is what
+     migration 0114 recorded when it skipped the table. R8 came across from 2990
+     with the route and the frontend query but without its table, so this handler
+     has 500'd on EVERY Combo Pricing page load since it was vendored.
+
+     An absent table means "nothing is anchored", which is the truth and is
+     exactly what an empty list says. Report it as such rather than as a failure:
+     the caller (useSofaComboAnchors) only ever asks "which models are anchored",
+     and a 500 answers that question no better than [] while filling the console
+     with a red herring. Every OTHER error still surfaces as 500 — this narrows
+     to the one code that means the relation is missing (42P01), so a genuine
+     permission or connection fault can never hide behind it.
+
+     If the feature is ever wanted, the fix is a migration creating the table;
+     this branch then simply stops being taken. See docs/modules/combo-pricing.md
+     section 6. */
+  if (error) {
+    const missing = error.code === '42P01' || /relation .* does not exist/i.test(error.message ?? '');
+    if (missing) return c.json({ anchors: [] });
+    return c.json({ error: 'load_failed', reason: error.message }, 500);
+  }
   return c.json({ anchors: (data ?? []) as Array<{ base_model: string; supplier_id: string }> });
 });
 
@@ -431,6 +452,14 @@ sofaCombos.put('/anchors/:baseModel', async (c) => {
         { onConflict: 'company_id,base_model' },
       );
     if (error) {
+      /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+         Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+         0061 enabled RLS on every scm table with NO policies, and the SCM client is
+         the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+         getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+         42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+         permission check and do NOT treat it as scoping: the only boundary is this
+         route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
       if (error.code === '42501' || /permission denied/i.test(error.message)) {
         return c.json({ error: 'forbidden', reason: error.message }, 403);
       }
@@ -728,16 +757,21 @@ sofaCombos.put('/:id', async (c) => {
 // Soft-delete. The History drawer still shows the row; pricing lookup
 // skips it (the picker filters deleted_at IS NULL).
 sofaCombos.delete('/:id', async (c) => {
+  /* Company scope. sofa_combo_pricing carries company_id NOT NULL + FK since
+     migration 0083, and requireWriteRole above checks the scm_config_write
+     PERMISSION only — no tenancy — so an unscoped soft-delete by id retired
+     another company's combo price. Verified 2026-08-13: read the gate, then the
+     table's DDL, before changing anything. */
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
-  const { error } = await supabase
+  const { error } = await scopeToCompany(supabase
     .from('sofa_combo_pricing')
     .update({ deleted_at: new Date().toISOString() })
-    .eq('id', id);
+    .eq('id', id), c);
 
   if (error) {
     if (error.code === '42501' || /permission denied/i.test(error.message)) {

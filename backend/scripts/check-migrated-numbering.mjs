@@ -61,7 +61,7 @@ async function main() {
   for (const r of noRef.slice(0, 5)) log(`   no AutoCount receipt recorded for the PO behind ${r.grn_number} — re-run the GR reference stamp before renumbering`);
   bad += wrong.length;
 
-  /* Invoices (migration 0280). Written only by create-migrated-invoices.mjs,
+  /* Invoices (migration 0294). Written only by create-migrated-invoices.mjs,
      one per AutoCount invoice, numbered HC-<AutoCount's number> — the same rule
      as the four document types above, and the same failure if it drifts: a
      human holding AutoCount's PI-000658 finds nothing in the ERP.
@@ -78,7 +78,7 @@ async function main() {
       SELECT COUNT(*)::int AS present FROM information_schema.columns
       WHERE table_schema = 'scm' AND table_name = ${table} AND column_name = 'migrated_no_stock'`;
     if (!present) {
-      log(`${label}: scm.${table}.migrated_no_stock does not exist — migration 0280 not applied, nothing to check yet`);
+      log(`${label}: scm.${table}.migrated_no_stock does not exist — migration 0294 not applied, nothing to check yet`);
       continue;
     }
     const rows = await sql.unsafe(

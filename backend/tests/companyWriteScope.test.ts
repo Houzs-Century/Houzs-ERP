@@ -57,7 +57,20 @@ class FakeQuery {
   }
 }
 
-function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
+/* The GL post verbs gained a permission gate on 2026-08-13 (audit item C7:
+   accounting.ts had ZERO in-route checks on four GL verbs while payment vouchers
+   were double-gated). These tests are about COMPANY SCOPING, so the harness has
+   to get past the gate to reach what it is testing — otherwise every assertion
+   below reads 403 and proves nothing about scoping.
+   Granting it here does NOT leave the gate untested: `the GL gate itself` below
+   drives the same handler with no grant and asserts the 403. */
+const GL_PERM = 'scm.payment_voucher.post';
+
+function harness(
+  tables: Record<string, Row[]>,
+  companyId: number | undefined,
+  perms: readonly string[] = [GL_PERM],
+) {
   const log: string[] = [];
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -65,6 +78,7 @@ function harness(tables: Record<string, Row[]>, companyId: number | undefined) {
       from: (t: string) => new FakeQuery((tables[t] ||= []), log),
     } as never);
     c.set('companyId' as never, companyId as never);
+    c.set('houzsUser' as never, { permissions_set: perms } as never);
     await next();
   });
   app.post('/journal-entries/:id/post', postJournalEntryHandler as never);
@@ -233,6 +247,30 @@ describe('setting a default warehouse only affects the active company', () => {
 });
 
 /* ── The refusal has to survive the client that renders it ───────────────── */
+/* ── The gate the harness above grants past ──────────────────────────────── */
+describe('the GL gate itself', () => {
+  /* Without this, granting GL_PERM in the harness would quietly REMOVE coverage
+     of the gate it was added to get past — the shape where a test is "fixed" by
+     disabling the thing it was failing on. */
+  test('a caller without the permission cannot post a journal entry at all', async () => {
+    const t = { journal_entries: jes() };
+    const { app } = harness(t, CO_A, []);
+    const res = await post(app, 'je-a');
+
+    expect(res.status).toBe(403);
+    // And it is refused BEFORE the row is touched, not after.
+    expect(t.journal_entries.find((r) => r.id === 'je-a')!.posted).toBe(false);
+  });
+
+  test('the wildcard grant passes, so Owner / IT Admin are not locked out', async () => {
+    const t = { journal_entries: jes() };
+    const { app } = harness(t, CO_A, ['*']);
+    const res = await post(app, 'je-a');
+
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('refusal wording', () => {
   test('every refusal message is under the SCM client\'s 200-character cutoff', async () => {
     const { app } = harness({ journal_entries: jes(), warehouses: whs() }, undefined);

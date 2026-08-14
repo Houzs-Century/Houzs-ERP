@@ -1,0 +1,63 @@
+name: Repair migrated PO lines (dedication, dates, line key)
+
+# Manual. One repair over the migrated purchase-order lines: stamps the
+# so_item_id the outstanding-PO import never had a column for, fills the
+# delivery_date it lost to a renamed export key (DelivDate -> DeliveryDate), and
+# stores PODTL.DtlKey so no future repair has to re-derive the link by fuzzy
+# matching. Then gives each header the earliest of its own line dates.
+# NO stock movements. DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: "apply only — type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-migrated-po-lines-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-po-lines.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-migrated-po-lines.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

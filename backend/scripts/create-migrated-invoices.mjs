@@ -10,6 +10,10 @@
 // documents. It does NOT import AutoCount's 4,789 purchase-invoice / 9,245
 // sales-invoice history; the owner ruled that out ("这个不要").
 //
+// RE-RUN: inert. Every source already carrying an invoice is reported as "already
+// exists" and skipped, so a second run creates nothing and the plan comes back
+// empty. It is the safe way to confirm the first run landed.
+//
 // WHY THIS SCRIPT AND NOT THE CONVERT ROUTE. POST /from-grn and POST /from-dos
 // exist and work, and both now REFUSE a migrated source on purpose
 // (routes/purchase-invoices.ts, routes/sales-invoices.ts). Three things go wrong
@@ -43,6 +47,16 @@ import { planMigratedInvoices } from "../src/scm/lib/migrated-chain.ts";
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* This CREATES posted invoices. An invoice cannot be deleted, only cancelled,
+   and reverting the commit does not take it back out of the ledger — so APPLY
+   alone is not the gate; the phrase is. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}" — refusing to write.`);
+  process.exit(2);
+}
+/* Invoice numbers this run actually created, for the fresh-connection check. */
+const created = [];
 const KIND = (process.env.KIND || "both").toLowerCase();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -283,7 +297,7 @@ function report(kind, sources, plans, blocked, already, lineIndex, extraAcDocs) 
 /**
  * Which AutoCount invoices this ERP has already mirrored — the idempotency read.
  *
- * Migration 0280 adds the two columns. Before it is applied there are no mirrors
+ * Migration 0294 adds the two columns. Before it is applied there are no mirrors
  * by definition, and a DRY-RUN must still be runnable then (that is the whole
  * point of reviewing the plan before the migration ships). The absence is
  * DETECTED and ANNOUNCED rather than caught and swallowed: a query that failed
@@ -295,7 +309,7 @@ async function existingMirrors(table) {
     SELECT COUNT(*)::int AS present FROM information_schema.columns
     WHERE table_schema = 'scm' AND table_name = ${table} AND column_name = 'migrated_no_stock'`;
   if (!present) {
-    log(`  NOTE: scm.${table}.migrated_no_stock does not exist yet (migration 0280 not applied), `
+    log(`  NOTE: scm.${table}.migrated_no_stock does not exist yet (migration 0294 not applied), `
       + `so nothing has been mirrored and APPLY would refuse to run.`);
     return null;
   }
@@ -388,11 +402,11 @@ async function run(kind) {
   const lineIndex = new Map(sources.map((s) => [s.docNo, s.lines.filter((l) => l.qty > 0)]));
   const headIndex = new Map(sources.map((s) => [s.docNo, s._head]));
   const { plans, blocked } = planMigratedInvoices(sources, acTotals);
-  /* A null here means migration 0280 has not run. Planning and reporting are
+  /* A null here means migration 0294 has not run. Planning and reporting are
      still meaningful (that is the review the dry-run exists for); WRITING is
      not, because the columns that mark a row migrated do not exist yet. */
   if (APPLY && already === null) {
-    console.error("REFUSING TO APPLY: migration 0280 has not been applied — "
+    console.error("REFUSING TO APPLY: migration 0294 has not been applied — "
       + "scm.purchase_invoices/sales_invoices have no migrated_no_stock column, so an invoice "
       + "written now could not be marked as carried over and WOULD post to the GL.");
     process.exit(3);
@@ -408,6 +422,7 @@ async function run(kind) {
   for (const p of writes) {
     if (kind === "PI") await writePi(p, lineIndex, headIndex);
     else await writeSi(p, lineIndex, headIndex);
+    created.push({ kind, invoiceNumber: p.invoiceNumber });
     log(`  CREATED ${p.invoiceNumber}`);
   }
   return writes.length;
@@ -424,5 +439,47 @@ async function main() {
     : `DRY-RUN — ${total} invoice(s) would be created. Set APPLY=1 to write. `
       + `No inventory movement and no journal entry is written in either mode.`);
   await sql.end();
+
+  /* Verify on a SECOND connection. A count would only repeat what the writer
+     already believes; what has to be true of these rows is a SHAPE — each one
+     is flagged migrated_no_stock, carries its AutoCount document number, and
+     has NO journal entry against it. That last one is the whole promise of this
+     script (AutoCount already booked the money), and it is the failure nobody
+     would see afterwards. */
+  if (!created.length) return;
+  const check = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    const bad = [];
+    for (const [kind, table] of [["PI", "purchase_invoices"], ["SI", "sales_invoices"]]) {
+      const mine = created.filter((x) => x.kind === kind).map((x) => x.invoiceNumber);
+      if (!mine.length) continue;
+      const back = await check.unsafe(
+        `SELECT invoice_number, migrated_no_stock, linked_ac_docno, status
+           FROM scm.${table} WHERE invoice_number = ANY($1::text[])`, [mine]);
+      log(`VERIFY (fresh connection) scm.${table}: read back ${back.length}/${mine.length}`);
+      const seen = new Map(back.map((r) => [r.invoice_number, r]));
+      for (const n of mine) {
+        const r = seen.get(n);
+        if (!r) { bad.push(`${n}: not readable on a fresh connection`); continue; }
+        if (r.migrated_no_stock !== true) bad.push(`${n}: migrated_no_stock=${r.migrated_no_stock}, expected true — this invoice would move stock`);
+        if (!r.linked_ac_docno) bad.push(`${n}: linked_ac_docno is empty — the AutoCount document it stands for is unrecorded`);
+      }
+      /* NOT wrapped in a catch. If scm.journal_entries.source_doc_no is ever
+         renamed this must go RED, not quietly stop asking: a verification that
+         cannot run is not a verification. (post-si-revenue.ts:54 queries the
+         same column, so the two move together.) */
+      const je = await check.unsafe(
+        `SELECT COUNT(*)::int AS n FROM scm.journal_entries
+          WHERE source_doc_no = ANY($1::text[])`, [mine]);
+      if (Number(je[0]?.n) > 0) bad.push(`${je[0].n} journal entr(ies) exist for invoices this run created — AutoCount already booked that money`);
+    }
+    if (bad.length) {
+      for (const m of bad.slice(0, 20)) console.error(`VERIFY FAILED: ${m}`);
+      process.exit(1);
+    }
+    log(`VERIFY OK - all ${created.length} created invoice(s) are migrated_no_stock, AutoCount-linked, and carry no journal entry.`);
+  } finally {
+    await check.end();
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

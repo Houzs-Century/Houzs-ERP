@@ -35,6 +35,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -190,7 +191,7 @@ async function main() {
     if (samples.get(cls).length < 6) samples.get(cls).push(line);
   };
 
-  const ALLOC_EXCLUDED = new Set(["CANCELLED", "CLOSED", "SHIPPED", "DELIVERED", "INVOICED", "DRAFT"]);
+  const ALLOC_EXCLUDED = new Set(SO_TERMINAL_STATES);
   let comparable = 0, agreeN = 0, divergeN = 0;
 
   for (const r of ac) {

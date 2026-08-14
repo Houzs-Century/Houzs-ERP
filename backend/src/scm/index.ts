@@ -527,8 +527,16 @@ scm.route("/dp-orders", dpOrders);
 // the board; env-gated (503 not_configured until the Seampify secrets are set).
 scm.use("/delivery-messages/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-messages", deliveryMessages);
-// AR receivables reconciliation (read-only preview) — finance-side read, mounted
-// under the coarse scm.access gate like the other cross-area read helpers.
+/* AR receivables reconciliation. AREA-GATED as of 2026-08-13 (owner decision,
+   asked directly: "加上和兄弟页面一样的门").
+
+   It used to ride the coarse scm.access umbrella "like the other cross-area read
+   helpers", which was not true of its actual siblings: /outstanding (:428) and
+   /unbilled-deliveries (:437) both sit behind scm.finance.outstanding. So a
+   caller explicitly DENIED finance.outstanding was refused by those two and got
+   the same book — debtor names, totals, paid, remaining and drift for up to 2000
+   open orders — from this one. */
+scm.use("/ar/*", scmAreaGuard("scm.finance.outstanding"));
 scm.route("/ar", arReconciliation);
 /* Workshop quotation / invoice OCR for the fleet repair record (mig 0241).
    Extraction-only and WRITE-FREE: it returns what the paper says and the

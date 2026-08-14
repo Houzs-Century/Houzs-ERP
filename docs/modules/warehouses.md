@@ -6,7 +6,15 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 
 > Convention: money in **sen**, dates UTC. Reads/writes via `/api/scm/*`.
 >
-> Line references are against `feat/warehouse-type-unify`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 ---
 
@@ -15,7 +23,7 @@ stock locations. Small table, but load-bearing: every stock movement / DO / GRN
 | Surface | File | Notes |
 |---------|------|-------|
 | Desktop list | `frontend/src/pages/scm-v2/Warehouses.tsx` | DataGrid, per-column filter + sort. Type column + label at `:22-33`. |
-| Shared edit drawer | `frontend/src/vendor/scm/components/WarehouseFormDrawer.tsx` | Type dropdown replaces the old "Mark as Showroom" checkbox (mig 0171). |
+| Shared edit drawer | `frontend/src/vendor/scm/components/WarehouseFormDrawer.tsx` | Type dropdown replaces the old "Mark as Showroom" checkbox (mig 0177). |
 | Master admin (inline) | `frontend/src/pages/scm-v2/SalesOrderMaintenance.tsx` | Legacy inline table — also uses `useCreateWarehouse` / `useUpdateWarehouse`. |
 | Query hook | `frontend/src/vendor/scm/lib/inventory-queries.ts` | `useWarehouses({ includeInactive })`, staleTime 5 min. `Warehouse` + `WarehouseType`. |
 
@@ -36,8 +44,9 @@ these migrations:
 | `0087_master_codes_per_company.sql` | UNIQUE `(company_id, code)` (replaced `code`-unique). |
 | `0148_venue_binding.sql` | `is_showroom bool NOT NULL DEFAULT false` + `venue_name text`. |
 | `0177_scm_warehouse_type_and_unify.sql` | `scm.warehouse_type` enum + `type` column (NOT NULL); 2990 renames; cross-company copies for warehouse + service types. |
+| `0186_warehouse_is_showroom_sync.sql` | one-time reconcile + `trg_warehouse_sync_is_showroom` — a BEFORE INSERT OR UPDATE OF `type`, `is_showroom` trigger that sets `is_showroom := COALESCE(type = 'showroom', false)` on every write. 0177 backfilled once in one direction and added no trigger, so a warehouse typed 'showroom' through the new drawer kept `is_showroom=false` — that is why 2990's "PJ SHOWROOM" was missing from the venue picker. |
 
-### Type enum (mig 0171)
+### Type enum (mig 0177)
 
 `scm.warehouse_type` has FIVE values:
 
@@ -50,9 +59,14 @@ these migrations:
 | `others` | HQ, C&C K.J, any site that doesn't fit. | HOUZS-only. |
 
 `is_showroom` is kept for backward compatibility (venue-binding resolver +
-Members-page staff parking + `inventory.ts:257`'s OR-include). The write path
-enforces `is_showroom = (type = 'showroom')` — updating either side flips the
-other so the two stay coherent.
+Members-page staff parking + `inventory.ts`'s OR-include). Since mig 0186
+**`type` is canonical and `is_showroom` is DERIVED from it by a database
+trigger** — `trg_warehouse_sync_is_showroom` overwrites `is_showroom` with
+`(type = 'showroom')` on every insert and on every update touching either
+column. The routes still compute the pair themselves (POST `inventory.ts:150-151`,
+PATCH `:267-271`), but the trigger has the last word: a create sent as
+`{ type: 'display', isShowroom: true }` lands `is_showroom=false`, not the
+`true` the route computed.
 
 ---
 
@@ -83,7 +97,8 @@ The Type column is not just cosmetic — several downstream code paths already
 key off the older `is_showroom` flag and will migrate to `type` incrementally:
 
 - **Venue-binding resolver** (mig 0148) reads `is_showroom = true` to feed the
-  Sales Maintenance venue list. `type='showroom'` guarantees the flag is true.
+  Sales Maintenance venue list. Since 0186 the trigger guarantees the flag
+  tracks `type='showroom'` on every write, so these readers need no migration.
 - **Members page** — staff `showroom_warehouse_id` FK; the picker filters on
   `is_showroom = true`.
 - **Inventory list** (`inventory.ts:257`) OR-includes `is_consignment=true`
@@ -97,9 +112,11 @@ you want "everything selectable", filter `is_active=true` and skip type.
 
 ## 5. Rules that will bite you
 
-- **`is_showroom` and `type` are ONE fact.** Do not update them independently.
-  The API enforces the invariant server-side; the schema does not, so a raw SQL
-  UPDATE on either column MUST update the other in the same statement.
+- **`is_showroom` and `type` are ONE fact, and the SCHEMA enforces it** since
+  mig 0186. Set `type`; `is_showroom` follows. A raw SQL UPDATE of `is_showroom`
+  alone does NOT stick — the BEFORE trigger rewrites it from `type` — so a
+  "fix" applied to the flag is silently discarded. To change whether a warehouse
+  is a showroom, change `type`.
 - **Company scope is on every read/write.** Any new query on `scm.warehouses`
   must go through `scopeToCompany` / `scopeToCompanyId`, or `activeCompanyId(c)`
   in a hand-written filter. The audit at `inventory.ts:110-122` shows what
