@@ -715,6 +715,14 @@ function CasesView({
       getValue: (r) => r.delivery_order || r.do_numbers,
     },
     {
+      key: "po_no",
+      filterable: true,
+      label: "PO No",
+      // The customer's purchase-order reference on the case (Nico 2026-08-14).
+      render: (r) => <span className="font-mono text-xs">{r.po_no || "—"}</span>,
+      getValue: (r) => r.po_no,
+    },
+    {
       key: "customer_name",
       filterable: true,
       label: "Customer",
