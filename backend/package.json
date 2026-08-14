@@ -13,7 +13,7 @@
     "test": "vitest run --config vitest.light.config.mts && vitest run",
     "test:pg": "vitest run --config vitest.pg.config.ts",
     "test:watch": "vitest",
-    "test:scale-contract": "node --test tests/pgSslMode.node.mjs tests/acPoLineRepair.node.mjs tests/catalogueSeriesOneList.node.mjs tests/pgrestShim.node.mjs tests/poCostPlan.node.mjs tests/routeMatrixDrift.node.mjs tests/scaleRealSchemaContract.node.mjs tests/scaleRouteDrift.node.mjs tests/scaleTargetGuard.node.mjs tests/noNulBytesInSource.node.mjs tests/soProcessingDateOneName.node.mjs tests/jsonbBindScan.node.mjs tests/swallowedReadScan.node.mjs tests/assrCaseScopeGuard.node.mjs tests/invoiceRealCost.node.mjs tests/migratedConvertGuard.node.mjs tests/classifyTests.node.mjs",
+    "test:scale-contract": "node --test tests/acPoLineRepair.node.mjs tests/catalogueSeriesOneList.node.mjs tests/pgrestShim.node.mjs tests/poCostPlan.node.mjs tests/routeMatrixDrift.node.mjs tests/scaleRealSchemaContract.node.mjs tests/scaleRouteDrift.node.mjs tests/scaleTargetGuard.node.mjs tests/noNulBytesInSource.node.mjs tests/soProcessingDateOneName.node.mjs tests/jsonbBindScan.node.mjs tests/swallowedReadScan.node.mjs tests/assrCaseScopeGuard.node.mjs tests/invoiceRealCost.node.mjs tests/migratedConvertGuard.node.mjs tests/classifyTests.node.mjs",
     "perf:scale": "node scripts/scale-harness.mjs",
     "audit:routes": "node scripts/generate-route-capability-matrix.mjs --check",
     "audit:job-types": "node scripts/check-job-type-parity.mjs",

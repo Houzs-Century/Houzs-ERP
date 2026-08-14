@@ -76,7 +76,7 @@ the AutoCount copy, which is what made the PO delete the worst of the three.
 
 **Stock Take is the boundary case worth understanding.** `OPEN` is a stock
 take's draft: no movements have been posted, so nothing has happened to
-inventory yet. The handler additionally refuses a non-assignee and writes an
+inventory yet. **CORRECTION — the DELETE handler does NOT check the assignee.** `stock-takes.ts:768-817` reads status, refuses non-`OPEN` with `not_open`, then deletes; it never reads `assignee_staff_id`. The `not_assignee` gate is on the POST handler (`:842-853`) only. This matters because the assignee check was one of the two reasons this row was classed COMPLIANT. The handler writes an
 `entityType: 'STOCK_TAKE', action: 'DELETE'` audit row before the purge. It has
 the same shape as the SO draft discard and is left alone on the same reasoning.
 If stock takes ever gain a pre-OPEN state, revisit this row.

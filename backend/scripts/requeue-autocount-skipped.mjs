@@ -10,6 +10,9 @@
 //   DOC_NO=HC-SO-2608-002              one document
 //   DOC_TYPE=SO|PO|ALL                 every skipped row of that type (default ALL)
 //   APPLY=1                            write. WITHOUT IT THIS IS A DRY RUN.
+//   INCLUDE_FAILED=1                   also re-send documents AutoCount REFUSED,
+//                                      not only ones the ERP declined to send.
+//                                      Read the warning below before using it.
 //
 // WHY THIS RUNS UNDER `tsx` AND NOT AS A PLAIN .mjs SCRIPT
 // --------------------------------------------------------
@@ -72,6 +75,14 @@ import { requeueSkipped } from "../src/scm/lib/autocount-requeue.ts";
 import { pgrestShim } from "./lib/pgrest-shim.mjs";
 
 const APPLY = process.env.APPLY === "1" || process.argv.includes("--apply");
+/* INCLUDE_FAILED widens the scope from "the ERP refused to send this" to "we
+   sent it and AutoCount refused it". Those are different risks. A skipped row
+   never left the building. A failed one did, and the C# create has no guard
+   against a duplicate ERP document number — so if a document actually landed
+   and only the reply was lost, re-sending writes a SECOND one into a licensed
+   account book. Use it when the failure is known to have changed nothing:
+   a foreign key rejects before the insert, an ambiguous 500 does not. */
+const INCLUDE_FAILED = process.env.INCLUDE_FAILED === "1" || process.argv.includes("--include-failed");
 const DOC_NO = (process.env.DOC_NO || "").trim();
 const DOC_TYPE = (process.env.DOC_TYPE || "ALL").trim().toUpperCase();
 
@@ -132,6 +143,7 @@ try {
     docNo: DOC_NO || null,
     docType: DOC_TYPE,
     apply: APPLY,
+    includeFailed: INCLUDE_FAILED,
   });
 
   if (!results.length) {

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13
 **Trigger (owner, verbatim):** "我点了 deactivate 它也是没反应" · "明明是当我有 ProcessingDate 和 DeliveryDate 的时候，它才 compulsory，现在怎么变成就算没有 ProcessingDate，也强制要求我填写了？" · "怎么出现那么多 bug 呢？" · "问了第一次第二次第三次给答案全部不一样"
-**Status:** Root causes traced and fixed on `fix/company-scope-sweep` (not merged). Three mechanical checks added. Owner decisions listed in §5.
+**Status:** Root causes traced and fixed. **MERGED to `main` 2026-08-14 as PR #2140** — this line said "not merged" for a day after it was, which is worse than saying nothing: a reader plans around fixes that already shipped. Three mechanical checks added. Owner decisions listed in §5.
 
 ---
 
@@ -101,7 +101,7 @@ So a salesperson who works both companies: builds a Houzs cart → switches to
 `onConflict: 'staff_id'` hits **the same row** → switches back → **the Houzs cart
 is gone**. No error, and the loss is indistinguishable from "I never saved it".
 
-Migration `0284_scm_pos_cart_company_key.sql` re-keys it `(staff_id, company_id)`.
+Migration `0289_scm_pos_cart_company_key.sql` re-keys it `(staff_id, company_id)`. (It was `0284` when this was written; upstream took that number and `0284` is now `0284_retire_consignment_proceeded_at.sql`, an unrelated column DROP. The reference did not dangle — it RESOLVED, to the wrong file, which is why `check-docs-drift` passed it. That checker now reads a migration's FULL NAME when a doc writes one.)
 
 **Both siblings named here have since been settled, in opposite directions
 (`59e61025`, mig `0293`) — and the difference was only visible in the PARENT
@@ -140,9 +140,11 @@ address line 1 / postcode / delivery date) and tells the operator to untick
 
 ## 3. Fixes shipped
 
-Branch `fix/company-scope-sweep`, **not merged**. (The commit count that stood
-here went stale within hours of being written — a number typed into prose about
-a branch that is still moving. Run `git rev-list --count origin/main..HEAD`.)
+Branch `fix/company-scope-sweep`, **merged to `main` 2026-08-14** (PR #2140).
+Every commit below is an ancestor of `origin/main`; verify with
+`git merge-base --is-ancestor <sha> origin/main`. (The commit COUNT that once
+stood here went stale within hours — a number typed into prose about a branch
+that was still moving. It is not replaced with a new number.)
 
 | Commit | What | Effect |
 |---|---|---|
@@ -150,7 +152,7 @@ a branch that is still moving. Run `git rev-list --count origin/main..HEAD`.)
 | `e3341332` | two real cross-company deletes; unified-fleet exemptions documented | 11 handlers proven exempt, 2 fixed |
 | `2c2036be` | every by-id trip read and write bounded | incl. live driver GPS |
 | `92b51658` | repaired the scope scanner's dead regex; fixed the PV **post** it was hiding | cross-company GL posting closed |
-| `3685086d` | POS cart re-keyed per company (mig 0284); 3 more deletes scoped | silent cart destruction closed |
+| `3685086d` | POS cart re-keyed per company (mig 0289, renumbered from 0284); 3 more deletes scoped | silent cart destruction closed |
 | `e1fb493b` | 35 silent frontend mutations; DO payment endpoints scoped | a refusal now reaches the user |
 | `bbf3e810` | `variantsRequired` on all 11 sites; default removed | UI matches each server |
 | `9296dfb9` | `PAYMENT_METHOD_CORE_VALUES` split out on both sides | UI and API agree |
@@ -171,8 +173,9 @@ Run the scripts; do not quote these numbers.
 
 **They ARE wired as CI gates now** — `.github/workflows/ci.yml:89-91`, on the
 PR and the merge queue, never on deploy. `check-shared-mirrors` and
-`check-silent-mutations` run `--strict`; `check-company-scope` is deliberately
-report-only until its remaining WRITE backlog is judged (that comment in
+`check-silent-mutations` run `--strict`; **`check-company-scope` is `--strict`
+too, since 2026-08-13** — `ci.yml:98` — because the backlog this paragraph was
+waiting on got judged: 0 WRITE findings over 1019 handlers. (that comment in
 `ci.yml` predates the backlog reaching zero).
 
 ---
@@ -218,7 +221,7 @@ theory already disproved.
 | ~~`model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` PK is the single business column. One company's upsert overwrites the other's.~~ | **NOT AN OWNER QUESTION — SETTLED `59e61025`.** It was not a business question: the same file's GET already filtered by company while its PK permitted one row globally, so somebody had already decided the deltas are per-company and only the key was left behind. `compartment_fabric_tier_overrides` re-keyed `(compartment_id, company_id)` (mig `0293`); `model_fabric_tier_overrides` refuted — its parent `product_models` stamps `company_id`, so the two companies cannot contend for a `model_id`. **Still yours, and stated plainly: the deltas already overwritten are gone — the upsert replaced them in place and nothing recorded the previous values.** |
 | ~~The desktop `SalesOrderNew` has no address rule; mobile and the backend both have one.~~ | **DECIDED + SHIPPED `1d7d36cc`.** Owner 2026-08-13: "只要是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。就是 processing date。电话、电脑都一样的." All three surfaces now gate on the Processing Date alone. |
 | ~~`SalesOrderNew`'s confirm gate (`:1443`) requires category axes on CONFIRM "date or no date", while the line card shows nothing required without a date.~~ | **REFUTED — the two never disagreed by the time this was written.** `SalesOrderNew.tsx:1443-1455` is `if (processingDate)`, and its own comment records that the date-or-no-date form (2026-08-08, HC-SO-2607-008) was REMOVED because it stopped a salesperson booking a real order before the customer had picked a seat height. The line card is fed `variantsRequired={!!processingDate}`. Same condition on both. |
-| ~~Wiring the three checks as PR-gated CI.~~ | **DONE — `ci.yml:89-91`**, PR + merge_group, never deploy. Two run `--strict`; `check-company-scope` is report-only pending its own comment being refreshed. |
+| ~~Wiring the three checks as PR-gated CI.~~ | **DONE — `ci.yml:98-100`** (`:89-91` is the comment above them), PR + merge_group, never deploy. **All three run `--strict`**; `check-company-scope` became strict on 2026-08-13 once its WRITE backlog reached zero. |
 
 ---
 
