@@ -54,7 +54,7 @@ jobs:
       - run: npm ci
       # The refusal rules (never overwrite, ambiguous is a refusal, idempotent)
       # are unit-tested. Never let a write run against a tree where they fail.
-      - run: node --test tests/invoiceRealCost.node.mjs
+      - run: npx vitest run --config vitest.light.config.mts tests/invoiceRealCost.test.mjs
       - run: node scripts/stamp-real-po-costs.mjs
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22 }
       - run: npm ci
-      - run: node --test tests/invoiceRealCost.node.mjs
+      - run: npx vitest run --config vitest.light.config.mts tests/invoiceRealCost.test.mjs
       - run: node scripts/stamp-real-po-costs.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -14,7 +14,7 @@
 //   node --test backend/tests/jsonbBindScan.node.mjs
 // ---------------------------------------------------------------------------
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   scanSource,

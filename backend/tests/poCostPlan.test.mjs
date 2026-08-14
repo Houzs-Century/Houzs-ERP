@@ -15,7 +15,7 @@
  * fail: the queen row appears in `plan` at the king's price.
  *
  * Run by `npm test` through the pretest test:scale-contract target. */
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import zlib from "node:zlib";

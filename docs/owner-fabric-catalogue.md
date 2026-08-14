@@ -165,7 +165,7 @@ owner 自己的 249 行(Converter 78、销售库 171)报成
 的问题从此埋在 249 行噪音里。
 
 现在:`isCatalogueSeries(parsedSeries)`,问的是**解析后的系列**,所以 `DE01` 跟
-`DE-01` 答案一样。`backend/tests/catalogueSeriesOneList.node.mjs` 钉住三件事——两个
+`DE-01` 答案一样。`backend/tests/catalogueSeriesOneList.test.mjs` 钉住三件事——两个
 推导脚本都要 import;seed 新加的系列必须在清单里(否则下次 normalize 会把它推翻);
 除了 seed 和这份 lib,没有第三个档案列满 12 个。
 
