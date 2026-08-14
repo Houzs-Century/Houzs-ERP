@@ -7,7 +7,7 @@
 // skip GET, and NOT catch the child-resource / non-id routes? We mirror the
 // guard with the scope check stubbed to DENY, so "gated" shows up as 404 and
 // "exempt" as 200.
-import { test } from "node:test";
+import { test } from 'vitest';
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 
