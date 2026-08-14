@@ -1794,6 +1794,7 @@ mfgSalesOrders.get('/', async (c) => {
           mainCount: readiness?.mainCount ?? 0,
           isMainReady: readiness?.isMainReady ?? false,
           isFullyReady: readiness?.isFullyReady ?? false,
+          isShipReady: readiness?.isShipReady ?? false,
         },
         delivered: dDelivered,
         remaining: dRemaining,
@@ -11700,15 +11701,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). So auto-advance fires on main-ready, not
-  // all-ready.
+  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
     .select('item_group, stock_status, cancelled')
     .eq('doc_no', docNo);
   const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
   const readiness = summariseReadiness(liveRows);
-  const allReady = readiness.isMainReady;
+  const allReady = readiness.isShipReady;
 
   let advancedTo: string | null = null;
   if (allReady) {

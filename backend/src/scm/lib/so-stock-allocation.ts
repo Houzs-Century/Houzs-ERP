@@ -748,7 +748,13 @@ export async function recomputeSoStockAllocation(
          and it is re-derived from scratch on every pass (this function is
          idempotent). So record the doc number, keep going, and let the caller
          re-queue. Progress is made on every other order in the batch. */
-      if (r.isMainReady && (cur === 'CONFIRMED' || cur === 'IN_PRODUCTION')) {
+      /* isShipReady, NOT bare isMainReady: the latter is vacuously true for an
+         SO carrying no stock-bearing lines at all, which is exactly how 16
+         emptied-out 2990 test SOs auto-advanced to READY_TO_SHIP on
+         2026-08-13/14. An empty document is never ship-able. See so-readiness.
+         The regress arm inherits the same gate, so those husks fall back to
+         CONFIRMED on the next sweep without a data fix. */
+      if (r.isShipReady && (cur === 'CONFIRMED' || cur === 'IN_PRODUCTION')) {
         const advanced = await advanceSoGeneration(sb, docNo, { status: 'READY_TO_SHIP' }, { status: cur });
         if (advanced.applied) {
           ordersAdvanced += 1;
@@ -756,11 +762,13 @@ export async function recomputeSoStockAllocation(
         } else {
           deferredDocNos.push(`${docNo}:${advanced.reason}`);
         }
-      } else if (!r.isMainReady && cur === 'READY_TO_SHIP') {
+      } else if (!r.isShipReady && cur === 'READY_TO_SHIP') {
         const regressed = await advanceSoGeneration(sb, docNo, { status: 'CONFIRMED' }, { status: cur });
         if (regressed.applied) {
           ordersRegressed += 1;
-          await auditAutoStatus(cur, 'CONFIRMED', 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
+          await auditAutoStatus(cur, 'CONFIRMED', r.mainCount + r.accCount === 0
+            ? 'Auto-regressed: the order has no stock-bearing lines — not ship-able'
+            : 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
         } else {
           deferredDocNos.push(`${docNo}:${regressed.reason}`);
         }

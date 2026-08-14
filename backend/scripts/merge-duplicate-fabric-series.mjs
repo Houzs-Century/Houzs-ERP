@@ -80,6 +80,7 @@
    transaction per pair, and verifies on a SECOND, FRESH connection. */
 import postgres from "postgres";
 import { normColour, foldColour, markColour } from "./lib/fabric-colour-match.mjs";
+import { seriesToken } from "./lib/fabric-code.mjs";
 import { ARMS } from "./lib/fabric-write.mjs";
 
 const DSN = process.env.DATABASE_URL;
@@ -282,8 +283,31 @@ async function main() {
     const [a, b] = JSON.parse(pk);
     const ra = bySeries.get(a) || 0, rb = bySeries.get(b) || 0;
     const ca = (colsBySeries.get(a) || []).length, cb = (colsBySeries.get(b) || []).length;
-    // canonical: most live references, then most colours, then shorter id
-    const aWins = ra !== rb ? ra > rb : ca !== cb ? ca > cb : a.length <= b.length;
+    /* WHO WINS: most live references first — the owner's ruling of 2026-08-11,
+       "合并，按引用数多的那边" — and that is untouched.
+
+       THEN THE CANONICAL FORM, and that tie-break is new (2026-08-14). The
+       owner's rule is silent on a 0–0 reference tie, and the fallback below
+       (more colours) then contradicts the one thing that IS defined: what
+       lib/fabric-code.mjs says the series is called. LAMB VELVET is exactly
+       that case — both spellings parse to series "LAMB-VELVET", both sides
+       carry 0 live lines, and the colour count alone would have kept the
+       SPACE form while normalize-fabric-codes had just merged six colours the
+       other way on production. Two tools, one library, opposite directions,
+       every run undoing the last.
+
+       So on a tie, the side already spelled the way the parser spells it wins.
+       This is the rule the COLOUR merger has always had ("the row already
+       carrying the canonical id wins outright"); the series merger never got
+       it. Colour count still decides when neither side is canonical. */
+    /* seriesToken, not parse: parse() wants a full code (series + number) and
+       answers null for a bare series id, so asking it here would have made this
+       tie-break silently do nothing on every pair. Caught by running it. */
+    const aCanon = seriesToken(a) === a, bCanon = seriesToken(b) === b;
+    const aWins = ra !== rb ? ra > rb
+      : aCanon !== bCanon ? aCanon
+      : ca !== cb ? ca > cb
+      : a.length <= b.length;
     const [keep, drop] = aWins ? [a, b] : [b, a];
     const keepRefs = aWins ? ra : rb, dropRefs = aWins ? rb : ra;
     const declared = declaredPks.has(pk);

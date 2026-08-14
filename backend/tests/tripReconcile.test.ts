@@ -77,7 +77,7 @@ describe("clearing the override returns a ready order to PENDING_SCHEDULE (share
      schedules onto a trip and then hides from the queue with a manual override. */
   const readyUndelivered = {
     status: "CONFIRMED",
-    readiness: { mainCount: 1, isMainReady: true, isFullyReady: true },
+    readiness: { mainCount: 1, isMainReady: true, isFullyReady: true, isShipReady: true },
     delivered: 0,
     remaining: 5,
     effectiveDD: "2026-08-01",
@@ -105,7 +105,7 @@ describe("clearing the override returns a ready order to PENDING_SCHEDULE (share
     const delivered = derivePlanningState({
       storedOverride: null,
       status: "DELIVERED",
-      readiness: { mainCount: 1, isMainReady: true, isFullyReady: true },
+      readiness: { mainCount: 1, isMainReady: true, isFullyReady: true, isShipReady: true },
       delivered: 5,
       remaining: 0,
       effectiveDD: "2026-08-01",
