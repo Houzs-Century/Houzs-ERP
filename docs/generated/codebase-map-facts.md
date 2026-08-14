@@ -169,7 +169,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1302 files, 541591 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1306 files, 541825 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
