@@ -1,3 +1,11 @@
+> ## Corrections — 2026-08-12 code-read sweep
+>
+> 1. The post flip is an atomic CAS on the observed status (grns.ts:375-411), not .neq(CLOSED) — the old predicate let two concurrent confirms double-book stock; GUARD 2 (:533-549) also skips the IN write when movements already exist.
+> 2. /from-po-items buckets by SUPPLIER (:2196) — one GRN per supplier spanning POs; the “one per PO” cell copied a stale in-file comment (:2109-2117, itself wrong).
+> 3. That path creates headers POSTED-by-default (payload carries no status; DDL default POSTED) — DRAFT never occurs on it.
+> 4. The R2 422 message is fx-guard's three-remedies text (fx-guard.ts:84-92), not “Set the <CUR> exchange rate before posting this GRN”.
+> 5. Post-guide surface omitted here: RECEIVABLE_PO_STATUSES gate on all create paths, warehouse_required 400, recountError surfacing, negative-guard on line edit/delete, entity audit, the AutoCount outbox, grnHasDownstream moved to downstream-lock.ts:145-151.
+
 # Module: Goods Received Note / GRN (SCM)
 
 Per-module technical doc — the data flow from the screen down to the database,

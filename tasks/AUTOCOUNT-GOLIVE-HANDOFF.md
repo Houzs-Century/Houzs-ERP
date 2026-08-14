@@ -68,11 +68,23 @@ standing at that machine except to run one command.
    does not resolve, and it names database **`AED_DEMO`** — neither value can be
    trusted, and the script now warns about the second.
 2. Re-run `qa-convert.ps1` to close `create-po` and `po-to-gr`.
-3. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
+3. **Set `AC_SYNC_KEY` on the Worker** — `cd backend && npx wrangler secret put
+   AC_SYNC_KEY` (the owner or IT types the value directly; never through chat).
+   **This step was MISSING from this sequence and it is not optional.** Read
+   from both sides' code on 2026-08-12: the Worker sends `X-API-KEY` only when
+   the secret exists (`callAcService`, `services/autocount-writeback.ts:26` —
+   `...(cfg.key ? { 'X-API-KEY': cfg.key } : {})`), and the host refuses
+   everything without it (`AcSyncService.cs:161-162` — no key configured means
+   **503 for every request**, wrong key means **401**). `acServiceConfig`
+   treats the key as optional (`:775-780`, URL alone activates the drain), so
+   with the toggle on and the key unset, every real order drains into 401/503,
+   burns its 6 attempts, and lands FAILED — and there is still no outbox UI to
+   re-queue it.
+4. Turn the write-back on — Actions, **AutoCount write-back (on/off)**, `state=on`,
    `companies=1`. **Before anyone creates a document, not after**: the flag is
    checked at enqueue, so anything saved while it is off is never sent and cannot
    be backfilled.
-4. One real order, watched into the outbox.
+5. One real order, watched into the outbox.
 
 ## The owner's acceptance criteria
 
@@ -140,9 +152,12 @@ the live account book** — precisely the pair the owner named as his gate. On a
 purchase order those duplicates could never be removed, only zeroed, because the
 SDK has no `DeleteDetail` for `PurchaseOrder` at all.
 
-Open: adding a line to a document AutoCount already has is currently refused
-(`IsNewLine` is accepted by the C# but nothing sets it). There is no API or UI
-for the outbox. Coverage matrix and build plan: `docs/autocount-sync-coverage.md`
+~~Open: adding a line is refused~~ **Closed 2026-08-11 (#2003), for SO only**:
+`composeEdit` now sets `IsNewLine` when the inserting route declares the new
+row ids AND every other line on the document is already keyed (guard read in
+`services/autocount-writeback.ts` on 2026-08-12); PO and the four downstream
+types still refuse keyless lines. Still open: no API or UI for the outbox.
+Coverage matrix and build plan: `docs/autocount-sync-coverage.md` (PR #1931).
 (PR #1931).
 
 ## Criterion 2 — compartment and variant
@@ -249,15 +264,27 @@ its comment already named the trap.
 
 ## What still needs the owner
 
+**Re-verified against the tree on 2026-08-12 — three of the seven were already
+decided and SHIPPED on 2026-08-11.** Each closed row names the PR that closed
+it: the previous version of this list was still answering "open owner decision"
+for work already in production.
+
+**Still genuinely open:**
+
 | # | Decision |
 |---|---|
-| 1 | **Fabric library**: `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371` (which survives?), and whether to merge the 32 duplicate series |
-| 2 | **Should the ERP charge for special add-ons at all?** AutoCount never did — it absorbed them into the negotiated line price. Today a priced SOFA add-on is **costed but never charged**, so it only reduces margin |
-| 3 | **HYDRAULIC** — a divan property with no home. A bedframe variant axis, a flag in the item code like ADJUSTABLE, or free text? It must not become a `special_addons` code |
-| 4 | **"Seat Softer"** (7 instances) — the direct opposite of the existing `Seat Firmer`, currently with nowhere to go. Create it? |
-| 5 | **18 duplicate DO lines across 8 migrated documents** — a double INSERT, 0 stock movements, nothing to compensate. `delivery_order_items` has no cancel column, so: add one, or a qty-0 correction with an audit note? |
-| 6 | **`HC-SO-012949`** — a customer ordered a super-single `CODY-(S)` that was never put on any purchase order. Raising it is a commercial act |
-| 7 | **The 27 held-back specials lines** keep their instructions as free text with no picker tick, matching his own fallback rule. Accept, or build migrated-immunity in the money path? |
+| 1 | **Fabric library** — the individually ambiguous codes still need his call: `03#Straw` (HIRRING GD8371-03 or HIVE GD2034-03?), `J9833-2` (mistyped `J9883-2 CHIC`?), `Beetex harring gd 8371` (which of 10?), `ZanoLeather` (which ZL?), `GD8371` vs `HIRRING GD8371` (which survives?). The BULK half of this row is done: the merge tool shipped (#1972) and RAN six times on 2026-08-11 (last: run 31461314399), plus fabric repairs #2018 #2032 #2033 #2035 #2036 #2038 #2047 #2061. That final run's plan also surfaced one more decision this table did not have: **`NX` vs `NX016`** share zero colour codes so the detector cannot merge them — owner call |
+| 4 | **"Seat Softer"** (7 instances) — the direct opposite of the existing `Seat Firmer`, currently with nowhere to go. Create it? (No trace in the tree — verified by grep, 2026-08-12) |
+| 6 | **`HC-SO-012949`** — a customer ordered a super-single `CODY-(S)` that was never put on any purchase order. Raising it is a commercial act. (The link-repair workflow explicitly excludes this order and says why — `repair-po-so-links-autocount-text.yml`) |
+| 7 | **The 27 held-back specials lines** keep their instructions as free text with no picker tick, matching his own fallback rule. Accept, or build migrated-immunity in the money path? (Still open — `docs/autocount-migration-record.md` section 9) |
+
+**Closed since this list was written — decided and shipped 2026-08-11:**
+
+| # | Was | Outcome |
+|---|---|---|
+| 2 | Should the ERP charge for special add-ons at all? | **CHARGE.** #1973: `chargeableSurchargesSen` reaches the customer price on every non-migrated line (`scm/lib/mfg-pricing-recompute.ts`), pinned by `mfg-pricing-recompute.surcharge.test.ts` — the 12 tests were RUN green on 2026-08-12, not just located. Migrated lines are structurally immune |
+| 3 | HYDRAULIC — this row said "must not become a `special_addons` code" | **It became exactly that, at the owner's own later instruction** ("开 special order 那边勾选") — same PR #1973 plus `seed-hydraulic-special-addon.yml`, price seeded 0 so it charges nothing until he prices it. **Applied to prod**: run 31454564942 (2026-08-11 03:09) — `APPLIED — 1 inserted`, read back on a fresh connection as `[Hydraulic] categories=BEDFRAME active=true sell=0 cost=0`. The constraint recorded here was overtaken by his ruling |
+| 5 | 18 duplicate DO lines — add a cancel column, or qty-0 with an audit note? | **Option B: qty-0 + audit note, nothing deleted.** #1971 + `zero-duplicate-do-lines.yml`. **Applied to prod**: run 31451705673 (2026-08-11 02:13, mode=APPLY) — surplus lines zeroed and, in the run's own words, `VERIFIED on a fresh connection: quantities zeroed, notes present, every other column and every document total unchanged` |
 
 ## Sequence to go live
 

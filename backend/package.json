@@ -42,6 +42,12 @@
     "audit:decision-params": "node scripts/check-optional-decision-params.mjs",
     "audit:generators": "node scripts/check-generators-run.mjs",
     "audit:trgm:ask": "node scripts/check-trgm-coverage.mjs",
+    "gen:bug-index": "node scripts/gen-bug-index.mjs",
+    "audit:bug-index": "node scripts/gen-bug-index.mjs --check",
+    "check:doc-refs": "node scripts/check-doc-refs.mjs",
+    "audit:doc-refs": "node scripts/check-doc-refs.mjs --strict",
+    "check:company-scope": "node scripts/check-company-scope.mjs",
+    "audit:company-scope": "node scripts/check-company-scope.mjs --strict",
     "test:coverage": "npm run test:coverage:light && npm run test:coverage:workers",
     "test:coverage:light": "vitest run --config vitest.light.config.mts --coverage",
     "test:coverage:workers": "vitest run --coverage"

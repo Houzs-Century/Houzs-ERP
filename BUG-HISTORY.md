@@ -57,6 +57,7 @@ required check partly because of it. Expect a recurrence on the next
 
 **Ref** — #2143. Gate under test: itself.
 
+=======
 ## Migrated purchase lines were priced by inference, and 318 item codes have a price that varies by PO [high]
 
 **Symptom.** 10,372 migrated purchase-order lines carried no unit price. The
@@ -4302,6 +4303,273 @@ because the only symptom was a console line on a page that otherwise worked.
 
 ---
 
+
+## Cross-tenant stock-transfer cancel, and a per-company report that returned both companies [high]
+
+**Symptom** - two holes of the same class, found 2026-08-13 by an external
+full-module code audit and each verified against the source before being touched.
+
+1. `PATCH /stock-transfers/:id/cancel` had no company scoping anywhere: the
+   before-read was `.eq('id', id)` and the CANCELLED flip was
+   `.update(...).eq('id', id).neq('status','CANCELLED')`. A caller in company A
+   holding company B's transfer UUID could cancel B's POSTED transfer — and the
+   handler then calls `reverseMovements(sb, 'STOCK_TRANSFER', id, ...)`, so B's
+   stock moved back. **This is a WRITE**, unlike the seven read-side `/:id/linked`
+   leaks fixed the day before.
+2. `GET /inventory/reconcile` called `reconcileLedger(sb)` with no second
+   argument, so the operator-facing report returned BOTH companies' GRN, DO,
+   transfer and consignment document numbers and statuses.
+
+**Root cause (traced, not guessed)** - both are missed call sites, not missing
+mechanisms. The 2026-07-22 owner audit scoped every sibling flow;
+`stock-takes.ts:437-440` carries that fix with a comment naming this exact class
+("the sibling /cancel /reverse /post already do requireActiveCompanyId; align")
+— the stock-transfer cancel was simply never aligned. And `reconcileLedger`
+(`scm/lib/reconcile-ledger.ts:46-51`) has ALWAYS taken `companyId?`, with its
+own comment stating the operator endpoint is per-company "so the report can't
+surface the other company's doc numbers"; only `systemHealth.ts:297` is meant to
+run cross-company. The guard existed and the caller skipped it.
+
+**Fix** - the cancel now takes `requireActiveCompanyId` and scopes BOTH the
+before-read and the flip, returning `NOT_THIS_COMPANY` (404) on a foreign id;
+`/reconcile` passes `activeCompanyId(c)`. Verified: backend typecheck clean,
+companyScopeHardening passes (16 tests).
+
+**What this is really about** - the day before, a documentation sweep found 7
+cross-company leaks and I reported "7 bugs, none in the money path, this is not
+a bad system". That was a statement about what MY question could find. A sweep
+that asks "do the docs match the code" surfaces documentation defects; it does
+not go looking for missed guards. The audit that asked "find the bugs" returned
+**56 cross-company scope misses, 27 of them high**. Same codebase, same day,
+different question. **The size of a finding set is a property of the question,
+not of the system** — and a clean result from one lens must never be reported as
+a verdict on the whole.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## The route-locator generator read a mention of `/api/*` as an opening block comment [medium]
+
+**Symptom** - `docs/generated/route-locator.md` reported "986 route registrations
+across 128 files". The tree holds 1,021 across 136. Eight whole route files were
+absent, including `so-mirror.ts` (a pre-auth 2990 mirror) and `public-images.ts`
+(a pre-auth R2 proxy) — exactly the kind of endpoint someone greps this artifact
+to find.
+
+**Root cause (traced, not guessed)** - `stripComments` in
+`gen-route-locator.mjs` cut the `//` line comment LAST, after testing for a
+`/*` block opener. So a line like `// Mounted at '/api/sync/so-mirror' ...
+above the /api/* wall` had its `/api/*` read as an opening block comment;
+`inBlock` then stayed true to end of file and every route below it vanished. The
+five SCM routers found this way (`addons`, `maintenance-config`, `pos-cart`,
+`public-images`, `so-mirror`) all carry a header comment mentioning a wildcard
+path. Proved by re-running the generator's own `stripComments` over each file
+and printing the first line it swallowed.
+
+**Fix** - cut the line comment before looking for `/*`. Regenerated: 986 -> 1021
+registrations, 128 -> 136 files.
+
+**What this is really about** - the artifact was regenerated earlier the same day
+and reported as repaired in `docs/staging-bench-rot-coe.md`. Regenerating proved
+the generator RAN; nobody checked that its output matched the tree. A generated
+file can be current and wrong at once, and "I regenerated it" is not the same
+claim as "it is correct". The sibling check that would have caught it —
+comparing the artifact's file list against the routers on disk — did not exist
+and still does not.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## Every /:id/linked endpoint resolved another company's documents [high]
+
+**Symptom** - the Smart Buttons fan-out (`GET /:id/linked`) returned the linked
+GRN / invoice / return / receive numbers for ANY document id, regardless of which
+company the caller was in. Seven endpoints, one shape.
+
+**Root cause (traced, not guessed)** - on every one of the seven SCM routers that
+expose `/:id/linked`, the list and detail reads are company-scoped
+(`scopeToCompany`) and the writes use the strict
+`requireActiveCompanyId` + `scopeToCompanyId` pair — but the `/linked` read was
+written as a bare `.eq('id', id)` with no scope at all. Two of the module guides
+(`purchase-return.md` §6, `purchase-consignment-order.md` §7) claimed "every read
+is company-scoped", which is how it survived review: the doc asserted a guard the
+code never had.
+
+The guide-verification sweep reported TWO leaky endpoints because two agents each
+saw only their own router. Grepping `get('/:id/linked'` across
+`backend/src/scm/routes` found **seven**: grns, mfg-purchase-orders,
+purchase-consignment-orders, purchase-consignment-receives,
+purchase-consignment-returns, purchase-invoices, purchase-returns.
+
+**Fix** - all seven scoped. Five read an anchor row by id and now wrap it in
+`scopeToCompany`; two (mfg-purchase-orders, purchase-consignment-orders) only fan
+out by parent id, so they gained an explicit ownership check before the fan-out,
+answering 404 — an unreachable row must not confirm its own existence.
+Verified: backend typecheck clean; companyScopeHardening + assrCompanyScope pass
+(24 tests); all seven re-grepped and each now carries `scopeToCompany` inside its
+handler.
+
+**Exposure** - low but real: ids are UUIDs, so this needed a leaked or guessed id
+rather than enumeration. It returned document NUMBERS and ids, not amounts.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## A voided service case still escalated, still emailed, and still counted as open [high]
+
+**Symptom** - a case closed as `voided` (the terminal alt-outcome added
+2026-07-29) kept behaving as if it were open: the daily 02:00 SLA sweep escalated
+it and emailed its assignee, it inflated the "active backlog" tile and every
+ageing bucket, and it sat in assignees' inboxes and overdue lists.
+
+**Root cause (traced, not guessed)** - `voided` was added to the Stage union and
+`statusForStage` maps it to "Closed" (`services/assr.ts:63-67,:88`), but every
+consumer predicate still spelled "open" as `stage != 'completed'`. Grep found
+**twelve** such predicates, not the two the audit first reported:
+`assrEscalation.ts` (the escalation WHERE), `routes/assr.ts` x9 (backlog count,
+period counts, stage-history join, per-creditor open/breached, unassigned,
+breached tile, the three ageing buckets, per-agent breached) and
+`routes/inbox.ts` x3 (my-cases, overdue, stuck-in-stage).
+
+**Fix** - all twelve now read `stage NOT IN ('completed', 'voided')`. The
+`= 'completed'` counters that define "closed" were deliberately LEFT ALONE:
+folding voided into them changes what those tiles mean, which is a product
+decision, not a bug fix. Verified: backend typecheck clean; assrCompanyScope,
+assrSearch, assrCreateCategory and assrEscalation suites pass (21 tests); zero
+`stage != 'completed'` left in `backend/src`.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-13
+
+---
+
+## Composed mail validated and stored Cc/Bcc, then never sent them [high]
+
+**Symptom** - a staff member composes a mail in Mail Center with Cc or Bcc
+recipients. The thread renders them as recipients, but they never receive the
+mail. No error anywhere: the send succeeds for To.
+
+**Root cause (traced, not guessed)** - POST /compose collects and validates
+ccList/bccList (mail-center.ts) and stores ccAddresses on the message row, but
+the sendEmail call passed only to/subject/html/text/purpose/from/replyTo/
+companyCode/attachments - no cc, no bcc. The reply path passes both, so only
+compose was affected. Found by the 2026-08-12 module-guide code-read sweep
+(the guide claimed "a single Resend call carrying arrays" for all sends);
+verified by reading the call site, then fixed.
+
+**Fix** - compose's sendEmail now passes cc/bcc in the reply path's exact shape.
+Verified: backend typecheck clean. Still open (own task): attachment-bearing
+sends do not set outboxRetry:false, so a failed attachment send is re-drained
+body-only by the */5 cron.
+
+**Ref** - docs/staging-truth-and-map-refresh, 2026-08-12
+
+---
+
+## A COE named the wrong root cause because it quoted a repo comment instead of the run history [medium]
+
+**Symptom** - the staging COE, the roadmap, `deploy-staging.yml` and a
+BUG-HISTORY entry all stated that the Staging `CLOUDFLARE_API_TOKEN` had been
+failing "since the day it was set, 2026-07-01". The owner rejected it on sight:
+*"staging environment 怎么可能没有 set 过 cloudflare"*, *"之前 staging 都没问题的"*.
+
+**Root cause (traced, not guessed)** - `deploy-staging.yml`'s trigger comment,
+written 2026-07-31, inferred the start date from the secret's `updated_at`
+(2026-07-01) plus the fact that the workflow was failing. Nobody opened the run
+list. `gh run list --workflow deploy-staging.yml` shows Deploy (Staging)
+succeeding on that same token for four weeks — last success run 30470280714,
+2026-07-29 16:20 UTC — and the first failure, run 30518266259 at 2026-07-30
+06:00, already carries `Invalid access token [code: 9109]`. The credential died
+on Cloudflare's side; the GitHub secret was never touched.
+
+The COE then quoted that comment as evidence and built a **"ruled out"** row on
+it, marking "the token was working and was revoked recently" as REFUTED — the
+one thing that was actually true. The contradiction was already inside the same
+document (it stated the last good deploy as 2026-07-29, four weeks after the
+date it claimed the token had never worked) and was explained away with an
+invented earlier credential rather than chased.
+
+**Fix** - corrected in all four places, with the old claim left visible rather
+than silently overwritten, since a wrong "ruled out" row is what stops the next
+person re-checking. Added as lesson 3 of the COE: *an inherited note is not
+evidence — copy the CHECK, not the conclusion.*
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
+## The codebase-map generator died 11 hours after it was written, and froze the inventory for three weeks [medium]
+
+**Symptom** - `docs/generated/codebase-map-facts.md` — the artifact
+`CODEBASE-MAP.md` defers to precisely because generated numbers "cannot drift" —
+claimed 122 route modules, 164 pg migrations and a highest migration of `0163`.
+The tree held 135 route modules, 279 pg `.sql` files and `0281`. The file that
+exists to be authoritative about migrations was missing 116 of them.
+
+**Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
+`backend/vitest.config.ts` by hardcoded name, to derive table 2's "read by
+backend vitest" column. `#925` (2026-07-22 10:03) renamed that file to
+`vitest.config.mts` as part of a toolchain upgrade. `#963` had written the
+generator at 2026-07-21 22:28 — so it crashed with `ENOENT` from **eleven hours
+and thirty-five minutes after it was born**, before writing any output. It had
+produced exactly one generation, and that generation stood as current.
+
+Nothing caught it because `audit:map` IS the same script with `--check`, so the
+drift check crashed identically — and it is documented as deliberately NOT a CI
+or deploy gate, for the good reason that a stale doc must never block a deploy.
+The control case confirms the mechanism rather than contradicting it:
+regenerating all three artifacts found `route-capability-matrix.csv` and its
+summary byte-identical, because `audit:routes` gates them; the two that had
+rotted, `codebase-map-facts.md` and `route-locator.md`, are exactly the two
+nothing gates.
+
+**Fix** - the generator resolves the vitest config across `.mts` / `.ts` / `.js`
+and, if none exists, exits with a message naming the candidates instead of an
+ENOENT stack — so the next rename says which filename to add rather than silently
+freezing the inventory. Both stale artifacts regenerated. Class and lesson in
+`docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
+
+---
+
+## Staging carried no build stamp, so two weeks of green nightly E2E proved a two-week-old build [high]
+
+**Symptom** - `Staging E2E (smoke)` reported `success` every night from at least
+2026-08-04 to 2026-08-11, ~90s each, running real login / SO-list / company-
+isolation proofs. Staging had not been built from `main` since **2026-07-29
+16:20 UTC**, by then 775 commits and 59 production migrations behind. Every
+assertion was true and none of them were about current code.
+
+**Root cause (traced, not guessed)** - two independent facts had to meet.
+(1) The Staging `CLOUDFLARE_API_TOKEN` **worked for four weeks and then died**:
+last successful deploy 2026-07-29 16:20 UTC (run 30470280714), first failure
+2026-07-30 06:00 (run 30518266259), already carrying `Invalid access token
+[code: 9109]` while the GitHub secret's `updated_at` stayed 2026-07-01 — so the
+credential was revoked or expired on Cloudflare's side. On 2026-07-31 `main` was
+correctly removed from the trigger so the permanent red would stop training
+people to ignore red — after which the workflow simply stopped being invoked,
+because the `staging` branch it still triggers on last moved 2026-07-14.
+(2) `staging-e2e.yml` also runs on a nightly `schedule`, which needs no deploy.
+It pointed at the still-running old stack and passed. Nothing made the gap
+visible: prod stamps `--var GIT_SHA:${{ github.sha }}` and has a watchdog
+comparing it to `main` every 15 minutes, but `deploy-staging.yml` never added
+the stamp, so staging `/health` answered `{"ok":true,"sha":null}`. Reproduced on
+demand: run 31566944717, dispatched from `main` on 2026-08-12, passed typecheck,
+tests and build and failed at `cloudflare/wrangler-action` — the token is still
+bad.
+
+**Fix** - `deploy-staging.yml` now stamps `--var GIT_SHA`, and `staging-e2e.yml`
+reports the deployed commit against the commit it checked out, warning when they
+differ or when the stamp is absent. Deliberately a warning, not a failure: the
+suite proves an environment, and failing it while the deploy is paused would
+recreate the permanently-red workflow the pause was right to remove. Restoring
+`main` to the trigger is blocked on the owner issuing a new token. Full write-up
+and the ruled-out theories: `docs/staging-bench-rot-coe.md`.
+
+**Ref** - `docs/staging-truth-and-map-refresh`, 2026-08-12
 ## A shebang made a test suite unparseable on Windows only, and one error was counted as two failing files [low]
 
 **Symptom** - `npx vitest run tests/soFeeLineRepairRow.test.ts` failed on every
