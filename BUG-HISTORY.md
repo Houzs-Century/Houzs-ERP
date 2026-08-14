@@ -8,7 +8,8 @@ the GRN No checkbox in the Columns drawer would not tick at all.
 the user had ticked once. Funnels persist to `dt:filters:<table>`, apply from the
 first paint, and are visible nowhere but the header carrying them — per browser,
 which is why the owner's login could not reproduce it. The toolbar Reset could
-not help: the 13 pages that pass `resetFilters` define "active" as their own
+not help: the 15 pages that pass `resetFilters` (`git grep -l "resetFilters={"
+-- frontend/src`, less this component's own test) define "active" as their own
 pills, view and search, and their `onReset` clears URL params and sort, never the
 stored funnels.
 
@@ -28,11 +29,12 @@ preset-hidden column and re-sorted the table into definition order. Nobody
 reported it; the layout-sync test had pinned it as correct.
 
 **Fix.** `DataTable` folds its own `colFilters` into the Reset button's `active`
-and clears them on click, and renders the button unconditionally so the ~23 lists
-that pass no `resetFilters` get one too. Visibility gestures move to
-`dataTableColumnPrefs.ts` and bank the baseline into real prefs — order included
-— before applying themselves, which is what picking a layout from the drawer
-already did. There is no longer a "preset mode" a click has to escape from.
+and clears them on click, and renders the button unconditionally so the 24 lists
+that render a `DataTable` without passing `resetFilters` get one too. Visibility
+gestures move to `dataTableColumnPrefs.ts` and bank the baseline into real prefs
+— order included — before applying themselves, which is what picking a layout
+from the drawer already did, so a toggle and a Show all no longer have a "preset
+mode" to escape from.
 
 **What this does not change.** A funnel still persists, and still applies from
 the first paint. That is the design — it is the only way a narrowed view survives
