@@ -106,6 +106,38 @@ If a module has no guide yet, that is the gap to close, not a licence to explore
 write the guide as you learn the module, following the shape of
 `docs/modules/sales-order.md`.
 
+## ⚠️ Coverage ratchets — and one of them BLOCKS your PR
+
+Unlike the three rules above, this one is enforced by a check rather than by
+remembering it. Per AREA, line coverage may only go **up** and the count of files
+with **no test at all** may only go **down**. Floors live in
+`coverage-baseline.json`; the gate is `scripts/coverage-ratchet.mjs`.
+
+All six areas are checked on every PR, from one merged report built out of the
+three suites (`backend-typecheck` runs the light project, the four
+`backend-tests` shards run the workers project, `frontend-checks` runs the
+frontend).
+
+- **`frontend/src` hard-blocks**: it is checked inline in `frontend-checks`,
+  which the required `frontend` roll-up covers. Add a `.tsx` with no test and
+  the merge is blocked.
+- **The five backend areas** are checked in the `coverage-ratchet` job, which is
+  a visible red X but not (yet) a required context — that list is the owner's.
+- `backend/scripts` (the one-shot ops scripts, NOT `scripts/lib`) has its
+  no-test floor turned off on purpose — a new ops script with no test is normal
+  there. Everything else is held to both floors.
+
+Raising a floor is `npm run coverage:update`. LOWERING one needs
+`--update --allow-drop`, says so loudly in the log, and belongs in the diff with
+a reason in the PR. The percentage floor carries a tenth of a point of slack —
+for the merge base, not for you; the no-test floor carries none.
+`docs/TESTING-RATCHET.md` has the measured cost of each suite and, in §6, where
+the no-test floor is BLIND (it is, in `scm/routes`).
+
+**A percentage is not the target.** Testing getters to raise it protects nothing.
+The floor that matters is the second one, and the files worth attacking are the
+ones that decide MONEY or STOCK and have no test of any kind.
+
 ## ⚠️ A serious incident gets a COE — MANDATORY (owner rule)
 
 **COE = Correction of Error** (the industry term, AWS's). `BUG-HISTORY.md` is the

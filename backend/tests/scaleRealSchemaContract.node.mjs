@@ -122,15 +122,30 @@ test("the sharded command reaches the workerd vitest project, not the light one"
 
   /* THE PROPERTY, and the only one worth pinning: npm appends run arguments to
      the LAST command of the script, so whatever ends the chain is what --shard
-     lands on. It must be the bare workerd `vitest run`. A trailing `--config`
-     would point the shard at a DIFFERENT project — silently unsharding the
-     expensive half while four runners each ran the cheap one whole. */
+     lands on. It must resolve to the WORKERD project — a `vitest run` with no
+     `--config`, which is how vitest picks up vitest.config.mts. A trailing
+     `--config` would point the shard at a DIFFERENT project, silently
+     unsharding the expensive half while every runner ran the cheap one whole.
+
+     Asserted as a PROPERTY, not as the literal string "vitest run". This
+     assertion WAS `assert.equal(last, "vitest run")`, and that is the very
+     mistake the comment above it warns about: the coverage ratchet legitimately
+     makes the shard target `vitest run --coverage` — same project, instrumented
+     — and a literal match rejects it. Flags that do not change which project
+     runs are none of this guard's business. */
   const last = script.split("&&").pop().trim();
-  assert.equal(
+  assert.match(
     last,
-    "vitest run",
+    /^vitest run\b/,
     `ci.yml shards \`npm run ${scriptName}\`, whose last command is "${last}". ` +
-      "npm appends --shard there, so it must be the bare workerd `vitest run`.",
+      "npm appends --shard there, so it has to be a `vitest run`.",
+  );
+  const cfg = /--config[= ]\s*(\S+)/.exec(last);
+  assert.ok(
+    !cfg || /vitest\.config\.mts$/.test(cfg[1]),
+    `ci.yml shards \`npm run ${scriptName}\`, whose last command is "${last}". ` +
+      `That points --shard at ${cfg?.[1]}, not the workerd project — the expensive ` +
+      "half would run unsharded on every runner.",
   );
 
   assert.equal(pkg.scripts.pretest, "npm run test:scale-contract");
