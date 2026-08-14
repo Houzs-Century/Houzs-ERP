@@ -27,6 +27,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { supabaseAuth } from "../middleware/auth";
+import { canWriteScmConfig } from "../lib/houzs-perms";
 import type { Env, Variables } from "../env";
 
 export const localities = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -157,6 +158,19 @@ const updateSchema = z.object({
 
 // POST / — create a new row.
 localities.post("/", async (c) => {
+  /* GATED. These three writes had NO permission check at all - the file did
+     not import houzs-perms, and localities is in SCM_UNGUARDED_PREFIXES
+     (lib/scm-areas.ts) so no area guard runs over it either. Anyone who passed
+     requireScmAccess - a Sales Executive with view-only on orders included -
+     could edit or delete rows of the shared 5,870-row Malaysian postcode master
+     and repoint warehouse_id, the city-level delivery-routing override. It has
+     no company_id (see the header), so a change hits BOTH companies at once.
+     Every sibling on the same ungated umbrella already gates its writes:
+     currencies.ts:76 (scm.currency.manage), categories.ts (canWriteScmConfig
+     x7), staff.ts:433 (users.manage). */
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to change address data." }, 403);
+  }
   let body: unknown;
   try {
     body = await c.req.json();
@@ -184,6 +198,15 @@ localities.post("/", async (c) => {
 
 // PATCH /:id — update a row.
 localities.patch("/:id", async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to change address data." }, 403);
+  }
+  // company-scope: my_localities is a GLOBAL address master (postcode -> city ->
+  // state -> warehouse). Verified 2026-08-13 against its CREATE TABLE in
+  // scm-schema/2990s-full-schema.sql:786 — it has NO company_id column, and
+  // migration 0083 (which added company_id to 30-odd scm tables) deliberately
+  // skipped it. Both companies share one Malaysian postcode map; adding a
+  // company predicate here would filter against a column that does not exist.
   const id = c.req.param("id");
   let body: unknown;
   try {
@@ -223,6 +246,15 @@ localities.patch("/:id", async (c) => {
 
 // DELETE /:id — drop a row.
 localities.delete("/:id", async (c) => {
+  if (!canWriteScmConfig(c)) {
+    return c.json({ error: "You don't have permission to change address data." }, 403);
+  }
+  // company-scope: my_localities is a GLOBAL address master (postcode -> city ->
+  // state -> warehouse). Verified 2026-08-13 against its CREATE TABLE in
+  // scm-schema/2990s-full-schema.sql:786 — it has NO company_id column, and
+  // migration 0083 (which added company_id to 30-odd scm tables) deliberately
+  // skipped it. Both companies share one Malaysian postcode map; adding a
+  // company predicate here would filter against a column that does not exist.
   const id = c.req.param("id");
   const sb = c.get("supabase");
   const { error } = await sb.from("my_localities").delete().eq("id", id);

@@ -13,6 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SofaPriceTier } from '@2990s/shared';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type SofaComboRule = {
   id: string;
@@ -191,6 +192,7 @@ export function useSetSofaComboAnchor() {
       // (both master + supplier-scoped) must refetch to show them.
       qc.invalidateQueries({ queryKey: ['sofa-combos'] });
     },
+    onError: writeFailed,
   });
 }
 

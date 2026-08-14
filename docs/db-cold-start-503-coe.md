@@ -81,6 +81,22 @@ A cold start is a few seconds of slowness. What makes it a COE subject is that "
 
 - **A driver was shown the wrong money.** `MobilePOD.tsx` read payments as `data ?? []`, so `paid = 0` and the balance rendered as the full order total. `data` is `undefined` both when a read has not answered **and when it failed** — the coalesce collapsed "I don't know" into "this customer has paid nothing", and put that number in front of a driver collecting cash (`BUG-HISTORY.md:1698`). The entry names the cold start as *"a documented recurring condition here… not a hypothetical."*
 - **Company scoping fails open on purpose during the window.** `scopeToCompany` no-ops when the active company is unresolved, which a cold start can cause. Post multi-company merge that is a cross-company **read** exposure, and it is the most likely explanation for the owner's "Houzs user sees 2990 DOs" screenshot (`BUG-HISTORY.md:264`, `:274`). Failing closed instead would blank single-company lists on every cold start. **The tradeoff is documented and deliberate; it exists only because the window exists.**
+
+  **Corrected 2026-08-13 — the hole is now three narrow ones, not one wide one.**
+  `b6c45ac2` (PR #893, 2026-07-20 — before this COE was written) made
+  `scopeToCompany` FAIL CLOSED whenever the context is RESOLVED but no single
+  active company could be picked: it emits `.in('company_id', [])`
+  (`scm/lib/companyScope.ts`, the `scopeToCompany` comment). Separately,
+  `loadCompanies` now prefers LAST-KNOWN-GOOD over a blank on a failed master
+  read, "so a live multi-company context does NOT momentarily degrade to the
+  cross-company fail-open" (`middleware/companyContext.ts`), and a brand-new
+  isolate with no last-known-good resolves from the caller's OWN
+  `user_companies` grants — one grant resolves unambiguously, several with no
+  usable header set the allow-list and leave the active company unset, which
+  fails closed. **What still fails open is only the case where the companies
+  master AND `user_companies` are both unreadable**, which cannot be
+  distinguished from a genuine single-company install. The tradeoff is real but
+  it is no longer the routine cold-start behaviour this bullet described.
 - **Fail-closed session revocation could not ship as designed.** PR #918 made revocation authoritative; a brief blip then logged the entire company out, because an unreachable DB propagated as an auth failure. `40e3e5c8` bounds it with a 60-second liveness cache — an explicit owner trade of revocation latency for availability.
 
 ---
@@ -108,7 +124,7 @@ A cold start is a few seconds of slowness. What makes it a COE subject is that "
 
 ## 7. Lessons
 
-1. **`backend/src/db/pg.ts` is frozen, and "frozen" is a verifiable claim here, not a slogan.** Its last functional change is `b5922f36`, **2026-06-13 — 1,767 commits ago** on `main`. Every parameter in it is a scar: `prepare:false` (HOOKKA, 2026-04-27), no `connect_timeout` (emergency revert, 2026-06-04), `max:1` with no per-request `.end()` and no driver-level retries (churn/exhaustion, 2026-06-13), never cache the client across requests (`system-foundation-coe.md`'s cross-context I/O bug). **The cold start is the symptom this file is most tempting to "fix", and the three most obvious fixes have each already caused a worse outage.** Change the client's patience, the pool's warmth, or the compute tier — not this file.
+1. **`backend/src/db/pg.ts` is frozen, and "frozen" is a verifiable claim here, not a slogan.** Its last functional change is `b5922f36`, **2026-06-13 — 3,112 commits ago** on `main` (re-measured 2026-08-13; the figure here read 1,767 when written — `git rev-list --count b5922f36..origin/main` is the check, and the point is the distance, not the number). Every parameter in it is a scar: `prepare:false` (HOOKKA, 2026-04-27), no `connect_timeout` (emergency revert, 2026-06-04), `max:1` with no per-request `.end()` and no driver-level retries (churn/exhaustion, 2026-06-13), never cache the client across requests (`system-foundation-coe.md`'s cross-context I/O bug). **The cold start is the symptom this file is most tempting to "fix", and the three most obvious fixes have each already caused a worse outage.** Change the client's patience, the pool's warmth, or the compute tier — not this file.
 2. **A retry belongs where the request has not yet executed.** Every safe retry in this system rests on one property: the cold-pool 503 is raised by the connection layer *before* the handler runs, so nothing happened and re-running cannot double-write. That is why even mutations may retry that specific 503 (#177), and why `TRANSIENT_CONN_RE`'s comment forbids adding any real SQL error to it. **Check "did this reach the server?" before adding anything to a retry set.**
 3. **Fix the path the user is actually on, and prove which one that is.** #267 was correct, complete, and invisible to the owner, because his screens fetch through a different helper. A fix that ships to a path nobody uses reads exactly like a fix that worked.
 4. **`?? []` and `?? 0` are how a latency problem becomes a money bug.** `undefined` means both "not answered yet" and "failed", and the coalesce destroys the only discriminator — the error. In a system where reads *are documented to fail transiently*, defaulting a failed read to an empty value is not defensive coding, it is asserting a fact you do not have. Three separate money bugs in one day traced to this (`BUG-HISTORY.md:2204`).

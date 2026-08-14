@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import routeSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import rawRouteSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
+
+/* NORMALISE LINE ENDINGS. This file's assertions are source-TEXT anchors that
+   embed `\n`, and on Windows the working copy is checked out CRLF (git's
+   autocrlf), so every multi-line anchor missed and the suite failed HERE while
+   CI stayed green on Linux — the same Windows-only-red shape CLAUDE.md already
+   records for the shebang trap. The wiring was never broken; only the search
+   was. A source-text test must be indifferent to a checkout setting. */
+const routeSource = rawRouteSource.replace(/\r\n/g, '\n');
 
 /* Owner ruling 2026-08-13 — a company-1 Sales Order must resolve a stock
    location, because AutoCount refuses a document line whose Location is not in

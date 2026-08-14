@@ -11,6 +11,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
 
@@ -82,6 +83,7 @@ export function useToggleLorryInHouse() {
         { method: 'PATCH', body: JSON.stringify({ isInternal }) },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['lorry-capacity'] }),
+    onError: writeFailed,
   });
 }
 

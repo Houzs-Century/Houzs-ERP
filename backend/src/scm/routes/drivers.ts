@@ -105,6 +105,14 @@ drivers.post('/', async (c) => {
     const { data, error } = await sb.from('drivers')
       .insert({ ...row, driver_code: driverCode }).select(COLS).single();
     if (!error) return c.json({ driver: data }, 201);
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     if (error.code !== '23505') return c.json({ error: 'insert_failed', reason: error.message }, 500);
     if (suppliedCode) return c.json({ error: 'duplicate_code' }, 409);
@@ -113,6 +121,15 @@ drivers.post('/', async (c) => {
 });
 
 drivers.patch('/:id', async (c) => {
+  // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
+  // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
+  // ("every company's TMS page shows the same lorries/drivers"), and driver_code
+  // carries a bare UNIQUE so per-company minting would collide across tenants.
+  // scm.lorry_service_records' own DDL (mig 0121) spells out the consequence:
+  // company_id is stamped on insert but "NOT used to scope reads", because a
+  // lorry's history must be visible wherever the lorry is. Verified 2026-08-13
+  // against the DDL and both route declarations before deciding NOT to change
+  // this handler.
   const id = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }

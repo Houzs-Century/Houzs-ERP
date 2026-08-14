@@ -21,8 +21,26 @@ Forward post/dispatch routes called best-effort inventory-move helpers whose `{o
 ### C. Frontend null-crash class — FIXED system-wide
 ~80 null guards across ~45 files. The crash class = a field typed `string` that the API can return `null`, reaching `.localeCompare`/`.toLowerCase`/`.slice`. HIGH instance: `pages/Projects.tsx` calendar `.slice(0,10)` on a null `due_date` (crashes the Calendar view). Plus Mail Center search/sort, `Team.tsx`, and a system-wide sweep of every ad-hoc `sortFn` `localeCompare` in `scm-v2/*` + `vendor/scm/components/*` (wrapped both operands with `?? ''`). The shared `sort-options.ts` `byText` helper was already null-safe. (A handful of LOW sortFn guards on ~9 list pages — DeliveryReturnsList, GoodsReceived, MfgSalesOrdersList, PurchaseConsignment*, PurchaseInvoices/Orders/ReturnsList, SalesInvoicesList — were dropped during deploy-recovery and remain a follow-up; those columns are rarely null.)
 
+  **Corrected 2026-08-13 — "every ad-hoc `sortFn` `localeCompare`" does not
+  describe the tree today.** Of 149 `localeCompare` sites in those two trees,
+  **46 carry no `?? ''` on either operand.** Whether each of those 46 is a real
+  null risk needs the field's own type and cannot be settled by grep, and
+  nothing here establishes how many predate the sweep versus arrived after it —
+  so treat the sweep as done-once, not as an invariant. The follow-up list also
+  names files that no longer exist under those names: the pages are now
+  `DeliveryReturnsListV2.tsx`, `GoodsReceivedListV2.tsx` and siblings.
+
 ### D. Data integrity — FIXED
-- `is_active` lost its `DEFAULT` in the D1→PG migration on 4 public tables (`assr_lead_time_profiles`, `creditors`, `lorries`, `stock_items` — all bigint, 0 existing NULL rows). → `ALTER … SET DEFAULT 1` (applied to prod + migration `104_restore_is_active_defaults.sql`).
+- `is_active` lost its `DEFAULT` in the D1→PG migration on 4 public tables (`assr_lead_time_profiles`, `creditors`, `lorries`, `stock_items` — all bigint, 0 existing NULL rows). → `ALTER … SET DEFAULT 1` (applied to prod + migration `migrations-pg/0054_restore_is_active_defaults.sql`).
+
+  **Corrected 2026-08-13** — this line named `104_restore_is_active_defaults.sql`,
+  which is the D1 tree production never reads. Filing it there is what BLOCKED
+  every backend deploy until PR #120 (`7eddca7f`) turned `migrations/104` into a
+  deliberate `SELECT 1;` no-op and moved the real DDL to `migrations-pg/0054`.
+  `docs/pg-migration-dropped-defaults-coe.md` §3 records that incident and had it
+  right; these two documents contradicted each other on the same fact. The file
+  itself settles it — `migrations/104`'s header reads *"(D1 / SQLite test mirror
+  — intentional NO-OP)"*.
 - `sales_reps` SR-002 (departed IT dev Nijam's rep, wrongly still `active`) → set `inactive`.
 
 ## Verified NOT a problem (audit ruled these out)

@@ -61,47 +61,77 @@ test("pagination correctness uses the real SO doc_no key when the list has no id
 
 test("PR CI executes and retains the full 100k PostgreSQL evidence run", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  // The gate must still fire on `pull_request`. It now ALSO fires on
-  // `merge_group`, so the condition is a folded multi-line `if: >-` and the
-  // single-line form this used to match no longer exists. Asserting on the
-  // event name alone keeps the invariant (every PR gets one evidence run)
-  // without pinning the YAML formatting that expresses it.
-  assert.match(workflow, /scale-postgres-contract:[\s\S]*github\.event_name == 'pull_request'/);
+  /* The job must be PR-gated. Asserted as a PROPERTY, not a format: the
+     condition was a one-liner and became a folded `if: >-` block when a
+     merge_group clause was added, which broke this assertion on origin/main
+     itself without anything about the gate changing. Match the job header, then
+     the expression anywhere in it. */
+  assert.match(workflow, /scale-postgres-contract:[\s\S]*?if:[\s\S]{0,600}?github\.event_name == 'pull_request'/);
   assert.match(workflow, /--orders=100000 --lines=100000 --skus=10000 --users=10000 --runs=20/);
   assert.match(workflow, /--json=artifacts\/scale-pg-100k\.json/);
   assert.match(workflow, /uses: actions\/upload-artifact@v4[\s\S]*if-no-files-found: error/);
 });
 
-// npm appends run arguments to the LAST command in a script, so whatever CI
-// shards MUST be a single command — an `&&` chain sends `--shard` to the wrong
-// binary and leaves vitest unsharded: every runner executing the whole suite,
-// green, at several times the wall time sharding exists to remove.
+// The backend suite is sharded across four runners with
+// `npm test -- --shard=i/n` (see ci.yml). npm appends run arguments to the LAST
+// command in the script, so what `--shard` reaches is whatever ends the chain.
 //
-// The carrier changed. `test` is now `test:light && test:workers` (the pure-
-// logic project plus the Workers-pool one) and is deliberately NOT what CI
-// shards; ci.yml shards `test:workers`, which is the single command. The
-// invariant is unchanged — only the script it applies to.
-test("the sharded backend script stays a single command so CI sharding still reaches vitest", async () => {
+// THIS GUARD ASSERTED A LITERAL STRING AND THAT MADE IT WRONG. It required
+// `test` to be exactly "vitest run". When the suite was split into a fast
+// pure-logic project and a workerd one, `test` legitimately became
+// "vitest run --config vitest.light.config.mts && vitest run" — and this
+// assertion failed on origin/main itself, so `npm test` exited 1 there before a
+// single vitest file ran. A guard that pins the SHAPE of a correct answer
+// blocks every other correct answer; it has to pin the PROPERTY it exists to
+// protect.
+//
+// The property is: the command that `--shard` lands on must be the WORKERD
+// vitest run, because that is the 45-file project worth sharding. A chain is
+// fine as long as it ENDS there. The light project runs once in the
+// backend-typecheck job (`npm run test:light`), so a chain that also runs it
+// per shard is wasteful but not wrong; a chain that ends on the LIGHT config
+// would silently unshard the expensive half, which is the failure this exists
+// to catch.
+test("the sharded command reaches the workerd vitest project, not the light one", async () => {
   const pkg = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
-  assert.equal(pkg.scripts["test:workers"], "vitest run");
-  assert.ok(
-    !pkg.scripts["test:workers"].includes("&&"),
-    "test:workers must stay a single command — CI appends --shard to it",
-  );
   const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(
-    workflow,
-    /npm run test:workers -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/,
-  );
-});
 
-// `pretest` only fires for `npm test`, and backend CI runs `test:light` and
-// `test:workers` — never `npm test`. So this suite has to be invoked by name in
-// the workflow, or it stops running and nobody finds out. It did, for one
-// afternoon, and two checks in this very file were failing the whole time.
-test("this contract suite is actually invoked by CI, not left to pretest", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(workflow, /- run: npm run test:scale-contract/);
+  /* Read WHICH script ci.yml shards, rather than hard-coding a name.
+     THE CARRIER CHANGED, and that is the whole lesson: `test` is now
+     `test:light && test:workers`, and CI deliberately shards `test:workers`
+     instead — targeting the workerd project directly rather than relying on
+     where an `&&` chain happens to end. The old guard named `npm test` by hand
+     and so failed on that improvement.
+
+     A second session fixed this same guard the same afternoon by hard-coding
+     `test:workers` instead. Same verdict, and it works — but it pins the name
+     in two places, so the NEXT rename breaks it again. Following the workflow
+     is what stops that recurring. */
+  const shardCmd = /npm (?:run )?([\w:-]+) -- --shard=\$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}/.exec(workflow);
+  assert.ok(
+    shardCmd,
+    "ci.yml no longer shards with `npm [run] <script> -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}`. " +
+      "If sharding moved, this guard has to move with it.",
+  );
+
+  const scriptName = shardCmd[1] === "test" ? "test" : shardCmd[1];
+  const script = pkg.scripts[scriptName];
+  assert.ok(script, `ci.yml shards \`${scriptName}\`, which is not a script in package.json.`);
+
+  /* THE PROPERTY, and the only one worth pinning: npm appends run arguments to
+     the LAST command of the script, so whatever ends the chain is what --shard
+     lands on. It must be the bare workerd `vitest run`. A trailing `--config`
+     would point the shard at a DIFFERENT project — silently unsharding the
+     expensive half while four runners each ran the cheap one whole. */
+  const last = script.split("&&").pop().trim();
+  assert.equal(
+    last,
+    "vitest run",
+    `ci.yml shards \`npm run ${scriptName}\`, whose last command is "${last}". ` +
+      "npm appends --shard there, so it must be the bare workerd `vitest run`.",
+  );
+
+  assert.equal(pkg.scripts.pretest, "npm run test:scale-contract");
 });

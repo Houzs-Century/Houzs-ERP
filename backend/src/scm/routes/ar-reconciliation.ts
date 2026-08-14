@@ -26,6 +26,8 @@ import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
+import { canViewAllSales } from '../lib/houzs-perms';
+import { resolveSalesScopeIds } from '../lib/salesScope';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { supabaseAuth } from '../middleware/auth';
 
@@ -65,12 +67,27 @@ arReconciliation.get('/reconciliation', async (c) => {
   const onlyDrift = c.req.query('drift') === 'true';
   const onlyOutstanding = c.req.query('outstanding') === 'true';
 
+  /* PER-SALESPERSON ROW SCOPE, matching unbilled-deliveries.ts:187 — the
+     sibling that answers the same question against DOs. Without it a
+     self-scoped rep who reached this page saw the whole book's debtor names,
+     totals, paid and remaining, while their own SO list showed only theirs.
+
+     resolveSalesScopeIds returns null for a view-all caller (ops, finance,
+     management) — they are unchanged. It MUST be given the REAL Houzs integer
+     id via houzsUser: `user.id` here is the SCM bridge's pinned system-staff
+     uuid, and feeding that to the scope lookup is the documented non-admin 500.
+
+     Owner decision 2026-08-13: gate it like its siblings. The area guard
+     (scm.finance.outstanding) was added at the mount in scm/index.ts. */
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+
   let soQ = sb
     .from('mfg_sales_orders')
-    .select('doc_no, so_date, status, debtor_name, local_total_centi, paid_centi')
+    .select('doc_no, so_date, status, debtor_name, local_total_centi, paid_centi, salesperson_id')
     .in('status', AR_STATUSES)
     .order('so_date', { ascending: false })
     .limit(2000);
+  if (scopeIds) soQ = soQ.in('salesperson_id', scopeIds);
   soQ = scopeToAllowedCompanies(soQ, c);
   const { data: soData, error: soErr } = await soQ;
   if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);

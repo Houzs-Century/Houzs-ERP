@@ -41,13 +41,32 @@ export interface SinglePwpClaimResult {
   /** Sofa reward combo ids. null on non-sofa path or rejection. */
   pwpSofaComboIds: string[] | null;
   /** For rollback on a subsequent failure. null if not claimed (rejection). */
-  claimed: { code: string; prevStatus: string } | null;
+  /* companyId travels WITH the claim so the rollback undoes the row the claim
+     took. Since 0188 re-keyed pwp_codes (company_id, code), a receipt carrying
+     only the code does not identify a row. */
+  claimed: { code: string; companyId: number; prevStatus: string } | null;
   /** Set when the code cannot be granted. null on success. */
   rejection: { code: string; reason: string } | null;
 }
 
 export interface PwpClaimSingleArgs {
   code: string;
+  /**
+   * The active company. REQUIRED, and required for a reason worth reading.
+   *
+   * A PWP code used to be globally unique — `code text PRIMARY KEY` — so
+   * addressing a row by code alone was safe by construction. Migration 0188
+   * re-keyed the table `(company_id, code)` so each company could own its own
+   * code space, and that removed the guarantee this file was silently relying
+   * on. From then on `.eq('code', ...)` addresses "whichever company's row the
+   * planner returns first", on a path that CLAIMS and BURNS a voucher.
+   *
+   * Made required rather than optional so every caller has to answer the
+   * question — CLAUDE.md's first recorded trap is that a default is a decision
+   * nobody reviews, and an optional company would have defaulted to the old,
+   * wrong behaviour at exactly the call sites that forgot it.
+   */
+  companyId: number;
   docNo: string;
   /**
    * The resolved product catalog SKU (product.code from the catalog row).
@@ -246,6 +265,7 @@ export async function claimPwpForSingleLine(
     .from('pwp_codes')
     .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, customer_id, source_doc_no, redeemed_doc_no, type')
     .eq('code', args.code)
+    .eq('company_id', args.companyId)
     .limit(1);
   if (fetchErr) return reject('could not verify the code — please try again');
   const cRow: PwpCodeRow | null = (codeRows as PwpCodeRow[] | null)?.[0] ?? null;
@@ -343,7 +363,10 @@ export async function claimPwpForSingleLine(
       redeemed_item_code: args.itemCode,
       updated_at:         new Date().toISOString(),
     })
-    .eq('code', args.code);
+    .eq('code', args.code)
+    // The claim is the WRITE that burns the voucher; since 0188 re-keyed
+    // pwp_codes (company_id, code), code alone no longer addresses one row.
+    .eq('company_id', args.companyId);
   // Orphaned-USED re-claim: match USED + exact dead doc_no to avoid hijacking
   // a parallel legitimate redemption.
   claimQ = orphanedUsed
@@ -360,7 +383,7 @@ export async function claimPwpForSingleLine(
   return {
     pwpBaseSen: elig.grantSofaComboIds ? null : elig.grantPwpPrice,
     pwpSofaComboIds: elig.grantSofaComboIds ?? null,
-    claimed: { code: args.code, prevStatus },
+    claimed: { code: args.code, companyId: args.companyId, prevStatus },
     rejection: null,
   };
 }
@@ -375,7 +398,10 @@ export async function claimPwpForSingleLine(
  */
 export async function rollbackSinglePwpClaim(
   sb: any,
-  claimed: { code: string; prevStatus: string },
+  /* companyId rides the claim receipt rather than being passed separately: a
+     rollback must undo the row the claim actually took, and the two travelling
+     together is what makes that true by construction. */
+  claimed: { code: string; companyId: number; prevStatus: string },
 ): Promise<void> {
   const patch: Record<string, unknown> = {
     status: claimed.prevStatus,
@@ -386,5 +412,8 @@ export async function rollbackSinglePwpClaim(
   // If restoring to RESERVED, also null source_doc_no — we stamped it on claim
   // (mirrors create rollbackPwpClaims ~line 2020).
   if (claimed.prevStatus === 'RESERVED') patch.source_doc_no = null;
-  await sb.from('pwp_codes').update(patch).eq('code', claimed.code).eq('status', 'USED');
+  await sb.from('pwp_codes').update(patch)
+    .eq('code', claimed.code)
+    .eq('company_id', claimed.companyId)
+    .eq('status', 'USED');
 }
