@@ -169,12 +169,12 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1310 files, 543347 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1310 files, 543345 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15003 |
+| `frontend/src/pages/Projects.tsx` | 14996 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
@@ -192,7 +192,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
-| `backend/src/services/projects.ts` | 3189 |
+| `backend/src/services/projects.ts` | 3194 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3016 |
 
 ## 4. Frontend desktop routes
