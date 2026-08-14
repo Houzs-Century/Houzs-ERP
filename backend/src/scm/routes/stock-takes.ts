@@ -327,6 +327,17 @@ stockTakes.get('/:id', getStockTakeDetailHandler);
 // body: { warehouseId, assigneeStaffId, takeDate?, scopeType, scopeValue?,
 //         notes?, blind? }
 export const createStockTakeHandler = async (c: any) => {
+  /* company-scope: two by-id statements here, both correct.
+       · the ROLLBACK delete targets the header this handler inserted moments
+         earlier (insertWithDocNoRetry stamps the active company), so its id is
+         not caller-supplied.
+       · the scm.staff existence check MUST NOT be company-filtered. Mig 0089
+         lists staff under "Deliberately NOT stamped (shared / per-staff
+         reference data)", which is exactly why hr_salesperson_profiles is
+         UNIQUE(company_id, staff_id): ONE staff row holds one profile PER
+         company. Adding a company predicate there would reject a legitimate
+         assignee — a "fix" that manufactures a bug.
+     Verified 2026-08-13 by reading the handler end to end. */
   const sb = c.get('supabase');
   const user = c.get('user');
   let body: Record<string, unknown>;
@@ -398,6 +409,14 @@ export const createStockTakeHandler = async (c: any) => {
       .from('stock_takes').insert({ take_no: takeNo, ...headerInsert }).select(HEADER).single(),
   );
   if (hErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
@@ -639,8 +658,11 @@ stockTakes.patch('/:id/reverse', async (c) => {
   // Load the forward ADJUSTMENT movements this take wrote. (Reversal can only
   // run once — the status gate above — so there are no prior reversal rows to
   // filter out.)
+  /* unit_cost_sen is SELECTED now — it was not, so the reversal below could not
+     have carried the original basis even if it wanted to. See the note on the
+     reversal row. */
   const { data: movs, error: mLoadErr } = await sb.from('inventory_movements')
-    .select('warehouse_id, product_code, product_name, variant_key, batch_no, qty')
+    .select('warehouse_id, product_code, product_name, variant_key, batch_no, qty, unit_cost_sen')
     .eq('source_doc_type', 'STOCK_TAKE')
     .eq('source_doc_id', id);
   if (mLoadErr) {
@@ -651,6 +673,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
   for (const m of (movs as Array<{
     warehouse_id: string; product_code: string; product_name: string | null;
     variant_key: string | null; batch_no: string | null; qty: number;
+    unit_cost_sen: number | null;
   }>) ?? []) {
     if (!m.qty) continue; // zero-variance lines wrote nothing; nothing to undo
     reverseRows.push({
@@ -661,7 +684,32 @@ stockTakes.patch('/:id/reverse', async (c) => {
       variant_key:     m.variant_key ?? '',
       batch_no:        m.batch_no ?? null,
       qty:             -m.qty,                          // flip the sign — undo
-      unit_cost_sen:   0,                               // trigger recomputes cost
+      /* CARRY THE ORIGINAL BASIS. This was `unit_cost_sen: 0`, commented
+         "trigger recomputes cost" — and the trigger cannot. Its IN branch
+         (`fn_inventory_movement_fifo`, migration 0195:138-150) averages OPEN
+         lots only, with no last-known tier and no consignment exclusion:
+
+             v_unit_cost := COALESCE(NULLIF(NEW.unit_cost_sen, 0), v_avg_cost, 0);
+
+         A write-off is precisely the case that DRAINS the bucket, so on reversal
+         the average query matches no rows, v_avg_cost is 0, and the units come
+         back as a permanent RM0 lot. Ten units that left at RM100 return worth
+         nothing: RM1,000 of COGS vanishes into phantom margin, and
+         reconcileUncostedAfterIn does not repair it (it costs prior short OUTs
+         from arriving lots, not the arriving lot itself).
+
+         This handler's own POST refuses to do exactly this — it 422s
+         `cost_required` rather than open a cost-less lot (:951-963), using the
+         4-tier resolveForcedUnitCostSen ladder that never returns 0. The fix
+         landed on POST and inventory-adjustments and never on the reverse, whose
+         sibling reverseMovements DOES carry the cost
+         (lib/inventory-movements.ts:559).
+
+         Carrying the forward row's own unit_cost_sen is exact, not an estimate:
+         it is the basis those units left at. `|| 0` only when the forward row
+         had none, which is the pre-existing behaviour for a genuinely uncosted
+         movement. */
+      unit_cost_sen:   Number(m.unit_cost_sen ?? 0),
       source_doc_type: 'STOCK_TAKE',
       source_doc_id:   header.id,
       source_doc_no:   header.take_no,

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { missingVariantAxes, missingConfirmVariantAxes } from './so-variant-rule';
 
-/* Owner 2026-08-08 (HC-SO-2607-008): confirming an order requires every goods
-   line's category-required variant axes — with ONE carve-out over the
-   Processing-Date rule: a colour-KIV line (series committed, colour confirmed
-   later) SATISFIES the fabric axis at confirm time. Desktop New SO, mobile
-   New SO and the backend confirm gate all read missingConfirmVariantAxes, so
-   this suite is the one place the carve-out is pinned for both surfaces. */
+/* The colour-KIV carve-out: a line that committed to a fabric SERIES with the
+   colour confirmed later SATISFIES the fabric axis.
+
+   CORRECTED 2026-08-14. This header used to say "Desktop New SO, mobile New SO
+   and the backend confirm gate all read missingConfirmVariantAxes" — all three
+   statements were false from 2026-08-13, when #2072 took variants out of the
+   confirm gate on the owner's narrowing ("只要是没有 proceed 这一张订单，其实都
+   不一定是需要填写的"). docs/modules/sales-order.md recorded the falsehood and
+   deliberately left it here, being a docs-only diff; this is that follow-up.
+   What reads the function now is the .mjs audit mirror — see its docblock. */
 
 const labels = (axes: Array<{ label: string }>) => axes.map((a) => a.label);
 

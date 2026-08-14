@@ -1,7 +1,8 @@
 # COE — CI capacity: the queue that ate the working day
 
 **Date** 2026-08-13 · **Severity** P2 (no production impact; sustained loss of
-delivery throughput) · **Status** partially fixed, see Deferred
+delivery throughput) · **Status** fixed; the remaining items in Deferred are
+decisions, not defects
 
 ---
 
@@ -47,6 +48,13 @@ Measured over 24h: **173 CI runs across 35 open PRs**. One branch,
 `backend`, `scale-postgres-contract`, `backend-postgres`, `frontend`,
 `e2e-contract`. With several PRs pushing together the demand is 60–90
 concurrent jobs against a **20-job free-plan ceiling**.
+
+> **That fan-out is the INCIDENT-DAY shape and both fixes in this document
+> changed it.** On `origin/main` today `backend-tests` is `shard: [1, 2]` (two,
+> per #2131) and `frontend` is four jobs (`frontend-checks`, `frontend-build`,
+> `frontend-perf` and the `frontend` roll-up, per #2142) — eleven slots, not
+> ten, arranged differently. Read this paragraph as the measurement that
+> motivated the work, not as a description of CI now.
 
 At the moment of measurement: **24 jobs unfinished, 5 sitting in `queued`**.
 Worst observed waits: 132s at job level, **850s (14 minutes)** at run level.
@@ -110,10 +118,15 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
-| `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | this PR |
-| `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | this PR |
-| `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | this PR |
-| `tests/schemaSnapshotParity.test.ts` | Proves snapshot ≡ replay inside the real D1: DDL, seeded rows, and the Phase-1 soak row | this PR |
+| `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
+| `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
+| `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
+| `tests/schemaSnapshotParity.test.ts` | Proves snapshot ≡ replay inside the real D1: DDL, seeded rows, and the Phase-1 soak row | #2131 |
+| 221 of 265 backend test files moved off the Workers pool onto a plain node runner | Suite 565s → 106s; slowest CI shard 380s → 141s; `backend-tests` 4 shards → 2 | #2131 |
+| `frontend` split into `frontend-checks` / `frontend-build` / `frontend-perf` with a roll-up, plus a Playwright browser cache | The gate 285s → **150s**; whole CI critical path now ~150s | #2142 |
+| `BUG-HISTORY.md merge=union` in `.gitattributes` | The append-at-top ledger stops being a merge conflict — **for local merges only**, see the caveat above | #2133 |
+| `test:scale-contract` invoked by name in `backend-typecheck`, and its two stale assertions corrected | Restores 100 checks that #2131 silently stopped running; a new assertion fails if CI is ever rerouted around it again | #2146 |
+| The light/workers split computed at config time instead of from a committed list | Removes a per-PR regeneration tax #2131 had introduced; two PRs had already gone red on it | #2150 |
 
 ### The near-miss the parity test caught
 
@@ -152,11 +165,11 @@ here as such so nobody later cites it as established.
 
 | Item | Why deferred | Owner |
 | --- | --- | --- |
-| **`frontend` is now the slowest job (~285s) and gates every PR** | Untouched by this work. It runs a SECOND full `vite build` of the merge base for the bundle baseline, and downloads Playwright Chromium, inside one serial job. Both plausible, neither measured | owner |
+| ~~**`frontend` is now the slowest job (~285s) and gates every PR**~~ — **CLOSED by #2142, 2026-08-13** | It was deferred as "untouched by this work, both plausible, neither measured". It was then measured and split: `frontend` on `main` is now a ROLL-UP over `frontend-checks` / `frontend-build` / `frontend-perf`, with the Playwright browser cached. See the Fixes table above. | — |
 | **Restore an emergency bypass on the `main-protection` ruleset** | `CLAUDE.md` claimed repository admin was on the bypass list; checked 2026-08-13, `bypass_actors` is `null` and `current_user_can_bypass` is `"never"`. Harmless today, but a merge queue that jams with no bypass blocks `main` for everyone. Requires `hello-houzs` admin | owner |
 | ~~Enable the merge queue~~ — **NOT POSSIBLE on this repo, see below** | `hello-houzs` is a **User** account, and GitHub's merge queue is organization-only. The ruleset page simply does not offer the option | — |
 | Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
+| Nearly every workflow file is a one-off `workflow_dispatch` data script (289 of 300 carry `secrets.DATABASE_URL`, re-counted 2026-08-14; this row said "286 of 296") | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -189,10 +202,32 @@ Nothing was dropped. The 13 `tests-pg/` and `tests-node/` files were
 additionally being run *inside workerd* by the old config's default glob, on top
 of their own `test:pg` run; they now execute only where they belong.
 
-The split is generated by `npm run gen:test-projects` and gated by
-`npm run audit:test-projects`, because a hand-maintained list rots invisibly —
-a new test lands in whichever project someone guessed, and the only symptom is
-the suite slowly getting slow again.
+The split is computed from the source tree at config time by
+`backend/scripts/lib/classify-tests.mjs`, which both vitest configs call.
+
+**It was not built that way, and the first attempt is the more useful story.**
+It shipped in #2131 as a generated JSON file with an `audit:test-projects`
+gate, following this repo's `gen:`/`audit:` convention. Within the same day
+#1898 and #2058 both went red on *"Test project split is stale"* — for adding a
+backend test file. Every PR touching backend tests would have paid that tax
+forever.
+
+The convention was followed correctly and applied to the wrong kind of fact.
+`gen:`/`audit:` earns its keep where a human authors something that could be
+wrong and re-deriving it is expensive: the schema snapshot (baseline + 147
+migrations), the route capability matrix. This split is a **pure function of
+the tree** — does the file mention `cloudflare:test` or a D1 binding — so a
+committed copy can never be *more* correct than computing it, only less, and
+the gate existed solely to detect that it had become so.
+
+#2150 deleted the generator, the committed JSON, both npm scripts and the CI
+step. The staleness they guarded against is no longer representable.
+
+**Before adopting a convention, ask what it is defending against.**
+
+> Current size of the split, for scale rather than as a fact to maintain —
+> re-run `classifyTests()` rather than trusting this line: **light 236 /
+> workers 44** on 2026-08-14.
 
 ### What this replaced, and why `fileParallelism` was not the answer
 
@@ -209,8 +244,6 @@ Also measured and recorded so it is not re-investigated: the four test bindings
 total ~320 KB shipped into every isolated worker, and shrinking the largest
 (`TEST_MIGRATIONS`, 201 KB) bought ~8% of setup. Not pursued — the split makes
 it irrelevant for 221 of the files and marginal for the remaining 44.
-| Reduce the number of simultaneously open PRs | The load generator behind cause 1. Process, not code | owner |
-| 286 of the repo's 296 workflow files are one-off `workflow_dispatch` data scripts | No runner cost, but the Actions tab and every `gh` query are unusable | owner |
 
 ---
 
@@ -223,16 +256,23 @@ per-shard the same job cost before:
 | --- | --- | --- |
 | `backend-tests (1)` | ~380s | **141s** |
 | `backend-tests (2)` | ~380s | **127s** |
-| `backend-typecheck` | ~55s | 92s (it now also runs the 234-file light suite) |
+| `backend-typecheck` | ~55s | 92s (it now also runs the light suite — 234 files at the time of this run; 236 as of 2026-08-14, and the split is derived at config time by `classifyTests()`, so run that rather than trusting this cell) |
 | `scale-postgres-contract` | ~80s | 70s |
 | `backend-postgres` | ~60s | 38s |
 | `e2e-contract` | ~18s | 17s |
-| **`frontend`** | ~285s | **~285s — untouched** |
+| **`frontend`** | ~285s | **~285s — untouched by #2131** |
 
-**The critical path is now `frontend`, and nothing in this work touched it.**
-A CI run finishes when its slowest job finishes; that used to be
-`backend-tests` at ~380s and it is now `frontend` at ~285s. Further backend
-work buys the PR author almost nothing from here.
+**As of #2131 the critical path was `frontend`, and nothing in THAT PR touched
+it.** A CI run finishes when its slowest job finishes; that used to be
+`backend-tests` at ~380s and it became `frontend` at ~285s.
+
+> **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
+> story.** `frontend` was then split three ways and the Playwright browser
+> cached; on `origin/main` today `frontend` is a ROLL-UP job over
+> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`), not the one
+> serial block described below. The paragraph is kept because the ANALYSIS below
+> is what identified the two candidates that #2142 acted on — read it as the
+> diagnosis, not as the current shape of the job.
 
 That job does, in one serial block: `npm ci`, `check:test-focus`, `typecheck`,
 `test`, two `node --test` gate scripts, `build`, **a second full `vite build` of
@@ -280,6 +320,11 @@ pull requests that turned `DIRTY` after an unrelated merge landed:
 | #1867 | `BUG-HISTORY.md` |
 | #2037 | `docs/modules/autocount-writeback.md` |
 
+> The table lists FOUR of the five, so the ratio below cannot be re-derived from
+> it. The fifth PR — the one whose conflict was in code, and therefore the whole
+> point of the comparison — was never written down. Noted 2026-08-14 rather than
+> invented: the claim is plausible and unverifiable as published.
+
 **Four out of five, and not one line of code.** `BUG-HISTORY.md` is
 append-at-the-top and mandatory, so with N branches open, every one of them
 edits the same first line of the same file. Merge any one and the other N-1
@@ -302,6 +347,70 @@ and anything else edited in place.
 Resolving one of these by hand also demonstrated the treadmill: the fix was
 pushed, and `main` had moved again before GitHub finished recomputing. Manual
 resolution does not converge while the base branch is live.
+
+### The half of this that does NOT work — read before relying on it
+
+**GitHub's server side does not honour `.gitattributes merge=union`.** Tested
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`:
+
+```
+$ git merge origin/main          # local, in a worktree
+   0 unresolved files            # union applied, clean
+
+$ gh pr update-branch 1905
+   X Cannot update PR branch due to conflicts
+```
+
+Same two commits, opposite answers. The attribute is applied by the git that
+performs the merge, and the "Update branch" button is GitHub's git, which reads
+its own configuration and not the repository's.
+
+So the fix is real but its reach is narrower than it looks:
+
+| how the branch is updated | union applies |
+| --- | --- |
+| `git merge origin/main` locally, then push | **yes** |
+| GitHub's *Update branch* button / `gh pr update-branch` | **no** |
+
+**The practical consequence:** when a PR is behind and its only conflict is
+`BUG-HISTORY.md`, do not press *Update branch* — it will refuse. Merge `main`
+into the branch locally and push. The union driver resolves the ledger on the
+way through and the push lands a branch GitHub then sees as clean.
+
+This was initially reported here as working server-side, on the strength of a
+local `git merge-tree` returning no conflict. That was local git applying the
+attribute, being mistaken for GitHub's behaviour — the same shape of error as
+the `391ms` and merge-queue mistakes recorded above: a local observation read as
+a platform guarantee.
+
+## The fix that switched off its own alarm
+
+The worst thing found all day was caused by the work itself, and it was found by
+accident.
+
+`test:scale-contract` — 100 checks across 7 files — is wired as `pretest` in
+`backend/package.json`. **npm fires `pretest` for `npm test` and nothing else.**
+#2131 split the backend suite and pointed CI at `test:light` and `test:workers`.
+Neither is `npm test`, so the whole guard suite stopped running in backend CI —
+silently, because a suite that does not run reports nothing and every check
+stays green.
+
+Two of its checks had been failing the entire time, against changes made in the
+same PR that silenced them:
+
+| check | why it broke | was the invariant actually broken? |
+| --- | --- | --- |
+| `scale-postgres-contract` runs on `pull_request` | the condition became a folded multi-line `if: >-` (it now also fires on `merge_group`), so the single-line regex stopped matching | **no** — the gate got stronger; the assertion pinned YAML layout instead of the rule |
+| the backend test script stays a single command | `test` became a two-command chain and sharding moved to `test:workers` | **no** — npm appends `--shard` to the LAST command, and `test:workers` is `vitest run`, still single |
+
+Neither was a real weakening. That is not the point: **nobody could have known
+either way, because the thing that would have asked was the thing that stopped
+running.** It surfaced only because an unrelated `package.json` conflict on
+#1907 was resolved by hand and the script happened to be run manually.
+
+Fixed in #2146: the suite is invoked by name in `backend-typecheck`, the two
+assertions now match the invariant rather than the formatting, and a **new**
+assertion fails if the workflow ever stops calling this suite by name.
 
 ## Lessons
 
@@ -349,7 +458,27 @@ resolution does not converge while the base branch is live.
    Verify the input exists before believing the empty result — the repo's
    standing rule that exit code 0 is not success, in a new costume.
 
-8. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
+8. **A check that stops running is worse than a check that fails.** Rerouting
+   CI away from `npm test` took 100 assertions offline without a single red
+   mark, and two of them were already failing. Any suite reached only through a
+   lifecycle hook (`pretest`, `prepare`, `pre-commit`) is one refactor away from
+   silence — invoke it by name, and assert that the workflow does.
+
+9. **Every mistake here had the same shape.** Four times in one session, "how it
+   has always worked" was used as "how it works now": the migration replay was
+   assumed to be the bottleneck (391ms), the merge queue was assumed available
+   (organization-only), `merge=union` was assumed to apply server-side (it does
+   not), and `pretest` was assumed to still fire (it does not). Every one cost
+   less than a minute to check and none of them were checked first.
+
+10. **A convention is an answer; check it matches the question.** The
+    `gen:`/`audit:` pattern is right for facts a human authors and that are
+    expensive to re-derive. Applied to a pure function of the source tree it
+    produced a gate whose only job was to notice a copy had gone stale — and
+    two innocent PRs paid for it before it was removed. Following the house
+    style is not the same as understanding what the house style defends.
+
+11. **A sizing comment is a fact with an expiry date.** `ci.yml` still explains
    the shard count against "112 files" and a "334s" suite. Both are long stale
    (277 files; a single shard now runs ~380s), and every later decision that
    trusted those numbers inherited the error. Sizing comments must be

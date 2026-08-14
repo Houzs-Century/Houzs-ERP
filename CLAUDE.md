@@ -40,6 +40,36 @@ money corruption was suspected from reading a migration file, then refuted again
 the live database. The lesson recorded there ("verify schema claims against the live
 DB, not migration files") is worth more than the fix was.
 
+## ⚠️ The bug ledger, the module guide and migrations are CHECKED on every PR
+
+`.github/workflows/working-agreement.yml` runs
+`scripts/check-working-agreement.mjs` and holds a PR to the two MANDATORY rules
+directly above — the `BUG-HISTORY.md` entry and the module-guide update — plus
+the migration discipline described under *Migrations* below. It REPORTS: it is
+deliberately not in the `main-protection` required checks (those are
+`backend-typecheck` and `frontend`), so a red run does not block a merge and the
+owner decides. And what it measures is narrower than what these rules say — the
+seven known gaps are pinned in `scripts/lib/working-agreement.escapes.test.mjs`
+and written up in `BUG-HISTORY.md`; read them before trusting a green run. Before it existed
+they lived only in prose: on 2026-08-13 ten hand-written PRs shipped that read
+as fixes and changed code, not one added a `BUG-HISTORY.md` entry, and nothing
+said a word. (The COE rule is not checked: an incident is a judgement call, not
+a diff shape.)
+
+| It fails when | It wants |
+|---|---|
+| the title, the branch name, or a body HEADING reads as a fix, code changed, and `BUG-HISTORY.md` gained no new `## ` entry | the entry, in this PR |
+| a changed file under `backend/src` / `frontend/src` adds a route, a permission string, a status value, a required-field flip or a lock, and the module guide that quotes that file is untouched | the guide update, in this PR |
+| `backend/src/db/migrations-pg/` changed and the body does not carry a `Reversal:` line and a `Verified against:` line | both lines, filled in |
+
+The escapes are LABELS — `no-bug-history-needed`, `no-guide-change` — and they
+are not silence: the check prints the violation it waived, so the exception
+lands in the log. Rule 3 has no label; two lines in the body is the whole cost.
+
+Where NO guide covers a file whose surface moved, the check WARNS and names the
+guide that should exist. It does not fail you for a gap you did not open — but
+that gap is the one CLAUDE.md asks you to close.
+
 **This file stays THIN on purpose.** It carries rules and traps, not an
 inventory. Facts that change with every merge — route counts, file sizes,
 module lists — belong in the map below, because a stale fact HERE is worse
@@ -96,14 +126,41 @@ because that endpoint only reports CLASSIC protection and this is a ruleset:
 gh api repos/hello-houzs/Houzs-ERP/rules/branches/main
 ```
 
-It currently returns `deletion`, `non_fast_forward`, and `required_status_checks`
-with contexts `backend-typecheck` + `frontend` and
-**`strict_required_status_checks_policy: true`** — that last flag is *Require
+It currently returns FOUR rules: `deletion`, `non_fast_forward`,
+`required_status_checks` with contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`**, and `pull_request`.
+
+That strict flag is *Require branches to be up to date before merging*, and it
+is the one that will cost you TIME rather than correctness: on a busy day `main`
+moves faster than a large PR can finish CI, so the branch has to be re-merged
+and re-run, repeatedly. GitHub auto-merge helps — it fires the moment checks are
+green AND the branch is current — but it does **not** resolve conflicts, so a
+merge that goes DIRTY still needs a person. Measured 2026-08-13 on a 70-commit
+PR: five rounds.
+
+The `pull_request` rule is why a direct push to `main` is refused at all, and it
+carries `required_approving_review_count: 0` — a PR is required, an approval is
+not.
+
+Checked 2026-08-14, it returns FOUR rule types — `deletion`,
+`non_fast_forward`, `required_status_checks` and **`pull_request`** — with
+contexts `backend-typecheck` + `frontend` and
+**`strict_required_status_checks_policy: true`**. That last flag is *Require
 branches to be up to date before merging*, and it is the one that matters.
 
+The `pull_request` rule is the newer one and this paragraph listed only three
+until it was re-checked. Its parameters are worth knowing before you plan a
+merge: `required_approving_review_count: 0`, `require_code_owner_review: false`,
+`require_last_push_approval: false`, `allowed_merge_methods: [squash, rebase,
+merge]`. So it forces work through a PR — a direct push to `main` is refused —
+but it asks for no approvals, which is why one-person merges still land. Do not
+read "0 approvals" as "no PR needed".
+
 **There is NO emergency escape hatch.** This paragraph used to end "Repository
-admin is on the bypass list as an emergency escape hatch"; checked 2026-08-13,
-the ruleset returns `bypass_actors: null` and `current_user_can_bypass:
+admin is on the bypass list as an emergency escape hatch". Two independent
+sweeps landed on the same correction on 2026-08-13:
+`gh api repos/hello-houzs/Houzs-ERP/rulesets/20119902` returns
+`bypass_actors: null` with `enforcement: active` and `current_user_can_bypass:
 "never"`. Nobody can force a merge, including the owner. That is fine while
 merges are one-at-a-time, and it is the thing to fix FIRST if a merge queue is
 ever switched on — a queue that jams with no bypass blocks `main` for everyone
@@ -112,16 +169,45 @@ until someone edits the ruleset itself.
 **What this now prevents, which used to be yours to catch by hand.** A PR whose
 CI ran against a `main` that has since moved can no longer merge; GitHub makes
 you update the branch, which re-runs CI against the real merge base. That closes
-the mechanism behind every incident this section used to list:
+the STALE-BRANCH mechanism behind the incidents below:
 
 | incident | how it happened |
 |---|---|
 | 2026-07-22: `main` red ~20 min | #918 and #925 were each green against a `main` lacking the other |
 | 2026-07-22: backend could not deploy | #1039 merged a `0171` colliding with #912's; its CI predated #912 |
 | 2026-07-31: backend could not deploy for 2h | #1439 merged a `0230` colliding with #1435's, for exactly the same reason |
+| **2026-08-13: backend could not deploy for ~30 min** | **#2121 merged a `0284` colliding with #2106's — and the branch was NOT stale. It had merged `main`. The test RAN and FAILED, and the merge happened anyway.** |
 
-The duplicate-migration test would have caught both collisions — it just never
-ran against a tree containing the other branch. Now it has to.
+> **CORRECTED 2026-08-14.** This paragraph used to end: *"The duplicate-migration
+> test would have caught both collisions — it just never ran against a tree
+> containing the other branch. Now it has to."* That is now false, and the
+> counter-example is the row added above.
+>
+> On 2026-08-13 `backend/tests/migrationNumbers.test.ts` did run against the
+> right tree and did catch the collision —
+> `AssertionError: src/db/migrations-pg: 0284 is taken twice — rename your file
+> to 0286_*.sql` — and #2121 merged four minutes into that run anyway. **Branch
+> protection does not gate on it.** The required contexts are `backend-typecheck`
+> + `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`);
+> `migrationNumbers.test.ts` runs in `backend-tests (2)`, which the section below
+> forbids making required, for good reasons that remain good. So this class is
+> **structurally ungated**, and `gh pr merge --auto` — armed on 12 PRs in 27
+> seconds that morning — merges the moment the two required checks go green,
+> which is exactly what happened.
+>
+> The deploy stayed broken from 13:06Z (#2121 merged) until #2124 landed:
+> `Deploy` runs 31703284503 and 31704506807 both concluded `failure` with the
+> `backend` job **`skipped`**, so nothing merged in that window reached
+> production. Recovered by `0c2a4e88` — renumber to `0286`, plus the return-shape
+> fix the same batch missed.
+>
+> **Two remedies, neither of which is "be careful":**
+> 1. Move the duplicate-number assertion into `backend-typecheck` — the job that
+>    IS a required context — so a collision blocks the merge instead of only the
+>    deploy. **Not done. This is the open item.**
+> 2. Never arm `gh pr merge --auto` on a PR carrying a migration or an
+>    integration batch. Auto-merge structurally cannot wait for a check that is
+>    not required.
 
 **Still yours, because no ruleset checks it:**
 
@@ -129,19 +215,142 @@ ran against a tree containing the other branch. Now it has to.
    up-to-date makes a collision *fail loudly* instead of merging, but you still
    have to pick a free number — one branch was renumbered four times in a day
    (`0159 → 0165 → 0167 → 0171`).
-2. **Before renaming an applied migration, check whether it has run.**
-   `pg-migrate` tracks by FULL FILENAME, so renaming an applied file makes it a
-   new file and its SQL runs a SECOND time against a schema it already changed.
-   The deploy log's `APPLIED <file>` line is the record.
+2. **Renaming an applied migration no longer double-applies it — but it can
+   still fail the deploy closed.** Since #914 (2026-07-22) `pg-migrate` tracks
+   filename **and checksum**. A rename whose SQL is byte-identical is detected
+   as a rename, the tracker row is REPOINTED to the new name, and the SQL is
+   explicitly not re-run (`RENAMED <from> -> <to>` in the deploy log,
+   `pg-migrate.mjs:167` and the repoint at `:209`). A rename whose CONTENT also
+   changed cannot be proven to be the same migration: it is reported as
+   `DRIFT ... probable_renumber` and the runner exits 1, blocking the deploy
+   until the tracker row is repointed by hand. So renumber freely; edit an
+   applied file's body never.
 3. **After merging, confirm the backend job said `success`, not `skipped`.**
-   Required status checks gate the MERGE; nothing gates the deploy that follows.
-   On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
-   green, because the deploy failed at a step CI does not run.
+   `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`. Required status
+   checks gate the MERGE; nothing gates the deploy that follows. On 2026-07-31
+   the backend sat un-deployed for over two hours while `main` was green, and it
+   happened again on 2026-08-13 — two `Deploy` runs, both `failure` with
+   `backend: skipped`. **Treat `skipped` on `backend` as a failed deploy.**
+4. **`frontend` is `npm run typecheck` (`tsc -b`), never `npx tsc --noEmit`.**
+   *Added 2026-08-14.* `frontend/tsconfig.json` is `{"files": [], "references":
+   [...]}` — a solution-style config with no inputs of its own. In `frontend/`,
+   `tsc --noEmit --listFiles` emits **0 files** and exits 0; `tsc -p
+   tsconfig.app.json --listFiles` emits 1084. CI was never fooled
+   (`.github/workflows/ci.yml:70` runs `npm run typecheck`), but three merged PRs
+   on `main` — #2106, #2112, #2117 — carry "`tsc --noEmit` clean" as their
+   frontend evidence, and #2122 repeated the claim after the no-op was known.
+   The same trap is already in `BUG-HISTORY.md:5562` from 2026-07-31; it produced
+   prose instead of a check, so it recurred. **A BUG-HISTORY entry with no test
+   attached is unfixed.**
+5. **A `workflow_dispatch` workflow is not shipped until it has been dispatched
+   once and reported success.** *Added 2026-08-14.* #2120's new AutoCount requeue
+   workflow failed on its first dispatch (run 31704539182) reaching for
+   `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, which exist nowhere in this repo
+   — it copied `recompute-2990-so-allocation.yml`, a workflow that has never run,
+   instead of `recompute-so-allocation.yml`, which works. Precedent was taken by
+   name similarity rather than by evidence the precedent runs.
 
 **Do NOT add `backend-tests (N)` or `backend` as required contexts.** The shard
 name carries an index that changes with the shard count, and `backend` is a
 roll-up that is legitimately `skipped` on frontend-only PRs — a skipped required
-check leaves the PR pending forever.
+check leaves the PR pending forever. This rule stands — but note what it costs:
+every assertion living only in a shard is advisory at merge time. If an assertion
+must BLOCK a merge, it belongs in `backend-typecheck`, not in a shard.
+
+## ⚠️ Run the audit scripts — they answer questions no doc can
+
+Three dependency-free checks (they run in a fresh worktree with no
+`node_modules`). Full story in `docs/one-sided-rules-coe.md`.
+
+**Run them; do not quote a number from this file.** An earlier version of this
+paragraph said all three were "at ZERO", and that was wrong — not because the
+code changed but because `check-company-scope.mjs` was. It counted a handler as
+scoped when a helper NAME appeared anywhere in its body, so
+`delivery-orders-mfg PATCH /:id` passed while writing `update(updates).eq('id',
+id)` with no predicate, on the strength of an `activeCompanyId(c)` twenty lines
+LATER inside an audit field. Two independent readers found that handler while
+the script reported zero. It now requires the helper to sit inside a real
+`.from(` QUERY, and the honest count went 0 → 20 unscoped writes.
+
+That is the third dead-or-too-loose pattern found in these checkers in one day.
+Treat their output as evidence, and this sentence as a pointer to where the
+evidence lives.
+
+Each script prints its own corpus size on the first line, so no count is typed
+here — an earlier version said "632 SCM handlers" and the checker now reports
+1019, which is exactly the drift this file keeps producing.
+
+```
+node backend/scripts/check-company-scope.mjs     # SCM handlers: rows touched by id with no company predicate
+node frontend/scripts/check-silent-mutations.mjs # useMutation sites: a server refusal that reaches nobody
+node backend/scripts/check-shared-mirrors.mjs    # rule modules: frontend copy vs backend original
+node backend/scripts/check-docs-drift.mjs        # docs: paths, migration numbers, permission keys, npm scripts
+```
+
+**The fourth one exists because THIS FILE lied for a month.** `check-docs-drift`
+resolves every mechanically checkable claim the documentation makes — a path, a
+`mig NNNN`, a permission key, an `npm run` — against the tree, and `--strict`
+gates a PR on the CERTAIN half. It does NOT check behaviour: no script settles
+"the confirm gate requires a venue", and that half still needs a reader.
+
+Three markers keep an honest doc green, and each tells the READER the same thing
+it tells the checker:
+
+| marker | meaning |
+| --- | --- |
+| `` `path` [gone] `` | the doc is RECORDING a deletion — most of `BUG-HISTORY.md` is this by construction |
+| `` `path` [planned] `` | proposed, not written yet |
+| `` `path` [external] `` | lives in the 2990 source repo this SCM tree was vendored from, not here |
+
+Do not add a silent exemption list instead. A suppression the reader cannot see
+is a suppression nobody re-checks — which is the whole failure mode here.
+
+## ⚠️ `tsc --noEmit -p tsconfig.json` CHECKS NOTHING on the frontend
+
+`frontend/tsconfig.json` is a **solution file** — `{"files": [], "references": [...]}`.
+Pointing `tsc` at it compiles **zero files** and exits **0**. A whole session's
+worth of "frontend typecheck green" can mean nothing was ever compiled.
+
+```bash
+npm --prefix frontend run typecheck    # tsc -b  — the real gate
+```
+
+Add `--force` when you want it to ignore `.tsbuildinfo` and recheck everything.
+`backend/tsconfig.json` is a normal config with `include`, so `-p` is fine THERE —
+which is exactly why the frontend one slips past: the same command is correct one
+directory over. If a typecheck finishes suspiciously fast and silent, verify it
+with a deliberate type error and confirm it FAILS before trusting a pass.
+
+**Three traps this repo produced repeatedly. Each is now a rule.**
+
+1. **A default is a decision nobody reviews.** `SoLineCard`'s
+   `variantsRequired = true` made nine forms demand a field their own server
+   never asked for; `scm.pos_carts`' `staff_id PRIMARY KEY` (a column added by
+   mig 0100, the KEY left alone) let one company's cart overwrite the other's.
+   Where the right answer differs per caller, make the parameter REQUIRED so
+   forgetting it fails to compile.
+
+2. **A failure that reaches nobody is worse than a crash.** Thirty-five write
+   paths refused correctly and told no one — the owner reported it as "the
+   button does nothing". Budget an error path per mutation the way you budget a
+   success path (`vendor/scm/lib/mutation-error.ts`).
+
+3. **A checker that cannot match reports a clean run.** Two scripts did this in
+   one day: a lost `\s`/`\b` made one scan the wrong function bodies for weeks,
+   and repairing it took the count from 34 findings UP to 37 — the extra being a
+   cross-company GL posting. Every checker here now self-tests its patterns at
+   startup and refuses to report rather than report from a dead one. **A verdict
+   computed over nothing must never read as a pass.**
+
+**Read the DDL's own words, not its column list.** Counting `company_id` columns
+gave the WRONG answer twice in opposite directions on the fleet tables. The
+authority is the migration header plus the READ path — migs 0202/0203/0204/0238
+each say `company_id` is stamped "for provenance but NOT used to scope reads",
+and `GET /fleet-maintenance/dashboard` reads every row with no predicate. And
+`error.code === '42501' → 403` in a handler is NOT a database permission check
+doing your scoping: mig 0061 enabled RLS with NO policies and the SCM client is
+the SERVICE-ROLE client, which bypasses RLS. The only boundary is the predicate
+in the route.
 
 ## Read the map before exploring
 
@@ -150,7 +359,26 @@ check leaves the PR pending forever.
   files are too big to open whole. Read this INSTEAD of exploring from
   scratch; it is the hand-written judgement layer.
 - **`docs/generated/`** — the mechanical inventory (routes, migrations,
-  largest files), regenerated from the tree so it cannot drift.
+  largest files). It is COMPUTED from the tree, which is not the same as
+  being current: only `route-capability-matrix` is a CI gate (`audit:routes`,
+  in `ci.yml` + both deploy workflows). `route-locator.md` and
+  `codebase-map-facts.md` are regenerated ON DEMAND and nothing in CI runs
+  their `--check`; `gen-codebase-map.mjs` says so in its own output. As of
+  2026-08-13 `codebase-map-facts.md` IS drifted at HEAD — it records
+  `consignment-returns.ts` at 957 lines against an actual 1118. Run
+  `npm --prefix backend run audit:map` / `audit:route-locator` before trusting
+  a number from either.
+
+  largest files), regenerated from the tree. **"Cannot drift" is only true of
+  the CI-gated half, and this bullet used to claim it of all four.** CI runs
+  `audit:routes` (the capability matrix) on every PR; it does NOT run
+  `audit:route-locator` or `audit:map`, and both of those artifacts were found
+  STALE on `main` on 2026-08-14. That is deliberate, not an oversight — both
+  generators say so in their own headers ("a navigation doc going stale must
+  never block a deploy"). The practical rule: **treat `route-locator.md` and
+  `codebase-map-facts.md` as hints and re-run the generator before trusting a
+  line number**, and do not "fix" the gap by adding a CI gate without the owner,
+  because the absence is a decision.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -169,9 +397,19 @@ layer that will be forced to update it when it changes.* A number that shifts
 every merge must be GENERATED, never typed — that is exactly how this file
 came to claim the database was D1 SQLite for a month after the cutover.
 
-Do not open a 5,000+ line file whole. Several pages and route modules run
-past 8,000 lines and one past 12,000. Locate with grep, then read the line
-range. The map lists the offenders and roughly what lives where in each.
+Do not open a 5,000+ line file whole. Three run past 8,000 lines and TWO past
+12,000 — `frontend/src/pages/Projects.tsx` is the largest at ~14,900, ahead of
+`backend/src/scm/routes/mfg-sales-orders.ts` at ~12,000. Locate with grep, then
+read the line range. The map lists the offenders and roughly what lives where
+in each.
+
+**Those files may not get any bigger.** `scripts/file-size-ceilings.json`
+records what each already is and CI fails if one grows past it; every other
+file is capped at 2,000 lines, so a new 3,000-line module fails. Shrinking is
+always free and a ceiling may only FALL — `--update` cannot raise one, so if
+you are over, the fix is a new module, never a bigger number. Nothing requires
+you to SPLIT an existing file. `npm run check:file-size`, rules in
+`docs/repo-hygiene.md`.
 
 ## What this repo is
 
@@ -195,6 +433,44 @@ test-only now — which matters most for migrations, below.
   number at MERGE time by re-listing the tree, not when you branch — parallel
   PRs otherwise pick the same one.
 
+## Release discipline — the two things a revert cannot undo (ENFORCED)
+
+Reverting a commit un-ships a route. It does not un-ship a **migration** (the
+file is applied to prod on the next push to main and is immutable from that
+moment) and it does not un-ship a **repair script that has already run**. For
+those two, the discipline IS the rollback plan, so it is a CI gate and not a
+paragraph: `npm --prefix backend run audit:release-discipline`, wired into the
+required `backend-typecheck` check.
+
+**A migration carries a `-- REVERSAL:` note.** What undoes it, or `IRREVERSIBLE
+— <why>`. If it does `DROP VIEW`, the note has to name the GRANTS the recreate
+must put back: a recreated view is a NEW object with an empty ACL, which is how
+0189 took prod's Sales Order list down for every user and needed both 0190 and
+0191 to repair — nobody had written down what the view's grants were.
+
+**A script in `backend/scripts` that opens a database and WRITES carries all
+four of:**
+
+1. a `MODE` / `APPLY` gate whose DEFAULT is plan (any non-`apply` default —
+   `'plan'`, `'dry-run'` — counts; an opt-OUT like `DRY=1` does not, because
+   unset it writes);
+2. a `CONFIRM` phrase on the apply path, refused with an exit (a value you must
+   repeat, like `delete-test-so.mjs`'s `CONFIRM_DOC`, is stronger and also counts);
+3. a verification that re-reads on a **FRESH connection** and asserts the
+   **SHAPE**. A row count is not a shape: on 2026-08-13 a repair written to undo
+   the jsonb double-encoding COE reproduced that exact bug on 7 production rows,
+   and its row count reported 7 of 7 while only its shape check saw it;
+4. a `RE-RUN:` line in the header saying what a SECOND run does.
+
+Copy `repair-array-shaped-variants.mjs` or `unify-processing-date.mjs` — both
+pass all four today.
+
+**It is a ratchet.** Today's tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`, and that list may only
+SHRINK: fix a rule and the check makes you delete it from the ledger in the same
+PR, and the count is printed on every run so the debt stays visible. A NEW
+script complies or CI fails.
+
 ## ⚠️ Never ask the owner to run a query — build the check instead (owner rule)
 
 The owner is not a database console. If you need a fact that lives only in
@@ -207,8 +483,10 @@ Live example to copy: `backend/scripts/check-soak-gate.mjs` +
 `.github/workflows/soak-gate-check.yml`. Actions → **Soak gate check
 (read-only)** → Run workflow; the verdict appears as a run annotation.
 
-**`DATABASE_URL` is the credential. There is no other one.** 286 workflows here
-use `secrets.DATABASE_URL`; it is the only database secret this repo holds, at
+**`DATABASE_URL` is the credential. There is no other one.** Nearly every
+workflow here uses `secrets.DATABASE_URL` (289 of 300 as of 2026-08-14 —
+`grep -rl secrets.DATABASE_URL .github/workflows | wc -l`, which is the number
+to re-run rather than trust); it is the only database secret this repo holds, at
 repo level or in any of its three environments. If your script needs a
 PostgREST-shaped client — because it imports a real service function out of
 `src/` rather than re-implementing it, which is the right instinct — it needs
@@ -319,10 +597,13 @@ Not generic narrative.
   and immutable after deploy. Drizzle-kit is for type generation /
   schema diffing only, never as the migration runner.
 - **Demo / test seed data does NOT belong in numbered migrations.**
-  Numbered migrations run in prod. Mig 067 + 069 seeded ~40 fake
+  Numbered migrations run in prod. Migs 067 + 069 seeded 39 fake
   `sales_reps` with `@example.my` emails; mig 079 then had to delete
-  them — every new environment now pays a seed-then-cleanup cost
-  forever. Put demo data in a one-shot `backend/scripts/seed-*.mjs`
+  them. All three live in `src/db/migrations/`, the D1 tree production
+  no longer reads, so the seed-then-cleanup cost is now paid only by a
+  fresh D1 test DB — not by prod. Do not read that as the rule being
+  spent: it is the same mistake in `migrations-pg/` that would be
+  permanent. Put demo data in a one-shot `backend/scripts/seed-*.mjs`
   script you run manually against the local D1 (precedent: existing
   `backend/scripts/backfill-project-codes.mjs`). Numbered migrations
   are for schema changes + production-required data only — lookup
@@ -340,10 +621,15 @@ Not generic narrative.
   Unhandled Rejection), so it looks like two broken files. Linux
   externalizes the same module and node strips the shebang itself, so
   **CI stays green and only local Windows breaks** (#2062 — BUG-HISTORY
-  has the trace). Every test-imported `.mjs` already lives in
-  `scripts/lib/` and none carry a shebang: if a runnable script needs to
-  expose a function to a test, put the pure part in `scripts/lib/` and
-  import it from the script.
+  has the trace). No test-imported `.mjs` carries a shebang today, which
+  is the property that matters — but three of them do NOT live in
+  `scripts/lib/`: `scale-pg-real-schema.mjs`, `scale-target-guard.mjs`
+  and `repair-so-fee-line-integrity.mjs` sit directly in
+  `backend/scripts/`, imported by `tests/scale*.node.mjs` and
+  `tests/soFeeLineRepairRow.test.ts`. Adding a `#!` to any of those three
+  breaks local Windows and CI will not tell you. If a runnable script
+  needs to expose a function to a test, put the pure part in
+  `scripts/lib/` and import it from the script.
 - **Keep schema and data in separate migrations when both are large.**
   An `ALTER TABLE` + 100-line `INSERT` block in the same file makes
   rollback awkward and the diff hard to read. Numbered migrations are
@@ -383,9 +669,14 @@ Not generic narrative.
   `backend/src/services/projectAcl.ts` — returns
   `{ pic_ids, brands }`. The SQL fragment
   `COALESCE(p.pic_id, p.created_by) IN (...) AND p.brand IN (...)`
-  is still hand-written across 3 callsites (project list / calendar /
-  notifications); centralising into `projectScopeWhere(user)` is on
-  the Roadmap.
+  is still hand-written at FIVE statements across four callsites —
+  project list (`services/projects.ts:1889`), calendar
+  (`routes/projects.ts:4916` + `:4924`, two arms of one handler),
+  notifications (`routes/notifications.ts:96`, written in Drizzle
+  template form so a raw-string grep MISSES it), and the two finance
+  endpoints `GET /finance/by-project` (`:2752`) and `GET /finance/lines`
+  (`:2961`). `projectScopeWhere(user)` does not exist yet; centralising
+  into it is on the Roadmap.
 - **Section + attachment data on tasks** (mig 050). Project tasklist
   groups by `project_checklist_sections`; per-task attachments live
   in `project_checklist_attachments`. The project-level
@@ -410,6 +701,7 @@ Not generic narrative.
 - **`docs/CODEBASE-MAP.md`** — start here for anything you would otherwise
   go exploring for; `docs/generated/` for the mechanical inventory
 - **`BUG-HISTORY.md`** — read the entries for a subsystem before touching it
+- **`docs/repo-hygiene.md`** — the branch rules and the file-size ratchet
 - `/sync-wiki` — user-scope slash command for the Obsidian refresh; the
   command file is NOT in this repo, so it exists only where the user has it
   installed

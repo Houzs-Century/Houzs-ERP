@@ -463,8 +463,12 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
     return c.json({ error: "Logo must be under 1 MB" }, 413);
   }
 
+  /* Scope BOTH halves, like every other /brands/:id route. Unscoped, an upload
+     against another company's brand id replaced that brand's logo AND deleted
+     its previous R2 object. */
+  const brandCoSql = activeCompanySql(c);
   const brand = await c.env.DB.prepare(
-    `SELECT id, name, logo_r2_key FROM project_brands WHERE id = ?`
+    `SELECT id, name, logo_r2_key FROM project_brands WHERE id = ?${brandCoSql}`
   )
     .bind(id)
     .first<{ id: number; name: string; logo_r2_key: string | null }>();
@@ -477,7 +481,7 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
   // previous one (orphans are cheap; a failed delete never fails the upload).
   const prevKey = brandLogoKeyOf(brand);
   await c.env.DB.prepare(
-    `UPDATE project_brands SET logo_r2_key = ? WHERE id = ?`
+    `UPDATE project_brands SET logo_r2_key = ? WHERE id = ?${brandCoSql}`
   )
     .bind(key, id)
     .run();
@@ -1209,12 +1213,14 @@ app.get("/payment-statuses", (c) => c.json({ data: PAYMENT_STATUSES }));
 // still matches projects whose sections were cloned from an older
 // template version.
 app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
+  /* "Most recent active template" resolves WITHIN the active company (mig
+     0288). Company-blind, MAX(id) picks whichever company's template is newer. */
   const rows = await c.env.DB.prepare(
     `SELECT s.name, s.sort_order
        FROM project_checklist_template_sections s
       WHERE s.template_id = (
         SELECT MAX(t.id) FROM project_checklist_templates t
-         WHERE t.active = 1
+         WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
       )
       ORDER BY s.sort_order, s.id`
   ).all<{ name: string; sort_order: number }>();
@@ -1232,7 +1238,8 @@ app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
        FROM project_checklist_template_items i
        LEFT JOIN project_checklist_template_sections s ON s.id = i.section_id
       WHERE i.template_id = (
-        SELECT MAX(t.id) FROM project_checklist_templates t WHERE t.active = 1
+        SELECT MAX(t.id) FROM project_checklist_templates t
+         WHERE t.active = 1${activeCompanySql(c, "t.company_id")}
       )
       ORDER BY s.sort_order, i.seq, i.id`
   ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
@@ -1474,6 +1481,10 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
     binds.push(body.notes ?? null);
   }
   if (sets.length === 0) return c.json({ ok: true });
+  /* company-scope: `venueCoSql` (activeCompanySql) is in the WHERE and
+     `!r.meta.changes` makes a cross-company miss a 404. Flagged only because the
+     checker's SQL window starts at .prepare( and cannot see a predicate
+     composed above it. */
   const r = await c.env.DB.prepare(
     `UPDATE project_venues SET ${sets.join(", ")} WHERE id = ?${venueCoSql}`
   )
@@ -1501,8 +1512,40 @@ app.delete("/venues/:id", requirePermission("projects.manage"), async (c) => {
 // project_checklist_templates row. Items live in
 // project_checklist_template_items. These routes let admins manage
 // the template body that gets cloned into every new project.
+//
+// PER-COMPANY since mig 0288, and every route below follows the same three
+// rules — stated once here, not re-argued at each handler:
+//   · a TEMPLATE id in the URL goes through findTemplateInCompany;
+//   · a CHILD id (itemId / sectionId) is scoped by that row's OWN company_id,
+//     and `!r.meta.changes` turns a cross-company miss into a 404, not a
+//     silent "ok" — the same shape as PATCH /venues/:id and PATCH /brands/:id;
+//   · a CREATE takes requireActiveCompanyId and REFUSES when it is unknown.
+//     Falling through to the company_id DEFAULT writes the row into HOUZS,
+//     where the scoped read never shows it again.
+
+/**
+ * The company boundary for any /checklist-templates route carrying a TEMPLATE id.
+ * Null => the caller answers 404, deliberately the same answer as "no such
+ * template": confirming another company's id exists is itself a leak.
+ * A STAMP IS NOT A PREDICATE — stamping company_id on a new child says nothing
+ * about whose template it hangs under, so the parent is re-checked separately on
+ * every create and reorder. Degrades exactly as activeCompanySql does.
+ */
+async function findTemplateInCompany(
+  c: { env: Env; get(key: string): unknown },
+  templateId: number,
+): Promise<{ id: number } | null> {
+  return await c.env.DB.prepare(
+    `SELECT id FROM project_checklist_templates WHERE id = ?${activeCompanySql(c)}`
+  )
+    .bind(templateId)
+    .first<{ id: number }>();
+}
 
 app.get("/checklist-templates", requirePageAccess("projects.list"), async (c) => {
+  /* Company-scoped since mig 0288 (owner: 应该按公司分开). The template master
+     was SHARED on read AND write, so both companies edited one set of rows. */
+  const coSql = activeCompanySql(c, "t.company_id");
   const templates = await c.env.DB.prepare(
     `SELECT t.id, t.name, t.description,
             (SELECT COUNT(*) FROM project_checklist_template_items WHERE template_id = t.id) AS item_count,
@@ -1510,6 +1553,7 @@ app.get("/checklist-templates", requirePageAccess("projects.list"), async (c) =>
                FROM project_event_types et
               WHERE et.default_template_id = t.id) AS used_by
        FROM project_checklist_templates t
+      ${coSql ? `WHERE 1=1${coSql}` : ""}
       ORDER BY t.name`
   ).all();
   return c.json({ data: templates.results ?? [] });
@@ -1521,6 +1565,12 @@ app.get(
   async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+    /* Company gate on the PARENT. The children below stay keyed on template_id
+       alone on purpose: this gate is the only way to reach them, so a second
+       predicate could only hide a child from its own template. */
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     // Return items + sections together so the editor renders one
     // round-trip. mig 050: section_id + requires_review on items.
     const items = await c.env.DB.prepare(
@@ -1566,6 +1616,13 @@ app.post(
     }>();
     const title = (body.title || "").trim();
     if (!title) return c.json({ error: "title required" }, 400);
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    // A STAMP IS NOT A PREDICATE: the stamp says whose item this is, not whose
+    // template it hangs under.
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     // If no seq given, append at end.
     let seq = body.seq;
     if (seq == null) {
@@ -1579,8 +1636,8 @@ app.post(
     const r = await c.env.DB.prepare(
       `INSERT INTO project_checklist_template_items
          (template_id, seq, title, description, required_perm, role_label,
-          crew_visible, due_offset_days, section_id, requires_review)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          crew_visible, due_offset_days, section_id, requires_review, company_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
@@ -1592,7 +1649,8 @@ app.post(
         body.crew_visible ? 1 : 0,
         body.due_offset_days ?? null,
         body.section_id ?? null,
-        body.requires_review ? 1 : 0
+        body.requires_review ? 1 : 0,
+        co.companyId
       )
       .run();
     return c.json({ id: r.meta.last_row_id, seq }, 201);
@@ -1639,11 +1697,15 @@ app.patch(
       binds.push(body.crew_visible ? 1 : 0);
     }
     if (sets.length === 0) return c.json({ ok: true });
-    await c.env.DB.prepare(
-      `UPDATE project_checklist_template_items SET ${sets.join(", ")} WHERE id = ?`
+    // company-scope: no template id in this URL, so the row's OWN company_id is
+    // the predicate.
+    const itemCoSql = activeCompanySql(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE project_checklist_template_items SET ${sets.join(", ")} WHERE id = ?${itemCoSql}`
     )
       .bind(...binds, id)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -1654,11 +1716,13 @@ app.delete(
   async (c) => {
     const id = parseInt(c.req.param("itemId"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-    await c.env.DB.prepare(
-      `DELETE FROM project_checklist_template_items WHERE id = ?`
+    // company-scope: the row's own company_id, as in the PATCH above.
+    const r = await c.env.DB.prepare(
+      `DELETE FROM project_checklist_template_items WHERE id = ?${activeCompanySql(c)}`
     )
       .bind(id)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -1683,11 +1747,17 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
+    /* BOTH halves: the parent template must be this company's, and each row is
+       scoped again so a foreign id in the array is a no-op. */
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const coSql = activeCompanySql(c);
     const stmts = ids.map((itemId, idx) =>
       c.env.DB.prepare(
         `UPDATE project_checklist_template_items
             SET seq = ?
-          WHERE id = ? AND template_id = ?`
+          WHERE id = ? AND template_id = ?${coSql}`
       ).bind((idx + 1) * 10, itemId, id)
     );
     await c.env.DB.batch(stmts);
@@ -2635,18 +2705,18 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   // Company scope (owner audit 2026-07-22): the PIC check + patchFinance
   // both loaded by id alone, so a user granted BOTH companies could — while
   // active on A — be PIC on a B project and edit B's finance from within A.
-  // Scope the PIC load to the caller's active company; the update path is
-  // in services/projects.ts:patchFinance and needs the same treatment there
-  // to be fully airtight (deferred, tracked separately).
-  if (isScopedProjectUser(user)) {
+  //
+  // 2026-08-14: this load used to sit INSIDE the isScopedProjectUser branch, so
+  // for a caller who is NOT scope-to-PIC no company predicate was evaluated at
+  // all — and patchFinance CREATES the row when missing, so a cross-company id
+  // got a snapshot written and recomputeAutoCostLines ran on it. Resolved in the
+  // active company FIRST, for everyone; the PIC rule applies to THAT row.
+  {
     const row = await c.env.DB.prepare(
       `SELECT pic_id, created_by FROM projects WHERE id = ?${activeCompanySql(c)}`
-    )
-      .bind(id)
-      .first<{ pic_id: number | null; created_by: number | null }>();
+    ).bind(id).first<{ pic_id: number | null; created_by: number | null }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    const effectivePic = row.pic_id ?? row.created_by ?? null;
-    if (effectivePic !== user.id) {
+    if (isScopedProjectUser(user) && (row.pic_id ?? row.created_by ?? null) !== user.id) {
       return c.json({ error: "You don't have permission to view this project's financial information." }, 403);
     }
   }
@@ -3198,6 +3268,16 @@ app.post("/:id/phase-photos", async (c) => {
     }
   }
 
+  /* project_phase_photos has no company_id, so the boundary is the PARENT
+     project — the rule the GET already applies. Unscoped, a photo lands on the
+     other company's project and is then invisible to everyone. */
+  const owner = await c.env.DB.prepare(
+    `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!owner) return c.json({ error: "Not found" }, 404);
+
   const r = await c.env.DB.prepare(
     `INSERT INTO project_phase_photos
        (project_id, phase, r2_key, content_type, caption, uploaded_by)
@@ -3244,8 +3324,13 @@ app.delete("/phase-photos/:photoId", async (c) => {
   const photoId = parseInt(c.req.param("photoId"), 10);
   if (isNaN(photoId)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
+  /* Parent project's company, same EXISTS form the GET uses. Unscoped, a
+     foreign photoId deleted both the row and its R2 object. */
+  const photoCoSql = activeCompanySql(c, "p.company_id");
   const row = await c.env.DB.prepare(
-    `SELECT project_id, phase, uploaded_by, r2_key FROM project_phase_photos WHERE id = ?`
+    `SELECT project_id, phase, uploaded_by, r2_key FROM project_phase_photos WHERE id = ?${
+      photoCoSql ? ` AND EXISTS (SELECT 1 FROM projects p WHERE p.id = project_id${photoCoSql})` : ""
+    }`
   )
     .bind(photoId)
     .first<{ project_id: number; phase: "setup" | "dismantle" | "service" | "schedule"; uploaded_by: number | null; r2_key: string }>();
@@ -4341,6 +4426,12 @@ app.post(
     const body = await c.req.json<{ name?: string; sort_order?: number }>();
     const name = (body.name || "").trim();
     if (!name) return c.json({ error: "name is required" }, 400);
+    // Company for the WRITE, then prove the parent template is this company's.
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
     let order = body.sort_order;
     if (order == null) {
       const max = await c.env.DB.prepare(
@@ -4352,10 +4443,10 @@ app.post(
       order = (max?.s ?? 0) + 10;
     }
     const r = await c.env.DB.prepare(
-      `INSERT INTO project_checklist_template_sections (template_id, name, sort_order)
-       VALUES (?, ?, ?)`
+      `INSERT INTO project_checklist_template_sections (template_id, name, sort_order, company_id)
+       VALUES (?, ?, ?, ?)`
     )
-      .bind(id, name, order)
+      .bind(id, name, order, co.companyId)
       .run();
     return c.json({ id: r.meta.last_row_id, name, sort_order: order }, 201);
   }
@@ -4391,11 +4482,15 @@ app.patch(
     }
     if (sets.length === 0) return c.json({ error: "No fields to update" }, 400);
     binds.push(sectionId);
-    await c.env.DB.prepare(
-      `UPDATE project_checklist_template_sections SET ${sets.join(", ")} WHERE id = ?`
+    // company-scope: no template id in this URL, so the row's own company_id is
+    // the predicate.
+    const sectionCoSql = activeCompanySql(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE project_checklist_template_sections SET ${sets.join(", ")} WHERE id = ?${sectionCoSql}`
     )
       .bind(...binds)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -4406,11 +4501,13 @@ app.delete(
   async (c) => {
     const sectionId = parseInt(c.req.param("sectionId"), 10);
     if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
-    await c.env.DB.prepare(
-      `DELETE FROM project_checklist_template_sections WHERE id = ?`
+    // company-scope: the row's own company_id, as in the PATCH above.
+    const r = await c.env.DB.prepare(
+      `DELETE FROM project_checklist_template_sections WHERE id = ?${activeCompanySql(c)}`
     )
       .bind(sectionId)
       .run();
+    if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
     return c.json({ ok: true });
   }
 );
@@ -4432,12 +4529,17 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
+    // BOTH halves scoped, as in the items reorder above.
+    if (!(await findTemplateInCompany(c, id))) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const coSql = activeCompanySql(c);
     const stmts = ids.map((sectionId, idx) =>
       c.env.DB
         .prepare(
           `UPDATE project_checklist_template_sections
               SET sort_order = ?
-            WHERE id = ? AND template_id = ?`
+            WHERE id = ? AND template_id = ?${coSql}`
         )
         .bind((idx + 1) * 10, sectionId, id)
     );

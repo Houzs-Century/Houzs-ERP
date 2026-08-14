@@ -92,7 +92,7 @@ These raw-UTC `new Date().toISOString().slice(0,10)` sites were checked and are
 - `scm/lib/bridge-2990.ts:144` `today2990Iso()` — **deliberately UTC**, with a
   docblock explaining why: it must read dates the way 2990 does, or it breaks the
   byte-for-byte blob preservation the whole 2990 sync rests on. **Do not touch.**
-- `routes/sales.ts:431`, `routes/assr.ts:1193` — only build a **CSV export
+- `routes/sales.ts:462`, `routes/assr.ts:1239` — only build a **CSV export
   filename** (`sales_2026-07-23.csv`). Cosmetic; not a data/money date.
 
 Other intentional duplicates the audit ruled out (leave them):
@@ -117,7 +117,7 @@ real risk for a cosmetic gain — do them behind the staging bench (see
 | **Money formatting** | `vendor/shared/format.ts fmtMoneyCenti` | ~20 page-local `fmtMoney` | MED-HIGH | LOW | Each local copy also renders "MYR NaN" on null; converging fixes that too. Display-only. |
 | **Hardcoded `VALID_CURRENCIES`** | the `currencies` master | `['MYR','RMB','USD','SGD']` at 5 sites (`mfg-purchase-orders.ts`, `purchase-consignment-orders.ts`, `suppliers.ts`, `SupplierDetail.tsx`, `Suppliers.tsx`), + the `VALID_KINDS` `['mfg_product','fabric','raw']` twin at 3 of them | MED | LOW-MED | The hardcoded currency sets SHADOW the UI-editable master — adding a currency in the UI is silently rejected by PO/PC creation. Behavioural: converging is a real fix, not a tidy-up, so verify carefully. *(Payment methods split out of this row and FIXED 2026-08-13 — see Done above; the "1 payment" copy counted here was actually 7.)* |
 | **State lists** | `vendor/scm/components/StatePicker` / lookup | 3 (`Projects.tsx`, `Sales.tsx`, `delivery-planning-queries.ts`) | MED | LOW | Penang vs "Pulau Pinang" spelling split breaks cross-module matching. |
-| **`projectScopeWhere(user)`** | build it in `projectAcl.ts` | 5 hand-written SQL predicates | MED | LOW-MED | CLAUDE.md's own roadmap item; now 5 sites (was 3 — drift). |
+| **`projectScopeWhere(user)`** | build it in `backend/src/services/projectAcl.ts` | 5 hand-written SQL predicates | MED | LOW-MED | CLAUDE.md's own roadmap item; now 5 sites (was 3 — drift). |
 | **Upload MIME mechanism** | one `lib/uploads.ts` | ~6 per-route copies | MED | MED | Keep per-surface allow-lists; share the mechanism. Partially touched by the XSS PRs. |
 | **Frontend fetch clients** | share retry/timeout into common helpers | 2 clients + `slip.ts`/`verified-save.ts` stragglers | MED | MED-HIGH | Don't merge wholesale (vendor boundary + deliberate behaviour diffs); converge resilience only. |
 | **Audit tables** | finish `entity_audit_log` migration | 3 tables (`audit_events`, `mfg_so_audit_log`, `entity_audit_log`) | HIGH | HIGH | The consolidation is half-done (entity_audit_log was created to replace mfg_so_audit_log). Needs a DB migration + UI read-path changes. Highest value, highest risk — do it supervised, with a backup, on staging first. |

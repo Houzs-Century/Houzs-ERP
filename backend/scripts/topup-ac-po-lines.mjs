@@ -72,8 +72,11 @@
 //   - never posts an inventory movement. These units came in with the AutoCount
 //     balance snapshot (see 0276_scm_migrated_documents.sql).
 //
-// Idempotent: re-running claims the rows it wrote and inserts nothing.
-// DRY-RUN by default; APPLY=1 writes. DOC=PO-009435 limits it to one document.
+// RE-RUN: inert. A second run re-reads the live rows, claims the ones this run
+// wrote by supplier_sku, finds every family already covered and inserts nothing;
+// the header top-up is therefore not re-applied either.
+// DRY-RUN by default; APPLY=1 plus CONFIRM writes. DOC=PO-009435 limits it to
+// one document.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
@@ -90,6 +93,16 @@ import {
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
+/* The apply path writes purchase-order LINES and moves document totals, and a
+   wrong run is not undone by reverting the commit — the rows are in production
+   from the moment it finishes. So APPLY=1 alone is not enough: the phrase has
+   to be typed, which is the step that cannot happen by a stale shell variable
+   or a re-dispatched workflow. */
+const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
+  console.error(`APPLY=1 requires CONFIRM="${CONFIRM_PHRASE}" — refusing to write.`);
+  process.exit(2);
+}
 const ONLY = (process.env.DOC || "").trim().replace(/^HC-/, "");
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -447,6 +460,9 @@ async function main() {
   log("");
   log("APPLYING...");
   let wrote = 0, docsWritten = 0, deltaCenti = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
+  /* Ids of the rows this run actually inserted, so the verification below reads
+     back exactly what was written rather than re-deriving the plan. */
+  const writtenIds = [];
   for (const p of plan) {
     await sql.begin(async (tx) => {
       /* Re-read inside the transaction: if another run - or the sibling repair -
@@ -504,6 +520,7 @@ async function main() {
           keysWritten++;
         }
         if (soItemId) dedicationsWritten++;
+        if (ins) writtenIds.push(ins.id);
         added += r.up * r.qty;
         wrote++;
       }
@@ -520,5 +537,40 @@ async function main() {
   log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaCenti / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
   log("no inventory movement written, no document created, no status changed - by design.");
   await sql.end();
+
+  /* Verify on a SECOND connection. The session that wrote is the worst witness
+     that the write landed, and a row COUNT would not have caught the thing most
+     likely to be wrong here: `variants` and `custom_specials` go in through
+     sql.json(), which is one mistake away from storing the JSON *text* instead
+     of an object — the double-encoding COE (docs/jsonb-double-encoding-coe.md)
+     is exactly that, and its repair script reported 7 of 7 rows repaired while
+     re-corrupting all 7 because it only counted. So ask what the values ARE. */
+  if (!writtenIds.length) return;
+  const check = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    const back = await check`
+      SELECT id::text AS id, supplier_sku,
+             jsonb_typeof(variants)         AS variants_shape,
+             jsonb_typeof(custom_specials)  AS specials_shape,
+             pg_typeof(received_qty)::text  AS recv_type,
+             received_qty, linked_ac_dtlkey
+        FROM scm.purchase_order_items
+       WHERE id = ANY(${writtenIds}::uuid[])`;
+    const missing = writtenIds.length - back.length;
+    const badJson = back.filter((r) =>
+      (r.variants_shape !== null && r.variants_shape !== "object")
+      || (r.specials_shape !== null && r.specials_shape !== "array"));
+    const badRecv = back.filter((r) => r.received_qty === null || !Number.isFinite(Number(r.received_qty)));
+    log(`VERIFY (fresh connection): read back ${back.length}/${writtenIds.length} rows; variants shape object=${back.filter((r) => r.variants_shape === "object").length}, null=${back.filter((r) => r.variants_shape === null).length}; received_qty type ${back[0]?.recv_type ?? "n/a"}`);
+    if (missing || badJson.length || badRecv.length) {
+      if (missing) console.error(`VERIFY FAILED: ${missing} inserted row(s) are not readable on a fresh connection.`);
+      for (const r of badJson.slice(0, 10)) console.error(`VERIFY FAILED: ${r.supplier_sku} variants=${r.variants_shape} custom_specials=${r.specials_shape} — expected object/array, a string here is the double-encoding bug.`);
+      for (const r of badRecv.slice(0, 10)) console.error(`VERIFY FAILED: ${r.supplier_sku} received_qty=${r.received_qty} is not a number.`);
+      process.exit(1);
+    }
+    log("VERIFY OK - every inserted row reads back with the expected shape.");
+  } finally {
+    await check.end();
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

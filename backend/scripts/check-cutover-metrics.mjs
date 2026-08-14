@@ -13,16 +13,22 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { isDivanOnly, isDivanlessFrame } from "./lib/variant-axes.mjs";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const isSofa = (c) => /SOFA/i.test(c || "");
-const isDivanOnly = (c) => /\bDIVAN\s*ONLY\b/i.test(c || "");
-// adjustable / pull-out / double-decker: no divan base at all (owner 2026-08-10)
-const isDivanless = (c) => /ADJUSTABLE|\(S?S\+S\)|DOUBLE\s*D[AE]C?KER|\bDDB/i.test(c || "");
+/* Imported, not re-typed — see scripts/lib/variant-axes.mjs. Local copies of
+   these two predicates are how the owner's exemptions came to hold in some
+   audits and not others. */
+const isDivanless = isDivanlessFrame;
 const snip = (s, n = 70) => (s || "").replace(/\s+/g, " ").slice(0, n);
 
 async function main() {
@@ -65,17 +71,28 @@ async function main() {
 
   // ---- 3. processed bedframe completeness ----
   /* "Processed" is the STATE "this order carries a Processing Date", and that
-     date lives in internal_expected_dd — the column the UI writes and every
-     screen reads. proceeded_at is stamped only at the IN_PRODUCTION transition,
+     date lives in processing_date — the column the UI writes and every screen
+     reads. It was internal_expected_dd until mig 0286 renamed it, and this
+     script's SQL still said so, which is a 42703 the moment anyone dispatches
+     it. proceeded_at is stamped only at the IN_PRODUCTION transition,
      so counting it measured a different, smaller population than the one the
      owner sees (2026-08-13). */
   const pb = await sql`SELECT i.id, i.item_code, i.description2, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, h.doc_no
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.internal_expected_dd IS NOT NULL AND i.item_group = 'bedframe'`;
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL AND h.${PDATE} IS NOT NULL AND i.item_group = 'bedframe'`;
   const pbBad = pb.filter((r) => !(r.variants?.colourId) || (!isDivanless(r.item_code) && (r.divan_height_inches == null || r.leg_height_inches == null || (r.gap_inches == null && !isDivanOnly(r.item_code)))));
   log(`processed bedframe lines: ${pb.length}; complete: ${pb.length - pbBad.length}; INCOMPLETE: ${pbBad.length}`);
   for (const r of pbBad.slice(0, 40)) {
-    const why = [!(r.variants?.colourId) && "colour", r.divan_height_inches == null && "divan", r.leg_height_inches == null && "leg", r.gap_inches == null && !isDivanOnly(r.item_code) && "gap"].filter(Boolean).join("+");
+    /* The reason string must apply the SAME divanless guard the filter above
+       does, or a frame flagged only for its colour prints "colour+divan+leg" and
+       sends someone hunting for two measurements that do not exist. */
+    const base = !isDivanless(r.item_code);
+    const why = [
+      !(r.variants?.colourId) && "colour",
+      base && r.divan_height_inches == null && "divan",
+      base && r.leg_height_inches == null && "leg",
+      base && r.gap_inches == null && !isDivanOnly(r.item_code) && "gap",
+    ].filter(Boolean).join("+");
     log(`   BF ${r.doc_no} ${r.item_code} missing ${why} :: "${snip(r.description2)}"`);
   }
 
@@ -105,7 +122,7 @@ async function main() {
   const [cov] = await sql`SELECT COUNT(*) total,
     COUNT(emergency_contact_phone) emergency,
     COUNT(building_type) building,
-    COUNT(internal_expected_dd) processed,
+    COUNT(${PDATE}) processed,
     COUNT(customer_delivery_date) deliv
     FROM scm.mfg_sales_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`;
   const [lcov] = await sql`SELECT COUNT(*) total, COUNT(line_delivery_date) with_date

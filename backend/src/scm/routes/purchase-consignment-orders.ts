@@ -247,6 +247,19 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
+  /* Prove the PC Order belongs to the active company BEFORE fanning out. This
+     read was the only one on the router with no company scope, so a caller in
+     one company could resolve another company's PCO to its receive/return
+     numbers by id (found 2026-08-12 by code read; the module guide claimed
+     scoping that was absent). 404 rather than 403: an unreachable row must not
+     confirm its own existence. */
+  const owner = await scopeToCompany(
+    sb.from('purchase_consignment_orders').select('id').eq('id', id),
+    c,
+  ).maybeSingle();
+  if (owner.error) return c.json({ error: 'load_failed', reason: owner.error.message }, 500);
+  if (!owner.data) return c.json({ error: 'not_found' }, 404);
+
   const [recvRes, retRes] = await Promise.all([
     sb.from('purchase_consignment_receives')
       .select('id, receive_number, status, received_at')
@@ -273,6 +286,11 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
 //   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceCenti, bindingId? }]
 // }
 purchaseConsignmentOrders.post('/', async (c) => {
+  /* company-scope: the only by-id write here is the ROLLBACK — the header this
+     handler inserted moments earlier is deleted when the child insert fails.
+     insertHeader / insertWithDocNoRetry stamp the active company on that row, so
+     the id is not caller-supplied and cannot name another company's document.
+     Verified 2026-08-13 by reading the handler end to end. */
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
     return c.json({ error: 'invalid_json' }, 400);
@@ -373,6 +391,14 @@ purchaseConsignmentOrders.post('/', async (c) => {
   );
 
   if (hErr) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }

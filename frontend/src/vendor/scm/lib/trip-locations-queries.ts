@@ -86,6 +86,12 @@ export function useMyActiveTrip() {
    rather than throwing, so a single bad fix never breaks the capture loop. */
 export function usePostTripLocation() {
   return useMutation({
+    /* silent-mutation-ok: the only consumer is useTripLocationCapture below, and
+       BOTH of its .mutate call sites (the web watchPosition path and the native
+       background-watch path) pass a per-call onError that puts the message into
+       CaptureState.lastError. Deliberately NOT writeFailed: this fires every
+       ~25s per driver, so a dialog per refused ping would bury the driver in
+       modals while they are on the road. */
     mutationFn: (p: { tripId: string; lat: number; lng: number; accuracy?: number | null; recorded_at?: string; simulated?: boolean }) =>
       authedFetch<{ ok: boolean; accepted?: boolean; reason?: string }>(`/trips/${p.tripId}/location`, {
         method: 'POST',

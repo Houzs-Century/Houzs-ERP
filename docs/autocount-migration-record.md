@@ -203,7 +203,49 @@ save typing five requests.
 
 **Undo:** the document is cancelled, not deleted, which is the whole point. Nothing else changed.
 
-### Step 3 — Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY`
+### Step 3 — DONE 2026-08-11. The tunnel fronts the service and the runbook PASSED
+
+**Do not re-plan this step. It is finished, and the four "this machine cannot
+reach it" findings that were true this morning stopped being true at the moment
+the hostname was repointed.** They are recorded here because a later session
+re-derived them from the pre-repoint state of this document and concluded the
+whole thing was unrunnable.
+
+| what was true this morning | why it is no longer |
+|---|---|
+| ZeroTier to `10.147.17.100:8900` answers 400, and 403 with a forged Host | Still true, and irrelevant. The listener prefix is `http://localhost:<port>/`, so http.sys serves loopback only. **cloudflared connects from loopback ON that host**, so the tunnel path works where a direct one cannot |
+| `it-houzs.dev` does not front AcSyncService | Correct, and it never will. **`autocount.houzscentury.com` does**, since the owner repointed it |
+| the API key exists only in `C:\Tempc-svc-key.txt` on the host | It was downloadable over the old file server, and is now the `AC_SYNC_KEY` Worker secret. **Set.** |
+| no `AED_HOUZS` SQL password locally | True and not needed: the HTTP path needs the API key, not the database |
+
+**The evidence, from an ordinary workstation over the public tunnel:**
+
+```
+POST https://autocount.houzscentury.com/health
+  -> {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+
+/create-so ZZERP-0001, two lines  -> lines[] with DtlKey 894957, 894958   (4.1 PASS)
+/edit  no DtlKey                  -> HTTP 500 REFUSED                     (4.2 PASS)
+/edit  DtlKey 894957, Qty 9       -> ok                                   (4.3 PASS)
+/edit  IsNewLine                  -> ok                                   (4.4 PASS)
+/edit  DtlKey 894958, Retire      -> ok                                   (4.5 PASS)
+/cancel                           -> ok, cancelled and NOT deleted
+```
+
+`ZZERP-0001` stays in the book, cancelled, per 不可以删只可以 cancel. **Do not
+delete it.** `GET /ac-svc-key.txt` now returns 405 from the service, so the
+file server that had been publishing the key is no longer in front — see
+`docs/autocount-writeback-exposure-coe.md`.
+
+**What is still NOT proven:** anything on the ERP side. Nothing has been driven
+from an ERP save — `scm.autocount_writeback` is still `off` and the outbox still
+holds zero rows. And the exe on the host is still the pre-`/ensure-masters`
+build, so a document naming a new master would still fail there.
+
+<details><summary>The original Step 3, kept because the rollback and the
+configuration notes in it are still correct</summary>
+
+### Step 3 (original) — Stand up the tunnel and set `AC_SYNC_URL` + `AC_SYNC_KEY`
 
 **Who: IT, physically at the office machine. This is the only step that needs that, and it blocks
 every step after it.**
@@ -233,6 +275,8 @@ Worker** — not from the office LAN. A localhost curl proves nothing about the 
 
 **Undo:** re-comment `AC_SYNC_URL` and redeploy. `drainAutoCountOutbox` returns
 `ac_service_not_configured` before it reads the queue, so an unset URL is a complete stop.
+
+</details>
 
 ### Step 4 — Turn on `scm.autocount_writeback` for company 1
 
@@ -1121,7 +1165,7 @@ price is strictly better and is still open.
 
 | # | Task |
 |---|---|
-| 1 | **Stand up the tunnel route to `AcSyncService` on port 8900.** Copy the shape already carrying `it-houzs.dev`. This is the one step that requires physical presence and it blocks every step after it. **Write the configuration down somewhere — today it lives only on that machine** |
+| 1 | ~~Stand up the tunnel route~~ **DONE 2026-08-11.** `autocount.houzscentury.com` fronts `localhost:8900`; the owner changed it in the Cloudflare dashboard, which is where a token-mode cloudflared keeps its ingress — **no physical presence was needed after all**. `AC_SYNC_URL` and the `AC_SYNC_KEY` secret are both set. See Step 3 |
 | 2 | Set `AC_SYNC_URL` in `backend/wrangler.toml` and `wrangler secret put AC_SYNC_KEY`, matching `C:\Temp\ac-svc-key.txt` |
 | 3 | Rebuild the clean service from the bridge and confirm `/health` names the book it is connected to (runbook step 1) |
 | 4 | Restore or replace `AED_TESTING`, if a test book is ever wanted again. The current one has exhausted its 500-transaction evaluation limit |

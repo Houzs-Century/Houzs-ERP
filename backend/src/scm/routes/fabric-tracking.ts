@@ -65,7 +65,12 @@ const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
    dictated on 2026-08-11.
 
    REFUSING IS NOT DELETING. PATCH /:id/active and DELETE /:id are untouched, so
-   the two rows already in the table stay fixable by the people who own them. */
+   the two rows already in the table stay fixable by the people who own them.
+   The rows that were already there are retired by
+   backend/scripts/retire-non-fabric-rows.mjs, which applies THIS rule (via
+   scripts/lib/non-fabric-code.mjs, held identical to NON_FABRIC_HEAD by
+   backend/tests/nonFabricCodeParity.test.ts) and refuses any row a live
+   document still names. It deactivates and stamps; it never deletes. */
 const NON_FABRIC_HEAD =
   /^(SOFA|SQUARE\s*PILLOW|LONG\s*PILLOW|BOLSTER|STOOL|CONSOLE|MATTRESS|BEDFRAME|DIVAN|DELIVERY|TRANSPORT|SERVICE|SVC)\b/i;
 
@@ -181,6 +186,14 @@ fabricTracking.post('/', async (c) => {
   const { data, error } = await sb.from('fabric_trackings').insert({ ...row, company_id: activeCompanyId(c) }).select('*').single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }

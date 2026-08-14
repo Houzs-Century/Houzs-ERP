@@ -25,7 +25,7 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
-import { findModelUsage } from '../lib/sku-usage';
+import { findModelUsage, usageCheckFailedBody } from '../lib/sku-usage';
 import { activeCompanyId, stampCompany, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { canWriteScmConfig, canViewScmProductCost } from '../lib/houzs-perms';
@@ -1007,11 +1007,13 @@ productModels.delete('/:id', async (c) => {
   // been sold / ordered / moved in stock, block the delete: removing it would
   // orphan live order lines. Unused models (setup-phase typos) stay deletable.
   const used = await findModelUsage(supabase, id);
-  if (used) {
+  /* A probe that could not run is NOT "unused" — see sku-usage.ts. */
+  if (!used.ok) return c.json(usageCheckFailedBody('model', used.reason), 409);
+  if (used.usage) {
     return c.json({
       error: 'model_in_use',
-      reason: `SKU “${used.code}” under this model is used in ${used.where}` +
-        `${used.doc ? ` (${used.doc})` : ''} — it can’t be deleted.`,
+      reason: `SKU “${used.usage.code}” under this model is used in ${used.usage.where}` +
+        `${used.usage.doc ? ` (${used.usage.doc})` : ''} — it can’t be deleted.`,
     }, 409);
   }
   const { error } = await scopeToCompanyId(supabase.from('product_models').delete().eq('id', id), co.companyId);

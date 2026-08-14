@@ -412,9 +412,17 @@ trips.get('/day', async (c) => {
 trips.get('/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
+  /* COMPANY BOUND — the detail must answer within the SAME set GET / lists
+     under, or the bounded list is decoration: the uuid alone opened any
+     company's trip and its stops (customer name + address on every stop).
+     Widened to the allowed set, not isolated to the active company: TMS is one
+     shared queue. The crew scope below is a DIFFERENT axis (which person), and
+     never made this one redundant — it passes ops/dispatcher straight through. */
   const [t, s] = await Promise.all([
-    sb.from('trips').select(TRIP_COLS).eq('id', id).maybeSingle(),
-    sb.from('trip_stops').select(STOP_COLS).eq('trip_id', id).order('stop_no', { ascending: true }),
+    scopeToAllowedCompanies(sb.from('trips').select(TRIP_COLS).eq('id', id), c).maybeSingle(),
+    scopeToAllowedCompanies(
+      sb.from('trip_stops').select(STOP_COLS).eq('trip_id', id).order('stop_no', { ascending: true }), c,
+    ),
   ]);
   if (t.error) return c.json({ error: 'load_failed', reason: t.error.message }, 500);
   if (!t.data) return c.json({ error: 'not_found' }, 404);
@@ -477,6 +485,14 @@ trips.post('/', async (c) => {
   );
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_trip_no', reason: error.message }, 409);
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -502,7 +518,7 @@ const tripPatchSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
-trips.patch('/:id', async (c) => {
+export const patchTripHandler = async (c: any) => {
   const id = c.req.param('id');
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -531,12 +547,22 @@ trips.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ error: 'no_changes' }, 400);
 
-  /* CROSS-COMPANY, not un-scoped: Trips is one shared queue, so the boundary is
-     the caller's ALLOWED set (scopeToAllowedCompanies), the same predicate the
-     list read above uses — never the single active company. The service-role
-     client bypasses RLS, so without this a company-1-only dispatcher could edit
-     a company-2 trip by id. maybeSingle, not single: the predicate can
-     legitimately match zero rows, and single() would turn that 404 into a 500. */
+  /* COMPANY BOUND — the write must honour the SAME set the row was listed under.
+     GET / widens to the caller's ALLOWED companies (`.in('company_id', allowed)`);
+     this write had no company predicate at all, so a caller granted only company
+     A could PATCH company B's trip by its uuid. WIDENED, not isolated: TMS is one
+     shared cross-company queue, so scopeToCompany (active-company only) would
+     break the design — see the CROSS-COMPANY note on TRIP_COLS.
+
+     Do NOT read the `42501` branch below as the guard that was already here.
+     42501 is Postgres permission-denied, i.e. RLS — and RLS cannot fire on this
+     path: mig 0061 enabled RLS on every scm table with NO policies, and the SCM
+     client is the SERVICE-ROLE client (db/supabase.ts getSupabaseService), which
+     bypasses RLS by design and by that migration's own stated intent. The branch
+     is unreachable here; the only boundary is the predicate in this file.
+
+     .maybeSingle(), not .single(): an out-of-scope id is now a legitimate
+     zero-row answer and must read as 404, not as a 500 "update_failed". */
   const { data, error } = await scopeToAllowedCompanies(
     sb.from('trips').update(updates).eq('id', id), c,
   ).select(TRIP_COLS).maybeSingle();
@@ -546,14 +572,15 @@ trips.patch('/:id', async (c) => {
   }
   if (!data) return c.json({ error: 'not_found' }, 404);
   return c.json({ trip: data });
-});
+};
+trips.patch('/:id', patchTripHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    PATCH /trips/:id/status — flip the trip status (PLANNED/IN_PROGRESS/…).
    Stamps clock_in_at on first IN_PROGRESS and clock_out_at on COMPLETED if not
    already set (best-effort timeline, doesn't overwrite a manual clock).
    ─────────────────────────────────────────────────────────────────────────*/
-trips.patch('/:id/status', async (c) => {
+export const patchTripStatusHandler = async (c: any) => {
   const id = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -561,6 +588,8 @@ trips.patch('/:id/status', async (c) => {
   if (!TRIP_STATUSES.has(status)) return c.json({ error: 'invalid_status' }, 400);
 
   const sb = c.get('supabase');
+  // company-scope: widened to the caller's ALLOWED companies, same set GET /
+  // lists under - see the COMPANY BOUND note on PATCH /:id above.
   const { data: cur } = await scopeToAllowedCompanies(
     sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id').eq('id', id), c,
   ).maybeSingle();
@@ -599,7 +628,8 @@ trips.patch('/:id/status', async (c) => {
     return c.json({ trip: data, ...reconcileFieldsFor(reconcile) });
   }
   return c.json({ trip: data });
-});
+};
+trips.patch('/:id/status', patchTripStatusHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    POST /trips/:id/stops — add a stop linking a DO/SO, with stop_type + revenue.
@@ -692,17 +722,26 @@ trips.post('/:id/stops', async (c) => {
 });
 
 /* DELETE /trips/:id/stops/:stopId — remove one stop. */
-trips.delete('/:id/stops/:stopId', async (c) => {
+export const deleteTripStopHandler = async (c: any) => {
   const tripId = c.req.param('id');
   const stopId = c.req.param('stopId');
   const sb = c.get('supabase');
   /* Snapshot the stop's source keys BEFORE the delete — once it is gone there is
      nothing left to map back to a header. */
-  const { data: stopRow } = await scopeToAllowedCompanies(sb.from('trip_stops')
-    .select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId), c).maybeSingle();
-  // Shared queue → the ALLOWED set is the boundary, on the DELETE itself: the
-  // read above cannot protect the write, the client being service-role.
-  const { error } = await scopeToAllowedCompanies(sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId), c);
+  /* company-scope: scm.trip_stops carries company_id NOT NULL (mig 0083), so the
+     stop is bounded on its OWN column - not merely inherited from the trip via
+     .eq('trip_id'), which a caller supplies and which would let a stop from an
+     out-of-scope trip be deleted by passing that trip's uuid. Widened to the
+     allowed set, matching the trip reads. */
+  const { data: stopRow } = await scopeToAllowedCompanies(
+    sb.from('trip_stops').select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId), c,
+  ).maybeSingle();
+  if (!stopRow) return c.json({ error: 'not_found' }, 404);
+  /* The predicate goes on the DELETE itself, not only on the read above: the
+     read cannot protect the write, the client being service-role. */
+  const { error } = await scopeToAllowedCompanies(
+    sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId), c,
+  );
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
   /* REVERSE SYNC: a removed DELIVERY stop means that order is no longer on this
@@ -720,14 +759,15 @@ trips.delete('/:id/stops/:stopId', async (c) => {
     return c.json({ ok: true, ...reconcileFieldsFor(reconcile) });
   }
   return c.json({ ok: true });
-});
+};
+trips.delete('/:id/stops/:stopId', deleteTripStopHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    DELETE /trips/:id — cancel (default) or hard-delete (?hard=true). A cancel
    flips status → CANCELLED (the legs FK is ON DELETE SET NULL, so a hard delete
    orphans the legs back to unplanned rather than removing them). Idempotent.
    ─────────────────────────────────────────────────────────────────────────*/
-trips.delete('/:id', async (c) => {
+export const deleteTripHandler = async (c: any) => {
   const id = c.req.param('id');
   const hard = c.req.query('hard') === 'true';
   const sb = c.get('supabase');
@@ -738,23 +778,36 @@ trips.delete('/:id', async (c) => {
      returned to the board. Read once, up front, for both paths. */
   const stops = await deliveryStopsOfTrip(sb, id);
 
+  /* company-scope: BOTH paths - see the COMPANY BOUND note on PATCH /:id. The
+     hard path is the more dangerous of the two: trip_stops CASCADEs (mig 0053),
+     so an unbounded DELETE by uuid took another company's stops with it. */
   if (hard) {
+    /* Confirm the trip is in scope BEFORE deleting, because a DELETE reports no
+       rows-affected here - a silent no-op and a real delete would look alike. */
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
+      sb.from('trips').select('id').eq('id', id), c,
+    ).maybeSingle();
+    if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
+    if (!own) return c.json({ error: 'not_found' }, 404);
     const { error } = await scopeToAllowedCompanies(sb.from('trips').delete().eq('id', id), c);
     if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
     const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
     return c.json({ ok: true, deleted: true, ...reconcileFieldsFor(reconcile) });
   }
 
-  const { data, error } = await scopeToAllowedCompanies(sb.from('trips')
-    .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-    .eq('id', id), c).select(TRIP_COLS).maybeSingle();
+  const { data, error } = await scopeToAllowedCompanies(
+    sb.from('trips')
+      .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+      .eq('id', id), c,
+  ).select(TRIP_COLS).maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
   /* REVERSE SYNC — return each stranded order to the board (clear its
      scheduled-looking override). Best-effort + REPORTED. */
   const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
   return c.json({ trip: data, cancelled: true, ...reconcileFieldsFor(reconcile) });
-});
+};
+trips.delete('/:id', deleteTripHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    POST /trips/:id/optimize-route — ask Google Directions for the shortest order
@@ -763,12 +816,19 @@ trips.delete('/:id', async (c) => {
    nothing bills until the owner sets the key. Read-only by default; `?apply=true`
    writes the optimised order back to trip_stops.stop_no.
    ─────────────────────────────────────────────────────────────────────────*/
-trips.post('/:id/optimize-route', async (c) => {
+export const optimizeTripRouteHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
   const apply = c.req.query('apply') === 'true';
 
-  const t = await sb.from('trips').select('id, warehouse_id').eq('id', id).maybeSingle();
+  /* company-scope: the trip gate for this whole handler. Everything below keys
+     off `id` (the stop read, and the stop_no / total_distance_km write-back when
+     ?apply=true), so bounding the trip here bounds the writes too - and an
+     out-of-scope id stops before Google is called, which also means it cannot be
+     used to bill the owner's Directions quota. */
+  const t = await scopeToAllowedCompanies(
+    sb.from('trips').select('id, warehouse_id').eq('id', id), c,
+  ).maybeSingle();
   if (t.error) return c.json({ error: 'load_failed', reason: t.error.message }, 500);
   if (!t.data) return c.json({ error: 'not_found' }, 404);
 
@@ -810,7 +870,8 @@ trips.post('/:id/optimize-route', async (c) => {
     applied = true;
   }
   return c.json({ ...result, applied });
-});
+};
+trips.post('/:id/optimize-route', optimizeTripRouteHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    POST /trips/propose-schedule — the "Propose times + route" SMART scheduler
@@ -1089,8 +1150,15 @@ trips.get('/:id/locations/latest', async (c) => {
   const tripId = c.req.param('id');
   const sb = c.get('supabase');
 
-  const { data: trip } = await sb.from('trips')
-    .select('id, driver_id, helper_1_id, helper_2_id').eq('id', tripId).maybeSingle();
+  /* COMPANY BOUND. The header comment above says "row-scoped like the rest of
+     the router", and that was only half true: the crew scope below was here,
+     the company predicate was not. Its own sibling GET /active/locations DOES
+     call scopeToAllowedCompanies on the trip set, so the two endpoints answered
+     the same question differently — and this is the one that hands back live
+     driver GPS for a single trip. */
+  const { data: trip } = await scopeToAllowedCompanies(
+    sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id').eq('id', tripId), c,
+  ).maybeSingle();
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(trip as Record<string, unknown>))) {

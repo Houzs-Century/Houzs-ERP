@@ -60,6 +60,11 @@ describe('findServiceLineCodes — the company is what decides, so it cannot be 
   };
   const line = [{ itemCode: 'LIFT-CHARGE', itemGroup: 'bedframe' }];
 
+  /* findServiceLineCodes returns a DISCRIMINATED RESULT, not a bare array:
+     `{ ok: true; codes }` or `{ ok: false; reason }`, so a failed catalog read
+     can no longer arrive as "no offenders found". That is the structural remedy
+     docs/bug-classes.md class B recommends everywhere — the failure becomes a
+     state the caller must branch on rather than one `?? []` can absorb. */
   it('company 1 sees a SERVICE line and refuses the return', async () => {
     const seen: { companyId?: unknown } = {};
     expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 1)).toEqual({ ok: true, codes: ['LIFT-CHARGE'] });

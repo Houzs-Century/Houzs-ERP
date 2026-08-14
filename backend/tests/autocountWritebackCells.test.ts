@@ -169,7 +169,16 @@ describe('the SO and PO mutation paths the named-anchor test did not cover', () 
   });
 
   test('Sales Invoice partial transfer — folding a second DO into an existing invoice', () => {
-    const tail = between(SI, "salesInvoices.post('/:id/items/from-do/:doId'", 'return c.json({ ok: true, added: rows.length }, 201);');
+    /* Anchored on the HANDLER's declaration, not on its route registration.
+       The handler was extracted to a named export on 2026-08-13 so the
+       company-scope tests could mount it past supabaseAuth, which moves
+       `salesInvoices.post('/:id/items/from-do/:doId', ...)` BELOW the body —
+       and a start anchor that now sits after the end anchor makes `between()`
+       return -1, i.e. the test fails on a rename rather than on a regression.
+       The declaration is where the body is, so it is the stable anchor.
+       Sibling handlers extracted the same way (postStockTakeHandler,
+       patchSalesInvoiceStatusHandler) are anchored this way too. */
+    const tail = between(SI, 'export const appendDoLinesToSalesInvoiceHandler', 'return c.json({ ok: true, added: rows.length }, 201);');
     expect(tail).toContain('queueAcSiEdit(c, id)');
   });
 });

@@ -168,7 +168,7 @@ Pick any order by its AutoCount DocNo and pull the ERP side:
 ```sql
 -- header
 SELECT doc_no, linked_ac_docno, debtor_name, salesperson_id, postcode, city, customer_state,
-       venue, emergency_contact_phone, proceeded_at,
+       venue, emergency_contact_phone, proceeded_at, processing_date,
        local_total_centi/100.0 total, balance_centi/100.0 balance, paid_centi/100.0 paid
 FROM scm.mfg_sales_orders WHERE linked_ac_docno = 'SO-0XXXXX';
 
@@ -197,7 +197,8 @@ Compare each field against the AutoCount SO/SODTL source line:
 | **amount_centi (payment)** | (Σ line `Qty*UnitPrice`) − `UDF_BALANCE`, in sen. |
 | **account_sheet / approval_code** | the two halves of `UDF_PAYEMENT` `(accountsheet/approval)`. |
 | **paid_at / payment_date** | the SO `DocDate`. |
-| **proceeded_at (processing)** | `UDF_PDate`. RULE: if this is set, address + bedframe colour MUST be complete (else it is on the exceptions list). |
+| **proceeded_at** | `UDF_PDate`. The importer writes AutoCount's processing date into `proceeded_at` (`import-ac-outstanding-so.mjs:304, 390`) and does NOT write `processing_date`. RULE: if this is set, address + bedframe colour MUST be complete (else it is on the exceptions list). |
+| **processing_date** | **NOT written by the importer** — left NULL on every migrated order. Since mig 0286 this is the ERP's one Processing Date (`scm.mfg_sales_orders.processing_date`), so a migrated order is "proceeded" with no Processing Date. That state is inert for the amendment path but the stock allocator gates on `proceeded_at`, so the two genuinely disagree on migrated rows. This row used to be labelled `proceeded_at (processing)`, which is the exact conflation mig 0286 exists to end. |
 
 PO field-level tally is the same shape against `scm.purchase_order_items`
 (material_code<-binding, supplier_id<-creditor, warehouse_id<-location, delivery_date,
