@@ -85,7 +85,12 @@ export type PlanningOrder = {
      with the amend dates above. */
   amend_reason: string | null;
   effective_delivery_date: string | null;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
+  /* Owner 2026-08-12 (2990 only) — a live PO already claims one of this SO's
+     lines, so the SO is soft-locked with no processing date involved. Read by
+     DeliveryFieldsDrawer's procLockActive call to route a replacement_disposal
+     change into an amendment instead of a direct save. */
+  po_locked: boolean | null;
   days_left: number | null;
   /* HC delivery-sheet address columns. */
   address: string | null;

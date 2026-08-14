@@ -86,6 +86,16 @@ export type Env = {
   AUTOCOUNT_API_KEY: string;
   // Inbound-sync kill switch. "true" = skip every AutoCount pull (cron + manual).
   AUTOCOUNT_SYNC_DISABLED?: string;
+  // ── ERP -> AutoCount WRITE-BACK (outbound; separate from the two above,
+  // which are the legacy inbound pull) ───────────────────────────────────────
+  // Base URL of AcSyncService, the write-back service that runs ON the AutoCount
+  // host and drives the licensed 2.2 SDK (backend/scripts/autocount-service).
+  // CONFIG, not a secret — a hostname and a port. ABSENT = the write-back drain
+  // is a no-op and says so, which is the state this ships in.
+  AC_SYNC_URL?: string;
+  // Shared key for that service's X-API-KEY header. A CREDENTIAL: set it as a
+  // wrangler secret (`wrangler secret put AC_SYNC_KEY`), never in wrangler.toml.
+  AC_SYNC_KEY?: string;
   DASHBOARD_API_KEY: string;
   // Dedicated service token for Houzs Connect's org sync — accepted as the
   // same service-tier caller as DASHBOARD_API_KEY (see middleware/auth.ts),
@@ -367,7 +377,11 @@ export interface SalesOrderRow {
   remark2: string | null;
   remark3: string | null;
   remark4: string | null;
-  processing_date: string | null;
+  /* AutoCount's SO.UDF_PDate, mirrored verbatim (mig 0285 renamed this from
+     `processing_date`). NOT the ERP's Processing Date — that is
+     scm.mfg_sales_orders.internal_expected_dd, one column, different table,
+     different document. */
+  ac_udf_pdate: string | null;
   expiry_date: string | null;
   note: string | null;
   po_doc_no: string | null;

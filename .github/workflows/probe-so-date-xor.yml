@@ -1,0 +1,56 @@
+name: probe-so-date-xor
+
+# How many live orders already break "Processing Date and Delivery Date must be
+# set together" (owner, restated 2026-08-13).
+#
+# The client refuses both directions (so-form-validate.ts:94). The server only
+# refuses one — a Delivery Date with NO Processing Date raises nothing — so any
+# path that skips the form can write one.
+#
+# Before closing that half: a save-time rule blocks the NEXT EDIT of every
+# pre-existing offender, including edits that touch no date. This counts them,
+# so the fix ships with the right grandfather carve-out instead of a surprise.
+#
+# Read-only. See backend/scripts/probe-so-date-xor.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-so-date-xor
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count the both-or-neither offenders
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-so-date-xor.mjs | tee date-xor.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-so-date-xor
+          path: backend/date-xor.txt
+          retention-days: 14

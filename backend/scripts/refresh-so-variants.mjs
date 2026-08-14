@@ -7,16 +7,35 @@
 // Owner 2026-08-09: "为什么要清旧的SO 不能update进去用旧的" — right, an UPDATE is
 // safer than wipe+reload, so parser improvements land this way from now on.
 //
-// Writes: variants (fabricId/colourId/fabricCode/colourLabel/gap/divanHeight/
-// legHeight/totalHeight/specials/size), gap_inches, divan_height_inches,
-// leg_height_inches, custom_specials (mapped to REAL scm.special_addons codes).
+// WHAT IT MAY CHANGE, and what it may not. The sweep owns exactly the keys in
+// OWNED_VARIANT_KEYS (lib/variant-merge.mjs) — the fabric/colour block, the
+// gap/divan/leg heights and the size — plus the three geometry columns that
+// mirror them. It MERGES that patch into the existing `variants` jsonb; every
+// other key in that column belongs to another writer and survives untouched.
+// It used to rebuild the whole object and write the column wholesale, which
+// deleted any key it had not heard of (BUG-HISTORY.md, "The variant refresh
+// scripts REPLACE the whole variants jsonb"; PR #1926 recorded it, this fixes
+// it).
+//
+// It no longer writes `variants.specials` or `custom_specials`. Both now belong
+// to backfill-specials-into-variants.mjs, which is the money-guarded pipeline —
+// see the rationale on OWNED_VARIANT_KEYS. This sweep still REPORTS what the
+// Desc2 re-parse would map, so the parse is still visible in the run log.
+//
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: by design, repeatedly. This is a SWEEP: it re-parses Desc2 and re-stamps only the keys in OWNED_VARIANT_KEYS, so running it after every parser change is the point.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { parseBedframe } from "./lib/parse-bedframe.mjs";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
+import { mapSpecial } from "./lib/bedframe-special-map.mjs";
+import {
+  OWNED_SIZE_ONLY_KEYS, buildBedframeVariantPatch, buildSizeOnlyVariantPatch, mergeVariantPatch,
+} from "./lib/variant-merge.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -25,75 +44,47 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 
-const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
-
-/* mapSpecial is still rebuilt from fix-so-specials.mjs by source-text slicing.
-   parseBedframe was too, until the end marker got a new comment line in front of
-   it and the appended `return` was swallowed by it - BUG-HISTORY.md 2026-08-10. */
-const fxSrc = fs.readFileSync(path.join(here, "fix-so-specials.mjs"), "utf8");
-const mapSpecial = new Function(`${fxSrc.slice(fxSrc.indexOf("function mapSpecial"), fxSrc.indexOf("async function main")).trim()}; return mapSpecial;`)();
-
-function parseCsvLine(line) {
-  const out = []; let cur = ""; let q = false;
-  for (let i = 0; i < line.length; i++) { const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
-    else { if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; } }
-  out.push(cur); return out;
-}
-
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}`);
   const rows = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", "ac-outstanding-so.json.gz"))).toString("utf8").replace(/^﻿/, ""));
-  const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8").replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
-  csv.shift();
-  const byAc = new Map();
-  for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
-
-  // AutoCount DocNo|erp_code -> the freshly parsed variant block
+  /* AutoCount DtlKey -> the freshly parsed variant block.
+     DtlKey is the LINE's own identity and is unique across the whole export
+     (13,588 rows, 13,588 distinct keys). The pair (DocNo | erp_code) that this
+     lookup used until 2026-08-11 is NOT unique: one order routinely carries
+     several rows of the same SKU in different colours or heights, so Map.set
+     kept only the LAST of them and the write below then stamped that single
+     parse onto EVERY line sharing the key. 183 keys collided with a DIFFERENT
+     Desc2 and 298 export lines were lost that way - see BUG-HISTORY.md.
+     Keying on DtlKey also retires the AutoCount->ERP item-code CSV here: the
+     line identity needs no code translation to find its own text. */
   const parsed = new Map();
-  for (const r of rows) {
-    const erp = byAc.get(norm(r.ItemCode)); if (!erp) continue;
-    parsed.set(`${r.DocNo}|${erp.toUpperCase()}`, parseBedframe(r.Desc2));
-  }
+  for (const r of rows) parsed.set(Number(r.DtlKey), parseBedframe(r.Desc2));
 
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map(); for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    /* SERIESNUM: split "PC151-2"/"PC151101" into series + number so a 1-digit or
-       over-long tail still finds PC151-02 / PC151-01 (owner data has both). */
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
   // (SP) special-size lines are included whatever their group — a custom-size
   // MATTRESS carries its dimensions in Desc2 too and must show them.
-  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, i.description2, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.item_group, i.variants, i.description2, i.linked_ac_dtlkey, h.linked_ac_docno
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND (i.item_group = 'bedframe' OR i.item_code ILIKE '%(SP)%') AND h.linked_ac_docno IS NOT NULL`;
   log(`imported bedframe lines: ${items.length}`);
 
-  const updates = []; let gained = 0;
+  const updates = []; let gained = 0; let byKey = 0, byOwnText = 0, noSource = 0;
   for (const it of items) {
-    // The line stores the original AutoCount Desc2 in description2, so when the
-    // export/CSV lookup misses (e.g. an (SP) code absent from the binding CSV),
-    // parse the line's own text instead of skipping it.
-    const bf = parsed.get(`${it.linked_ac_docno}|${(it.item_code || "").toUpperCase()}`)
-      ?? (it.description2 ? parseBedframe(it.description2) : null);
-    if (!bf) continue;
+    /* Resolve by the LINE's identity, never by (document + item code). A line
+       with no stored DtlKey falls back to its OWN description2, which the
+       import wrote per line and is therefore line-accurate too; what must never
+       happen again is one line's text being applied to another's. */
+    const viaKey = it.linked_ac_dtlkey != null ? parsed.get(Number(it.linked_ac_dtlkey)) : undefined;
+    const bf = viaKey ?? (it.description2 ? parseBedframe(it.description2) : null);
+    if (!bf) { noSource++; continue; }
+    if (viaKey) byKey++; else byOwnText++;
     if (it.item_group !== "bedframe") {
       // non-bedframe (SP) line: only the dimensions apply — no fabric/gap/divan/leg
       if (!bf.size) continue;
-      updates.push({ id: it.id, sizeOnly: true, variants: { ...(it.variants || {}), size: bf.size }, specials: [], gap: null, divan: null, leg: null });
+      updates.push({ id: it.id, sizeOnly: true, patch: buildSizeOnlyVariantPatch(bf), specials: [], geometry: null });
       continue;
     }
     const pending = isPendingColour(bf.color);
@@ -104,44 +95,53 @@ async function main() {
       for (const c of mapSpecial(raw)) if (validSpecials.has(c)) codes.add(c);
     }
     const specials = [...codes];
-    const tot = (Number(bf.gap) || 0) + (Number(bf.divan) || 0) + (Number(bf.leg) || 0);
-    const variants = {
-      fabricId: fc ? fc.fabric_id : null, colourId: fc ? fc.colour_id : null,
-      fabricCode: fc ? fc.colour_id : null, colourLabel: fc ? fc.label : null,
-      fabricLabel: fc ? fc.fabric_id : null,
-      gap: bf.gap != null ? bf.gap + '"' : null, divanHeight: bf.divan != null ? bf.divan + '"' : null,
-      legHeight: bf.leg != null ? bf.leg + '"' : null, totalHeight: tot ? tot + '"' : null,
-      size: bf.size || null, specials,
-    };
+    const patch = buildBedframeVariantPatch(bf, fc);
     const had = it.variants || {};
-    if (!had.colourId && variants.colourId) gained++;
-    updates.push({ id: it.id, variants, specials, gap: bf.gap, divan: bf.divan, leg: bf.leg });
+    if (!had.colourId && patch.colourId) gained++;
+    updates.push({ id: it.id, patch, specials, geometry: { gap: bf.gap, divan: bf.divan, leg: bf.leg } });
   }
-  const withColour = updates.filter((u) => u.variants.colourId).length;
+  const withColour = updates.filter((u) => u.patch.colourId).length;
   const withSpecials = updates.filter((u) => u.specials.length).length;
-  log(`lines to refresh: ${updates.length}; with colour: ${withColour} (newly gained ${gained}); with real special options: ${withSpecials}`);
+  log(`lines to refresh: ${updates.length}; with colour: ${withColour} (newly gained ${gained}); parsed special options (REPORT ONLY, not written): ${withSpecials}`);
+  log(`source of truth: ${byKey} by AutoCount DtlKey, ${byOwnText} by the line's own description2, ${noSource} skipped for having neither`);
 
   if (!APPLY) { log("\nDRY-RUN — set APPLY=1 to write."); await sql.end(); return; }
+  /* Merged, never replaced: `variants = variants || patch` overwrites only the
+     keys this sweep owns. A row whose `variants` is not a jsonb object is
+     SKIPPED by the statement's own WHERE (jsonb || non-object concatenates into
+     an array rather than merging — docs/jsonb-double-encoding-coe.md) and
+     counted here, never coerced. The count is RETURNING, not a command tag. */
+  let merged = 0; const skipped = new Set();
   for (let i = 0; i < updates.length; i += 200) {
     const b = updates.slice(i, i + 200);
     await sql.begin(async (tx) => {
       for (const u of b) {
-        if (u.sizeOnly) {
-          await tx`UPDATE scm.mfg_sales_order_items SET variants = ${sql.json(u.variants)} WHERE id = ${u.id}`;
-          continue;
-        }
-        await tx`UPDATE scm.mfg_sales_order_items SET
-                   variants = ${sql.json(u.variants)},
-                   custom_specials = ${u.specials.length ? sql.json(u.specials) : null},
-                   gap_inches = ${u.gap != null ? Math.round(u.gap) : null},
-                   divan_height_inches = ${u.divan != null ? Math.round(u.divan) : null},
-                   leg_height_inches = ${u.leg != null ? Math.round(u.leg) : null}
-                 WHERE id = ${u.id}`;
+        const n = await mergeVariantPatch(tx, {
+          table: "mfg_sales_order_items", id: u.id, patch: u.patch, geometry: u.geometry,
+          owned: u.sizeOnly ? OWNED_SIZE_ONLY_KEYS : undefined,
+        });
+        if (n) merged += n; else skipped.add(u.id);
       }
     });
     log(`  ..${Math.min(i + 200, updates.length)}/${updates.length}`);
   }
-  log(`DONE. refreshed ${updates.length} bedframe lines`);
+  if (skipped.size) {
+    log(`SKIPPED ${skipped.size} line(s) whose variants jsonb is not an object — left untouched for #1938's shape repair:`);
+    for (const id of [...skipped].slice(0, 50)) log(`   ${id}`);
+  }
+  log(`DONE. merged ${merged} of ${updates.length} bedframe lines (RETURNING)`);
+
+  /* Read back on a SEPARATE connection. The session that just wrote is the
+     worst available witness for what the rows now hold. */
+  const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  try {
+    const ids = updates.map((u) => u.id).filter((id) => !skipped.has(id));
+    const [chk] = await v.unsafe(
+      `SELECT COUNT(*)::int AS n FROM scm.mfg_sales_order_items
+        WHERE id = ANY($1::uuid[]) AND jsonb_typeof(variants) = 'object'`, [ids]);
+    log(`READ-BACK on a NEW connection: ${chk.n}/${ids.length} merged rows hold a jsonb OBJECT`);
+    if (chk.n !== ids.length) log(`::error::${ids.length - chk.n} merged rows are NOT objects — investigate before another run`);
+  } finally { await v.end(); }
   await sql.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });

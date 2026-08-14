@@ -45,6 +45,38 @@ import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import type { Env, Variables } from '../env';
+import { canViewScmFinance } from '../lib/houzs-perms';
+
+/* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
+   不到成本".
+
+   This router imported nothing from houzs-perms. Its only gate was
+   scmAreaGuard("scm.warehouse.inventory") at VIEW level, and Storekeeper /
+   Storekeeper Supervisor hold exactly that (services/positionPolicy.ts) — while
+   the same policy sets `canSeeMargin: false` for them. That flag was WRITTEN and
+   nothing enforced it, which is the "a written level sitting inert" trap this
+   repo documents twice.
+
+   Every sibling surface over the same numbers already gates: reports.ts:512 and
+   entity-audit-log.ts:97 on canViewScmFinance, mfg-products on
+   canViewScmProductCost, and /sofa-combos was deliberately denied openRead for
+   precisely this reason.
+
+   Quantity, location, batch and movement history stay visible to everyone with
+   the area — only cost, value, margin and supplier pricing are withheld. */
+const INVENTORY_FINANCE_KEYS = [
+  'unit_cost_sen', 'total_cost_sen', 'value_sen', 'cost_sen', 'avg_cost_sen',
+  'main_supplier_price_centi', 'margin_sen', 'unit_cost_centi',
+] as const;
+
+/** Drop the finance columns from a row set. Caller decides WHETHER. */
+function stripInventoryFinance<T extends Record<string, unknown>>(rows: T[]): T[] {
+  return rows.map((r) => {
+    const out = { ...r } as Record<string, unknown>;
+    for (const k of INVENTORY_FINANCE_KEYS) delete out[k];
+    return out as T;
+  });
+}
 
 export const inventory = new Hono<{ Bindings: Env; Variables: Variables }>();
 inventory.use('*', supabaseAuth);
@@ -478,6 +510,19 @@ inventory.get('/products', async (c) => {
      unchanged. */
   const products = (data ?? []) as Array<Record<string, unknown>>;
   const codes = products.map((p) => String(p.product_code));
+  /* GET /products. DELIBERATELY NOT shared/so-terminal-states.ts, which carries
+     SIX. This four-status set omits DRAFT and SHIPPED, so a draft or shipped
+     order still counts as open demand HERE while MRP and the allocator treat it
+     as done — it drives committed_scheduled / available / surplus on the
+     Inventory page.
+
+     Three different answers to "is this order still open" survive this repo:
+     FOUR here, FIVE in GET /reservations below (:1424 — it has SHIPPED), SIX in
+     the shared file. Measured 2026-08-13 while collapsing that six-status set's
+     fourteen copies, and left standing on purpose: each spelling moves a number
+     staff act on, so choosing one is a business decision, not a side effect of a
+     de-duplication. Do not "helpfully" merge them without it.
+     See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED']);
   const PO_LIVE = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED']);
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -895,7 +940,11 @@ inventory.get('/movements', async (c) => {
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ movements: data ?? [] });
+  /* Movement HISTORY stays visible to everyone with the area — what moved,
+     when, where, in what quantity, is warehouse work. Only the cost columns
+     (unit_cost_sen / total_cost_sen) are withheld. */
+  const movements = (data ?? []) as Array<Record<string, unknown>>;
+  return c.json({ movements: canViewScmFinance(c) ? movements : stripInventoryFinance(movements) });
 });
 
 /* ── FIFO lots drilldown for one product ─────────────────────────────── */
@@ -911,7 +960,10 @@ inventory.get('/lots/:productCode', async (c) => {
   q = scopeToCompany(q, c); // FIFO lots are per-company (both table + view carry company_id).
   const { data, error } = await q.order('received_at', { ascending: true });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ lots: data ?? [] });
+  /* Lot drilldown: qty, batch, received date and warehouse are operational and
+     stay; unit_cost_sen is not. */
+  const lots = (data ?? []) as Array<Record<string, unknown>>;
+  return c.json({ lots: canViewScmFinance(c) ? lots : stripInventoryFinance(lots) });
 });
 
 /* ── Batch availability (Stage 2 — Commander 2026-05-31) ──────────────────
@@ -1032,6 +1084,10 @@ inventory.get('/batches', async (c) => {
 
 /* ── COGS stream ─────────────────────────────────────────────────────── */
 inventory.get('/cogs', async (c) => {
+  // Cost of goods sold — finance by definition.
+  if (!canViewScmFinance(c)) {
+    return c.json({ error: 'forbidden', message: "You don't have permission to see cost of goods sold." }, 403);
+  }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
   const productCode = c.req.query('productCode');
@@ -1055,6 +1111,10 @@ inventory.get('/cogs', async (c) => {
 
 /* ── Inventory valuation (qty × cost) ────────────────────────────────── */
 inventory.get('/value', async (c) => {
+  // Pure valuation — nothing here is non-finance, so refuse rather than strip.
+  if (!canViewScmFinance(c)) {
+    return c.json({ error: 'forbidden', message: "You don't have permission to see inventory valuation." }, 403);
+  }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
   // PostgREST's 1000-row cap silently truncated the valuation — page through so
@@ -1248,7 +1308,17 @@ inventory.get('/analytics', async (c) => {
 inventory.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   try {
-    return c.json(await reconcileLedger(sb));
+    /* PER-COMPANY, and it has to be typed out. reconcile-ledger.ts documents
+       exactly two modes — "when a companyId is given (operator-facing
+       /reconcile, which is per-company)" and "when omitted (System Health's
+       cross-company integrity count)" — and tests/reconcileLedgerScope.test.ts
+       pins the per-company mode in both directions after company A's report
+       listed company B's PC-Return numbers. That fix was tested at the function
+       and never wired here: this call passed no company at all, so the
+       operator-facing report had been running in System Health's cross-company
+       mode. Found 2026-08-13 by audit:decision-params, when the parameter
+       stopped being omissible. */
+    return c.json(await reconcileLedger(sb, activeCompanyId(c)));
   } catch (e: any) {
     return c.json({ error: 'load_failed', reason: e?.message ?? 'reconcile failed' }, 500);
   }
@@ -1401,6 +1471,13 @@ inventory.get('/reservations', async (c) => {
   // 2. READY SO demand (company-scoped) — the lines the allocator flipped to
   //    READY because stock exists for them. allocated_batch_no is forward-compat
   //    (mig 0121): fall back to a batch-less select if the column is absent.
+  /* GET /reservations. FIVE statuses: this one HAS SHIPPED, so it differs from
+     shared/so-terminal-states.ts (SIX) by DRAFT alone — a draft order still
+     reserves stock here. GET /products above (:494) has FOUR, dropping SHIPPED
+     as well, so the two halves of this one file already disagree with each other.
+     Measured and left standing 2026-08-13 for the same reason as that one: each
+     spelling drives a number a human reads, so picking one is a business
+     decision. See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'SHIPPED']);
   type SoJoin = {
     created_at: string | null; status: string | null;

@@ -18,13 +18,21 @@
 // the so_item_id dedication ONLY — the paperwork that readiness reads, not an
 // inventory event. Nothing here touches inventory_movements or lots.
 //
+// It also stores PODTL.DtlKey now. The value was computed at three sites and
+// written nowhere, so the link back to the AutoCount line existed only inside
+// this process; every later repair had to re-derive it from supplier_sku
+// prefixes and (qty, Desc2) buckets.
+//
 // DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { buildFabricColourIndex, isPendingColour } from "./lib/fabric-colour-match.mjs";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { acDeliveryDate, acDtlKey } from "./lib/ac-po-line.mjs";
+import { makeSoLineTaker } from "./lib/so-line-dedication.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -33,8 +41,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
-const strip = (s) => norm(s).replace(/[^A-Z0-9]/g, "");
-const isPendingColour = (c) => /(TBC|KIV)/i.test(c || "");
 const SYS_USER = "00000000-0000-4000-8000-000000000001";
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -88,39 +94,27 @@ async function main() {
      document carries it. Ambiguity is not resolved by guessing: no hit means the
      colour rides as a label only. */
   const fcRows = await sql`SELECT fabric_id, colour_id, label FROM scm.fabric_colours WHERE company_id = 1`;
-  const fcx = new Map();
-  for (const r of fcRows) for (const k of [norm(r.colour_id), norm(r.label), strip(r.colour_id), strip(r.label)]) if (k && !fcx.has(k)) fcx.set(k, r);
-  const findColour = (c) => {
-    if (!c) return null;
-    const pad = (x) => x.replace(/(?<!\d)(\d)$/, "0$1");
-    const seriesNum = (x) => { const mm = /^([A-Z]{2,4})(\d{2,4})(\d{1,3})$/.exec(strip(x)); return mm ? [mm[1] + mm[2] + mm[3].padStart(2, "0"), mm[1] + mm[2] + mm[3].slice(-2)] : []; };
-    const toks = [c, (c.trim().split(/\s+/)[0] || "")];
-    const m = /[A-Z]{1,4}\s?\d{2,4}\s?-?\s?\d*/i.exec(c); if (m) toks.push(m[0]);
-    const cands = [];
-    for (const t of toks) { if (!t) continue; cands.push(norm(t), strip(t), pad(strip(t)), ...seriesNum(t)); if (/^\d/.test(t.trim())) cands.push(strip("PC" + t), pad(strip("PC" + t))); }
-    for (const t of cands) { const h = fcx.get(t); if (h) return h; }
-    return null;
-  };
+  const { findColour } = buildFabricColourIndex(fcRows);
   const suppliers = await sql`SELECT id, code FROM scm.suppliers WHERE company_id = 1`;
   const supByCode = new Map(suppliers.map((s) => [norm(s.code), s.id]));
   const whs = await sql`SELECT id, code FROM scm.warehouses WHERE company_id = 1`;
   const whByCode = new Map(whs.map((w) => [norm(w.code), w.id]));
   const whId = (loc) => { const k = norm(loc); return whByCode.get(norm(SALESLOC[k] || k)) ?? whByCode.get(k) ?? null; };
 
-  // ERP SO lines, addressable by (AutoCount SO doc | erp code), in line order
+  /* ERP SO lines, addressable by (AutoCount SO doc | erp code), in line order.
+     The hand-out rule now lives in lib/so-line-dedication.mjs so the
+     outstanding-PO import and the repair claim from the SAME pool — a line is
+     claimed once no matter which writer asks. A cancelled line is not offered. */
   const soItems = await sql`SELECT i.id, i.item_code, i.line_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
-  const soByKey = new Map();
-  for (const it of soItems) {
-    const k = `${it.ac}|${norm(it.item_code)}`;
-    if (!soByKey.has(k)) soByKey.set(k, []);
-    soByKey.get(k).push(it);
-  }
+    WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL
+      AND COALESCE(i.cancelled, false) = false
+    ORDER BY i.line_no`;
   const takenSoItem = new Set(
     (await sql`SELECT DISTINCT so_item_id FROM scm.purchase_order_items WHERE so_item_id IS NOT NULL`)
       .map((r) => r.so_item_id),
   );
+  const taker = makeSoLineTaker(soItems, takenSoItem);
 
   const existing = new Set(
     (await sql`SELECT linked_ac_docno FROM scm.purchase_orders WHERE company_id = 1 AND linked_ac_docno IS NOT NULL`)
@@ -149,7 +143,6 @@ async function main() {
   /* Resolve each PO line's SO line. Same-code lines on one SO are handed out in
      order and never reused, so two PO lines for the same SKU on one order bind
      to two DIFFERENT SO lines instead of both claiming the first. */
-  const handedOut = new Map();
   const plan = [];
   let noSoLine = 0, noWh = 0, noSupplier = 0, recvUnits = 0, sofaPlaceholderBind = 0;
   const sofaDecode = [];
@@ -163,24 +156,13 @@ async function main() {
       /* Hand out the SO line for one ERP code on one AutoCount order: same-code
          lines are consumed in order and never reused, so two PO lines for the
          same SKU bind to two DIFFERENT SO lines. */
-      const takeSoLine = (erpCode) => {
-        if (!src || !erpCode) return null;
-        const k = `${src.doc}|${norm(erpCode)}`;
-        const cands = soByKey.get(k);
-        if (!cands) return null;
-        const used = handedOut.get(k) ?? 0;
-        const pick = cands.find((c, i) => i >= used && !takenSoItem.has(c.id));
-        if (!pick) return null;
-        handedOut.set(k, cands.indexOf(pick) + 1);
-        takenSoItem.add(pick.id);
-        return pick.id;
-      };
+      const takeSoLine = (erpCode) => (src ? taker.take(src.doc, erpCode) : null);
       const wh = whId(l.Location);
       if (!wh) noWh++;
       const recv = Math.round(Number(l.GrQty ?? 0));
       const qty = Math.round(Number(l.Qty ?? 0));
       const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
-      const deliveryDate = l.DeliveryDate ? l.DeliveryDate.slice(0, 10) : null;
+      const deliveryDate = acDeliveryDate(l);
       const group = prodCat.get(norm(l.erp)) ?? "others";
 
       /* SOFA — one AutoCount line is one BUILD; the ERP models it as one line
@@ -235,7 +217,7 @@ async function main() {
               name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
               supplierSku: `${l.ItemCode} ${cmp}`,
               qty, recv, priceCenti: first ? priceCenti : 0,
-              wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants, note: null,
+              wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants, note: null,
             });
             first = false;
           }
@@ -252,7 +234,7 @@ async function main() {
           code, description: l.Description, desc2: l.Desc2, group,
           name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
           supplierSku: l.ItemCode, qty, recv, priceCenti, wh, soItemId,
-          dtlKey: Number(l.DtlKey), deliveryDate,
+          dtlKey: acDtlKey(l), deliveryDate,
           variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
           note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
         });
@@ -266,7 +248,7 @@ async function main() {
         code: l.erp, description: l.Description, desc2: l.Desc2, group,
         name: (prodByCode.get(String(l.erp).toUpperCase()) || {}).name || l.Description || l.erp,
         supplierSku: l.ItemCode, qty, recv, priceCenti,
-        wh, soItemId, dtlKey: Number(l.DtlKey), deliveryDate, variants: null, note: null,
+        wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants: null, note: null,
       });
     }
     const anyRecv = items.some((i) => i.recv > 0);
@@ -302,10 +284,15 @@ async function main() {
     const poNo = "HC-" + p.acDoc;
     await sql.begin(async (tx) => {
       const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceCenti, 0);
+      /* The PO screen's EXPECTED DELIVERY reads the HEADER, and this import only
+         ever wrote the per-line date, so every migrated PO showed a blank
+         delivery date while AutoCount had one on all 579 lines. Derive it the
+         way the app's own SO->PO convert does: the earliest line date. */
+      const headerEta = p.items.map((it) => it.deliveryDate).filter(Boolean).sort()[0] ?? null;
       const [hdr] = await tx`INSERT INTO scm.purchase_orders
-          (po_number, linked_ac_docno, supplier_id, status, po_date, purchase_location_id, currency,
+          (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
            subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
-        VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`},
+        VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`}, ${headerEta},
                 ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;
@@ -315,7 +302,7 @@ async function main() {
              description, description2, notes,
              qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
              custom_specials, variants,
-             warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
+             warehouse_id, so_item_id, company_id, delivery_date, from_mrp, linked_ac_dtlkey)
           VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.name ?? it.description}, ${it.supplierSku ?? null},
                   ${it.description}, ${it.desc2},
                   ${it.note ? (it.desc2 ? it.desc2 + " | " + it.note : it.note) : (it.desc2 || null)},
@@ -323,7 +310,7 @@ async function main() {
                   ${it.group === "bedframe" ? "SET" : "UNIT"},
                   ${it.variants && it.variants.specials && it.variants.specials.length ? sql.json(it.variants.specials) : null},
                   ${it.variants ? sql.json(it.variants) : null},
-                  ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false)`;
+                  ${it.wh}, ${it.soItemId}, 1, ${it.deliveryDate}, false, ${it.dtlKey ?? null})`;
       }
     });
     made++;

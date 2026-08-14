@@ -26,9 +26,10 @@
 // (docNo, userID) — inherited by every invoicing command. Setting Cancelled on
 // the entity would bypass AutoCount's transferred-document guards.
 //
-// Headless safety: the SDK raises WinForms dialogs for over-transfer and
-// transfer conflicts. We subscribe ConfirmOverTransferedQtyEvent and answer it
-// programmatically so a service call can never block on a hidden dialog.
+// Headless safety: the SDK raises WinForms dialogs for over-transfer. That
+// event's EventArgs type is not public, so it cannot be subscribed; the
+// condition is instead made unreachable by only ever transferring what is
+// outstanding. See the note above OverQty's former site.
 //
 // Build (on the AutoCount host):
 //   csc.exe /platform:x64 ^
@@ -40,21 +41,37 @@
 //     /r:System.Web.Extensions.dll /r:System.Data.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
-// Run: AcSyncService.exe   (port from C:\Tempc-svc-port.txt, default 8900)
+// Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
 // Routes (all POST, header X-API-KEY):
 //   /health          -> { ok, book }
-//   /create-so       -> { docNo }      payload = header + Details[]
-//   /create-po       -> { docNo }
-//   /so-to-do        -> { docNo }      { FromDocNo, DtlKeys[]?, DocDate?, ... }
-//   /po-to-gr        -> { docNo }
-//   /do-to-iv        -> { docNo }
-//   /gr-to-pi        -> { docNo }
+//   /create-so       -> { docNo, lines[] }  payload = header + Details[]
+//   /create-po       -> { docNo, lines[] }
+//   /so-to-do        -> { docNo, lines[] }  { FromDocNo, DtlKeys[]?, DocDate?, ... }
+//   /po-to-gr        -> { docNo, lines[] }
+//   /do-to-iv        -> { docNo, lines[] }
+//   /gr-to-pi        -> { docNo, lines[] }
 //   /cancel          -> { ok }         { DocType, DocNo }
 //   /edit            -> { ok }         { DocType, DocNo, Header{}, Lines[] }
 //
+// ── LINE IDENTITY (2026-08-11) ─────────────────────────────────────────────
+// `lines` on every create/convert response is
+//     [ { Seq, DtlKey, ItemCode, Desc2 }, ... ]   ordered by DtlKey
+// so the ERP can store scm.*_items.linked_ac_dtlkey at the moment the document
+// is created. These routes previously answered with the DocNo alone, which left
+// EVERY ERP-created document with NULL line identity — and /edit then APPENDED
+// duplicate lines into the live book instead of updating them. Measured on prod
+// 2026-08-11: 0 of 13,907 SO lines and 0 of 864 PO lines carried a DtlKey.
+//
+// /edit now REFUSES a line that has neither a DtlKey nor an explicit IsNewLine,
+// and a line can be retired in place with Retire:true (Qty = 0, Transferable =
+// false, Desc2 marked) because this SDK offers no line-level cancel on any
+// class and no line delete at all on PO / GRN / PI / DO / IV.
+//
 // The SQL connection line (__DBLINE__) is injected at build time so the DB
 // password never lives in source control; the API key is read from
-// C:\Temp\ac-svc-key.txt.
+// C:\Temp\ac-svc-key.txt. It now appears in THREE methods — Session, DtlKeys
+// and CreatedLines — so the build step must replace EVERY occurrence, not the
+// first one.
 using System;
 using System.IO;
 using System.Net;
@@ -65,18 +82,31 @@ using System.Web.Script.Serialization;
 
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
-  const string BOOK = "AED_HOUZS";
+  /* Substituted at build time from the SAME value that builds the DB connection
+     line below, so the
+     book this service REPORTS can never disagree with the book it is actually
+     connected to. It used to be a separate hardcoded constant, which meant a
+     build pointed at a test book still announced the live one on /health — the
+     single signal an operator uses to check exactly that. */
+  const string BOOK = "__BOOK__";
   /* Port is a FILE, not a constant: 8899 turned out to be pinned inside
      http.sys by an orphaned listener registration from the cutover file
      server, and a service that cannot be moved without a recompile is a
      service that fights the machine it runs on. Default 8900. */
   static string Url =
-    "http://localhost:" + (File.Exists(@"C:\Tempc-svc-port.txt")
-      ? File.ReadAllText(@"C:\Tempc-svc-port.txt").Trim() : "8900") + "/";
+    "http://localhost:" + (File.Exists(@"C:\Temp\ac-svc-port.txt")
+      ? File.ReadAllText(@"C:\Temp\ac-svc-port.txt").Trim() : "8900") + "/";
   const string USER = "ADMIN";
 
   static string ApiKey =
     File.Exists(@"C:\Temp\ac-svc-key.txt") ? File.ReadAllText(@"C:\Temp\ac-svc-key.txt").Trim() : null;
+
+  /* Prefixed to Desc2 when the ERP retires a line. A line-level Cancelled flag
+     does not exist in this SDK (whole-file check of sdk-api-reference.txt: the
+     string "Cancelled" appears zero times), so a retired line is recognised by
+     Qty = 0 plus this marker. Keep it greppable and keep it ASCII — it is read
+     off a printed document and out of SQL by people, not by code. */
+  const string RETIRED_MARK = "[ERP-CANCELLED]";
 
   static void Main() {
     AppDomain.CurrentDomain.AssemblyResolve += (s, e) => {
@@ -113,33 +143,114 @@ class AcSyncService {
     try { File.AppendAllText(@"C:\Temp\ac-sync-service.log", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
   }
 
+  /* Every real payload is one document; the largest sofa order in the cutover
+     is tens of KB. Reading an unbounded stream into a string is how a single
+     request takes the service down. */
+  const int MaxBody = 2 * 1024 * 1024;
+
   static void Handle(HttpListenerContext ctx) {
     var path = ctx.Request.Url.AbsolutePath;
+
+    /* FAIL CLOSED. This used to read
+           if (!IsNullOrEmpty(ApiKey) && header != ApiKey) -> 401
+       so NO KEY FILE meant NO CHECK AT ALL - every request accepted, including
+       /create-so and /cancel, straight into the licensed live book. One deleted
+       file, or one rebuild on a fresh machine, and the account book is open to
+       whoever reaches the port; behind a public hostname that is everyone. A
+       service with no key configured now serves nothing. */
+    if (string.IsNullOrEmpty(ApiKey)) { Json(ctx, 503, Err("no API key configured on the host - refusing every request")); return; }
+    if (!SameKey(ctx.Request.Headers["X-API-KEY"], ApiKey)) { Json(ctx, 401, Err("bad key")); return; }
+
+    /* AFTER the key, deliberately: which account book this is connected to is
+       not something to hand an anonymous caller on a public hostname. */
     if (path == "/health") {
       Json(ctx, 200, new Dictionary<string, object> { { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" } });
       return;
     }
     if (ctx.Request.HttpMethod != "POST") { Json(ctx, 405, Err("POST only")); return; }
-    if (!string.IsNullOrEmpty(ApiKey) && ctx.Request.Headers["X-API-KEY"] != ApiKey) { Json(ctx, 401, Err("bad key")); return; }
 
+    if (ctx.Request.ContentLength64 > MaxBody) { Json(ctx, 413, Err("body too large")); return; }
     string body;
     using (var sr = new StreamReader(ctx.Request.InputStream, Encoding.UTF8)) body = sr.ReadToEnd();
+    if (body.Length > MaxBody) { Json(ctx, 413, Err("body too large")); return; }
     var p = (Dictionary<string, object>) new JavaScriptSerializer().DeserializeObject(body);
-    Log(path + " " + (body.Length > 400 ? body.Substring(0, 400) + "..." : body));
+    /* The ROUTE and the DOCUMENT, never the payload. A payload carries the
+       customer's name, address and phone, and a log is a file people copy. */
+    Log(path + " " + Str(p, "DocType") + " " + Or(Str(p, "DocNo"), Str(p, "FromDocNo")));
 
+    /* Every route that CREATES a document answers with the created line keys
+       as well as the DocNo. The DocNo alone is not enough: without the DtlKeys
+       the ERP stores NULL line identity, and the next /edit of that very
+       document is refused by the keyless-line guard (or, before that guard
+       existed, silently appended duplicates into the account book). */
     string docNo;
+    string dtlTable;
     switch (path) {
-      case "/create-so": docNo = CreateSo(p); break;
-      case "/create-po": docNo = CreatePo(p); break;
-      case "/so-to-do":  docNo = Convert_("SO", "DO", p); break;
-      case "/po-to-gr":  docNo = Convert_("PO", "GR", p); break;
-      case "/do-to-iv":  docNo = Convert_("DO", "IV", p); break;
-      case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); break;
+      case "/create-so": docNo = CreateSo(p); dtlTable = "SODTL"; break;
+      case "/create-po": docNo = CreatePo(p); dtlTable = "PODTL"; break;
+      case "/so-to-do":  docNo = Convert_("SO", "DO", p); dtlTable = "DODTL"; break;
+      case "/po-to-gr":  docNo = Convert_("PO", "GR", p); dtlTable = "GRDTL"; break;
+      case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
+      case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
       case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
+      case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
-    Json(ctx, 200, Ok(docNo));
+    Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
+  }
+
+  /* The DtlKeys of the document we just created, in the order AutoCount stored
+     them, each with its ItemCode and Desc2.
+
+     Read back from the book's own detail table rather than off the SDK detail
+     objects: DtlKey is assigned by the database at Save() and is not a settable
+     property on any detail class, so the entity wrapper is not a dependable
+     source for it — the same reason DtlKeys() below reads SQL directly.
+
+     ItemCode and Seq travel with each key ON PURPOSE. The ERP zips this array
+     onto its own lines by index; shipping the code alongside lets it ASSERT the
+     zip is right and refuse to store anything if the two disagree, instead of
+     writing a confidently wrong line identity that would later edit the wrong
+     line in a live book. A wrong DtlKey is worse than no DtlKey: no key is
+     refused loudly, a wrong key silently edits somebody else's line. */
+  static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
+    var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
+    var outp = new List<Dictionary<string, object>>();
+    if (string.IsNullOrEmpty(docNo)) return outp;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        using (var cmd = cn.CreateCommand()) {
+          cmd.CommandText =
+            "SELECT d.DtlKey, d.ItemCode, d.Desc2 FROM " + dtlTable + " d " +
+            "JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+            "WHERE h.DocNo = @no ORDER BY d.DtlKey";
+          var pr = cmd.CreateParameter(); pr.ParameterName = "@no"; pr.Value = docNo;
+          cmd.Parameters.Add(pr);
+          using (var rd = cmd.ExecuteReader()) {
+            var seq = 0;
+            while (rd.Read()) {
+              outp.Add(new Dictionary<string, object> {
+                { "Seq", seq++ },
+                { "DtlKey", rd.GetInt64(0) },
+                { "ItemCode", rd.IsDBNull(1) ? "" : rd.GetString(1) },
+                { "Desc2", rd.IsDBNull(2) ? "" : rd.GetString(2) },
+              });
+            }
+          }
+        }
+      }
+    } catch (Exception ex) {
+      /* Never fail a CREATE that already succeeded just because the read-back
+         did not. The document exists in AutoCount and the ERP must be told its
+         DocNo; missing keys degrade to the refusal path on a later edit, which
+         is visible and recoverable. Losing the DocNo would not be. */
+      Log("  CreatedLines(" + dtlTable + ", " + docNo + ") failed: " + ex.Message);
+      return new List<Dictionary<string, object>>();
+    }
+    return outp;
   }
 
   // ── session ───────────────────────────────────────────────────────────────
@@ -231,7 +342,6 @@ class AcSyncService {
       case "DO": {
         var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         SalesHeader(doc, p);
         doc.Save();
@@ -240,7 +350,6 @@ class AcSyncService {
       case "IV": {
         var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
         doc.AddPartialTransferDetail(fromType, dtlKeys, false);
         SalesHeader(doc, p);
         doc.Save();
@@ -249,8 +358,13 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // transferMaster MUST be true on the purchase side. That flag copies the
+        // source PO's header master (supplier/currency/terms) onto the target; with
+        // false the GRN is built with no supplier, the purchase detail ctor looks
+        // that row up in the master table, IndexOf returns -1, and Save() dies with
+        // "there is no row at position -1". The sales classes tolerate false (DO and
+        // IV are PROVEN with it, DO-011260 / DO-011262) so they are left alone.
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
@@ -259,8 +373,8 @@ class AcSyncService {
       case "PI": {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.ConfirmOverTransferedQtyEvent += OverQty;
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        // see the GR case above — purchase side needs transferMaster = true
+        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
         doc.Save();
@@ -270,12 +384,17 @@ class AcSyncService {
     throw new Exception("unsupported target " + toType);
   }
 
-  /* The SDK's over-transfer dialog, answered in code. Refusing is the safe
-     default: an ERP that thinks it is shipping more than the PO ordered is a
-     data bug, and silently accepting it here would hide it inside AutoCount. */
-  static void OverQty(object sender, AutoCount.Invoicing.ConfirmOverTransferedQtyEventArgs e) {
-    Set(() => e.IsConfirmed = false);
-  }
+  /* OVER-TRANSFER: unreachable by construction, not answered by a handler.
+     Every document class exposes ConfirmOverTransferedQtyEvent, but its
+     EventArgs type is not public in AutoCount.Invoicing — reflection against
+     the real assemblies found the delegate and no matching public args type,
+     so it cannot be subscribed from outside the SDK, and naming it does not
+     compile. Instead the condition is made impossible: DtlKeys() only ever
+     selects source lines with (Qty - TransferedQty) > 0 and transfers exactly
+     what is outstanding. If a caller passes explicit DtlKeys that would
+     over-transfer, AutoCount raises PartialTransferQtyLessThanTransferedQty
+     Exception (or a sibling) and the service returns that as an error — the
+     failure mode is a refused call, never a silently accepted over-ship. */
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
@@ -348,6 +467,278 @@ class AcSyncService {
       " (already transferred to a downstream document, or already cancelled)");
   }
 
+  /* ── masters ────────────────────────────────────────────────────────────────
+     A document naming a master AutoCount does not have does not fail politely:
+     it fails on a FOREIGN KEY, and the whole document is lost. That is not a
+     theory — the live book answered FK_SODTL_Location to a create whose lines
+     carried no stock location, and the same shape is waiting behind every new
+     SKU, every new salesperson and every new customer the ERP opens.
+
+     So the ERP declares the masters a document needs and this route makes them
+     exist FIRST. It is idempotent by construction: each one is looked up and
+     only created when the lookup comes back empty, so the ERP may declare the
+     same set on every push without inventing anything.
+
+     WHAT IT DELIBERATELY WILL NOT DO:
+     - It never EDITS a master that already exists. An item's costing method or
+       a debtor's credit limit is Finance's, not the sync's, and overwriting one
+       from an ERP field would be a silent business change. Existing masters are
+       reported as `existed` and left exactly as they are.
+     - It never creates a LOCATION. A new warehouse is a real business decision
+       with stock consequences; a create that names an unknown one is refused on
+       the ERP side instead (MissingLocationError).
+     - Everything it creates is stamped in Desc2/Description so Finance can find
+       them: an auto-opened master is a thing to review, not a thing to hide. */
+  static Dictionary<string, object> EnsureMasters(Dictionary<string, object> p) {
+    var s = Session();
+    var created = new List<string>();
+    var existed = new List<string>();
+    var failed = new List<Dictionary<string, object>>();
+
+    foreach (var o in List(p, "Items")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "ItemCode");
+      if (code.Length == 0) continue;
+      try {
+        var da = AutoCount.Stock.Item.ItemDataAccess.Create(s, s.DBSetting);
+        if (ItemExists(da, code)) { existed.Add("item:" + code); continue; }
+        var e = da.NewItem();
+        e.ItemCode = code;
+        e.Description = Or(Str(it, "Description"), code);
+        Set(() => e.Desc2 = Str(it, "Desc2"));
+        /* ItemGroup is a FOREIGN KEY (FK_Item_ItemGroup), not a label. An item
+           opened without one is refused by the live book, which is what a new
+           SKU coming from the ERP hits on its very first document. OTHER exists
+           in AED_HOUZS for exactly this - a group that classifies nothing and
+           blocks nothing. Proved 2026-08-12: the same call fails with
+           FK_Item_ItemGroup and then succeeds with the group supplied. */
+        Set(() => e.ItemGroup = Or(Str(it, "ItemGroup"), "OTHER"));
+        Set(() => e.StockControl = true);
+        Set(() => e.IsSalesItem = true);
+        Set(() => e.IsPurchaseItem = true);
+        /* An item with no UOM cannot be put on a document line: the detail's
+           own UOM foreign-keys to ItemUOM. One base UOM at rate 1. */
+        var uom = Or(Str(it, "UOM"), "UNIT");
+        Set(() => e.NewUom(uom, 1m));
+        Set(() => e.BaseUom = uom);
+        da.SaveData(e, USER);
+        created.Add("item:" + code);
+        Log("  ensure-masters CREATED item " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "item:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    foreach (var o in List(p, "Agents")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "Agent");
+      if (code.Length == 0) continue;
+      try {
+        var cmd = AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand.Create(s, s.DBSetting);
+        if (AgentExists(cmd, code)) { existed.Add("agent:" + code); continue; }
+        var e = cmd.NewSalesAgent();
+        e.SalesAgent = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        cmd.SaveSalesAgent(e);
+        created.Add("agent:" + code);
+        Log("  ensure-masters CREATED agent " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "agent:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A PURCHASE agent is a DIFFERENT master from a sales agent - a different
+       table (dbo.PurchaseAgent) behind a different foreign key
+       (FK_PO_PurchaseAgent) reached through a different command. Opening
+       'OTHERS' as a sales agent does nothing for a purchase order that names
+       it, and the PO is refused with the whole document. Found 2026-08-12 by
+       /create-po failing on the live book after /ensure-masters had reported
+       agent:OTHERS as already existing - the third foreign key in this chain,
+       after FK_SO_SalesAgent and FK_SO_SalesLocation, each one only visible
+       once the previous was satisfied. */
+    foreach (var o in List(p, "PurchaseAgents")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Or(Str(it, "PurchaseAgent"), Str(it, "Agent"));
+      if (code.Length == 0) continue;
+      try {
+        var cmd = AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand.Create(s, s.DBSetting);
+        if (PurchaseAgentExists(cmd, code)) { existed.Add("purchase-agent:" + code); continue; }
+        var e = cmd.NewPurchaseAgent();
+        e.PurchaseAgent = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        Set(() => e.IsActive = true);
+        cmd.SavePurchaseAgent(e);
+        created.Add("purchase-agent:" + code);
+        Log("  ensure-masters CREATED purchase agent " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "purchase-agent:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    foreach (var o in List(p, "Debtors")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var acc = Str(it, "AccNo");
+      if (acc.Length == 0) continue;
+      try {
+        var da = AutoCount.ARAP.Debtor.DebtorDataAccess.Create(s, s.DBSetting);
+        if (DebtorExists(da, acc)) { existed.Add("debtor:" + acc); continue; }
+        var e = da.NewDebtor();
+        e.AccNo = acc;
+        Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
+        Set(() => e.ControlAccount = Str(it, "ControlAccount"));
+        da.SaveDebtor(e, USER);
+        created.Add("debtor:" + acc);
+        Log("  ensure-masters CREATED debtor " + acc);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "debtor:" + acc }, { "error", ex.Message } });
+      }
+    }
+
+    /* A PURCHASE ORDER NAMES A CREDITOR, and CreditorCode is applied
+       unconditionally by CreatePo - so a supplier the account book does not
+       have fails the same foreign key a missing item does, and takes the whole
+       PO with it. Same shape as the Location that FK'd on the live book; the
+       only reason it was not found the same way is that no PO has been pushed
+       yet. */
+    foreach (var o in List(p, "Creditors")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var acc = Str(it, "AccNo");
+      if (acc.Length == 0) continue;
+      try {
+        var da = AutoCount.ARAP.Creditor.CreditorDataAccess.Create(s, s.DBSetting);
+        if (CreditorExists(da, acc)) { existed.Add("creditor:" + acc); continue; }
+        var e = da.NewCreditor();
+        e.AccNo = acc;
+        Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
+        Set(() => e.ControlAccount = Str(it, "ControlAccount"));
+        da.SaveCreditor(e, USER);
+        created.Add("creditor:" + acc);
+        Log("  ensure-masters CREATED creditor " + acc);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "creditor:" + acc }, { "error", ex.Message } });
+      }
+    }
+
+    /* A STOCK LOCATION. The live book answered FK_SODTL_Location to a line
+       whose Location was empty, so a warehouse the book does not have fails the
+       document the same way a missing item does. Opening one has real
+       consequences - it is a place stock can sit - so it is created EMPTY:
+       a code and a description, nothing else. Everything a warehouse actually
+       needs (addresses, payment accounts, defaults) stays for a human. */
+    foreach (var o in List(p, "Locations")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var code = Str(it, "Location");
+      if (code.Length == 0) continue;
+      try {
+        var lm = AutoCount.Stock.Location.LocationMaintenance.CreateLocationMaint(s, s.DBSetting);
+        if (LocationExists(lm, code)) { existed.Add("location:" + code); continue; }
+        var e = lm.NewLocation();
+        e.Location = code;
+        Set(() => e.Description = Or(Str(it, "Description"), code));
+        lm.SaveLocation(e);
+        created.Add("location:" + code);
+        Log("  ensure-masters CREATED location " + code);
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "location:" + code }, { "error", ex.Message } });
+      }
+    }
+
+    /* A UDF DROPDOWN OPTION (BRANDING, VENUE).
+       READ, APPEND, WRITE BACK THE WHOLE SET - never Add() with just the new
+       one. AutoCount.UDF.List exposes GetItems() and SetItems(), so the current
+       options can be read first and the new value appended to them. Calling
+       Add(name, new[]{ value }) and hoping it appends would, if it replaces,
+       delete every other option in a live book - roughly 95 of them on VENUE.
+       The read-modify-write shape makes that impossible rather than unlikely.
+
+       A list that does not exist at all is NOT created: an unknown list NAME is
+       a spelling mistake on our side, not a missing option, and inventing one
+       would hide it. */
+    var udfWanted = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var o in List(p, "UdfOptions")) {
+      var it = o as Dictionary<string, object>;
+      if (it == null) continue;
+      var listName = Str(it, "List");
+      var val = Str(it, "Value");
+      if (listName.Length == 0 || val.Length == 0) continue;
+      if (!udfWanted.ContainsKey(listName)) udfWanted[listName] = new List<string>();
+      if (!udfWanted[listName].Contains(val)) udfWanted[listName].Add(val);
+    }
+    if (udfWanted.Count > 0) {
+      try {
+        var udfl = new AutoCount.UDF.UDFList(s.DBSetting);
+        var names = new List<string>(udfl.GetNames());
+        var dirty = false;
+        foreach (var kv in udfWanted) {
+          var listName = names.Find(n => string.Equals(n, kv.Key, StringComparison.OrdinalIgnoreCase));
+          if (listName == null) {
+            failed.Add(new Dictionary<string, object> {
+              { "master", "udf-list:" + kv.Key },
+              { "error", "no such user-defined list in this book - check the name, do not invent the list" },
+            });
+            continue;
+          }
+          var list = udfl[listName];
+          var items = new List<string>(list.GetItems() ?? new string[0]);
+          foreach (var v in kv.Value) {
+            if (items.Exists(x => string.Equals(x, v, StringComparison.OrdinalIgnoreCase))) {
+              existed.Add("udf:" + listName + "=" + v);
+              continue;
+            }
+            items.Add(v);
+            created.Add("udf:" + listName + "=" + v);
+            dirty = true;
+            Log("  ensure-masters ADDED udf option " + listName + " = " + v);
+          }
+          list.SetItems(items.ToArray());
+        }
+        if (dirty) udfl.Save();
+      } catch (Exception ex) {
+        failed.Add(new Dictionary<string, object> { { "master", "udf-options" }, { "error", ex.Message } });
+      }
+    }
+
+    var res = new Dictionary<string, object> {
+      { "ok", failed.Count == 0 },
+      { "created", created },
+      { "existed", existed },
+      { "failed", failed },
+    };
+    /* A partial answer is still an answer: the caller needs to know WHICH master
+       it may not name, and a bare 500 would lose that. */
+    if (failed.Count > 0) res["error"] = failed.Count + " master(s) could not be opened";
+    return res;
+  }
+
+  /* Existence is asked of the SDK, not of a table name we would have to guess.
+     A getter that throws means "not there" — the same answer as a null. */
+  static bool ItemExists(AutoCount.Stock.Item.ItemDataAccess da, string code) {
+    try { return da.LoadItem(code, AutoCount.Stock.Item.ItemEntryAction.Edit) != null; }
+    catch { return false; }
+  }
+  static bool PurchaseAgentExists(AutoCount.GeneralMaint.PurchaseAgent.PurchaseAgentCommand cmd, string code) {
+    try { return cmd.GetPurchaseAgent(code) != null; } catch { return false; }
+  }
+
+  static bool AgentExists(AutoCount.GeneralMaint.SalesAgent.SalesAgentCommand cmd, string code) {
+    try { return cmd.GetSalesAgent(code) != null; } catch { return false; }
+  }
+  static bool DebtorExists(AutoCount.ARAP.Debtor.DebtorDataAccess da, string acc) {
+    try { return da.GetDebtor(acc) != null; } catch { return false; }
+  }
+  static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
+    try { return da.GetCreditor(acc) != null; } catch { return false; }
+  }
+  static bool LocationExists(AutoCount.Stock.Location.LocationMaintenance lm, string code) {
+    try { return lm.GetLocation(code) != null; } catch { return false; }
+  }
+
   // ── edit (header + lines, incl. variants in Desc2) ─────────────────────────
   static void Edit(Dictionary<string, object> p) {
     var s = Session();
@@ -384,13 +775,39 @@ class AcSyncService {
     }
 
     /* Lines are addressed by the AutoCount DtlKey the ERP stored at import, so
-       an edit updates the SAME line instead of appending a duplicate. A line
-       with no DtlKey is a genuinely new line. Deleting lines is NOT offered:
-       only SalesOrder exposes DeleteDetail in this SDK, so a "delete" would
-       behave differently per document type — the ERP cancels and re-issues
-       instead, which is what the accounts expect anyway. */
-    foreach (var od in List(p, "Lines")) {
-      var it = (Dictionary<string, object>) od;
+       an edit updates the SAME line instead of appending a duplicate.
+
+       A KEYLESS LINE IS REFUSED unless the ERP explicitly asserts IsNewLine.
+       This is the whole point of the guard and it is not defensive padding:
+       every migrated document in production carries NULL DtlKeys on every line
+       (measured 2026-08-11 on prod: 0 of 13,907 SO lines and 0 of 864 PO lines
+       had one), so a fallback to AddDetail() does not add "the new line" — it
+       appends a SECOND COPY of every line the operator did not change, into a
+       live licensed account book. On a PO that duplicate can never be removed:
+       PurchaseOrder exposes neither DeleteDetail nor any line-level Cancelled
+       flag in this SDK, only SalesOrder has DeleteDetail. Refusing costs a
+       failed outbox row the operator can see; appending costs an account book
+       nobody can repair.
+
+       Validated in a PRE-FLIGHT PASS, before a single detail is touched, so a
+       refusal leaves the document exactly as AutoCount already had it rather
+       than half-applied and discarded. */
+    var lines = new List<Dictionary<string, object>>();
+    foreach (var od in List(p, "Lines")) lines.Add((Dictionary<string, object>) od);
+    for (var i = 0; i < lines.Count; i++) {
+      var it = lines[i];
+      var hasKey = it.ContainsKey("DtlKey") && it["DtlKey"] != null;
+      if (hasKey) continue;
+      if (Bool(it, "IsNewLine")) continue;
+      throw new Exception(
+        "REFUSED: line " + (i + 1) + " of " + lines.Count + " on " + type + " " + docNo +
+        " (ItemCode '" + Str(it, "ItemCode") + "') carries no DtlKey and does not declare " +
+        "IsNewLine. Appending it would duplicate a line in the live account book, and on a " +
+        "PO a duplicate cannot be removed. Store the line's AutoCount DtlKey " +
+        "(scm.*_items.linked_ac_dtlkey) or mark the line IsNewLine, then retry.");
+    }
+
+    foreach (var it in lines) {
       dynamic d;
       if (it.ContainsKey("DtlKey") && it["DtlKey"] != null) {
         d = doc.EditDetail(System.Convert.ToInt64(it["DtlKey"]));
@@ -399,6 +816,34 @@ class AcSyncService {
         d = doc.AddDetail();
         Set(() => d.ItemCode = Str(it, "ItemCode"));
       }
+
+      /* RETIREMENT. The owner's rule is that nothing is ever deleted, only
+         cancelled — and no detail class in this SDK exposes Cancelled/Void/
+         Status at line level, so "cancelled" has to be expressed in the fields
+         that do exist. Qty = 0 is the load-bearing one, not a cosmetic touch:
+         AutoCount's own outstanding predicate is
+             Qty - ISNULL(TransferedQty, 0) > 0
+         (the same one DtlKeys() reads above), so ONLY zeroing the quantity
+         makes AutoCount's outstanding set agree with an ERP line that has been
+         retired. Transferable = false stops it being pulled into a later DO or
+         GRN, and the Desc2 marker is what a human reads.
+
+         Deliberately NOT wrapped in Set(): Set swallows the exception, and a
+         silently-skipped Qty = 0 would leave the line outstanding in AutoCount
+         while the ERP believes it is cancelled — the precise divergence this
+         exists to prevent. It must fail the whole edit instead.
+
+         PrintOut is left alone on purpose. A retired line stays visible on the
+         printed document, marked; hiding it would be deletion wearing a
+         different hat. */
+      if (Bool(it, "Retire")) {
+        d.Qty = 0;
+        Set(() => d.Transferable = false);
+        var keep = it.ContainsKey("Desc2") ? Str(it, "Desc2") : SafeDesc2(d);
+        Set(() => d.Desc2 = (RETIRED_MARK + " " + keep).Trim());
+        continue;
+      }
+
       if (it.ContainsKey("Description")) Set(() => d.Description = Str(it, "Description"));
       if (it.ContainsKey("Desc2"))       Set(() => d.Desc2 = Str(it, "Desc2"));
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
@@ -423,6 +868,22 @@ class AcSyncService {
     if (docNo != null) d["docNo"] = docNo;
     return d;
   }
+  /* Create answers with the line keys too — see CreatedLines(). Without them a
+     document the ERP creates has NULL DtlKeys forever, and the very next edit
+     of it hits the keyless-line refusal in Edit(). */
+  static Dictionary<string, object> Ok(string docNo, List<Dictionary<string, object>> lines) {
+    var d = Ok(docNo);
+    if (lines != null) d["lines"] = lines;
+    return d;
+  }
+  /* Length-independent comparison. A shared secret on a public hostname should
+     not also answer "how much of it did you get right". */
+  static bool SameKey(string given, string want) {
+    if (given == null) return false;
+    var diff = given.Length ^ want.Length;
+    for (int i = 0; i < given.Length && i < want.Length; i++) diff |= given[i] ^ want[i];
+    return diff == 0;
+  }
   static Dictionary<string, object> Err(string m) { return new Dictionary<string, object> { { "ok", false }, { "error", m } }; }
   static string Str(Dictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) && v != null ? v.ToString() : ""; }
   static string Or(string a, string b) { return string.IsNullOrEmpty(a) ? b : a; }
@@ -432,6 +893,16 @@ class AcSyncService {
     DateTime dt; return DateTime.TryParse(v.ToString(), out dt) ? dt : (DateTime?) null;
   }
   static Dictionary<string, object> Dict(Dictionary<string, object> d, string k) { object v; return d.TryGetValue(k, out v) ? v as Dictionary<string, object> : null; }
+  static bool Bool(Dictionary<string, object> d, string k) {
+    object v; if (!d.TryGetValue(k, out v) || v == null) return false;
+    if (v is bool) return (bool) v;
+    var s = v.ToString().Trim();
+    return s == "1" || s.Equals("true", StringComparison.OrdinalIgnoreCase);
+  }
+  /* Desc2 is a settable property on every detail class, but reading it back off
+     the dynamic wrapper is not guaranteed on every one — fall back to empty
+     rather than losing the retirement over a missing getter. */
+  static string SafeDesc2(dynamic d) { try { return (string) d.Desc2 ?? ""; } catch { return ""; } }
   static IEnumerable<object> List(Dictionary<string, object> d, string k) { object v; if (d.TryGetValue(k, out v) && v is object[]) return (object[]) v; return new object[0]; }
   static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }
 

@@ -38,7 +38,7 @@ export async function findSofaLinesWithoutCompleteBatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   lines: SofaGuardLine[],
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<SofaGuardOffender[]> {
   if (lines.length === 0) return [];
 
@@ -125,7 +125,7 @@ export async function detectSofaSoItemIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ itemCode: string; itemGroup: string | null; soItemId: string | null }>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<Set<string>> {
   const out = new Set<string>();
   if (rows.length === 0) return out;
@@ -152,7 +152,7 @@ async function detectSofa(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   rows: Array<{ item_code: string; item_group: string | null }>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<(r: { item_code: string; item_group: string | null }) => boolean> {
   const codes = [...new Set(rows.map((r) => r.item_code).filter(Boolean))];
   const sofaCodes = new Set<string>();
@@ -173,13 +173,23 @@ export type IncompleteSofaSet = { docNo: string; missingItemCodes: string[] };
  *  a DO will ship, return any SO whose sofa set is only PARTIALLY included (some
  *  module lines in the DO, others left behind). Shipping a partial set would
  *  strand the rest of the dye lot as an orphan, so it must be blocked. The
- *  "complete set" for an SO = all its READY sofa lines (allocation binds an SO's
- *  whole set to one batch all-or-nothing, so a ready set's lines are all READY). */
+ *  "complete set" for an SO = all its READY, NON-CANCELLED sofa lines (allocation
+ *  binds an SO's whole set to one batch all-or-nothing, so a ready set's lines
+ *  are all READY).
+ *
+ *  The `cancelled = false` filters are load-bearing, not defensive. A cancelled
+ *  line can never appear in a DO — every picker reads live lines only — so if it
+ *  counted as a set member it would be missing from EVERY delivery, and this
+ *  guard would refuse every DO for that Sales Order forever, naming an item the
+ *  operator already removed. Production held zero cancelled rows until
+ *  2026-08-10 (PR #1937 reinstated two hard-deleted sofa modules as cancelled),
+ *  which is why this was never exercised. See
+ *  docs/autocount-line-retirement-plan.md gap 1. */
 export async function findIncompleteSofaSets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null | undefined>,
-  companyId?: number | null,
+  companyId: number | null | undefined,
 ): Promise<IncompleteSofaSet[]> {
   const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return [];
@@ -188,7 +198,8 @@ export async function findIncompleteSofaSets(
   const { data: provRows } = await sb
     .from('mfg_sales_order_items')
     .select('id, doc_no, item_code, item_group')
-    .in('id', ids);
+    .in('id', ids)
+    .eq('cancelled', false);
   const provided = (provRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null }>;
   if (provided.length === 0) return [];
   const isSofaProv = await detectSofa(sb, provided, companyId);
@@ -206,7 +217,8 @@ export async function findIncompleteSofaSets(
     .from('mfg_sales_order_items')
     .select('id, doc_no, item_code, item_group, stock_status')
     .in('doc_no', docs)
-    .eq('stock_status', 'READY');
+    .eq('stock_status', 'READY')
+    .eq('cancelled', false);
   const setLines = (setRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null }>;
   const isSofaSet = await detectSofa(sb, setLines, companyId);
   const fullByDoc = new Map<string, Array<{ id: string; item_code: string }>>();

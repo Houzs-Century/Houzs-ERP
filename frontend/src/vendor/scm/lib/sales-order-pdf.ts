@@ -94,7 +94,7 @@ type SoHeader = {
   sales_location?: string | null;
   customer_po?: string | null;
   customer_delivery_date?: string | null;
-  internal_expected_dd?: string | null;
+  processing_date?: string | null;
   ship_to_address?: string | null;
   email?: string | null;
   city?: string | null;
@@ -138,6 +138,11 @@ type SoItem = {
   total_centi: number;
   variants: Record<string, unknown> | null;
   remark?: string | null;
+  /* A retired line. GET /:docNo returns cancelled rows along with the live ones
+     (it is the SO's history), so every caller hands them to this generator —
+     see the filter at the top of renderSalesOrderInto. Optional because older
+     callers pass rows that predate the column. */
+  cancelled?: boolean | null;
 };
 
 /* Mirrors flow-queries.ts `SoPayment`. Re-declared here to keep the PDF
@@ -289,13 +294,28 @@ export async function renderSalesOrderInto(
   doc: JsPdf,
   autoTable: AutoTableFn,
   header: SoHeader,
-  items: SoItem[],
+  allItems: SoItem[],
   payments: SoPayment[] = [],
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
   opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
 ): Promise<void> {
+  /* A cancelled line must never reach a CUSTOMER document — not as a printed
+     row and not inside a total. The gate lives HERE, in the one function both
+     the single and the combined generator render through, rather than at the
+     five callsites: the SO detail (desktop V2 filters, mobile did not), the SO
+     list bulk print, and the consignment pages each build their own row list,
+     and four of them are four chances to forget.
+
+     GET /mfg-sales-orders/:docNo deliberately returns cancelled rows — they are
+     the order's history and the detail screen may want to show them — so the
+     filter belongs to whoever renders for the customer, which is this file.
+     Production held zero cancelled rows until 2026-08-10 (PR #1937 reinstated
+     two hard-deleted sofa modules as cancelled), so no print had ever met one.
+     See docs/autocount-line-retirement-plan.md gap 4. */
+  const items = allItems.filter((l) => !l.cancelled);
+
   // First page this SO occupies — the footer loop numbers from here so a
   // combined doc doesn't re-stamp earlier SOs' pages.
   const startPage = doc.getNumberOfPages();
@@ -345,10 +365,9 @@ export async function renderSalesOrderInto(
   });
 
   // ── Resolve processing + delivery dates (folded into ORDER DETAILS below).
-  /* Owner 2026-06-12 — Processing Date lives in internal_expected_dd (PR #140
-     renamed only the LABEL; the legacy processing_date column was dropped in
-     mig 0189). */
-  const processingDate = header.internal_expected_dd ?? null;
+  /* Owner 2026-06-12 — Processing Date lives in processing_date: one column
+     (0189), one name (0284). */
+  const processingDate = header.processing_date ?? null;
   const deliveryDate = header.customer_delivery_date ?? null;
 
   // ── BILL TO + ORDER DETAILS (unified Hookka-tidy info block) ──────

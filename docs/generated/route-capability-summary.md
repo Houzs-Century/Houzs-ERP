@@ -4,8 +4,8 @@
 
 - Total route rows: 1055
 - Routes with a declared capability/area gate: 921
-- Mutation routes requiring manual capability classification: 72
-- Read routes requiring manual capability classification: 62
-- Routes with no static authentication gate: 19
+- Mutation routes requiring manual capability classification: 73
+- Read routes requiring manual capability classification: 61
+- Routes with no static authentication gate: 20
 - Routes with a handler-local credential guard: 9
 - Allowlisted duplicate method/path registrations requiring removal: 3

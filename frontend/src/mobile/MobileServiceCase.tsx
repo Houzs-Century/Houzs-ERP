@@ -87,7 +87,7 @@ const activeMStages = (method: string | null | undefined, currentStage: string):
 // stage so it survives the resolution filter (a phase whose stages all drop is
 // simply not rendered for that case).
 const PHASE_DEFS: { name: string; keys: string[] }[] = [
-  { name: "Intake", keys: ["pending_review", "under_verification", "pending_solution"] },
+  { name: "Intake", keys: ["pending_review", "pending_solution", "under_verification"] },
   { name: "Repair", keys: ["pending_supplier_pickup", "pending_item_ready"] },
   { name: "Return", keys: ["pending_delivery_service", "completed"] },
 ];
@@ -269,11 +269,11 @@ function useSoSearch(q: string): { results: SoHit[]; loading: boolean } {
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // Human labels for the resolution_method slugs (mirrors desktop).
 const RESOLUTION_LABELS: Record<string, string> = {
-  replace_unit: "Replace unit",
-  supplier_repair: "Supplier repair",
-  field_service_own: "Field service (own)",
-  field_service_supplier: "Field service (supplier)",
-  return_visit: "Return visit",
+  replace_unit: "Replace Unit",
+  supplier_repair: "Supplier Service",
+  field_service_own: "On Site Service (Own Team)",
+  field_service_supplier: "On Site Service (Supplier)",
+  return_visit: "2nd Services",
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
 const prettyStage = (stage: string) => {

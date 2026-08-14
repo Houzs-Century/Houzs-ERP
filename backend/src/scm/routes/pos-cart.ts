@@ -94,19 +94,47 @@ posCart.put('/', async (c) => {
     );
   }
 
+  /* The cart is keyed (staff_id, company_id) since mig 0284, so the company is
+     now part of the row's identity and cannot be absent. Refuse plainly rather
+     than write a company-less row — the same fail-safe shape as the unlinked
+     staff refusal above, and for the same reason: until 0284 the key was
+     staff_id ALONE, so saving here upserted onto the salesperson's row for the
+     OTHER company and destroyed that cart with no error. A save that fails for
+     a moment and says why is strictly better; the client retries on its next
+     debounce. */
+  const companyId = activeCompanyId(c);
+  if (companyId == null) {
+    return c.json(
+      {
+        error: 'company_unresolved',
+        message:
+          'The active company could not be determined just now, so the cart was not saved. It will save again in a moment.',
+      },
+      409,
+    );
+  }
+
   const { error } = await supabase.from('pos_carts').upsert(
     {
       staff_id: staffId,
       lines: body.lines,
       source_quote_id: body.sourceQuoteId ?? null,
       updated_at: new Date().toISOString(),
-      // company_2 = 2990 in the POS context; no-op (undefined) pre-activation.
-      company_id: activeCompanyId(c),
+      // company_2 = 2990 in the POS context.
+      company_id: companyId,
     },
-    { onConflict: 'staff_id' },
+    { onConflict: 'staff_id,company_id' },
   );
 
   if (error) {
+    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+       0061 enabled RLS on every scm table with NO policies, and the SCM client is
+       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+       permission check and do NOT treat it as scoping: the only boundary is this
+       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501' || /permission denied/i.test(error.message)) {
       return c.json({ error: 'forbidden', reason: error.message }, 403);
     }

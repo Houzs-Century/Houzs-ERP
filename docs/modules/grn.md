@@ -8,7 +8,15 @@ it carries more inventory machinery than the other three siblings combined.
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **PO → GRN → PI**, with **GRN → PR** (Purchase Return) as the
 send-back branch. The route file's own one-liner: *"PO → GRN → Purchase Invoice.
@@ -28,7 +36,20 @@ On POST, qty_received rolls up to PO items"* (`grns.ts:1-2`).
 | Desktop from-PO | `frontend/src/pages/scm-v2/GrnFromPo.tsx` | Multi-select over `/outstanding-po-items`. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS.grns` (`:1159-1192`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:324`; status actions `:535-542`. |
-| Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert (`:74`, `:60-61`). |
+| Mobile convert (PO→GRN) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "grn"`, **no line picker** — a whole-PO convert. Offered only to a caller who passes `canOperateGoodsReceipts` — see below. |
+
+**The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
+`+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
+no auth of its own — so withholding `onNew` is the only thing that keeps the wizard
+away from a caller who may not write. `MobileApp.tsx` gated the DO and SI convert
+targets and then fell through to a literal `: true`, which covered this one: a
+`view`-level holder of `scm.procurement.grn` was offered the `+`, filled in the whole wizard, and
+met the area guard's 403 at the end of it. The gate is now
+`canOperateGoodsReceipts(can, pageAccess)` (`frontend/src/auth/salesAccess.ts`), which mirrors
+`scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
+`*` always passing. The target chain has no default arm, so a new ConvertTarget
+that forgets its gate will not typecheck.
+
 
 Desktop routes: `frontend/src/App.tsx:542-545`, behind
 `<ScmGuard area="scm.procurement.grn">`.
@@ -84,8 +105,20 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | POST | `/from-po-items` | `:1775` | Line-level multi-select convert; one GRN per source PO, each created DRAFT then posted via the shared helper. |
 | PATCH | `/:id/post` | `:1764` (handler `:1682`) | **The stock chokepoint**: DRAFT → POSTED. |
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
-| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). |
+| PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
+
+**`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
+(PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at
+`:1173` had been scoped by the 2026-08-10 audit and this write had not, so a GRN
+id belonging to the other company could be loaded and edited here — and this
+handler moves stock. The service-role client bypasses RLS, so the app-level
+predicate is the only isolation there is; a scoped read does not gate the
+unscoped write that follows it. Both statements now carry
+`scopeToCompanyId(…, co.companyId)` behind `requireActiveCompanyId`, and the
+update uses `maybeSingle()` rather than `single()` **on purpose**: the company
+predicate can legitimately match zero rows, and `single()` renders that honest
+404 as a 500. Out-of-company answers `NOT_THIS_COMPANY` / 404.
 
 The `asDraft` flag is the only way to create a draft: `POST /` with
 `status: 'DRAFT'` in the body is rejected outright with
@@ -222,6 +255,29 @@ matches in this module's chain: `0082_scm_fx_landed_cost.sql`,
 `0154_scm_oversell_retrocost.sql`, `0057_scm_dropship_do.sql`. Do not trust a bare
 "migration NNNN" in a comment without checking the filename.
 
+### `grn_items.variants` is a SNAPSHOT, and nothing sweeps it (2026-08-11)
+
+`grn_items.variants` is copied from the parent PO line at receipt
+(`create-migrated-documents.mjs:157`, and the UI post path likewise). After
+that **no script has ever written it again**. `refresh-so-variants.mjs` writes
+`mfg_sales_order_items`; `refresh-po-variants.mjs` writes
+`purchase_order_items`; neither touches this table, and no parity check
+compared the two until `diag-so-po-variant-divergence.mjs` grew Section E.
+
+The consequence is the one every snapshot column has: **repairing the PO line
+does not repair the receipt taken from it.** A wrong value frozen at receipt
+survives every later correction of its parent, silently.
+
+That is usually correct - a genuine difference between a receipt and its order
+is history and must be preserved. The exception is a figure that could never
+have been a measurement. Production, 2026-08-11: of 442 GRN lines carrying
+variants, 331 agree with their parent, 110 differ plausibly (left alone), and
+**one** held `divanHeight 151"` / `totalHeight 160"` where the parent reads
+14"/23". `repair-grn-variant-snapshot.mjs` + Actions -> **Repair GRN variant
+snapshot** restores only that class: out of the observed range, or equal to a
+digit run of the fabric code bound on the same row, AND the parent agreeing
+with its own AutoCount text. Everything else is listed, never guessed at.
+
 ---
 
 ## 5. Stock direction
@@ -282,6 +338,7 @@ Return** (`/purchase-returns`), a separate module.
 | Status not DRAFT / (POSTED without children) | the whole page read-only (frontend) | `GoodsReceivedDetail.tsx:246` — `isLocked = !(status === 'DRAFT' || (status === 'POSTED' && !hasChildren))`; the page drops out of edit mode automatically if it locks mid-edit (`:253-258`) |
 | Source PO belongs to another company | all three create paths | `firstCrossCompanyPo` (`:30-48`) — receiving another company's PO would post the stock and its cost into the active company's books |
 | An **unlinked line for a material the header's PO already orders** | `POST /` and `POST /:id/items` | `findUnlinkedPoLines` (`lib/grn-unlinked-po-lines.ts`) → 409 `unlinked_po_lines` |
+| A line would receive stock at **zero cost** while that SKU has been received at a real price before | confirm, and all three create paths | `checkGrnZeroCost` → `lib/zero-cost-receipt-guard.ts` → 409 `zero_cost_receipt`, carrying the offending lines and each SKU's known cost |
 
 **Why that last one exists, and what it is NOT.** `grn_items.purchase_order_item_id`
 is nullable so a free/manual receipt can land stock with no PO behind it — that
@@ -290,8 +347,63 @@ material while leaving the link off: the stock goes in, `received_qty` does not
 move, `verifyGrnOverReceipt` sees nothing, and the same delivery can be received
 again. It is the receiving-side mirror of the delivery-side defect in
 `docs/unlinked-line-duplicate-coe.md` (owner: *"包括 GR 那边也是"*). A production
-scan on 2026-08-04 found **no** GRN in this state — the guard is preventative
-here, corrective on the delivery side.
+scan on 2026-08-04 found **no** GRN in this state (UNVERIFIED as of 2026-08-13:
+needs production data) — the guard is preventative here, corrective on the
+delivery side.
+
+**Why the zero-cost refusal exists.** Houzs suppliers price the GOODS RECEIVED
+document, not the purchase order, so an unpriced PO line is normal paperwork
+(live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced, OHANA and DORSETTLOFT
+100%). Nothing downstream puts the cost back: the zero reaches the FIFO
+trigger's IN branch, which is `COALESCE(NEW.unit_cost_sen, 0)` — the
+weighted-average fallback exists only in the ADJUSTMENT branch — so the lot
+opens at zero, the OUT consumes it at RM0 COGS, and the margin report reads
+100%. Once the unit ships that COGS is settled and must never be rewritten, so
+the receipt is the last moment the cost is still changeable.
+
+The rule does not need a free-gift flag, and there is none on the purchase side
+anyway (`default_free_gifts` is entirely sales-side). A SKU that has **never**
+been received at a non-zero cost is genuinely free — GWP pillows, demo units,
+display furniture — and posts silently; a SKU that **has** carried money before
+is refused, because on that one a zero is a missing price. `grn_items.zero_cost_ack`
+(migration 0280) is the per-line override for the rare genuine freebie of an
+item that normally costs money; it exists so nobody types a fake price to get
+past the gate. A GRN carrying a non-zero service/freight pool is skipped, since
+the landed allocation can lift a zero-priced goods line off zero and the
+allocation is computed after this point.
+
+**How an operator clears the refusal.** Two ways, and the 409 body names both in
+its `remedy` array so the answer travels with the refusal:
+
+1. enter the unit price from the supplier's goods-received document, or
+2. tick **Received free** on the line and say why.
+
+The tick is a per-line field on the receipt screen (`GoodsReceivedDetail.tsx`,
+which `GoodsReceivedDetailV2` loads as its inline editor) and renders only while
+the line carries no price — a permanently visible waiver next to every line is
+the control people learn to tick without reading. It is deliberately NOT a
+button on the refusal dialog: one click waiving a whole receipt is the reflex
+the gate exists to prevent.
+
+| surface | field | route |
+| --- | --- | --- |
+| create a receipt | `items[].zeroCostAck`, `items[].zeroCostReason` | `POST /scm/grns` |
+| add a line | `zeroCostAck`, `zeroCostReason` | `POST /scm/grns/:id/items` |
+| tick an existing line | `zeroCostAck`, `zeroCostReason` | `PATCH /scm/grns/:id/items/:itemId` |
+
+All three go through `zeroCostAckColumns` (`lib/zero-cost-receipt-guard.ts`), the
+single place that writes the four columns together: the tick, the reason, and
+**who** ticked it plus **when** (`zero_cost_ack_by` / `zero_cost_ack_at`, stamped
+from the session, never from the request body). Removing the tick clears all
+three — a name left on an un-ticked line is an audit trail that lies. Both
+`POST /scm/grns` and `POST /scm/grns/:id/items` build their insert from an
+EXPLICIT column whitelist, so a field missing from that list is silently dropped;
+that is why the acknowledgement is spread into both rather than assumed.
+
+The refusal renders in one place for every caller — desktop Confirm, the mobile
+convert wizard and the from-PO batch receive — in `vendor/scm/lib/authed-fetch.ts`
+alongside the sofa hard stops, which is what keeps desktop and mobile saying the
+same thing.
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
@@ -384,3 +496,7 @@ lists**, and structurally so:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+How this document's lines relate to the SO / PO / GRN / DO it was copied from,
+which columns the migrated writer did and did not copy, and what a correction
+applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.

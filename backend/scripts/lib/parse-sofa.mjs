@@ -14,11 +14,82 @@
 //  - PROCESSED orders must decompose fully or fall back (never guess pieces).
 const SOFA_MODEL_ALIAS = { "5530": "9028", "5536": "9058", "5537": "8030", "5540": "8030" };
 const CM_TO_INCH = { 60: 24, 66: 26, 70: 28, 75: 30, 80: 32 };
-function parseSofa(d2raw, model, recl = false) {
+/* Vocabulary of the special-order sweep below. Built by reading every slash
+   segment of all 716 sofa Desc2 in the three cutover exports and checking that
+   nothing left over is an instruction — what remains uncaught is colour codes,
+   seat sizes and structure. */
+const SPECIAL_WORD = /depth|\b(?:bottom|bttm|umbrella|umb|nylon|nilon|cover\w*|back\s*rest|backrest|back\s*cushion|backcushion|head\s*rest|headrest|cushion|firm\w*|soft\w*|harder|notch|stitch\w*|stich\w*|holes?|push\s*back|extend\w*|separate|packing|bracket|wood\w*|arm\s*rest|armrest|arm|adj\w*table|slider|plane|plain|legs?|height|seating|in\s?front|feeling|stopper|microgel|movable)\b/i;
+// "CH141-4 WOOD" is a fabric colour, not a request for a wooden anything
+const COLOUR_LIKE = /^[A-Z]{1,6}\s?\d{2,5}\s*[-#]?\s*\d{0,3}\s*\(?[A-Z0-9 ]{0,20}\)?$/i;
+/* An UNLABELLED colour code — "BO315-21 (PEARL)/28"/2L" — was read as an
+   unrecognised structure token and thrown away, so the colour never reached the
+   line. That is the whole missing-Fabrics bucket on sofa: 85 of 86 blank colour
+   axes hold no value at all rather than an unresolvable one.
+
+   It is recovered only through `opts.knownColour`, a predicate the CALLER
+   supplies and which must consult scm.fabric_colours. Without it this function
+   behaves exactly as before. The asymmetry is deliberate: a code the fabric
+   library can confirm is a copy of what AutoCount wrote, and a code it cannot
+   confirm is a guess — and this migration does not guess. Sizes and piece
+   lists are excluded before the library is consulted so a numeric coincidence
+   can never be promoted to a colour. */
+function unlabelledColour(d2raw, knownColour) {
+  for (const raw of String(d2raw || "").split(/[/\n]+/)) {
+    const seg = raw.trim();
+    if (!seg || seg.length > 40) continue;
+    const t = seg.replace(/\s*\((?:feather|foam)\)\s*/i, "").trim();
+    /* A fabric code always reads letters-then-digits — BO315, CH141, GD2502,
+       M2402, SL0095, HR 805. A piece token reads the other way round (2L, 1NA,
+       3S), and a size has no letters at all. That one asymmetry separates them
+       without having to enumerate the piece vocabulary, which would rot the
+       moment a new compartment is minted. */
+    if (!/[A-Z]\s?\d/i.test(t)) continue;
+    if (/^\d+\s*(?:"|”|inch|cm)?$/i.test(t)) continue;                // a bare size
+    if (/^(?:size|seat)\b/i.test(t)) continue;                        // a labelled size
+    if (/\+/.test(t) && /^[\d+ACLNPRSTacnprst()\s]+$/.test(t)) continue; // a piece list
+    const hit = knownColour(t) || knownColour(t.replace(/\s*\([^)]*\)\s*/g, "").trim());
+    if (hit) return { value: typeof hit === "string" ? hit : t, evidence: seg };
+  }
+  return null;
+}
+
+function parseSofa(d2raw, model, recl = false, opts = {}) {
   const o = { pieces: [], size: null, color: null, perPieceColor: {}, specials: [], conf: "high", why: [] };
   if (!d2raw || !String(d2raw).trim()) { o.conf = "low"; o.why.push("empty Desc2"); return o; }
   let d2 = String(d2raw).replace(/[\[\]{}]/g, " ").replace(/[”“″’‘′]/g, '"').replace(/\r/g, "")
     .replace(/\b(?:icnh|inhc|inchs|inc?h?es|ich)\b/gi, "inch").trim();
+  /* Same phrase written twice — once by the sweep, once by a rule below, once
+     more as a glued rider token — is one instruction. Key on the letters and
+     digits only, and let the fuller wording win: "BACKRESTCHANGE8030" and
+     "BACK REST CHANGE 8030" are the same request. */
+  const skey = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/NILON/g, "NYLON");
+  const addSpecial = (t) => {
+    const v = String(t ?? "").replace(/\s+/g, " ").replace(/^[\s*]+|[\s*]+$/g, "");
+    const k = skey(v);
+    if (!k) return;
+    for (let i = 0; i < o.specials.length; i++) {
+      const e = skey(o.specials[i]);
+      if (e.includes(k)) return;
+      if (k.includes(e)) { o.specials[i] = v; return; }
+    }
+    o.specials.push(v);
+  };
+  /* ── special-order sweep (owner: special order 全部 match 回来) ─────────────
+     Read off the ORIGINAL text, before the structure pipeline strips anything,
+     and written ONLY to o.specials — the decode below is untouched.
+     Two holes this closes. `bottom[^\/\n]*` deletes its whole segment, so all
+     53 "bottom use umbrella fabric" / "wrap bottom to umbrella fabric"
+     instructions reached the ERP as nothing at all. And the rider path only
+     ever sees the ONE segment that carried the structure, so a phrase alone in
+     its own segment ("/BACK CUSHION CHANGE 8030") was dropped too. */
+  {
+    const src = d2.replace(/col(?:our|or)?\s*\([^)]*\)\s*[:：][^\/\n]*/gi, " ")
+                  .replace(/col(?:our|or)?\s*[-:：][^\/\n]*/gi, " ");
+    for (const chunk of src.split(/[\/\n*]+/)) {
+      const c = chunk.trim();
+      if (c && SPECIAL_WORD.test(c) && !COLOUR_LIKE.test(c)) addSpecial(c);
+    }
+  }
   // protect composite tokens from the slash-splitter
   d2 = d2.replace(/\bCUSTOM\b/gi, " ").replace(/([123])S?\s*P\s*\+\s*P\b/gi, "$1PP")
     .replace(/\bCORNER\s*\((?=[^)]*[A-Za-z])/gi, "(").replace(/NO\s*CONSOLE/gi, " NOCONS ")
@@ -32,6 +103,13 @@ function parseSofa(d2raw, model, recl = false) {
   d2 = d2.replace(/col(?:our|or)?\s*[-:：]\s*([^\/\n]+)/gi, (_, val) => {
     if (!o.color) o.color = val.trim(); return " ";
   });
+  /* Read the raw text, not `d2`: by this point the composite-token guards above
+     have already rewritten it, and the colour must be the string AutoCount
+     actually holds. */
+  if (!o.color && typeof opts.knownColour === "function") {
+    const u = unlabelledColour(d2raw, opts.knownColour);
+    if (u) { o.color = u.value; o.colorEvidence = u.evidence; o.why.push(`colour from an unlabelled code "${u.evidence}"`); }
+  }
   // seat size: inches or cm anywhere (also "(28'Inch)" / "28''" / "28'" / "Size:28")
   const sm = /(\d{2,3})\s*(cm)\b/i.exec(d2) || /(\d{2})\s*(?:['"]{1,2}\s*inch(?:es)?\b|"|''|'(?!\w)|\s*inch(?:es)?\b)/i.exec(d2) || /size\s*[:：]\s*(\d{2})/i.exec(d2);
   if (sm) {
@@ -51,11 +129,14 @@ function parseSofa(d2raw, model, recl = false) {
   // rides as a special so the factory sheet still shows the request.
   {
     const lg = /[^\/\n]*\bleg\b[^\/\n]*/gi.exec(d2);
-    if (lg) { o.specials.push(lg[0].trim().replace(/^[*\s]+/, "")); d2 = d2.replace(/[^\/\n]*\bleg\b[^\/\n]*/gi, " "); }
+    /* The sweep has already taken this sentence off the ORIGINAL text. Only
+       fall back to the mangled copy when it did not, or the size cleanup's
+       leftovers land beside the clean wording ("ADD 1INCH LEG" + "ADD 1 LEG"). */
+    if (lg) { if (!o.specials.some((s) => /leg/i.test(s))) addSpecial(lg[0]); d2 = d2.replace(/[^\/\n]*\bleg\b[^\/\n]*/gi, " "); }
   }
   // specials that ride along
-  if (/nylon|nilon/i.test(d2)) o.specials.push("nylon");
-  if (/(left|right)?\s*side?\s*woo[rd]+e?r?n?\s*arm/i.test(d2) || /wood\w*\s*arm/i.test(d2)) o.specials.push("wooden arm");
+  if (/nylon|nilon/i.test(d2)) addSpecial("nylon");
+  if (/(left|right)?\s*side?\s*woo[rd]+e?r?n?\s*arm/i.test(d2) || /wood\w*\s*arm/i.test(d2)) addSpecial("wooden arm");
   const hasRecliner = /recliner/i.test(d2) && recl;
   if (/recliner/i.test(d2) && !recl) o.why.push("写了 recliner 但此款无 recliner 件 — 请核对");
   d2 = d2.replace(/bottom[^\/\n]*|(left|right)?side?woo[rd]+e?r?n?\s*arm[^\/\n]*|wood\w*\s*arm[^\/\n]*|recliner/gi, " ");
@@ -293,7 +374,7 @@ function parseSofa(d2raw, model, recl = false) {
       }
     }
     quiet.forEach((n) => o.why.push(`note "${n}"`));
-    rider.forEach((n) => { o.specials.push(n); o.why.push(`note "${n}"`); o._noteDemote = true; });
+    rider.forEach((n) => { addSpecial(n); o.why.push(`note "${n}"`); o._noteDemote = true; });
     if (out.length) { o._seg = rawSeg; out.forEach(P); matched = true; break; }
   }
   if (matched) {

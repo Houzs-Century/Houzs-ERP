@@ -38,10 +38,17 @@ Two independently deployed apps in one repo, plus two small side services.
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |
 
 `deploy.yml` splits by changed path, so a frontend-only push does not redeploy the
-Worker. The backend job runs `audit:routes`, `typecheck`, `test`, then
-`pg-migrate.mjs` against production, then deploys, then smoke-checks. **Migrations
-run before the Worker goes live and on every deploy** — which is why a single broken
-migration file blocks all deploys, not just its own.
+Worker. The backend job runs `audit:routes`, `audit:job-types`,
+`audit:work-order-states`, `typecheck`, then `pg-migrate.mjs` against production,
+then deploys, then smoke-checks. **Migrations run before the Worker goes live and
+on every deploy** — which is why a single broken migration file blocks all
+deploys, not just its own.
+
+`npm test` is NOT in that list any more — it moved out to the separate
+`backend-tests` matrix job, and `deploy.yml` says so in its own comment beside
+the gap. This sentence still named `test` between `typecheck` and `pg-migrate`
+until 2026-08-14; the assertion at the top of the backend job is what keeps the
+suite a gate now, not its presence in this sequence.
 
 ## 2. Backend — what each area is for
 
@@ -106,8 +113,8 @@ migration file blocks all deploys, not just its own.
 **Two migration trees; only one reaches production.** `migrations-pg/` is applied to
 prod by `deploy.yml` on every deploy. `migrations/` is the D1/SQLite tree — it is
 NOT dead and must not be deleted, but nothing applies it to production: it exists so
-backend vitest can build an in-process D1 with the same shape (`vitest.config.ts`
-reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
+backend vitest can build an in-process D1 with the same shape
+(`vitest.config.mts` reads it with `readD1Migrations`). Prod has no D1 binding at all. A schema change
 that must hold in prod goes in `migrations-pg/`; a mirror in `migrations/` only
 buys test parity. The generated facts file states which is which, derived from the
 workflow and the runner scripts rather than from anyone's memory.
@@ -117,6 +124,17 @@ workflow and the runner scripts rather than from anyone's memory.
 exist. `backend/tests/migrationNumbers.test.ts` freezes those and fails on any NEW
 duplicate — including against a `.TEMPLATE` file, which owns its number from the day
 it lands. Pick the number at merge time, not at branch time.
+
+**A migration and a run repair script are the two things a revert cannot undo,
+and both are gated.** `npm --prefix backend run audit:release-discipline` (a step
+of the required `backend-typecheck` check) fails a migration at or above the
+recorded floor with no `-- REVERSAL:` note, and a `backend/scripts` script that
+opens a database and writes without a plan-default MODE gate, a CONFIRM phrase, a
+fresh-connection re-read that asserts the SHAPE, and a `RE-RUN:` header line. The
+existing tree is grandfathered rule-by-rule in
+`backend/scripts/release-discipline-grandfathered.json`; that list may only
+shrink, and the gate prints its size on every run. Rules and rationale live in
+`CLAUDE.md`; the counts live in the gate's own output, never here.
 
 **`frontend/src/vendor/scm`, `frontend/src/vendor/shared`,
 `frontend/src/pages/scm-v2` and `backend/src/scm` are VENDORED.** They were copied
@@ -142,9 +160,11 @@ inside `/scm/fleet`). A file existing is not evidence a feature is live; check
 `App.tsx` for the route. The house rule is "off, not hidden": a gated feature has no
 nav entry, no mounted route and no query firing.
 
-**Docs that are historical.** `MIGRATION-D1-TO-SUPABASE.md` and
-`HANDOFF-supabase-cutover.md` describe the abandoned Supabase project and a bound
-D1. They are records of a past cutover, not descriptions of today.
+**Docs that are historical.** `docs/archive/MIGRATION-D1-TO-SUPABASE.md` and
+`docs/archive/HANDOFF-supabase-cutover.md` describe the abandoned Supabase project
+and a bound D1. They are records of a past cutover, not descriptions of today —
+which is why they now live under `docs/archive/`. See `docs/README.md` for what is
+authoritative for what.
 
 ## 5. Files that are too big to read whole
 
@@ -153,7 +173,19 @@ whole is the most common way a session runs out of room before it starts working
 **Locate by grep, then read by line range.** The exact sizes are in the generated
 facts file; the point here is the shape of each file so you can jump.
 
-- **`frontend/src/pages/Projects.tsx` (~12,400 lines)** — the entire events ERP in
+> Sizes were typed inline here until 2026-08-13 and had rotted exactly as this
+> file's header warns: `Projects.tsx` was labelled "~12,400 lines" against a real
+> 14,867, and `mfg-sales-orders.ts` "~10,400" against 12,094. They are gone rather
+> than refreshed — a number typed here is a number that will be wrong again.
+
+**These files may no longer grow.** `scripts/file-size-ceilings.json` records what
+each one already is, and `npm run check:file-size` fails CI if any exceeds its
+recorded ceiling — see [`docs/repo-hygiene.md`](./repo-hygiene.md). Nothing forces
+them to be SPLIT; the ratchet only stops the problem getting worse, and a ceiling
+may only fall. If you are adding to one of these, put the new code in its own
+module: that is now the path of least resistance, by design.
+
+- **`frontend/src/pages/Projects.tsx`** — the entire events ERP in
   one module, four view components plus a detail page. In order: pickers and small
   helpers, `Projects()` (the shell), `ProjectsListView`, `ProjectsFinancesView`,
   `ProjectsAnalyticsView`, `ProjectsCalendarView` (with its popovers and day modal),
@@ -161,7 +193,7 @@ facts file; the point here is the shape of each file so you can jump.
   strip, stage stepper, tasklist sections, documents, checklist rows, stock
   transfers, and the logistics crew/schedule editors at the very bottom. Grep the
   component name, then read around it.
-- **`backend/src/scm/routes/mfg-sales-orders.ts` (~10,400 lines)** — the Sales Order
+- **`backend/src/scm/routes/mfg-sales-orders.ts`** — the Sales Order
   module, and the pricing-critical one. Top third: the guards and gate helpers
   (`soHasDownstream`, `soProcessingLocked`, `soStatusTransitionError`,
   `gateSoFinance`) and the validation helpers. Middle: `createSalesOrderCore` and the
@@ -169,19 +201,19 @@ facts file; the point here is the shape of each file so you can jump.
   calls, so never reimplement a create beside it. Then header PATCH and delivery-fee
   re-derivation, then item CRUD with `recomputeTotals`, then per-line photos, then
   payments (`recordSoPaymentRow`), then the debtor lookup at the end.
-- **`frontend/src/pages/ServiceCases.tsx` (~8,000 lines)** — ASSR. `ServiceCases()`
+- **`frontend/src/pages/ServiceCases.tsx`** — ASSR. `ServiceCases()`
   and the list/board/calendar views first, then `CreatePanel`, then `DetailContent`
   and the exported `ServiceCaseDetail`, then the detail's parts: stage rows,
   inspection and verification cards, logistics, print and portal-link menus, cost
   tracking, customer history, and the per-item editors last.
-- **`frontend/src/pages/scm-v2/Products.tsx` (~5,500 lines)** — tabbed: `SkuMasterTab`
+- **`frontend/src/pages/scm-v2/Products.tsx`** — tabbed: `SkuMasterTab`
   (with its virtualised row list and inline price editors) occupies the first half,
   `MaintenanceTab` and its left-rail sub-tabs the second, CSV import/export helpers
   at the end. The `/scm/maintenance` route renders this same file.
-- **`frontend/src/pages/Team.tsx` (~5,200 lines)** — user management. `Team()` shell,
+- **`frontend/src/pages/Team.tsx`** — user management. `Team()` shell,
   `MembersTab`, `MemberDetail` / `MemberCard` / `EditMemberPanel`, brands panel, then
   `OrgChartTab` and its drag-and-drop machinery at the bottom.
-- **`backend/src/scm/routes/scan-so.ts` (~4,800 lines)** — see §6. Anthropic plumbing
+- **`backend/src/scm/routes/scan-so.ts`** — see §6. Anthropic plumbing
   and catalog loading first, then prompt construction and cache warming, then slip
   normalisation and validation, then the sample/rule distillation layer, then the
   route handlers.
@@ -312,10 +344,27 @@ screen.
 Each verified against the tree; if you are reading this long after 2026-07-21,
 re-check the cited file rather than trusting the line.
 
-- **AutoCount writes are hard-off in code**: `AUTOCOUNT_WRITES_DISABLED = true` in
-  `backend/src/services/autocount.ts`. Flipping it is a code edit, not a config
-  change. Inbound pulls, by contrast, are env-gated (`AUTOCOUNT_SYNC_DISABLED` in
-  `wrangler.toml`) and are currently ON.
+- **SCM writes are FROZEN for Houzs right now.** `scm.app_config` key
+  `scm.write_freeze` holds `'1'`, and `scm/lib/write-freeze.ts` (mounted ahead of
+  every SCM sub-router) refuses every non-GET on `/api/scm/*` for company 1.
+  Company 2 (2990) is unaffected — the value is a company id list, not a boolean.
+  If an SCM write "mysteriously" 503s with `error: write_frozen`, this is why,
+  and it is deliberate. The value also takes a per-module exception clause
+  (`'1 - scm.sales.orders'`) for the staged go-live lift. Read the current state
+  with the **SCM write freeze — status (read-only)** workflow or
+  `GET /api/scm/write-freeze`; grammar, the staged sequence and the one-command
+  rollback are in `docs/write-freeze-staged-lift.md`. Do not change the value to
+  test something — it gates a live business.
+- **AutoCount has TWO channels and this bullet used to describe only one.** The
+  LEGACY relay's writes are hard-off in code — `AUTOCOUNT_WRITES_DISABLED = true`
+  in `backend/src/services/autocount.ts`, a code edit to flip — while its inbound
+  pulls are env-gated (`AUTOCOUNT_SYNC_DISABLED` in `wrangler.toml`) and are ON.
+  That constant does **not** gate the ERP -> AutoCount WRITE-BACK, which is a
+  different service (`AcSyncService` on the AutoCount host) reached through
+  `AC_SYNC_URL` — set since PR #2030 — and gated instead by the DB toggle
+  `scm.app_config` -> `scm.autocount_writeback`, still `'off'`. Reading the
+  constant alone and concluding "nothing can reach AutoCount" is the mistake this
+  wording invited; `docs/autocount-integration-map.md` is the map.
 - **Cost/margin display** is env-gated by `COSTING_DISPLAY_ENABLED`, parsed by
   `scm/lib/costing-enabled.ts`. Set false and every sales document strips cost from
   the wire, not just from the UI.
@@ -344,9 +393,13 @@ re-check the cited file rather than trusting the line.
   Off means the code path is not taken: with the var off, neither the fallback
   lookup nor the liveness recording runs at all (pinned by
   `backend/tests/sessionFallback.test.ts`).
-- **`HOUZS_OWNS_2990`** is the cutover flip. While false, Houzs holds a read-only
+- **`HOUZS_OWNS_2990` = `"true"`** in BOTH prod and staging (`backend/wrangler.toml`
+  `:82` and `:315`, checked 2026-08-14). The cutover has flipped. This bullet used
+  to describe only the `false` branch — *"while false, Houzs holds a read-only
   mirror of the `2990-` document namespace and the mirror guards refuse Houzs-side
-  creates/edits of those documents.
+  creates/edits"* — and never stated the live value, so a reader landed on the half
+  that no longer applies. Every sibling bullet in this section states its value;
+  this one now does too.
 - **Staging is not a copy of prod**: its own Supabase project, its own queues and KV,
   no Analytics Engine binding, and `crons = []`. Bindings do not inherit into named
   wrangler envs — adding one to prod does not add it to staging.
@@ -365,10 +418,35 @@ re-check the cited file rather than trusting the line.
   artifact — see the script header).
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
+- **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**
+  There is not one connection, there are **four channels** with different directions,
+  different credentials and different jobs, and treating them as one is how sessions
+  conclude the wrong thing. It carries: which hostname writes and why the ZeroTier IP
+  is refused by design; which of the six document types are CREATED versus CONVERTED
+  and why DO/GR/IV/PI can never be created standalone; how a SKU crosses (translation,
+  sofa decomposition, and `Desc2` as the only place a specification lives); what the
+  5-minute drain does automatically and the four cases that will **never** be automatic;
+  and a table of beliefs that were acted on and turned out false.
+- `docs/autocount-writeback-golive-coe.md` — 2026-08-13, the write-back was switched on
+  and NOTHING reached the account book. Seven faults in one chain, each hiding the next,
+  and the finding worth carrying: three of them are one shape — a fact the ERP holds in
+  two columns, the UI reads both, the write-back reads one (`supplier_sku`, the stock
+  location, the salesperson). Also records what was ruled out, including two theories
+  that were stated and then refuted.
+- `docs/autocount-read-relay-exposure-coe.md` — the legacy `it-houzs.dev` relay answers
+  the public internet with **no key** on two routes, one of them ~52 MB of purchase
+  history. OPEN, needs an owner action. Do not build on that relay.
 - `docs/autocount-cutover-ledger.md` — the permanent record of every row the AutoCount
   go-live pushed into company 1: how to tell a migrated row from a real one (the exact
-  SQL predicates), what each import wave wrote with its run id, and — the one that bites —
-  which imported documents carry `received_qty` but deliberately no GRN, because posting
-  one would count the same stock twice.
-- `frontend/src/pages/scm-v2/_VENDORING_PROGRESS.md` for what was vendored, when, and
-  with what caveats.
+  SQL predicates), what each import wave wrote with its run id, and — the ones that bite —
+  which imported documents carry `received_qty` but deliberately no GRN, and which
+  migrated GRNs and DOs carry `migrated_no_stock = true` and deliberately no inventory
+  movement at all. Posting either would count the same stock twice. Its section 9 records
+  the owner's own cutover decisions in his words — historical documents are NOT imported,
+  whole-sofa stock is NOT imported, and one AutoCount order whose header disagrees with
+  its own lines is recorded rather than corrected. **Read section 9 before "fixing" any
+  gap between AutoCount and the ERP**: most of those gaps are decisions.
+- `docs/archive/scm-v2-vendoring-progress.md` for what was vendored, when, and with
+  what caveats. Archived — the vendoring finished, so read it as history: it still
+  describes temporary `/scm/<x>-v2` routes and an intact native `pages/scm/` tree,
+  and neither exists any more.

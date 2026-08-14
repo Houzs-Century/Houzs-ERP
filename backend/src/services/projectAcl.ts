@@ -62,16 +62,6 @@ export function getProjectScope(user: AuthUser): ProjectScope | null {
   return { pic_ids, brands };
 }
 
-/**
- * Back-compat shim. Kept so any caller that only cares about the PIC
- * dimension keeps working. Prefer `getProjectScope` for new code so the
- * brand filter is wired automatically.
- */
-export function getProjectPicScope(user: AuthUser): number[] | null {
-  const s = getProjectScope(user);
-  return s ? s.pic_ids : null;
-}
-
 /** Effective PIC id — falls back to the creator when pic_id is unset.
  *  Keeps legacy projects (created before migration 039) visible to
  *  their creator's team, without requiring a full backfill. */

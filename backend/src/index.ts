@@ -34,7 +34,6 @@ import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
-import events from "./routes/events";
 import projects from "./routes/projects";
 // Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
 // Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
@@ -81,6 +80,7 @@ import mailInbound from "./routes/mail-inbound";
 import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
+import { drainAutoCountOutbox } from "./scm/lib/autocount-outbox";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -121,6 +121,11 @@ import { getBranding } from "./services/branding";
 // ASSR SO lookup, which had been frozen since the 2026-06-13 pause.
 import { runPull } from "./services/pull";
 import { runDoMirrorSync } from "./services/doMirror";
+// AutoCount PO pulls (restored — frozen since 2026-06-12) and the unfiltered
+// ac_snapshot_* staging load that gives the migration reconciliation a
+// denominator. Both daily; see the 02:00 slot.
+import { runPOPull, runPODocsPull } from "./services/po";
+import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -342,7 +347,6 @@ app.route("/api/notifications", notifications);
 // Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
 app.route("/api/presence", presence);
-app.route("/api/events", events);
 app.route("/api/projects", projects);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
@@ -516,6 +520,21 @@ export default {
           })
           .catch((e) => console.error("[cron amendment-cmd]", e))
       );
+      // ERP -> AutoCount write-back drain. Ships dark twice over: no-op without
+      // AC_SYNC_URL, and no-op while scm.app_config 'scm.autocount_writeback'
+      // is off (which 0277 seeds it to). Best-effort — a drain failure can
+      // never break the slot.
+      ctx.waitUntil(
+        drainAutoCountOutbox(env)
+          .then((r) => {
+            /* A FAILED row means a document exists in the ERP and does not
+               exist in AutoCount. That is the divergence this whole mechanism
+               is built to prevent, so it can never read as routine. */
+            if (r.failed) console.error(`[cron ac-writeback] FAILED ${JSON.stringify(r)}`);
+            else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron ac-writeback]", e))
+      );
       // Durable SO allocation projection: every source-data mutation first
       // queues the singleton invalidation in its own DB transaction. This sweep
       // is the crash/network backstop for the low-latency after-commit attempt.
@@ -633,6 +652,30 @@ export default {
           runDoMirrorSync(env, "SCHEDULED")
             .then((r) => console.log(`[cron do-mirror] ${r.message}`))
             .catch((e) => console.error("[cron do-mirror]", e))
+        );
+        // AutoCount PO pulls — frozen since 2026-06-12 because the 2026-07-14
+        // restore brought back the SO pull only. Both tables are read on main:
+        // `purchase_orders` by the ASSR supplier-PO lookup, `purchase_order_docs`
+        // by Finance/P&L. Daily, not 5-min: each is a full wipe-and-reload of a
+        // few thousand rows. Sequential so the two reloads never interleave, and
+        // best-effort like every other job in this slot.
+        ctx.waitUntil(
+          runPODocsPull(env, "SCHEDULED")
+            .then((r) => console.log(`[cron po-docs-pull] ${r.message}`))
+            .then(() => runPOPull(env, "SCHEDULED"))
+            .then((r) => console.log(`[cron po-pull] ${r.message}`))
+            .catch((e) => console.error("[cron po-pull]", e))
+        );
+        // Full AutoCount snapshots into the ac_snapshot_* staging tables
+        // (mig 0282) — the unfiltered denominator the migration reconciliation
+        // needs. Writes only its own tables, so a failure here cannot touch the
+        // mirrors above.
+        ctx.waitUntil(
+          runSOSnapshot(env, "SCHEDULED")
+            .then((r) => console.log(`[cron ac-snapshot-so] ${r.message}`))
+            .then(() => runPOSnapshot(env, "SCHEDULED"))
+            .then((r) => console.log(`[cron ac-snapshot-po] ${r.message}`))
+            .catch((e) => console.error("[cron ac-snapshot]", e))
         );
       }
       ctx.waitUntil(

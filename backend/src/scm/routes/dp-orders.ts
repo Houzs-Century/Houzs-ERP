@@ -432,7 +432,9 @@ dpOrders.post('/:id/cancel', async (c) => {
   const stopId = (data as { trip_stop_id?: string | null }).trip_stop_id ?? null;
   if (stopId) {
     try {
-      const del = await sb.from('trip_stops').delete().eq('id', stopId);
+      // trip_stops is the CROSS-COMPANY shared queue, so its predicate is the
+      // allowed set (same rule as trips.ts) — not "no predicate at all".
+      const del = await scopeToAllowedCompanies(sb.from('trip_stops').delete().eq('id', stopId), c);
       stopRemoved = del.error
         ? { removed: false, failed: true, reason: del.error.message }
         : { removed: true, failed: false };

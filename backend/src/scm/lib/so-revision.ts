@@ -1,6 +1,14 @@
 // ----------------------------------------------------------------------------
 // SO amendment apply-revision helpers — port of 2990 apps/api/src/lib/so-revision.ts.
 //
+// company-scope-file: every write in this file addresses rows by `doc_no`, which IS
+// mfg_sales_orders' PRIMARY KEY (2990s-full-schema.sql:638) and whose numbering
+// is prefix-partitioned per company (companyDocPrefix: HOUZS 'HC-', others
+// '<CODE>-'). One doc_no therefore names exactly one company's order, and the
+// mfg_sales_order_items rows are reached through that same doc_no. A company
+// predicate would be redundant here, not safer. Read 2026-08-13 when the
+// library pass of check-company-scope.mjs first surfaced these five statements.
+//
 // `applySoAmendment` is the Approve-SO gate's engine: it freezes the current SO
 // as an immutable `so_revisions` snapshot, applies the amendment's line diffs
 // (SPEC / QTY / ADD / REMOVE) to `mfg_sales_order_items`, then RE-RUNS the
@@ -33,6 +41,7 @@ import {
   loadMaintenanceConfig,
   recomputeOneLine,
   type MfgItemForRecompute,
+  type TrustSelling,
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { deriveMfgPoUnitCost } from './po-pricing';
@@ -47,6 +56,7 @@ import { todayMyt } from './my-time';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
+import { canonicaliseSoHeaderChanges } from '../shared/so-processing-date';
 
 /* The routable field atoms an SO amendment moves — lines + header — for the audit
    routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
@@ -149,6 +159,11 @@ type AmendmentLineRow = {
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
   new_unit_price_sen: number | null;
+  /* Mig 0280 — the requested REMARK. NULL = the request does not touch it (every
+     row created before 0280, and every line whose remark did not move); '' = a
+     real request to clear it. The `!= null` test at the write is the ONE gate,
+     so approving an old amendment can never blank a remark typed since. */
+  new_remark: string | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
@@ -275,7 +290,7 @@ export async function applySoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('so_amendment_lines')
     .select('id, sales_order_item_id, change_type, new_item_code, new_variants, ' +
-      'new_qty, new_unit_price_sen, old_snapshot')
+      'new_qty, new_unit_price_sen, new_remark, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applySoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as AmendmentLineRow[];
@@ -295,9 +310,28 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
+
+  /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
+     actually exists on the SO header (migration 0271); `migrated_no_stock` lives
+     only on scm.grns / scm.delivery_orders and is NOT available here.
+
+     It decides whether an approved amendment may re-price the line. For a NATIVE
+     order the answer stays what it has always been — re-price to the current
+     catalogue, the owner's authoritative default. For a MIGRATED order it must
+     not: that unit price is what AutoCount recorded as negotiated with the
+     customer, and mfg_products.sell_price_sen is in no sense a better answer for
+     an order this ERP never priced. Approving even a QTY-ONLY amendment used to
+     overwrite it.
+
+     'including-zero' rather than plain `true` because a migrated sofa is
+     routinely carried as the whole-set price on ONE lead module line with 0 on
+     its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
+     sibling a catalogue price anyway, which bills the set several times over. */
+  const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
+  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : false;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
@@ -354,16 +388,35 @@ export async function applySoAmendment(
          re-check covers amendments raised before that gate existed and any
          non-route writer. Company-scoped to the SO's own company — code is
          only unique per company. */
+      /* The same row also supplies the line's NAME and CATEGORY (owner
+         2026-08-11) — see the two stamps below. One read, three uses. */
+      let prodName: string | null = null;
+      let prodCategory: string | null = null;
       {
-        let q = sb.from('mfg_products').select('code').eq('code', itemCode);
+        let q = sb.from('mfg_products').select('code, name, category').eq('code', itemCode);
         if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
         const { data: prodRows } = await q.limit(1);
         if (!prodRows || prodRows.length === 0) {
           throw new Error(`applySoAmendment: ADD line item code is not in the product catalog: ${itemCode}`);
         }
+        const prod = prodRows[0] as { name?: string | null; category?: string | null };
+        prodName = (prod.name ?? '').trim() || null;
+        prodCategory = (prod.category ?? '').trim() || null;
       }
       const variants = (diff.new_variants ?? null) as Record<string, unknown> | null;
-      const itemGroup = String((variants?.itemGroup ?? diff.old_snapshot?.item_group ?? 'others')).toLowerCase();
+      /* ITEM GROUP — the requested blob first, then the line's own old snapshot,
+         then the CATALOG's category (owner 2026-08-11). The catalog step is new:
+         the chain used to fall straight to the literal 'others', so an added
+         SVC-ADDON landed with item_group='others' while the identical SKU
+         created through POST / lands 'service'. That is not cosmetic —
+         isServiceLine() reads item_group, and a SERVICE line is never allocated
+         stock, never gates SO readiness, never becomes MRP demand and never
+         produces an inventory movement (vendor/shared/service-sku.ts). A service
+         line mis-grouped as goods asks the factory to make a delivery fee.
+         'others' remains the last resort for a catalog row with no category. */
+      const itemGroup = String(
+        variants?.itemGroup ?? diff.old_snapshot?.item_group ?? prodCategory ?? 'others',
+      ).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
 
       // Recompute the new line authoritatively (same path as POST /).
@@ -398,6 +451,18 @@ export async function applySoAmendment(
         line_date:              todayMyt(),
         item_group:             itemGroup,
         item_code:              itemCode,
+        /* NAME + variant summary (owner 2026-08-11). This insert wrote NEITHER,
+           so every line ever added by an approved amendment landed with
+           description NULL and description2 NULL — the row could only ever name
+           itself by its bare SKU code, on the SO, on the DO and SI it flows to,
+           and on all three printed documents. The name comes from the CATALOG
+           row just read (`mfg_products.name`), never from the amendment payload:
+           an amendment line carries no description field, and the catalog is the
+           authority the swap path (PATCH …/items/:id/swap) already uses.
+           description2 is the server-built variant summary, exactly as POST /
+           builds it — the single source of truth for the long attribute string. */
+        description:            prodName,
+        description2:           buildVariantSummary(itemGroup, variants) || null,
         uom:                    'UNIT',
         qty,
         unit_price_centi:       unit,
@@ -415,9 +480,20 @@ export async function applySoAmendment(
         custom_specials:        rec.custom_specials ?? null,
         stock_status:           'PENDING',
         warehouse_id:           addLineWarehouseId,   // follows the SO — see above
+        /* Mig 0280 — the requested REMARK rides onto the added line. This insert
+           used to omit it entirely, so a SVC-ADDON line added purely to carry an
+           instruction ("Please take back Cody Bedframe (King Size) 2 units")
+           landed as an RM0 line saying nothing, and the person meant to execute
+           it had no way to read the job. NULL stays NULL. */
+        remark:                 diff.new_remark,
       });
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
+      /* The remark is its OWN audit row — an added line's note is the request in
+         a service line's case, so "qty 1" alone would not say what was approved. */
+      if ((diff.new_remark ?? '').trim()) {
+        lineChanges.push({ field: `line_added_${itemCode}_remark`, from: null, to: diff.new_remark });
+      }
       touched.push({ change, itemCode, qty });
       continue;
     }
@@ -451,13 +527,19 @@ export async function applySoAmendment(
       ? Number(diff.new_unit_price_sen)
       : Number(row.unit_price_centi ?? 0);
 
+    /* amendTrust is 'including-zero' only for a MIGRATED order — see where it is
+       derived. On such an order clientUnit is the AutoCount price (or the
+       operator's explicit new_unit_price_sen when the amendment supplies one),
+       and either way it is the figure the customer agreed to. A SPEC change does
+       not re-price it: if the new spec should cost differently, the amendment
+       carries new_unit_price_sen and that is what persists. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
       qty,
       unitPriceCenti: clientUnit,
       variants: (variants as MfgItemForRecompute['variants']) ?? null,
-    }, cachedConfig, soCompanyId);
+    }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust });
 
     const unit = rec.unit_price_sen;
     const discount = Number(row.discount_centi ?? 0);
@@ -480,6 +562,12 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
+      /* Mig 0280 — write the REMARK only when the request carries one. NULL is
+         "not requested", so spreading it conditionally is what stops an
+         amendment raised last week (or any row created before 0280, where the
+         column is NULL by definition) from blanking a remark somebody typed on
+         the line in the meantime. '' IS a request — clear it. */
+      ...(diff.new_remark != null ? { remark: diff.new_remark } : {}),
     }).eq('id', diff.sales_order_item_id);
     if (updErr) throw new Error(`applySoAmendment: ${change} update failed for line ${diff.sales_order_item_id}: ${updErr.message}`);
     /* Keyed by the line's ORIGINAL item code so the drawer reads as one line's
@@ -498,6 +586,8 @@ export async function applySoAmendment(
         buildVariantSummary(itemGroup, (row.variants as Record<string, unknown> | null) ?? null),
         buildVariantSummary(itemGroup, variants ?? null),
       );
+      // Mig 0280 — only when the request touched it (noteChange drops a no-op).
+      if (diff.new_remark != null) noteChange(`line_${key}_remark`, row.remark, diff.new_remark);
     }
     touched.push({ change, itemCode, qty });
   }
@@ -514,7 +604,15 @@ export async function applySoAmendment(
      Every key is re-checked against AMENDABLE_HEADER_FIELDS — the create route
      already rejects an unlisted key, this is defence in depth on the last step
      before the write. */
-  const headerChanges = amendment.header_changes ?? null;
+  /* CANONICALISE THE STORED KEYS FIRST.
+     `header_changes` is a jsonb written at REQUEST time and read here at APPROVE
+     time — days later, across any number of deploys. The loop below `continue`s
+     on a key the allow-list does not have, so a payload-key rename would make an
+     already-pending amendment approve cleanly, audit cleanly, and never write
+     its value. Rewriting legacy spellings onto today's keys before anything
+     reads them is what stops that; it is an identity map until a rename lands.
+     See shared/so-processing-date.ts for the removal condition. */
+  const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   const headerApplied: string[] = [];
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const headerUpdates: Record<string, unknown> = {};
@@ -867,12 +965,22 @@ export async function reviseBoundPo(
   const poLinks = (snap?.poLinks ?? {}) as Record<string, string[]>;
 
   // (4) Current (post-Approve-SO) SO line ids.
+  /* CANCELLED IS REMOVED. `removed = prevLineIds \ currentIdSet` is what
+     orphans the PO line a since-deleted SO line was bound to, and it is the
+     only warning the supplier side ever gets. A retained cancelled row would
+     stay in currentIdSet forever, so the customer's cancellation would never
+     reach the supplier and the factory would keep building the item. The hard
+     delete gives this for free today; the filter is what keeps it true once a
+     removal becomes a soft cancel. Filtered in JS rather than SQL so a NULL —
+     which the column default forbids but a partial row shape does not — reads
+     as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb
     .from('mfg_sales_order_items')
-    .select('id')
+    .select('id, cancelled')
     .eq('doc_no', docNo);
   if (soItemErr) throw new Error(`reviseBoundPo: SO items load failed: ${soItemErr.message}`);
-  const soItemIds = ((soItemRows ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const soItemIds = ((soItemRows ?? []) as Array<{ id: string; cancelled?: boolean | null }>)
+    .filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
 
   /* ADDED   = a current line the pre-amendment snapshot did not have (an ADD diff

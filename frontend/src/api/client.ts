@@ -197,19 +197,19 @@ export function humanHttpMessage(status: number, body: string): string {
   const t = (body ?? "").trim();
   if (t && (t.startsWith("{") || t.startsWith("["))) {
     try {
-      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown };
+      const j = JSON.parse(t) as { error?: unknown; message?: unknown; detail?: unknown; reason?: unknown };
       // A code-shaped `error` is looked up, never shown raw; a sentence-shaped
       // `error` keeps the historic behaviour of being surfaced as-is.
       if (typeof j?.error === "string" && isErrorCode(j.error.trim())) {
         const mapped = ERROR_CODE_MESSAGES[j.error.trim()];
         if (mapped) return mapped;
-        const fallback = j?.message ?? j?.detail;
+        const fallback = j?.message ?? j?.detail ?? j?.reason;
         if (typeof fallback === "string") {
           const safe = presentable(fallback);
           if (safe) return safe;
         }
       } else {
-        const m = j?.error ?? j?.message ?? j?.detail;
+        const m = j?.error ?? j?.message ?? j?.detail ?? j?.reason;
         if (typeof m === "string") {
           const safe = presentable(m);
           if (safe) return safe;
@@ -737,6 +737,25 @@ export const api = {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     });
+  },
+
+  /* The server-rendered print views (ASSR case, project sheet) as TEXT, so the
+     caller can show the document BEFORE committing to a tab — the Print preview
+     dialog renders this in an iframe. openHtml below is the same read, opened
+     straight into a tab; both go through the authenticated binaryFetch because
+     these routes need the bearer token (an <iframe src="/api/…"> would not carry
+     it). */
+  async getHtml(path: string): Promise<string> {
+    const token = tokenStore.get();
+    const res = await binaryFetch(`${baseUrl}${path}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+    }, BINARY_GET_TIMEOUT_MS);
+    if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
+    let html = "";
+    await consumeCorrelated(res, async () => {
+      html = await res.text();
+    });
+    return html;
   },
 
   async openHtml(path: string): Promise<void> {

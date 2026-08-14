@@ -39,7 +39,7 @@ import {
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
-import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
@@ -75,6 +75,7 @@ import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
 import { resolveSoLocation } from "../../lib/soLocation";
+import { poCellChips } from "../../lib/soPoChips";
 import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
@@ -147,7 +148,7 @@ type SoRow = {
   /** Any line shipped/allocated from a PO-less stock ADJUSTMENT — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank. */
   source_po_adj?: boolean;
-  internal_expected_dd: string | null;
+  processing_date: string | null;
   customer_delivery_date: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
@@ -574,11 +575,10 @@ function DetailDrawer({
                 <MetaItem k="Branding" v={brandOf(row)} />
                 <MetaItem k="Order date" v={fmtDate(row.so_date)} />
                 {/* Owner 2026-07-24 — the quick view showed only the order
-                    date; operators need Processing (internal_expected_dd, the
-                    one true user date since legacy processing_date was
-                    dropped) and Delivery at a glance. Both already ride the
-                    list payload (HEADER). */}
-                <MetaItem k="Processing" v={fmtDate(row.internal_expected_dd)} />
+                    date; operators need Processing (processing_date, the one
+                    true user date) and Delivery at a glance. Both already ride
+                    the list payload (HEADER). */}
+                <MetaItem k="Processing" v={fmtDate(row.processing_date)} />
                 <MetaItem k="Delivery" v={fmtDate(row.customer_delivery_date)} />
                 <MetaItem
                   k="Payment"
@@ -1478,45 +1478,28 @@ export function MfgSalesOrdersListV2() {
            consumed batches ∪ READY projections, the shared resolver). The
            convert-link lied by omission: accessories/CS SOs fulfilled from
            stock bought under other POs showed "—" while their drill named the
-           source PO. The legacy raise-link stays in the TOOLTIP when it
-           differs, clearly labelled. */
+           source PO.
+         · 2026-08-11 — the raise-link came BACK as a visible chip, because
+           demoting it to a tooltip on an em-dash reintroduced the same lie
+           from the other side. Both goods-source arms need execution: SHIPPED
+           needs a DO line, READY needs an open lot that resolves to a PO.
+           A CONFIRMED order that has not shipped and whose stock is not yet
+           allocated satisfies NEITHER, so the cell said "no purchase order"
+           for documents whose own Relationship Map named one (HC-SO-011733 →
+           HC-PO-008783 → HC-GR-004863). Across the 2,723 Houzs Century SOs
+           only ~53 could ever light the union arms, while 277 carry a real
+           non-cancelled PO on `purchase_order_items.so_item_id`. The raised
+           PO is now rendered as a MUTED provenance chip — visually distinct
+           from the solid goods-source chip and carrying its own tooltip — so
+           the cell answers "是谁的货" and "叫了什么单" without conflating them.
+           A tooltip is not an answer: if a link exists, a chip must show. */
       key: "po_doc_no",
       group: "Logistics",
       label: "PO No.",
       width: "150px",
       disableSort: true,
-      getValue: (r) => (r.source_po_union ?? []).join(", "),
-      render: (r) => {
-        const pos = r.source_po_union ?? [];
-        const legacy = r.converted_po_nos ?? [];
-        const legacyExtra = legacy.filter((n) => !pos.includes(n));
-        const legacyTitle = legacyExtra.length > 0
-          ? `Raised PO (convert-time link, not a goods source): ${legacyExtra.join(", ")}`
-          : undefined;
-        if (pos.length === 0 && !r.source_po_adj) {
-          return legacyExtra.length > 0 ? (
-            <span className="text-ink-muted" title={legacyTitle}>
-              —
-            </span>
-          ) : (
-            <span className="text-ink-muted">—</span>
-          );
-        }
-        return (
-          <div className="flex flex-wrap gap-1" title={legacyTitle}>
-            {pos.map((n) => (
-              <span
-                key={n}
-                title={`Source PO ${n} — the goods on this order come from this purchase order (shipped batch or READY allocation).`}
-                className="rounded bg-primary-soft px-1.5 py-0.5 font-docno text-[11px] font-semibold text-primary-ink"
-              >
-                {n}
-              </span>
-            ))}
-            {r.source_po_adj && <StockAdjChip />}
-          </div>
-        );
-      },
+      getValue: (r) => poCellChips(r).all.join(", "),
+      render: (r) => <SoListPoCell row={r} />,
     },
     {
       key: "phone",
@@ -1704,10 +1687,10 @@ export function MfgSalesOrdersListV2() {
       width: "140px",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.internal_expected_dd ?? "",
+      getValue: (r) => r.processing_date ?? "",
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
-          {fmtDate(r.internal_expected_dd)}
+          {fmtDate(r.processing_date)}
         </span>
       ),
     },

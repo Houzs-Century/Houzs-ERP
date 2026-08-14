@@ -17,7 +17,8 @@
 // rules. It only aggregates + names them. Pure — no I/O, no DB, no Hono.
 // ----------------------------------------------------------------------------
 import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from './so-variant-rule';
-import { meetsProcessingDatePaymentGate, processingDateThresholdFor } from './order-rules';
+import { meetsDepositGate, processingDateThresholdFor } from './order-rules';
+import { soDatePairRefusal } from './so-processing-date';
 import { fmtRM } from './format';
 
 /** One machine- + human-readable reason a save was rejected.
@@ -63,9 +64,9 @@ export type ProcessingGateFacts = {
   /** Malaysia calendar day (YYYY-MM-DD) — the not-in-the-past floor. */
   todayMY: string;
   /** Stored dates BEFORE this save, for the grandfather carve-out on the edit
-   *  path: an already-saved past date this edit does NOT change is a historical
-   *  record, not a fresh past entry, and must not block. Omit (leave undefined)
-   *  on the create path — every date there is new. */
+   *  path: an already-saved past — or unpaired — date this edit does NOT change
+   *  is a historical record, not a fresh entry, and must not block. Omit (leave
+   *  undefined) on the create path — every date there is new. */
   origProcDate?: string | null;
   origDelivDate?: string | null;
   /** Lines whose category-mandatory variants aren't filled — exactly what the
@@ -75,7 +76,7 @@ export type ProcessingGateFacts = {
    *  2026-07-24 (after SO-2607-016): the moment an SO carries a Processing
    *  Date, every line must be a fully-confirmed maintained selection — a
    *  colour-KIV line blocks the date. Routes must pass this ONLY when the save
-   *  genuinely SETS or CHANGES internal_expected_dd (the offenders are ignored
+   *  genuinely SETS or CHANGES processing_date (the offenders are ignored
    *  when procDate is null, and clearing the date never blocks), so editing
    *  e.g. a remark on an old KIV order still works. */
   kivOffenders?: readonly ColourKivOffenderLike[];
@@ -174,8 +175,9 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
 
   // 2. Deposit — a Processing Date is production's "ready to build" signal,
   //    so it can't be set until >=30% is collected. Reported with the concrete
-  //    amount + threshold. Mirrors meetsProcessingDatePaymentGate → 400
-  //    processing_date_unpaid. Only fires when a date is actually being set.
+  //    amount + threshold. The SAME predicate the Proceed gate weighs
+  //    (meetsDepositGate) — one deposit rule, since setting the date IS
+  //    proceeding. Only fires when a date is actually being set.
   if (facts.deposit && facts.procDate) {
     const { paidCenti, totalCenti } = facts.deposit;
     /* Per company (owner 2026-07-31: Houzs 30%, 2990 50%). The threshold is read
@@ -183,7 +185,7 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
        amount in the message — a 2990 operator refused at 50% must not be told
        "30%", which is what a hard-coded constant here would print. */
     const threshold = processingDateThresholdFor(facts.companyCode);
-    if (!meetsProcessingDatePaymentGate(paidCenti, totalCenti, facts.companyCode)) {
+    if (!meetsDepositGate(paidCenti, totalCenti, facts.companyCode)) {
       const pct = Math.round(threshold * 100);
       const neededCenti = Math.ceil(totalCenti * threshold);
       out.push({
@@ -213,6 +215,32 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       code: 'delivery_date_past',
       message: 'Delivery Date cannot be in the past — today or a future date only.',
       field: 'Delivery Date',
+    });
+  }
+  /* "Both dates or neither" (owner, restated 2026-08-13), BOTH directions, from
+     the one shared predicate in shared/so-processing-date rather than a local
+     compare. This block used to ask only the delivery→processing direction; the
+     reverse lived in 1c above and is gated on `facts.completeness`, which the
+     consignment paths do not supply — so on those paths a Processing Date with
+     no Delivery Date raised nothing at all. Grandfathering (a stored unpaired
+     pair this save leaves exactly as it found it) is inside the predicate: 19
+     live orders are honestly unpaired, and an edit that touches neither date
+     must still save.
+
+     Suppressed when 1c already named the missing delivery date — the same fact
+     told twice reads as two things to fix. */
+  const pairAlreadyReported = out.some(
+    (p) => p.code === 'processing_date_incomplete' && p.field === 'Delivery date',
+  );
+  if (!pairAlreadyReported && soDatePairRefusal({
+    nextProc: procDate, nextDeliv: delivDate, origProc, origDeliv,
+  })) {
+    out.push({
+      code: 'processing_delivery_must_pair',
+      message: procDate
+        ? 'A Delivery Date is required when a Processing Date is set — set both, or leave both empty.'
+        : 'A Processing Date is required when a Delivery Date is set — set both, or leave both empty.',
+      field: procDate ? 'Delivery Date' : 'Processing Date',
     });
   }
   // Factory start can't fall after the promised delivery. Both plain ISO

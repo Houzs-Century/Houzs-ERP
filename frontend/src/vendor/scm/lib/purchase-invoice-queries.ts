@@ -4,6 +4,7 @@
 // Copied VERBATIM from the source flow-queries.ts PI section except for the
 // boundary:
 //   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
+import { writeFailed } from './mutation-error';
 //     → /api/scm).
 //   • the dropped `import { supabase }` / `verified-save` machinery — none of the
 //     PI hooks below reference it (they all go through authedFetch).
@@ -81,6 +82,7 @@ export const useRecordPiPayment = () => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', vars.id] });
     },
+    onError: writeFailed,
   });
 };
 export const useCancelPurchaseInvoice = () => {
@@ -159,6 +161,7 @@ export const useDeletePurchaseInvoiceItem = () => {
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
     },
+    onError: writeFailed,
   });
 };
 

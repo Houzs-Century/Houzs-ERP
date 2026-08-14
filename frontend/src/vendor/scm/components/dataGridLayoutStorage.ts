@@ -151,3 +151,30 @@ export function writeDataGridLayout(key: string, layout: DataGridLayout): void {
     // localStorage can be disabled or full. Layout persistence is best-effort.
   }
 }
+
+/**
+ * Turn the pristine-defaults OVERLAY into stored state.
+ *
+ * A grid whose `order` and `hidden` are both empty is "no explicit choices
+ * yet", and DataGrid overlays the `defaultHidden` columns on top of it at read
+ * time. That overlay is DERIVED, so a mutator that writes either field without
+ * materialising it first is writing against a layout that does not exist, and
+ * the overlay reasserts the moment the write lands back on the pristine shape —
+ * which is why "Show <column>" on a never-adjusted grid did nothing at all, and
+ * why hiding one column silently un-hid the rest. BUG-HISTORY 2026-08-14.
+ *
+ * BOTH fields are written: `order` is what makes the layout non-pristine
+ * however few columns end up hidden. Lives here, next to the shape it edits, so
+ * every mutator can share one implementation.
+ */
+export function materializeDataGridLayout(
+  layout: DataGridLayout,
+  columns: ReadonlyArray<{ key: string; defaultHidden?: boolean }>,
+): DataGridLayout {
+  if (layout.order.length || layout.hidden.length) return layout;
+  return {
+    ...layout,
+    hidden: columns.filter((c) => c.defaultHidden).map((c) => c.key),
+    order: columns.map((c) => c.key),
+  };
+}

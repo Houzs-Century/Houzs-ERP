@@ -55,8 +55,14 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
-import { soDateGuardError, soSliplessPaymentError, soErrorText } from "../../vendor/scm/lib/so-form-validate";
-import { hasSofaMixConflict, missingConfirmVariantAxes, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
+import {
+  companyRequiresStockLocation,
+  soDateGuardError,
+  soStockLocationError,
+  soErrorText,
+} from "../../vendor/scm/lib/so-form-validate";
+import { useBranding } from "../../hooks/useBranding";
+import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from "../../vendor/shared/so-variant-rule";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
@@ -183,6 +189,29 @@ export function SalesOrderNewFromProducts() {
   };
   const clearCart = () => setCartQty({});
 
+  /* Active company — feeds the shared stock-location guard in onCreate. */
+  const branding = useBranding();
+
+  /* WHY THIS FLOW LANDS A DRAFT UNDER COMPANY 1 (owner-approved 2026-08-13).
+     PR #2112 made a resolved stock location mandatory at CREATE for the
+     companies in LOCATION_REQUIRED_COMPANY_CODES, because AutoCount refuses a
+     document line whose Location is not in dbo.Location. This page collects no
+     address BY DESIGN ("address is added on the SO detail after save") and used
+     to land CONFIRMED, so under company 1 it could not create an order at all —
+     every cart met a 422 with no field on this screen to fix it.
+
+     A DRAFT is the exemption the location gate already grants, for a reason
+     that applies here exactly: a draft is never written to AutoCount, so it
+     owes the account book no Location. The operator adds the address on the SO
+     detail and confirms there, where the DRAFT -> live transition re-runs the
+     same gate — nothing is bypassed, only deferred to the screen that can
+     satisfy it.
+
+     Read from the ONE shared list, never re-derived: company 2 (2990) and every
+     company the rule does not cover keep landing CONFIRMED exactly as before,
+     and adding a company to that list moves this page with it. */
+  const landsDraft = companyRequiresStockLocation(branding.companyCode);
+
   // Customer state
   const [customer, setCustomer] = useState<Customer>({
     name: "",
@@ -247,38 +276,50 @@ export function SalesOrderNewFromProducts() {
        runs, so a bad cart surfaces one plain sentence here instead of a raw
        server 400/409. A cart CAN mix categories, so hasSofaMixConflict is the
        real guard here (a sofa + bedframe/mattress cart 400s so_sofa_no_other_main
-       on the server). This flow collects no dates or payments (added on the SO
-       detail), so soDateGuardError / soSliplessPaymentError run on empty inputs
-       and pass — kept for single-logic-layer parity so a future date/payment
-       field is guarded automatically. Variant completeness
-       (missingRequiredVariants) only fires once a processing date is set (server
-       parity); none is set here, so it's enforced on the SO detail. */
+       on the server). This flow collects no dates (added on the SO detail), so
+       soDateGuardError runs on empty inputs and passes — kept for
+       single-logic-layer parity so a future date field is guarded
+       automatically. Payments are not guarded at all: the slip is optional
+       everywhere (owner 2026-08-13) and this flow collects no payment. Variant
+       completeness (missingRequiredVariants) only fires once a processing date
+       is set (server parity); none is set here, so it's enforced on the SO
+       detail. */
     const preErr =
       soDateGuardError({ processingDate: "", deliveryDate: "", today: todayMyt() }) ??
       (hasSofaMixConflict(items.map((i) => i.itemGroup)) ? { title: SOFA_MIX_MESSAGE } : null) ??
-      soSliplessPaymentError([]);
+      soStockLocationError({
+        companyCode: branding.companyCode,
+        salesLocation: "",
+        state: "",
+        /* Inert for exactly the companies the location rule covers, because
+           for those this create IS a draft (below) and a draft is never
+           written to AutoCount. Still wired, like the guided wizard: the day
+           this flow stops drafting, it is gated instead of silently minting
+           locationless orders. */
+        asDraft: landsDraft,
+      });
     if (preErr) {
       setPostError(soErrorText(preErr));
       return;
     }
 
-    /* Owner 2026-08-08 — CONFIRMING now requires every goods line's required
-       variant axes (sofa Seat Height + Fabrics, bedframe Divan/Leg/Gap/
-       Fabrics). This flow has no variant editors by design ("enrich on the SO
-       detail after save"), so a cart carrying such a line lands a DRAFT the
-       operator completes and confirms on the detail — the server confirm gate
-       would refuse a direct-CONFIRMED create outright. Accessory / mattress /
-       others carts carry no axes and keep confirming directly. */
-    const needsCompletion = items.some(
-      (i) => missingConfirmVariantAxes(i.itemGroup, i.variants).length > 0,
-    );
+    /* This flow carries no Processing Date and no variant editors by design
+       ("enrich on the SO detail after save"), so nothing here can be
+       spec-complete and nothing here needs to be: variant completeness is the
+       PROCEED rule (owner 2026-08-13), and proceeding happens on the detail
+       page once a date is set.
+
+       It used to downgrade EVERY variant-bearing cart to a DRAFT, because the
+       confirm gate (2026-08-08) would have refused a direct-CONFIRMED create.
+       That gate no longer asks about variants, so that downgrade went. `asDraft`
+       is back for a different and narrower reason — see `landsDraft`. */
     const body: Record<string, unknown> = {
       customerName: customer.name.trim(),
       phone: customer.phone.trim(),
       email: customer.email.trim() || null,
       debtorCode: customer.debtorCode || null,
       items,
-      asDraft: needsCompletion || undefined,
+      asDraft: landsDraft || undefined,
     };
     try {
       const res = await create.mutateAsync({ ...body, idempotencyKey: idemKey });
@@ -307,8 +348,9 @@ export function SalesOrderNewFromProducts() {
             New order from catalogue
           </h1>
           <p className="mt-0.5 text-[12px] text-ink-muted">
-            Pick products from the catalogue, set quantities, confirm. Payments
-            and address are added on the SO detail after save.
+            {landsDraft
+              ? "Pick products from the catalogue, set quantities, save. The order lands as a DRAFT — add the delivery address on the SO detail, then confirm it there."
+              : "Pick products from the catalogue, set quantities, confirm. Payments and address are added on the SO detail after save."}
           </p>
         </div>
         <button
@@ -357,6 +399,7 @@ export function SalesOrderNewFromProducts() {
           onClearCart={clearCart}
           submitting={create.isPending}
           canSubmit={Boolean(canSubmit)}
+          landsDraft={landsDraft}
           onSubmit={onSubmit}
         />
       </div>
@@ -367,6 +410,7 @@ export function SalesOrderNewFromProducts() {
         subtotalSen={subtotalSen}
         submitting={create.isPending}
         canSubmit={Boolean(canSubmit)}
+        landsDraft={landsDraft}
         onSubmit={onSubmit}
       />
 
@@ -682,6 +726,7 @@ function CartCard({
   onClearCart,
   submitting,
   canSubmit,
+  landsDraft,
   onSubmit,
 }: {
   customer: Customer;
@@ -695,6 +740,7 @@ function CartCard({
   onClearCart: () => void;
   submitting: boolean;
   canSubmit: boolean;
+  landsDraft: boolean;
   onSubmit: () => void;
 }) {
   return (
@@ -814,11 +860,13 @@ function CartCard({
             disabled={submitting || !canSubmit}
             icon={submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           >
-            {submitting ? "Saving…" : "Create Sales Order"}
+            {submitting ? "Saving…" : landsDraft ? "Save draft SO" : "Create Sales Order"}
           </Button>
         </div>
         <p className="mt-1 text-right text-[10.5px] text-ink-muted">
-          Server validates SKU codes and re-prices any matching combo on save.
+          {landsDraft
+            ? "Saves as a draft. Add the delivery address on the SO detail, then confirm."
+            : "Server validates SKU codes and re-prices any matching combo on save."}
         </p>
       </div>
     </aside>
@@ -928,12 +976,14 @@ function MobileFooter({
   subtotalSen,
   submitting,
   canSubmit,
+  landsDraft,
   onSubmit,
 }: {
   cartCount: number;
   subtotalSen: number;
   submitting: boolean;
   canSubmit: boolean;
+  landsDraft: boolean;
   onSubmit: () => void;
 }) {
   if (cartCount === 0) return null;
@@ -964,7 +1014,7 @@ function MobileFooter({
           ) : (
             <Check size={14} />
           )}
-          {submitting ? "Saving…" : "Create SO"}
+          {submitting ? "Saving…" : landsDraft ? "Save draft SO" : "Create SO"}
         </button>
       </div>
     </div>

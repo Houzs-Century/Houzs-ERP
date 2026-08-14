@@ -82,7 +82,7 @@ inventoryAdjustments.post('/', async (c) => {
 
   let variantKey: string;
   if (qtyDelta > 0) {
-    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo);
+    const errs = adjustmentIncreaseErrors(itemGroup, variants, batchNo, productCode);
     if (errs.length > 0) return c.json({ error: 'adjustment_incomplete', message: errs.join(' ') }, 422);
     variantKey = body.variantKey != null
       ? String(body.variantKey)

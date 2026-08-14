@@ -8,7 +8,15 @@ BUY side of the same doc-machinery (list hook → `/api/scm/<doc>` handler →
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **SO → PO → GRN → PI**. The PO is the only document in that
 chain that moves **no stock at all** (see §5).
@@ -22,9 +30,14 @@ floating MRP allocator — pooled by (warehouse, item_code, variant_key),
 constrained by one-batch-per-SOFA-set (bedframes exempt), ordered by delivery
 date then doc_no. Nothing persisted before the DO may bind execution:
 `purchase_order_items.so_item_id` and the mig-0235 allocation sub-lines are
-**procurement provenance** — they record why we bought, they are displayed and
-audited, and they influence NO cap, NO batch expectation, NO coverage
-precedence.
+**procurement provenance** — they record why we bought, and they are displayed
+and audited. That is the TARGET state; the demotion is staged and **none of the
+three has landed**. Today `so_item_id` still drives all three execution paths:
+the per-line over-convert cap (`soLineOverConvertRefusal` →
+`409 qty_exceeds_remaining`, `mfg-purchase-orders.ts:2956-2975`), the drop-ship
+expected batch (`dropship-batch.ts:77-126`), and `/po-so-coverage` layer (b)
+precedence (`po-so-coverage.ts:245-256`). The router concedes it inline at
+`mfg-purchase-orders.ts:2884-2887`.
 
 At DO creation the allocator decides binding **live** — including which incoming
 PO batch a ship-before-arrival commits to — and records it on the DO line
@@ -69,14 +82,27 @@ visibly live — including the Relationship Map, which "会跳动" by design.
 ### Screens
 | Surface | File | Notes |
 |---------|------|-------|
-| Desktop list | `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx` | Server-paginated, `pageSize = 50` fixed (`:584`), page index in `?page=`. Renders the server page verbatim — no client re-filter. |
+| Desktop list | `frontend/src/pages/scm-v2/PurchaseOrdersListV2.tsx` | Server-paginated. Page size is operator-chosen and persisted per user (`useLocalStorage("scm:perpage:purchase-orders", 50)`) — 50 is the default, not a constant; the server clamps to 1..100. Page index in `?page=`. Renders the server page verbatim — no client re-filter. |
 | Desktop detail (read) | `frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx` | **READ-ONLY by design** (`:334`). A thin router: `?edit=1` forwards to the legacy editor (`:351`). |
 | Desktop detail (edit) | `frontend/src/pages/scm-v2/PurchaseOrderDetail.tsx` | The inline editor + the SO-amendment "Revision ready" banner + Revisions tab. Lazy-loaded (`PurchaseOrderDetailV2.tsx:341`). |
 | Desktop new | `frontend/src/pages/scm-v2/PurchaseOrderNew.tsx` | |
 | Desktop from-SO | `frontend/src/pages/scm-v2/PurchaseOrderFromSo.tsx` | Multi-select picker over `/outstanding-so-items`. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | Generic screen; the PO config is `MODULE_CONFIGS["mfg-purchase-orders"]` (`:1198-1237`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Generic; PO config `:354`, PO status actions `:515-532`. |
-| Mobile convert (SO→PO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "po"` (`:75`). |
+| Mobile convert (SO→PO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "po"`. Offered only to a caller who passes `canOperatePurchaseOrders` — see below. |
+
+**The mobile `+` is an OPERATE gate (2026-08-14).** `MobileModuleList` renders the
+`+` on the presence of an `onNew` callback alone, and `MobileConvertWizard` imports
+no auth of its own — so withholding `onNew` is the only thing that keeps the wizard
+away from a caller who may not write. `MobileApp.tsx` gated the DO and SI convert
+targets and then fell through to a literal `: true`, which covered this one: a
+`view`-level holder of `scm.procurement.po` was offered the `+`, filled in the whole wizard, and
+met the area guard's 403 at the end of it. The gate is now
+`canOperatePurchaseOrders(can, pageAccess)` (`frontend/src/auth/salesAccess.ts`), which mirrors
+`scm/middleware/area-guard` — `edit` on the area for POST/PATCH/PUT/DELETE, with
+`*` always passing. The target chain has no default arm, so a new ConvertTarget
+that forgets its gate will not typecheck.
+
 
 Desktop routes are declared in `frontend/src/App.tsx:516-519`, all behind
 `<ScmGuard area="scm.procurement.po">`.
@@ -112,12 +138,12 @@ PO-specific facts:
    `"mfg-purchase-orders-paged"`, which is a *different* first segment and so
    fails `isListKey` (`:113`). A cold open of the PO list therefore shows a real
    load, unlike the SO list.
-2. **Mobile's shared-invalidation entry omits the paged root.**
-   `frontend/src/mobile/sharedInvalidate.ts:71` maps `"mfg-purchase-orders"` to
-   `["mfg-purchase-orders", "mfg-purchase-order-detail"]` — no
-   `"mfg-purchase-orders-paged"`, unlike the DO / SI / GRN entries either side of
-   it (`:69-72`). A mobile PO status change does not invalidate the desktop
-   paged list. Stated as observed, not as a recommendation.
+2. **Mobile's shared-invalidation entry carries all three PO roots** —
+   `frontend/src/mobile/sharedInvalidate.ts:73-80` maps `"mfg-purchase-orders"`
+   to `["mfg-purchase-orders", "mfg-purchase-orders-paged",
+   "mfg-purchase-order-detail"]`, so a mobile PO status write DOES invalidate the
+   desktop paged list. PO was the one document module missing `-paged`; the
+   entry's own comment names the bug this paragraph used to describe.
 
 ---
 
@@ -126,12 +152,15 @@ PO-specific facts:
 All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 `/api/scm/mfg-purchase-orders` (`backend/src/scm/index.ts:237`) behind
 `scmAreaGuard('scm.procurement.po')` (`:236`) — GET needs `view`, writes need
-`edit` on that area.
+`edit` on that area, **but only for a caller whose position is
+`scm_l2_configured`**. Anyone else hits the no-lockout fallthrough
+(`area-guard.ts:168-172`) and passes on the coarse `scm.access` umbrella alone,
+with no per-area level consulted.
 
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:374` | List. `?page=` opts into pagination + `statusCounts`; without it the legacy `{ purchaseOrders }` array. |
-| GET | `/outstanding-so-items` | `:537` | SO lines still convertible (`qty - po_qty_picked > 0`) — the From-SO picker. |
+| GET | `/outstanding-so-items` | `:537` | SO lines carrying an uncovered POOLED shortage — `computeMrp` runs and a line shows only when `shortageQty > 0`, so a line covered by stock or an open PO drops off and returns when that cover is consumed. `qty - po_qty_picked` is the FALLBACK, used only when the MRP compute throws. Excludes CANCELLED / DRAFT / ON_HOLD. The From-SO picker. |
 | GET | `/:id` | `:693` | Header + items + `has_children`. |
 | GET | `/:id/linked` | `:859` | Downstream GRNs / PIs / PRs (three parallel reads). |
 | GET | `/:id/revisions` | `:896` | `po_revisions` snapshots for the Revisions tab. |
@@ -140,18 +169,32 @@ All under `backend/src/scm/routes/mfg-purchase-orders.ts`, mounted at
 | POST | `/:id/items/:itemId/allocations` | | Add one slice `{ qty, soItemId\|null }` (null = STOCK; STOCK skips the SO gate, qty-capped insert). A non-null `soItemId` must be the same code AND same SPEC as the PO line — `soLinkTargetRefusal` returns 409 `so_link_material_mismatch` / `so_link_spec_mismatch` (owner 2026-08-08). seq auto-assigned dense. |
 | PATCH | `/:id/items/:itemId/allocations/:allocationId` | | Edit a slice (`qty?`, `soItemId?` — explicit null → STOCK; absent keeps). |
 | DELETE | `/:id/items/:itemId/allocations/:allocationId` | | Remove a slice + resequence the survivors dense 1..n. |
-| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ signedUrl, thumbUrl, expiresAt }`). READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey/signed` | | Trade one key from the line's `photo_urls` for a short-lived signed R2 GET URL (`{ mode:'signed', signedUrl, thumbUrl, expiresAt }`). Falls back to `{ mode:'proxy', proxyPath, … }` — never 500 — when signing is impossible. READ-ONLY — see §4 *Line photos*. |
+| GET | `/:id/items/:itemId/photos/:photoKey` | | PROXY: streams the object from the R2 binding, no S3 credential needed. Same authz as `/signed`, company scoping included. Behind the auth gate, so NOT usable as a bare `<img src>` — see §4 *Line photos*. |
 | POST | `/` | `:911` | Create (`asDraft: true` → DRAFT, else SUBMITTED). SO-sourced lines (carrying `soItemId`, e.g. the desktop New-PO-from-SO flow) are capped at the SO line's remaining (`qty - po_qty_picked`): over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (pre-write guard, marks idempotency no-write). Manual lines (no `soItemId`) unaffected. |
-| POST | `/from-sos` | `:2139` | Batch convert whole SOs; groups by supplier, can emit N POs. |
+| POST | `/from-sos` | `:2139` | Batch convert whole SOs, emitting N POs. The bucket key is per-CATEGORY (owner 2026-07-17, `po-grouping.ts:69-90`): sofa/bedframe per (warehouse, supplier, SO), mattress per (warehouse, supplier, 7-day delivery window), everything else per the caller's `combined \| per-so` toggle. Warehouse is always in the key, which is what keeps the header's `purchase_location_id` unambiguous. |
 | POST | `/:id/convert-from-so` | `:2694` | Append SO lines onto an existing PO. |
 | PATCH | `/:id` | `:2219` | Header edit. |
+| POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. A line carrying `soItemId` is capped at the SO line's remaining exactly like `POST /` — over-convert → 409 `qty_exceeds_remaining` unless `confirmOverConvert: true` (2026-08-11; see *Binding a PO line to its source SO line*). |
+| PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. |
+| PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2400` / `:2504` / `:2619` | Line CRUD. |
 | PATCH | `/:id/submit` | `:2904` | Legacy no-op/echo — returns 409 unless already SUBMITTED. Also 409 `purchase_location_id_required` if the PO has no ship-to warehouse (2026-08-02). |
 | PATCH | `/:id/confirm` | `:2998` | **The commit**: DRAFT → SUBMITTED. Blocked 409 `purchase_location_id_required` (via `poWarehouseGap`) if the header `purchase_location_id` is blank AND any line has no `warehouse_id` — a warehouse-less PO can't go live because its GR would receive into the wrong warehouse (owner 2026-08-02). |
 | POST | `/:id/send-to-supplier` | `:3019` | Email the PO PDF. Fail-closed on the `purchase_order` email channel (`:3032`). |
 | PATCH | `/:id/cancel` | `:3182` | → CANCELLED; releases SO quota AND clears the line's mig-0235 allocation sub-lines (a cancelled PO attributes nothing — 2026-08-02). |
-| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. |
-| DELETE | `/:id` | `:3345` | Hard delete, **CANCELLED only** (`:3362`). |
+| PATCH | `/:id/reopen` | `:3276` | CANCELLED → SUBMITTED; re-claims SO quota. Allocation sub-lines are NOT restored (they were cleared on cancel); the coarse `so_item_id` link remains, re-split via the allocation editor if needed. **Since 2026-08-13 it also runs `poWarehouseGap` and stamps `submitted_at`** — reopen was the third door to SUBMITTED and the only one with no warehouse gate, so cancel-then-reopen turned a warehouse-less DRAFT into a live, GR-receivable PO. |
+| POST | `/bulk-supplier-date` | — | **Was missing from this table until 2026-08-13.** Sets ONE supplier-REVISED delivery-date slot (`slot` 2/3/4 → `supplier_delivery_date_2..4`) across up to 100 POs. It never touches `supplier_id` and never touches `expected_at`. `applyToLines` **defaults to TRUE**, so unless the caller opts out it cascades onto every line's date as well. A downstream-locked or foreign-company PO is reported in `skipped`, never written; each updated PO still gets its own audit row. |
+
+**There is no document-level DELETE.** `DELETE /:id` existed until 2026-08-11 and
+hard-purged a CANCELLED PO. It was removed under the owner's rule
+不可以删只可以 cancel: a PO is cancelled, never deleted. `PATCH /:id/cancel` is
+the terminal action and the row stays, which is also what makes an AutoCount
+reconcile possible — a purged PO has nothing to reconcile against. Line-level
+`DELETE /:id/items/:itemId` and the allocation DELETE are unaffected; so are the
+create-time rollback deletes inside `POST /` and `POST /from-sos`, which remove a
+document that never successfully existed (supabase-js has no transaction, and
+they are the only thing preventing a headerless orphan).
 
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
 UUID**; use `houzsUser.id` for the public bigint.
@@ -179,11 +222,15 @@ UUID**; use `houzsUser.id` for the public bigint.
      (`:467-474`), over the same company + supplier filter but **without** status,
      search or paging. (Seven, not six: the `outstanding` roll-up is counted
      separately rather than derived, so the pill and the filter share one source.)
-3. **Enrichment — exactly ONE extra query** (`:496-512`): all non-cancelled GRNs
-   for the listed PO ids, carrying `id` + `grn_number`. It powers both
-   `has_children` (the downstream lock) and the "GRN No" column, so the two are
-   one round trip. `transfer_to_grns` is `{ id, grnNumber }[]` — the id is what
-   lets the column link to `/scm/grns/:id`.
+3. **Enrichment — TWO waves.** First one GRN query (`:496-512`): all
+   non-cancelled GRNs for the listed PO ids, carrying `id` + `grn_number`. It
+   powers both `has_children` (the downstream lock) and the "GRN No" column, so
+   those two are one round trip. `transfer_to_grns` is `{ id, grnNumber }[]` —
+   the id is what lets the column link to `/scm/grns/:id`. Then a parallel pair
+   (`:573-576`): `resolvePoSoCoverageForPos` and `resolveDeliveredDosForPos`,
+   which together add roughly a dozen reads **and one full `computeMrp` run per
+   list request** (`po-so-coverage.ts:787`). That MRP run, not the row fetch, is
+   the list's dominant cost.
 4. **Assemble** (`:513-517`) — `has_children` + `transfer_to_grns` +
    `assigned_sos` / `assigned_so_linked` (`resolvePoSoCoverageForPos`) +
    **`delivered_dos`** (`resolveDeliveredDosForPos`) stamped per row; response is
@@ -219,9 +266,9 @@ UUID**; use `houzsUser.id` for the public bigint.
   (`:3214`). Releases every converted SO line's quota via `recomputeSoPicked`
   (`:3251-3259`).
 - **Reopen** (`:3276`). CANCELLED → SUBMITTED only (`:3294`); re-claims the quota.
-- **Delete** (`:3345`). CANCELLED only; items cascade by FK (`:3376`); the audit
-  row snapshots number/supplier/total because nothing can be joined back to
-  afterwards (`:3380-3400`).
+- **Delete** — GONE (2026-08-11). CANCELLED is terminal. The removed endpoint's
+  own comment called the audit row it left behind "the ONLY remaining evidence
+  that the PO existed", which is the argument against it, not for it.
 
 ### The two guards worth knowing
 
@@ -256,6 +303,17 @@ it, but a hand-typed line never could.
   active company**, must not be cancelled, and its `item_code` must equal the PO
   line's `material_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
+  proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
+  line paths take an operator-supplied qty, and until this landed neither capped
+  it, so a line could be appended (or edited upward) against an SO line that was
+  already fully converted and re-order the goods. Now capped at
+  `qty - po_qty_picked` → `409 qty_exceeds_remaining`, overridable with
+  `confirmOverConvert: true` (the same escape hatch `POST /` documents).
+  On **edit**, the line's own stored qty is credited back while it stays on the
+  SAME SO line — otherwise re-saving an already-bound line would 409 against
+  itself; a **rebind** onto a different SO line gets no such credit.
+  Repeat conversion stays legal: the ceiling is capped, never the second convert.
 - **UI:** the PO detail edit grid's `PoLineCard` renders an optional *Source
   Sales Order line* picker plus a `SO LINKED` / `NOT LINKED` badge. Candidates
   come from the existing `GET /mfg-purchase-orders/outstanding-so-items` shortage
@@ -374,6 +432,78 @@ above refused. Idempotent (linked or already-allocated lines skip); one SO
 line is never double-served (links and allocations both count as taken). Rule:
 `planFifoAttribution`, `backend/scripts/lib/doc-evidence-core.mjs`.
 
+### The MIGRATED purchase orders — a fourth source of evidence, above all three
+
+The tiers above recover a link from what the ERP itself recorded. A purchase
+order imported from AutoCount has something stronger: AutoCount's own
+`PODTL.FromSODtlKey`, which names the sales-order line the PO was raised from as
+a matter of record. `backend/scripts/repair-migrated-po-lines.mjs` (workflow
+**Repair migrated PO lines (dedication, dates, line key)**) walks it, and in the
+same pass fills the two other things those rows lost. All three are one repair
+because they are one row and one cause.
+
+| What it writes | Where it comes from |
+|---|---|
+| `so_item_id` | `PODTL.FromSODtlKey` -> the AutoCount sales order -> the ERP line with the matching code, through the SHARED taker `scripts/lib/so-line-dedication.mjs` — so a sales-order line is claimed exactly once across every importer and this repair. |
+| `delivery_date` | `PODTL.DeliveryDate`, via `scripts/lib/ac-po-line.mjs`. |
+| `linked_ac_dtlkey` | `PODTL.DtlKey` — AutoCount's PRIMARY KEY for the line. |
+| `purchase_orders.expected_at` | Earliest of the header's own line dates, the same rule `backfill-po-expected-at.mjs` and the SO->PO convert use. |
+
+Matching an already-imported ERP row back to its AutoCount line is done from
+`supplier_sku`, which carries AutoCount's `ItemCode` verbatim (a sofa line
+carries `<ItemCode> <compartment>`); the rule lives in
+`scripts/lib/ac-po-line-match.mjs`. **One AutoCount sofa line owns SEVERAL ERP
+rows** — one per compartment — and all of them carry its `DtlKey`, which is why
+`linked_ac_dtlkey` is indexed and never unique. Where one document has several
+AutoCount lines sharing an ItemCode they are split further on `(qty, Desc2)`.
+A group whose two sides do not split the same way is refused whole.
+
+**Where even `(qty, Desc2)` does not separate them, the ERP rows are identical
+but the AUTOCOUNT LINES USUALLY ARE NOT — and the AutoCount side is where every
+written value comes from.** All 5 such buckets in the committed snapshots carry
+different `FromSODtlKey`s, and on `PO-000290` the two keys name two different
+PRODUCTS on one sales order. So a bucket is zipped only when its AutoCount lines
+agree on `FromSODtlKey` and `DeliveryDate`; otherwise it is REFUSED with both
+candidates printed. On today's data that refuses all 5 and repairs none of their
+rows, which is the correct outcome — **a wrong `linked_ac_dtlkey` is strictly
+worse than NULL**, because NULL tells the write-back to CREATE while a wrong one
+makes `AcSyncService` APPEND a line instead of editing the operator's.
+
+For the same reason the dedication never crosses products: the sales-order
+line's own ERP code is only tried when it names the same product as the PO line
+(or that line's sofa placeholder). A cross-product candidate is left blank and
+listed for the owner. Which codes a row may claim is one function —
+`dedicationCandidates()` in `scripts/lib/so-line-dedication.mjs`, beside the
+taker — so the rule and the script cannot drift apart.
+
+A cancelled sales-order line is never offered, and every query that builds the
+taker pool reads the column as **nullable** — `COALESCE(cancelled, false) =
+false`, the same way `check-po-so-links.mjs` (the checker for this exact link)
+reads it. A bare `cancelled = false` is NULL for a NULL row, which silently
+drops it out of a **claim-once** pool: that both under-repairs and hands a
+DIFFERENT line to the PO row that follows.
+
+Every UPDATE re-asserts that the column is still NULL, so the repair is
+idempotent and never overwrites a value a human has set by hand. It does NOT
+recompute `po_qty_picked` — `recomputeSoPicked` only ever runs from a route
+handler — so the SO lines it dedicates keep reading as still-needing-ordering in
+the From-SO picker (`qty - po_qty_picked > 0`, `/outstanding-so-items`) until
+something touches them. **That is a duplicate-PO risk**: the line is now bound to
+a purchase order, but the picker still offers it, so a second PO can be raised
+for stock already on order. `backfill-po-so-item-links.mjs` has the identical
+gap, so this is precedent rather than a regression. The DRY-RUN lists every
+affected SO line by id, so the exposure is enumerable rather than estimated.
+
+Because it may only write into a NULL, the repair is **silent about rows another
+writer already filled** — and on 2026-08-10 `backfill-ac-line-keys.mjs` filled
+275 of them by a weaker rule. Silence there would be a choice not to look, so the
+script also AUDITS what it may not touch: it compares every stored
+`linked_ac_dtlkey` against the one it derives and prints each disagreement with
+the ERP row's own `Desc2` beside the AutoCount line's. It never writes or reverts
+them. A wrong `DtlKey` makes `AcSyncService` APPEND a line to the live account
+book instead of editing the operator's, so each disagreement is an owner ruling,
+not a thing for a script to decide.
+
 ### The SO-quota counter — `recomputeSoPicked` (`:2352-2398`)
 
 Live-count, not arithmetic: it re-sums `purchase_order_items.qty` per
@@ -395,7 +525,8 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_centi` / `tax_centi` / `total_centi`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below). |
+| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
+| `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
 | `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
@@ -430,6 +561,31 @@ The importer's append (`ARRAY(SELECT DISTINCT unnest(COALESCE(photo_urls,'{}') |
 R2 objects — one photo, two documents, no duplicated bytes and no R2 round-trip
 inside the convert. Consequence, deliberate: deleting a photo from the SO line
 removes the object, so it also leaves any PO raised from that line.
+
+**Reading a photo: signed first, proxy fallback (2026-08-10).** There are two
+read routes and the difference is not cosmetic.
+
+| Route | Mints | Needs | Usable as `<img src>`? |
+|---|---|---|---|
+| `/photos/:photoKey/signed` | presigned S3 URL | `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` + `R2_ENDPOINT` (wrangler SECRETS) | YES — signature travels in the query string |
+| `/photos/:photoKey` (proxy) | the bytes | the `SO_ITEM_PHOTOS` binding only | **NO** — see below |
+
+Those three secrets have never been provisioned in production, so
+`soItemPhotoBindings()` throws and `/signed` used to answer
+`500 {"error":"signing_failed"}` for every photo. It now falls back to the proxy
+and returns `200 { mode: 'proxy', proxyPath, thumbProxyPath, expiresAt: null,
+reason }`. Signing is still attempted first and still used when it works —
+signed URLs exist so a grid of thumbnails does not pay a Worker invocation per
+tile, and the fallback must not become the default read path.
+
+**The proxy path is NOT an `<img src>`.** It sits behind the global auth gate,
+which reads the bearer token from the `Authorization` HEADER only; there is no
+cookie session in this app. A browser attaches no header to an `<img>`, so
+pointing one at the proxy 401s. The client must fetch it with the authed client,
+read the response as a Blob, and hand `URL.createObjectURL(blob)` to the `<img>`
+(revoking it on unmount). This is why the fallback returns `proxyPath` and
+deliberately leaves `signedUrl` undefined — populating it would swap a visible
+500 for an invisible 401. See `backend/src/scm/lib/photoProxyFallback.ts`.
 
 **Per line, never deduplicated across a PO.** One sofa build is several
 compartment lines that legitimately share one build photo; folding them would
@@ -474,9 +630,11 @@ file's own audit header says it plainly: *"No REVERSE: a PO posts nothing to the
 ledger, so there is nothing to contra"* (`:114`).
 
 What the PO *does* move at confirm is a **counter, not stock**:
-`mfg_sales_order_items.po_qty_picked` (`recomputeSoPicked`, `:2988`), which is
-what drops a line out of the From-SO picker. Cancel/reopen/delete move the same
-counter back and forth.
+`mfg_sales_order_items.po_qty_picked` (`recomputeSoPicked`, `:2988`), the base
+for the over-convert cap. It no longer decides From-SO picker visibility — the
+pooled MRP shortage does (`/outstanding-so-items`, §2). Cancel and reopen move
+the counter back and forth; so do line delete and line edit. There is no
+document delete on a PO.
 
 The inventory IN for purchased goods happens one document later, at **GRN post**
 (`docs/modules/grn.md` §5).
@@ -487,22 +645,33 @@ The inventory IN for purchased goods happens one document later, at **GRN post**
 
 | Trigger | What stops being editable | Enforced at |
 |---------|---------------------------|-------------|
-| Any non-cancelled **GRN** exists on the PO | Header PATCH, line add, line edit, line delete, **and cancel** | `poHasDownstream` called at `:2228`, `:2412`, `:2512`, `:2624`, `:3208` |
+| Any non-cancelled **GRN** exists on the PO | Header PATCH, line add, line edit, line delete, **and cancel** | `poHasDownstream`, now imported from `scm/lib/downstream-lock.ts` (see below) |
 | Status `RECEIVED` | Cancel refused outright | `:3200` |
 | Status `RECEIVED` or `CANCELLED` | Whole page read-only (frontend) | `PurchaseOrderDetail.tsx:254-255` — `isEditableStatus` is DRAFT / SUBMITTED / PARTIALLY_RECEIVED; `isLocked = !isEditableStatus || hasChildren` |
-| Status ≠ `CANCELLED` | Hard DELETE refused | `:3362` |
+| Any status | Document-level DELETE — the endpoint no longer exists (2026-08-11) | n/a |
 | Drop-ship DO shipped against this PO's expected batch | Cancel refused | `:3214` |
 | Status `DRAFT` or `CANCELLED` | Send-to-supplier refused | `poSendRefusalForStatus`, `:3052` |
 
 The frontend drops out of edit mode automatically if the PO locks while the user
 is editing (`PurchaseOrderDetail.tsx:261-267`).
 
+**The GRN lock is also the AutoCount rule.** Owner, 2026-08-10:
+*"已经转到下游的单据, AutoCount 不许取消/改动 ... 是的 我们也是要这样"* —
+AutoCount refuses to cancel or edit a document it has already transferred
+downstream, so the ERP must refuse the same or the two systems diverge the
+first time someone edits a received PO. `poHasDownstream` used to be a private
+copy inside this router; it now lives in `backend/src/scm/lib/downstream-lock.ts`
+alongside its SO / DO / GRN siblings, with the same signature, the same JSON and
+the same 409 — and, for the first time, a unit test. See
+`docs/modules/autocount-writeback.md` §5.
+
 **Amendment path — yes.** The PO is revised **in place** with a bumped `revision`
 column, and the prior version is snapshotted into `scm.po_revisions`. The engine
 is `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:725`), driven by the
 SO-amendment approve-PO gate; `GET /:id/revisions` (`:896`) feeds the Revisions
-tab and the detail header shows a "Revised · rev N" badge when `revision > 1`
-(`:346-349`).
+tab. There is no "Revised" badge: the revision rides the DOC NUMBER itself —
+`poDisplayNumber()` (`vendor/scm/lib/po-status.ts:37-44`) renders
+`<po_number>_R<revision-1>` when `revision > 1`, on screen and on every print.
 
 ---
 
@@ -516,7 +685,7 @@ columns at all.
 | `unit_price_centi` | line | Live — operator-editable until the PO locks. This is the agreed supplier price. |
 | `discount_centi` | line | Live. Clamped so `line_total_centi = max(0, qty*unit - discount)` (`:2432`). |
 | `line_total_centi` | line | Derived on every line write; rolls into the header. |
-| `unit_cost_centi` | line | Written at create from the supplier cost matrix (`computeMfgPoUnitCost`, `shared/mfg-pricing`) / supplier sofa-combo spread (`loadSupplierSofaCombos`, `:78`). |
+| `unit_cost_centi` | line | Written by the **SO→PO convert paths only** — `computeMfgPoUnitCost` (`shared/mfg-pricing`) plus the supplier sofa-combo spread (`loadSupplierSofaCombos`, `:78`). Plain `POST /` writes no `unit_cost_centi` at all, and add-line / line-edit store whatever `unitCostCenti` the client sends, unvalidated. |
 | `subtotal_centi`, `tax_centi`, `total_centi` | header | Derived from lines. |
 | `currency` | header | MYR / RMB / USD / SGD (`VALID_CURRENCIES`, `:299`). **The PO carries no `exchange_rate`** — FX→MYR conversion happens at the GRN, using the GRN's own rate (`grns.ts:400`). |
 | `received_qty` | line | Not money, but the column the money chain hangs off: written only by `recomputePoReceived` (`grns.ts:672`). |
@@ -537,22 +706,31 @@ A rule change to the PO touches both surfaces. The pairs:
 | List columns / filters | `pages/scm-v2/PurchaseOrdersListV2.tsx` | `mobile/MobileModuleList.tsx` `MODULE_CONFIGS["mfg-purchase-orders"]` (`:1198`) |
 | Server pagination opt-in | the `usePurchaseOrdersPaged` hook | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` set (`:328`) |
 | Detail fields | `pages/scm-v2/PurchaseOrderDetailV2.tsx` (read) + `PurchaseOrderDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:354` |
-| Status actions (Confirm / Cancel / Reopen / Delete) | `PurchaseOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx:515-532` |
+| Status actions (Confirm / Cancel / Reopen) | `PurchaseOrderDetailV2.tsx` action bar | `mobile/MobileModuleDetail.tsx` `mfg-purchase-orders` case — Delete was removed from BOTH surfaces on 2026-08-11 |
 | SO→PO conversion | `pages/scm-v2/PurchaseOrderFromSo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "po"`) |
 | Line allocations (mig 0235) | `PurchaseOrderDetailV2.tsx` Allocations column + `components/scm-v2/PoLineAllocationsModal.tsx` (editor) | `mobile/MobileModuleDetail.tsx` `LineItem` chips — DISPLAY-ONLY (the phone PO surface has no per-line editor, same precedent as the SO-link picker) |
 | Cache invalidation after a write | the mutation hooks in `vendor/scm/lib/suppliers-queries.ts` | `mobile/sharedInvalidate.ts:71` |
-| Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — there is no mobile PO detail surface at all (only PO amendments) |
+| Line photos (mig 0274) | NOT BUILT — see below | NOT BUILT — the mobile PO detail surface DOES exist (`MobileModuleDetail` config, Submit/Cancel/Reopen actions, a line list already rendering the mig-0235 allocation chips); it renders no photos, and there is no per-line editor to hang an uploader on |
 
 **Line photos are backend-only today, deliberately.** The keys are on the detail
-row and the signed-URL route serves them, but no surface renders them yet. The
-SO's `PhotoThumb` is ~110 lines defined INSIDE
-`vendor/scm/components/SoLineCard.tsx`, hard-wired to
-`fetchSoItemPhotoSignedUrl(docNo, itemId, key)` plus two module-level caches
-(`signedUrlCache`, `thumbMissingKeys`) and its own CSS-module classes. Reusing it
-for the PO means extracting it with an injectable fetcher, adding a PO signed-URL
-query, threading `photoUrls` through the PO detail type into `PoLineCard.tsx`, and
-building the phone surface that does not exist. That is a UI project, not a field
-add — do it as its own PR, extracting the thumb rather than copying it.
+row and both the signed-URL route and the proxy route serve them, but no PO
+surface renders them yet.
+
+The extraction this section used to ask for HAS HAPPENED on the SO side: the
+resolver is no longer buried in `SoLineCard.tsx`. It lives in
+`frontend/src/vendor/scm/lib/so-line-photo.ts` as `useSoLinePhoto`, and both SO
+surfaces (the edit card's `PhotoThumb`, the V2 read-only
+`components/scm-v2/SoLinePhotoStrip.tsx`) are thin chrome over it. Read that
+file's header before touching it — three production regressions have lived in
+that state machine.
+
+What is still missing for the PO is the FETCHER SEAM, not the state machine:
+`useSoLinePhoto` calls `fetchSoItemPhotoSignedUrl` / `fetchSoItemPhotoBlob`
+directly, and the PO's routes are `/mfg-purchase-orders/:id/items/:itemId/…`.
+So the remaining work is: make the two fetchers injectable (or add a PO-shaped
+sibling that passes the PO pair), thread `photoUrls` through the PO detail type
+into `PoLineCard.tsx`, and build the phone surface that does not exist. Still
+its own PR — but a seam plus wiring now, not a rewrite. Do NOT copy the hook.
 
 Shared, so a change lands on both at once: the backend route, and the
 `suppliers-queries.ts` hooks (mobile's convert wizard and POD screens call
@@ -583,3 +761,32 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## `so_item_id` on a MIGRATED purchase-order line (2026-08-11)
+
+`backfill-po-so-item-links.mjs` resolves this link from the PO's `From SOs:`
+note, written at raise time by the SO -> PO convert. A migrated PO has no such
+note — measured, not assumed: of the 181 company-1 sofa/bedframe PO lines with
+a NULL `so_item_id`, the notes of **zero** name a sales order. That script's
+three tiers are structurally blind to the cutover corpus.
+
+`repair-po-so-links-autocount-text.mjs` covers it with the evidence a migrated
+line does carry, under the same 1:1 discipline: the line sits on a purchase
+order where OTHER lines are linked (so it is not a stock buy), and exactly one
+unclaimed, non-cancelled SO line carries the same item code AND the same
+AutoCount `description2`.
+
+Three things it will not do, and the reasons are the rule rather than caution:
+
+- **168 lines on POs where nothing is linked are left alone.** A stock purchase
+  is not raised for any order. Per `docs/modules/document-traceability.md` this
+  column is procurement *provenance* and binds no execution; filling it would
+  invent a dedication that never existed.
+- **Anything that does not pair 1:1 is reported, never written.** A guess
+  stamped into `so_item_id` is indistinguishable from a fact afterwards.
+- **A wrong link is corrected to NULL when the right target is not certain.**
+  `scm.purchase_order_items` has no `cancelled` column (unlike
+  `scm.mfg_sales_order_items`), so there is no third state to park it in.
+How this document's lines relate to the SO / PO / GRN / DO it was copied from,
+which columns the migrated writer did and did not copy, and what a correction
+applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.

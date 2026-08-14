@@ -1623,7 +1623,9 @@ export const MaintenanceTab = ({
 
   // Count fabric_trackings rows for the left-rail "Fabrics (N)" badge.
   // Lightweight query (cached 30s) — uses the same hook as the panel itself.
-  const fabricsList = useFabricTrackings();
+  // Retired rows are excluded so the badge counts fabrics you can still use.
+  // Before this it read 827 while 88 of those were supersede tombstones.
+  const fabricsList = useFabricTrackings({ includeRetired: false });
   const fabricsCount = fabricsList.data?.length ?? 0;
 
   // PR #208 — draft beats supplier-scope-resolved beats master-fallback.
@@ -1706,13 +1708,22 @@ export const MaintenanceTab = ({
         resolved.data?.data?.sofaCompartments ?? masterFallback.data?.data?.sofaCompartments,
       );
       const next = maintValues(draft.sofaCompartments);
+      /* A rename is an IN-PLACE edit, so the row count cannot change. When it
+         does, the save is an add and/or a delete, and comparing by INDEX reads
+         the shift as a rename: deleting `1B` and `2B` while adding `DB` in the
+         same save slid DB up into 1B's old slot and offered to cascade
+         "1B -> DB" across SKU codes, sales orders INCLUDING HISTORY, delivery
+         orders, invoices, GRN/PO lines, Modular ticks, combos and quick picks —
+         with no dry run (owner, 2026-08-10). Length equality is the guard: on a
+         length change, do nothing and let the plain save handle it. */
       const renames: Array<{ from: string; to: string }> = [];
-      const len = Math.min(baseline.length, next.length);
-      for (let i = 0; i < len; i++) {
-        const from = (baseline[i] ?? '').trim();
-        const to = (next[i] ?? '').trim();
-        if (!from || !to || from === to) continue;
-        if (!next.includes(from) && !baseline.includes(to)) renames.push({ from, to });
+      if (baseline.length === next.length) {
+        for (let i = 0; i < baseline.length; i++) {
+          const from = (baseline[i] ?? '').trim();
+          const to = (next[i] ?? '').trim();
+          if (!from || !to || from === to) continue;
+          if (!next.includes(from) && !baseline.includes(to)) renames.push({ from, to });
+        }
       }
       if (renames.length > 0) {
         const summary = renames.map((r) => `${r.from} → ${r.to}`).join('\n');
@@ -3830,8 +3841,12 @@ const CodeFormatPanel = ({
 
 const FabricsMaintenancePanel = () => {
   const [search, setSearch] = useState('');
+  /* This panel is a working list, not the master admin surface — the Fabric
+     Converter is, and that is where retired rows stay visible (and toggleable).
+     Here they are simply out of the way. */
   const { data, isLoading, error } = useFabricTrackings({
     search: search.trim() || undefined,
+    includeRetired: false,
   });
   const rows = data ?? [];
 
@@ -4444,6 +4459,10 @@ const SpecialsMaintenancePanel = ({
 
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<SpecialAddonInput[] | null>(null);
+  // Rows taken off THIS category but kept alive under their others. They are no
+  // longer in the draft, so the snapshot has to carry them explicitly or /save
+  // would retire a code that is still live elsewhere. See confirmRemove.
+  const [detached, setDetached] = useState<SpecialAddonInput[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -4458,10 +4477,11 @@ const SpecialsMaintenancePanel = ({
 
   const startEdit = () => {
     setError(null);
+    setDetached([]);
     setDraft(viewRows.map(rowToSpecialInput));
     setEditMode(true);
   };
-  const cancelEdit = () => { setDraft(null); setEditMode(false); setError(null); };
+  const cancelEdit = () => { setDraft(null); setDetached([]); setEditMode(false); setError(null); };
 
   const patchRow = (i: number, p: Partial<SpecialAddonInput>) =>
     setDraft((d) => (d ? d.map((r, idx) => (idx === i ? { ...r, ...p } : r)) : d));
@@ -4519,10 +4539,17 @@ const SpecialsMaintenancePanel = ({
     // shared across categories is taken from the draft when present (the editor
     // owns it here), else preserved from the live set.
     const draftByCode = new Map(draft.map((r) => [r.code.trim(), r]));
+    // Detached rows are still inCat in the LIVE set, so otherRows would skip
+    // them; carry them explicitly or /save retires a code that is live elsewhere.
+    const detachedByCode = new Map(detached.map((r) => [r.code.trim(), r]));
     const otherRows = allRows
-      .filter((r) => !inCat(r) && !draftByCode.has(r.code))
+      .filter((r) => !inCat(r) && !draftByCode.has(r.code) && !detachedByCode.has(r.code))
       .map(rowToSpecialInput);
-    const snapshot: SpecialAddonInput[] = [...otherRows, ...draft.map((r) => ({ ...r, code: r.code.trim() }))];
+    const snapshot: SpecialAddonInput[] = [
+      ...otherRows,
+      ...detached.map((r) => ({ ...r, code: r.code.trim() })),
+      ...draft.map((r) => ({ ...r, code: r.code.trim() })),
+    ];
 
     try {
       await saveAll.mutateAsync({ effectiveFrom, addons: snapshot });
@@ -4533,7 +4560,26 @@ const SpecialsMaintenancePanel = ({
     }
   };
 
+  /* A code carrying more than one category is SHARED by both panels. Dropping it
+     from the draft drops it from the snapshot, and /save retires every live code
+     the snapshot omits - so "remove" on a Sofa add-on that also carries BEDFRAME
+     used to retire it on Sofa as well. Detach the category instead: the row stays
+     active, keeps its other categories, and every order naming the code still
+     resolves it. Only a row that belongs to this category ALONE is a real retire. */
   const confirmRemove = async (i: number, lbl: string) => {
+    const row = draft?.[i];
+    if (!row) return;
+    const others = row.categories.filter((x) => x !== category);
+    if (others.length > 0) {
+      if (!(await askConfirm({
+        title: `Remove "${lbl || 'this add-on'}" from ${category}?`,
+        body: `It stays available under ${others.join(', ')}, and existing orders are unaffected.`,
+        confirmLabel: 'Remove from this list',
+      }))) return;
+      setDetached((d) => [...d, { ...row, categories: others }]);
+      removeRow(i);
+      return;
+    }
     if (!(await askConfirm({ title: `Remove "${lbl || 'this add-on'}"?`, body: 'It will be retired on Save (existing orders keep their saved text).', confirmLabel: 'Remove', danger: true }))) return;
     removeRow(i);
   };

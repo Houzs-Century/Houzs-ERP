@@ -16,6 +16,15 @@
 // the instruction to every future reconciliation and repair job: this document
 // has no movements ON PURPOSE. "Fixing" it doubles the inventory.
 //
+// BOTH WRITERS COPY item_group AND variants FROM THE PARENT, and the DO writer
+// copies description2 too. That is not decoration: an audit or a repair that
+// filters `WHERE item_group IN ('sofa','bedframe')` returns NOTHING when the
+// column is NULL, and reads the empty set as a clean chain. The DO writer
+// originally omitted all three and hid the entire SO -> DO leg for that reason
+// (2026-08-11, backfill-do-line-snapshot.mjs repaired the rows it had already
+// written). A child document here is a SNAPSHOT of its parent — copy the
+// classification with the quantity, always.
+//
 // KIND=grn | do | both (default both). DRY-RUN by default; APPLY=1 writes.
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -84,6 +93,40 @@ async function doGrns() {
      so a bare AC GR number is not always unique: when it covers more than one
      imported PO the ERP number carries the PO too. Either way the number a
      human reads starts from the AutoCount document, not a fresh sequence. */
+  /* An AutoCount receipt routinely covers SEVERAL purchase orders while an ERP
+     GRN covers ONE, and only the POs belonging to an undelivered sales order
+     were imported. Measured on the reference snapshot: of the 187 AutoCount
+     receipts touching an imported PO, 118 also cover POs the ERP does not hold
+     - GR-000201 receives ten and the ERP holds two of them.
+
+     So the ERP document is legitimately SMALLER than the AutoCount one with the
+     same number, and someone reconciling the two will see it. Saying so on the
+     document turns a discrepancy into a stated scope. */
+  const acPoCount = new Map();   // AutoCount GR doc -> how many POs it receives, AutoCount-side
+  try {
+    const refs = gz("ac-gr-refs.json.gz");
+    const byGr = new Map();
+    for (const r of refs) {
+      if (!r.GrNo) continue;
+      if (!byGr.has(r.GrNo)) byGr.set(r.GrNo, new Set());
+      byGr.get(r.GrNo).add(r.PoNo);
+    }
+    for (const [gr, pos] of byGr) acPoCount.set(gr, pos.size);
+  } catch { /* reference snapshot absent: the note simply omits the scope line */ }
+
+  const grnNote = (g) => {
+    const acGrs = g.po.linked_ac_grn_docnos ?? [];
+    const parts = [`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}`];
+    if (acGrs.length) parts[0] += ` (AutoCount GR ${acGrs.join(", ")})`;
+    const spans = acGrs.filter((gr) => (acPoCount.get(gr) ?? 1) > 1)
+      .map((gr) => `${gr} receives ${acPoCount.get(gr)} purchase orders in AutoCount`);
+    if (spans.length) {
+      parts.push(`SCOPE: ${spans.join("; ")}; this document covers ONLY ${g.po.linked_ac_docno}, so its quantity is smaller than the AutoCount document of the same number. That is correct, not a shortfall.`);
+    }
+    parts.push("No stock movement: the units are already on hand from the balance snapshot.");
+    return parts.join(" ");
+  };
+
   const grUse = new Map();
   for (const g of plan) for (const gr of (g.po.linked_ac_grn_docnos ?? [])) grUse.set(gr, (grUse.get(gr) ?? 0) + 1);
   let seq = await nextSeq("grns", "grn_number", "HC-GRN-");
@@ -101,9 +144,7 @@ async function doGrns() {
         VALUES (${grnNo}, ${g.po.purchase_order_id}, ${g.po.supplier_id},
                 ${g.items[0].warehouse_id ?? g.po.purchase_location_id}, 'POSTED', NOW(), CURRENT_DATE, 'MYR',
                 ${CO}, ${SYS_USER},
-                ${`mirrors the AutoCount receipt for ${g.po.linked_ac_docno}` +
-                   (g.po.linked_ac_grn_docnos?.length ? ` (AutoCount GR ${g.po.linked_ac_grn_docnos.join(", ")})` : "") +
-                   ". No stock movement: the units are already on hand from the balance snapshot."},
+                ${grnNote(g)},
                 true, ${g.po.linked_ac_docno})
         RETURNING id`;
       for (const it of g.items) {
@@ -136,7 +177,21 @@ async function doDos() {
       WHERE company_id = ${CO} AND migrated_no_stock = true AND linked_ac_docno IS NOT NULL`)
     .map((r) => r.linked_ac_docno));
 
-  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, h.doc_no, h.linked_ac_docno ac
+  /* delivery_orders.debtor_name is NOT NULL - the document is addressed to
+     someone. The AutoCount note carries it; where it does not, the sales order
+     it delivers does. */
+  const soDebtor = new Map((await sql`SELECT doc_no, debtor_name FROM scm.mfg_sales_orders
+    WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`).map((r) => [r.doc_no, r.debtor_name]));
+  /* item_group / variants / description2 are pulled BECAUSE A DELIVERY ORDER IS
+     A SNAPSHOT OF THE SALES ORDER AT DISPATCH. The first version of this writer
+     named seven columns and copied none of the three, and the failure mode was
+     silence: `WHERE item_group IN ('sofa','bedframe')` then matched ZERO
+     delivery-order lines corpus-wide, so the whole SO -> DO leg of
+     check-sofa-chain-alignment.mjs reported "aligned" while measuring an empty
+     set. The GRN writer above (:145) always copied them, which is exactly why
+     nobody noticed. Do not drop them again. */
+  const soItems = await sql`SELECT i.id, i.item_code, i.line_no, i.qty, i.item_group, i.variants,
+      i.description2, h.doc_no, h.linked_ac_docno ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL ORDER BY i.line_no`;
   const soByKey = new Map();
@@ -162,8 +217,26 @@ async function doDos() {
   };
 
   const byDo = new Map();
-  let noSoLine = 0, unmapped = 0;
+  let noSoLine = 0, unmapped = 0, exhausted = 0, collapsed = 0;
+  const missExamples = [];
   const missCodes = new Map(); // a silent miss count hid this same class of bug twice already
+  /* TWO WAYS THIS WRITER INSERTED THE SAME DELIVERY LINE TWICE, both fixed here.
+     Measured on production 2026-08-11: 8 migrated documents, 18 surplus lines,
+     every one an EXACT duplicate of its twin - same item, same qty, same
+     so_item_id - so they are a double INSERT, not two real AutoCount lines.
+
+       1. `targets` took cands[0] unconditionally, so a SECOND AutoCount row of
+          the same item code on the same order produced a second delivery line
+          pointing at the FIRST sales-order line. Consuming the candidates in
+          order fixes the duplicate AND the mis-link underneath it: two rows of
+          one code are two deliveries against two different lines.
+       2. the sofa branch re-pushed EVERY compartment of a build each time
+          another AutoCount row named the same model, multiplying a 3-piece
+          sofa by however many rows AutoCount wrote.
+
+     HC-SO-001920 is the visible one: 1 unit ordered, 4 delivery lines. */
+  const taken = new Map();      // `DoNo|SoNo|code`  -> candidate SO lines already claimed
+  const modelDone = new Set();  // `DoNo|SoNo|model` -> the whole build is already on this DO
   for (const r of rows) {
     const erp = byAc.get(norm(r.ItemCode));
     if (!erp) { unmapped++; continue; }
@@ -171,22 +244,62 @@ async function doDos() {
        shipped as one whole unit corresponds to EVERY compartment of that build
        here, so all of them are marked delivered - otherwise the pieces stay
        outstanding and the set can be shipped a second time. */
-    const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`);
-    const pieces = (cands && cands.length) ? null : soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
-    const targets = (cands && cands.length) ? [cands[0]] : pieces;
+    const cands = soByKey.get(`${r.SoNo}|${norm(erp)}`) ?? [];
+    let targets = null;
+    if (cands.length) {
+      const ck = `${r.DoNo}|${r.SoNo}|${norm(erp)}`;
+      const used = taken.get(ck) ?? 0;
+      /* Out of distinct sales-order lines to claim. Reusing one is what created
+         the duplicates, so the row is skipped and counted LOUDLY instead - the
+         same choice backfill-ac-line-keys.mjs makes when a group's counts
+         disagree, and for the same reason: a wrong link is worse than none. */
+      if (used >= cands.length) { exhausted++; continue; }
+      taken.set(ck, used + 1);
+      targets = [cands[used]];
+    } else {
+      const mk = `${r.DoNo}|${r.SoNo}|${sofaModelOf(erp)}`;
+      if (modelDone.has(mk)) { collapsed++; continue; }
+      const pieces = soByModel.get(`${r.SoNo}|${sofaModelOf(erp)}`);
+      if (pieces && pieces.length) { modelDone.add(mk); targets = pieces; }
+    }
     if (!targets || !targets.length) {
       noSoLine++;
       missCodes.set(erp, (missCodes.get(erp) ?? 0) + 1);
+      if (missExamples.length < 5) missExamples.push({ so: r.SoNo, erp: norm(erp) });
       continue;
     }
-    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no, items: [] });
+    if (!byDo.has(r.DoNo)) byDo.set(r.DoNo, { doNo: r.DoNo, date: r.DoDate, so: targets[0].doc_no,
+      debtorCode: r.DebtorCode || null, debtorName: (r.DebtorName || "").trim() || null, items: [] });
     for (const t of targets) {
-      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)), soItemId: t.id });
+      byDo.get(r.DoNo).items.push({ code: t.item_code, name: r.LineDesc, qty: Math.round(Number(r.Qty || 0)),
+        soItemId: t.id, group: t.item_group ?? null, variants: t.variants ?? null, desc2: t.description2 ?? null });
     }
   }
+  /* The invariant, asserted rather than inferred. Whatever the mapping above
+     decides, one document may not carry the same sales-order line at the same
+     quantity twice. The two fixes above remove the known causes; this refuses
+     the SHAPE, so a future mapping path cannot reintroduce it silently. */
+  for (const d of byDo.values()) {
+    const seen = new Set(); const keep = [];
+    for (const it of d.items) {
+      const k = `${it.soItemId}|${norm(it.code)}|${it.qty}`;
+      if (seen.has(k)) { collapsed++; continue; }
+      seen.add(k); keep.push(it);
+    }
+    d.items = keep;
+  }
+
   const plan = [...byDo.values()].filter((d) => !done.has(d.doNo));
   log(`AutoCount delivery lines against open orders: ${rows.length}; unmapped code ${unmapped}; no ERP SO line ${noSoLine}`);
+  log(`duplicate-guard: ${exhausted} row(s) skipped for having no unclaimed SO line left; ${collapsed} duplicate line(s) refused`);
   for (const [code, n] of [...missCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`   no ERP line for ${code} x${n}`);
+  /* A count of misses is not a diagnosis. For the first few, print what the ERP
+     order ACTUALLY has on it, so the mismatch is visible instead of inferred. */
+  for (const ex of missExamples.slice(0, 5)) {
+    const have = (soByKey.get(`${ex.so}|${ex.erp}`) ?? []).length;
+    const onOrder = soItems.filter((it) => it.ac === ex.so).map((it) => it.item_code);
+    log(`   MISS ${ex.so} wanted "${ex.erp}" (exact hits ${have}); that order's ERP lines: ${onOrder.length ? onOrder.join(" | ") : "(no lines found for this linked_ac_docno)"}`);
+  }
   log(`DO documents: ${byDo.size}; already mirrored: ${byDo.size - plan.length}; to create: ${plan.length} (${plan.reduce((s, d) => s + d.items.length, 0)} lines, ${plan.reduce((s, d) => s + d.items.reduce((t, i) => t + i.qty, 0), 0)} units)`);
   for (const d of plan.slice(0, 8)) log(`   ${d.doNo} <- ${d.so}: ${d.items.length} line(s)`);
   if (!APPLY) { log("DRY-RUN — set APPLY=1 to create. No inventory movement is written in either mode."); return; }
@@ -197,17 +310,21 @@ async function doDos() {
     const doNo = "HC-" + d.doNo;
     await sql.begin(async (tx) => {
       const [hdr] = await tx`INSERT INTO scm.delivery_orders
-          (do_number, so_doc_no, status, do_date, currency, company_id, created_by,
-           notes, migrated_no_stock, linked_ac_docno)
-        VALUES (${doNo}, ${d.so}, 'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
+          (do_number, so_doc_no, debtor_code, debtor_name, status, do_date, currency,
+           company_id, created_by, notes, migrated_no_stock, linked_ac_docno)
+        VALUES (${doNo}, ${d.so}, ${d.debtorCode},
+                ${d.debtorName ?? soDebtor.get(d.so) ?? "(unnamed)"},
+                'DELIVERED', ${(d.date || "").slice(0, 10) || null}, 'MYR',
                 ${CO}, ${SYS_USER},
                 ${`mirrors AutoCount delivery ${d.doNo}. No stock movement: the balance snapshot already counts these units as delivered.`},
                 true, ${d.doNo})
         RETURNING id`;
       for (const it of d.items) {
         await tx`INSERT INTO scm.delivery_order_items
-            (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id)
-          VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO})`;
+            (delivery_order_id, so_item_id, item_code, description, uom, qty, company_id,
+             item_group, variants, description2)
+          VALUES (${hdr.id}, ${it.soItemId}, ${it.code}, ${it.name || null}, 'UNIT', ${it.qty}, ${CO},
+                  ${it.group}, ${it.variants ? sql.json(it.variants) : null}, ${it.desc2})`;
       }
     });
     made += 1;

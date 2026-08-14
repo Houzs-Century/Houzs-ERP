@@ -1,0 +1,56 @@
+name: Seed the owner's fabric catalogue
+
+# Manual. MODE=plan (the default) writes NOTHING - it prints what would be
+# created, merged and renamed. MODE=apply needs the CONFIRM sentence, exactly
+# like every other repair workflow here.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default, writes nothing) | apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      series:
+        description: "comma-separated series to limit to (blank = the whole catalogue)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply only: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: seed-owner-fabric-catalogue-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/seed-owner-fabric-catalogue.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          SERIES: ${{ inputs.series }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
