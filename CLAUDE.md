@@ -113,16 +113,24 @@ remembering it. Per AREA, line coverage may only go **up** and the count of file
 with **no test at all** may only go **down**. Floors live in
 `coverage-baseline.json`; the gate is `scripts/coverage-ratchet.mjs`.
 
-All six areas are checked on every PR, from one merged report built out of the
-three suites (`backend-typecheck` runs the light project, the four
-`backend-tests` shards run the workers project, `frontend-checks` runs the
-frontend).
+**The two halves run in different places, and that split is deliberate.**
 
-- **`frontend/src` hard-blocks**: it is checked inline in `frontend-checks`,
+- **`frontend/src` hard-blocks, per PR.** Checked inline in `frontend-checks`,
   which the required `frontend` roll-up covers. Add a `.tsx` with no test and
-  the merge is blocked.
-- **The five backend areas** are checked in the `coverage-ratchet` job, which is
-  a visible red X but not (yet) a required context — that list is the owner's.
+  the merge is blocked. It stays on the PR path because instrumenting the
+  frontend suite costs 2 seconds (18s → 20s) and `frontend/src` is 594 files.
+- **The five backend areas are measured ON MAIN**, by
+  `.github/workflows/coverage.yml`, once per merge — not per PR. Moved there
+  2026-08-14 after measuring what it cost on the PR path: the workers suite is
+  **217s of test work bare and 746s instrumented**, so coverage was adding
+  **529 seconds to the critical path of every pull request**. A floor is a
+  statement about what is on `main`; measuring it when something lands on `main`
+  is the same statement for a fraction of the money.
+
+  **What that gives up, plainly:** a PR that lowers backend coverage is caught
+  at the merge, not before it. The fix becomes a follow-up rather than a block.
+  If that trade ever stops being worth 529s per PR, the job is one file and
+  moves back.
 - `backend/scripts` (the one-shot ops scripts, NOT `scripts/lib`) has its
   no-test floor turned off on purpose — a new ops script with no test is normal
   there. Everything else is held to both floors.
@@ -469,6 +477,60 @@ and `GET /fleet-maintenance/dashboard` reads every row with no predicate. And
 doing your scoping: mig 0061 enabled RLS with NO policies and the SCM client is
 the SERVICE-ROLE client, which bypasses RLS. The only boundary is the predicate
 in the route.
+
+## There IS a linter now — since 2026-08-13, and it is a RATCHET
+
+Until this date the repo had none: no `.eslintrc`, no `eslint.config.*`, no
+`lint` script in any of the seven `package.json` files — while `backend/src` +
+`frontend/src` carried **514** hand-written `eslint-disable` comments that had
+never suppressed anything, because nothing ever ran. `tsc --noEmit` and vitest
+were the only gates, and neither can see a nullish default on something that is
+never nullish.
+
+- `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
+  matrixed over the two apps. NOT a required status check yet.
+- **The FRONTEND leg enforces; the BACKEND leg runs `-- --advisory` and only
+  reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
+  ceiling, all of it debt `main` grew while the linter waited to land, and
+  twelve of them are `no-unnecessary-condition` in the money routes where
+  deleting the condition would create a real bug: the rule fires because a
+  hand-written `as {…}` cast promises non-null over a `sb: any` read, so the
+  `??` it calls redundant is the only guard left (worked example in the
+  `lint:` job's own comment in `ci.yml`). The upstream fix needs honest types,
+  and `schema.pg.ts` covers **none** of the SCM money tables — `drizzle-kit
+  pull` first. Drop the `--advisory` flag when that is done and the backend leg
+  is green, not before. **Locally it is still strict** — `npm --prefix backend
+  run lint` exits 1 and shows you the findings; only CI's backend leg is told to
+  report. And a HARD error (ESLint missing, config broken) is never advisory,
+  because a gate that did not execute must not report a pass. `--advisory` sits
+  on the script rather than `continue-on-error` on the job because the latter
+  stops the workflow failing but still publishes the check run as FAILURE —
+  measured 2026-08-14 — so the red X survives and the wallpaper stays.
+- **It runs `node_modules/eslint/bin/eslint.js` under `process.execPath`, not the
+  `.bin/eslint` shim, and that is deliberate.** The shim is a POSIX shell script
+  Windows cannot execute (ENOENT, reported as "no ESLint installed" because
+  `existsSync` finds it), and `.bin/eslint.cmd` cannot be spawned without a shell
+  since CVE-2024-27980 (EINVAL). Do not "simplify" it back to the shim: CI is
+  Linux and will not notice, and the linter becomes unrunnable on the OS this
+  repo is developed on. `BUG-HISTORY.md` 2026-08-14 has the trace.
+- **Every rule is a WARNING.** The gate is `scripts/lint-ratchet.mjs`: a
+  **per-file ceiling** in `<app>/eslint-ratchet.json` that may only **FALL**.
+  A file with no entry has a ceiling of **zero**, so a new file — or a rule that
+  is clean tree-wide — fails on its first violation.
+- **Never raise a number in `eslint-ratchet.json` to make a build pass.** Fix the
+  finding, or write `// eslint-disable-next-line <rule> -- <reason>` at the site
+  so the reason lives next to the code. `npm run lint:update` exists to write the
+  ceilings DOWN after you fix things; using it to write them up is forging the
+  evidence the gate exists to check (same rule as `check-soak-gate.mjs`).
+- **The rule list is `scripts/eslint/houzs-lint-rules.mjs`, and every rule cites
+  the `BUG-HISTORY.md` entry it exists to catch.** Do not add a rule without one.
+  That file also records what was considered and left OFF, and why. It is shared
+  by both apps deliberately — a lint layer whose own rule list is hand-copied per
+  app is the duplicated-list bug wearing a badge.
+- Linting is **type-aware** (`no-unnecessary-condition` needs it), so it lints
+  only what the tsconfigs include: `backend/src/**/*.ts` and
+  `frontend/src/**/*.{ts,tsx}`. `backend/tests/`, `backend/scripts/`,
+  `frontend/perf-lab/` and `frontend/e2e/` are out of scope.
 
 ## Read the map before exploring
 

@@ -1409,11 +1409,11 @@ export const SalesOrderNew = () => {
       return;
     }
     if (!debtorName.trim()) {
-      notify({ title: 'Customer name is required.', tone: 'error' });
+      void notify({ title: 'Customer name is required.', tone: 'error' });
       return;
     }
     if (!phone.trim()) {
-      notify({
+      void notify({
         title: 'Phone number is required',
         body: 'every sales order must have a contact number.',
         tone: 'error',
@@ -1424,12 +1424,12 @@ export const SalesOrderNew = () => {
     // mobile via soDateGuardError so the rule can't drift between surfaces.
     const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
     if (dateErr) {
-      notify({ ...dateErr, tone: 'error' });
+      void notify({ ...dateErr, tone: 'error' });
       return;
     }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     if (validLines.length === 0) {
-      notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
+      void notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
       return;
     }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
@@ -1439,7 +1439,7 @@ export const SalesOrderNew = () => {
        silently dropping it, so the operator is forced to pick a real SKU. */
     const unpickedScanned = lines.filter((l) => !l.itemCode.trim() && (scanLineMeta[l.rid]?.rawText ?? '').trim() !== '');
     if (unpickedScanned.length > 0) {
-      notify({
+      void notify({
         title: 'Pick a SKU for every scanned line.',
         body:
           `${unpickedScanned.length} scanned line${unpickedScanned.length === 1 ? '' : 's'} ` +
@@ -1453,7 +1453,7 @@ export const SalesOrderNew = () => {
     // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
     // Block + warn here so the operator gets one plain sentence, not a raw 400.
     if (hasSofaMixConflict(validLines.map((l) => l.itemGroup))) {
-      notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
+      void notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
       return;
     }
     /* Variant completeness is the PROCEED rule, and only the proceed rule
@@ -1481,7 +1481,7 @@ export const SalesOrderNew = () => {
         !deliveryDate.trim() ? 'delivery date' : null,
       ].filter(Boolean) as string[];
       if (addrMissing.length > 0) {
-        notify({
+        void notify({
           title: 'A Processing Date means this order is proceeding, so it needs a delivery address.',
           body: `Still missing: ${addrMissing.join(', ')}.`
             + (fillAddressLater ? '\n\nUntick "Fill in address later" to enter it.' : ''),
@@ -1495,7 +1495,7 @@ export const SalesOrderNew = () => {
         .map((l) => ({ code: l.itemCode, miss: missOf(l) }))
         .filter((x) => x.miss.length > 0);
       if (variantGaps.length > 0) {
-        notify({
+        void notify({
           title: 'Complete all variant selections before setting a Processing Date:',
           body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n'),
           tone: 'error',
@@ -1509,7 +1509,7 @@ export const SalesOrderNew = () => {
        the round-trip. The SELF sentinel counts as a salesperson: the backend
        stamps the caller's own staff row for it. */
     if (!asDraft && !effectiveVenueId) {
-      notify({
+      void notify({
         title: 'Pick a venue before confirming this order.',
         body: 'The venue follows the picked salesperson. A draft can be saved without one.',
         tone: 'error',
@@ -1517,7 +1517,7 @@ export const SalesOrderNew = () => {
       return;
     }
     if (!asDraft && !salespersonId) {
-      notify({
+      void notify({
         title: 'Pick a salesperson before confirming this order.',
         body: 'A draft can be saved without one.',
         tone: 'error',
@@ -1538,7 +1538,7 @@ export const SalesOrderNew = () => {
       asDraft,
     });
     if (locationErr) {
-      notify({ ...locationErr, tone: 'error' });
+      void notify({ ...locationErr, tone: 'error' });
       return;
     }
 
@@ -1559,7 +1559,7 @@ export const SalesOrderNew = () => {
       .filter((x) => x.missing !== null);
     if (methodGaps.length > 0) {
       const g = methodGaps[0]!;
-      notify({
+      void notify({
         title: `Payment ${g.row} (${g.method}) needs a ${g.missing}.`,
         body: 'Pick the required sub-field for each payment method before saving.',
         tone: 'error',
