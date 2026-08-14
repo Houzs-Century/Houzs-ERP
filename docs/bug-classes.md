@@ -313,7 +313,8 @@ corrupted three times, and 88+ columns silently losing their `DEFAULT`
 **Why no check here.** Two of the three obvious remedies are each their own PR:
 adding `allowJs`/`checkJs` over 335 unchecked files produces thousands of errors
 that must be triaged, not suppressed; and routing every script through one
-`scripts/lib/prod-writer.mjs` (explicit `--target` allow-list failing closed, a
+prod-writer module under `scripts/lib/` — it does not exist yet — (explicit
+`--target` allow-list failing closed, a
 `pg_dump` before the first write, no bare `DELETE FROM scm.*`, success read from
 `RETURNING` and never from `res.count`) is a migration of 304 call sites. What this
 PR does cover is the one rule that is total and needed no migration: `audit:jsonb-binds`

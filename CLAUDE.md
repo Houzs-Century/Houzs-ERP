@@ -3,6 +3,92 @@
 This file is loaded into every Claude session. It tells you what's
 non-obvious about this codebase and how the user wants to collaborate.
 
+## ⚠️ Do not guess. Prove it, or say you do not know yet — MANDATORY (owner rule)
+
+The owner's instruction, 2026-08-12: *"我要确定的答案，有时找 bugs 都是猜的，很不好."*
+
+The two rules below already demand `traced, not guessed` — but both of them only
+govern what you WRITE AFTER the work. Nothing governed the work itself, so the
+guessing was legal right up until the write-up, and a fix reached by guessing can
+still be written up in confident "traced" language. This rule closes that.
+
+**A cause you have not observed is a hypothesis, and a fix built on a hypothesis
+is a guess.** Before you propose or ship a fix:
+
+1. **State the hypothesis out loud, and name the observation that would REFUTE
+   it.** If you cannot name one, you do not have a hypothesis, you have a story.
+2. **Go and make that observation.** A live query, a `wrangler tail`, a
+   `workflow_dispatch` read-only check, a reproduction, a log line, a probe
+   script. Name the tool in what you report.
+3. **Only then fix.** If the observation refutes you, say so and start again —
+   that is the cheap outcome, not the embarrassing one.
+
+**Label every claim you make to the owner.** Three words are enough and he is
+entitled to them on every answer:
+
+- **PROVEN** — I ran something and here is the output.
+- **LIKELY** — consistent with the evidence, not yet checked; here is what would
+  settle it.
+- **UNKNOWN** — I do not know yet. This is always an acceptable answer. It is
+  never acceptable to dress it as one of the other two.
+
+**Reading code is not evidence about production.** Source, migration files and
+comments describe intent; the running system is the fact. This repo has paid for
+that distinction repeatedly, and each one was found by measuring after reasoning
+had already produced a confident wrong answer:
+
+- A migration file read as money corruption; the live DB refuted it
+  (`system-foundation-coe.md`).
+- "The unique index does not exist" — it did, four of them, ported by hand and
+  present in no file in this repo.
+- "604 `custom_specials` rows are corrupt, null them" — 679 of 694 strings were
+  live picker codes. Nulling would have deleted a correct, currently-rendering
+  line item from 604 historical documents.
+- `/health` answered `{"ok":true,"book":"AED_HOUZS"}` from CONSTANTS while the
+  service could not open the database at all.
+- "The master exists" was true — about the sales agent, while the constraint
+  pointed at the purchase agent.
+
+**Two traps that make a guess feel proven:**
+
+- **The check that answers a different question.** `UPDATE 1` was true while the
+  column was being corrupted; `res.count` answered the wrong question three
+  times (`jsonb-double-encoding-coe.md`). Ask what the successful result would
+  ALSO be true of.
+- **The check that is not running.** `audit:map` reported nothing for three
+  weeks because the script it runs had been crashing since the day after it was
+  written, and the nightly staging E2E passed for two weeks against a build
+  nobody had deployed (`staging-bench-rot-coe.md`). Green is not evidence until
+  you know the check ran, and against what.
+
+**Never make the evidence say what you want.** If a marker row is missing, that
+is the finding — do not insert it to make a gate pass. If a matcher misses, fix
+the library, do not loosen the guard the matcher exists to enforce.
+
+### Two rules that make the above executable
+
+A rule is text; text does not run. These two are actions, and both were bought
+the same day this section was written, by breaking it within hours.
+
+**1. RE-RUN, never recall.** Any date, count, run id or causal claim that is
+going into a document must come from a command executed *at the moment of
+writing*, not from something gathered earlier in the session. Late in a long
+session the earlier output has decayed into an impression, and an impression
+produces the same confident sentence a fact does. On 2026-08-12 the run list
+proving staging deployed fine until 2026-07-29 had already been fetched hours
+before; the COE was then written from memory of it and asserted the opposite.
+Re-running one command would have put the refutation on screen.
+
+**2. A contradiction is a finding — STOP, do not bridge it.** When two things
+you hold disagree, one is wrong, and establishing which is the work. Do not
+write the sentence that makes them fit. The same COE stated "last successful
+deploy 2026-07-29" and "the token never worked after 2026-07-01" four paragraphs
+apart, and reconciled them by inventing an earlier credential nobody had
+evidenced. The urge to produce a complete, coherent answer is the single largest
+source of wrong answers here — completeness is not a quality bar, and "these two
+facts disagree and I have not resolved it" is a better answer than a seamless
+one.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
@@ -711,6 +797,48 @@ Not generic narrative.
   - Write TODO when planning is confirmed 
   - After meaningful work lands, end the reply with a one-line offer to
   `/sync-wiki` if the wiki should be updated.
+
+## A merged PR's branch gets DELETED — MANDATORY (owner rule, 2026-08-12)
+
+*"确保做好了的PR 就delete掉."* A branch whose PR has merged is finished: its
+content is on `main`, and leaving it on `origin` costs a real thing. On
+2026-08-12 the repo carried **1,510 remote branches, 1,406 of them heads of
+already-merged PRs** — a `git branch -r` nobody could read, a tab-complete
+nobody could use, and 1,406 chances to branch off dead work by mistake. They
+were pruned in one pass, with a name+SHA manifest kept so every one stays
+restorable.
+
+**The durable fix is a repo setting, not a habit** — habits are what produced
+the 1,406. Settings -> General -> **Automatically delete head branches**. It was
+`false` as of 2026-08-12 and needs repo ADMIN to flip, so only the owner can:
+the API answers `404` to everyone else. Once on, GitHub deletes the head branch
+on every merge and nothing here needs doing by hand.
+
+Deliberately NOT solved with a workflow. A GitHub Action could delete the branch
+on merge without admin, but this repo has just paid for a workflow that died
+silently and went unnoticed for three weeks (`docs/staging-bench-rot-coe.md`). A
+setting cannot rot; a workflow can. One checkbox beats one more thing to watch.
+
+What the setting does NOT cover, and stays manual:
+
+- **PRs closed without merging.** GitHub leaves those branches alone, correctly
+  — the work was abandoned, not landed, and the branch is the only copy. Review
+  before deleting, never bulk-prune them.
+- **Branches with no PR at all.** As of 2026-08-12 there were 51, and `main` and
+  `staging` are among them. Never bulk-delete this set.
+
+To prune by hand, select on the PR being MERGED — never on age, and never on
+`git branch -r --merged`, which misses everything squash-merged (it found 291 of
+the 1,406):
+
+```sh
+gh pr list --state merged --limit 3000 --json headRefName --jq '.[].headRefName' | sort -u > /tmp/merged.txt
+git ls-remote --heads origin | sed 's|.*refs/heads/||' | sort -u > /tmp/branches.txt
+comm -12 /tmp/branches.txt /tmp/merged.txt   # verify this list before deleting anything
+```
+
+Record `sha<TAB>branch` for whatever you delete. `git push origin <sha>:refs/heads/<branch>`
+restores it without depending on GitHub's Restore button.
 
 ## See also
 
