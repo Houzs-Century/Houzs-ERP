@@ -20,6 +20,7 @@ import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
+import { writeFailed, writeFailedAs, reportInBandFailure } from './mutation-error';
 
 /* ── Batch conversions ────────────────────────────────────────────────
    BOTH hooks below have ZERO callers as of 2026-07-17 (verified across every
@@ -54,6 +55,7 @@ export const useGrnFromPos = () => {
       /* Force picker refetch so received PO lines drop off. */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('GRN not created'),
   });
 };
 
@@ -70,6 +72,7 @@ export const usePurchaseReturnFromGrns = () => {
       /* Force picker refetch so returned/invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase return not created'),
   });
 };
 
@@ -217,6 +220,7 @@ export const useDeleteGrnItem = () => {
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
       qc.invalidateQueries({ queryKey: ['grns'] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -227,8 +231,17 @@ export const useDeleteGrnItem = () => {
 export const useCancelGrn = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => authedFetch<{ grn: any }>(`/grns/${id}/cancel`, { method: 'PATCH' }),
-    onSuccess: (_, id) => {
+    mutationFn: (id: string) =>
+      authedFetch<{ grn: any; cancelErrors?: string[] }>(`/grns/${id}/cancel`, { method: 'PATCH' }),
+    onSuccess: (data, id) => {
+      /* IN-BAND FAILURE. The cancel writes a reversing OUT for everything the
+         GRN received; that write is best-effort and its result comes back in
+         `cancelErrors`, not as a rejection — so `onError` above never fires and
+         the operator would be told the cancel worked while the stock stayed
+         received. The backend started reporting this on 2026-08-13 (audit item
+         D3) and NOTHING read it until check-inband-failures.mjs counted the
+         producers against the readers and found zero. */
+      reportInBandFailure('GRN cancelled, but the stock was not reversed', data);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
@@ -255,6 +268,7 @@ export const usePurchaseInvoiceFromGrn = () => {
       /* Force picker refetch so already-invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase invoice not created'),
   });
 };
 
@@ -307,5 +321,6 @@ export const usePurchaseReturnFromGrn = () => {
       /* Force picker refetch so returned GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
+    onError: writeFailedAs('Purchase return not created'),
   });
 };

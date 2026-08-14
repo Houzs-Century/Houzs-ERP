@@ -25,6 +25,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { normalizePhone } from '../shared/phone';
+import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import { DO_SHIPPED_STATES } from '../shared/do-shipped-states';
 import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -52,10 +54,18 @@ consignmentNotes.use('*', supabaseAuth);
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
 async function noteHasDownstream(sb: any, noteId: string): Promise<{ error: string; message: string } | null> {
-  const { count: crCount } = await sb.from('consignment_delivery_returns')
+  const { count: crCount, error: crErr } = await sb.from('consignment_delivery_returns')
     .select('id', { head: true, count: 'exact' })
     .eq('consignment_do_id', noteId)
     .neq('status', 'CANCELLED');
+  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
+     the error made `crCount ?? 0` read as "no Consignment Return", which is the
+     absence that authorises the line edit / CANCELLED transition this guard
+     exists to refuse. A failed read must never read as an absence when the
+     absence is what authorises the write. */
+  if (crErr) {
+    return { error: 'downstream_check_failed', message: `Could not check whether this Consignment Note has a Consignment Return, so it is locked for safety — try again (${crErr.message}).` };
+  }
   if ((crCount ?? 0) > 0) {
     return { error: 'note_has_downstream', message: 'Consignment Note has a Consignment Return — cancel it first to edit' };
   }
@@ -134,8 +144,14 @@ function gateCnFinance(
 
 /* Statuses that count as "shipped" — the loaner has left our shipping warehouse,
    so it has been transferred to the consignment warehouse. The FIRST transition
-   into ANY of these fires the loaner transfer. Same list as the DO. */
-const SHIPPED_STATES = ['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED'];
+   into ANY of these fires the loaner transfer.
+
+   IMPORTED, not "the same list as the DO" written out again. A consignment note
+   is a clone of the DO chain and shares its status vocabulary — lib/reconcile-
+   ledger.ts already reads delivery_orders and consignment_delivery_orders with
+   ONE list — so a spelling that is right for one and wrong for the other is a
+   bug in both, not a difference worth keeping two copies for. */
+const SHIPPED_STATES: string[] = [...DO_SHIPPED_STATES];
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
   const d = new Date();
@@ -840,8 +856,14 @@ consignmentNotes.post('/:id/items', async (c) => {
   await recomputeTotals(sb, id);
   /* Reconcile inventory for the added line — resync writes the new line's OUT
      when the note has already shipped, and is a no-op otherwise. Idempotent. */
-  try { await resyncNoteInventory(sb, id, user?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ item: data }, 201);
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, user?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ item: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) }, 201);
 });
 
 consignmentNotes.patch('/:id/items/:itemId', async (c) => {
@@ -910,8 +932,14 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   /* Adjust inventory by the qty/variant delta (no-op until shipped). */
-  try { await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 consignmentNotes.delete('/:id/items/:itemId', async (c) => {
@@ -928,8 +956,14 @@ consignmentNotes.delete('/:id/items/:itemId', async (c) => {
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
   await recomputeTotals(sb, id);
   /* Give the deleted line's stock back (no-op until shipped). */
-  try { await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); } catch { /* best-effort */ }
-  return c.json({ ok: true });
+  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+  movementErrors; these mutations threw it away, so a resync that failed to
+  book or drain stock returned a clean 200. writeMovements never throws, so
+  the catch caught nothing either. */
+  let resyncErrs: string[] = [];
+  try { resyncErrs = await resyncNoteInventory(sb, id, c.get('user')?.id ?? null); }
+  catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
+  return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
 // ── Payments (mirror DO payments ledger) ──────────────────────────────────
@@ -952,8 +986,12 @@ consignmentNotes.get('/:id/payments', async (c) => {
 
 const paymentCreateSchema = z.object({
   paidAt:             z.string().min(1),
-  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. */
-  method:             z.enum(['merchant', 'transfer', 'cash', 'installment']),
+  /* 2026-06-06 payment-method unify — 'installment' is first-class L1. The
+     accepted set IS shared/payment-methods.ts's PAYMENT_METHOD_CODES, not a
+     re-typed literal: this enum stood in seven route files, so "don't add a
+     5th code without wiring its branch logic" (that module's header) was
+     advice no reader of this line could act on. */
+  method:             z.enum(PAYMENT_METHOD_CODES),
   merchantProvider:   z.string().trim().min(1).optional().nullable(),
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
@@ -1072,10 +1110,19 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   /* Inventory ledger — one self-healing resync covers BOTH the ship-out (first
      transition into a shipped state writes the CS_DO OUT) and the cancel (status
      CANCELLED drives every bucket's net back to 0). Idempotent + best-effort. */
+  // Hoisted: the response is OUTSIDE this block, so a block-scoped
+  // declaration would leave the cancel path unable to report.
+  let resyncErrs: string[] = [];
   if (SHIPPED_STATES.includes(body.status) || body.status === 'CANCELLED') {
-    try { await resyncNoteInventory(sb, id, user.id); } catch { /* best-effort */ }
+    /* REPORTED, not discarded. The CREATE path returns this exact string[] as
+    movementErrors; these mutations threw it away, so a resync that failed to
+    book or drain stock returned a clean 200. writeMovements never throws, so
+    the catch caught nothing either. */
+    resyncErrs = [];
+    try { resyncErrs = await resyncNoteInventory(sb, id, user.id); }
+    catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   }
 
-  return c.json({ consignmentNote: data });
+    return c.json({ consignmentNote: data, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 };
 consignmentNotes.patch('/:id/status', patchConsignmentNoteStatusHandler);

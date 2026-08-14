@@ -49,7 +49,7 @@
     mirroring — disabled by the mobile UI and named in its lock copy, but in
     neither backend set, so it was both un-editable AND un-requestable. */
 export const AMENDABLE_HEADER_KEYS = [
-  'internalExpectedDd',
+  'processingDate',
   'customerDeliveryDate',
   'customerState',
   'postcode',
@@ -82,7 +82,7 @@ export type SoAmendmentHeaderChanges = Partial<Record<AmendableHeaderKey, string
 /** Human labels for the before/after diff (desktop AmendmentDetailV2 + the
     mobile "View changes" sheet render these, so the wording lives once). */
 export const AMENDABLE_HEADER_LABELS: Record<AmendableHeaderKey, string> = {
-  internalExpectedDd:   'Processing Date',
+  processingDate:       'Processing Date',
   customerDeliveryDate: 'Delivery Date',
   customerState:        'State',
   postcode:             'Postcode',
@@ -142,7 +142,7 @@ export const hasAmendmentHeaderChanges = (h: SoAmendmentHeaderChanges): boolean 
 /** The date-valued amendable keys — rendered through the caller's date
     formatter so the numeric DD/MM/YYYY house rule applies. */
 const DATE_HEADER_KEYS = new Set<AmendableHeaderKey>([
-  'internalExpectedDd',
+  'processingDate',
   'customerDeliveryDate',
 ]);
 

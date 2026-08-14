@@ -130,7 +130,12 @@ specialAddons.get('/', async (c) => {
     supabase.from('special_addons').select(SELECT),
     c,
   )
+    // sort_order is the MANUAL position and stays the higher rule (owner
+    // 2026-08-12). Alphabetical is the tie-break, not a replacement: rows the
+    // owner has not deliberately positioned share a sort_order and were
+    // previously left in insertion order, which is what made the list unreadable.
     .order('sort_order', { ascending: true })
+    .order('label', { ascending: true })
     .order('created_at', { ascending: true });
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
   return c.json({ addons: (data as AddonRow[]).map(toApi) });
@@ -328,11 +333,18 @@ specialAddons.post('/save', async (c) => {
   const supabase = c.get('supabase');
   const userId = gate.userId;
 
+  // The apply step below upserts ON CONFLICT (company_id, code) — the constraint
+  // migration 0087 put there. An unresolved company would send company_id NULL,
+  // which never conflicts, so every save would INSERT a second copy of every
+  // add-on instead of updating it. Refuse instead, matching PATCH and DELETE.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
   // 1) Append the version-log snapshot (audit + apply-source).
   const histId = genHistId();
   const { data: hist, error: histErr } = await supabase
     .from('special_addons_history')
-    .insert({ company_id: activeCompanyId(c), id: histId, addons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
+    .insert({ company_id: co.companyId, id: histId, addons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
     .select('id, addons, effective_from, notes, created_at')
     .single();
   if (histErr) return c.json({ error: 'history_insert_failed', reason: histErr.message }, 500);
@@ -359,8 +371,20 @@ specialAddons.post('/save', async (c) => {
   if (upsertRows.length > 0) {
     const { error: upErr } = await supabase
       .from('special_addons')
-      .upsert(upsertRows, { onConflict: 'code' });
+      // 0087 dropped special_addons_code_unique and added
+      // special_addons_company_code_unique UNIQUE (company_id, code). ON CONFLICT
+      // must name the constraint that EXISTS or Postgres raises 42P10, which is
+      // what made every Save return 500.
+      .upsert(upsertRows, { onConflict: 'company_id,code' });
     if (upErr) {
+      /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
+         Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
+         0061 enabled RLS on every scm table with NO policies, and the SCM client is
+         the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
+         getSupabaseService), which bypasses RLS by design. No scm function RAISEs
+         42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
+         permission check and do NOT treat it as scoping: the only boundary is this
+         route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
       if (upErr.code === '42501' || /permission denied/i.test(upErr.message)) {
         return c.json({ error: 'forbidden', reason: upErr.message }, 403);
       }

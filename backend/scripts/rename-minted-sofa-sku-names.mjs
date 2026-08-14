@@ -7,6 +7,8 @@
 // same fix onto supplier_material_bindings.material_name for those codes.
 // Scope: HOUZS company + exactly the minted code list + names that actually
 // start with 'ZANOTTI SOFA '. DRY-RUN default; APPLY=1 to write.
+//
+// RE-RUN: inert. regexp_replace on a '^ZANOTTI SOFA ' prefix the first run removes; a renamed row no longer matches.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

@@ -58,7 +58,7 @@ const HEADER_KEY_LANE: Record<string, AmendmentLane> = {
      therefore splits into two documents, one per signer; the pair validation
      (set together, proc ≤ delivery) runs at SUBMIT on the combined values, and
      the lanes apply independently after that. */
-  internalExpectedDd:   'LINES',
+  processingDate:       'LINES',
   customerDeliveryDate: 'DELIVERY',
   customerState:        'DELIVERY',
   postcode:             'DELIVERY',

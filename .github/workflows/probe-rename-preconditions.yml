@@ -1,0 +1,66 @@
+name: probe-rename-preconditions
+
+# Pre-flight for migration 0284_scm_processing_date_one_name.sql, read against
+# the LIVE catalog. READ-ONLY: the script runs everything inside a
+# SET TRANSACTION READ ONLY transaction and writes nothing.
+#
+# WHY IT IS A WORKFLOW AND NOT A NOTE IN A PR. 0284 was verified against a
+# PGlite replica built from this repo's own SQL, which proves the migration is
+# consistent with the source tree and proves nothing about production. Every
+# step of 0284 is guarded on the catalog — that is what makes it idempotent, and
+# also what lets it do NOTHING and still exit 0. The consignment collision-drop
+# in particular fires only while BOTH column names are present; if prod does not
+# match, the guard makes it a no-op and the failure shows up as a 500 later, not
+# as a red migration. Run this BEFORE the deploy window, not during it.
+#
+# Read the last line: MATCHES (job green, proceed) or DIFFERS (job red, the body
+# names which pre-condition prod does not hold). A red job here has not broken
+# anything — nothing was written — it is the answer.
+#
+# See backend/scripts/probe-rename-preconditions.mjs for what each check means.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-rename-preconditions-${{ inputs.target }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+
+      - name: Ask the live catalog what 0284 will actually find
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        # pipefail, or `tee` reports success for a probe that crashed halfway and
+        # a truncated report reads exactly like a clean one.
+        run: |
+          set -o pipefail
+          node scripts/probe-rename-preconditions.mjs | tee rename-preconditions.txt
+
+      # if: always() — the report is the deliverable, and a DIFFERS run exits
+      # non-zero on purpose. Uploading only on success would throw away the only
+      # runs anybody needs to read.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-rename-preconditions-${{ inputs.target }}
+          path: backend/rename-preconditions.txt
+          retention-days: 30

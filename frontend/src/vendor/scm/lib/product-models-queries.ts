@@ -13,6 +13,7 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMfgProducts, type MfgCategory } from './mfg-products-queries';
 import { authedFetch } from './authed-fetch';
+import { writeFailed } from './mutation-error';
 // HOUZS RE-SOURCING (2026-06-21): branding is maintained centrally in Houzs's
 // Project Maintenance / PMS (project_brands). The branding pool sources from
 // /api/projects/brands — which lives OUTSIDE the /api/scm mount, so it uses the
@@ -283,6 +284,7 @@ export function useActivateOneShot() {
       qc.invalidateQueries({ queryKey: ['product-models'] });
       void vars; // suppress unused-var warning
     },
+    onError: writeFailed,
   });
 }
 

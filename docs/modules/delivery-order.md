@@ -8,7 +8,15 @@ ledger, `recomputeTotals`) with one thing the SO does not have: **it moves stock
 > Convention: money is in **sen** (integer cents) end-to-end. Dates are stored
 > UTC, displayed DD/MM/YYYY. All reads/writes go through `/api/scm/*`.
 >
-> Line references are against `main` @ `8f8427ed`.
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
 
 Doc-flow position: **SO → DO → SI**, with **DO → DR** (Delivery Return) as the
 reversal branch. The DO is the OUT half of the inventory ledger.
@@ -27,7 +35,7 @@ reversal branch. The DO is the OUT half of the inventory ledger.
 | Desktop report | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing.tsx` | Detail-listing report. |
 | Mobile list | `frontend/src/mobile/MobileModuleList.tsx` | `MODULE_CONFIGS["delivery-orders-mfg"]` (`:1064-1106`). |
 | Mobile detail | `frontend/src/mobile/MobileModuleDetail.tsx` | Config `:241`; status actions `:480-494`. |
-| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status` (`:167`). |
+| Mobile POD | `frontend/src/mobile/MobilePOD.tsx` | The driver screen — signature + photo + `PATCH /:id/status`. `signatureData` is sent **only when the customer actually drew** (gated on `hasSignature`, which the pad sets on the first pointerdown). It used to be gated on `canvas.toDataURL()`, which returns a valid non-empty PNG for an untouched transparent canvas — so every delivery stored a blank signature into `delivery_orders.signature_data`, indistinguishable from a real POD that failed to render. `podKey` and the GPS fields in the same payload were already gated on real capture. |
 | Mobile convert (SO→DO) | `frontend/src/mobile/MobileConvertWizard.tsx` | `target = "do"` (`:72`). |
 | Mobile planning board | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | |
 
@@ -129,10 +137,18 @@ still need `edit` on `scm.sales.delivery`.
    The first two collapse into `has_children`; the third gives
    `lifecycle_state` (`'shipped' | 'invoiced' | 'returned'`, `:1998`).
    A fourth, sequential batched read then pulls
-   `mfg_sales_orders.internal_expected_dd` for the distinct `so_doc_no` set and
-   stamps it on each row as **`so_internal_expected_dd`** — the linked SO's
+   `mfg_sales_orders.processing_date` for the distinct `so_doc_no` set and
+   stamps it on each row as **`so_processing_date`** — the linked SO's
    "Processing date" shown in the DO quick-view drawer (desktop
    `MfgDeliveryOrdersListV2` + mobile `MobileModuleList`).
+   **This is a DERIVED response field, and both ends read it as a string** —
+   mobile via `pick(r, "soProcessingDate", "so_processing_date")`
+   (`MobileModuleList.tsx:1147,1198`; corrected 2026-08-14 — this line named
+   `soInternalExpectedDd` / `so_internal_expected_dd`, retired by mig 0286). If
+   the SO column is ever renamed, rename this response key on BOTH ends or
+   neither: a backend-only rename blanks the "Processing" column with no error
+   anywhere. See docs/modules/sales-order.md, "surfaces that read this date by
+   NAME".
    The list also stamps **`source_pos`** per row via the ONE shared resolver
    (`scm/lib/source-po-trace.ts`, batched, one ledger pass): a DO is a sales-side
    doc, so its list + drill-down show the durable **Source PO** (`batch_no` =
@@ -197,11 +213,25 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
-Status vocabulary (`:366-376`):
-`DO_STATUSES` = DRAFT, LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED,
-INVOICED, COMPLETED, CANCELLED. `DO_PRESHIP_STATUSES` = DRAFT, LOADED.
-`SHIPPED_STATES` (`:357`) = DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED.
-`DO_STOCK_OUT_STATUSES` = `SHIPPED_STATES` ∪ {COMPLETED}.
+**Status vocabulary — read `backend/src/scm/shared/do-shipped-states.ts`, not
+this paragraph.** Since 2026-08-13 that file is the single declaration of
+`DO_SHIPPED_STATES`, `DO_STOCK_OUT_STATES`, `DO_PRESHIP_STATES` and
+`DO_STATUSES`; `delivery-orders-mfg.ts` (`:402`, `:411`, `:413`, `:419`),
+`consignment-notes.ts`, `lib/reconcile-ledger.ts`,
+`services/agents/delivery-agent.ts` and seven audit scripts all read it through
+`scripts/lib/do-shipped-states.mjs` or the TS module. This doc used to spell the
+sets out here, which made it one more copy of a list that already stood in
+eleven files — and copies of this particular list had already drifted: the
+delivery agent's was missing `COMPLETED`, so its DO pipeline silently omitted
+that bucket.
+
+The shape, so the section still says something: `DO_SHIPPED_STATES` is the
+**write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
+excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the
+**read predicate** ("has this stock already gone out?") and is
+`DO_SHIPPED_STATES ∪ {COMPLETED}`. `tests/doShippedStatesMirror.test.ts` pins
+that relationship and the .mjs mirror.
+
 Filter buckets (`:2180-2185`): `open` = DRAFT+LOADED, `in_transit` =
 DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
 `cancelled` = CANCELLED.
@@ -212,10 +242,10 @@ DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
 
 **A Delivery Order moves inventory OUT.**
 
-**When:** the FIRST transition into ANY status in `SHIPPED_STATES`
-(`:357`). This is deliberately a set, not a single status, so a DO that jumps
-straight to SIGNED or DELIVERED still deducts exactly once. There are two entry
-points to that same deduction:
+**When:** the FIRST transition into ANY status in `SHIPPED_STATES` (`:402`,
+spread from `DO_SHIPPED_STATES`). This is deliberately a set, not a single
+status, so a DO that jumps straight to SIGNED or DELIVERED still deducts exactly
+once. There are two entry points to that same deduction:
 
 - **Non-draft create** (`:2842-2843`) — the DO is born DISPATCHED, so
   `deductInventoryForDo` runs right after the item insert.
@@ -283,6 +313,31 @@ the ledger did not move. Measured on production 2026-08-11: **ZERO** movements
 carried the function's own notes marker, so it had never landed one row. The
 function now stamps `correction_seq = max_for_bucket + 1`, and the corrections
 insert.
+
+**A qty REDUCTION no longer takes that path at all (0286).** Once the deltas
+could land, the second question became what the returning stock is WORTH, and
+the answer was a weighted average — `round(out_total_cost / out_qty)` — which
+blends units that have a cost with units that do not, then MINTS A LOT at the
+invented figure. `fn_return_do_units_at_cost` replaces it: the partial form of
+`fn_reverse_do_out`, unwinding the bucket's `inventory_lot_consumptions`
+newest-first so each unit goes back to the lot that paid for it, restamping the
+OUT's COGS from the consumptions that survive, and writing its own balancing IN
+at cost 0 with the minted lot closed. Uncosted units — the "ship anyway"
+oversell — return at nothing and are reported in `qty_uncosted`.
+
+Three consequences worth knowing before touching this path:
+
+- **LIFO is a decision, not a derivation.** Nothing in the data says which
+  physical units came back. The migration header states the rule and the reason
+  (a reduction is an undo; what an operator undoes is the most recent shipment).
+- **A handled reduction contributes NO row to `writes`.** The function writes its
+  own IN, so the route tracks those buckets separately — they still have to reach
+  `reconcileUncostedAfterIn` (a restored lot can retro-cost an earlier oversell)
+  and still count as "the ledger changed" for the restamp and allocation steps.
+  Gating those on `writes.length` alone silently skips every reduction.
+- **The old blended row still exists**, solely as a fallback for a database
+  without 0286. A reduction that posts nothing leaves shipped stock permanently
+  deducted, which is worse than an imprecise cost.
 
 The rows stay `source_doc_type='DO'` **on purpose** — see the rejected
 alternatives in `BUG-HISTORY.md`. Short version: `restampDoActualCost`,
@@ -587,3 +642,26 @@ entangled with the deferred line-retirement work
 (`docs/autocount-line-retirement-plan.md`). The exact 18 lines, the two options
 and the recommendation are in `docs/migrated-do-duplicate-lines.md` — an owner
 decision, laid out to be approved in one read.
+
+**Decided 2026-08-11 — Option B: the surplus lines hold quantity 0.** The owner
+chose "qty 改 0 + 审计备注" over adding a `cancelled` column, so
+`backend/scripts/zero-duplicate-do-lines.mjs` (Actions → **Zero the duplicate
+migrated DO lines (owner Option B)**) sets `qty = 0` on the surplus rows and
+appends an audit note to the line's `description`. **The rows stay** — nothing
+is deleted, which is the owner's standing rule.
+
+What that means for anyone reading or writing this module:
+
+- **A `scm.delivery_order_items` row with `qty = 0` is now a real, expected
+  shape on migrated documents.** It is a retired duplicate, not a data error.
+  The note in `description` begins `[ZEROED ` and names the original quantity
+  and the twin row that carries the real delivery.
+- Nothing had to change to make the arithmetic right: `delivered` is the line's
+  own `qty` (`do-line-remaining.ts:199`) and every delivered sum is `SUM(qty)`,
+  so a zero contributes nothing. No reader was taught a new flag, which is
+  exactly why this was preferred over a half-converted soft-cancel.
+- **A zero-quantity line still prints on the DO PDF** unless the renderer
+  filters it. That is the accepted cost of Option B, recorded here so it is not
+  rediscovered as a bug.
+- When the line-retirement work lands for real, these rows are still present
+  and can be flipped to `cancelled = true` in one statement.

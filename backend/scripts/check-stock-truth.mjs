@@ -115,6 +115,7 @@ import { gunzipSync } from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { DO_SHIPPED_STATES } from "./lib/do-shipped-states.mjs";
 import { explainDivergence } from "./stock-truth-classify.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -796,7 +797,11 @@ async function sectionB(state) {
 /* ════════════════════════════════════════════════════════════════════════════
    SECTION C — delivered COGS
    ════════════════════════════════════════════════════════════════════════════ */
-const SHIPPED_STATES = ["DISPATCHED", "IN_TRANSIT", "SIGNED", "DELIVERED", "INVOICED"];
+/* From the shared module, not a hand copy. main extracted this list while this
+   branch was open and tests/doShippedStatesMirror.test.ts pins it; an audit that
+   scans a different status set than the write path is how a COMPLETED delivery
+   order was in scope for one sweep and invisible to another on the same day. */
+const SHIPPED_STATES = DO_SHIPPED_STATES;
 
 async function sectionC(state) {
   notice("");

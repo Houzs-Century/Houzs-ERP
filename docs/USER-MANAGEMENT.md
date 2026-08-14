@@ -2,7 +2,9 @@
 
 How staff access is controlled in Houzs ERP. Deployed to prod 2026-06-13.
 Companion docs: [PERMISSION-MATRIX.md](PERMISSION-MATRIX.md) (the agreed grid),
-[DEPLOY-USER-MGMT.md](DEPLOY-USER-MGMT.md) (deploy runbook).
+[archive/DEPLOY-USER-MGMT.md](archive/DEPLOY-USER-MGMT.md) (the one-shot deploy
+runbook, archived — it targets the long-merged `migrate/d1-to-supabase` branch;
+the live release path is [STAGING-RELEASES.md](STAGING-RELEASES.md)).
 
 ## The model: two orthogonal dimensions
 A user has both a **role** and a **position**:

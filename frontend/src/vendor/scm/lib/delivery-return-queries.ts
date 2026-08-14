@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
+import { writeFailed, writeFailedAs } from './mutation-error';
 
 // Re-export the DO-side prefill hook the New-DR page pulls from this module in
 // the source (it lives in the vendored DO slice — single source of truth).
@@ -103,6 +104,7 @@ export const useConvertDoToDeliveryReturn = () => {
       qc.invalidateQueries({ queryKey: ['sales-invoices', 'invoiceable-do-lines'], refetchType: 'all' });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
     },
+    onError: writeFailedAs('Delivery return not created'),
   });
 };
 
@@ -119,6 +121,7 @@ export const useUpdateDeliveryReturnHeader = () => {
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -155,6 +158,7 @@ export const useAddDeliveryReturnItem = () => {
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
     },
+    onError: writeFailedAs('Line not added'),
   });
 };
 
@@ -169,6 +173,7 @@ export const useUpdateDeliveryReturnItem = () => {
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
     },
+    onError: writeFailed,
   });
 };
 
@@ -181,5 +186,6 @@ export const useDeleteDeliveryReturnItem = () => {
       qc.invalidateQueries({ queryKey: ['delivery-return-detail', vars.id] });
       qc.invalidateQueries({ queryKey: ['delivery-returns'] });
     },
+    onError: writeFailedAs('Line not deleted'),
   });
 };

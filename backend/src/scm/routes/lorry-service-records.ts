@@ -141,6 +141,15 @@ lorryServiceRecords.post('/', async (c) => {
 
 // ── update ───────────────────────────────────────────────────────────────────
 lorryServiceRecords.patch('/:id', async (c) => {
+  // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
+  // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
+  // ("every company's TMS page shows the same lorries/drivers"), and driver_code
+  // carries a bare UNIQUE so per-company minting would collide across tenants.
+  // scm.lorry_service_records' own DDL (mig 0121) spells out the consequence:
+  // company_id is stamped on insert but "NOT used to scope reads", because a
+  // lorry's history must be visible wherever the lorry is. Verified 2026-08-13
+  // against the DDL and both route declarations before deciding NOT to change
+  // this handler.
   const id = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -197,6 +206,15 @@ lorryServiceRecords.patch('/:id', async (c) => {
 // Removes the R2 object too — an orphaned invoice in a shared bucket is a leak
 // nobody would ever go looking for.
 lorryServiceRecords.delete('/:id', async (c) => {
+  // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
+  // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
+  // ("every company's TMS page shows the same lorries/drivers"), and driver_code
+  // carries a bare UNIQUE so per-company minting would collide across tenants.
+  // scm.lorry_service_records' own DDL (mig 0121) spells out the consequence:
+  // company_id is stamped on insert but "NOT used to scope reads", because a
+  // lorry's history must be visible wherever the lorry is. Verified 2026-08-13
+  // against the DDL and both route declarations before deciding NOT to change
+  // this handler.
   const id = c.req.param('id');
   const sb = c.get('supabase');
   const { data: row } = await sb.from('lorry_service_records').select('id, invoice_key').eq('id', id).maybeSingle();
@@ -212,6 +230,15 @@ lorryServiceRecords.delete('/:id', async (c) => {
 
 // ── invoice upload ───────────────────────────────────────────────────────────
 lorryServiceRecords.put('/:id/invoice', async (c) => {
+  // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
+  // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
+  // ("every company's TMS page shows the same lorries/drivers"), and driver_code
+  // carries a bare UNIQUE so per-company minting would collide across tenants.
+  // scm.lorry_service_records' own DDL (mig 0121) spells out the consequence:
+  // company_id is stamped on insert but "NOT used to scope reads", because a
+  // lorry's history must be visible wherever the lorry is. Verified 2026-08-13
+  // against the DDL and both route declarations before deciding NOT to change
+  // this handler.
   const id = c.req.param('id');
   if (!c.env.SO_ITEM_PHOTOS) return c.json({ error: 'photo_bucket_not_configured' }, 500);
 

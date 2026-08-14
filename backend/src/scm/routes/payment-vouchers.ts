@@ -183,6 +183,46 @@ export function buildAllocations(
    src/db/migrations-pg/0147_scm_settle_pi_paid_centi.sql for how that
    over-pays. */
 
+/* ── The allocation's pi_id is CALLER-SUPPLIED, so it is checked here ────────
+   An allocation row is stamped with the ACTIVE company (stampCompany, below),
+   but `piId` arrives in the request body and nothing verified that the invoice
+   it names is this company's. Post the voucher and settlePiPaidCenti moves that
+   invoice's paid_centi and status by id alone — the service-role client bypasses
+   RLS (mig 0061 enabled it with NO policies) — so a company-A voucher marked a
+   company-B supplier invoice PARTIALLY_PAID / PAID, and the FX-adoption branch
+   further down POST /:id/post could then rewrite that invoice's exchange_rate
+   and re-cost the GRN behind it. Company B sees an invoice settle with no
+   voucher of its own to explain it.
+
+   Checked where the id ENTERS, not at post time: nothing has been written yet,
+   so the operator gets a straight refusal instead of a voucher that silently
+   settles nothing. scm.purchase_invoices.company_id is NOT NULL (mig 0083), so
+   this filter is exact — an invoice of this company can never fail it.
+
+   FAILS CLOSED on a read error: absence is what REFUSES here, so folding a blip
+   into "all present" would authorise exactly the write this guard exists to
+   stop. Returns the offending ids. */
+async function allocationPisOutsideCompany(
+  sb: any,
+  c: any,
+  piIds: string[],
+): Promise<string[]> {
+  const ids = [...new Set(piIds.filter(Boolean))];
+  if (ids.length === 0) return [];
+  const { data, error } = await scopeToCompany(
+    sb.from('purchase_invoices').select('id').in('id', ids), c,
+  );
+  if (error) return ids;
+  const seen = new Set(((data ?? []) as Array<{ id: string }>).map((r) => r.id));
+  return ids.filter((id) => !seen.has(id));
+}
+
+const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
+  error: 'allocation_not_in_company',
+  message: 'One of the invoices this voucher applies to is not available in the company you are working in.',
+  purchaseInvoiceIds: ids.slice(0, 20),
+});
+
 /* ────────────────────────────────────────────────────────────────────────
    List / get
    ──────────────────────────────────────────────────────────────────────── */
@@ -241,7 +281,10 @@ paymentVouchers.get('/:id', async (c) => {
    Create (DRAFT)
    ──────────────────────────────────────────────────────────────────────── */
 
-paymentVouchers.post('/', async (c) => {
+/* Exported for the same reason postPaymentVoucherHandler and
+   cancelPaymentVoucherHandler are: the supabaseAuth bridge cannot run in the
+   vitest harness, so the scope test mounts the handler on a bare Hono app. */
+export const createPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
@@ -266,6 +309,12 @@ paymentVouchers.post('/', async (c) => {
   }
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  // Every applied-to invoice must be THIS company's — see allocationPisOutsideCompany.
+  {
+    const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+    if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+  }
   const currency = normalizeCurrency(body.currency);
   /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
      unless the body sends an explicit one; MYR ⇒ 1, a strict no-op. */
@@ -338,7 +387,8 @@ paymentVouchers.post('/', async (c) => {
   });
 
   return c.json({ id: h.id, pvNumber: h.pv_number }, 201);
-});
+};
+paymentVouchers.post('/', createPaymentVoucherHandler);
 
 /* ────────────────────────────────────────────────────────────────────────
    Update — DRAFT only (a POSTED / CANCELLED voucher is read-only)
@@ -356,7 +406,18 @@ paymentVouchers.patch('/:id', async (c) => {
   /* The FULL header, not just status: this row is the BEFORE half of every
      from->to pair recorded at the end of the handler. Reading it here also
      removes the second round-trip the currency branch used to make. */
-  const { data: cur } = await sb.from('payment_vouchers').select(HEADER).eq('id', id).maybeSingle();
+  /* Company scope. This was an unscoped `.eq('id', id)`, so a holder of the
+     cross-company `scm.payment_voucher.write` permission could edit ANOTHER
+     company's DRAFT voucher - payee, amount, currency, lines. The sibling
+     cancel handler in this same file already does exactly this and its comment
+     names the class ('an unscoped load let one company cancel another's
+     voucher'); the PATCH was never aligned. Found 2026-08-13 by a scanner over
+     all 632 SCM handlers, then read here before changing anything. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: cur } = await scopeToCompanyId(
+    sb.from('payment_vouchers').select(HEADER).eq('id', id), co.companyId,
+  ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   const before = cur as unknown as Record<string, unknown>;
   if ((before as { status: string }).status !== 'DRAFT') {
@@ -420,6 +481,14 @@ paymentVouchers.patch('/:id', async (c) => {
     if (allocBuilt.total > total) {
       return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total }, 400);
     }
+    /* Same check as the create path, and it has to be here too: a DRAFT edit is
+       the other door the caller-supplied pi_id comes through, and it REPLACES
+       the whole allocation set. Refused before the delete, so a rejected edit
+       cannot leave the voucher with no allocations at all. */
+    {
+      const outside = await allocationPisOutsideCompany(sb, c, allocBuilt.rows.map((r) => r.pi_id));
+      if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
+    }
     await sb.from('pv_allocations').delete().eq('pv_id', id);
     if (allocBuilt.rows.length > 0) {
       const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocBuilt.rows.map((r) => ({ ...r, pv_id: id })), c));
@@ -464,9 +533,24 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  const { data: pvRaw } = await sb.from('payment_vouchers')
-    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id).maybeSingle();
-  if (!pvRaw) return c.json({ error: 'not_found' }, 404);
+  /* Scoped before the load. POSTING is a write, and the service-role client
+     bypasses RLS (mig 0061 enabled it with NO policies), so an app-level
+     predicate is the ONLY isolation there is. Everything downstream keys off
+     this row — the GL entry is written from pv.pv_number, pv.credit_account_code
+     and pv.company_id — so an unscoped load let one company POST another
+     company's voucher and stamp a journal entry into that company's ledger. The
+     GET at :208 and cancelPaymentVoucherHandler both already scoped it; post is
+     the same door and was the one left unlocked.
+
+     Found twice independently — by this audit and by #2086 — which is why the
+     merge of the two kept the shared NOT_THIS_COMPANY refusal rather than a
+     second bespoke `not_found` shape. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const { data: pvRaw } = await scopeToCompanyId(sb.from('payment_vouchers')
+    .select(`${HEADER}, supplier:suppliers(code, name)`).eq('id', id), co.companyId).maybeSingle();
+  if (!pvRaw) return c.json(NOT_THIS_COMPANY, 404);
   const pv = pvRaw as unknown as {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
     credit_account_code: string; total_centi: number; currency: string | null;
@@ -478,12 +562,26 @@ export const postPaymentVoucherHandler = async (c: any) => {
 
   // Idempotency — an ACTIVE (non-reversed) PV JE already exists? (mirror
   // postPiAccounting). Flip POSTED + echo without re-writing the GL.
-  const { data: existingRows } = await sb.from('journal_entries')
-    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number);
+  /* The error is READ, not dropped. This is the idempotency check: if the
+     query fails, `existingRows` is undefined, `?? []` turns that into "no
+     journal entry exists", and the handler goes on to post a SECOND one
+     against the same voucher. A failed read must never read as an absence
+     when the absence is what authorises the write.
+
+     Scoped as well — a pv_number is unique per company, so an unscoped lookup
+     could match the other company's JE and skip a posting that never happened
+     here. */
+  const { data: existingRows, error: existingErr } = await scopeToCompanyId(sb.from('journal_entries')
+    .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number), co.companyId);
+  if (existingErr) {
+    return c.json({ error: 'post_failed', message: `Could not check whether this voucher is already posted: ${existingErr.message}` }, 500);
+  }
   const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>).find((r) => !r.reversed);
   if (active) {
     if (pv.status !== 'POSTED') {
-      await sb.from('payment_vouchers').update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+      await scopeToCompanyId(sb.from('payment_vouchers')
+        .update({ status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', id), co.companyId);
     }
     return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id });
   }

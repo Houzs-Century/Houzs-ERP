@@ -2077,31 +2077,13 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
 
 /**
  * POST /api/users/:id/reset-password
- * Admin-triggered "send reset link". Emails the user a one-hour, single-use
- * link. THE ACCOUNT IS NOT TOUCHED (owner 2026-07-19: "如果他们没有点击，状态
- * 就保持不变；如果点击了，就可以重置密码"): the password hash, the status and
- * the user's live sessions are all left exactly as they were. Only redeeming
- * the link (POST /api/auth/reset/:token) changes anything — and that path
- * already sets the new hash and revokes every session.
- *
- * TWO DELIBERATE REMOVALS from the earlier version of this handler, both of
- * which made "send a link" a state change:
- *
- *   1. It used to DELETE every session for the target the moment the admin
- *      clicked, so an untouched link still logged the user out of their phone
- *      mid-job. That is precisely the behaviour the owner ruled out.
- *   2. It used to RETURN the token (`token`, `reset_path`) and the Team screen
- *      copied the live link to the admin's clipboard. That made `users.manage`
- *      a silent account-takeover primitive: any holder could mint a working
- *      one-hour credential for ANY account — including one more privileged
- *      than their own — and use it themselves without the target's mailbox
- *      ever being involved, while the audit row said only that a reset was
- *      "issued". The link is a credential; it goes to the mailbox, not to the
- *      person who pressed the button. If email is down, fix the channel (the
- *      response says which one) — do not route a credential through an admin.
- *
- * Rate-limited on the TARGET, because an admin button that sends mail to a
- * colleague is also a way to spam that colleague.
+ * Admin-triggered "send reset link". THE ACCOUNT IS NOT TOUCHED — no hash, no
+ * status, no session change; only redeeming the link changes anything. It must
+ * NOT return the token either: the link is a credential and goes to the
+ * mailbox, never to the admin who pressed the button. Both of those are
+ * deliberate removals, not omissions — the full reasoning, the owner's wording
+ * and the account-takeover primitive they closed are in
+ * docs/modules/team-members.md section 5. Rate-limited on the TARGET.
  */
 app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2247,17 +2229,11 @@ app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
 });
 
 // ── Impersonation ────────────────────────────────────────────────────────────
-// Two doors, both behind users.manage (Nico approved 2026-07-22):
-//   · Staging flag — IMPERSONATION_ENABLED === "true", set ONLY in
-//     wrangler.toml's [env.staging.vars]: every users.manage admin may hop
-//     between the shared test accounts. Ordinary 7-day sessions.
-//   · Wildcard owner — a caller whose permissions carry `*` (Super Admin
-//     role / god-tier position) may impersonate EVERYWHERE, prod included,
-//     with a 1-HOUR session instead (the "view-as" design the owner hand-off
-//     in frontend main.tsx describes: short-lived + audited).
-// Anyone else: the probe reports disabled and the mint endpoint 404s.
-// Mints a REGULAR session for the target (2FA is bypassed by design — the
-// caller already proved users.manage), so "exit" is just logging out.
+// THE app.post("/:id/impersonate") BELOW IS DEAD — the earlier registration in
+// this file shadows it, so the two-door design it implements never runs, while
+// GET /impersonation-enabled (unshadowed) still advertises the staging door.
+// LEFT AS IS on purpose; it is the owner's decision which door is correct.
+// Read docs/modules/team-members.md section 4 before touching either one.
 
 const hasWildcard = (
   u: { permissions_set?: Set<string>; permissions: string[] } | undefined,

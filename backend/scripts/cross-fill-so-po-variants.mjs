@@ -12,15 +12,22 @@
 // linked_ac_docno, plus the same ERP material/item code. Only fills BLANKS —
 // never overwrites a value that is already there.
 // DRY-RUN by default; APPLY=1 to write.
+//
+// RE-RUN: convergent. Re-derives the same fill from the same paired document, so a second run rewrites identical values.
 import fs from "node:fs";
 import postgres from "postgres";
+/* The exemptions are IMPORTED, not re-typed. This script had a local isDivanOnly
+   and NO isDivanlessFrame, so `complete()` demanded a Divan Height and a Leg
+   Height from adjustable / pull-out / double-decker frames that physically have
+   no divan base — the owner's 2026-08-10 exemption reached the app and not this
+   audit. tests/variantAxesMirror.test.ts pins the module against the TS rule. */
+import { isDivanOnly, isDivanlessFrame, isSeatlessPiece } from "./lib/variant-axes.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const APPLY = process.env.APPLY === "1";
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
-const isDivanOnly = (c) => /\bDIVAN\s*ONLY\b/i.test(c || "");
 
 /** Merge donor values into the blanks of `into`. Returns null when nothing changed. */
 function fillBlanks(into, donor) {
@@ -45,7 +52,14 @@ function fillBlanks(into, donor) {
   return changed ? { variants: v, cols, specials: merged.length ? merged : null, specialsChanged } : null;
 }
 
-const complete = (r) => !!(r.variants?.colourId) && r.divan_height_inches != null && r.leg_height_inches != null && (r.gap_inches != null || isDivanOnly(r.code));
+/* A divanless frame has no Divan Height, Leg Height or Gap to state at all, so
+   none of the three may be demanded of it (owner 2026-08-10). */
+const complete = (r) =>
+  !!(r.variants?.colourId) &&
+  (isDivanlessFrame(r.code) ||
+    (r.divan_height_inches != null &&
+      r.leg_height_inches != null &&
+      (r.gap_inches != null || isDivanOnly(r.code))));
 
 async function main() {
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}`);

@@ -51,21 +51,34 @@ const DEAD_PO_STATUSES = new Set(['CANCELLED', 'DRAFT']);
 /** Resolve each SO line's EXPECTED batch (bound LIVE PO number + ETA). A line
  *  with no live bound PO is simply absent from the returned map (caller treats
  *  absence as "cannot drop-ship"). When a line is bound to >1 live PO:
- *    - onMultiPo 'latest' (default; movement-write paths): pick the most
- *      recently created live PO so the batch stays deterministic and matches
- *      the bucket the original OUT was stamped with;
+ *    - onMultiPo 'latest' (movement-write paths): pick the most recently
+ *      created live PO so the batch stays deterministic and matches the bucket
+ *      the original OUT was stamped with;
  *    - onMultiPo 'block' (guard/offer paths): return the line with
  *      poNumber null + multiPo true so the caller blocks the drop-ship and
  *      can tell the operator WHY (audit H3).
+ *
+ *  `onMultiPo` IS REQUIRED, and that is the point. It arrived as
+ *  `opts?: { onMultiPo?: ... }` defaulting to 'latest' — so H3, the hardening
+ *  that exists to REFUSE an ambiguous batch, only applied to the call sites
+ *  that opted in, and a new caller inherited the pre-H3 behaviour with no
+ *  compile error and no failing test. 'latest' cannot be the silent default
+ *  because it is the permissive direction: it stamps ONE of two possible PO
+ *  numbers on the OUT while the GRN may arrive under the other, stranding the
+ *  drop-ship COGS at 0 forever. Every caller now states which question it is
+ *  asking, so the next hardening can enumerate them from the compiler
+ *  (2026-08-13, optional-param-noop sweep — same shape as itemCode in
+ *  scm/shared/so-variant-rule.ts).
+ *
  *  Best-effort: any read error yields an empty map (every line treated as
  *  no-PO -> drop-ship blocked, safe). */
 export async function resolveExpectedBatchBySoItem(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soItemIds: Array<string | null | undefined>,
-  opts?: { onMultiPo?: 'latest' | 'block' },
+  opts: { onMultiPo: 'latest' | 'block' },
 ): Promise<Map<string, ExpectedBatch>> {
-  const onMultiPo = opts?.onMultiPo ?? 'latest';
+  const onMultiPo = opts.onMultiPo;
   const out = new Map<string, ExpectedBatch>();
   const ids = [...new Set(soItemIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;

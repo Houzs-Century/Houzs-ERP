@@ -1,5 +1,15 @@
 # Module: Global Search (Cmd+K palette)
 
+> **Line numbers here are INDICATIVE, not authoritative.** They were correct at
+> `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
+> every `:NNN` in this directory stale while the paths, methods and permission
+> keys were right. Resolve a route to its current line with the GENERATED
+> artifact, which cannot go stale because it is rebuilt from the tree:
+>
+> ```bash
+> npm --prefix backend run gen:route-locator   # then grep docs/generated/route-locator.md
+> ```
+
 One endpoint, ten sources, two palettes, and one rule that matters more than the
 rest: **a source that could not be READ must never be presented as a source with
 nothing in it.**
@@ -92,8 +102,10 @@ bypassed. Each fragment is `""` ONLY when the company context is unresolved;
 a resolved-but-restricted caller gets a match-nothing predicate. Never fail open.
 
 - projects → `activeCompanySql` (follows the ACTIVE company)
-- ASSR → `assrCompanySql`, mirroring `routes/assr.ts`: rank-and-file Sales are
-  PINNED to HOUZS, office/backend/directors widen to their allowed set
+- ASSR → `assrCompanySql`, IMPORTED from `routes/assr.ts` (not copied), where it
+  is `allowedCompaniesSql` — the caller's GRANTED companies, no role pin. The
+  local copy that pinned rank-and-file Sales to HOUZS was deleted when the owner
+  removed that pin on 2026-07-20; it had already drifted out of sync
 - users → global (an unscoped shared directory, matching `/api/users`)
 - all SCM sources → `scopeToCompany`
 

@@ -1,0 +1,64 @@
+name: Fabric description tidy
+
+# Brings fabric DESCRIPTIONS to the owner-approved shape (`<CODE> <COLOUR NAME>`)
+# and drops the asterisk he ruled meaningless on 2026-08-12.
+#
+# CODES ARE NEVER TOUCHED — only the description text — so no document is
+# re-pointed, no price tier moves, and nothing that joins on the code can break.
+#
+# plan (DEFAULT) writes nothing and pins the session read-only. apply needs the
+# confirm phrase AND target=prod chosen explicitly.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+      mode:
+        description: "plan writes nothing; apply rewrites descriptions"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      series:
+        description: "Limit to these series, comma separated (blank = all)"
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "For apply only — type: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: fabric-description-tidy
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'staging' && 'Staging' || '' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/tidy-fabric-descriptions.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'staging' && secrets.STAGING_DATABASE_URL || secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          SERIES: ${{ inputs.series }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: "1"

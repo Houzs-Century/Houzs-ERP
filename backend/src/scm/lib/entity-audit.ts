@@ -37,6 +37,12 @@ export const ENTITY_TYPES = [
   'PURCHASE_ORDER',
   'PURCHASE_INVOICE',
   'DELIVERY_ORDER',
+  /* Write-only so far, exactly like DELIVERY_ORDER: purchase-returns.ts records
+     RECOUNT_FAILED here when a line change's delta movement is refused. Nothing
+     reads it through the History drawer (the frontend's AuditEntityType union
+     does not carry it either), so the row exists for an investigator and for
+     /inventory/reconcile, not for a tab. */
+  'PURCHASE_RETURN',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

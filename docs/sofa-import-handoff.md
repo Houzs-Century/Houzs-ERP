@@ -118,6 +118,13 @@ token 的书写顺序 = 面对沙发时的实际摆位。解析器最后有一�
   with 1 inch leg` → `Seat Base Fully Cover with no Leg`;`after push back align to
   seat` → `Seat Behind Extend 5"`;`seat cushion add height 1 inch` **故意没有 code**,
   走自由文本。Altay Leg 已经搬去 leg pool,所以换脚的句子也不映射
+- **这支不能盲目再跑一次**(2026-08-13 修):它写的是旧的 `string[]` 形状,而
+  `custom_specials` 宣告的形状是 `Array<{ description, surchargeSen }>`
+  (`mfg-pricing-recompute.ts:117`),定价引擎一改行就写后者。第二趟碰到已经
+  recompute 过的行,`String(物件)` 会把整栏写成 `["[object Object]"]`——把带钱的
+  surcharge 明细换成一个占位字串。现在这种行会被**拒绝并列印**,报表那行叫
+  `lines REFUSED because the pricing engine already owns their custom_specials`。
+  其余的行第二趟会推出同样的联集,是空转
 
 ### 2.6 铁律
 

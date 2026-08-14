@@ -179,7 +179,12 @@ describe("trips.ts — the reverse sync is wired into every trip write endpoint"
     const stripped = stripComments(routeSource);
     /* The stop must be snapshotted before it is deleted — once gone it cannot be
        mapped to a header. */
-    const delStopIdx = stripped.indexOf("trips.delete('/:id/stops/:stopId'");
+    /* Anchor on the HANDLER, not on its router registration. The handler became
+       a named export (deleteTripStopHandler) so the company-scope suite can
+       mount it directly; `trips.delete('/:id/stops/:stopId', deleteTripStopHandler)`
+       is now a one-line registration, and slicing from there reads the NEXT
+       handler's body instead of this one. */
+    const delStopIdx = stripped.indexOf("export const deleteTripStopHandler");
     expect(delStopIdx).toBeGreaterThan(-1);
     const body = stripped.slice(delStopIdx, delStopIdx + 1200);
     expect(body).toContain("trip_stops");

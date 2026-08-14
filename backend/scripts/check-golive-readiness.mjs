@@ -11,11 +11,15 @@
 //
 // Read-only. SELECT only, no writes.
 import postgres from "postgres";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const CO = 1;
 
 async function main() {
@@ -52,15 +56,20 @@ async function main() {
 
   log("");
   log("═══ C. sales-order readiness ═══");
+  /* "Processed" = carries a Processing Date, and that date is
+     internal_expected_dd — the column the UI writes and the only one
+     soProcessingLocked and MRP read. proceeded_at is the IN_PRODUCTION stamp,
+     so every readiness number below used to describe a smaller population than
+     the screens the owner compares them against. */
   const [hdr] = await sql`SELECT COUNT(*) total,
-      COUNT(*) FILTER (WHERE proceeded_at IS NOT NULL) processed,
+      COUNT(*) FILTER (WHERE ${PDATE} IS NOT NULL) processed,
       COUNT(*) FILTER (WHERE status = 'READY_TO_SHIP') ready_hdr
     FROM scm.mfg_sales_orders WHERE company_id = ${CO} AND status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
   log(`live orders: ${hdr.total}; with a processing date: ${hdr.processed}; header READY_TO_SHIP: ${hdr.ready_hdr}`);
 
   const byStatus = await sql`SELECT i.stock_status, COUNT(*)::int n FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-    WHERE h.company_id = ${CO} AND h.proceeded_at IS NOT NULL AND COALESCE(i.cancelled,false) = false
+    WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
     GROUP BY 1 ORDER BY n DESC`;
   log(`lines on PROCESSED orders, by stock status: ${byStatus.map((r) => `${r.stock_status ?? "(null)"}=${r.n}`).join(", ")}`);
@@ -79,7 +88,7 @@ async function main() {
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
     JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-    WHERE h.company_id = ${CO} AND h.proceeded_at IS NOT NULL
+    WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL
       AND COALESCE(i.cancelled,false) = false
       AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
       AND COALESCE(poi.received_qty,0) > 0
@@ -99,7 +108,7 @@ async function main() {
     WITH bf_need AS (
       SELECT i.item_code, COUNT(*)::int lines, SUM(i.qty)::int need
       FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-      WHERE h.company_id = ${CO} AND h.proceeded_at IS NOT NULL AND i.item_group = 'bedframe'
+      WHERE h.company_id = ${CO} AND h.${PDATE} IS NOT NULL AND i.item_group = 'bedframe'
         AND COALESCE(i.cancelled,false) = false AND i.stock_status <> 'READY'
         AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
       GROUP BY 1

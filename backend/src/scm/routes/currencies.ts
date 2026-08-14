@@ -18,6 +18,15 @@
 // gates are dead — the SCM bridge pins every caller to one super_admin row).
 // company_id is stamped on insert (no-op pre-activation); the `code` PK is global,
 // so reads are NOT company-scoped (MYR must stay visible to every company).
+//
+// DELIBERATELY CROSS-COMPANY ON WRITE TOO. PATCH /:code carries no company
+// predicate on purpose: `code` is the primary key, so there is exactly ONE row
+// per currency for the whole system, and MULTICOMPANY-MODULE-MAP.md classes the
+// currency master as SHARED. Scoping the update would make the single MYR row
+// editable by whichever company happened to insert it and invisible to the
+// other, which is the opposite of a shared master. The gate here is the
+// `scm.currency.manage` permission, not company_id — one rate table, one set of
+// people allowed to move it.
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';

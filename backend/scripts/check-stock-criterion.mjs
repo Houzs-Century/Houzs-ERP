@@ -25,6 +25,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const DST = process.env.DATABASE_URL;
 if (!DST) { console.error("need DATABASE_URL"); process.exit(2); }
@@ -32,6 +33,9 @@ const TOP = Number(process.env.TOP || 40);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const log = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+/* The ONE name of the Processing Date column, spliced as SQL text rather than
+   bound as a parameter — see lib/so-processing-date.mjs for why. */
+const PDATE = soProcessingDateFragment(sql);
 const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 const gz = (f) => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(here, "data", f))).toString("utf8").replace(/^﻿/, ""));
 
@@ -138,28 +142,31 @@ async function main() {
   /* ── B. stock_status census — the acceptance test ───────────────────────── */
   log("");
   log("---------------- B. PER-LINE stock_status ----------------");
-  /* IDENTICAL filter to check-ac-vs-erp-reconcile.mjs:62-66, which is the run
+  /* IDENTICAL filter to check-ac-vs-erp-reconcile.mjs, which is the run
      docs/stock-reconciliation.md 7.3 tabulated (sofa 0 READY / 272 PENDING).
      A different filter here would produce a different baseline and the
-     before/after comparison would measure the filter, not the repair. */
+     before/after comparison would measure the filter, not the repair — so this
+     tracked that script onto internal_expected_dd, the Processing Date the UI
+     writes. Note that so-stock-allocation.ts still gates on proceeded_at, so
+     this population is now slightly WIDER than the allocator's own. */
   const cen = await sql`
     SELECT COALESCE(i.item_group,'(none)') g, COALESCE(i.stock_status,'(null)') s, count(*)::int n
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-     WHERE h.company_id = 1 AND h.proceeded_at IS NOT NULL
+     WHERE h.company_id = 1 AND h.${PDATE} IS NOT NULL
        AND COALESCE(i.cancelled,false) = false
        AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
      GROUP BY 1,2 ORDER BY 1,2`;
   const groups = [...new Set(cen.map((r) => r.g))].sort();
   const cell = (g, s) => cen.filter((r) => r.g === g && r.s === s).reduce((a, r) => a + r.n, 0);
-  log("  PROCESSED, still-open orders — the set the allocator acts on (7.3 baseline):");
+  log("  PROCESSED, still-open orders — every order carrying a Processing Date (7.3 baseline):");
   log(`    ${pad("group", 12)}${num("READY", 8)}${num("PENDING", 9)}${num("PARTIAL", 9)}`);
   for (const g of groups) log(`    ${pad(g, 12)}${num(cell(g, "READY"), 8)}${num(cell(g, "PENDING"), 9)}${num(cell(g, "PARTIAL"), 9)}`);
   const [hdrs] = await sql`
     SELECT COUNT(*) FILTER (WHERE status = 'READY_TO_SHIP')::int ready,
            COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int confirmed
       FROM scm.mfg_sales_orders
-     WHERE company_id = 1 AND proceeded_at IS NOT NULL
+     WHERE company_id = 1 AND ${PDATE} IS NOT NULL
        AND status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')`;
   log(`  processed order headers: READY_TO_SHIP ${hdrs.ready}; CONFIRMED ${hdrs.confirmed}`);
 
@@ -169,7 +176,7 @@ async function main() {
     SELECT count(*)::int n, count(*) FILTER (WHERE i.item_group = 'sofa')::int sofa
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
-     WHERE h.company_id = 1 AND h.proceeded_at IS NOT NULL
+     WHERE h.company_id = 1 AND h.${PDATE} IS NOT NULL
        AND COALESCE(i.cancelled,false) = false
        AND h.status NOT IN ('CANCELLED','CLOSED','DELIVERED','SHIPPED','INVOICED')
        AND i.stock_status = 'PENDING' AND i.warehouse_id IS NULL`;
