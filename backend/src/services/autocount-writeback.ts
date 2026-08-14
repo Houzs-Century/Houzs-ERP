@@ -38,62 +38,49 @@ import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
 
-/** ERP salesperson label -> AutoCount Sales Agent (the agent name IS the code). */
-export const AGENT_MAP: Record<string, string> = {
-  ANTHONY: 'ANTHONY', YUNY: 'YUNY', KRIS: 'KRIS', SHAWN: 'SHAWN',
-  LAWRENCE: 'LAWRENCE', KINGSLEY: 'KINGSLEY', STANLEY: 'STANLEY',
-  JUNIE: 'JUNIE', 'MEI TING': 'MEI TING', PETER: 'PETER', 'WEI HOW': 'WEI HOW',
-  RACHAEL: 'RACHAEL', SALLY: 'SALLY', ZACK: 'Zack', 'SHELDON TAN': 'SHELDON',
-  'JAMES SEOW': 'JAMES SEOW', LUCAS: 'LUCAS', ADRIAN: 'ADRIAN',
-  'ESTHER CHONG': 'ESTHER CHONG', 'MELVIN CHONG': 'MELVIN CHONG',
-  'CHEA HUAN': 'Chea Huan', WENGGI: 'WENGGI', 'KAR JIUN': 'TAN KAR JIUN',
-  'HWA SHENG': 'Hwasheng', 'SHI TING': 'Chang Shi Ting', 'LUIS TEO': 'LUIS',
-  'PEI FEN': 'PEIFEN', 'LIM YAU WEI': 'LIM YAU WEI', ETHAN: 'ETHAN SOO',
-  'WEI PIN': 'WEIPIN',
-};
-
-/** ERP sales_location (long / free text) -> AutoCount location code. */
-export const LOCATION_MAP: Record<string, string> = {
-  'KL WAREHOUSE': 'KL', 'PG WAREHOUSE': 'PG', 'SLGR WAREHOUSE': 'KL',
-  'KUALA LUMPUR': 'KL', 'PETALING JAYA': 'KL', CHERAS: 'KL', 'SHAH ALAM': 'KL',
-  'GEORGE TOWN': 'PG', 'KOTA KINABALU': 'SBH', KUANTAN: 'KL', 'JOHOR BAHRU': 'KL',
-  KL: 'KL', PG: 'PG', SRW: 'SRW', SBH: 'SBH', HQ: 'HQ',
-};
-
-/** ERP venue -> AutoCount VENUE UDF option (naming differs by SOLO suffix etc). */
-export const VENUE_MAP: Record<string, string> = {
-  'SUNWAY PYRAMID CONVENTION CENTRE': 'SUNWAY PYRAMID CONVENTION CENTRE',
-  'SUTERA MALL': 'SUTERA MALL SOLO',
-  'KLCC CONVENTION CENTRE': 'KUALA LUMPUR CONVENTION CENTRE',
-  'SUTERA SQUARE': 'SUTRA SQUARE JOHOR',
-  'MVEC SOUTHKEY': 'MIDVALLEY SOUTHKEY JB',
-  'SUNWAY KLUANG MALL': 'SUNWAY KLUANG MALL SOLO',
-  'KSL CITY MALL': 'KSL CITY MALL JOHOR SOLO',
-};
-
 /**
- * ERP branding -> AutoCount BRANDING UDF option. HOUZS added to AC 2026-08-06.
+ * THE FOUR MASTER-DATA MAPS — GENERATED, and re-exported here because this is
+ * where every reader looks for them.
  *
- * THIS MAP IS AN ALLOW-LIST, and it is the only one of the four that is.
- * Location and venue pass an unmapped value through for `/ensure-masters` to
- * open; branding must NOT, because its ERP source is not a brand vocabulary.
- * `mfg_sales_order_items.branding` is snapshotted from `mfg_products.branding`,
- * and measured against production on 2026-08-14 the values that map does not
- * know are `2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8),
- * `2990` (3), `Bedframe` (3), `Happi.S` (2) — four CATEGORIES and a company
- * name. Passing those through would write categories into the account book's
- * BRAND list, permanently, which is the same objection that keeps the display
- * rule's `BEDFRAME` pseudo-brand out of here.
+ * They are compiled from `scripts/data/autocount-so-writeback-mappings.json` by
+ * `scripts/gen-autocount-master-maps.mjs` (CI: `npm run audit:ac-master-maps`).
+ * That is not ceremony: CONFIRMING A BINDING has to be cheap and reviewable, and
+ * it used to mean hand-editing an object literal here while the record of WHY
+ * the binding is right lived in the JSON. The two drifted in all four
+ * dimensions. `check-autocount-master-bindings.mjs` proposes a pair with its
+ * reason, a human moves it into the JSON, the generator writes the map.
  *
- * `CARRESS` and `DUNLOP` are added because they are the opposite case: real
- * brands in the live book's OWN history (7 SOs) that this map was simply never
- * told about. That is what a spelling map is for.
+ * WHAT EACH MAP IS FOR:
+ *
+ * - `AGENT_MAP` — ERP salesperson label -> AutoCount Sales Agent (the name IS
+ *   the code). Read through `bookSpelling` only; see `resolveAcAgent` for why
+ *   the raw `agent` column never passes through unmapped.
+ * - `LOCATION_MAP` — ERP `sales_location` / warehouse code -> the book's SHORT
+ *   location code. Passes through unmapped (`bookSpellingOrOwn`).
+ * - `VENUE_MAP` — ERP venue -> the book's VENUE UDF option. Passes through
+ *   unmapped; venue is deliberately free text (mig 0229).
+ * - `BRANDING_MAP` — ERP branding -> the book's BRANDING UDF option. THE ONE
+ *   ALLOW-LIST OF THE FOUR, and production decided that rather than taste: the
+ *   ERP column behind it is snapshotted from `mfg_products.branding`, which
+ *   holds CATEGORIES, and a pass-through was measured on 2026-08-14 as opening
+ *   `2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8), `2990`
+ *   (3), `Bedframe` (3) and `Happi.S` (2) as permanent brands in a licensed
+ *   book. `CARRESS` and `DUNLOP` are in the map for the opposite reason — real
+ *   brands in the book's own history it had never been told about. A matcher may
+ *   PROPOSE an addition; it may not turn this into a pass-through.
  */
-export const BRANDING_MAP: Record<string, string> = {
-  AKEMI: 'AKEMI', DUNLOPILLO: 'DUNLOPILLO', ERGOTEX: 'ERGOTEX',
-  MYLATEX: 'MYLATEX', HOUZS: 'HOUZS', ZANOTTI: 'ZANOTTI', NONE: 'NONE',
-  CARRESS: 'CARRESS', DUNLOP: 'DUNLOP',
-};
+export {
+  AGENT_MAP,
+  LOCATION_MAP,
+  VENUE_MAP,
+  BRANDING_MAP,
+} from './autocount-master-maps';
+import {
+  AGENT_MAP,
+  LOCATION_MAP,
+  VENUE_MAP,
+  BRANDING_MAP,
+} from './autocount-master-maps';
 
 const norm = (s: string | null | undefined): string =>
   String(s ?? '').toUpperCase().replace(/\s+/g, ' ').trim();
