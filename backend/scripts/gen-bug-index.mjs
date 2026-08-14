@@ -139,14 +139,46 @@ for (const [name, list] of byArea) {
 
 const existing = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
 if (checkOnly) {
+  /* TWO FAILURES LIVE HERE, and only one of them is the author's.
+
+     The one worth gating is the GENERATOR DYING — docs/staging-bench-rot-coe.md
+     records audit:map crashing unnoticed for three weeks, which is why this
+     runs on every PR at all. That is caught above: a parse failure or a missing
+     BUG-HISTORY.md throws before this point, and an empty entry list is refused
+     below.
+
+     The other is CONTENT DRIFT, and in this repo it carries no signal. The
+     working agreement REQUIRES every code PR to append an entry to
+     BUG-HISTORY.md, main-protection makes merges strictly serial, so the
+     moment any PR merges, this file is stale on every other open PR — through
+     no act of theirs. Measured 2026-08-14: five PRs failed here at once on
+     "175 entries", were regenerated, and were stale again one merge later. A
+     gate that every author trips for something the previous author did is a
+     deadlock, not a check.
+
+     So drift is REPORTED, in full, with both counts and the fix — and does not
+     fail the run. It is still visible on every PR, and `--strict` restores the
+     hard failure for anyone who wants it locally or in a job of their own. */
   if (existing.replace(/\r\n/g, "\n") !== out) {
-    console.error(
-      `docs/generated/bug-index.md is out of date (${entries.length} entries in BUG-HISTORY.md).\n` +
-        `Run: npm --prefix backend run gen:bug-index`,
-    );
-    process.exit(1);
+    const had = (existing.match(/^\| /gm) ?? []).length;
+    const msg =
+      `docs/generated/bug-index.md is out of date: the index holds ${had} row(s), ` +
+      `BUG-HISTORY.md holds ${entries.length} entr(y/ies).\n` +
+      `Run: npm --prefix backend run gen:bug-index\n` +
+      `NOT failing the run: every PR must append an entry and merges are serial, ` +
+      `so this drifts on its own. Pass --strict to fail on it.`;
+    if (process.argv.includes("--strict")) { console.error(msg); process.exit(1); }
+    console.warn(msg);
+  } else {
+    console.log(`Bug index is current (${entries.length} entries).`);
   }
-  console.log(`Bug index is current (${entries.length} entries).`);
+  /* The generator producing NOTHING is the failure this gate exists for.
+     A scan that finds no entries is broken, not clean — the same rule the
+     file-size gate encodes for an empty file list. */
+  if (entries.length === 0) {
+    console.error("BUG INDEX: parsed ZERO entries from BUG-HISTORY.md — that is a broken generator, not an empty history.");
+    process.exit(2);
+  }
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, out, "utf8");
