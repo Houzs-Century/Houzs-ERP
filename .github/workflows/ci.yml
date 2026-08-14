@@ -235,7 +235,13 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/houzs_replay
         run: |
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || true)
-          if [ -n "$base" ] && git diff --quiet "$base" HEAD -- src/db/migrations-pg; then
+          # ci.yml is in the trigger set alongside the migrations, and that is
+          # not housekeeping: a PR that edits this gate must EXERCISE it. Without
+          # it, the change that introduced this step skipped its own step, went
+          # green, and would have shipped a gate whose main path had never once
+          # run — which is the same mistake as a workflow_dispatch that is called
+          # shipped before anyone dispatched it (CLAUDE.md).
+          if [ -n "$base" ] && git diff --quiet "$base" HEAD -- src/db/migrations-pg ../.github/workflows/ci.yml; then
             echo "No migration changed against $base — replay skipped."
             exit 0
           fi
