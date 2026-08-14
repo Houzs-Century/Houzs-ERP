@@ -431,6 +431,11 @@ re-check the cited file rather than trusting the line.
   `node backend/scripts/generate-route-capability-matrix.mjs --locations` when you
   need the line number (line numbers are deliberately kept out of the compared
   artifact — see the script header).
+- `docs/TESTING-RATCHET.md` — the measured coverage number for each area, which of
+  them is enforced on a PR and which weekly, and the arithmetic that decided the
+  split (instrumenting `src/scm/routes` costs the backend suite ~20s per test
+  file). Read it before assuming an area is covered: §6 says which are thin and
+  which of those is dangerous.
 - `docs/PERMISSION-MATRIX.md`, `docs/ARCHITECTURE.md`, `docs/agents/operating-spec.md`.
 - `docs/modules/sales-order.md` for the SO document flow in depth.
 - **`docs/autocount-integration-map.md` — START HERE for anything touching AutoCount.**

@@ -102,6 +102,7 @@ places nothing forced anyone to revisit. Hence the rule above, and hence
 | A new module's shape | `docs/modules/<module>.md` |
 | A rule every session must obey | `CLAUDE.md` — but only if it is short and stable |
 | A number, count, or inventory | Nowhere. Teach the generator to emit it. |
+| A per-area coverage number | Nowhere by hand. `node scripts/coverage-ratchet.mjs --sync-docs` writes it into `docs/TESTING-RATCHET.md` from `coverage-baseline.json`, and ci.yml fails if the two disagree. |
 | Business reasoning for people | Obsidian |
 
 ## 4. Why agent-facing knowledge lives in the repo, not Obsidian
