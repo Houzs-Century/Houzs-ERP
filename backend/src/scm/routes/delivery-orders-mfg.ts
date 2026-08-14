@@ -24,6 +24,7 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
@@ -941,23 +942,22 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
       else if (m.movement_type === 'IN') { agg.net_qty -= q; agg.net_cost -= cost; }
     }
 
-    // Restamp each line to its bucket's actual unit cost.
+    /* Each line takes its SHARE of the bucket's booked cost; the unit cost is
+       derived from it, never the reverse. Was `round(cost/qty) * line_qty`,
+       which invents money when the per-unit figure is sub-sen — ledger B5. */
+    const allocByLine = allocateAcrossBuckets(items as Array<{ id: string; qty: number }>, aggByBucket,
+      (it: any) => `${lineWh.get(it.id) ?? ''}::${it.item_code}::${computeVariantKey(it.item_group ?? null, it.variants ?? null)}::${it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? '') : ''}`);
     for (const it of items as Array<{
       id: string; so_item_id?: string | null; item_code: string; qty: number;
       item_group?: string | null; variants?: VariantAttrs | null; line_total_centi: number | null;
       ship_cost_centi?: number | null;
     }>) {
-      const warehouseId = lineWh.get(it.id) ?? null;
-      if (!warehouseId) continue;
-      const variantKey = computeVariantKey(it.item_group ?? null, it.variants ?? null);
-      const batchNo = it.so_item_id ? (batchBySoItem.get(it.so_item_id) ?? null) : null;
-      const k = `${warehouseId}::${it.item_code}::${variantKey}::${batchNo ?? ''}`;
-      const agg = aggByBucket.get(k);
-      if (!agg || agg.net_qty <= 0) continue; // no booked outflow — leave as-is
-      const unitCost = Math.round(agg.net_cost / agg.net_qty);
+      const share = allocByLine.get(it.id);
+      if (!share) continue; // no booked outflow for this bucket — leave as-is
+      const unitCost = share.unitCostSen;
       const qty = Number(it.qty ?? 0);
       const lineTotal = Number(it.line_total_centi ?? 0);
-      const lineCost = unitCost * qty;
+      const lineCost = share.lineCostSen;
       const update: Record<string, number> = {
         unit_cost_centi: unitCost,
         line_cost_centi: lineCost,
