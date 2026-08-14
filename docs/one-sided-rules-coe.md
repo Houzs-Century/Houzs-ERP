@@ -104,7 +104,7 @@ is gone**. No error, and the loss is indistinguishable from "I never saved it".
 Migration `0284_scm_pos_cart_company_key.sql` re-keys it `(staff_id, company_id)`.
 
 **Both siblings named here have since been settled, in opposite directions
-(`59e61025`, mig `0287`) — and the difference was only visible in the PARENT
+(`59e61025`, mig `0293`) — and the difference was only visible in the PARENT
 table.** `compartment_fabric_tier_overrides` was REAL and is fixed: its
 catalogue `scm.compartment_library` carries no `company_id`, so both companies
 genuinely reference the same compartment ids, and the PUT's
@@ -215,7 +215,7 @@ theory already disproved.
 
 | Item | Why it is yours |
 |---|---|
-| ~~`model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` PK is the single business column. One company's upsert overwrites the other's.~~ | **NOT AN OWNER QUESTION — SETTLED `59e61025`.** It was not a business question: the same file's GET already filtered by company while its PK permitted one row globally, so somebody had already decided the deltas are per-company and only the key was left behind. `compartment_fabric_tier_overrides` re-keyed `(compartment_id, company_id)` (mig `0287`); `model_fabric_tier_overrides` refuted — its parent `product_models` stamps `company_id`, so the two companies cannot contend for a `model_id`. **Still yours, and stated plainly: the deltas already overwritten are gone — the upsert replaced them in place and nothing recorded the previous values.** |
+| ~~`model_fabric_tier_overrides` / `compartment_fabric_tier_overrides` PK is the single business column. One company's upsert overwrites the other's.~~ | **NOT AN OWNER QUESTION — SETTLED `59e61025`.** It was not a business question: the same file's GET already filtered by company while its PK permitted one row globally, so somebody had already decided the deltas are per-company and only the key was left behind. `compartment_fabric_tier_overrides` re-keyed `(compartment_id, company_id)` (mig `0293`); `model_fabric_tier_overrides` refuted — its parent `product_models` stamps `company_id`, so the two companies cannot contend for a `model_id`. **Still yours, and stated plainly: the deltas already overwritten are gone — the upsert replaced them in place and nothing recorded the previous values.** |
 | ~~The desktop `SalesOrderNew` has no address rule; mobile and the backend both have one.~~ | **DECIDED + SHIPPED `1d7d36cc`.** Owner 2026-08-13: "只要是 proceed 的单，它都必须填；如果没有 proceed，就不需要必填。就是 processing date。电话、电脑都一样的." All three surfaces now gate on the Processing Date alone. |
 | ~~`SalesOrderNew`'s confirm gate (`:1443`) requires category axes on CONFIRM "date or no date", while the line card shows nothing required without a date.~~ | **REFUTED — the two never disagreed by the time this was written.** `SalesOrderNew.tsx:1443-1455` is `if (processingDate)`, and its own comment records that the date-or-no-date form (2026-08-08, HC-SO-2607-008) was REMOVED because it stopped a salesperson booking a real order before the customer had picked a seat height. The line card is fed `variantsRequired={!!processingDate}`. Same condition on both. |
 | ~~Wiring the three checks as PR-gated CI.~~ | **DONE — `ci.yml:89-91`**, PR + merge_group, never deploy. Two run `--strict`; `check-company-scope` is report-only pending its own comment being refreshed. |
