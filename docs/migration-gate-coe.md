@@ -102,7 +102,7 @@ and two of the fixes are worth keeping; the fourth is disqualifying.
 | run | result | what it refuted |
 | --- | --- | --- |
 | 1 | step ran **0s and skipped itself** | a gate whose trigger is a diff can ship having never executed its own main path. Fix: put `ci.yml` in its own trigger set |
-| 2 | died in **0.059s** on TLS | `pg-migrate.mjs` hardcoded `ssl: "require"`. Fixed loopback-only and fail-closed in `backend/scripts/lib/pg-ssl-mode.mjs` [planned]; production connections byte-identical. The marker is literal: that file lives on PR #2164's branch, which is NOT merged, so it does not exist in this tree — and `check-docs-drift` caught this line claiming otherwise |
+| 2 | died in **0.059s** on TLS | `pg-migrate.mjs` hardcoded `ssl: "require"`, so it could not reach ANY local PostgreSQL — meaning the only database a migration could ever be applied to was production. Fixed loopback-only and fail-closed in `backend/scripts/lib/pg-ssl-mode.mjs`; production connections byte-identical. **This one outlived the gate** and shipped separately |
 | 3 | `290 migration(s)`, then `FAILED 0001: relation "sales_orders" does not exist` | the claim that the tree is self-contained. `pg-migrate.mjs:63` EXCLUDES the baseline by design — *"the 0000 baseline, which the loader owns"* |
 | 4 | baseline applied first, then `FAILED 0001_search_trgm.sql: column "organizer" does not exist` | **the design.** The FIRST migration needs a column the baseline does not have |
 
