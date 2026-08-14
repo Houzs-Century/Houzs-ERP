@@ -149,24 +149,6 @@ function fmtMoney0(n: number | null | undefined): string {
   return `RM ${Math.round(n).toLocaleString("en-MY")}`;
 }
 
-const STAGE_LABEL: Record<string, string> = {
-  draft: "Draft",
-  planning: "Planning",
-  build: "Build",
-  live: "Live",
-  teardown: "Teardown",
-  closed: "Closed",
-  cancelled: "Cancelled",
-};
-
-const PAYMENT_LABEL: Record<string, string> = {
-  not_started: "Not started",
-  deposit_paid: "Deposit paid",
-  paid: "Paid in full",
-  refund_pending: "Refund pending",
-  refunded: "Refunded",
-};
-
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const CHUNK = 0x8000;
@@ -235,7 +217,6 @@ app.get("/:id", async (c) => {
   // to match the detail-GET rollout rule (un-migrated users keep legacy access).
   const pmsPrint = getPmsAccess(user, detail.project as any);
   const hideMoney = !!user && user.position_id != null && !pmsPrint.canFinancial;
-  const hidePayment = !!user && user.position_id != null && !pmsPrint.canPayment;
   // Quotation / Agreement (WF_SENSITIVE) are DIRECTOR-only (rule 5) — strip
   // those checklist rows from the debrief for a non-director position, the
   // same server-side backstop as the detail JSON.
@@ -802,17 +783,9 @@ app.get("/:id", async (c) => {
           <div class="hero">
             <div>
               <div class="h-name">${esc(p.name)}</div>
-              <div class="h-meta">${esc(
-                [
-                  fmtRange(p.start_date, p.end_date),
-                  p.booth_no ? `Booth ${p.booth_no}` : null,
-                  p.brand || null,
-                  p.event_type_name || null,
-                  p.code,
-                ]
-                  .filter(Boolean)
-                  .join(" · "),
-              )}</div>
+              <!-- Title + dates only (owner 2026-08-14) — booth, brand, event
+                   type and the code all repeat further down the sheet. -->
+              <div class="h-meta">${esc(fmtRange(p.start_date, p.end_date))}</div>
             </div>
             ${p.pic_name ? `<div class="h-pic">PIC · ${esc(p.pic_name)}</div>` : ""}
           </div>
@@ -849,17 +822,9 @@ app.get("/:id", async (c) => {
             <div class="cell"><div class="k">Venue</div><div class="v">${esc(p.venue || "—")}</div></div>
             <div class="cell"><div class="k">Duration</div><div class="v">${p.duration_days ?? "—"} day(s)</div></div>
             <div class="cell"><div class="k">Size (m²)</div><div class="v mono">${p.size_sqm ?? "—"}</div></div>
-            <div class="cell"><div class="k">Status</div><div class="v">${nice(p.status)}</div></div>
-            <!-- STAGE_LABEL predates the setup / dismantle stages, so fall back
-                 to title-casing whatever the row carries rather than printing
-                 the raw enum. -->
-            <div class="cell"><div class="k">Stage</div><div class="v">${esc(STAGE_LABEL[p.stage] || nice(p.stage))}</div></div>
-            ${
-              hidePayment
-                ? `<div class="cell blank"></div>`
-                : `<div class="cell"><div class="k">Payment</div><div class="v">${esc(PAYMENT_LABEL[p.payment_status || "not_started"])}</div></div>`
-            }
-            <div class="cell blank"></div>
+            <!-- Status / Stage / Payment removed from the sheet (owner
+                 2026-08-14) — workflow state belongs on screen, not on the
+                 printed debrief. -->
           </div>
         </section>`
             : ""
