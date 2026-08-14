@@ -13,16 +13,21 @@
 //   ties are PICKED automatically and CONFIRMED by the operator in the existing
 //   short-stock dialog — never a new refusal ("方案一…自动挑一张…确认").
 //
-// SHADOW MODE FIRST. Money-critical binding follows this repo's soak
-// discipline (AUTOCOUNT_WRITES_DISABLED precedent): the allocator runs beside
-// the stored-link resolution, LOGS every divergence, and binds nothing until
-// the one-line switch in delivery-orders-mfg.ts flips after the shadow data is
-// reviewed. This file is pure + loader; it holds no switch itself.
+// LIVE SINCE PR-4 (owner-gated flip; shadow first was the AUTOCOUNT_WRITES_
+// DISABLED soak discipline). resolveShipCommitments (delivery-orders-mfg.ts)
+// now binds the ALLOCATOR's pick: allocateExpectedBatches below decides, per
+// shipping line, WHICH incoming PO batch a ship-before-arrival commits to —
+// pooled supply minus what earlier shipments already own (subtractOutstanding
+// over lib/committed-shipments' loader), demand walked in the owner's order.
+// The stored PO→SO link (purchase_order_items.so_item_id / mig-0235 slices)
+// is procurement provenance only and decides NOTHING here — it is compared
+// and logged (BIND_SHADOW evidence rows) but never consulted for the pick.
 //
 // Same-batch-per-set is SOFA-ONLY (owner: "bedframe 是不需要的").
 // ----------------------------------------------------------------------------
 
 import { computeVariantKey, effectiveDelivery } from '../shared';
+import type { OutstandingCommitment } from './ship-commitment';
 
 /** One open PO line's remaining supply, bucketed the way MRP pools it. */
 export type IncomingLine = {
@@ -82,10 +87,19 @@ export function pickIncomingForBucket(
  *  `needs` is the set's demand per bucket. A candidate PO must cover EVERY
  *  bucket's need on its own lines; among candidates, earliest ETA (the
  *  earliest of its covering lines), then smaller PO number. Null when no
- *  single PO covers the set — the caller's conflict/dialog path takes over. */
+ *  single PO covers the set — the caller's conflict/dialog path takes over.
+ *
+ *  `preferPoNumber` (PR-4): when SOME modules of the set already hold a
+ *  PHYSICALLY RECEIVED batch (allocated_batch_no), the remaining modules must
+ *  ship under THAT batch or the set splits its dye lot — one PO IS one batch
+ *  number (owner, 2026-07-31). So a preferred PO that fully covers the needs
+ *  wins over an earlier-ETA alternative; a preferred PO that does NOT cover
+ *  falls back to the normal order, and the sofa-set conflict gate stays the
+ *  backstop for the split that produces. */
 export function pickIncomingForSofaSet(
   lines: IncomingLine[],
   needs: Map<string, number>, // bucketKey -> qty
+  preferPoNumber?: string | null,
 ): { poNumber: string; eta: string | null } | null {
   if (needs.size === 0) return null;
   const byPo = new Map<string, Map<string, number>>(); // po -> bucket -> qty
@@ -111,8 +125,165 @@ export function pickIncomingForSofaSet(
     if (covers) candidates.push({ poNumber: po, eta: etaByPo.get(po) ?? null });
   }
   if (candidates.length === 0) return null;
+  if (preferPoNumber) {
+    const preferred = candidates.find((c) => c.poNumber === preferPoNumber);
+    if (preferred) return preferred;
+  }
   candidates.sort(supplyOrder);
   return candidates[0];
+}
+
+/* ── The fold (PR-4): units earlier shipments already own are not supply ─────
+   A ship-before-arrival wrote a real OUT bound to a PO batch; the receipt is
+   going to hand those units to THAT shipment (fn_reconcile_dropship_batch),
+   not to this one. Subtract every outstanding commitment from the pool BEFORE
+   picking, matched on the same (warehouse, itemCode, variantKey, batchNo)
+   identity the SQL reconcile claims on, so committing the same incoming unit
+   twice is structurally impossible rather than merely unlikely. The
+   commitment map comes from lib/committed-shipments.loadCommittedShipments —
+   the SAME loader computeMrp deducts with (one definition of "still
+   committed", not two). A commitment that finds no pool line to subtract from
+   (PO fully received / dead / other bucket) subtracts nothing — that is
+   applyCommittedSupply's `unmatched` shape, and MRP already reports it. */
+export function subtractOutstanding(
+  lines: IncomingLine[],
+  committed: Iterable<OutstandingCommitment>,
+): IncomingLine[] {
+  const out = lines.map((l) => ({ ...l }));
+  for (const c of committed) {
+    let left = Number(c.qty ?? 0);
+    for (const l of out) {
+      if (left <= 0) break;
+      if (l.poNumber !== c.batchNo || l.itemCode !== c.itemCode || l.variantKey !== c.variantKey) continue;
+      if ((l.warehouseId ?? null) !== (c.warehouseId ?? null)) continue;
+      const take = Math.min(l.qtyLeft, left);
+      l.qtyLeft -= take;
+      left -= take;
+    }
+  }
+  return out;
+}
+
+/* ── The pick itself (PR-4): one walk decides every line's expected batch ─── */
+
+export type AllocatorDemandLine = {
+  lineRef: string;
+  itemCode: string;
+  variantKey: string;
+  shipQty: number;
+  /** Sofa modules resolve as a whole SET (one dye lot); everything else per bucket. */
+  isSofa: boolean;
+  /** mfg_sales_order_items.doc_no — the sofa SET's identity AND the demand
+   *  tiebreak (owner: "SO1 比 SO2 优先"). */
+  soDocNo: string | null;
+  /** A PHYSICALLY RECEIVED batch the stock allocator already locked. The line
+   *  ships normally (it draws no incoming supply and gets NO pick here), but
+   *  it anchors its sofa set's batch preference — the un-received siblings
+   *  must follow it or the set splits. */
+  allocatedBatchNo: string | null;
+  /** Effective demand date: line delivery date, else the SO header's
+   *  (mrp.ts §4 demand order — delivery date ascending, nulls LAST). */
+  deliveryDate: string | null;
+};
+
+export type AllocatorPick = { poNumber: string; eta: string | null };
+
+/* Demand-side order, the owner's rule verbatim: delivery date first (nulls
+   last — an undated line never outranks a dated one), then smaller doc number,
+   then lineRef for a stable total order. */
+const demandOrder = (a: AllocatorDemandLine, b: AllocatorDemandLine): number => {
+  if (a.deliveryDate !== b.deliveryDate) {
+    if (a.deliveryDate == null) return 1;
+    if (b.deliveryDate == null) return -1;
+    return a.deliveryDate < b.deliveryDate ? -1 : 1;
+  }
+  const ad = a.soDocNo ?? '';
+  const bd = b.soDocNo ?? '';
+  if (ad !== bd) return ad < bd ? -1 : 1;
+  return a.lineRef < b.lineRef ? -1 : a.lineRef > b.lineRef ? 1 : 0;
+};
+
+/** Draw `qty` units of one bucket from one PO's pool lines (post-pick), so a
+ *  later line in the same write sees only what is genuinely left. */
+const drawFromPool = (
+  pool: IncomingLine[],
+  poNumber: string,
+  itemCode: string,
+  variantKey: string,
+  qty: number,
+): void => {
+  let left = qty;
+  for (const l of pool) {
+    if (left <= 0) break;
+    if (l.poNumber !== poNumber || l.itemCode !== itemCode || l.variantKey !== variantKey) continue;
+    const take = Math.min(l.qtyLeft, left);
+    l.qtyLeft -= take;
+    left -= take;
+  }
+};
+
+/** The DO-time binding decision, whole-write: which incoming PO batch does
+ *  each shipping line commit to?
+ *
+ *  - Lines walk in the owner's DEMAND order (delivery date, then doc number),
+ *    so when the pool is tight the earlier order gets the covering PO — the
+ *    same priority computeMrp gives it.
+ *  - A SOFA set resolves ONCE, as a whole, at its first module's turn:
+ *    pickIncomingForSofaSet over the set's pooled needs (modules already
+ *    holding a received allocated_batch_no contribute no need but set the
+ *    batch PREFERENCE — one PO is one batch number). Every un-received module
+ *    of the set gets the SAME pick; no single covering PO -> no pick, and the
+ *    existing sofa guards (sofa_no_batch dialog / set-conflict gate) take
+ *    over. Never a per-module fallback pick: that is the split the set rule
+ *    exists to prevent.
+ *  - Every pick DRAWS DOWN the pool before the next line looks, so two lines
+ *    of one write cannot both count the same incoming unit — the intra-write
+ *    twin of the subtractOutstanding fold.
+ *  - Ties auto-pick deterministically (supply order); the operator confirms
+ *    in the existing short-stock dialog. No new refusal lives here. */
+export function allocateExpectedBatches(
+  incoming: IncomingLine[],
+  demand: AllocatorDemandLine[],
+): Map<string, AllocatorPick> {
+  const pool = incoming.map((l) => ({ ...l }));
+  const out = new Map<string, AllocatorPick>();
+  const setDone = new Set<string>();
+  const ordered = [...demand].sort(demandOrder);
+
+  for (const d of ordered) {
+    if (!(Number(d.shipQty) > 0)) continue;
+
+    if (d.isSofa && d.soDocNo) {
+      if (setDone.has(d.soDocNo)) continue;
+      setDone.add(d.soDocNo);
+      const modules = ordered.filter((m) => m.isSofa && m.soDocNo === d.soDocNo);
+      const needs = new Map<string, number>();
+      for (const m of modules) {
+        if (m.allocatedBatchNo || !(Number(m.shipQty) > 0)) continue;
+        const k = bucketKey(m.itemCode, m.variantKey);
+        needs.set(k, (needs.get(k) ?? 0) + Number(m.shipQty));
+      }
+      if (needs.size === 0) continue; // fully received set — nothing to bind
+      const anchors = [...new Set(modules.map((m) => m.allocatedBatchNo).filter((b): b is string => !!b))];
+      const preferPo = anchors.length === 1 ? anchors[0] : null;
+      const pick = pickIncomingForSofaSet(pool, needs, preferPo);
+      if (!pick) continue;
+      for (const m of modules) {
+        if (m.allocatedBatchNo || !(Number(m.shipQty) > 0)) continue;
+        out.set(m.lineRef, { poNumber: pick.poNumber, eta: pick.eta ?? null });
+        drawFromPool(pool, pick.poNumber, m.itemCode, m.variantKey, Number(m.shipQty));
+      }
+      continue;
+    }
+
+    if (d.allocatedBatchNo) continue; // received stock ships; nothing to bind
+    const pick = pickIncomingForBucket(pool, d.itemCode, d.variantKey, Number(d.shipQty));
+    if (!pick) continue;
+    out.set(d.lineRef, { poNumber: pick.poNumber, eta: pick.eta ?? null });
+    drawFromPool(pool, pick.poNumber, d.itemCode, d.variantKey, Number(d.shipQty));
+  }
+
+  return out;
 }
 
 /* ── Loader — the open-PO pool for a set of item codes, MRP's read shape ─────
@@ -170,3 +341,73 @@ export async function loadIncomingLines(sb: any, itemCodes: string[], warehouseI
 }
 
 export const incomingBucketKey = bucketKey;
+
+/* ─── THE FLIP, and what it decided ─────────────────────────────────────────
+ *
+ * Moved here from routes/delivery-orders-mfg.ts on 2026-08-14, verbatim. That
+ * file is 261 lines over its size ceiling and this PR added 120 lines to it,
+ * every one of them a comment — so the ratchet charged it, correctly. Prose
+ * about what this module decides belongs beside the module, not copied into
+ * each caller.
+ *
+ * ── resolveShipCommitments (2026-07-31; allocator-bound since PR-4) ──────────
+ *    THE ONE PLACE a ship decides whether it is binding an incoming PO.
+ * 
+ *    Owner's rule: "when they pick ship-anyway, that matched PO should be bound and
+ *    go negative against it." So binding follows the FACT that the line resolves a
+ *    PO — it is not a second question after the drop-ship dialog, and it is not
+ *    gated on the DO header's is_dropship flag (which mig 0057 defines as the UI
+ *    badge). The decision table itself is PURE and unit-tested in
+ *    scm/lib/ship-commitment.ts; this helper only gathers the four facts it needs:
+ * 
+ *      · isSofa            — detectSofaSoItemIds (the same detector the cost paths use)
+ *      · allocatedBatchNo  — mfg_sales_order_items.allocated_batch_no (a RECEIVED batch)
+ *      · expectedBatchNo   — THE LIVE ALLOCATOR'S PICK (Decision 2026-08-06, "soft
+ *                            until DO, hard from DO"): allocateExpectedBatches over
+ *                            the pooled open-PO supply minus outstanding
+ *                            commitments (lib/do-live-allocator +
+ *                            lib/committed-shipments), supply ordered earliest
+ *                            effective ETA then smaller PO number, demand ordered
+ *                            delivery date then doc number, sofa sets picked WHOLE
+ *                            (one dye lot per set). The stored PO→SO link
+ *                            (resolveExpectedBatchBySoItem) stopped deciding this
+ *                            at the flip — it is procurement provenance, resolved
+ *                            only for the BIND_SHADOW divergence evidence below.
+ *      · availableQty      — from the shortage list the short-stock guard just
+ *                            produced, so the binding cannot disagree with the
+ *                            question the operator was asked
+ * 
+ *    Returns lineRef -> the binding for the lines that bind (batch + ETA, so the
+ *    ONE dialog the operator sees can name the incoming PO), plus any SOFA SET
+ *    this write would split across two batches — see planSofaSetPoConflicts,
+ *    which stays ARMED as the backstop even though whole-set picks make a split
+ *    structurally unreachable from this path (a stored allocated_batch_no on part
+ *    of a set can still conflict with the pick for the rest).
+ *    Best-effort throughout: any read failure yields no commitments, i.e. exactly
+ *    the pre-0230 behaviour (ship, no binding) — a binding lookup must never block
+ *    a shipment. The set conflict is the one exception, and deliberately so: it is
+ *    raised only when a binding WAS resolved, so it can never turn a working ship
+ *    into a refusal. Ties auto-pick + the operator confirms in the existing
+ *    short-stock dialog — never a new refusal (owner tiebreak ruling).
+ *
+ * ── THE LIVE PICK (PR-4, Decision 2026-08-06) ──────────────────────────
+ *        The allocator decides the binding at DO time: pooled open-PO supply for
+ *        the DO's own item codes, MINUS the units earlier ship-before-arrivals
+ *        already own (subtractOutstanding over the SAME loadCommittedShipments
+ *        read computeMrp deducts with — one definition of "still committed", so
+ *        double-commitment is structurally impossible), walked in the owner's
+ *        demand order with sofa sets picked whole. loadIncomingLines throws on a
+ *        read error, which lands in the outer catch: ship, no binding — a lookup
+ *        must never block a shipment.
+ *
+ * ── SHADOW, INVERTED (post-flip observability) ─────────────────────────
+ *        The allocator BINDS now; the stored raise-link is procurement provenance
+ *        (Decision 2026-08-06). The comparison and its BIND_SHADOW evidence rows
+ *        stay — same rows, same checker (scripts/check-bind-shadow.mjs), so the
+ *        soak keeps measuring how often provenance and execution disagree AFTER
+ *        the flip. A divergence here is NOT a defect (the Decision says so in as
+ *        many words); a double-SERVE in the delivered ledger is, and that is what
+ *        the other checks watch. Failure-isolated exactly as before: nothing in
+ *        this block can touch shipping.
+ *
+ */
