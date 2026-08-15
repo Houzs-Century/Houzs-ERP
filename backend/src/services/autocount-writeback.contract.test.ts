@@ -421,11 +421,16 @@ interface Divergence {
  * assertions below are written against it, so adding a divergence without an
  * entry fails, and fixing one without deleting its entry also fails.
  *
- * It is deliberately a list of FINDINGS, not of fixes. Nothing in this PR
- * changes the write-back's behaviour — the toggle is off, #1855 is unmerged,
- * and each of these needs a decision that is not a test author's to make.
- * docs/modules/autocount-writeback.md section 11 carries the same list in prose
- * with the decision each one needs.
+ * It is deliberately a list of FINDINGS, not of fixes. Each of these needs a
+ * decision that is not a test author's to make.
+ *
+ * THE PROSE HOME OF THIS LIST IS NOT "SECTION 11". This comment and the count
+ * assertion below both pointed there until 2026-08-15, and the module guide has
+ * never had a section 11 — so the one instruction a reader is given when this
+ * test fails sent them to a heading that does not exist. D9 and D10 are written
+ * up in **7b**, D8 in **7d2**, and the fields the extract proves are missing in
+ * **7q**. (This paragraph was written while striking D3; a pointer that rots
+ * beside the list it points at is the failure the guide keeps warning about.)
  */
 export const DIVERGENCES: Divergence[] = [
   {
@@ -913,8 +918,8 @@ describe('the divergence register', () => {
 
   test('the count is pinned — a new divergence has to be written down to land', () => {
     /* If this fails you have either found an eleventh or fixed one of the ten.
-       Both are good news; update the list and section 11 of
-       docs/modules/autocount-writeback.md together.
+       Both are good news; update the list and the module guide's prose together
+       — 7b for D9/D10, 7d2 for D8, 7q for the extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
        and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
