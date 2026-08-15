@@ -5,52 +5,8 @@ import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
-
-// ── Codes ─────────────────────────────────────────────────────
-// Format: `YYYY-MM-{ORGANIZER}-{STATE}-{VENUE}-{BRAND}` — built from
-// the project's identity fields so the code itself describes the
-// event. Organizer defaults to `SOLO` when null (mirrors the
-// canonical name format). State / venue / brand are required;
-// createProject throws if any are missing. On collision (two
-// projects with identical inputs and dates) `-2`, `-3` … suffixes
-// are appended.
-//
-// Migration 071 backfilled names to this same family; the
-// backfill-project-codes.mjs script rewrites legacy `PRJ-YYYY-NNN`
-// rows to the new format in one pass.
-
-function slugSegment(s: string | null | undefined): string {
-  return (s ?? "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-export function deriveProjectCode(input: {
-  year: number;
-  month: number;
-  organizer?: string | null;
-  state?: string | null;
-  venue?: string | null;
-  brand?: string | null;
-  /** Optional event-type slug. When "solo", the organizer slot is
-   *  forced to the literal "SOLO" regardless of whether an organizer
-   *  was picked — a solo event is by definition not organised by
-   *  anyone. Mirrors `composeDefaultProjectName` on the frontend. */
-  event_type_slug?: string | null;
-}): string {
-  const state = slugSegment(input.state);
-  const venue = slugSegment(input.venue);
-  const brand = slugSegment(input.brand);
-  if (!state) throw new Error("state is required to generate a project code");
-  if (!venue) throw new Error("venue is required to generate a project code");
-  if (!brand) throw new Error("brand is required to generate a project code");
-  const isSolo = (input.event_type_slug || "").toLowerCase() === "solo";
-  const organizer = isSolo ? "SOLO" : (slugSegment(input.organizer) || "SOLO");
-  const yyyy = String(input.year);
-  const mm = String(input.month).padStart(2, "0");
-  return `${yyyy}-${mm}-${organizer}-${state}-${venue}-${brand}`;
-}
+import { deriveProjectCode, deriveProjectName } from "./project-naming";
+export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
 export async function uniqueProjectCode(env: Env, base: string): Promise<string> {
@@ -161,35 +117,6 @@ export async function getUserPhasesOnProject(
     phases.push("dismantle");
   }
   return phases;
-}
-
-// ── Auto-derived name ─────────────────────────────────────────
-// Canonical project name format. Used by both createProject() and the
-// seed script so a future re-seed lands at the exact same string as
-// the backfill migration 071.
-//
-//   {state} [{brand}] {organizer | SOLO} @ {venue}
-//
-// Examples:
-//   JOHOR [AKEMI] KAI HAO (KL CHEN) @ PARADIGM MALL
-//   SABAH [AKEMI] SOLO @ SURIA SABAH   (organizer NULL → "SOLO")
-export function deriveProjectName(input: {
-  state?: string | null;
-  brand?: string | null;
-  organizer?: string | null;
-  venue?: string | null;
-  /** Optional event-type slug. When "solo", the organizer slot is
-   *  forced to the literal "SOLO" regardless of organizer input. */
-  event_type_slug?: string | null;
-}): string {
-  const state = (input.state || "").trim() || "—";
-  const brand = (input.brand || "").trim() || "—";
-  const venue = (input.venue || "").trim() || "—";
-  const isSolo = (input.event_type_slug || "").toLowerCase() === "solo";
-  const organizer = isSolo
-    ? "SOLO"
-    : ((input.organizer || "").trim() || "SOLO");
-  return `${state} [${brand}] ${organizer} @ ${venue}`;
 }
 
 // ── Create ────────────────────────────────────────────────────
