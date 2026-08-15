@@ -24,6 +24,10 @@ import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricin
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
    variant | compartment | combo matcher shared with the POS, used at BOTH
    recompute sites (create + cross-category re-detect). */
+import {
+  deriveCountryFromState, deriveSalesLocationFromState, senOrZero, snapshotUnitCostSen,
+} from '../lib/sales-doc-derive';
+export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
@@ -1010,27 +1014,6 @@ const ITEM =
    postcode set. ─────────────────────────────────────────────────────── */
 /* Exported (2026-07-16) so the amendment apply engine (lib/so-revision.ts) runs
    the SAME State cascade the header PATCH does, instead of re-deriving it. */
-export const deriveCountryFromState = async (
-  sb: any,
-  state: string | null | undefined,
-): Promise<string | null> => {
-  if (!state) return null;
-  /* Mig 0175 (owner 2026-07-22) — canonicalize BEFORE the my_localities lookup
-     so "PENANG" or "Penang" both resolve to "Pulau Pinang" and the lookup
-     returns Malaysia cleanly. The 2026-05-28 tolerant fallback below is kept
-     as a second safety net (a genuinely unknown foreign state name should
-     still not leave Country blank when the caller obviously typed something),
-     but with canonicalization in front it should almost never fire. */
-  const probe = canonicalizeMyState(state) ?? state;
-  const { data } = await sb
-    .from('my_localities')
-    .select('country')
-    .eq('state', probe)
-    .limit(1)
-    .maybeSingle();
-  const country = (data as { country?: string } | null)?.country;
-  return country ?? 'Malaysia';
-};
 
 /* Commander 2026-05-29 — the Sales/shipping Location (warehouse) follows the
    customer's State. The create FORM resolves it via state_warehouse_mappings
@@ -1038,32 +1021,6 @@ export const deriveCountryFromState = async (
    that set a State but no salesLocation (e.g. API/import) so Location is bound
    to the address everywhere, not only through the form. Returns the warehouse
    code for the state, or null when unmapped. */
-export const deriveSalesLocationFromState = async (
-  sb: any,
-  state: string | null | undefined,
-  c: any,
-): Promise<string | null> => {
-  if (!state) return null;
-  // state_warehouse_mappings keys on the canonical state name; map the common
-  // WP-KL alias the locality table doesn't carry under the WP prefix.
-  const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await scopeToCompany(
-    sb
-      .from('state_warehouse_mappings')
-      .select('warehouse_id')
-      .eq('state', key),
-    c,
-  ).maybeSingle();
-  const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
-  if (!whId) return null;
-  const { data: w } = await sb
-    .from('warehouses')
-    .select('name, code')
-    .eq('id', whId)
-    .maybeSingle();
-  const wh = w as { name?: string; code?: string } | null;
-  return warehouseLabel(wh);
-};
 
 /* Commander 2026-05-31 (MRP/Supply-Chain rebuild) — the per-LINE warehouse_id
    UUID (migration 0118) drives MRP + auto-allocation, which run strictly
@@ -1152,28 +1109,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    STALE-totals outcome described above is real and remains the DESIGNED failure
    mode — it is what the function does deliberately when it cannot vouch for its
    inputs. */
-const senOrZero = (n: unknown): number => {
-  const v = Number(n);
-  return Number.isFinite(v) ? v : 0;
-};
 
-const snapshotUnitCostSen = async (
-  sb: any,
-  itemCode: string,
-  explicit: number,
-  c: any,
-): Promise<number> => {
-  if (explicit > 0) return senOrZero(explicit);
-  if (!itemCode) return 0;
-  const { data } = await scopeToCompany(
-    sb
-      .from('mfg_products')
-      .select('cost_price_sen')
-      .eq('code', itemCode),
-    c,
-  ).maybeSingle();
-  return senOrZero((data as { cost_price_sen?: number } | null)?.cost_price_sen ?? 0);
-};
 
 mfgSalesOrders.get('/', async (c) => {
   const sb = c.get('supabase');

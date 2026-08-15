@@ -1,3 +1,58 @@
+## The CO/SO helper twins: two had drifted, and both drifts are now PROVEN harmless [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Follow-up to the entry recorded with #2236, which left this open as an owner
+decision. It did not need one — it needed the proof finishing.**
+
+Three derivations existed in both `routes/mfg-sales-orders.ts` and its clone
+`routes/consignment-orders.ts`:
+
+| twin | verdict |
+|---|---|
+| `deriveSalesLocationFromState` | identical once formatting is normalised — a straight duplicate |
+| `deriveCountryFromState` | the SO canonicalises the state before the lookup; the CO used the raw string |
+| `snapshotUnitCostSen` | the SO wraps both the explicit value and the DB read in `senOrZero`; the CO did neither |
+
+**Both drifts are now PROVEN harmless, where #2236 could only say "I could not
+construct a differing case".**
+
+*Country.* Both fall back to `'Malaysia'` on a miss, so they can only diverge if
+canonicalising turns a string into one that names a NON-Malaysia locality.
+Measured: the **16** values `canonicalizeMyState` can produce (its
+`CANONICAL_STATES` plus every `ALIAS_MAP` target) and the **38** `state` values
+seeded into `my_localities` under a country other than Malaysia (China +
+Singapore, mig 0181) share **ZERO** entries. No input can canonicalise across the
+country boundary. Same output for every input — a proof, not an absence of
+counter-examples.
+
+*Unit cost.* All three CO callsites already wrapped the argument in `Number(...)`
+and `NaN > 0` is false; the DB side reads `mfg_products.cost_price_sen`, which is
+`integer DEFAULT 0 NOT NULL` and can be neither null nor non-numeric. `Number(x)`
+and `senOrZero(x)` agree on every value that column can hold.
+
+**Fix.** All three move to `scm/lib/sales-doc-derive.ts`, keeping the Sales
+Order's bodies **copied verbatim**. `backend/tests/salesDocDerive.test.ts` holds
+the two proofs as assertions, because both are facts about OTHER files that can
+change: seed a Singapore locality whose state is `Johor` and it goes red; drop a
+`Number(...)` at a callsite and it goes red. Both proven red before being
+trusted.
+
+**A trap this hit, worth the entry on its own.** The first draft of the shared
+module PARAPHRASED the bodies instead of copying them — it swapped the WP-KL
+alias (`state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state`)
+for `canonicalizeMyState`, and dropped `name` from a SELECT that
+`warehouseLabel()` reads. Caught by re-reading the original before deleting it.
+**Consolidating duplicates is only safe if the surviving copy is the one that
+already ran** — a rewrite that looks equivalent is a new implementation with no
+production history. The removal script now refuses unless the text it is about to
+delete matches the shared module token-for-token.
+
+`consignment-orders.ts` 2383 -> 2332, `mfg-sales-orders.ts` 12011 -> 11947.
+Both ceilings follow.
+
+**Ref.** 2026-08-15.
+
 ## Three same-named constants across two purchase routers; two were copies, one was a real difference nobody had written down [low]
 
 <!-- area: Purchase orders + GRN + PI -->
