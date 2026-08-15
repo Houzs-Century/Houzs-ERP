@@ -11,7 +11,7 @@ has to rediscover the shape of the thing by probing production.
 | `docs/modules/autocount-writeback.md` | how to CALL the service, the master-data foreign key chain, the payload shapes |
 | `docs/autocount-migration-record.md` | how the one-time migration was done, the coverage matrix, the Friday runbook |
 | `docs/autocount-service-deploy.md` | building and swapping the exe on the host |
-| `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md` | where the cutover stands right now |
+| `docs/generated/autocount-coverage.md` | which operations exist, which the service implements, which routes trigger them, and which have run against the live book — GENERATED |
 | `docs/autocount-writeback-golive-coe.md` | **the day the write-back was switched on and nothing reached the book** — seven faults in one chain, and the one shape that caused three of them |
 | `docs/autocount-writeback-exposure-coe.md` | the API key that was being published |
 | `docs/autocount-read-relay-exposure-coe.md` | the read relay that answers the public internet without a key |
@@ -216,7 +216,7 @@ next person spends the time on something new.
 | "The SQL bridge holds the clean current source" | **It is stale** — 31,897 chars, no `/ensure-masters`, no fail-closed auth. Rebuilding from it ships the old service |
 | "`setup.json` tells you which book to build against" | It names **`AED_DEMO`**. The build must be told `AED_HOUZS` explicitly |
 | "`setup.json` tells you the server" | It says `192.168.1.198\A2006`, which the host does not resolve. It resolves `.\A2006` |
-| "`/health` proves the service works" | It answers from **constants** and opens no database. A build that cannot reach the book passes it |
+| "`/health` proves the service works" | It answers from **constants** and opens no database. A build that cannot reach the book passes it. Since 2026-08-15 it does at least say WHICH BUILD is answering — `builtAt` (the assembly's own file timestamp) and `mvid` (unique per compilation) — so "is the host behind" is now a comparison instead of a guess. It still proves nothing about the database |
 | "The masters exist, `ensure-masters` said so" | A sales agent and a **purchase** agent are different tables behind different foreign keys. The report can be true and irrelevant |
 | "`it-houzs.dev` is the AutoCount tunnel" | It is a different, older relay. A 404 there proves nothing about the write service |
 | "The evaluation book is a safe place to test" | `AED_TESTING` exhausted its **500-transaction limit**. Verification happens on the live book, on a throwaway document, cancelled afterwards |
@@ -235,7 +235,12 @@ Actions -> AutoCount outbox health (read-only)          -> is anything queued or
 Actions -> SCM write freeze - status (read-only)        -> who can write in the ERP right now
 ```
 
-The coverage matrix in `docs/autocount-migration-record.md` section 8 records
-which cells have actually been PROVEN against the live book, with the document
-numbers. **A cell that says BUILT means code exists on both sides and has never
-been run end to end.** Do not read BUILT as working.
+`docs/generated/autocount-coverage.md` records which operations have actually
+run against the live book, with the document numbers, and it is GENERATED —
+three of its four columns are read out of source every run, so they cannot go
+stale the way the four hand-written copies of this table did.
+
+**Code existing on both sides is not evidence that it works.** The generated
+table keeps those two questions in separate columns for that reason: *the
+service implements it* and *run against the live book* are different facts, and
+only the second one means a document reached the account book.

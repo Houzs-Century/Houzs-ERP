@@ -1416,6 +1416,14 @@ export const AC_ROUTE = {
   create_so: '/create-so',
   create_po: '/create-po',
   so_to_do: '/so-to-do',
+  /* SO -> PO is a TRANSFER like the four below, but it is not one of them: a
+     purchase document transferring from a sales order uses its own SDK method
+     (AddSOToPOTransferDetail), so the service gives it its own route rather
+     than folding it into Convert_. Sent only when every purchase line maps 1:1
+     to a sales line the book has a key for — the decision is
+     scm/shared/po-transfer-shape.ts, and a consolidated purchase stays a plain
+     create_po. */
+  so_to_po: '/so-to-po',
   po_to_gr: '/po-to-gr',
   do_to_iv: '/do-to-iv',
   gr_to_pi: '/gr-to-pi',
@@ -1550,5 +1558,32 @@ export async function callAcService(
        'failed' still carrying AutoCount's own words, whereas dead-lettering a
        transient one loses a document until a human notices. */
     retryable: res.status >= 500,
+  };
+}
+
+/**
+ * The `/so-to-po` payload: which sales lines this purchase order buys, and what
+ * the ERP agreed to pay for them.
+ *
+ * The per-line values are applied by the service AFTER the transfer, because
+ * `AddSOToPOTransferDetail` brings the SALES line across — price included — and
+ * a purchase order owes the supplier's cost, not the customer's price.
+ *
+ * `DtlKeys` and `Details` are index-aligned by construction: both come from the
+ * same decision, which refused unless every line mapped 1:1.
+ */
+export function composeSoToPo(
+  dtlKeys: readonly number[],
+  details: readonly AcDetail[],
+): { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+  return {
+    DtlKeys: [...dtlKeys],
+    Details: details.map((d, i) => ({
+      DtlKey: dtlKeys[i],
+      UnitPrice: d.UnitPrice,
+      Qty: d.Qty,
+      ...(d.Location != null ? { Location: d.Location } : {}),
+      ...(d.DeliveryDate !== undefined ? { DeliveryDate: d.DeliveryDate } : {}),
+    })),
   };
 }

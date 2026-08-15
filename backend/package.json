@@ -21,6 +21,8 @@
     "audit:map": "node scripts/gen-codebase-map.mjs --check",
     "gen:ac-item-map": "node scripts/gen-autocount-item-map.mjs",
     "audit:ac-item-map": "node scripts/gen-autocount-item-map.mjs --check",
+    "gen:ac-coverage": "node scripts/gen-autocount-coverage.mjs",
+    "audit:ac-coverage": "node scripts/gen-autocount-coverage.mjs --check",
     "gen:ac-master-maps": "node scripts/gen-autocount-master-maps.mjs",
     "audit:ac-master-maps": "node scripts/gen-autocount-master-maps.mjs --check",
     "gen:ac-sofa-corpus": "node scripts/gen-sofa-desc2-corpus.mjs",

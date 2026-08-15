@@ -59,6 +59,262 @@ and is already called on both create (`:403`) and edit (`:923`).
 
 **Ref.** 2026-08-15, PR #2247.
 
+## A purchase order raised from a sales order reached AutoCount with no link to it [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner, describing the flow he expects: *"当 Sales Order 转换成
+PO 时，AutoCount 那边也要跟着同步把 PO 开进去。通常流程是先开 PO，然后做
+Connection（关联），即 Transfer From 之类的单据流转."* The PO did arrive — but as
+a standalone document. `git grep -c so_to_po` was **0**: there was no such
+operation, no such route, and nothing named the sales order it came from.
+
+**Root cause.** The four conversions all use one SDK primitive,
+`AddPartialTransferDetail(fromType, keys, transferMaster)`, and `Convert_`
+serves all four. SO-to-PO is not one of them: a PURCHASE document transferring
+from a SALES one has its own method, `AddSOToPOTransferDetail(Int64)`, one key
+at a time (`sdk-api-reference.txt`, the PurchaseOrder METH list). Nobody had
+written it, so `convertSosToPosCore` fell through to `enqueuePoCreate` and the
+book got a new PO with no provenance.
+
+**Why it is not simply a transfer, which is the part worth keeping.** Measured
+against the owner's own 2026-08-01 decision, recorded in mig 0235: **one PO line
+can serve several customers plus stock at once** — the live example is one qty-5
+MAKOTO line covering SO-036 x1 + SO-029 x1 and 3 for stock. A transfer builds
+the purchase order FROM sales lines, so it would either split a line the
+business deliberately consolidated or drop the stock quantity, which belongs to
+no sales order at all. It also brings the SALES price across, and a purchase
+order owes the supplier's cost.
+
+**Fix — both shapes, decided per document.** `scm/shared/po-transfer-shape.ts`
+transfers only when it is certain and falls back on any doubt, because a create
+is what happens today and cannot be wrong:
+
+| falls back when | why |
+|---|---|
+| any line has allocation rows | consolidated; mig 0235's case |
+| any line is for stock (`so_item_id` null) | nothing to transfer it from |
+| any source line has no `linked_ac_dtlkey` | a transfer is addressed by that key and nothing else |
+| two lines name the same source line | a transfer would count the quantity twice |
+| the lines come from more than one sales order | the drain has ONE parent anchor to wait on |
+
+On the create path the source document numbers go into the PO's `Ref` —
+deduplicated and sorted so the same order renders the same string every time.
+That field was free: the ERP has no PO ref column and `readPoHeader` sent
+`ref: null`, while `CreatePo` has always applied `po.Ref`.
+
+On the transfer path the payload carries `DtlKeys` and per-line `UnitPrice` /
+`Qty` / `Location` / `DeliveryDate`, applied AFTER the transfer so the ERP's
+agreed cost replaces the sales price the transfer brought over. `fromDoc` makes
+the drain hold the row as `waiting` — without burning an attempt — until the
+sales order itself has an AutoCount number.
+
+`DtlKeys` is REQUIRED on `/so-to-po`, unlike the four conversions, which may
+omit it and fall through to "every still-outstanding line on the parent". That
+default is safe when the two documents are the same document one step on; a
+purchase order is not, and guessing would buy lines nobody ordered from this
+supplier.
+
+Mig 0295 widens the outbox `op` CHECK, which 0277 pinned. The contract test
+gained a `/so-to-po` case, so the new route's keys are held against the C#
+source like the rest.
+
+**Ref.** 2026-08-15, PR #2251.
+## Nothing could say which build the AutoCount host was running [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Asked what still needed doing, the answer given was *"the exe on
+that machine is three changes behind"*. It was stated as fact and it was not
+one: it came from a handoff note dated three days earlier. The owner pushed
+back — *"你确定？查看源代码了？？"* — and he was right. Source cannot answer the
+question and neither could anything else.
+
+**Root cause, traced by reading the service rather than a document.**
+`/health` answered `{ok, book, service}` and nothing more
+(`AcSyncService.cs`, the `Handle` prefix). No build identity, no timestamp, no
+commit. The repository records nothing about what is deployed either: the exe
+lives on the office machine, and `git grep` for a build stamp finds none.
+
+So "does the running exe contain commit X" had **no answer anywhere**, and the
+only material that looked like one was prose that goes stale. Three commits
+touched `AcSyncService.cs` after the last recorded build — `#2043` (purchase-side
+`transferMaster`), `#2200` (eight unsent fields), `#2218` (the blank line
+delivery date the owner had reported) — and whether any of them are live is
+UNKNOWN, which is exactly the answer that should have been given.
+
+**This class has already been paid for once.** `docs/SECURITY-DX-ROADMAP.md`
+records the nightly Staging E2E passing for a fortnight against a two-week-old
+build: *"Staging carried no `GIT_SHA` stamp, so `/health` answered `sha:null`
+and the staleness was invisible from outside."* Same shape, different host, and
+the lesson had not been carried across.
+
+**Fix.** `/health` now returns `builtAt` — the assembly's own file timestamp,
+via `Assembly.GetExecutingAssembly().Location` + `File.GetLastWriteTimeUtc` —
+and `mvid`, the module version id, unique per compilation. Comparing `builtAt`
+against `git log -1 --date=short -- backend/scripts/autocount-service/AcSyncService.cs`
+turns "is the host behind" from a guess into a comparison.
+
+**Deliberately NOT a version constant, and not a git SHA injected at build
+time.** Both are things a person has to remember, and this repo's own standing
+rule is that a hand-maintained fact is a fact with an expiry date. A file
+timestamp maintains itself: rebuilding the exe moves it and nothing else can.
+
+Both reads are wrapped, and the keys are emitted as `null` on failure rather
+than omitted — `/health` is the probe used to decide whether the host is up at
+all, so it must degrade to a vague answer and never to a 500, and an ABSENT key
+reads as an old build that never had them, which is the confusion being
+removed.
+
+Pinned in `src/services/autocount-writeback.contract.test.ts`, which already
+reads `AcSyncService.cs` at build time for the payload contract and is the only
+place that can see the service's source — there is no C# test harness. Both new
+cases were observed RED against `origin/main`'s service.
+
+**Ref.** 2026-08-15, PR #2241.
+## A source comment named the wrong department to sign an amendment, and a guide's list had rotted 5-of-13 [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Two findings from verifying the SO amendment section of
+`docs/modules/sales-order.md`. Neither is a runtime defect; both are what a
+reader would act on.**
+
+**1. The comment said Purchasing; the code says Logistics.**
+`so-amendment-header.ts`'s `AMENDABLE_HEADER_KEYS` carried:
+
+> *(DELIVERY lane — Logistics signs; the Processing Date above signs with
+> Purchasing per the same ruling)*
+
+`soHeaderFieldKind` returns the literal `'DELIVERY'` for **every** key including
+`processingDate`, and `amendment-routing.ts` maps `DELIVERY` to **Logistics**.
+Purchasing is reached only through the `SUPPLIER` atom — a PO header field with
+no SO-header counterpart.
+
+Three places agree with the code and only the comment did not: the routing table
+itself, `sales-order.md`, and `purchase-order-amendment.md` section 7. That is
+the worst place for it to be wrong — a comment is where a reader looks FIRST when
+working out who signs off on a change. Corrected in place, with what it used to
+say.
+
+**2. The guide named 5 amendable header keys; there are 13.**
+The prose listed delivery date, processing date, state, postcode and city. The
+two-lane rework (owner 2026-07-27) added the whole delivery-address block
+(`address1`..`address4`, `shipToAddress`, `billToAddress`, `installToAddress`)
+plus `replacementDisposal`, and the prose did not follow. **A reader planning an
+amendment would have concluded the ship-to address could not be amended.**
+
+**The fix is not to update the list — it is to stop repeating it.** The keys
+already have a guard the prose never had: `so-field-policy.test.ts` asserts
+`AMENDABLE_HEADER_KEYS` equals `soAmendableHeaderKeys()` exactly. Proven live
+here by deleting `'shipToAddress'` from the array — 1 of 12 fails with
+`expected [ 'processingDate', …(11) ] to deeply equal [ 'processingDate', …(12) ]`.
+The guide now points at the constant and that test instead of carrying a
+hand-written copy, because a hand-written copy is exactly what rotted.
+
+**Ref.** 2026-08-15, module-guide verification of `sales-order.md`.
+
+## My own matcher reported "10 of 10 missing" on ten functions that were all there [low]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Not a repo defect — a verification defect, and the third of the same kind in
+one session, which is why it is worth an entry rather than a shrug.**
+
+`docs/modules/sales-order.md` carries a table of twelve helpers that must each
+take a `companyId`, because `mfg_products.code` is not unique across companies.
+That is a real cross-company leak if any of them lost it, so it is exactly the
+kind of list worth checking mechanically.
+
+The check reported **10 of 10 not found**. Every one of them exists:
+
+```
+export async function loadProductByCode(sb: any, code: string, companyId: ...)
+```
+
+**Root cause.** The matcher was a `RegExp` built from a template literal inside a
+heredoc'd script. The backslash escapes did not survive the layers — the
+constructed source came out as
+`(export )?(async )?function loadProductByCodes*[:=]`: the `` had vanished
+entirely and `\s` had become a literal `s`. The regex could not match anything,
+so it matched nothing, so it reported nothing found.
+
+**Had the claim been the opposite shape, this would have read as a clean pass.**
+That is the failure `CLAUDE.md` records as "a checker that cannot match reports a
+clean run", arriving here through escaping rather than through a lost `` in
+source — and this session has now hit it three times (a `` eaten by a shell in
+an earlier red proof, backticks eaten by `git commit -m`, and this).
+
+**The rule that actually works, and it is not "escape more carefully":** in a
+script that has to travel through a shell, do not use regex escapes at all.
+`line.includes('function ' + fn + '(')` cannot be mangled by a layer it passes
+through. The rewritten check found all twelve, and it carries a self-guard —
+if EVERY entry comes back missing it exits 2 and refuses to report, because a
+whole population going missing at once is a broken matcher, not a finding.
+
+**Result after the fix:** all twelve helpers take a `companyId`. The guide's
+table is correct.
+
+**Ref.** 2026-08-15, module-guide verification of `sales-order.md`.
+
+## Four documents each held their own AutoCount coverage table, and they contradicted each other [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** The owner asked what actually reaches AutoCount. He was given two
+answers in one session, in opposite directions, both wrong, each read off a
+different document. First: *"the four conversions have never run"* — false.
+Then, after he said *"我记得是有的"*: `so-to-do` HAS run, `DO-011260`. He then
+gave the instruction this entry exists for: *"过期的文件也是要删掉或者存起,
+不要有这些问题. 然后去查看源代码, 不要查看这些文件了."*
+
+**Root cause, traced by grepping for the claim rather than by reading any one
+document.** Four files each carried a hand-written matrix of which operations
+work, and no two agreed:
+
+| file | said |
+|---|---|
+| `docs/archive/autocount-sync-coverage-2026-08-11.md` | "No cell anywhere is PROVEN", every EDIT cell `NOTHING` |
+| `docs/autocount-migration-record.md` | "Five cells are PROVEN as of 2026-08-12"; PO create `REFUSED — FK_PO_PurchaseAgent` |
+| `docs/autocount-service-deploy.md` | "`/create-po`, `/so-to-do` and `/po-to-gr` have never run end to end" |
+| `docs/archive/AUTOCOUNT-GOLIVE-HANDOFF-2026-08-12.md` | "PROVEN \| ... so-to-do (**DO-011260**, cancelled)" |
+
+`autocount-migration-record.md` had already noticed — it contains the sentence
+"Both cannot be true, and it" — and left the two copies standing. Every one of
+the four was accurate the day it was written. Three then rotted, in different
+directions, because the thing they describe moves and prose does not.
+
+`AcSyncService.cs` carried a fifth version in a comment: "DO and IV are PROVEN
+with it, DO-011260 / DO-011262". Both cited numbers are DELIVERY ORDER numbers;
+the IV half had nothing behind it and `/do-to-iv` has still never run.
+
+**Fix.** One table, and three of its four columns are read out of SOURCE on
+every run — so they cannot rot:
+
+| column | derived from |
+|---|---|
+| operation, route | `AC_ROUTE` in `src/services/autocount-writeback.ts` |
+| service implements it | the `case "/x":` labels in `AcSyncService.cs` |
+| ERP triggers it from | the enqueue call sites under `src/scm/routes` + `src/scm/lib` |
+| run against the live book | `backend/scripts/data/ac-live-proof.json` — the one thing no source tree can answer |
+
+`backend/scripts/gen-autocount-coverage.mjs` writes
+`docs/generated/autocount-coverage.md`; `audit:ac-coverage` gates it in `ci.yml`.
+The generator self-tests every pattern and EXITS 2 rather than emitting a table
+if a match count falls below the floor — a verdict computed over nothing must
+not read as a pass.
+
+An entry in the proof JSON is admissible only with a document number or a
+re-runnable query. The two stale files are archived with banners rather than
+deleted, since one holds the only record of `DO-011260`; the two live ones keep
+their content and lose their matrix.
+
+**The trap worth keeping.** The queue is not the whole record. `so-to-do` was
+driven directly on the host by `qa-convert.ps1`, so `scm.autocount_outbox` has
+no row for it — which is exactly how reading only the queue produced the first
+wrong answer. The generated file says so in prose, next to the column.
+
+**Ref.** 2026-08-15, PR #2230.
 ## An instruction sheet existed because a service had no read route; it has one now [medium]
 
 <!-- area: AutoCount sync + write-back -->
@@ -4445,7 +4701,7 @@ broken in production right now.
    and closed with *"it is `internal_expected_dd`, full stop."* The same batch
    merged the migration that retired it.
 3. **A doc that CACHED a production measurement as a durable sentence.**
-   `docs/autocount-sync-coverage.md` warned *"Re-run the workflow before quoting
+   `docs/archive/autocount-sync-coverage-2026-08-11.md` warned *"Re-run the workflow before quoting
    these; they move with the data"* two lines above quoting them itself as
    settled state, in bold: toggle `off`, outbox *"zero rows of any status"*,
    *"No ERP document has ever reached AutoCount."* All three were falsified the
