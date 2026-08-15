@@ -47,6 +47,7 @@ const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ 
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
@@ -529,6 +530,17 @@ export default function App() {
             <PageGuard page="system_health">
               <SystemHealth />
             </PageGuard>
+          }
+        />
+        {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
+            two keys the endpoint accepts, so the nav row, this door and the
+            server all agree; the server is still the boundary. */}
+        <Route
+          path="/autocount-sync"
+          element={
+            <Guard anyPerm={["*", "scm.autocount.read", "settings.manage"]}>
+              <AutoCountSync />
+            </Guard>
           }
         />
         <Route
