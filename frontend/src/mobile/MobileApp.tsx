@@ -59,6 +59,7 @@ const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ defaul
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
+const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -80,6 +81,7 @@ type Screen =
   | { t: "po-amendment-detail"; id: string }
   | { t: "so-maintenance" }
   | { t: "fair-report" }
+  | { t: "autocount-sync" }
   | { t: "new-so"; mode: "new" | "edit" | "edit-draft"; docNo?: string; scanPrefill?: MobileScanPrefill }
   | { t: "scan" }
   | { t: "module"; key: string; title: string }
@@ -119,6 +121,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/sales-orders") return { t: "orders-tab" };
   if (path === "/scm/sales-orders/maintenance") return { t: "so-maintenance" };
   if (path === "/reports/fair-report") return { t: "fair-report" };
+  if (path === "/autocount-sync") return { t: "autocount-sync" };
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
@@ -366,6 +369,15 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
     { to: "/scm/inventory", label: "Inventory" },
     { to: "/scm/stock-transfers", label: "Stock Transfers" },
     { to: "/scm/stock-takes", label: "Stock Take" },
+  ]},
+  /* System — the phone half of the desktop Sidebar's `system` section. Only one
+     row so far: the AutoCount write-back queue, which is the answer to "did my
+     sales order reach AutoCount" and therefore the one system page an owner
+     opens on a phone rather than at a desk. Gated by its own live NAV_TABS entry
+     at /autocount-sync (mechanism 1 above), which carries the same two keys the
+     endpoint accepts. */
+  { group: "System", items: [
+    { to: "/autocount-sync", label: "AutoCount Sync" },
   ]},
 ];
 
@@ -706,6 +718,13 @@ function MobileAppInner() {
     // mount the screen (or fire its queries) for a user outside the cohort.
     // Mirrors the desktop FairReport route guard; OFF, not hide.
     overlay = !canViewFairReport(user) ? <TabLocked title="Sales Report" /> : <MobileFairReport onBack={back} />;
+  }
+  else if (screen.t === "autocount-sync") {
+    /* Guard the SCREEN, not only the menu row: an /autocount-sync URL must not
+       mount the page or fire its query for someone the endpoint would 403.
+       Same two keys the desktop route and the server accept. OFF, not hidden. */
+    const mayRead = can("*") || can("scm.autocount.read") || can("settings.manage");
+    overlay = !mayRead ? <TabLocked title="AutoCount Sync" /> : <MobileAutoCountSync onBack={back} />;
   }
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
