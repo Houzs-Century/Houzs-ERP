@@ -1231,6 +1231,43 @@ appears both on screen and on the document the customer receives.
 
 The scratch order was **cancelled, not deleted** (Void), per the owner's rule.
 
+### 7q3. `POST /doc-read` — reading a document back, because every other route writes
+
+Until this route existed, this service could create, convert, edit and cancel
+documents in the live book and had **no way to say what actually landed**. Two
+things made that stop being tolerable on 2026-08-15:
+
+- `qa-convert.ps1` reported `/po-to-gr` as `status=0 ... (500)`. The body was
+  never read, so the failure had a symptom and no cause — and a 500 with no
+  cause cannot be fixed, only guessed at.
+- The owner's standing questions are all questions about what the BOOK holds,
+  not about what we sent: does an edited processing date reach AutoCount, does a
+  line's delivery date, is the convert's Transfer link really there. Checking
+  our own payload cannot answer any of them.
+
+```
+POST /doc-read   { "DocType": "SO"|"PO"|"DO"|"GR"|"IV"|"PI", "DocNo": "..." }
+  -> { ok, docType, header: {...}, lines: [{...}], missingColumns: [...] }
+```
+
+**It discovers the columns rather than naming them**, the same discipline
+`/further-description` uses. The wanted lists are what we would LIKE to see;
+the query asks `sys.columns` which of them exist and selects only those,
+reporting the rest in `missingColumns`. So "AutoCount has no such field" comes
+back as an ANSWER — which is itself the answer to *does payment update into
+AutoCount* if no payment column exists on that document — rather than a SQL
+error that reads like a broken service.
+
+The line list deliberately includes `FromDocType` / `FromDocNo` / `FromDtlKey`.
+That is where AutoCount records that a line came from another document, and it
+is what the entry screen's *convert from* / *convert to* reads — so it is the
+evidence for whether a conversion really linked the two, as opposed to producing
+a standalone document that merely looks right.
+
+READ-ONLY and mechanically so: SELECTs on one connection, no SDK session, no
+transaction, and the table names come from a fixed map, never from the caller's
+string.
+
 ## 7e. The masters a document names are opened first
 
 A document naming a master AutoCount does not have does not fail politely: it

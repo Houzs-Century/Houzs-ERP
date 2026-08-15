@@ -255,6 +255,8 @@ class AcSyncService {
       /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
          no SDK session. See FurtherDescription() for why it exists. */
       case "/further-description": Json(ctx, 200, FurtherDescription(p)); return;
+      /* READ-ONLY. Two SELECTs, no SDK session. See DocRead() for why. */
+      case "/doc-read": Json(ctx, 200, DocRead(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -386,6 +388,136 @@ class AcSyncService {
      writing a confidently wrong line identity that would later edit the wrong
      line in a live book. A wrong DtlKey is worse than no DtlKey: no key is
      refused loudly, a wrong key silently edits somebody else's line. */
+  /* ── /doc-read — read a document back out of the book ─────────────────────
+     WHY THIS EXISTS. Every route here WRITES, and until now nothing could say
+     what actually landed. That gap is not academic: `qa-convert.ps1` reported
+     `/po-to-gr` as `status=0 ... (500)` and the body was never read, so the
+     failure has a symptom and no cause. And the owner's standing questions -
+     does an edited processing date reach AutoCount, does a line delivery date,
+     is the convert's Transfer link really there - are all questions about what
+     the book HOLDS, which no amount of checking our own payload can answer.
+
+     IT DISCOVERS THE COLUMNS RATHER THAN NAMING THEM, for the same reason
+     FurtherDescription() does. The wanted list below is what we would LIKE to
+     see; the query asks sys.columns which of them exist on that table and
+     selects only those, reporting the rest in `missingColumns`. So "AutoCount
+     has no such field" comes back as an ANSWER - which is itself the answer to
+     "does payment update into AutoCount" if no payment column exists on the
+     document - instead of a SQL error that reads like a broken service.
+
+     READ-ONLY and mechanically so: SELECTs on one connection, no SDK session,
+     no transaction, and the table names come from a fixed map, never from the
+     caller's string. */
+  static readonly string[] DocTypes = { "SO", "PO", "DO", "GR", "IV", "PI" };
+
+  /* Wanted on the HEADER. DocNo/DocDate/Cancelled are the identity and the
+     state; the rest are the fields the ERP claims to send, so a QA run can
+     prove each one arrived rather than assume it. */
+  static readonly string[] HeaderWanted = {
+    "DocKey", "DocNo", "DocDate", "Cancelled", "DebtorCode", "DebtorName",
+    "CreditorCode", "CreditorName", "Agent", "SalesLocation", "Ref",
+    "Description", "DeliveryDate", "ProcessingDate", "Note",
+    "Remark1", "Remark2", "Remark3", "Remark4", "Attention", "Phone1",
+    "DeliverAddr1", "InvAddr1", "SupplierDONo", "SupplierInvoiceNo",
+    "Total", "OutstandingAmt", "PaymentAmt", "PaymentTerm", "CreditTerm",
+  };
+
+  /* Wanted on the LINES. From* is the whole point of the convert questions:
+     it is where AutoCount records that this line came from another document,
+     and it is what "convert from / convert to" reads. */
+  static readonly string[] DetailWanted = {
+    "DtlKey", "Seq", "ItemCode", "Description", "Desc2", "Qty", "UnitPrice",
+    "Location", "DeliveryDate", "TransferedQty", "Transferable",
+    "FromDocType", "FromDocNo", "FromDtlKey", "FromDocKey", "PrintOut",
+  };
+
+  static Dictionary<string, object> DocRead(Dictionary<string, object> p) {
+    var docType = Str(p, "DocType").ToUpperInvariant();
+    if (Array.IndexOf(DocTypes, docType) < 0)
+      return Err("DocType must be one of " + string.Join(", ", DocTypes) + " (got '" + docType + "')");
+    var docNo = Str(p, "DocNo");
+    if (string.IsNullOrEmpty(docNo)) return Err("DocNo required");
+
+    var hdrTable = docType;
+    var dtlTable = docType + "DTL";
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var header = ReadOne(cn, hdrTable, HeaderWanted, "DocNo = @d", docNo, missing);
+      if (header == null) return Err("no " + docType + " with DocNo '" + docNo + "'");
+      var lines = ReadMany(cn, dtlTable, DetailWanted,
+                           "DocKey = (SELECT DocKey FROM " + hdrTable + " WHERE DocNo = @d)", docNo, missing);
+      var r = Ok(null);
+      r["docType"] = docType;
+      r["header"] = header;
+      r["lines"] = lines;
+      r["missingColumns"] = missing;
+      return r;
+    }
+  }
+
+  /* Which of `wanted` actually exist on `table`. The ones that do not are
+     APPENDED to `missing` rather than dropped silently: a caller asking "did
+     the processing date update" needs to be told the difference between "it is
+     null" and "there is no such column". */
+  static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
+    var have = new List<string>();
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(@t)";
+      var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+      cmd.Parameters.Add(pt);
+      var all = new List<string>();
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) all.Add(rd.GetString(0));
+      foreach (var w in wanted) {
+        if (all.Contains(w)) have.Add(w); else missing.Add(table + "." + w);
+      }
+    }
+    return have;
+  }
+
+  static string SelectList(List<string> cols) {
+    var q = new List<string>();
+    foreach (var c in cols) q.Add("[" + c + "]");
+    return string.Join(", ", q.ToArray());
+  }
+
+  static Dictionary<string, object> RowToDict(System.Data.SqlClient.SqlDataReader rd, List<string> cols) {
+    var row = new Dictionary<string, object>();
+    for (int i = 0; i < cols.Count; i++) {
+      var v = rd.IsDBNull(i) ? null : rd.GetValue(i);
+      if (v is DateTime) v = ((DateTime) v).ToString("yyyy-MM-dd HH:mm:ss");
+      else if (v is decimal) v = (double) (decimal) v;
+      row[cols[i]] = v;
+    }
+    return row;
+  }
+
+  static Dictionary<string, object> ReadOne(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return null;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT TOP 1 " + SelectList(cols) + " FROM [" + table + "] WHERE " + where;
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) return rd.Read() ? RowToDict(rd, cols) : null;
+    }
+  }
+
+  static List<Dictionary<string, object>> ReadMany(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var outp = new List<Dictionary<string, object>>();
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return outp;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + table + "] WHERE " + where + " ORDER BY [DtlKey]";
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) outp.Add(RowToDict(rd, cols));
+    }
+    return outp;
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
