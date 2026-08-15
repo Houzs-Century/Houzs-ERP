@@ -946,10 +946,23 @@ same contract as the Processing-Date gates), all reasons at once:
 > axes via `missingConfirmVariantAxes`". Commit `16d94ab4` (#2072, 2026-08-13)
 > removed it from all three surfaces: *"so-confirm-gate no longer reads variants
 > at all: the field is off `SoConfirmLineFacts`, off the row type, and out of the
-> SELECT."* Verified on `origin/main` `0c2a4e88` —
-> `backend/src/scm/lib/so-confirm-gate.ts:118-120` reads `/* NO VARIANT CHECK
-> HERE … Variant completeness is the PROCEED rule (so-variant-check.ts, gated on
-> the Processing Date), not the confirm rule. */`
+> SELECT."* Re-verified 2026-08-15: `backend/src/scm/lib/so-confirm-gate.ts`
+> carries `/* NO VARIANT CHECK HERE … Variant completeness is the PROCEED rule
+> (so-variant-check.ts, gated on the Processing Date), not the confirm rule. */`
+> immediately before its `return out`, and `missingConfirmVariantAxes` still has
+> ZERO production callers — only its two definitions (backend + the frontend
+> mirror) and tests:
+>
+> ```bash
+> grep -n 'NO VARIANT CHECK' backend/src/scm/lib/so-confirm-gate.ts
+> grep -rn missingConfirmVariantAxes backend/src frontend/src | grep -v '\.test\.'
+> ```
+>
+> *(This said `so-confirm-gate.ts:118-120` until 2026-08-15. The comment had
+> moved to 141 and 118-120 is a different block entirely — the file is long
+> enough that the reference stayed WITHIN range, so nothing mechanical could
+> catch it: a line number that resolves is not a line number that is right. Cite
+> a symbol, or the command that finds it.)*
 >
 > **Variant completeness is a Processing-Date gate only** — see the
 > Processing-Date gate table above. The owner's ruling, 2026-08-13:
