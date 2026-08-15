@@ -1363,6 +1363,30 @@ Indexes that matter here:
 Stock/inventory rules: DO=out, DR/GR=in, PR=out; one ledger + FIFO lots; balances
 are a VIEW; allocation is computed; SO readiness is binary.
 
+### The doc number: how it is minted, when a gap is permanent, how to rename
+
+- Minted **`max(suffix) + 1`** per company+month prefix (`scm/lib/doc-no.ts:17`),
+  deliberately NOT `count + 1` — `count+1` re-mints a surviving number forever
+  once a row is deleted, and took down POS order creation on 2026-06-12.
+- So deleting the **top** of a month returns those numbers to the pool and the
+  sequence self-heals. Deleting from the **middle** leaves a gap the minter will
+  never go back and fill. That is by design, not a bug.
+- `doc_no` is the real PRIMARY KEY and **every FK pointing at it is
+  `ON UPDATE NO ACTION`**, not CASCADE (`2990s-full-schema.sql:1652-1768`).
+  `UPDATE ... SET doc_no = ...` is therefore REFUSED by Postgres while any child
+  row exists. A rename is **copy the row under the new number -> repoint every
+  reference -> delete the old row**, in one transaction:
+  `backend/scripts/renumber-sales-orders.mjs` + the `Renumber sales orders`
+  workflow (dry-run by default).
+- Why that order is not optional: six child tables are `ON DELETE CASCADE`, so a
+  reference the rename MISSED is **destroyed** by the delete rather than left as
+  a visible orphan. The script re-scans for the old number and aborts before
+  deleting. The references that a hand-written table list forgets are the ones
+  with **no FK at all** — `scm.pwp_codes.source_doc_no` / `redeemed_doc_no` are
+  plain text, as is the AutoCount outbox — which is why the script discovers
+  them by scanning `to_jsonb(t.*)` over every base table instead of trusting a
+  list.
+
 ---
 
 ## 5. Performance summary (what's optimized, what to watch)
