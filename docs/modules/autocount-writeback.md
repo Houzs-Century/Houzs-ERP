@@ -1188,11 +1188,30 @@ ones, or it destroys the rest. That rule and its three cases (unchanged → omit
 operator ADDED → re-emit everything; operator REMOVED → do not act, raise it) are
 `docs/autocount-further-description-photos.md` §6.3.
 
-**Not yet proven, and it is the next thing:** that AutoCount RENDERS a metafile
-it did not write itself. The entry screen and the report's `XRRichText` are
-different renderers, so a picture that appears in one may not appear in the
-other. §5.2 of that document is the probe; until it has run, this route is built
-and unproven.
+**PROVEN 2026-08-15 — the bytes we emit are the bytes the book holds.** The
+conversion was extracted into a standalone harness and compiled with the real
+`csc.exe` (`Framework64\v4.0.30319`, `/r:System.Drawing.dll`, exit 0), then run
+against a 240x159 JPEG — the dimensions of the manifest's first line. It
+produced:
+
+```
+picw/goal  = {\pict\wmetafile8\picw240\pich159\picwgoal3600\pichgoal2385
+wmf header = 010009000003
+caption before pict = True
+```
+
+Both lines are **character-for-character what the live book stores on `DtlKey`
+34553** (`docs/autocount-further-description-photos.md` §4.2, which read
+`\picw240\pich159\picwgoal3600\pichgoal2385` and a value beginning
+`010009000003`). The dpi arithmetic, the twips conversion, the mapping mode and
+the caption ordering are therefore all confirmed against a real measurement
+rather than against the code that produced them.
+
+**Still NOT proven, and it is the next thing:** that AutoCount RENDERS a
+metafile it did not write itself. Matching bytes is necessary, not sufficient —
+the entry screen and the report's `XRRichText` are different renderers, so a
+picture that appears in one may not appear in the other. §5.2 of that document
+is the probe; until it has run on the host, this route is built and unrendered.
 
 ## 7e. The masters a document names are opened first
 
