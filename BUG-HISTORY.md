@@ -5,7 +5,7 @@
 **Symptom.** `check-docs-drift` reported **41** `renamed-migration` advisories —
 each one a doc naming a migration filename that no longer exists, where the
 NUMBER now resolves to a completely different migration. A reader following
-`0210_so_amendments.sql` opens `0210_scm_threepl_companies.sql` and finds
+`0210_so_amendments.sql` [external] opens `0210_scm_threepl_companies.sql` and finds
 something unrelated.
 
 Nobody acted on any of them, and that was rational: the list was mostly correct
@@ -31,7 +31,7 @@ pattern:
 | genuinely deleted, incl. `MIGRATION-RETIREMENTS.md`, whose subject IS retirement | 17 | `[gone]` |
 
 **The trap avoided.** The obvious fix — a script that renumbers every reference
-to the current file — would have rewritten *2990's* `0210_so_amendments.sql` into
+to the current file — would have rewritten *2990's* `0210_so_amendments.sql` [external] into
 a Houzs migration number. That reference was CORRECT; the checker resolves
 against this repo's tree and the doc was talking about another repo's. Reading
 one line of context is what caught it.
