@@ -968,36 +968,75 @@ class AcSyncService {
     var po = cmd.AddNew();
     po.CreditorCode = creditor;
     Set(() => po.CreditorName = Str(p, "CreditorName"));
-    /* KEEP WHAT THE TRANSFER RETURNS, keyed by the SOURCE line. The override
-       loop below used to call po.EditDetail(sourceDtlKey) - but that key is the
-       SALES line's, and the purchase lines the transfer just made have keys of
-       their own. EditDetail returned null every time, `continue` swallowed it,
-       and NOT ONE override was applied: the PO came out with a null Qty and the
-       sales price, silently, on 2026-08-16. */
-    var madeBySourceKey = new Dictionary<long, object>();
-    foreach (var k in keys) madeBySourceKey[k] = po.AddSOToPOTransferDetail(k);
+    /* PHASE ONE: transfer, then SAVE. Nothing else.
+
+       AddSOToPOTransferDetail does NOT return a purchase line - it returns an
+       AutoCount.Invoicing.Purchase.TransferSOToPODetail, a transfer INSTRUCTION
+       with a different shape and no Qty at all. Every earlier attempt to set the
+       cost and quantity on it went through Set(), which logs and swallows, so
+       the type mismatch was invisible and the purchase order saved with a NULL
+       Qty. Proven on the live book, from the service's own log:
+
+         set skipped: 'AutoCount.Invoicing.Purchase.TransferSOToPODetail'
+                      does not contain a definition for 'Qty'
+
+       A NULL Qty is fatal in a way that reads as nothing: AutoCount's
+       outstanding predicate is Qty - ISNULL(TransferedQty, 0) > 0, which is NULL
+       and never true, so the document looks correct in every list and can never
+       be converted onward.
+
+       So the overrides are applied in a SECOND pass, after Save, when the
+       purchase lines finally exist and have keys of their own that EditDetail
+       can address. This does not depend on what TransferSOToPODetail exposes,
+       which is deliberate: that type is not in sdk-api-reference.txt and is not
+       being guessed at. */
+    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
-    /* AFTER the transfer, deliberately. The transfer brings the sales line's
-       own price across, and a purchase order needs the COST the ERP agreed with
-       the supplier. Applied only for the lines the payload names, by DtlKey, so
-       a line the ERP said nothing about keeps whatever the transfer gave it. */
+    po.Save();
+    var docNo = po.DocNo;
+
+    /* PHASE TWO: reopen and apply what the ERP agreed with the supplier.
+
+       The transfer brings the SALES price across, and a purchase order owes the
+       COST. Lines are matched by ORDER: AddSOToPOTransferDetail was called once
+       per key, in the order of DtlKeys, so the Nth purchase line answers to the
+       Nth source key. CreatedLines reads them back in DtlKey order, which is
+       creation order. */
+    var made = CreatedLines("PODTL", docNo);
+    if (made.Count != keys.Length)
+      throw new Exception("SO-to-PO transferred " + keys.Length + " line(s) but the saved purchase order has " +
+        made.Count + " - refusing to guess which override belongs to which line");
+
+    var newKeyBySourceKey = new Dictionary<long, long>();
+    for (int i = 0; i < keys.Length; i++)
+      newKeyBySourceKey[keys[i]] = System.Convert.ToInt64(made[i]["DtlKey"]);
+
+    var po2 = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting).Edit(docNo);
+    if (po2 == null) throw new Exception("SO-to-PO saved " + docNo + " but it could not be reopened to apply the costs");
+
+    var applied = 0;
     foreach (var od in List(p, "Details")) {
       var it = (Dictionary<string, object>) od;
       if (!it.ContainsKey("DtlKey")) continue;
-      var dtl = System.Convert.ToInt64(it["DtlKey"]);
-      object madeObj;
-      if (!madeBySourceKey.TryGetValue(dtl, out madeObj) || madeObj == null)
-        throw new Exception("/so-to-po was given an override for DtlKey " + dtl + ", which is not one of the source lines it transferred");
-      dynamic d = madeObj;
-      if (it.ContainsKey("UnitPrice")) Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
-      if (it.ContainsKey("Qty"))       Set(() => d.Qty = Dec(it, "Qty", 1));
+      var srcKey = System.Convert.ToInt64(it["DtlKey"]);
+      long newKey;
+      if (!newKeyBySourceKey.TryGetValue(srcKey, out newKey))
+        throw new Exception("/so-to-po was given an override for DtlKey " + srcKey + ", which is not one of the source lines it transferred");
+      var d = po2.EditDetail(newKey);
+      if (d == null) throw new Exception("purchase line " + newKey + " could not be opened to apply its cost");
+
+      /* NOT Set(). Set() swallows, and swallowing is what let a NULL Qty reach
+         the book in the first place. A cost or quantity that fails to apply must
+         fail the request. */
+      if (it.ContainsKey("UnitPrice")) d.UnitPrice = Dec(it, "UnitPrice", 0);
+      if (it.ContainsKey("Qty"))       d.Qty = Dec(it, "Qty", 1);
       if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));
-      if (it.ContainsKey("DeliveryDate")) {
-        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
-      }
+      if (it.ContainsKey("DeliveryDate")) { var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd); }
+      applied++;
     }
-    po.Save();
-    return po.DocNo;
+    if (applied > 0) po2.Save();
+    Log("  so-to-po " + docNo + ": " + keys.Length + " transferred, " + applied + " line(s) costed in phase two");
+    return docNo;
   }
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
