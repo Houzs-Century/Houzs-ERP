@@ -15,7 +15,7 @@
     "backend/src/scm/routes/consignment-orders.ts": 2405,
     "backend/src/scm/routes/delivery-orders-mfg.ts": 5418,
     "backend/src/scm/routes/delivery-planning.ts": 2919,
-    "backend/src/scm/routes/fleet-maintenance.ts": 2117,
+    "backend/src/scm/routes/fleet-maintenance.ts": 2096,
     "backend/src/scm/routes/grns.ts": 3482,
     "backend/src/scm/routes/mfg-purchase-orders.ts": 4485,
     "backend/src/scm/routes/mfg-sales-orders.ts": 12106,
