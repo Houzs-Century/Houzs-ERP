@@ -750,18 +750,11 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo is resolved at DRAIN, like the four conversions. DtlKeys
-           names the lines this order buys and is REQUIRED; the per-line values
-           are the ERP's agreed COST, which replaces the sales price the
-           transfer carries over. */
+        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest. */
         body: (shape.kind === 'transfer'
           ? composeSoToPo(shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
-        /* THE PARENT MUST EXIST FIRST. dispatchOne holds a row whose fromDoc has
-           no AutoCount number yet as `waiting` — without burning an attempt —
-           which is exactly right here: a purchase order raised the same minute
-           as its sales order would otherwise fail on a document the book has
-           not been told about. */
+        /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`. */
         ...(shape.kind === 'transfer'
           ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
           : {}),
@@ -1318,15 +1311,8 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
-    /**
-     * ERP columns THIS REQUEST wrote, so a value the operator DELETED reaches
-     * AutoCount as a clear instead of as silence. Same contract as
-     * `newLineIds`: the composer reads the SAVED row and both cases look like
-     * an empty column, so the route that did the writing has to say.
-     *
-     * Absent means nothing was cleared, which is the stricter direction and the
-     * behaviour before this existed — a line route legitimately passes nothing.
-     */
+    /** ERP columns THIS REQUEST wrote — same contract as `newLineIds`: the
+     *  composer reads the SAVED row and cannot tell a clear from a blank. */
     touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
@@ -1606,15 +1592,8 @@ function soEditHeader(
   /** REQUIRED, never optional: it decides what the account book says a live
    *  customer still owes. `null` omits the key and keeps the book's own. */
   outstandingCenti: number | null,
-  /**
-   * The ERP columns THIS REQUEST wrote, so a value the operator DELETED can be
-   * told apart from one that was never there. Optional, and the absence is the
-   * STRICTER direction — no touched fields means nothing is cleared, which is
-   * the behaviour before this existed (CLAUDE.md permits an optional parameter
-   * only on that condition). Every other caller is a line operation and did not
-   * touch the header at all, so `[]` is the honest value there, not a default
-   * standing in for one.
-   */
+  /** ERP columns THIS REQUEST wrote. Optional: absence is the STRICTER
+   *  direction. Rule and exclusions live on clearedAcKeys. */
   touchedFields: readonly string[] = [],
 ): Record<string, string | null | Record<string, string>> {
   const out: Record<string, string | null | Record<string, string>> = present({
@@ -1658,12 +1637,8 @@ function soEditHeader(
   const balance = acUdfMoney(outstandingCenti);
   if (balance != null) udf.BALANCE = balance;
 
-  /* AN EXPLICIT NULL IS THE MESSAGE. Everything above omits what the ERP has no
-     value for, which keeps the account book's own text — right for a field that
-     was never filled, and wrong for one the operator just deleted. Only the
-     route knows which is which, so only a field it says it WROTE, and which is
-     now empty, is nulled here. `Str` turns the null into "" on the service side
-     and the book's value goes. */
+  /* AN EXPLICIT NULL IS THE MESSAGE — `Str` turns it into "", and the book's
+     value goes. */
   const cleared = clearedAcKeys(touchedFields, h);
   for (const key of cleared.header) out[key] = null;
   for (const key of cleared.udf) udf[key] = '';
