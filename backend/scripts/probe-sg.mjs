@@ -1,3 +1,12 @@
+/* SPENT PROBE — kept for the record, not as a tool.
+   
+   This was a probe for the correct Singapore pooler host, same move.
+   It answered its question at the time and nothing reaches it now: no npm
+   script, no workflow, no doc, no import.
+   
+   It is read-only, so running it is not dangerous — but it probes an
+   environment that has since moved, so what it prints is unlikely to mean
+   what its output says it means. */
 // Find the correct Singapore pooler host for the new SG project and confirm
 // it's reachable + empty. Tries aws-0 and aws-1 (same region can be either).
 import postgres from "postgres";

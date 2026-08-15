@@ -1,0 +1,17 @@
+# Branches deleted by hand on 2026-08-15, and how to restore any of them.
+#
+# WHY BY HAND. `delete_branch_on_merge` is ON now and works — every branch from
+# this session's PRs was removed automatically, verified by listing them. These
+# two merged BEFORE the setting took effect, and GitHub does not apply it
+# retroactively. They are the last of that set.
+#
+# Selected on the PR being MERGED, never on age. Both verified:
+#   fix/bug-index-area-tags                  -> PR #2202 MERGED
+#   fix/file-size-rebaseline-is-not-a-thing  -> PR #2207 MERGED
+#
+# RESTORE any row with:
+#   git push origin <sha>:refs/heads/<branch>
+#
+# sha	branch
+a00388ada6ea727a9d3aa9f1f25181078400705d	fix/bug-index-area-tags
+584f4c7ee44150fa393f995c2b11cab47be89bfd	fix/file-size-rebaseline-is-not-a-thing

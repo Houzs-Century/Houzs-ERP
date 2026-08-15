@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for the D1 -> Supabase cutover and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   A SOURCE codemod, same cutover. It drives off a file list that has since been renamed, split and deleted.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // One-shot codemod for the D1->Supabase cutover. Drives off the TypeScript
 // compiler's own error locations so it only edits the exact lines where
 // postgres-js Drizzle differs from the old D1/SQLite Drizzle:

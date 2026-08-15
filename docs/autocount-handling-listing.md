@@ -1,5 +1,13 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
+> **OWNER, 2026-08-15: not needed.** Asked what remained across the whole
+> cleanup, he answered *"autocount的不需要"* — so the deploy below is NOT
+> being chased, and nobody should treat it as outstanding work. The route is
+> merged and harmless: it is read-only, and the office host does not run it
+> until someone deploys. Left in the source rather than reverted, because the
+> next person who needs this answer should find the route already written
+> instead of re-deriving the sheet.
+>
 > **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
 >
 > Section 8 below said the durable fix was a read-only route on `AcSyncService`
