@@ -968,7 +968,14 @@ class AcSyncService {
     var po = cmd.AddNew();
     po.CreditorCode = creditor;
     Set(() => po.CreditorName = Str(p, "CreditorName"));
-    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    /* KEEP WHAT THE TRANSFER RETURNS, keyed by the SOURCE line. The override
+       loop below used to call po.EditDetail(sourceDtlKey) - but that key is the
+       SALES line's, and the purchase lines the transfer just made have keys of
+       their own. EditDetail returned null every time, `continue` swallowed it,
+       and NOT ONE override was applied: the PO came out with a null Qty and the
+       sales price, silently, on 2026-08-16. */
+    var madeBySourceKey = new Dictionary<long, object>();
+    foreach (var k in keys) madeBySourceKey[k] = po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
     /* AFTER the transfer, deliberately. The transfer brings the sales line's
        own price across, and a purchase order needs the COST the ERP agreed with
@@ -978,8 +985,10 @@ class AcSyncService {
       var it = (Dictionary<string, object>) od;
       if (!it.ContainsKey("DtlKey")) continue;
       var dtl = System.Convert.ToInt64(it["DtlKey"]);
-      var d = po.EditDetail(dtl);
-      if (d == null) continue;
+      object madeObj;
+      if (!madeBySourceKey.TryGetValue(dtl, out madeObj) || madeObj == null)
+        throw new Exception("/so-to-po was given an override for DtlKey " + dtl + ", which is not one of the source lines it transferred");
+      dynamic d = madeObj;
       if (it.ContainsKey("UnitPrice")) Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Qty"))       Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));
