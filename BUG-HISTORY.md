@@ -57,7 +57,7 @@ whole point of that rule.
 No C# change and no host rebuild: `ApplyUdf` writes whatever keys it is given
 and is already called on both create (`:403`) and edit (`:923`).
 
-**Ref.** 2026-08-15, PR #2245.
+**Ref.** 2026-08-15, PR #2247.
 
 ## An instruction sheet existed because a service had no read route; it has one now [medium]
 
