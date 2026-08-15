@@ -1090,11 +1090,27 @@ The UOM is set where it belongs: `/ensure-masters` gives a NEW item
 `NewUom(uom, 1m)` + `BaseUom`, so the line inherits it, and an item the book
 already holds keeps its own. Owner 2026-08-15: every SKU already carries a UOM.
 
-### Desc2 is the Further Description, and what we composed was a second opinion
+### Desc2 is NOT the Further Description — two columns, and this section covers only the first
+
+> **CORRECTED 2026-08-15.** This section was headed *"Desc2 is the Further
+> Description"* and it is not. `Desc2` and `FurtherDescription` are **separate
+> columns on the same detail class** — both appear in every `SET:` list in
+> `backend/scripts/autocount-service/sdk-api-reference.txt`:
+>
+> | column | type | carries | who writes it |
+> |---|---|---|---|
+> | `Desc2` | `nvarchar(100)` | the build text — fabric, size, legs, gap | this section |
+> | `FurtherDescription` | `nvarchar(MAX)` | the **photographs**, as RTF | §7q2 below |
+>
+> The owner's instruction quoted next is about the PHOTOGRAPHS, and what shipped
+> under this heading was the variant text. Both are wanted; neither answers the
+> other. Conflating them points a photograph at a 100-character column, which is
+> why the correction is worth its space.
 
 Owner 2026-08-15: *"照片那一边是从 Further Description 那边抽出来的，所以你录入的
-时候，也是要录入回 Further Description"*. The cutover PARSED this field to get the
-ERP's variants — `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
+时候，也是要录入回 Further Description"* — the photographs; see §7q2. The cutover
+also parsed **`Desc2`** to get the ERP's variants —
+`import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
 
@@ -1132,6 +1148,51 @@ behind an unreadable 500. So an over-long line is refused into a `skipped` row
 naming it, using the same `AC_DESC2_MAX` the sofa collapse already refuses on.
 Truncating is not the alternative: Desc2 IS the specification the factory builds
 from, and half a specification is a wrong instruction rather than a short one.
+
+### 7q2. `FurtherDescription` — the photographs, and why the host converts them
+
+The owner's instruction in §7q is this one: the photographs on our sales-order
+lines were pulled OUT of AutoCount's `FurtherDescription` at cutover
+(`backend/scripts/import-so-line-photos.mjs`), so putting them back means writing
+that same field.
+
+**What the live book actually stores was measured, not assumed** — three lines
+read on 2026-08-15, `docs/autocount-further-description-photos.md` §4.2. Every
+one stores the picture as `\wmetafile8`, a Windows metafile; none as
+`\jpegblip` or `\pngblip`. Four consequences, and each one is a line of code:
+
+| measured | what the writer must do |
+|---|---|
+| the form is `\wmetafile8` | a JPEG cannot go in verbatim. The conversion needs GDI, which exists on the AutoCount host and in no Cloudflare Worker, so **the ERP sends JPEG bytes and `AcSyncService.cs` renders them** |
+| `picwgoal`/`picw` = 96 on all three | `dpi = 96`; `picw`/`pich` are pixels, the `*goal` pair twips |
+| a caption `Image on <M/D/YYYY h:mm:ss AM>` precedes each `{\pict` | the field is **not pictures alone**. A writer that emits pictures only DESTROYS that text, so the caption is part of what is written |
+| `nvarchar(MAX)`, `chars x 2 = bytes` | no 100-character ceiling here — that one belongs to `Desc2` |
+
+**The `/edit` line payload accepts two shapes, and neither is ever sent as null:**
+
+```
+FurtherDescription : "<rtf>"              verbatim — for the write probe, and for
+                                          a value read back out of the book unchanged
+Photos : [ { Jpeg: "<base64>", Caption? } ] the JPEGs; the host renders the RTF
+```
+
+Same `ContainsKey` rule as every other line field: **a key the ERP does not own
+is OMITTED, never nulled.** Unlike the others it is deliberately NOT wrapped in
+`Set()` — `Set()` logs and swallows, which is right for a cosmetic field and
+wrong here, because a silently-skipped write would leave the ERP believing the
+photographs arrived while the line still holds what it held before.
+
+**The field is ONE string and is replaced wholesale — there is no append.** So a
+composer must send every photograph the line should end up with, not just the new
+ones, or it destroys the rest. That rule and its three cases (unchanged → omit;
+operator ADDED → re-emit everything; operator REMOVED → do not act, raise it) are
+`docs/autocount-further-description-photos.md` §6.3.
+
+**Not yet proven, and it is the next thing:** that AutoCount RENDERS a metafile
+it did not write itself. The entry screen and the report's `XRRichText` are
+different renderers, so a picture that appears in one may not appear in the
+other. §5.2 of that document is the probe; until it has run, this route is built
+and unproven.
 
 ## 7e. The masters a document names are opened first
 

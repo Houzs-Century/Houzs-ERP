@@ -282,9 +282,32 @@ then `\fs20\par`, then `}` closing the document.
    §7's question 5 in the direction that matters: **a writer that replaces the
    field with pictures alone destroys that caption**, so the caption is part of
    what has to be reproduced.
-5. **One picture per line on all three**, so the multi-image layout (how
-   AutoCount separates two pictures) is still unobserved — the manifest says
-   other lines carry up to five, and none of those three was in this sample.
+5. **One picture per line on all three** — and the manifest says that is the
+   whole population, not a lucky sample.
+
+   > **CORRECTED 2026-08-15**, hours after this list was first written. This
+   > point used to end *"the manifest says other lines carry up to five"*, and
+   > that was wrong: it took the five-photograph figure from §6.4, which counts
+   > photographs on a DOCUMENT, and read it as photographs on a LINE. Counted
+   > directly, every one of the 554 manifest rows is a `_1` file and the 554
+   > rows carry 554 distinct `DtlKey`s — so no line in the manifest holds more
+   > than one picture:
+   >
+   > ```
+   > $ node -e '...gunzip ac-photo-manifest.json.gz...'
+   > file suffix distribution: [["1",554]]
+   > unique DtlKey: 554 of 554 rows
+   > ```
+
+   That closes the layout question for everything we have to write back, and
+   the writer emits one caption + one `{\pict}` per photograph accordingly.
+
+   **It does not close it for the book.** The manifest is the output of an
+   extractor that was not kept (§2.1), so "the extractor only ever took the
+   first picture" is not excluded by this count alone. What would exclude it is
+   one aggregate over `SODTL` itself — `MAX` of the `{\pict` count — and that
+   is worth running the next time anyone is on the host, because a second
+   picture in the book on a line we rewrite would be destroyed, not duplicated.
 
 ---
 
@@ -589,11 +612,32 @@ answers 413.
 6. **What the nine large images weigh.** §6.4.
 7. **Whether the same treatment is wanted on DO / IV / GR / PI lines.** The
    field exists on all six (§1); only SO and PO were extracted.
-8. **How AutoCount lays out MORE THAN ONE picture on a line.** New, and opened
-   by §4.2: all three sampled lines carry exactly one. The manifest has lines
-   with up to five, and the separator between two pictures — another `\par`, a
-   second caption, or nothing — has not been observed. Re-run the §4.2 queries
-   against a `DtlKey` the manifest says holds several.
+8. **Whether any line in the BOOK holds more than one picture.** Narrowed the
+   same day it was opened, and it is no longer about layout.
+
+   The original question assumed the manifest had lines with up to five
+   pictures. It does not — 554 rows, 554 distinct `DtlKey`s, every file a `_1`
+   (the count is in §4.2 point 5). So for **everything the write-back has to
+   send**, one picture per line is the whole population and the layout question
+   is moot.
+
+   What survives is narrower and worth one query: the manifest is the output of
+   an extractor nobody kept (§2.1), so it cannot rule out that the extractor
+   took only the first picture of a line that held two. The write REPLACES the
+   field wholesale (§6.3), so a second picture in the book on a line we rewrite
+   would be **destroyed**, and that is the only reason this still matters.
+
+   One aggregate settles it for the whole book, read-only:
+
+   ```sql
+   SELECT COUNT(*) AS lines_with_a_value,
+          MAX((LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription,'{\pict',''))) / 6) AS max_pictures
+   FROM SODTL
+   WHERE FurtherDescription IS NOT NULL AND LEN(FurtherDescription) > 0;
+   ```
+
+   `max_pictures = 1` closes it outright. Anything higher is a finding, and the
+   composer needs a read-before-write on those lines before it may touch them.
 
 ---
 

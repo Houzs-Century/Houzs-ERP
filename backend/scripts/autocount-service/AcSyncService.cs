@@ -38,7 +38,7 @@
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Purchase.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Accounting.dll" ^
-//     /r:System.Web.Extensions.dll /r:System.Data.dll ^
+//     /r:System.Web.Extensions.dll /r:System.Data.dll /r:System.Drawing.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
 // Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
@@ -79,6 +79,9 @@ using System.Text;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
@@ -1000,6 +1003,26 @@ class AcSyncService {
 
       if (it.ContainsKey("Description")) Set(() => d.Description = Str(it, "Description"));
       if (it.ContainsKey("Desc2"))       Set(() => d.Desc2 = Str(it, "Desc2"));
+      /* FurtherDescription — the photograph field. Two shapes, and the second
+         is the one the ERP uses:
+           FurtherDescription : "<rtf>"   verbatim, for probes and for a value
+                                          read back out of the book unchanged
+           Photos : [ { Jpeg, Caption? } ] the JPEGs; this host renders them
+
+         NOT wrapped in Set(). Set() swallows the exception and logs it, which is
+         right for a cosmetic field but wrong here: a silently-skipped write
+         would leave the ERP believing the photographs reached AutoCount when
+         the line still holds whatever it held before. A conversion that fails
+         must fail the whole edit and be visible in the response. */
+      if (it.ContainsKey("FurtherDescription")) {
+        var fd = Str(it, "FurtherDescription");
+        d.FurtherDescription = fd;
+      } else if (it.ContainsKey("Photos")) {
+        int n;
+        var rtf = PhotoRtf(List(it, "Photos"), out n);
+        d.FurtherDescription = rtf;
+        Log("  FurtherDescription: " + n + " picture(s), " + rtf.Length + " chars");
+      }
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("UnitPrice"))   Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Location"))    Set(() => d.Location = Str(it, "Location"));
@@ -1065,6 +1088,124 @@ class AcSyncService {
   static string SafeDesc2(dynamic d) { try { return (string) d.Desc2 ?? ""; } catch { return ""; } }
   static IEnumerable<object> List(Dictionary<string, object> d, string k) { object v; if (d.TryGetValue(k, out v) && v is object[]) return (object[]) v; return new object[0]; }
   static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }
+
+  // ── FurtherDescription: photographs, in the form AutoCount itself writes ───
+  /* WHY THE CONVERSION IS HERE AND NOT IN THE WORKER.
+     Read off the LIVE book on 2026-08-15 (docs/autocount-further-description-
+     photos.md section 4.2): all three sampled SODTL lines store the picture as
+     `\wmetafile8` — a Windows metafile — and none as `\jpegblip` or `\pngblip`.
+     A JPEG therefore cannot go in verbatim. Turning one into a metafile needs
+     GDI, which exists on this host and nowhere in a Cloudflare Worker, so the
+     ERP sends the JPEG bytes and the conversion happens here.
+
+     MM_ANISOTROPIC (8) is not a choice: it is the number IN the keyword
+     `\wmetafile8`, so the bits have to be fetched in that mapping mode for the
+     declaration to be true. */
+  const int MM_ANISOTROPIC = 8;
+  [DllImport("gdi32.dll")] static extern uint GetWinMetaFileBits(IntPtr hemf, uint cbData16, byte[] pData16, int iMapMode, IntPtr hdcRef);
+  [DllImport("gdi32.dll")] static extern bool DeleteEnhMetaFile(IntPtr hemf);
+
+  static byte[] JpegToWmf(byte[] picture, out int widthPx, out int heightPx) {
+    using (var ms = new MemoryStream(picture))
+    using (var src = Image.FromStream(ms)) {
+      widthPx = src.Width; heightPx = src.Height;
+      /* A 1x1 bitmap only exists to lend a screen-compatible HDC: both the
+         metafile and GetWinMetaFileBits need a reference DC, and neither
+         draws on it. */
+      using (var refBmp = new Bitmap(1, 1))
+      using (var refG = Graphics.FromImage(refBmp)) {
+        IntPtr hdc = refG.GetHdc();
+        try {
+          using (var buf = new MemoryStream())
+          using (var mf = new Metafile(buf, hdc, new Rectangle(0, 0, widthPx, heightPx), MetafileFrameUnit.Pixel, EmfType.EmfOnly)) {
+            using (var g = Graphics.FromImage(mf)) g.DrawImage(src, 0, 0, widthPx, heightPx);
+            /* GetHenhmetafile hands OWNERSHIP over; the Metafile must not
+               free it and we must. */
+            IntPtr hemf = mf.GetHenhmetafile();
+            try {
+              uint n = GetWinMetaFileBits(hemf, 0, null, MM_ANISOTROPIC, hdc);
+              if (n == 0) throw new Exception("GetWinMetaFileBits returned a zero size");
+              var wmf = new byte[n];
+              if (GetWinMetaFileBits(hemf, n, wmf, MM_ANISOTROPIC, hdc) == 0) throw new Exception("GetWinMetaFileBits failed to fill the buffer");
+              return wmf;
+            } finally { DeleteEnhMetaFile(hemf); }
+          }
+        } finally { refG.ReleaseHdc(hdc); }
+      }
+    }
+  }
+
+  /* 96 dpi, and it is MEASURED, not assumed: on all three sampled lines
+     picwgoal/1440 against picw gives exactly 96 (3600/1440 in against 240 px,
+     and the same for 2220/148 and 750/50). picw/pich are pixels, the *goal
+     pair is twips. */
+  const int PhotoDpi = 96;
+  static int Twips(int px) { return (int) Math.Round((double) px * 1440.0 / PhotoDpi); }
+
+  static string RtfHex(byte[] b) {
+    var sb = new StringBuilder(b.Length * 2 + b.Length / 32);
+    for (int i = 0; i < b.Length; i++) {
+      sb.Append(b[i].ToString("x2"));
+      if ((i + 1) % 32 == 0) sb.Append('\n');
+    }
+    return sb.ToString();
+  }
+
+  static string RtfEscape(string s) {
+    var sb = new StringBuilder();
+    foreach (char ch in s ?? "") {
+      if (ch == '\\' || ch == '{' || ch == '}') { sb.Append('\\').Append(ch); continue; }
+      if (ch == '\n') { sb.Append("\\par\n"); continue; }
+      if (ch == '\r') continue;
+      if (ch < 0x80) { sb.Append(ch); continue; }
+      sb.Append("\\u").Append(((short) ch).ToString()).Append('?');
+    }
+    return sb.ToString();
+  }
+
+  /* Builds the WHOLE field value from the photographs the ERP holds for one
+     line, in the shape the live book was observed to use: a caption paragraph,
+     then the picture, per photograph.
+
+     THE CAPTION IS NOT DECORATION. Section 4.2 found `Image on 8/12/2024
+     5:01:16 PM` sitting before the {\pict group on every sampled line, so a
+     writer that emitted pictures alone would DESTROY text AutoCount put there.
+     The ERP sends the caption it read back, or we stamp today's.
+
+     The field is ONE string and is replaced wholesale — there is no append — so
+     the caller must send every photograph the line should end up with, not just
+     the new ones. That rule is section 6.3's, and it belongs to the composer;
+     this function only renders what it is given. */
+  static string PhotoRtf(IEnumerable<object> photos, out int converted) {
+    var parts = new List<string>();
+    converted = 0;
+    foreach (var o in photos) {
+      var ph = o as Dictionary<string, object>;
+      if (ph == null) throw new Exception("each entry of Photos must be an object");
+      var b64 = Str(ph, "Jpeg");
+      if (string.IsNullOrEmpty(b64)) throw new Exception("a Photos entry carries no Jpeg");
+      byte[] jpeg;
+      try { jpeg = Convert.FromBase64String(b64); }
+      catch (Exception ex) { throw new Exception("a Photos entry is not valid base64: " + ex.Message); }
+
+      int w, h;
+      var wmf = JpegToWmf(jpeg, out w, out h);
+
+      var caption = ph.ContainsKey("Caption")
+        ? Str(ph, "Caption")
+        : "Image on " + DateTime.Now.ToString("M/d/yyyy h:mm:ss tt");
+      if (!string.IsNullOrEmpty(caption)) parts.Add(RtfEscape(caption));
+
+      parts.Add("{\\pict\\wmetafile8\\picw" + w + "\\pich" + h
+                + "\\picwgoal" + Twips(w) + "\\pichgoal" + Twips(h) + "\n"
+                + RtfHex(wmf) + "}");
+      converted++;
+    }
+    if (parts.Count == 0) throw new Exception("Photos was empty — omit the key instead of sending nothing");
+    return "{\\rtf1\\ansi\\deff0\n{\\fonttbl{\\f0 Arial;}}\n\\viewkind4\\uc1\\pard\\fs20 "
+           + string.Join("\n\\par\n", parts.ToArray())
+           + "\n\\fs20\\par\n}";
+  }
 
   static void Json(HttpListenerContext ctx, int code, Dictionary<string, object> obj) {
     var s = new JavaScriptSerializer().Serialize(obj);
