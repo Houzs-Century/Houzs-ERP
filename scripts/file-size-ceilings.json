@@ -12,7 +12,7 @@
     "backend/src/routes/mail-center.ts": 2284,
     "backend/src/routes/projects.ts": 5188,
     "backend/src/routes/users.ts": 2306,
-    "backend/src/scm/routes/consignment-orders.ts": 2405,
+    "backend/src/scm/routes/consignment-orders.ts": 2383,
     "backend/src/scm/routes/delivery-orders-mfg.ts": 5418,
     "backend/src/scm/routes/delivery-planning.ts": 2907,
     "backend/src/scm/routes/fleet-maintenance.ts": 2096,

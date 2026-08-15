@@ -345,25 +345,25 @@ Total: 1021 route registrations across 136 files.
 - L2248  POST   /:id/impersonate
 
 ## backend/src/scm/routes/consignment-orders.ts  (19)
-- L336  GET    /
-- L553  GET    /mine
-- L659  GET    /:docNo
-- L707  POST   /
-- L1147  PATCH  /:docNo/status
-- L1150  GET    /:docNo/audit-log
-- L1184  POST   /:docNo/items/:itemId/override
-- L1238  PATCH  /:docNo
-- L1629  POST   /:docNo/items
-- L1782  PATCH  /:docNo/items/:itemId
-- L1972  DELETE /:docNo/items/:itemId
-- L2049  POST   /:docNo/items/:itemId/photos
-- L2214  GET    /:docNo/items/:itemId/photos/:photoKey/signed
-- L2219  GET    /:docNo/items/:itemId/photos/:photoKey
-- L2258  DELETE /:docNo/items/:itemId/photos/:photoKey
-- L2316  GET    /:docNo/payments
-- L2363  POST   /:docNo/payments
-- L2424  DELETE /:docNo/payments/:id
-- L2457  GET    /debtors/search
+- L258  GET    /
+- L475  GET    /mine
+- L581  GET    /:docNo
+- L629  POST   /
+- L1069  PATCH  /:docNo/status
+- L1072  GET    /:docNo/audit-log
+- L1106  POST   /:docNo/items/:itemId/override
+- L1160  PATCH  /:docNo
+- L1551  POST   /:docNo/items
+- L1704  PATCH  /:docNo/items/:itemId
+- L1894  DELETE /:docNo/items/:itemId
+- L1957  POST   /:docNo/items/:itemId/photos
+- L2122  GET    /:docNo/items/:itemId/photos/:photoKey/signed
+- L2127  GET    /:docNo/items/:itemId/photos/:photoKey
+- L2166  DELETE /:docNo/items/:itemId/photos/:photoKey
+- L2224  GET    /:docNo/payments
+- L2271  POST   /:docNo/payments
+- L2332  DELETE /:docNo/payments/:id
+- L2365  GET    /debtors/search
 
 ## backend/src/scm/routes/hr.ts  (19)
 - L217  GET    /config
