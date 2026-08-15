@@ -72,6 +72,17 @@ jobs:
       # test first, it turned out to be one of the files that stops being
       # collected, so it would have vanished with the 17 suites it guards.
       - run: npm run audit:test-projects
+      # `explain` answers questions about this repo by COMPUTING them from the
+      # source, so the same question gives the same answer. Two things are gated:
+      # every question still computes (one that has stopped means the thing it
+      # reads has MOVED, and every answer given from it since is suspect), and
+      # every doc block holding a computed answer still matches. That second one
+      # is the drift check-docs-drift cannot do — it resolves paths, not numbers,
+      # so a doc whose file exists and whose count is wrong reads as clean.
+      # Runs from the repo root, hence the `cd ..`; both are dependency-free.
+      - run: cd .. && node scripts/explain.mjs --check
+      - run: cd .. && node --test scripts/explain.test.mjs
+      - run: cd .. && node scripts/explain.mjs --check-docs
       # The two DERIVED docs. Neither is in deploy.yml — a stale doc must never
       # block a release (audit:routes as a deploy gate jammed prod twice in one
       # day) — and since 2026-08-14 neither fails a PR on DRIFT either. They

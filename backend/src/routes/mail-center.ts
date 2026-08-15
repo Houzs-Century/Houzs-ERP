@@ -32,6 +32,7 @@ import { getBranding, getBrandingForCompany } from "../services/branding";
 import { validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
+import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -143,57 +144,11 @@ export type IngestResult =
   | { ok: true; threadId: string; messageId: string; deduped?: boolean }
   | { ok: false; error: string };
 
-function toArray(v: string[] | string | undefined | null): string[] {
-  if (!v) return [];
-  if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
-  // RFC headers separate addresses with commas; References uses whitespace.
-  return String(v)
-    .split(/[,\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function safeIso(input: string | undefined, fallback: string): string {
-  if (!input) return fallback;
-  const t = Date.parse(input);
-  if (Number.isNaN(t)) return fallback;
-  return new Date(t).toISOString();
-}
-
-// Decode standard base64 into raw bytes. Tolerant of base64url and stray
-// whitespace/newlines. Returns null on anything that doesn't decode so a single
-// bad attachment never aborts the whole email.
-function base64ToBytes(b64: string): Uint8Array | null {
-  try {
-    const clean = b64.replace(/[\r\n\s]+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-    const bin = atob(clean);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-// Sanitise a filename for use inside an R2 object key: strip any path segments
-// (no traversal), keep a readable ASCII-ish basename, bound the length.
-function safeFilename(name: string | undefined): string {
-  const base = (name ?? "").split(/[\\/]/).pop() || "";
-  const cleaned = base
-    .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
-  return cleaned || "file";
-}
+/* toArray / stripHtml / safeIso / base64ToBytes / safeFilename moved VERBATIM to
+   services/mail-parse.ts (imported above). They are pure — no env, no database,
+   no R2 — so lifting them changes nothing here, and this file is over its
+   file-size ceiling: the only way to clear that is to take something out.
+   They now have tests, which they did not have inline. */
 
 // Persist the attachments for one freshly-stored (or backfilled) message: upload
 // each file's bytes to R2 (POD_BUCKET) and INSERT an email_attachments row.
