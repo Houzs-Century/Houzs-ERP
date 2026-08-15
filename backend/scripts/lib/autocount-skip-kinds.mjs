@@ -103,7 +103,10 @@ export function isRequeuedNote(lastError) {
 
 /** The state to SHOW for a row — its status, except a re-queued skip. */
 export function acOutboxState(status, lastError) {
-  if (status === 'skipped' && isRequeuedNote(lastError)) return 'requeued';
+  /* Both terminal states, not just skipped — see the TS twin's comment. A
+     re-queued FAILED row is history for the same reason a re-queued skip is:
+     the document went through under a newer row. */
+  if (isRequeuedNote(lastError) && (status === 'skipped' || status === 'failed')) return 'requeued';
   return status;
 }
 
