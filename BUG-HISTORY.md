@@ -45,10 +45,27 @@ a bijection exists but choosing one is a coin flip, and the two SO lines can
 differ in what is linked to them. A wrong link is worse than none: it credits
 one line's shipment against another and cannot be told from a fact afterwards.
 
-**Fix, part two — the hole.** Still to do: `buildItemRow` should derive the link
-from `(so_doc_no, item_code)` when a client omits it and refuse only when that
-is ambiguous — the same thing `/from-sos` already does — so no future client
-regression can write this again.
+**Fix, part two — the hole (2026-08-15).** `scm/lib/derive-do-so-item-id.ts`
+reads the link off the sales order before either body-driven insert path can
+write a null, which is what `POST /from-sos` always did and is why that path
+never produced one. Three outcomes, and the middle one is the whole point:
+
+  · code on the SO, resolvable  → link it, no client change required;
+  · code on the SO, ambiguous   → **400**. Only the client knows which line it
+    meant, and a coin flip is worse than a refusal — a wrong link credits one
+    line's shipment against another and cannot be told from a fact afterwards;
+  · code NOT on the SO          → the null stands. That is the ad-hoc line the
+    delivery paths already document. Prod carries none today, but closing a
+    hole is not a licence to break a supported shape.
+
+A failed read of the sales order refuses too, rather than defaulting to the null
+it exists to prevent — the same fail-closed rule `downstream-lock` follows.
+
+The pairing is IMPORTED from `scripts/lib/do-so-item-pairing.mjs`, not mirrored
+into `src` the way `do-shipped-states` / `variant-summary` are, so the repair
+script and the runtime guard cannot drift into two opinions about what a link
+means. Precedent for crossing that boundary: `autocount-sofa-collapse.ts`
+importing `parse-sofa.mjs`.
 
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 

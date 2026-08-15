@@ -25,6 +25,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { doHasDownstream } from '../lib/downstream-lock';
+import { fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
@@ -3309,7 +3310,7 @@ deliveryOrdersMfg.post('/', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
   if (!debtorName) return c.json({ error: 'debtor_name_required' }, 400);
-  const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
+  let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -3317,6 +3318,16 @@ deliveryOrdersMfg.post('/', async (c) => {
   if (items.length > 0) {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
+  }
+
+  /* Read the SO link the client left out, BEFORE anything downstream resolves
+     on it — the committed-SO check below, the remaining-qty guard, the batch
+     commitments and buildItemRow all consult soItemId, and a null quietly turns
+     every one of them into a no-op. See lib/derive-do-so-item-id. */
+  {
+    const linked = await fillMissingSoItemIds(sb, (body.soDocNo as string | null) ?? null, items);
+    if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
+    items = linked.items;
   }
 
   /* Audit gap #4 — the source SO must be committed (CONFIRMED or beyond) before a
@@ -4705,6 +4716,18 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      via resync; check stock first, gated by confirmShortStock. Skipped on a
      not-yet-shipped DO (no OUT yet — first-ship deduction handles it). */
   const h = header as { id: string; status: string | null; warehouse_id: string | null; so_doc_no: string | null };
+  /* Same reading as the create path (lib/derive-do-so-item-id), with one extra
+     constraint: an SO line this DO has ALREADY put a line against is not a
+     candidate again. Two delivery orders against one SO line is ordinary
+     partial delivery; two lines on ONE delivery order is not. */
+  {
+    const { data: linkedHere } = await sb
+      .from('delivery_order_items').select('so_item_id').eq('delivery_order_id', id);
+    const claimed = ((linkedHere ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id);
+    const linked = await fillMissingSoItemIds(sb, h.so_doc_no, [it], claimed);
+    if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
+    it = linked.items[0] as typeof it;
+  }
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
   /* The added line ships from ITS OWN SO line's warehouse — the same order the
      OUT uses (SO line → DO header → this company's default). Header-first was
