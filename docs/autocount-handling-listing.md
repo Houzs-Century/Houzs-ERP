@@ -1,5 +1,30 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
+> **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
+>
+> Section 8 below said the durable fix was a read-only route on `AcSyncService`
+> and that it should be the first thing added the next time that file was
+> opened. It has been added:
+>
+> ```bash
+> AC_SYNC_URL=... AC_SYNC_KEY=... \
+>   node backend/scripts/read-further-description.mjs --dtlkey 34553 --extract ./ac-34553.rtf
+> ```
+>
+> That one command does all three steps below — it DISCOVERS the column name
+> rather than assuming it (step 1), reads the value (step 2), and writes the
+> file (step 3). It reports truncation instead of hiding it, which is the trap
+> section 5 warns about.
+>
+> **The one human step that remains is a DEPLOY, not a query:** the route is in
+> the source and compiles (verified locally against the licensed assemblies —
+> `build-local.ps1`, exit 0, 51712 bytes), but the office host is still running
+> the previous build. Run `deploy-on-host.ps1` there once and this sheet is
+> spent.
+>
+> Keep it afterwards for the case it still covers: a machine that cannot reach
+> the service, or a service that will not start.
+
 **For:** somebody who has an AutoCount machine. Nobody on the development side
 has one, so this task cannot be done here and cannot be automated yet.
 **Costs:** about ten minutes.
@@ -191,9 +216,20 @@ The rule assumes the data is in our Postgres, which every workflow can reach wit
 automated path into it is `AcSyncService.cs` on the office host, and that service
 exposes no read route at all.
 
-So the durable fix is a read-only `GET /further-description?dtlkey=N` on that
-service, and it is the first thing to add the next time the file is opened. Until
-then this listing is the channel.
+So the durable fix was a read-only route on that service. **It is now written**
+— `POST /further-description` with `{ Table, DtlKey }`: two SELECTs on one
+connection, no SDK session, no transaction, and the table name comes from an
+allow-list rather than from the caller. Its caller is
+`backend/scripts/read-further-description.mjs`.
+
+It DISCOVERS the column instead of naming it, for the reason step 1 exists:
+nobody has looked at what the column is called, and hard-coding a guess would
+turn "the column has another name" — a real answer — into a SQL error that
+reads like a broken service. No matching column comes back as a 200 with
+`column: null`.
+
+Until the office host runs a build that contains it, this listing is still the
+channel.
 
 ---
 
