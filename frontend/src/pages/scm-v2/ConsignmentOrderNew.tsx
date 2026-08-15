@@ -19,12 +19,14 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronDown, Plus, Save, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import {
   useCreateConsignmentOrder, useConsignmentDebtorSearch, useAddConsignmentOrderPayment,
   useUploadConsignmentItemPhoto, useConsignmentOrderDetail,
@@ -204,6 +206,12 @@ export const ConsignmentOrderNew = () => {
   // ── Debtor autocomplete ─────────────────────────────────────────────
   const debtors = useConsignmentDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  const debtorInputRef = useRef<HTMLInputElement>(null);
+  /* Portalled + measured from the input: the same `.suggestList` rule inside
+     the same `.card { overflow: hidden }` that sliced the New Sales Order list
+     after three rows. SalesOrderDetail's copy of this field was portalled in an
+     earlier pass; this one and ConsignmentOrderDetail's were the twins missed. */
+  const debtorSuggestPos = useAnchoredPanel(debtorInputRef, showDebtorSuggest, 260);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -598,6 +606,7 @@ export const ConsignmentOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={debtorInputRef}
                 className={styles.fieldInput}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -606,8 +615,11 @@ export const ConsignmentOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
+              {showDebtorSuggest && debtorSuggestions.length > 0 && debtorSuggestPos && createPortal(
+                <ul
+                  className={styles.suggestList}
+                  style={{ ...anchoredPanelStyle(debtorSuggestPos), right: 'auto', marginTop: 0 }}
+                >
                   {debtorSuggestions.slice(0, 8).map((d, i) => (
                     <li
                       key={`${d.debtor_code ?? ''}-${i}`}
@@ -622,7 +634,8 @@ export const ConsignmentOrderNew = () => {
                       )}
                     </li>
                   ))}
-                </ul>
+                </ul>,
+                document.body,
               )}
             </label>
             <label className={styles.field}>

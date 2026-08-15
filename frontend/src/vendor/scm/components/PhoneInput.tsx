@@ -17,9 +17,19 @@
 // Deliberately self-contained (inline styles, no Tailwind / app-util imports)
 // so the component stays portable to the POS. Colours mirror the app palette
 // (tailwind.config.js · "Ink & Petrol").
+//
+// The country panel is PORTALLED to <body> and positioned `fixed` from the
+// trigger's rect — same idiom as StatePicker / SoLineCard / SearchableSelect.
+// It was `position: absolute` inside the field until 2026-08-15, and every
+// address form puts this field in a card that clips its overflow: measured on
+// prod's New Sales Order, the 287px panel had 247px sliced off by
+// `SalesOrderNew.module.css .card { overflow: hidden }`, leaving the search box
+// and not one country.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { COUNTRY_DIAL_CODES, splitE164, combineE164 } from '@2990s/shared/phone';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 
 // Chinese / common search aliases so typing "马"/"新"/"中" locates the country.
 // Frontend-side only (search is a UI concern) — keeps the mirrored phone.ts
@@ -94,8 +104,15 @@ export const PhoneInput = ({
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0); // highlighted row in the filtered list
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const nationalRef = useRef<HTMLInputElement>(null);
+
+  /* Search header (~46px) + the ten-row country list this replaced a native
+     <select> with. The list itself flexes, so a cramped viewport shrinks the
+     rows rather than hiding the search box. */
+  const panelPos = useAnchoredPanel(triggerRef, open, 300);
 
   // Pull external value changes (a fresh row loads) into local state, without
   // clobbering an in-progress edit (which updates lastSynced on every emit).
@@ -108,11 +125,17 @@ export const PhoneInput = ({
     }
   }, [value]);
 
-  // Close on click-outside while the panel is open.
+  // Close on click-outside while the panel is open. The panel is in a <body>
+  // portal, so it is NOT inside rootRef in the DOM — it has to be tested
+  // separately or a mousedown on a country would close the list before the
+  // button's click could pick it.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
@@ -186,6 +209,7 @@ export const PhoneInput = ({
     >
       {/* Country trigger — opens the searchable panel. */}
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Country dial code"
         aria-haspopup="listbox"
@@ -210,17 +234,18 @@ export const PhoneInput = ({
         <span aria-hidden style={{ color: C.inkMuted, fontSize: 10 }}>▾</span>
       </button>
 
-      {open && (
+      {open && panelPos && createPortal(
         <div
+          ref={panelRef}
           role="listbox"
           style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
-            zIndex: 50,
+            ...anchoredPanelStyle(panelPos),
+            // The trigger is a 96px chip; the list needs room for a country
+            // name, so it keeps its own width rather than the anchor's.
             width: 250,
             maxWidth: '80vw',
+            display: 'flex',
+            flexDirection: 'column',
             background: C.surface,
             border: `1px solid ${C.border}`,
             borderRadius: 8,
@@ -228,7 +253,7 @@ export const PhoneInput = ({
             overflow: 'hidden',
           }}
         >
-          <div style={{ padding: 6, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ flex: '0 0 auto', padding: 6, borderBottom: `1px solid ${C.border}` }}>
             <input
               ref={searchRef}
               value={query}
@@ -251,7 +276,7 @@ export const PhoneInput = ({
               }}
             />
           </div>
-          <div style={{ maxHeight: 240, overflowY: 'auto', padding: 4 }}>
+          <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 ? (
               <div style={{ padding: '10px 8px', fontSize: 12, color: C.inkMuted }}>
                 没有匹配 / no match
@@ -303,7 +328,8 @@ export const PhoneInput = ({
               })
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       <input

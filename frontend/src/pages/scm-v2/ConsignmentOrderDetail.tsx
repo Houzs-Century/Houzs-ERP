@@ -26,6 +26,7 @@ import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
   type CSSProperties,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, X, ChevronDown,
@@ -67,6 +68,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import styles from './SalesOrderDetail.module.css';
@@ -770,6 +772,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   const [form, setForm] = useState(() => initialFormFor(header));
   const [showSuggest, setShowSuggest] = useState(false);
+  const custInputRef = useRef<HTMLInputElement>(null);
   const debouncedDebtorQ = useDebouncedValue(form.customerName, 200);
   const debtorQuery = useConsignmentDebtorSearch(debouncedDebtorQ);
   const suggestions = (debtorQuery.data?.debtors ?? []).filter(
@@ -903,6 +906,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   const inputsDisabled = !isEditing;
 
+  /* Portalled + measured from the input: `.suggestList` is `position: absolute`
+     inside `.card { overflow: hidden }`, the same pair that sliced the New Sales
+     Order list after three rows. */
+  const suggestPos = useAnchoredPanel(custInputRef, showSuggest && !inputsDisabled, 260);
+
   return (
     <>
       {/* ── CUSTOMER ──────────────────────────────────────────────── */}
@@ -915,6 +923,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={custInputRef}
                 className={styles.fieldInput}
                 value={form.customerName}
                 disabled={inputsDisabled}
@@ -922,8 +931,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 onFocus={() => setShowSuggest(true)}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
               />
-              {showSuggest && suggestions.length > 0 && !inputsDisabled && (
-                <ul className={styles.suggestList}>
+              {showSuggest && suggestions.length > 0 && !inputsDisabled && suggestPos && createPortal(
+                <ul
+                  className={styles.suggestList}
+                  style={{ ...anchoredPanelStyle(suggestPos), right: 'auto', marginTop: 0 }}
+                >
                   {suggestions.slice(0, 8).map((d, i) => (
                     <li
                       key={`${d.debtor_code ?? ''}-${i}`}
@@ -938,7 +950,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                       )}
                     </li>
                   ))}
-                </ul>
+                </ul>,
+                document.body,
               )}
             </label>
             <label className={styles.field}>

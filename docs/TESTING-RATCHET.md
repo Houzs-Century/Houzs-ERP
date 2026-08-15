@@ -57,9 +57,9 @@ D1 SQLite for a month after the Postgres cutover.
 | `backend/src/scm/shared` | 48 | 2401 | 1135 | **47.27%** | 47.17% | 4 |
 | `backend/scripts/lib` | 40 | 2656 | 1430 | **53.84%** | 53.74% | 15 |
 | `backend/scripts` | 379 | 31906 | 15 | **0.05%** | 0.00% | 378 |
-| `frontend/src` | 593 | 59866 | 7624 | **12.74%** | 12.64% | 353 |
+| `frontend/src` | 601 | 60078 | 7832 | **13.04%** | 12.94% | 351 |
 
-Floors as committed in `coverage-baseline.json`, measured 2026-08-13.
+Floors as committed in `coverage-baseline.json`, measured 2026-08-15.
 <!-- /MEASURED-TABLE -->
 
 The unratcheted remainder — `backend/src` outside `scm/`, `frontend/functions` —

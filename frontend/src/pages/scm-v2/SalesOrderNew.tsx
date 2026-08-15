@@ -32,6 +32,7 @@ import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
@@ -49,6 +50,7 @@ import {
 import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
 import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
@@ -592,6 +594,14 @@ export const SalesOrderNew = () => {
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
   const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  const debtorInputRef = useRef<HTMLInputElement>(null);
+  /* The list is PORTALLED and measured from the input. Two things were wrong
+     with the in-place version, both seen on prod 2026-08-15: this module has no
+     `.field { position: relative }`, so the absolute list resolved against the
+     card body and painted 49px ABOVE the input at the card's full 1678px rather
+     than the input's 1200px; and `.card { overflow: hidden }` left 130px of room
+     for a 260px list, so a full result set was sliced after three rows. */
+  const debtorSuggestPos = useAnchoredPanel(debtorInputRef, showDebtorSuggest, 260);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -1834,6 +1844,7 @@ export const SalesOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Customer Name <span className={styles.req}>*</span></span>
               <input
+                ref={debtorInputRef}
                 className={`${styles.fieldInput} ${editedClass('debtorName', debtorName)}`}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -1842,8 +1853,11 @@ export const SalesOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
+              {showDebtorSuggest && debtorSuggestions.length > 0 && debtorSuggestPos && createPortal(
+                <ul
+                  className={styles.suggestList}
+                  style={{ ...anchoredPanelStyle(debtorSuggestPos), marginTop: 0 }}
+                >
                   {debtorSuggestions.slice(0, 8).map((d, i) => (
                     <li
                       key={`${d.debtor_code ?? ''}-${i}`}
@@ -1858,7 +1872,8 @@ export const SalesOrderNew = () => {
                       )}
                     </li>
                   ))}
-                </ul>
+                </ul>,
+                document.body,
               )}
             </label>
             <label className={styles.field}>

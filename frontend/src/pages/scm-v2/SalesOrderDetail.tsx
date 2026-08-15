@@ -134,6 +134,7 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import styles from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -2845,7 +2846,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   /* Portal the debtor dropdown to document.body so the section card's
      overflow:hidden can't clip it (mirrors the SoLineCard fix). */
   const custInputRef = useRef<HTMLInputElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   /* Task #99 (UI perf) — 200 ms debounce on the debtor autocomplete. Until
      this commit each keystroke in the Customer Name field issued a
      /debtors/search request. The hook itself now guards length>=2 (see
@@ -3155,21 +3155,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      semantics intact. */
   const inputsDisabled = !isEditing || locked;
 
-  /* Pin the portaled debtor dropdown under the Customer Name input while open. */
-  useEffect(() => {
-    if (!showSuggest || inputsDisabled) { setMenuPos(null); return; }
-    const update = () => {
-      const el = custInputRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => { window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showSuggest, inputsDisabled]);
+  /* Pin the portaled debtor dropdown to the Customer Name input while open.
+     Was a hand-rolled copy of this measurement that only ever placed the list
+     BELOW the input, so near the bottom of the window it ran off-screen where
+     `position: fixed` puts it beyond any scroll; the shared hook flips it. */
+  const menuPos = useAnchoredPanel(custInputRef, showSuggest && !inputsDisabled, 260);
 
   /* PR #168 — Commander 2026-05-27 screenshot diff vs. Create SO: Detail
      was using one big "Customer · Addresses" card with 4 hairline-divided
@@ -3206,7 +3196,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               {showSuggest && suggestions.length > 0 && !inputsDisabled && menuPos && createPortal(
                 <ul
                   className={styles.suggestList}
-                  style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, width: menuPos.width, right: 'auto', marginTop: 0, zIndex: 1000 }}
+                  style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
                 >
                   {suggestions.slice(0, 8).map((d, i) => (
                     <li
