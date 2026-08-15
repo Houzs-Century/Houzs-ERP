@@ -64,7 +64,7 @@ No C# change: `Str` already turns a present-null into `""`, which is the clear.
 
 Three of the new cases were observed RED with the rule neutralised.
 
-**Ref.** 2026-08-15, PR #2248.
+**Ref.** 2026-08-15, PR #2249.
 
 ## An instruction sheet existed because a service had no read route; it has one now [medium]
 
