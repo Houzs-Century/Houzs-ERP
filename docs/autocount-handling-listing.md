@@ -1,10 +1,32 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
-> **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
+> **DONE 2026-08-15 — the three steps below have been RUN, and this sheet is now
+> the FALLBACK rather than the channel. Do not hand it to anyone.**
+>
+> The measured values are in `docs/autocount-further-description-photos.md`
+> §4.2. The answer is **`form=wmetafile8`** — the branch of section 6's table
+> where the JPEG-to-metafile conversion has to move into `AcSyncService.cs` on
+> the Windows host. Tool: LINQPad on the AutoCount host, connection `.\A2006` /
+> `AED_HOUZS`, three read-only `SELECT`s; no document was opened in the
+> AutoCount UI, per section 5.
+>
+> **Step 3 was settled without saving a file.** That step exists to route around
+> `sqlcmd` cutting a long column at 256 characters where nobody sees it happen,
+> and it asks a human to check a file size. LINQPad does not truncate, so the
+> check became an identity instead: `LEN(x) * 2 = DATALENGTH(x)` held on all
+> three rows, which an `nvarchar` column satisfies only when the whole value is
+> in hand. Stronger evidence than a file size, and no attachment to mishandle.
+>
+> **The deploy this banner used to be waiting on has happened.**
+> `deploy-on-host.ps1 -Server ".\A2006"` was run on the office host on
+> 2026-08-15 and reported `compiled - 51712 bytes`, `/health` naming
+> `AED_HOUZS`, and `/ensure-masters` answering 200 — so the running exe now
+> carries the read route below, and the rollback sits beside it as
+> `C:\Temp\AcSyncService.prev.exe`.
 >
 > Section 8 below said the durable fix was a read-only route on `AcSyncService`
 > and that it should be the first thing added the next time that file was
-> opened. It has been added:
+> opened. It has been added, and is now LIVE:
 >
 > ```bash
 > AC_SYNC_URL=... AC_SYNC_KEY=... \
@@ -16,14 +38,13 @@
 > file (step 3). It reports truncation instead of hiding it, which is the trap
 > section 5 warns about.
 >
-> **The one human step that remains is a DEPLOY, not a query:** the route is in
-> the source and compiles (verified locally against the licensed assemblies —
-> `build-local.ps1`, exit 0, 51712 bytes), but the office host is still running
-> the previous build. Run `deploy-on-host.ps1` there once and this sheet is
-> spent.
+> **Nothing is now waiting on a human.** For any other `DtlKey` — including the
+> one open question this read did NOT settle, how AutoCount lays out more than
+> one picture on a line (`…-photos.md` §7.8) — call the route.
 >
-> Keep it afterwards for the case it still covers: a machine that cannot reach
-> the service, or a service that will not start.
+> Kept, not deleted, for the case it still covers: a machine that cannot reach
+> the service, or a service that will not start. Sections 2 and 5 also remain
+> the rules for anyone reading the book by hand at all.
 
 ---
 
