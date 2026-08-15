@@ -55,8 +55,19 @@ export const AMENDABLE_HEADER_KEYS = [
   'postcode',
   'city',
   /* Two-lane rework phase 2 (owner 2026-07-27): the delivery-address block +
-     disposal note join the amendable set (DELIVERY lane — Logistics signs;
-     the Processing Date above signs with Purchasing per the same ruling). */
+     disposal note join the amendable set.
+
+     CORRECTED 2026-08-15. This used to end "(DELIVERY lane — Logistics signs;
+     the Processing Date above signs with Purchasing per the same ruling)". The
+     second half is not what the code does: soHeaderFieldKind below returns
+     'DELIVERY' for EVERY key including processingDate, and amendment-routing.ts
+     maps DELIVERY -> Logistics. Purchasing is reached only through the SUPPLIER
+     atom, which is a PO header field and has no SO-header counterpart.
+
+     Both module guides agree with the code (sales-order.md, and the routing
+     table in purchase-order-amendment.md section 7) — this comment was the only
+     thing saying otherwise, and a comment is where a reader looks first when
+     they are working out who signs. */
   'address1',
   'address2',
   'address3',

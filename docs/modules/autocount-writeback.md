@@ -56,7 +56,7 @@ recurring inbound pull in the table above.
 
 | Half | Where | What it is |
 |---|---|---|
-| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. NINE POST routes (`/create-so`, `/create-po`, `/so-to-do`, `/po-to-gr`, `/do-to-iv`, `/gr-to-pi`, `/cancel`, `/edit`, `/ensure-masters`) plus `GET /health`. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
+| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. NINE POST routes (`/create-so`, `/create-po`, `/so-to-do`, `/po-to-gr`, `/do-to-iv`, `/gr-to-pi`, `/cancel`, `/edit`, `/ensure-masters`) plus `GET /health`, which since 2026-08-15 answers `builtAt` + `mvid` as well as the book — the only way to establish WHICH BUILD the office host is running. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
 | ERP | `backend/src/scm/lib/autocount-outbox.ts` + `backend/src/services/autocount-writeback.ts` | An outbox: routes enqueue, a cron drains, the returned AutoCount document number is recorded back onto the ERP row. |
 
 AcSyncService's routes, and the outbox `op` that targets each:
@@ -66,6 +66,7 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/create-so` | `create_so` | SO create |
 | `/create-po` | `create_po` | PO create |
 | `/so-to-do` | `so_to_do` | SO -> Delivery Order |
+| `/so-to-po` | `so_to_po` | SO -> Purchase Order. NOT one of the four below: a purchase document transferring from a sales one uses its own SDK method (`AddSOToPOTransferDetail`), and the ERP sends it only when every line maps 1:1 to a sales line the book has a key for. A consolidated purchase stays a plain `create_po` with the source SO numbers in `Ref` — see `scm/shared/po-transfer-shape.ts` |
 | `/po-to-gr` | `po_to_gr` | PO -> Goods Receipt |
 | `/do-to-iv` | `do_to_iv` | DO -> Sales Invoice |
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |
@@ -966,6 +967,7 @@ number below came from reading the two `.gz` files on 2026-08-15.
 | `UDF_BALANCE` — non-zero on **2,339 of 13,015** headers | no | **yes**, create + edit |
 | `DeliverPhone1` — on **120 of 13,015**, and genuinely different from `Phone1` on **37** | no | **yes**, create + edit |
 | `SODTL.DeliveryDate` — **NULL on 11,886 of 60,939 lines**, across 2,268 whole documents | no | **yes**, including the blank |
+| `UDF_PAYEMENT` — the free text the cutover parsed into `account_sheet` + `approval_code` (`import-ac-outstanding-so.mjs:16`; the misspelling is AutoCount's) | no | **yes**, create + edit |
 | `SODTL.UOM` | no | **still no — and that is correct**, see below |
 | `Cancelled` — `T` on 5 of 13,015 | the separate `/cancel` op (§7f) | unchanged |
 | `Seq`, `DtlKey`, `TransferedQty`, `TransferedPOQty` | AutoCount's own | never ours to send |
@@ -1090,11 +1092,27 @@ The UOM is set where it belongs: `/ensure-masters` gives a NEW item
 `NewUom(uom, 1m)` + `BaseUom`, so the line inherits it, and an item the book
 already holds keeps its own. Owner 2026-08-15: every SKU already carries a UOM.
 
-### Desc2 is the Further Description, and what we composed was a second opinion
+### Desc2 is NOT the Further Description — two columns, and this section covers only the first
+
+> **CORRECTED 2026-08-15.** This section was headed *"Desc2 is the Further
+> Description"* and it is not. `Desc2` and `FurtherDescription` are **separate
+> columns on the same detail class** — both appear in every `SET:` list in
+> `backend/scripts/autocount-service/sdk-api-reference.txt`:
+>
+> | column | type | carries | who writes it |
+> |---|---|---|---|
+> | `Desc2` | `nvarchar(100)` | the build text — fabric, size, legs, gap | this section |
+> | `FurtherDescription` | `nvarchar(MAX)` | the **photographs**, as RTF | §7q2 below |
+>
+> The owner's instruction quoted next is about the PHOTOGRAPHS, and what shipped
+> under this heading was the variant text. Both are wanted; neither answers the
+> other. Conflating them points a photograph at a 100-character column, which is
+> why the correction is worth its space.
 
 Owner 2026-08-15: *"照片那一边是从 Further Description 那边抽出来的，所以你录入的
-时候，也是要录入回 Further Description"*. The cutover PARSED this field to get the
-ERP's variants — `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
+时候，也是要录入回 Further Description"* — the photographs; see §7q2. The cutover
+also parsed **`Desc2`** to get the ERP's variants —
+`import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
 `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
 `specials` — so the specification has to go back.
 
@@ -1132,6 +1150,123 @@ behind an unreadable 500. So an over-long line is refused into a `skipped` row
 naming it, using the same `AC_DESC2_MAX` the sofa collapse already refuses on.
 Truncating is not the alternative: Desc2 IS the specification the factory builds
 from, and half a specification is a wrong instruction rather than a short one.
+
+### 7q2. `FurtherDescription` — the photographs, and why the host converts them
+
+The owner's instruction in §7q is this one: the photographs on our sales-order
+lines were pulled OUT of AutoCount's `FurtherDescription` at cutover
+(`backend/scripts/import-so-line-photos.mjs`), so putting them back means writing
+that same field.
+
+**What the live book actually stores was measured, not assumed** — three lines
+read on 2026-08-15, `docs/autocount-further-description-photos.md` §4.2. Every
+one stores the picture as `\wmetafile8`, a Windows metafile; none as
+`\jpegblip` or `\pngblip`. Four consequences, and each one is a line of code:
+
+| measured | what the writer must do |
+|---|---|
+| the form is `\wmetafile8` | a JPEG cannot go in verbatim. The conversion needs GDI, which exists on the AutoCount host and in no Cloudflare Worker, so **the ERP sends JPEG bytes and `AcSyncService.cs` renders them** |
+| `picwgoal`/`picw` = 96 on all three | `dpi = 96`; `picw`/`pich` are pixels, the `*goal` pair twips |
+| a caption `Image on <M/D/YYYY h:mm:ss AM>` precedes each `{\pict` | the field is **not pictures alone**. A writer that emits pictures only DESTROYS that text, so the caption is part of what is written |
+| `nvarchar(MAX)`, `chars x 2 = bytes` | no 100-character ceiling here — that one belongs to `Desc2` |
+
+**The `/edit` line payload accepts two shapes, and neither is ever sent as null:**
+
+```
+FurtherDescription : "<rtf>"              verbatim — for the write probe, and for
+                                          a value read back out of the book unchanged
+Photos : [ { Jpeg: "<base64>", Caption? } ] the JPEGs; the host renders the RTF
+```
+
+Same `ContainsKey` rule as every other line field: **a key the ERP does not own
+is OMITTED, never nulled.** Unlike the others it is deliberately NOT wrapped in
+`Set()` — `Set()` logs and swallows, which is right for a cosmetic field and
+wrong here, because a silently-skipped write would leave the ERP believing the
+photographs arrived while the line still holds what it held before.
+
+**The field is ONE string and is replaced wholesale — there is no append.** So a
+composer must send every photograph the line should end up with, not just the new
+ones, or it destroys the rest. That rule and its three cases (unchanged → omit;
+operator ADDED → re-emit everything; operator REMOVED → do not act, raise it) are
+`docs/autocount-further-description-photos.md` §6.3.
+
+**PROVEN 2026-08-15 — the bytes we emit are the bytes the book holds.** The
+conversion was extracted into a standalone harness and compiled with the real
+`csc.exe` (`Framework64\v4.0.30319`, `/r:System.Drawing.dll`, exit 0), then run
+against a 240x159 JPEG — the dimensions of the manifest's first line. It
+produced:
+
+```
+picw/goal  = {\pict\wmetafile8\picw240\pich159\picwgoal3600\pichgoal2385
+wmf header = 010009000003
+caption before pict = True
+```
+
+Both lines are **character-for-character what the live book stores on `DtlKey`
+34553** (`docs/autocount-further-description-photos.md` §4.2, which read
+`\picw240\pich159\picwgoal3600\pichgoal2385` and a value beginning
+`010009000003`). The dpi arithmetic, the twips conversion, the mapping mode and
+the caption ordering are therefore all confirmed against a real measurement
+rather than against the code that produced them.
+
+**AND AUTOCOUNT RENDERS IT — PROVEN on the live book, 2026-08-15.** This
+paragraph used to say the opposite: that matching bytes were necessary and not
+sufficient, that the entry screen and the report's `XRRichText` are different
+renderers, and that the route was "built and unrendered". The probe (§5.2) has
+now been run, and **both** renderers draw it.
+
+Scratch sales order `ERP-FDPROBE-1`, one line, written through
+`POST /edit` with `Photos`, then read with all four of §5.2's observations:
+
+| | what was looked at | result |
+|---|---|---|
+| i | the line's Further Description editor, entry screen | **the picture renders** — right way up (the probe image says `TOP` at the top and `BOTTOM` at the bottom), at its stated `240 x 159`, with the `Image on 8/15/2026 10:21:09 PM` caption above it |
+| ii | *Preview* of the printed sales order, report `0. Sales Order` | **the picture renders** — under the item, after the `PROBE` Desc2 line. This is the `XRRichText` path, and it was the real risk |
+| iii | `/further-description` on the same `DtlKey` | `chars=389549`, `truncated=False`, `pict=1`, `wmetafile8=1` — AutoCount stored **our own bytes**, unchanged, rather than rewriting them |
+| iv | the Save | no dialog, no truncation |
+
+So the return path is complete end to end: the ERP sends JPEG bytes, this host
+renders them to a metafile, AutoCount stores them verbatim, and the picture
+appears both on screen and on the document the customer receives.
+
+The scratch order was **cancelled, not deleted** (Void), per the owner's rule.
+
+### 7q3. `POST /doc-read` — reading a document back, because every other route writes
+
+Until this route existed, this service could create, convert, edit and cancel
+documents in the live book and had **no way to say what actually landed**. Two
+things made that stop being tolerable on 2026-08-15:
+
+- `qa-convert.ps1` reported `/po-to-gr` as `status=0 ... (500)`. The body was
+  never read, so the failure had a symptom and no cause — and a 500 with no
+  cause cannot be fixed, only guessed at.
+- The owner's standing questions are all questions about what the BOOK holds,
+  not about what we sent: does an edited processing date reach AutoCount, does a
+  line's delivery date, is the convert's Transfer link really there. Checking
+  our own payload cannot answer any of them.
+
+```
+POST /doc-read   { "DocType": "SO"|"PO"|"DO"|"GR"|"IV"|"PI", "DocNo": "..." }
+  -> { ok, docType, header: {...}, lines: [{...}], missingColumns: [...] }
+```
+
+**It discovers the columns rather than naming them**, the same discipline
+`/further-description` uses. The wanted lists are what we would LIKE to see;
+the query asks `sys.columns` which of them exist and selects only those,
+reporting the rest in `missingColumns`. So "AutoCount has no such field" comes
+back as an ANSWER — which is itself the answer to *does payment update into
+AutoCount* if no payment column exists on that document — rather than a SQL
+error that reads like a broken service.
+
+The line list deliberately includes `FromDocType` / `FromDocNo` / `FromDtlKey`.
+That is where AutoCount records that a line came from another document, and it
+is what the entry screen's *convert from* / *convert to* reads — so it is the
+evidence for whether a conversion really linked the two, as opposed to producing
+a standalone document that merely looks right.
+
+READ-ONLY and mechanically so: SELECTs on one connection, no SDK session, no
+transaction, and the table names come from a fixed map, never from the caller's
+string.
 
 ## 7e. The masters a document names are opened first
 

@@ -88,7 +88,10 @@ const createSo = (
   ls: ErpLine[],
   salespersonName: string | null,
   o: ComposeOptions = {},
-) => composeCreateSo(h, ls, salespersonName, null, o);
+) => composeCreateSo(h, ls, salespersonName, null, [], o);
+/* The helper passes NO payment references, which is the shape of every order
+   whose payments carry neither an account sheet nor an approval code. The
+   PAYEMENT round trip has its own file. */
 
 describe('master mapping', () => {
   test('normalises case and spacing before mapping (a salesperson types freely)', () => {

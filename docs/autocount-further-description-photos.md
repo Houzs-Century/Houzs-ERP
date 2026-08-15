@@ -12,12 +12,19 @@ built from here, what it costs, and the ONE observation that decides the rest.
 | **PROVEN** | A JPEG can be put into RTF and taken back out **byte for byte**, with no dependency, no re-encoding and no image decoding, at a wire cost of exactly 2 characters per byte. `backend/scripts/lib/rtf-picture.mjs` does it and `backend/tests/rtfPicture.test.mjs` asserts it. |
 | **PROVEN** | Size is not what stops this. AcSyncService refuses a body over 2 MiB; the busiest photographed document in the cutover carries five photographs, and at the one photo size ever measured that is 70,360 hex characters — 3.4% of the ceiling. |
 | **UNKNOWN** | Whether AutoCount **renders** the RTF we would produce. Nothing in this repository, and nothing on this development machine, can open the licensed application or a serious third-party RTF engine. §5 is the host procedure that settles it, and §5.1 is the read that settles it in about ten minutes without writing anything. |
-| **UNKNOWN, and cheaper to answer than to reason about** | Which RTF picture form AutoCount's own editor writes. 554 sales-order lines in the live book are holding the answer right now. Nobody kept a copy. |
+| ~~**UNKNOWN, and cheaper to answer than to reason about**~~ **PROVEN 2026-08-15** | Which RTF picture form AutoCount's own editor writes: **`\wmetafile8`**. Read off three live lines — see §4.2. |
 
 **Nothing here is wired into the write-back.** `autocount-writeback.ts`,
 `autocount-outbox.ts` and `AcSyncService.cs` are untouched by this change on
 purpose: the composer change belongs after §5 has been done, because building it
 now would mean shipping on an unobserved premise.
+
+> **§5.1 HAS NOW BEEN DONE — 2026-08-15.** The three `SELECT`s were run against
+> the live `AED_HOUZS` book through LINQPad on the AutoCount host. **§4.2 below
+> carries the measured values**, and they decide the return path: AutoCount
+> writes metafiles, so the JPEG-to-metafile conversion belongs in
+> `AcSyncService.cs` on the Windows host, exactly as §3 predicted. Four of §7's
+> seven open questions are closed by that one read; three remain.
 
 ---
 
@@ -213,6 +220,95 @@ QUIETLY, which are the ones worth a test:
 **The reader is the more important half.** It is what turns §5.1 from an opinion
 into a measurement.
 
+### 4.2 The measurement — three live lines, 2026-08-15
+
+**PROVEN.** Tool: LINQPad on the AutoCount host, connection `.\A2006` /
+`AED_HOUZS`, three read-only `SELECT`s. Nothing was written and no document was
+opened in the AutoCount UI (§5's own rule).
+
+**Step 1 — the column.** One match, and the SDK's name is the column's name:
+
+```
+name = FurtherDescription    system_type_id = 231    max_length = -1
+```
+
+`231` is `nvarchar` and `max_length = -1` is `(MAX)`. So the photographs are
+stored as **Unicode text**, not as a binary column: RTF, exactly as assumed.
+
+**Step 2 and 3 — the three manifest lines.** `DATALENGTH` in bytes, `LEN` in
+characters, picture-group counts by keyword:
+
+| DtlKey | ItemCode | chars | bytes | `{\pict` | `\wmetafile8` | `\pngblip` | `\jpegblip` |
+|---|---|---|---|---|---|---|---|
+| 34553 | `RDS-5526 SOFA` | 229,439 | 458,878 | 1 | 1 | 0 | 0 |
+| 34737 | `HOK-2009(A) (K)` | 72,478 | 144,956 | 1 | 1 | 0 | 0 |
+| 165891 | `RDS-5527 SOFA` | 213,598 | 427,196 | 1 | 1 | 0 | 0 |
+
+**Not truncated, and provably so:** `chars x 2 = bytes` for all three, which is
+the identity an `nvarchar` column satisfies only when the whole value is in
+hand. That is the check the listing's step 3 existed to force, and it is met
+without saving a file.
+
+The head of `DtlKey = 34553`, verbatim:
+
+```rtf
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Arial;}}
+\viewkind4\uc1\pard\fs20 Image on 8/12/2024 5:01:16 PM
+\par
+{\pict\wmetafile8\picw240\pich159\picwgoal3600\pichgoal2385
+010009000003E2DF00000000B9DF000000000400000003010800050000000B02000000050...
+```
+
+and the tail of all three is the same shape — hex, then `}` closing the picture,
+then `\fs20\par`, then `}` closing the document.
+
+**Five things that follow, and they are the specification for the writer:**
+
+1. **The form is `\wmetafile8`.** Per §3's table that is the branch where the
+   JPEG cannot go in verbatim, so **the conversion has to happen on the Windows
+   host in `AcSyncService.cs`** — `System.Drawing` — and not in the Worker. §3
+   called this branch in advance; it is now the measured one.
+2. **`010009000003…` is a WMF header** (`01 00`, `09 00`, `00 03` = type,
+   header size in words, version), which corroborates the keyword rather than
+   trusting it.
+3. **The dpi is 96, and `\picw`/`\pich` are pixels.** `\picwgoal 3600` twips
+   / 1440 = 2.5in against `\picw 240` gives 96; `2220/1440` against `148` and
+   `750/1440` against `50` give 96 as well. `rtf-picture.mjs` takes `dpi` as a
+   required parameter — **96 is the value to pass**, and it is now measured
+   rather than assumed.
+4. **The field is NOT pictures alone. It carries TEXT** — a caption line reading
+   `Image on <M/D/YYYY h:mm:ss AM>` sits before the `\pict` group. That closes
+   §7's question 5 in the direction that matters: **a writer that replaces the
+   field with pictures alone destroys that caption**, so the caption is part of
+   what has to be reproduced.
+5. **One picture per line on all three** — and the manifest says that is the
+   whole population, not a lucky sample.
+
+   > **CORRECTED 2026-08-15**, hours after this list was first written. This
+   > point used to end *"the manifest says other lines carry up to five"*, and
+   > that was wrong: it took the five-photograph figure from §6.4, which counts
+   > photographs on a DOCUMENT, and read it as photographs on a LINE. Counted
+   > directly, every one of the 554 manifest rows is a `_1` file and the 554
+   > rows carry 554 distinct `DtlKey`s — so no line in the manifest holds more
+   > than one picture:
+   >
+   > ```
+   > $ node -e '...gunzip ac-photo-manifest.json.gz...'
+   > file suffix distribution: [["1",554]]
+   > unique DtlKey: 554 of 554 rows
+   > ```
+
+   That closes the layout question for everything we have to write back, and
+   the writer emits one caption + one `{\pict}` per photograph accordingly.
+
+   **It does not close it for the book.** The manifest is the output of an
+   extractor that was not kept (§2.1), so "the extractor only ever took the
+   first picture" is not excluded by this count alone. What would exclude it is
+   one aggregate over `SODTL` itself — `MAX` of the `{\pict` count — and that
+   is worth running the next time anyone is on the host, because a second
+   picture in the book on a line we rewrite would be destroyed, not duplicated.
+
 ---
 
 ## 5. What a human must do on the AutoCount host
@@ -305,6 +401,31 @@ metafile, they will not be byte-identical and are not expected to be; what
 matters is whether the picture is the same picture and the same size.
 
 ### 5.2 The write probe (WRITES — scratch document only)
+
+> **RUN 2026-08-15, and it PASSED on all four observations.** The procedure
+> below is kept as written because it is the method; what follows is what it
+> answered. It is now a script — `backend/scripts/autocount-service/fd-probe.ps1`
+> — rather than a hand procedure, and the script REFUSES to write onto a line
+> that already holds a value, which was step 2's rule.
+>
+> Scratch order `ERP-FDPROBE-1`, `DtlKey 906102`, live `AED_HOUZS`:
+>
+> | | result |
+> |---|---|
+> | i entry screen | **renders** — right way up, `240 x 159`, caption above it |
+> | ii printed Preview | **renders** — this is `XRRichText`, and it was the real risk |
+> | iii read back | `chars=389549 truncated=False pict=1 wmetafile8=1` — AutoCount kept **our own bytes** unchanged rather than rewriting them |
+> | iv the Save | no dialog, no truncation |
+>
+> §5.3 lists what would have made this a failure worth stopping on. None of it
+> happened. The scratch order was **cancelled, not deleted**.
+>
+> Two things the run cost, both recorded in `BUG-HISTORY.md` rather than
+> smoothed over: the probe's first attempt was refused by
+> `FK_SO_SalesLocation` (a header field it was not sending), and its second
+> created a **blank-numbered** sales order because `/create-so` accepted an
+> absent `DocNo` — since fixed with `RequireDocNo()`. That document was found
+> and voided too.
 
 Only after 5.1. **Never on a customer document**, and never on a line that
 already holds a `FurtherDescription`: the whole risk of this feature is
@@ -495,22 +616,53 @@ answers 413.
 - *"BI_JPEG lets a DIB carry a JPEG without a decode."* Technically true,
   practically blank on a display driver (§3).
 
+**ANSWERED 2026-08-15 by the §4.2 read** — four of the seven
+
+1. ~~Which picture form AutoCount writes.~~ **`\wmetafile8`.** The conversion
+   moves to the host.
+3. ~~The source dpi.~~ **96**, derived three independent ways from `\picw` vs
+   `\picwgoal` (§4.2).
+4. ~~The column's SQL name and type.~~ **`SODTL.FurtherDescription`,
+   `nvarchar(MAX)`.** The SDK name and the column name do match.
+5. ~~Whether the field also holds TEXT.~~ **It does** — an
+   `Image on <date> <time>` caption precedes the picture on all three lines
+   sampled. A writer that emits pictures alone would destroy it.
+
 **Still UNKNOWN**
 
-1. **Which picture form AutoCount writes.** §5.1. Everything else waits on it.
 2. **Whether AutoCount reads a form it did not write.** §5.2(i) and (ii),
    separately — the entry editor and `XRRichText` are different renderers.
-3. **The source dpi.** The manifests record `w`/`h` in pixels but not which RTF
-   field they came from, and `\picwgoal` is what decides printed size. 5.1's
-   output gives both numbers for one real line and settles the ratio.
-4. **The column's SQL name and type.** `SODTL.FurtherDescription` is the
-   expected name and has not been observed; 5.1(a) checks it.
-5. **Whether any of the 571 lines' `FurtherDescription` also holds TEXT.** If it
-   does, replacing the field with pictures alone destroys it. The reader reports
-   picture groups; the surrounding text needs looking at in the same dump.
+   Now the SHARPER question, because §4.2 says the form we can produce cheaply
+   (`\jpegblip`) is NOT the form AutoCount writes.
 6. **What the nine large images weigh.** §6.4.
 7. **Whether the same treatment is wanted on DO / IV / GR / PI lines.** The
    field exists on all six (§1); only SO and PO were extracted.
+8. **Whether any line in the BOOK holds more than one picture.** Narrowed the
+   same day it was opened, and it is no longer about layout.
+
+   The original question assumed the manifest had lines with up to five
+   pictures. It does not — 554 rows, 554 distinct `DtlKey`s, every file a `_1`
+   (the count is in §4.2 point 5). So for **everything the write-back has to
+   send**, one picture per line is the whole population and the layout question
+   is moot.
+
+   What survives is narrower and worth one query: the manifest is the output of
+   an extractor nobody kept (§2.1), so it cannot rule out that the extractor
+   took only the first picture of a line that held two. The write REPLACES the
+   field wholesale (§6.3), so a second picture in the book on a line we rewrite
+   would be **destroyed**, and that is the only reason this still matters.
+
+   One aggregate settles it for the whole book, read-only:
+
+   ```sql
+   SELECT COUNT(*) AS lines_with_a_value,
+          MAX((LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription,'{\pict',''))) / 6) AS max_pictures
+   FROM SODTL
+   WHERE FurtherDescription IS NOT NULL AND LEN(FurtherDescription) > 0;
+   ```
+
+   `max_pictures = 1` closes it outright. Anything higher is a finding, and the
+   composer needs a read-before-write on those lines before it may touch them.
 
 ---
 

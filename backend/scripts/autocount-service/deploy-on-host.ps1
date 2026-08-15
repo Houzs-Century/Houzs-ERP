@@ -157,7 +157,7 @@ try {
             'AutoCount.GeneralMaint.dll','AutoCount.StockMaint.dll') |
           ForEach-Object { '/r:' + (Join-Path $AutoCountDir $_) }
   $args = @('/nologo','/platform:x64') + $refs +
-          @('/r:System.Web.Extensions.dll','/r:System.Data.dll', "/out:$newExe", $buildCs)
+          @('/r:System.Web.Extensions.dll','/r:System.Data.dll','/r:System.Drawing.dll', "/out:$newExe", $buildCs)
   $out = & $csc @args 2>&1
   if ($LASTEXITCODE -ne 0) {
     $out | ForEach-Object { Write-Host $_ -ForegroundColor Red }

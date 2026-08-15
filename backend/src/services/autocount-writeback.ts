@@ -1040,6 +1040,56 @@ export function acUdfMoney(centi: number | null | undefined): string | null {
   return (Math.round(centi) / 100).toFixed(2);
 }
 
+/** One payment's two reference texts, as the ledger holds them. */
+export interface ErpPaymentRef {
+  account_sheet: string | null;
+  approval_code: string | null;
+}
+
+/** The three characters AutoCount's PAYEMENT format uses as delimiters. */
+const PAYEMENT_DELIMITERS = /[()/]/g;
+
+const cleanPayemenPart = (v: string | null | undefined): string | null => {
+  const s = String(v ?? '').replace(PAYEMENT_DELIMITERS, ' ').replace(/\s+/g, ' ').trim();
+  return s || null;
+};
+
+/**
+ * The `PAYEMENT` UDF — where the account sheet and the approval code go back.
+ *
+ * THE CUTOVER READ THIS FIELD AND NOTHING EVER WROTE IT BACK.
+ * `import-ac-outstanding-so.mjs` filled `mfg_sales_order_payments.account_sheet`
+ * and `.approval_code` from `SO.UDF_PAYEMENT` on 13,015 headers; the write-back
+ * sent five UDFs and not this one, so an ERP-recorded payment reference reached
+ * the account book nowhere. The owner's rule is that whatever the cutover
+ * extracted must go back.
+ *
+ * THE FORMAT IS NOT MINE TO CHOOSE. It is whatever `parsePayment` reads, and
+ * that function is the one the cutover actually ran, so it is the
+ * specification. It lives beside its inverse in
+ * `backend/scripts/lib/ac-payment-udf.mjs`, and
+ * `autocountPaymentUdf.roundtrip.test.ts` composes with THIS function and
+ * parses with THAT one — a format written in one place and read in another is
+ * how the two stop agreeing, and this field is free text with no schema to
+ * catch it.
+ *
+ * Returns null when there is nothing to say, so `udf()` drops the key. Omitting
+ * is not sending a blank: `Str` turns a present-null into `""`, which would
+ * ERASE the cutover's own text on an order whose payments predate the ERP.
+ */
+export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | null {
+  const groups: string[] = [];
+  for (const p of payments) {
+    const acct = cleanPayemenPart(p?.account_sheet);
+    const appr = cleanPayemenPart(p?.approval_code);
+    /* `(/)` is skipped by the parser anyway — emitting it is noise in a field
+       people read off a printed document. */
+    if (!acct && !appr) continue;
+    groups.push(`(${acct ?? ''}/${appr ?? ''})`);
+  }
+  return groups.length ? groups.join(' ') : null;
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
@@ -1071,6 +1121,15 @@ export function composeCreateSo(
    * the same division `withLocations` and `readSalespersonName` draw.
    */
   outstandingCenti: number | null,
+  /**
+   * The payment references this order carries, oldest first — REQUIRED, never
+   * optional, for the same reason as the two above: it DECIDES what the account
+   * book's `PAYEMENT` field says, and a caller that says nothing would keep the
+   * old behaviour of never sending it with no compile error. Pass an empty
+   * array to state that the ERP has no references; the key is then omitted and
+   * the book keeps whatever the cutover left there.
+   */
+  paymentRefs: readonly ErpPaymentRef[],
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   const agent = resolveAcAgent(header.agent, salespersonName);
@@ -1110,6 +1169,9 @@ export function composeCreateSo(
       ToPONo: soCustomerRef(header),
       PDate: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingCenti),
+      /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
+         book, and the cutover read it (import-ac-outstanding-so.mjs). */
+      PAYEMENT: composePaymentUdf(paymentRefs),
     }),
     Details: details,
   };
@@ -1354,6 +1416,14 @@ export const AC_ROUTE = {
   create_so: '/create-so',
   create_po: '/create-po',
   so_to_do: '/so-to-do',
+  /* SO -> PO is a TRANSFER like the four below, but it is not one of them: a
+     purchase document transferring from a sales order uses its own SDK method
+     (AddSOToPOTransferDetail), so the service gives it its own route rather
+     than folding it into Convert_. Sent only when every purchase line maps 1:1
+     to a sales line the book has a key for — the decision is
+     scm/shared/po-transfer-shape.ts, and a consolidated purchase stays a plain
+     create_po. */
+  so_to_po: '/so-to-po',
   po_to_gr: '/po-to-gr',
   do_to_iv: '/do-to-iv',
   gr_to_pi: '/gr-to-pi',
@@ -1488,5 +1558,114 @@ export async function callAcService(
        'failed' still carrying AutoCount's own words, whereas dead-lettering a
        transient one loses a document until a human notices. */
     retryable: res.status >= 500,
+  };
+}
+
+// ── clearing a field, which is not the same as never having one ─────────────
+
+/**
+ * WHY THIS EXISTS. `soEditHeader` omits every key the ERP has no value for, and
+ * that rule is right for the case it was written for: an order that never had a
+ * `Ref` must not blank the one an operator typed into AutoCount. But it also
+ * makes the opposite intent inexpressible — an operator who DELETES a value in
+ * the ERP gets silence, and the account book keeps the old one forever. The
+ * owner's rule is that the ERP is master: *"任何情况 ERP update 就是都要跟"*.
+ *
+ * The composer cannot tell the two apart, because it reads the SAVED row and
+ * both look like an empty column. So the ROUTE says which fields this request
+ * wrote — it is the only thing that knows — exactly as it already does for
+ * `newLineIds`, and for the same reason: a keyless line means two opposite
+ * things and the ERP is not allowed to guess.
+ *
+ * NOT EVERY FIELD MAY BE CLEARED, and the exclusions are the point:
+ *
+ *   `agent`          FK_SO_SalesAgent. A blank Agent is not an empty field, it
+ *                    is a foreign-key failure that loses the whole document.
+ *   `sales_location` Same shape, and company 1 cannot save an order without one
+ *                    anyway (so-location-gate.ts).
+ *   `debtor_name`    Also travels as `Attention`. An order with no customer name
+ *                    is not a state the ERP can produce.
+ *   line `ItemCode`  Never re-sent on a line the book owns at all.
+ *
+ * Everything here is free text or a date with no foreign key behind it.
+ */
+export const CLEARABLE_SO_HEADER_FIELDS: Readonly<Record<string, string>> = {
+  ref: 'Ref',
+  phone: 'Phone1',
+  emergency_contact_phone: 'DeliverPhone1',
+};
+
+/**
+ * The ERP columns that pack into `InvAddr1..4`, as ONE unit.
+ *
+ * `soInvoiceAddress` folds five columns into four lines, so clearing any one of
+ * them re-shuffles the rest — line 3 can become line 2. There is no
+ * field-by-field answer, so touching ANY of these sends ALL FOUR keys, nulls
+ * included, and the account book takes the ERP's whole address block.
+ */
+export const SO_ADDRESS_FIELDS: readonly string[] = [
+  'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
+];
+
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
+  processing_date: 'PDate',
+};
+
+/**
+ * The keys this edit must send as an EXPLICIT NULL, from the ERP columns the
+ * request wrote.
+ *
+ * A field is cleared only when the route says it was written AND the saved value
+ * is empty. Written-and-still-empty is the operator deleting it; not written at
+ * all is silence, and silence keeps the book's value.
+ */
+export function clearedAcKeys(
+  touchedFields: readonly string[],
+  saved: Record<string, unknown>,
+): { header: string[]; udf: string[] } {
+  const touched = new Set(touchedFields);
+  const isBlank = (col: string) => String(saved[col] ?? '').trim() === '';
+  const header: string[] = [];
+  for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) header.push(key);
+  }
+  /* The address is a package: if any of its columns was written and the packer
+     now produces fewer lines, the trailing ones have to be nulled or the book
+     keeps a street that is no longer on the order. */
+  if (SO_ADDRESS_FIELDS.some((f) => touched.has(f))) {
+    header.push('InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4');
+  }
+  const udf: string[] = [];
+  for (const [col, key] of Object.entries(CLEARABLE_SO_UDF_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) udf.push(key);
+  }
+  return { header, udf };
+}
+
+/**
+ * The `/so-to-po` payload: which sales lines this purchase order buys, and what
+ * the ERP agreed to pay for them.
+ *
+ * The per-line values are applied by the service AFTER the transfer, because
+ * `AddSOToPOTransferDetail` brings the SALES line across — price included — and
+ * a purchase order owes the supplier's cost, not the customer's price.
+ *
+ * `DtlKeys` and `Details` are index-aligned by construction: both come from the
+ * same decision, which refused unless every line mapped 1:1.
+ */
+export function composeSoToPo(
+  dtlKeys: readonly number[],
+  details: readonly AcDetail[],
+): { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+  return {
+    DtlKeys: [...dtlKeys],
+    Details: details.map((d, i) => ({
+      DtlKey: dtlKeys[i],
+      UnitPrice: d.UnitPrice,
+      Qty: d.Qty,
+      ...(d.Location != null ? { Location: d.Location } : {}),
+      ...(d.DeliveryDate !== undefined ? { DeliveryDate: d.DeliveryDate } : {}),
+    })),
   };
 }

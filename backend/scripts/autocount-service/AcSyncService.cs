@@ -38,7 +38,7 @@
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Purchase.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Accounting.dll" ^
-//     /r:System.Web.Extensions.dll /r:System.Data.dll ^
+//     /r:System.Web.Extensions.dll /r:System.Data.dll /r:System.Drawing.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
 // Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
@@ -79,6 +79,9 @@ using System.Text;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
@@ -139,14 +142,72 @@ class AcSyncService {
     }
   }
 
+  /* One place, because /last-errors reads the same file the catch-all writes.
+     Two copies of a path is how a reader ends up tailing a file nobody is
+     writing to and reporting "no errors". */
+  const string LogPath = @"C:\Temp\ac-sync-service.log";
+
   static void Log(string m) {
-    try { File.AppendAllText(@"C:\Temp\ac-sync-service.log", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
+    try { File.AppendAllText(LogPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
   }
 
   /* Every real payload is one document; the largest sofa order in the cutover
      is tens of KB. Reading an unbounded stream into a string is how a single
      request takes the service down. */
   const int MaxBody = 2 * 1024 * 1024;
+
+  /* WHAT IS ACTUALLY RUNNING ON THIS HOST.
+     Until 2026-08-15 /health answered {ok, book, service} and nothing else, so
+     the question "does the exe on that machine contain commit X" had no answer
+     anywhere: not from this service, not from the repository, not from any
+     document that could be trusted to be current. It was answered by reading a
+     handoff note instead, which is how a reader concluded the host was three
+     changes behind without being able to show it. UNKNOWN was the honest
+     answer and there was no way to reach a better one.
+
+     builtAt is the assembly's own file timestamp. Compare it against the date
+     of the last commit that touched THIS FILE:
+
+       git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+
+     builtAt earlier than that date means the host is behind, full stop.
+
+     DELIBERATELY NOT a version constant someone has to bump, and not a git SHA
+     injected at build time. Both are things a person must remember, and this
+     repo's own rule is that a hand-maintained fact is a fact with an expiry
+     date. The timestamp maintains itself: rebuilding the exe moves it, and
+     nothing else can.
+
+     mvid is the module version id, unique per COMPILATION. Two hosts reporting
+     the same mvid are running the same bytes; two builds of identical source
+     differ. It is what settles "did the rebuild actually get swapped in" when a
+     timestamp alone looks plausible.
+
+     Both are read defensively: a single-file compile can run from a location
+     the process cannot stat, and /health failing is worse than /health being
+     vague — it is the probe used to decide whether the host is up at all. */
+  static Dictionary<string, object> Health() {
+    var h = new Dictionary<string, object> {
+      { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" },
+    };
+    try {
+      var asm = Assembly.GetExecutingAssembly();
+      try {
+        var loc = asm.Location;
+        if (!string.IsNullOrEmpty(loc) && File.Exists(loc)) {
+          h["builtAt"] = File.GetLastWriteTimeUtc(loc).ToString("yyyy-MM-ddTHH:mm:ssZ");
+        }
+      } catch { h["builtAt"] = null; }
+      h["mvid"] = asm.ManifestModule.ModuleVersionId.ToString();
+    } catch {
+      /* Report the gap rather than omitting the keys: an absent key reads as an
+         old build that never had them, which is the exact confusion this
+         removes. */
+      h["builtAt"] = null;
+      h["mvid"] = null;
+    }
+    return h;
+  }
 
   static void Handle(HttpListenerContext ctx) {
     var path = ctx.Request.Url.AbsolutePath;
@@ -164,7 +225,7 @@ class AcSyncService {
     /* AFTER the key, deliberately: which account book this is connected to is
        not something to hand an anonymous caller on a public hostname. */
     if (path == "/health") {
-      Json(ctx, 200, new Dictionary<string, object> { { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" } });
+      Json(ctx, 200, Health());
       return;
     }
     if (ctx.Request.HttpMethod != "POST") { Json(ctx, 405, Err("POST only")); return; }
@@ -190,6 +251,7 @@ class AcSyncService {
       case "/create-po": docNo = CreatePo(p); dtlTable = "PODTL"; break;
       case "/so-to-do":  docNo = Convert_("SO", "DO", p); dtlTable = "DODTL"; break;
       case "/po-to-gr":  docNo = Convert_("PO", "GR", p); dtlTable = "GRDTL"; break;
+      case "/so-to-po":  docNo = SoToPo(p); dtlTable = "PODTL"; break;
       case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
@@ -198,6 +260,10 @@ class AcSyncService {
       /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
          no SDK session. See FurtherDescription() for why it exists. */
       case "/further-description": Json(ctx, 200, FurtherDescription(p)); return;
+      /* READ-ONLY. Two SELECTs, no SDK session. See DocRead() for why. */
+      case "/doc-read": Json(ctx, 200, DocRead(p)); return;
+      /* READ-ONLY, and it reads a FILE rather than the book. See LastErrors(). */
+      case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -329,6 +395,214 @@ class AcSyncService {
      writing a confidently wrong line identity that would later edit the wrong
      line in a live book. A wrong DtlKey is worse than no DtlKey: no key is
      refused loudly, a wrong key silently edits somebody else's line. */
+  /* ── /doc-read — read a document back out of the book ─────────────────────
+     WHY THIS EXISTS. Every route here WRITES, and until now nothing could say
+     what actually landed. That gap is not academic: `qa-convert.ps1` reported
+     `/po-to-gr` as `status=0 ... (500)` and the body was never read, so the
+     failure has a symptom and no cause. And the owner's standing questions -
+     does an edited processing date reach AutoCount, does a line delivery date,
+     is the convert's Transfer link really there - are all questions about what
+     the book HOLDS, which no amount of checking our own payload can answer.
+
+     IT DISCOVERS THE COLUMNS RATHER THAN NAMING THEM, for the same reason
+     FurtherDescription() does. The wanted list below is what we would LIKE to
+     see; the query asks sys.columns which of them exist on that table and
+     selects only those, reporting the rest in `missingColumns`. So "AutoCount
+     has no such field" comes back as an ANSWER - which is itself the answer to
+     "does payment update into AutoCount" if no payment column exists on the
+     document - instead of a SQL error that reads like a broken service.
+
+     READ-ONLY and mechanically so: SELECTs on one connection, no SDK session,
+     no transaction, and the table names come from a fixed map, never from the
+     caller's string. */
+  static readonly string[] DocTypes = { "SO", "PO", "DO", "GR", "IV", "PI" };
+
+  /* Wanted on the HEADER. DocNo/DocDate/Cancelled are the identity and the
+     state; the rest are the fields the ERP claims to send, so a QA run can
+     prove each one arrived rather than assume it. */
+  static readonly string[] HeaderWanted = {
+    "DocKey", "DocNo", "DocDate", "Cancelled", "DebtorCode", "DebtorName",
+    "CreditorCode", "CreditorName", "Agent", "SalesLocation", "Ref",
+    "Description", "DeliveryDate", "ProcessingDate", "Note",
+    "Remark1", "Remark2", "Remark3", "Remark4", "Attention", "Phone1",
+    "DeliverAddr1", "InvAddr1", "SupplierDONo", "SupplierInvoiceNo",
+    "Total", "OutstandingAmt", "PaymentAmt", "PaymentTerm", "CreditTerm",
+    /* The REAL names, learned by listing sys.columns on 2026-08-15 after the
+       first run reported SO.Agent as missing - which it is, because the column
+       is SalesAgent. A wanted list built from SDK PROPERTY names answers a
+       different question than the one being asked, and "no such column" then
+       reads as "AutoCount cannot hold this" when it only means "not by that
+       name". These are the columns the book actually has. */
+    "SalesAgent", "DisplayTerm", "UDF_PDate", "UDF_UDate", "UDF_PAYEMENT",
+  };
+
+  /* Wanted on the LINES. From* is the whole point of the convert questions:
+     it is where AutoCount records that this line came from another document,
+     and it is what "convert from / convert to" reads. */
+  static readonly string[] DetailWanted = {
+    "DtlKey", "Seq", "ItemCode", "Description", "Desc2", "Qty", "UnitPrice",
+    "Location", "DeliveryDate", "TransferedQty", "Transferable",
+    /* FromDocDtlKey, not FromDtlKey - same lesson as above, same day.
+       FullTransferFromDocList is AutoCount's own summary of every document a
+       line was transferred from, so it is the cheapest single answer to "is
+       the convert-from link there". */
+    "FromDocType", "FromDocNo", "FromDocDtlKey", "FullTransferFromDocList",
+    "EstimatedDeliveryDate", "PrintOut",
+  };
+
+  /* ── /last-errors — the tail of this service's own log ────────────────────
+     WHY. The catch-all in Serve() already writes the FULL exception here, and
+     on 2026-08-15 that is where both open failures turned out to be written:
+
+       ERROR /so-to-po: ForeignKeyException (Constraint Name=FK_PO_DisplayTerm)
+       ERROR /cancel:   TransferedDocNotAllowToCancelException
+
+     Both had been reported for days as "500, no body" and chased as mysteries.
+     The cause was on this machine the whole time, and reaching it cost a remote
+     desktop session, LINQPad, and a person. That is the same argument section 8
+     of the handling listing makes about the account book: if the answer needs a
+     human to go and fetch it, the answer does not get fetched.
+
+     It returns the tail only, and never the whole file: the log carries every
+     request line and grows without bound. */
+  const int MaxLogLines = 400;
+
+  static Dictionary<string, object> LastErrors(Dictionary<string, object> p) {
+    int want = 60;
+    int.TryParse(Str(p, "Lines"), out want);
+    if (want <= 0) want = 60;
+    if (want > MaxLogLines) want = MaxLogLines;
+    var onlyErrors = Bool(p, "OnlyErrors");
+
+    var r = Ok(null);
+    r["path"] = LogPath;
+    if (!File.Exists(LogPath)) { r["exists"] = false; r["lines"] = new List<string>(); return r; }
+    r["exists"] = true;
+
+    string[] all;
+    /* The service is appending to this file while we read it, so share the
+       write handle rather than fighting for it. A locked log must not be able
+       to take the service down. */
+    try {
+      using (var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+      using (var sr = new StreamReader(fs)) {
+        var lines = new List<string>();
+        string ln;
+        while ((ln = sr.ReadLine()) != null) lines.Add(ln);
+        all = lines.ToArray();
+      }
+    } catch (Exception ex) { return Err("could not read the log: " + ex.Message); }
+
+    r["totalLines"] = all.Length;
+    var picked = new List<string>();
+    if (onlyErrors) {
+      /* An ERROR line is followed by its stack, and the stack is the useful
+         half - so take the ERROR line and everything under it up to the next
+         timestamped request line. */
+      for (int i = 0; i < all.Length; i++) {
+        if (all[i].IndexOf(" ERROR ", StringComparison.Ordinal) < 0) continue;
+        for (int j = i; j < all.Length && j < i + 40; j++) {
+          if (j > i && all[j].Length > 4 && all[j].StartsWith("20") && all[j].IndexOf(" ERROR ", StringComparison.Ordinal) < 0) break;
+          picked.Add(all[j]);
+        }
+        picked.Add("---");
+      }
+      if (picked.Count > want) picked = picked.GetRange(picked.Count - want, want);
+    } else {
+      var from = Math.Max(0, all.Length - want);
+      for (int i = from; i < all.Length; i++) picked.Add(all[i]);
+    }
+    r["lines"] = picked;
+    return r;
+  }
+
+  static Dictionary<string, object> DocRead(Dictionary<string, object> p) {
+    var docType = Str(p, "DocType").ToUpperInvariant();
+    if (Array.IndexOf(DocTypes, docType) < 0)
+      return Err("DocType must be one of " + string.Join(", ", DocTypes) + " (got '" + docType + "')");
+    var docNo = Str(p, "DocNo");
+    if (string.IsNullOrEmpty(docNo)) return Err("DocNo required");
+
+    var hdrTable = docType;
+    var dtlTable = docType + "DTL";
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var header = ReadOne(cn, hdrTable, HeaderWanted, "DocNo = @d", docNo, missing);
+      if (header == null) return Err("no " + docType + " with DocNo '" + docNo + "'");
+      var lines = ReadMany(cn, dtlTable, DetailWanted,
+                           "DocKey = (SELECT DocKey FROM " + hdrTable + " WHERE DocNo = @d)", docNo, missing);
+      var r = Ok(null);
+      r["docType"] = docType;
+      r["header"] = header;
+      r["lines"] = lines;
+      r["missingColumns"] = missing;
+      return r;
+    }
+  }
+
+  /* Which of `wanted` actually exist on `table`. The ones that do not are
+     APPENDED to `missing` rather than dropped silently: a caller asking "did
+     the processing date update" needs to be told the difference between "it is
+     null" and "there is no such column". */
+  static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
+    var have = new List<string>();
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(@t)";
+      var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+      cmd.Parameters.Add(pt);
+      var all = new List<string>();
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) all.Add(rd.GetString(0));
+      foreach (var w in wanted) {
+        if (all.Contains(w)) have.Add(w); else missing.Add(table + "." + w);
+      }
+    }
+    return have;
+  }
+
+  static string SelectList(List<string> cols) {
+    var q = new List<string>();
+    foreach (var c in cols) q.Add("[" + c + "]");
+    return string.Join(", ", q.ToArray());
+  }
+
+  static Dictionary<string, object> RowToDict(System.Data.SqlClient.SqlDataReader rd, List<string> cols) {
+    var row = new Dictionary<string, object>();
+    for (int i = 0; i < cols.Count; i++) {
+      var v = rd.IsDBNull(i) ? null : rd.GetValue(i);
+      if (v is DateTime) v = ((DateTime) v).ToString("yyyy-MM-dd HH:mm:ss");
+      else if (v is decimal) v = (double) (decimal) v;
+      row[cols[i]] = v;
+    }
+    return row;
+  }
+
+  static Dictionary<string, object> ReadOne(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return null;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT TOP 1 " + SelectList(cols) + " FROM [" + table + "] WHERE " + where;
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) return rd.Read() ? RowToDict(rd, cols) : null;
+    }
+  }
+
+  static List<Dictionary<string, object>> ReadMany(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var outp = new List<Dictionary<string, object>>();
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return outp;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + table + "] WHERE " + where + " ORDER BY [DtlKey]";
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) outp.Add(RowToDict(rd, cols));
+    }
+    return outp;
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
@@ -377,7 +651,29 @@ class AcSyncService {
   }
 
   // ── create (SO / PO) ──────────────────────────────────────────────────────
+  /* A DOCUMENT NUMBER IS NOT OPTIONAL, and an absent one used to be silent.
+     Str() answers "" for a key that is not there - not null, not an error - so
+     `DocNo = Str(p, "DocNo")` on a payload without one saved a document with a
+     BLANK number and answered {"ok":true,"docNo":"","lines":[]}. That reads as
+     success and is worse than a failure: every route that addresses a document
+     does it BY DocNo, so a blank-numbered document cannot be edited, cannot be
+     converted, and cannot even be CANCELLED through this service. It can only
+     be reached by hand in the AutoCount UI.
+
+     Measured on the live book 2026-08-15, after doing exactly that by accident:
+     SELECT COUNT(*) FROM SO WHERE DocNo IS NULL OR LTRIM(RTRIM(DocNo)) = ''
+     returned 1, and it was the one just created. So the ERP has never done this
+     - it always sends its own number (module guide 7g) - and nothing in the
+     book depends on AutoCount auto-numbering a document for us. Refusing is
+     therefore free, and it converts an unrecoverable silent success into a
+     visible 400. */
+  static void RequireDocNo(Dictionary<string, object> p, string what) {
+    if (string.IsNullOrEmpty(Str(p, "DocNo").Trim()))
+      throw new Exception("DocNo required for " + what + " - the ERP owns document numbering, and a blank number cannot be addressed, edited or cancelled afterwards");
+  }
+
   static string CreateSo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-so");
     var s = Session();
     var cmd = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting);
     var so = cmd.AddNew();
@@ -431,6 +727,7 @@ class AcSyncService {
   }
 
   static string CreatePo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-po");   // same reasoning as CreateSo above
     var s = Session();
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();
@@ -533,11 +830,88 @@ class AcSyncService {
      Exception (or a sibling) and the service returns that as an error — the
      failure mode is a refused call, never a silently accepted over-ship. */
 
+  /* SO -> PO, which is NOT one of the four above and cannot use Convert_.
+     AddPartialTransferDetail("SO", keys, ...) is the sales-side primitive; a
+     purchase document transferring FROM a sales order has its own method, one
+     key at a time:
+         AddSOToPOTransferDetail(Int64)      (sdk-api-reference.txt, the
+                                              PurchaseOrder METH list)
+     The ERP only sends this when every purchase line maps 1:1 to a sales line
+     the book already has a key for. A consolidated purchase -- one line serving
+     several customers plus stock, which is a shape Houzs buys in deliberately
+     (mig 0235) -- is sent as a plain /create-po instead, because a transfer
+     would split it or drop the stock quantity. That decision is made ERP-side
+     in scm/shared/po-transfer-shape.ts; this route only executes it.
+
+     DtlKeys is REQUIRED here, unlike the four conversions. Those may omit it
+     and fall through to "every still-outstanding line on the parent", which is
+     a safe default when the two documents are the same document one step on.
+     A purchase order is not: the ERP decides what it buys, and guessing would
+     transfer sales lines nobody ordered from this supplier. */
+  static string SoToPo(Dictionary<string, object> p) {
+    var s = Session();
+    var fromDocNo = Str(p, "FromDocNo");
+    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
+    var keys = LongList(p, "DtlKeys");
+    if (keys.Length == 0) throw new Exception("DtlKeys required for /so-to-po - the ERP decides which sales lines this purchase order buys");
+
+    /* THE CREDITOR IS NOT OPTIONAL, and leaving it out does not fail where you
+       would look for it. Measured on the live book 2026-08-15:
+
+         ERROR /so-to-po: AutoCount.Data.ForeignKeyException:
+           Foreign Key Error (Constraint Name=FK_PO_DisplayTerm)
+
+       DisplayTerm is the PAYMENT TERM, and AutoCount defaults it FROM THE
+       CREDITOR. This route sent the lines across with AddSOToPOTransferDetail
+       and then called PurchaseHeader, which writes DocDate/DocNo/Ref/
+       Description/UDF and NOT the creditor - so the purchase order reached
+       Save() with no supplier, therefore no term, and the insert died on the
+       term's foreign key rather than on anything mentioning a creditor.
+
+       That is why /create-po passed the same night while /so-to-po did not:
+       CreatePo assigns CreditorCode directly. The payload had always carried
+       one; this route simply dropped it. */
+    var creditor = Str(p, "CreditorCode");
+    if (string.IsNullOrEmpty(creditor))
+      throw new Exception("CreditorCode required for /so-to-po - AutoCount defaults the payment term from the supplier, and without one the save dies on FK_PO_DisplayTerm, which names the term and not the supplier");
+
+    var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
+    var po = cmd.AddNew();
+    po.CreditorCode = creditor;
+    Set(() => po.CreditorName = Str(p, "CreditorName"));
+    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    PurchaseHeader(po, p);
+    /* AFTER the transfer, deliberately. The transfer brings the sales line's
+       own price across, and a purchase order needs the COST the ERP agreed with
+       the supplier. Applied only for the lines the payload names, by DtlKey, so
+       a line the ERP said nothing about keeps whatever the transfer gave it. */
+    foreach (var od in List(p, "Details")) {
+      var it = (Dictionary<string, object>) od;
+      if (!it.ContainsKey("DtlKey")) continue;
+      var dtl = System.Convert.ToInt64(it["DtlKey"]);
+      var d = po.EditDetail(dtl);
+      if (d == null) continue;
+      if (it.ContainsKey("UnitPrice")) Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
+      if (it.ContainsKey("Qty"))       Set(() => d.Qty = Dec(it, "Qty", 1));
+      if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));
+      if (it.ContainsKey("DeliveryDate")) {
+        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
+    }
+    po.Save();
+    return po.DocNo;
+  }
+
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
     Set(() => doc.Description = Str(p, "Description"));
+    /* DisplayTerm is the payment term. It is normally defaulted from the
+       debtor/creditor, so it is sent only when the ERP has one to say - the
+       ContainsKey rule, because a blank here is a foreign key error, not an
+       empty field (FK_PO_DisplayTerm, live book 2026-08-15). */
+    if (p.ContainsKey("DisplayTerm")) Set(() => doc.DisplayTerm = Str(p, "DisplayTerm"));
     ApplyUdf(p, k => doc.UDF[k], (k, v) => doc.UDF[k] = v);
   }
 
@@ -546,6 +920,11 @@ class AcSyncService {
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
     Set(() => doc.Description = Str(p, "Description"));
+    /* DisplayTerm is the payment term. It is normally defaulted from the
+       debtor/creditor, so it is sent only when the ERP has one to say - the
+       ContainsKey rule, because a blank here is a foreign key error, not an
+       empty field (FK_PO_DisplayTerm, live book 2026-08-15). */
+    if (p.ContainsKey("DisplayTerm")) Set(() => doc.DisplayTerm = Str(p, "DisplayTerm"));
     ApplyUdf(p, k => doc.UDF[k], (k, v) => doc.UDF[k] = v);
   }
 
@@ -553,6 +932,15 @@ class AcSyncService {
      decides which lines ship) or we take every outstanding line on the source
      document. Read straight from the book's own detail table so the set always
      matches what AutoCount considers untransferred. */
+  /* The payload's DtlKeys, and NOTHING ELSE. DtlKeys() below falls back to
+     "every outstanding line on the parent" when the list is empty; /so-to-po
+     must not, so it reads the list through this instead. */
+  static long[] LongList(Dictionary<string, object> p, string key) {
+    var outp = new List<long>();
+    foreach (var k in List(p, key)) if (k != null) outp.Add(System.Convert.ToInt64(k));
+    return outp.ToArray();
+  }
+
   static long[] DtlKeys(Dictionary<string, object> p, string fromType, string fromDocNo) {
     var given = List(p, "DtlKeys");
     var outp = new List<long>();
@@ -1000,6 +1388,26 @@ class AcSyncService {
 
       if (it.ContainsKey("Description")) Set(() => d.Description = Str(it, "Description"));
       if (it.ContainsKey("Desc2"))       Set(() => d.Desc2 = Str(it, "Desc2"));
+      /* FurtherDescription — the photograph field. Two shapes, and the second
+         is the one the ERP uses:
+           FurtherDescription : "<rtf>"   verbatim, for probes and for a value
+                                          read back out of the book unchanged
+           Photos : [ { Jpeg, Caption? } ] the JPEGs; this host renders them
+
+         NOT wrapped in Set(). Set() swallows the exception and logs it, which is
+         right for a cosmetic field but wrong here: a silently-skipped write
+         would leave the ERP believing the photographs reached AutoCount when
+         the line still holds whatever it held before. A conversion that fails
+         must fail the whole edit and be visible in the response. */
+      if (it.ContainsKey("FurtherDescription")) {
+        var fd = Str(it, "FurtherDescription");
+        d.FurtherDescription = fd;
+      } else if (it.ContainsKey("Photos")) {
+        int n;
+        var rtf = PhotoRtf(List(it, "Photos"), out n);
+        d.FurtherDescription = rtf;
+        Log("  FurtherDescription: " + n + " picture(s), " + rtf.Length + " chars");
+      }
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("UnitPrice"))   Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Location"))    Set(() => d.Location = Str(it, "Location"));
@@ -1065,6 +1473,124 @@ class AcSyncService {
   static string SafeDesc2(dynamic d) { try { return (string) d.Desc2 ?? ""; } catch { return ""; } }
   static IEnumerable<object> List(Dictionary<string, object> d, string k) { object v; if (d.TryGetValue(k, out v) && v is object[]) return (object[]) v; return new object[0]; }
   static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }
+
+  // ── FurtherDescription: photographs, in the form AutoCount itself writes ───
+  /* WHY THE CONVERSION IS HERE AND NOT IN THE WORKER.
+     Read off the LIVE book on 2026-08-15 (docs/autocount-further-description-
+     photos.md section 4.2): all three sampled SODTL lines store the picture as
+     `\wmetafile8` — a Windows metafile — and none as `\jpegblip` or `\pngblip`.
+     A JPEG therefore cannot go in verbatim. Turning one into a metafile needs
+     GDI, which exists on this host and nowhere in a Cloudflare Worker, so the
+     ERP sends the JPEG bytes and the conversion happens here.
+
+     MM_ANISOTROPIC (8) is not a choice: it is the number IN the keyword
+     `\wmetafile8`, so the bits have to be fetched in that mapping mode for the
+     declaration to be true. */
+  const int MM_ANISOTROPIC = 8;
+  [DllImport("gdi32.dll")] static extern uint GetWinMetaFileBits(IntPtr hemf, uint cbData16, byte[] pData16, int iMapMode, IntPtr hdcRef);
+  [DllImport("gdi32.dll")] static extern bool DeleteEnhMetaFile(IntPtr hemf);
+
+  static byte[] JpegToWmf(byte[] picture, out int widthPx, out int heightPx) {
+    using (var ms = new MemoryStream(picture))
+    using (var src = Image.FromStream(ms)) {
+      widthPx = src.Width; heightPx = src.Height;
+      /* A 1x1 bitmap only exists to lend a screen-compatible HDC: both the
+         metafile and GetWinMetaFileBits need a reference DC, and neither
+         draws on it. */
+      using (var refBmp = new Bitmap(1, 1))
+      using (var refG = Graphics.FromImage(refBmp)) {
+        IntPtr hdc = refG.GetHdc();
+        try {
+          using (var buf = new MemoryStream())
+          using (var mf = new Metafile(buf, hdc, new Rectangle(0, 0, widthPx, heightPx), MetafileFrameUnit.Pixel, EmfType.EmfOnly)) {
+            using (var g = Graphics.FromImage(mf)) g.DrawImage(src, 0, 0, widthPx, heightPx);
+            /* GetHenhmetafile hands OWNERSHIP over; the Metafile must not
+               free it and we must. */
+            IntPtr hemf = mf.GetHenhmetafile();
+            try {
+              uint n = GetWinMetaFileBits(hemf, 0, null, MM_ANISOTROPIC, hdc);
+              if (n == 0) throw new Exception("GetWinMetaFileBits returned a zero size");
+              var wmf = new byte[n];
+              if (GetWinMetaFileBits(hemf, n, wmf, MM_ANISOTROPIC, hdc) == 0) throw new Exception("GetWinMetaFileBits failed to fill the buffer");
+              return wmf;
+            } finally { DeleteEnhMetaFile(hemf); }
+          }
+        } finally { refG.ReleaseHdc(hdc); }
+      }
+    }
+  }
+
+  /* 96 dpi, and it is MEASURED, not assumed: on all three sampled lines
+     picwgoal/1440 against picw gives exactly 96 (3600/1440 in against 240 px,
+     and the same for 2220/148 and 750/50). picw/pich are pixels, the *goal
+     pair is twips. */
+  const int PhotoDpi = 96;
+  static int Twips(int px) { return (int) Math.Round((double) px * 1440.0 / PhotoDpi); }
+
+  static string RtfHex(byte[] b) {
+    var sb = new StringBuilder(b.Length * 2 + b.Length / 32);
+    for (int i = 0; i < b.Length; i++) {
+      sb.Append(b[i].ToString("x2"));
+      if ((i + 1) % 32 == 0) sb.Append('\n');
+    }
+    return sb.ToString();
+  }
+
+  static string RtfEscape(string s) {
+    var sb = new StringBuilder();
+    foreach (char ch in s ?? "") {
+      if (ch == '\\' || ch == '{' || ch == '}') { sb.Append('\\').Append(ch); continue; }
+      if (ch == '\n') { sb.Append("\\par\n"); continue; }
+      if (ch == '\r') continue;
+      if (ch < 0x80) { sb.Append(ch); continue; }
+      sb.Append("\\u").Append(((short) ch).ToString()).Append('?');
+    }
+    return sb.ToString();
+  }
+
+  /* Builds the WHOLE field value from the photographs the ERP holds for one
+     line, in the shape the live book was observed to use: a caption paragraph,
+     then the picture, per photograph.
+
+     THE CAPTION IS NOT DECORATION. Section 4.2 found `Image on 8/12/2024
+     5:01:16 PM` sitting before the {\pict group on every sampled line, so a
+     writer that emitted pictures alone would DESTROY text AutoCount put there.
+     The ERP sends the caption it read back, or we stamp today's.
+
+     The field is ONE string and is replaced wholesale — there is no append — so
+     the caller must send every photograph the line should end up with, not just
+     the new ones. That rule is section 6.3's, and it belongs to the composer;
+     this function only renders what it is given. */
+  static string PhotoRtf(IEnumerable<object> photos, out int converted) {
+    var parts = new List<string>();
+    converted = 0;
+    foreach (var o in photos) {
+      var ph = o as Dictionary<string, object>;
+      if (ph == null) throw new Exception("each entry of Photos must be an object");
+      var b64 = Str(ph, "Jpeg");
+      if (string.IsNullOrEmpty(b64)) throw new Exception("a Photos entry carries no Jpeg");
+      byte[] jpeg;
+      try { jpeg = Convert.FromBase64String(b64); }
+      catch (Exception ex) { throw new Exception("a Photos entry is not valid base64: " + ex.Message); }
+
+      int w, h;
+      var wmf = JpegToWmf(jpeg, out w, out h);
+
+      var caption = ph.ContainsKey("Caption")
+        ? Str(ph, "Caption")
+        : "Image on " + DateTime.Now.ToString("M/d/yyyy h:mm:ss tt");
+      if (!string.IsNullOrEmpty(caption)) parts.Add(RtfEscape(caption));
+
+      parts.Add("{\\pict\\wmetafile8\\picw" + w + "\\pich" + h
+                + "\\picwgoal" + Twips(w) + "\\pichgoal" + Twips(h) + "\n"
+                + RtfHex(wmf) + "}");
+      converted++;
+    }
+    if (parts.Count == 0) throw new Exception("Photos was empty — omit the key instead of sending nothing");
+    return "{\\rtf1\\ansi\\deff0\n{\\fonttbl{\\f0 Arial;}}\n\\viewkind4\\uc1\\pard\\fs20 "
+           + string.Join("\n\\par\n", parts.ToArray())
+           + "\n\\fs20\\par\n}";
+  }
 
   static void Json(HttpListenerContext ctx, int code, Dictionary<string, object> obj) {
     var s = new JavaScriptSerializer().Serialize(obj);

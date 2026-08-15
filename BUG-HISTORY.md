@@ -1,3 +1,541 @@
+## The SO-to-PO transfer produces a PO with no transferable lines, and only half a Transfer link [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Two symptoms, one document, found once `/so-to-po` stopped failing outright.**
+Measured on the live book 2026-08-15, run `ZZQA-SO-20260815-233528` ->
+`ZZQA-PO-20260815-233528`:
+
+1. **The link is half written.** `/doc-read` on the PO's lines reports
+   `FromDocNo = 'ZZQA-SO-20260815-233528'` and `FromDocType = ''`. The document
+   number came across; the TYPE did not. Every other conversion writes both —
+   `DO<-SO` and `IV<-DO` both carry `FromDocType` and `FromDocNo` on every line.
+2. **The PO has nothing to transfer onward.** `/po-to-gr` refused with our own
+   guard: `no transferable lines on PO ZZQA-PO-20260815-233528`. That guard
+   reads AutoCount's own outstanding predicate,
+   `Qty - ISNULL(TransferedQty, 0) > 0`, so the PO's line is either zero-qty or
+   already counted as transferred the moment it was created.
+
+**Why they are probably one fault.** The four ordinary conversions go through
+`AddPartialTransferDetail(fromType, keys, transferMaster)`, which is handed the
+source TYPE explicitly. `SO->PO` is the odd one: the SDK offers only
+`AddSOToPOTransferDetail(Int64)` — one key at a time and **no type argument** —
+so whatever that method does with provenance and outstanding quantity, it does
+alone. Both symptoms are consistent with the PO line being created in a state
+the rest of the system reads as "already dealt with".
+
+**NOT yet traced, and deliberately not guessed at.** The PO was cancelled in
+teardown before its lines could be read a second time. The next run must call
+`/doc-read` on the PO **immediately** and record `Qty`, `TransferedQty`,
+`Transferable` and `FullTransferFromDocList` per line — those four settle it.
+
+**Consequence while it stands:** a purchase order raised from a sales order
+reaches AutoCount, but AutoCount does not consider it convertible, so `PO->GR`
+and `GR->PI` cannot run from it at all. The two purchase-side conversions remain
+unproven end to end.
+
+**Ref:** this PR, 2026-08-15.
+
+## The QA teardown cancelled the PO after the SO and left a live sales order [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `qa-matrix.ps1` ended with
+`FAIL 7 cancel SO ... status=500 ... CANCEL BY HAND`, leaving a real,
+uncancelled sales order in the live book.
+
+**Root cause.** The teardown order was `PI, GR, IV, DO, SO, PO` — the PO last.
+A sales order transferred to a purchase order cannot be cancelled while that PO
+is live, and AutoCount says exactly that:
+
+```
+SOTransferedToDocumentNotAllowToCancelException:
+The Sales Order was transfered to Purchase Order, so it is not allow to cancel.
+```
+
+So "child before parent" was written into the list but not fully applied: the PO
+is a child of the SO too, and it was ordered after it.
+
+**Fix.** `PI, GR, IV, DO, PO, SO`, with the exception quoted at the site.
+
+**The leftover was cleaned up rather than left:** the SO was cancelled once its
+PO was gone, and the cancel was verified by reading the document back —
+`Cancelled: "T"` — not by trusting the 200.
+
+**Worth keeping:** this is the second time the cancel guard has proved to be
+working after being suspected. It refuses by a NAMED exception in both
+directions, SO->DO/IV and SO->PO.
+
+**Ref:** this PR, 2026-08-15.
+
+## `/so-to-po` dropped the creditor, and died on a foreign key naming the payment term [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `POST /so-to-po` answered 500 with no body. `qa-convert.ps1`
+reported it as `status=0 ... (500)` for days because it never read the response
+stream, so the failure had a symptom and no cause.
+
+**Root cause, traced.** The service's own log had it the whole time
+(`C:\Temp\ac-sync-service.log`, written by the catch-all in `Serve()`):
+
+```
+2026-08-15 23:07:33 ERROR /so-to-po: AutoCount.Data.ForeignKeyException:
+  Foreign Key Error (Constraint Name=FK_PO_DisplayTerm)
+```
+
+`SoToPo()` called `AddSOToPOTransferDetail` for each line and then
+`PurchaseHeader()`, which writes `DocDate` / `DocNo` / `Ref` / `Description` /
+UDF and **not the creditor**. AutoCount defaults a purchase order's
+`DisplayTerm` — its payment term — **from the supplier**, so a PO reaching
+`Save()` with no creditor has no term, and the insert dies on the TERM's foreign
+key rather than on anything mentioning a supplier.
+
+That is why `/create-po` passed on the same night while `/so-to-po` did not:
+`CreatePo()` assigns `CreditorCode` directly. **The payload had always carried a
+creditor. This route simply never read it.**
+
+**Third of a kind.** `FK_SODTL_Location` (the line's warehouse),
+`FK_SO_SalesLocation` (the header's sales location), now `FK_PO_DisplayTerm`.
+Each is a lookup AutoCount defaults from something the payload failed to set,
+and each names a DIFFERENT field than the one actually missing.
+
+**Fix.** `SoToPo` sets `CreditorCode` (refusing when absent, naming the trap in
+the message) and `CreditorName`. `DisplayTerm` also becomes a `ContainsKey`
+passthrough on both header helpers, because a blank term is a foreign key error
+rather than an empty field.
+
+**Ref:** this PR, 2026-08-15.
+
+## The cancel guard was working, and the earlier finding against it is unresolved [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Withdrawn, in part.** `qa-convert.ps1` reported on 2026-08-15 that a sales
+order cancelled while its delivery order was still live, and that was written up
+as "the link did not hold". A second run the same night refutes it:
+
+```
+2026-08-15 23:07:35 ERROR /cancel:
+  AutoCount.Invoicing.TransferedDocNotAllowToCancelException:
+  The document was transfered to other document, so it is not allow to cancel.
+```
+
+So AutoCount does refuse, by a named exception, and `/doc-read` separately
+proved the link exists on that document's lines (`FromDocType=SO`,
+`FromDocNo=...`).
+
+**What is NOT resolved, and is deliberately not smoothed over:** the earlier run
+really did cancel — the log carries no `ERROR /cancel` at that timestamp, so it
+was not refused and then retried. Two runs of the same shape behaved
+differently and the difference has not been established. Recorded as an open
+question rather than bridged with a story that makes both fit.
+
+**Ref:** this PR, 2026-08-15.
+
+## `/create-so` saved a document with a BLANK number and answered ok:true [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Found by doing it to the live book, 2026-08-15.** Not a production defect —
+proven below — but an unrecoverable one when it fires.
+
+**Symptom.** `POST /create-so` without a `DocNo` answered
+`{"ok":true,"docNo":"","lines":[]}` and created a real, uncancelled sales order
+in `AED_HOUZS`: `DocKey 906099`, `DocNo` blank, one line `DtlKey 906100`
+(`AK-SLEEP ESSENTIAL 7 HOLES`, qty 1, RM1, KL). `lines` came back empty because
+the read-back finds lines BY `DocNo`, and there was none to find.
+
+**Root cause (traced).** `AcSyncService.cs` had `so.DocNo = Str(p, "DocNo")`,
+and `Str()` answers `""` for an absent key — not null, not an error. AutoCount
+accepted the blank and `Save()` succeeded.
+
+**Why it is worse than a failure.** Every route addresses a document BY `DocNo`:
+`/edit`, the converts, and `/cancel`. A blank-numbered document therefore cannot
+be edited, converted, or even CANCELLED through this service — the owner's
+"never delete, only cancel" rule has no instrument. It can only be reached by
+hand in the AutoCount UI.
+
+**Production was never exposed, and this is the check rather than the claim.**
+On the live book, `SELECT COUNT(*) FROM SO WHERE DocNo IS NULL OR
+LTRIM(RTRIM(DocNo)) = ''` returned **1**, and that row is the one just created,
+`CreatedTimeStamp 8/15/2026 10:11:29 PM`. The ERP has never done this — it
+always sends its own number (module guide 7g) — and `qa-convert.ps1` sends one
+too. Only a hand-written payload can reach it.
+
+**Fix.** `RequireDocNo()` on `/create-so` and `/create-po`: refuse, naming the
+reason, instead of saving something nobody can address. Nothing in the book
+relies on AutoCount auto-numbering for us, so refusing costs nothing.
+
+**Cleared 2026-08-15.** `DocKey 906099` was found in the AutoCount Sales Order
+list and **voided, not deleted**. It did not appear until the grid was
+REFRESHED - that list is cached, so a document created behind its back is
+invisible until then. Worth knowing the next time something is "not in
+AutoCount".
+
+**Ref:** this PR, 2026-08-15.
+
+## The write probe was refused by the live book: FK_SO_SalesLocation, and two more defects in the same scripts [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Three defects, all found by RUNNING the scripts against the live host rather
+than by reading them. None reached production; all three sat in scripts shipped
+hours earlier in #2253.**
+
+**1. `FK_SO_SalesLocation` — the probe could not create its scratch order.**
+Symptom: `/create-so` answered
+`{"ok":false,"error":"Foreign Key Error (Constraint Name=FK_SO_SalesLocation)"}`.
+Root cause: `SalesLocation` is a HEADER field and is not optional;
+`fd-probe.ps1` sent `Agent`, `DebtorCode` and a line `Location` but no header
+`SalesLocation`. It is the header-level twin of `FK_SODTL_Location`, the line
+one already documented. **The ERP itself never trips this** — `autocount-outbox.ts`
+raises `MissingSalesLocationError` naming this exact constraint and refuses to
+enqueue — so the constraint is invisible until something hand-writes a payload.
+`qa-convert.ps1` has always sent it. Fix: send it, with the refusal quoted at the
+site.
+
+**2. Both new scripts defaulted to an unreachable base URL.** Symptom:
+`Invoke-RestMethod : Bad Request - Invalid Hostname`, HTTP 400, on every call.
+Root cause: they defaulted to `http://127.0.0.1:8900`, but the service registers
+the prefix `http://localhost:<port>/` (`AcSyncService.cs:100`) and `HttpListener`
+matches on the Host header, so a numeric-IP request is refused before any route
+runs. `deploy-on-host.ps1` had always used `localhost`, which is why its own
+health check passed in the same run that my step 3 failed. Fix: default to
+`localhost` in both.
+
+**3. `host-session.ps1` did not fetch the probe it tells you to run.** Its
+fetch list was `AcSyncService.cs`, `deploy-on-host.ps1`, `qa-convert.ps1`;
+running `fd-probe.ps1` afterwards died on
+`The argument ... does not exist`. Fix: added to the list.
+
+**Lesson.** #2253 claimed the C# was compiled and run — it was — but the
+PowerShell around it had never executed against anything. A script that has not
+been run is not evidence, and the same rule the repo already applies to
+`workflow_dispatch` workflows ("not shipped until dispatched once") applies
+here.
+
+**Ref:** this PR, 2026-08-15.
+
+## `Desc2` was documented as being AutoCount's Further Description; they are two different columns [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Not a runtime defect today — it is a naming defect that was about to become
+one, found while building the writer for the field it names.**
+
+**Symptom.** `docs/modules/autocount-writeback.md` §7q was headed *"Desc2 is the
+Further Description"* and quoted the owner's 2026-08-15 instruction — *"照片那一边
+是从 Further Description 那边抽出来的，所以你录入的时候，也是要录入回 Further
+Description"* — directly above a section that then changed how `Desc2` is
+composed. `backend/src/scm/lib/autocount-outbox.test.ts` carried the same
+sentence over its describe block. Read together, the two say the owner asked for
+photographs and got variant text.
+
+**Root cause (traced, not guessed).** They are separate columns on the same
+detail class. `backend/scripts/autocount-service/sdk-api-reference.txt` lists
+`Desc2:String` and `FurtherDescription:String` in the `SET:` list of all six
+detail classes (lines 444, 452, 460, 468, 476, 484). The cutover read them with
+two different scripts for two different purposes: `refresh-so-variants.mjs`
+parsed **`Desc2`** for the ERP's variants, and `import-so-line-photos.mjs`
+pulled the **photographs** out of `FurtherDescription` (its own line 2 says so).
+`Desc2` is `nvarchar(100)` and at its ceiling; `FurtherDescription` is
+`nvarchar(MAX)` and held 458,878 bytes on one measured line.
+
+**Why it was about to bite.** Nothing wrote `FurtherDescription`, so the wrong
+name cost nothing. The moment something does, the conflation points a
+photograph at a 100-character column — and the `Desc2TooLongError` refusal that
+exists for that ceiling would fire on a picture, reading as a truncation bug.
+
+**Fix.** Both sites corrected in place, with the correction kept visible rather
+than the old sentence deleted; a table in §7q gives each column its type, its
+content and its owning section, and the writer itself is documented in a new
+§7q2.
+
+**Ref:** this PR, 2026-08-15.
+## Deleting a value in the ERP never reached AutoCount [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Shown the four transitions an edit can make, the owner stopped at
+the last one:
+
+| ERP | sent | AutoCount |
+|---|---|---|
+| blank -> blank | no | unchanged |
+| blank -> 8/25 | yes | 8/25 |
+| 8/20 -> 8/25 | yes | 8/25 |
+| **8/20 -> blank** | **no** | **still 8/20** |
+
+*"这个也是要跟啊 为什么不跟?"* — and then the rule for everything:
+*"任何情况 ERP update 就是都要跟就对了，无论什么，除非 update 不进去."*
+
+**Root cause.** `soEditHeader` omits any key whose ERP column is empty, and that
+rule was RIGHT for the case it was written for. On 2026-08-14 the opposite had
+just been fixed: eight header keys were emitted as `x ?? null` unconditionally,
+and since `Str` turns a present-null into `""`, every edit blanked whatever the
+account book held wherever the ERP's column was empty — `ref` on 112 of 115
+orders, `address3`/`address4` on 94.
+
+Omitting fixed that and created this: the composer reads the SAVED row, where
+*never had a value* and *just deleted the value* are the same empty column. It
+cannot tell them apart, so it chose the side that cannot destroy data, and
+clearing became inexpressible.
+
+**Fix, and it is a shape this repo already had.** `enqueueEdit` grows
+`touchedFields` — the ERP columns THIS REQUEST wrote — exactly as it already
+carries `newLineIds`, and for the same stated reason: a keyless line means two
+opposite things and *"the ERP is therefore not allowed to infer it: the route
+that did the adding says so"*. The header PATCH is the only caller that passes
+any, and `Object.keys(updates)` is precisely the set, because that loop only
+adds a key the request body carried.
+
+A key is nulled only when the route says it was WRITTEN and the saved value is
+now empty. Written-and-still-empty is a deletion; not written is silence.
+
+**What may NOT be cleared, which is the load-bearing half:**
+
+| field | why |
+|---|---|
+| `agent` | `FK_SO_SalesAgent`. A blank Agent is not an empty field, it is a foreign-key failure that loses the whole document |
+| `sales_location` | same shape, and company 1 cannot save an order without one anyway (`so-location-gate.ts`) |
+| `debtor_name` | also travels as `Attention`; an order with no customer name is not a state the ERP can produce |
+| line `ItemCode` | never re-sent on a line the book already owns |
+
+The address is treated as ONE package: `soInvoiceAddress` folds five ERP columns
+into four lines, so clearing one re-shuffles the rest and there is no
+field-by-field answer. Touching any of them sends all four `InvAddr` keys.
+
+A UDF clears with `""` rather than a null, because `ApplyUdf` writes
+`kv.Value == null ? "" : kv.Value.ToString()` and `""` is what the book stores.
+
+`touchedFields` is OPTIONAL, which the optional-param-noop rule normally
+forbids. It is allowed here on the exemption that rule names: its absence is the
+STRICTER direction — nothing is cleared, which is the behaviour before this
+existed — and every other caller is a line operation that did not touch the
+header, so `[]` is the honest value and not a default standing in for one.
+
+No C# change: `Str` already turns a present-null into `""`, which is the clear.
+
+Three of the new cases were observed RED with the rule neutralised.
+
+**Ref.** 2026-08-15, PR #2249.
+## The payment reference the cutover read out of AutoCount was never written back [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Told that the account sheet and the approval code had nowhere to go
+in AutoCount, the owner said: *"我记得之前 autocount 拉数据进来是有的，你查看一下，
+怎么 extract 的，然后原路返回怎么写。"* He was right and the answer given was
+wrong. The field exists, the cutover read it, and nothing ever wrote it back.
+
+**Root cause of the wrong answer.** The search was `SOUDF_` and the field is
+`UDF_PAYEMENT` — no `SO` prefix in the importer's query, and AutoCount's own
+spelling of "payment" is `PAYEMENT`. Two misses in one name. The conclusion
+drawn from an empty grep was "there is nowhere to put it", which is the shape
+CLAUDE.md warns about: a verdict computed over nothing reading as a pass.
+
+`import-ac-outstanding-so.mjs:16` says it plainly:
+
+```
+balance = UDF_BALANCE, paid = total - balance; UDF_PAYEMENT -> account_sheet
++ approval_code
+```
+
+So the AutoCount sales order has SIX UDFs, not five — `BALANCE`, `BRANDING`,
+`Note`, `PDate`, `ToPONo`, `VENUE` **and** `PAYEMENT` — and the write-back sent
+five of them.
+
+**Fix.** `composePaymentUdf` is the INVERSE of the cutover's own `parsePayment`,
+and the format is not a choice: it is whatever that function reads, since that
+function is what ran over 13,015 headers. `parsePayment` moved out of the
+runnable importer into `backend/scripts/lib/ac-payment-udf.mjs` (no shebang — a
+test imports it) so it sits beside its inverse; a format written in one file and
+read in another is how the two stop agreeing, and this field is free text with
+no schema to catch it.
+
+`autocountPaymentUdf.roundtrip.test.ts` composes with the shipped TS function and
+parses with the CUTOVER'S, in one assertion. Asserting a literal string would
+have pinned what the format was assumed to be; this pins what the importer can
+actually read.
+
+Three properties the tests exist for:
+
+- **Omit, never blank.** No references sends no key. `Str` turns a present-null
+  into `""`, which would erase the cutover's own text on an order whose payments
+  predate the ERP.
+- **The delimiters are the format's.** `(`, `)` and `/` become spaces, or a bank
+  name like `MBB/CIMB` parses back as acct `MBB`, appr `CIMB` and drops the
+  approval code. Lossy and predictable; a human typing into the field in
+  AutoCount's own UI is under the same constraint.
+- **The read is ORDERED** — `paid_at` then `id`. `paid_at` is a DATE, so a day
+  with two payments has no order of its own and the text would reshuffle between
+  edits, rewriting the account book for no reason.
+
+`paymentRefs` is a REQUIRED parameter on `composeCreateSo` and `soEditHeader`,
+not optional. The compiler then enumerated the four call sites, which is the
+whole point of that rule.
+
+No C# change and no host rebuild: `ApplyUdf` writes whatever keys it is given
+and is already called on both create (`:403`) and edit (`:923`).
+
+**Ref.** 2026-08-15, PR #2247.
+
+## A purchase order raised from a sales order reached AutoCount with no link to it [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner, describing the flow he expects: *"当 Sales Order 转换成
+PO 时，AutoCount 那边也要跟着同步把 PO 开进去。通常流程是先开 PO，然后做
+Connection（关联），即 Transfer From 之类的单据流转."* The PO did arrive — but as
+a standalone document. `git grep -c so_to_po` was **0**: there was no such
+operation, no such route, and nothing named the sales order it came from.
+
+**Root cause.** The four conversions all use one SDK primitive,
+`AddPartialTransferDetail(fromType, keys, transferMaster)`, and `Convert_`
+serves all four. SO-to-PO is not one of them: a PURCHASE document transferring
+from a SALES one has its own method, `AddSOToPOTransferDetail(Int64)`, one key
+at a time (`sdk-api-reference.txt`, the PurchaseOrder METH list). Nobody had
+written it, so `convertSosToPosCore` fell through to `enqueuePoCreate` and the
+book got a new PO with no provenance.
+
+**Why it is not simply a transfer, which is the part worth keeping.** Measured
+against the owner's own 2026-08-01 decision, recorded in mig 0235: **one PO line
+can serve several customers plus stock at once** — the live example is one qty-5
+MAKOTO line covering SO-036 x1 + SO-029 x1 and 3 for stock. A transfer builds
+the purchase order FROM sales lines, so it would either split a line the
+business deliberately consolidated or drop the stock quantity, which belongs to
+no sales order at all. It also brings the SALES price across, and a purchase
+order owes the supplier's cost.
+
+**Fix — both shapes, decided per document.** `scm/shared/po-transfer-shape.ts`
+transfers only when it is certain and falls back on any doubt, because a create
+is what happens today and cannot be wrong:
+
+| falls back when | why |
+|---|---|
+| any line has allocation rows | consolidated; mig 0235's case |
+| any line is for stock (`so_item_id` null) | nothing to transfer it from |
+| any source line has no `linked_ac_dtlkey` | a transfer is addressed by that key and nothing else |
+| two lines name the same source line | a transfer would count the quantity twice |
+| the lines come from more than one sales order | the drain has ONE parent anchor to wait on |
+
+On the create path the source document numbers go into the PO's `Ref` —
+deduplicated and sorted so the same order renders the same string every time.
+That field was free: the ERP has no PO ref column and `readPoHeader` sent
+`ref: null`, while `CreatePo` has always applied `po.Ref`.
+
+On the transfer path the payload carries `DtlKeys` and per-line `UnitPrice` /
+`Qty` / `Location` / `DeliveryDate`, applied AFTER the transfer so the ERP's
+agreed cost replaces the sales price the transfer brought over. `fromDoc` makes
+the drain hold the row as `waiting` — without burning an attempt — until the
+sales order itself has an AutoCount number.
+
+`DtlKeys` is REQUIRED on `/so-to-po`, unlike the four conversions, which may
+omit it and fall through to "every still-outstanding line on the parent". That
+default is safe when the two documents are the same document one step on; a
+purchase order is not, and guessing would buy lines nobody ordered from this
+supplier.
+
+Mig 0295 widens the outbox `op` CHECK, which 0277 pinned. The contract test
+gained a `/so-to-po` case, so the new route's keys are held against the C#
+source like the rest.
+
+**Ref.** 2026-08-15, PR #2251.
+## Nothing could say which build the AutoCount host was running [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Asked what still needed doing, the answer given was *"the exe on
+that machine is three changes behind"*. It was stated as fact and it was not
+one: it came from a handoff note dated three days earlier. The owner pushed
+back — *"你确定？查看源代码了？？"* — and he was right. Source cannot answer the
+question and neither could anything else.
+
+**Root cause, traced by reading the service rather than a document.**
+`/health` answered `{ok, book, service}` and nothing more
+(`AcSyncService.cs`, the `Handle` prefix). No build identity, no timestamp, no
+commit. The repository records nothing about what is deployed either: the exe
+lives on the office machine, and `git grep` for a build stamp finds none.
+
+So "does the running exe contain commit X" had **no answer anywhere**, and the
+only material that looked like one was prose that goes stale. Three commits
+touched `AcSyncService.cs` after the last recorded build — `#2043` (purchase-side
+`transferMaster`), `#2200` (eight unsent fields), `#2218` (the blank line
+delivery date the owner had reported) — and whether any of them are live is
+UNKNOWN, which is exactly the answer that should have been given.
+
+**This class has already been paid for once.** `docs/SECURITY-DX-ROADMAP.md`
+records the nightly Staging E2E passing for a fortnight against a two-week-old
+build: *"Staging carried no `GIT_SHA` stamp, so `/health` answered `sha:null`
+and the staleness was invisible from outside."* Same shape, different host, and
+the lesson had not been carried across.
+
+**Fix.** `/health` now returns `builtAt` — the assembly's own file timestamp,
+via `Assembly.GetExecutingAssembly().Location` + `File.GetLastWriteTimeUtc` —
+and `mvid`, the module version id, unique per compilation. Comparing `builtAt`
+against `git log -1 --date=short -- backend/scripts/autocount-service/AcSyncService.cs`
+turns "is the host behind" from a guess into a comparison.
+
+**Deliberately NOT a version constant, and not a git SHA injected at build
+time.** Both are things a person has to remember, and this repo's own standing
+rule is that a hand-maintained fact is a fact with an expiry date. A file
+timestamp maintains itself: rebuilding the exe moves it and nothing else can.
+
+Both reads are wrapped, and the keys are emitted as `null` on failure rather
+than omitted — `/health` is the probe used to decide whether the host is up at
+all, so it must degrade to a vague answer and never to a 500, and an ABSENT key
+reads as an old build that never had them, which is the confusion being
+removed.
+
+Pinned in `src/services/autocount-writeback.contract.test.ts`, which already
+reads `AcSyncService.cs` at build time for the payload contract and is the only
+place that can see the service's source — there is no C# test harness. Both new
+cases were observed RED against `origin/main`'s service.
+
+**Ref.** 2026-08-15, PR #2241.
+## A source comment named the wrong department to sign an amendment, and a guide's list had rotted 5-of-13 [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Two findings from verifying the SO amendment section of
+`docs/modules/sales-order.md`. Neither is a runtime defect; both are what a
+reader would act on.**
+
+**1. The comment said Purchasing; the code says Logistics.**
+`so-amendment-header.ts`'s `AMENDABLE_HEADER_KEYS` carried:
+
+> *(DELIVERY lane — Logistics signs; the Processing Date above signs with
+> Purchasing per the same ruling)*
+
+`soHeaderFieldKind` returns the literal `'DELIVERY'` for **every** key including
+`processingDate`, and `amendment-routing.ts` maps `DELIVERY` to **Logistics**.
+Purchasing is reached only through the `SUPPLIER` atom — a PO header field with
+no SO-header counterpart.
+
+Three places agree with the code and only the comment did not: the routing table
+itself, `sales-order.md`, and `purchase-order-amendment.md` section 7. That is
+the worst place for it to be wrong — a comment is where a reader looks FIRST when
+working out who signs off on a change. Corrected in place, with what it used to
+say.
+
+**2. The guide named 5 amendable header keys; there are 13.**
+The prose listed delivery date, processing date, state, postcode and city. The
+two-lane rework (owner 2026-07-27) added the whole delivery-address block
+(`address1`..`address4`, `shipToAddress`, `billToAddress`, `installToAddress`)
+plus `replacementDisposal`, and the prose did not follow. **A reader planning an
+amendment would have concluded the ship-to address could not be amended.**
+
+**The fix is not to update the list — it is to stop repeating it.** The keys
+already have a guard the prose never had: `so-field-policy.test.ts` asserts
+`AMENDABLE_HEADER_KEYS` equals `soAmendableHeaderKeys()` exactly. Proven live
+here by deleting `'shipToAddress'` from the array — 1 of 12 fails with
+`expected [ 'processingDate', …(11) ] to deeply equal [ 'processingDate', …(12) ]`.
+The guide now points at the constant and that test instead of carrying a
+hand-written copy, because a hand-written copy is exactly what rotted.
+
+**Ref.** 2026-08-15, module-guide verification of `sales-order.md`.
+
 ## My own matcher reported "10 of 10 missing" on ten functions that were all there [low]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
