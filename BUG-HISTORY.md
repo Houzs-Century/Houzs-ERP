@@ -1,6 +1,6 @@
 ## The SO renumber guard used a substring scan, so a cached response body blocked the delete [low]
 
-<!-- area: Sales order — doc numbering -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** The first APPLY run of `renumber-sales-orders.mjs`
 (run `31895385393`, 2026-08-15) aborted on the first pair:
