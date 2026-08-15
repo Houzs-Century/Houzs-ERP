@@ -59,9 +59,23 @@ the project is waiting on that machine.
 > operation to `AcSyncService.cs`, add its row here in the same PR.
 
 **Read the order, not just the rows: job 1 unblocks every other job.** Until the
-exe is rebuilt, FIVE merged changes are sitting in the repository and not
-running, including the read route the banner above depends on and the SO-to-PO
-transfer.
+exe is rebuilt, seven merged changes are sitting in the repository and not
+running (§0.1), including the read route the banner above depends on, the
+SO-to-PO transfer, and the photograph writer.
+
+> **Status 2026-08-15, and read the caveat on job 1 before trusting it.**
+>
+> | job | state |
+> |---|---|
+> | 1 | **run once, on an INCOMPLETE main** — see §0.2. Must be run again |
+> | 2 | **blocked by that**: the installed exe predates `#2241`, so `/health` carries no `builtAt` |
+> | 3 | **answered** — `/ensure-masters` returned 200, so the connection line works |
+> | 4 | **answered** — `\wmetafile8`, dpi 96, caption present (`…-photos.md` §4.2). One narrower question left, `…-photos.md` §7.8 |
+> | 5, 6, 7 | not run. The owner authorised all three on 2026-08-15 |
+>
+> `host-session.ps1` in `backend/scripts/autocount-service/` now does 1 through 4
+> in one command, because each was done by hand over a remote desktop that
+> passes no Ctrl combinations and freezes on a left-click.
 
 | # | Job | Writes? | What it needs | What it unblocks |
 |---|---|---|---|---|
@@ -113,8 +127,7 @@ master creation. Those wait on a DEPLOY, not on an answer — see 0.1.
 
 ### 0.1 What job 1 actually brings live
 
-Five merged changes are in the repository and not on the host. The running exe
-predates all of them:
+**SEVEN** merged changes are in the repository and not on the host:
 
 | change | what stops working without it |
 |---|---|
@@ -122,7 +135,16 @@ predates all of them:
 | `#2200` | eight fields the ERP holds and the write-back was not sending |
 | `#2218` | a line with no delivery date arrives BLANK instead of carrying the document date |
 | `#2243` | `POST /further-description` — the read route the banner above needs |
+| `#2241` | `/health` reports `builtAt` and `mvid`. Without it there is no way to tell WHICH build is answering, which is what makes job 2 possible at all |
 | `#2251` | `POST /so-to-po` — the SO-to-PO **Transfer From** link. Without it a purchase order raised from a sales order still reaches AutoCount, but as a standalone document with no provenance |
+| `#2253` | `FurtherDescription` on an `/edit` line, and the JPEG-to-metafile conversion. Without it the photographs cannot go back at all |
+
+> **Updated 2026-08-15.** This table said FIVE and listed `#2251` among the
+> merged when it was still open; `#2241` was in §0.2 as "not yet merged" and is
+> now in. All seven are merged as of this edit. The count is the kind of number
+> CLAUDE.md warns about — it expires — so check it rather than quote it:
+> `gh pr list --state merged --search "AcSyncService in:title"` plus the
+> `builtAt` from job 2.
 
 Verify rather than trust this table: compare `builtAt` from job 2 against
 
@@ -132,13 +154,21 @@ git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSync
 
 ### 0.2 Sequencing — do NOT rebuild twice
 
-A fifth change is open and not yet merged: it adds `builtAt` and `mvid` to
-`/health`, which is what makes job 2 possible at all. Before that lands,
-`/health` answers `{ok, book, service}` and there is no way to tell which build
-is running — the exact blind spot this list exists to close.
+> **SPENT 2026-08-15, and it was spent by being ignored.** This section said
+> `#2241` (`builtAt` + `mvid` on `/health`) was open, and that rebuilding before
+> it merged meant doing job 1 twice. A rebuild was run at 19:00 anyway, on a
+> `main` that did not yet carry it — so `/health` answered
+> `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}` with no `builtAt`,
+> and **job 2 could not be answered by the build job 1 had just installed.**
+> That is the second rebuild this section existed to prevent, and it cost
+> exactly what it said it would.
+>
+> `#2241` is now merged, along with `#2251` and `#2253`. The rule survives its
+> instance: **check §0.1 for anything still open that changes
+> `AcSyncService.cs`, and land it before rebuilding.** The cost of being wrong
+> is one more sitting on a machine nobody here can reach.
 
-**Land it first, then rebuild once.** Rebuilding before it merges means doing
-job 1 twice.
+**Land the pending changes first, then rebuild once.**
 
 ### 0.3 Two things nobody needs to supply
 
