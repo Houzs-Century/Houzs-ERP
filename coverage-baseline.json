@@ -60,13 +60,13 @@
       "files": 379
     },
     "frontend/src": {
-      "pct": 12.94,
+      "pct": 13.01,
       "zeroCoverageFiles": 351,
       "lines": {
-        "total": 60078,
-        "covered": 7832
+        "total": 60076,
+        "covered": 7877
       },
-      "files": 601
+      "files": 603
     }
   },
   "measuredAt": "2026-08-15"
