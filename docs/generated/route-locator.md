@@ -1257,7 +1257,7 @@ Total: 1021 route registrations across 136 files.
 - L65  GET    /reconciliation
 
 ## backend/src/scm/routes/autocount-outbox.ts  (1)
-- L372  GET    /
+- L394  GET    /
 
 ## backend/src/scm/routes/customer-mirror.ts  (1)
 - L63  POST   /
