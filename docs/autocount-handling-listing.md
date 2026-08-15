@@ -1,10 +1,32 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
-> **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
+> **DONE 2026-08-15 — the three steps below have been RUN, and this sheet is now
+> the FALLBACK rather than the channel. Do not hand it to anyone.**
+>
+> The measured values are in `docs/autocount-further-description-photos.md`
+> §4.2. The answer is **`form=wmetafile8`** — the branch of section 6's table
+> where the JPEG-to-metafile conversion has to move into `AcSyncService.cs` on
+> the Windows host. Tool: LINQPad on the AutoCount host, connection `.\A2006` /
+> `AED_HOUZS`, three read-only `SELECT`s; no document was opened in the
+> AutoCount UI, per section 5.
+>
+> **Step 3 was settled without saving a file.** That step exists to route around
+> `sqlcmd` cutting a long column at 256 characters where nobody sees it happen,
+> and it asks a human to check a file size. LINQPad does not truncate, so the
+> check became an identity instead: `LEN(x) * 2 = DATALENGTH(x)` held on all
+> three rows, which an `nvarchar` column satisfies only when the whole value is
+> in hand. Stronger evidence than a file size, and no attachment to mishandle.
+>
+> **The deploy this banner used to be waiting on has happened.**
+> `deploy-on-host.ps1 -Server ".\A2006"` was run on the office host on
+> 2026-08-15 and reported `compiled - 51712 bytes`, `/health` naming
+> `AED_HOUZS`, and `/ensure-masters` answering 200 — so the running exe now
+> carries the read route below, and the rollback sits beside it as
+> `C:\Temp\AcSyncService.prev.exe`.
 >
 > Section 8 below said the durable fix was a read-only route on `AcSyncService`
 > and that it should be the first thing added the next time that file was
-> opened. It has been added:
+> opened. It has been added, and is now LIVE:
 >
 > ```bash
 > AC_SYNC_URL=... AC_SYNC_KEY=... \
@@ -16,14 +38,132 @@
 > file (step 3). It reports truncation instead of hiding it, which is the trap
 > section 5 warns about.
 >
-> **The one human step that remains is a DEPLOY, not a query:** the route is in
-> the source and compiles (verified locally against the licensed assemblies —
-> `build-local.ps1`, exit 0, 51712 bytes), but the office host is still running
-> the previous build. Run `deploy-on-host.ps1` there once and this sheet is
-> spent.
+> **Nothing is now waiting on a human.** For any other `DtlKey` — including the
+> one open question this read did NOT settle, how AutoCount lays out more than
+> one picture on a line (`…-photos.md` §7.8) — call the route.
 >
-> Keep it afterwards for the case it still covers: a machine that cannot reach
-> the service, or a service that will not start.
+> Kept, not deleted, for the case it still covers: a machine that cannot reach
+> the service, or a service that will not start. Sections 2 and 5 also remain
+> the rules for anyone reading the book by hand at all.
+
+---
+
+## 0. EVERYTHING that needs this machine, in one place
+
+Added 2026-08-15 because the answer to *"what else needs the AutoCount host?"*
+was scattered across four documents. **This is the whole list.** Nothing else in
+the project is waiting on that machine.
+
+> Updated 2026-08-15 with job 7 — `/so-to-po` landed after this section was first
+> written, which is the exact way a hand-written list goes stale. If you add an
+> operation to `AcSyncService.cs`, add its row here in the same PR.
+
+**Read the order, not just the rows: job 1 unblocks every other job.** Until the
+exe is rebuilt, FIVE merged changes are sitting in the repository and not
+running, including the read route the banner above depends on and the SO-to-PO
+transfer.
+
+| # | Job | Writes? | What it needs | What it unblocks |
+|---|---|---|---|---|
+| **1** | **Rebuild and swap the exe** — `deploy-on-host.ps1` | replaces a binary; touches no document | one PowerShell line, on that machine | **everything below** |
+| 2 | Confirm the swap — `GET /health`, read `builtAt` | no | one call, with the key | proof that job 1 actually happened |
+| 3 | Prove it can reach the book — `POST /ensure-masters` with **empty arrays** | no (empty arrays open nothing) | one call | that the new build has a live DB connection, which `/health` cannot tell you |
+| 4 | Read one `FurtherDescription` | no | job 1, then `read-further-description.mjs` (the banner above) | which picture format the photos are in — the last unknown blocking photo sync |
+| 5 | `qa-convert.ps1` | **YES — writes to the LIVE book and consumes real DO / GR running numbers** | job 1, plus the owner saying go | `create-po`, `so-to-do`, `po-to-gr` — three operations never proven end to end |
+| 6 | The `FurtherDescription` write probe | **YES — scratch document only** | job 4 first | whether AutoCount will render RTF it did not write |
+| 7 | Convert one sales order to a purchase order and look at the PO's **Transfer From** | **YES — a real PO** | job 1 | that `/so-to-po` works, and that a CONSOLIDATED purchase correctly falls back to a plain create with the source SO numbers in `Ref` |
+
+### 0.05 ROOT CAUSE — why none of these can be done from the development side
+
+Written 2026-08-15 after measuring, not assuming. Everything else the ERP owes
+AutoCount has been built; what is left is here because of ONE property, and it
+is worth stating plainly so nobody spends another session trying to route
+around it.
+
+**There is no channel from here into that machine.** The four that were supposed
+to exist were each checked:
+
+| channel | expected | measured, 2026-08-15 |
+|---|---|---|
+| ZeroTier -> `10.147.17.100,55500`, direct SQL to `AED_HOUZS` | how the cutover read the book | **ZeroTier is not installed on the development machine, and the address is not reachable** |
+| a SQL client | `sqlcmd` / `tsql` / `isql` | **none installed** |
+| a driver, to write one | `mssql` / `tedious` in `backend/` | **neither is a dependency** |
+| `AcSyncService` over the tunnel | the automated path | reachable, but it is a WRITE service with no read route until `#2243`, and its key is a Cloudflare Worker secret that cannot be read from here |
+
+So the account book is not readable, not writable and not inspectable from the
+development side by any route. That is not a gap to be closed with more code:
+the licensed SDK assemblies exist on exactly one machine, and everything below
+either runs there or does not run.
+
+**Each item, and what would actually settle it:**
+
+| # | The question that cannot be answered here | What settles it | Why it is stuck |
+|---|---|---|---|
+| 1 | Which build is the host running? | rebuild once, then `GET /health` | Until `#2241` merges, `/health` answers `{ok, book, service}` — no version, no timestamp. The repository records nothing about what is deployed either, so the only material that looks like an answer is prose, and prose about a deployment goes stale in days. **The same class already cost a fortnight on staging**, where `/health` answered `sha:null` and a two-week-old build passed the nightly check (`docs/SECURITY-DX-ROADMAP.md`). |
+| 2 | Can the new build reach the account book? | `POST /ensure-masters` with empty arrays | `/health` answers from CONSTANTS and opens no database, so a build that cannot connect passes it. The probe that proves a connection is not in the runbook. |
+| 3 | Which picture format does AutoCount store photos in? | job 1, then `read-further-description.mjs` | The photographs came OUT of `FurtherDescription` at cutover, and **the raw RTF was not kept and neither was the extractor** — `git ls-files \| grep -c '\.rtf$'` is 0. The only copy of the answer is the 554 sales-order lines in the live book still holding it. Sending the wrong picture form renders a red X or a blank, and a blank photograph is worse than none. |
+| 4 | Do `create-po`, `so-to-do`, `po-to-gr` work end to end? | `qa-convert.ps1` | Never run since the blocker was fixed. `FK_PO_PurchaseAgent` stopped `create-po` on 2026-08-12; the cause is fixed in source (`AC_PURCHASE_AGENT`) and nothing has been sent since. A conversion cannot be tested against anything but a real book: `AED_TESTING` exhausted its 500-transaction limit. |
+| 5 | Will AutoCount RENDER RTF it did not write? | the write probe, job 6 | Two different renderers are involved — the entry screen and the report's `XRRichText` — so a picture that appears in one may not appear in the other. Only the host can show that. |
+| 6 | Does a document actually move stock? | job 5, then read a stock card | `qa-convert.ps1`'s own header says the GR posts a real stock IN. Nobody has looked at a stock card afterwards, so it is documented and unobserved. |
+
+**What is NOT on this list, deliberately.** Everything that can be built without
+the host has been: the payment balance and its references, the blank line
+delivery date, the eight unsent fields, clearing a field, the item-code chain,
+master creation. Those wait on a DEPLOY, not on an answer — see 0.1.
+
+### 0.1 What job 1 actually brings live
+
+Five merged changes are in the repository and not on the host. The running exe
+predates all of them:
+
+| change | what stops working without it |
+|---|---|
+| `#2043` | purchase-side converts pass `transferMaster=true`; without it `po-to-gr` and `gr-to-pi` die on save |
+| `#2200` | eight fields the ERP holds and the write-back was not sending |
+| `#2218` | a line with no delivery date arrives BLANK instead of carrying the document date |
+| `#2243` | `POST /further-description` — the read route the banner above needs |
+| `#2251` | `POST /so-to-po` — the SO-to-PO **Transfer From** link. Without it a purchase order raised from a sales order still reaches AutoCount, but as a standalone document with no provenance |
+
+Verify rather than trust this table: compare `builtAt` from job 2 against
+
+```
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+### 0.2 Sequencing — do NOT rebuild twice
+
+A fifth change is open and not yet merged: it adds `builtAt` and `mvid` to
+`/health`, which is what makes job 2 possible at all. Before that lands,
+`/health` answers `{ok, book, service}` and there is no way to tell which build
+is running — the exact blind spot this list exists to close.
+
+**Land it first, then rebuild once.** Rebuilding before it merges means doing
+job 1 twice.
+
+### 0.3 Two things nobody needs to supply
+
+- **A purchase agent for the PO.** The ERP has no such field and is not getting
+  one. AutoCount's `FK_PO_PurchaseAgent` insists on a value, so the write-back
+  sends the constant `OTHERS` (`AC_PURCHASE_AGENT`). Do not go looking for this
+  data; it does not exist and it is already handled.
+- **A customer account per debtor.** Every Houzs order is written against one
+  fixed account with the name overwritten, so there is nothing per-customer to
+  open.
+
+### 0.4 Preconditions job 1 refuses without
+
+Both live on the host, and `deploy-on-host.ps1` stops rather than guessing:
+
+- `C:\Temp\ac-svc-key.txt` must exist — this is the same value as the
+  `AC_SYNC_KEY` Worker secret.
+- `C:\Temp\ac-svc-port.txt` must read `8900`. The tunnel ingress points at that
+  port; any other value and the service is unreachable even when it starts.
+
+And two values in `setup.json` that cannot be trusted: it names the book
+`AED_DEMO` (must be `AED_HOUZS`) and the server `192.168.1.198\A2006` (the host
+resolves `.\A2006`). Pass `-Server ".\A2006"` explicitly.
+
+---
 
 **For:** somebody who has an AutoCount machine. Nobody on the development side
 has one, so this task cannot be done here and cannot be automated yet.

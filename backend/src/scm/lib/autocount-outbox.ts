@@ -65,6 +65,7 @@ import {
   composeDetails,
   composeEdit,
   clearedAcKeys,
+  composeSoToPo,
   acUdfDate,
   acUdfMoney,
   acServiceConfig,
@@ -90,7 +91,9 @@ export type { AcRetiredLine } from '../../services/autocount-writeback';
 import { mastersOf } from './autocount-masters';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
-import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
+import {
+  AcReadError, readOrThrow, readSoOutstandingCenti, readPoEnqueueShape,
+} from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -730,15 +733,38 @@ export async function enqueuePoCreate(
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
+
+    /* TRANSFER OR CREATE — the rule is scm/shared/po-transfer-shape.ts, and it
+       falls back to a create on ANY doubt because a create is what happens
+       today and cannot be wrong. Houzs buys in a shape a transfer often cannot
+       express: one PO line serving several customers plus stock (mig 0235). */
+    const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
+
     const body = composeCreatePo(header, lines, { bindings });
+    if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
+
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
-      op: 'create_po',
+      op: shape.kind === 'transfer' ? 'so_to_po' : 'create_po',
       docType: 'PO',
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        body: body as unknown as Record<string, unknown>,
+        /* FromDocNo is resolved at DRAIN, like the four conversions. DtlKeys
+           names the lines this order buys and is REQUIRED; the per-line values
+           are the ERP's agreed COST, which replaces the sales price the
+           transfer carries over. */
+        body: (shape.kind === 'transfer'
+          ? composeSoToPo(shape.dtlKeys, details)
+          : body) as unknown as Record<string, unknown>,
+        /* THE PARENT MUST EXIST FIRST. dispatchOne holds a row whose fromDoc has
+           no AutoCount number yet as `waiting` — without burning an attempt —
+           which is exactly right here: a purchase order raised the same minute
+           as its sales order would otherwise fail on a document the book has
+           not been told about. */
+        ...(shape.kind === 'transfer'
+          ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
+          : {}),
         writeback: { table: 'purchase_orders', keyCol: 'id', key: opts.poId },
         lineWriteback: {
           table: 'purchase_order_items',

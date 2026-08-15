@@ -113,7 +113,7 @@ because the read relay and the write-back run opposite ways.
 | [`autocount-integration-map.md`](autocount-integration-map.md) | The map of every channel between the two systems: direction, purpose, and what each is allowed to do. |
 | [`modules/autocount-writeback.md`](modules/autocount-writeback.md) | The ERP → AutoCount write-back: how to call it, the FK chain, payload shapes. |
 | [`autocount-field-alignment-audit.md`](autocount-field-alignment-audit.md) | Per FIELD: which ERP column the composer reads, whether that is where the ERP keeps the value, whether anything opens the master, and what AutoCount does when it is missing. The BROKEN / AT RISK list, with the numbers. Read it before adding a field to a payload. |
-| [`autocount-sync-coverage.md`](autocount-sync-coverage.md) | Coverage and gaps of the write-back. Carries its own SUPERSEDED-conclusions box — read that box before quoting anything from it. |
+| [`archive/autocount-sync-coverage-2026-08-11.md`](archive/autocount-sync-coverage-2026-08-11.md) | Coverage and gaps of the write-back. Carries its own SUPERSEDED-conclusions box — read that box before quoting anything from it. |
 | [`autocount-migration-record.md`](autocount-migration-record.md) | The one-time AutoCount → ERP migration: how it was done, what broke, and the numbered runbook to resume it. |
 | [`autocount-cutover-ledger.md`](autocount-cutover-ledger.md) | Which rows came from AutoCount vs were made in the ERP, with an evidence chain to a workflow run id. The answer to "where did this row come from" a year from now. |
 | [`cutover-tally-method.md`](cutover-tally-method.md) | How to COUNT and reconcile the outstanding SO/PO migration, re-runnably. |
@@ -122,7 +122,7 @@ because the read relay and the write-back run opposite ways.
 | [`autocount-service-deploy.md`](autocount-service-deploy.md) | Building and deploying `AcSyncService.cs` on a host with AutoCount installed. |
 | [`golive-readiness.md`](golive-readiness.md) | The assessment of what is left before staff move onto the ERP. Cites the four docs above rather than restating them. |
 | [`write-freeze-staged-lift.md`](write-freeze-staged-lift.md) | The `scm.app_config['scm.write_freeze']` switch and how to lift it module by module, with the one-statement rollback. |
-| [`../tasks/AUTOCOUNT-GOLIVE-HANDOFF.md`](../tasks/AUTOCOUNT-GOLIVE-HANDOFF.md) | **Live status of the cutover** — paused, staff still on AutoCount, freeze on, outbox empty. Check this before assuming anything above is in effect. |
+| [`generated/autocount-coverage.md`](generated/autocount-coverage.md) | **What actually works, AutoCount-side** — GENERATED from source every run. The four hand-written copies of this table contradicted each other; do not write a fifth. |
 
 ## 5. Multi-company, 2990, and tenant isolation
 
@@ -234,7 +234,7 @@ These are not documentation; they are work-in-flight, and they expire.
 
 | File | Carries |
 |---|---|
-| [`../tasks/AUTOCOUNT-GOLIVE-HANDOFF.md`](../tasks/AUTOCOUNT-GOLIVE-HANDOFF.md) | Current AutoCount cutover state: paused, freeze on, outbox empty. |
+| [`generated/autocount-coverage.md`](generated/autocount-coverage.md) | What actually works, AutoCount-side. Generated — three of its four columns are read out of source. |
 | [`../tasks/FAIR-PNL-RENTAL-OPEN.md`](../tasks/FAIR-PNL-RENTAL-OPEN.md) | PMS rental/setup figures are **not** reconciled. Do not trust them until closed. |
 | [`HANDOFF-2026-08-05.md`](HANDOFF-2026-08-05.md) | Session baton with items still open. Its own header says to delete it once they close. |
 | [`agents/agent-platform-buildout.md`](agents/agent-platform-buildout.md) | Agent-platform build state and the specs meant to survive compaction. |

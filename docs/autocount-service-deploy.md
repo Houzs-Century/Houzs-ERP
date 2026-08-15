@@ -195,6 +195,44 @@ It contains the DB password.
 
 ## 3. Deploy
 
+> **What is RUNNING on the host right now — 2026-08-15.** `deploy-on-host.ps1
+> -Server ".\A2006"`, exit 0. The source it built is `main`'s
+> `AcSyncService.cs` at SHA256 `b51e60a9…c933da` (57,382 bytes), fetched onto
+> the host from the public raw URL — the two copies already on the machine were
+> stale (`C:\Temp` 08-11, `C:\Temp\acbuild` 08-12) and would have rebuilt code
+> four merged PRs behind. It compiled to **51,712 bytes** and reported:
+>
+> ```
+> OK   health: {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+> OK   database reachable: /ensure-masters answered 200 - the connection line works
+> OK   listening on port 8900, as expected
+> ```
+>
+> So `/ensure-masters` and `/further-description` — both of which the previous
+> exe answered `404 unknown route` — are live. Rollback is
+> `C:\Temp\AcSyncService.prev.exe`, and §5 is the procedure.
+>
+> Two things worth knowing before the next deploy:
+>
+> - **`setup.json` names `AED_DEMO`, not `AED_HOUZS`.** The script says so and
+>   proceeds with the `-Book` value; that NOTE line is expected, not a warning
+>   to chase. The book comes from `-Book` (default `AED_HOUZS`), the server from
+>   `-Server`, and only the credentials come from the file.
+> - **`-Server ".\A2006"` is not optional here.** Without it the value is taken
+>   from `setup.json` and the build fails every real request with "Error
+>   Locating Server/Instance Specified" while `/health` still passes — the exact
+>   trap §4 was written against. `.\A2006` is what the host's own LINQPad
+>   connection uses.
+>
+> **Getting a command onto that host is harder than it looks.** It is driven
+> through UltraViewer, which does NOT pass Ctrl key combinations — so `Ctrl+V`
+> pastes nothing, in the console and in LINQPad alike. In LINQPad use the
+> **Edit menu's** Select All / Paste; in `conhost` use right-click, and note
+> that a left-click first puts the console into QuickEdit selection, which
+> FREEZES it and makes the next right-click copy instead of paste. Running the
+> deploy from LINQPad's C# mode via `Process.Start` with the output redirected
+> is more reliable than the console, and it captures the whole transcript.
+
 1. Stop the running `AcSyncService.exe`.
 2. Keep the previous `.exe` as `AcSyncService.prev.exe` — this is the rollback.
 3. Copy the new `.exe` into place and start it.
@@ -204,7 +242,25 @@ It contains the DB password.
 curl -X POST http://localhost:8900/health -H "X-API-KEY: %ACKEY%"
 ```
 
-Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}`.
+Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService","builtAt":"…Z","mvid":"…"}`.
+
+**`builtAt` is the whole point of this step.** It is the exe's own file
+timestamp, and it is how you tell whether the swap actually happened — compare
+it against the last change to the service's source:
+
+```
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+`builtAt` **earlier than that date means the host is running an old binary**, no
+matter what anybody remembers about deploying it. Before 2026-08-15 `/health`
+returned no build identity at all, so this question had no answer from the
+service, from the repository, or from any document that could be trusted to be
+current — the same blind spot that let a two-week-old staging build pass a
+nightly check for a fortnight (`docs/SECURITY-DX-ROADMAP.md`).
+
+`mvid` is unique per compilation. Use it when two timestamps both look
+plausible, or to confirm two hosts are running the same bytes.
 
 ---
 
@@ -271,13 +327,18 @@ return 0 or less.
 
 ### 4.6a The three cells 4.1-4.5 never touch
 
-4.1 to 4.5 exercise create-SO and edit. **`/create-po`, `/so-to-do` and
-`/po-to-gr` have never run end to end** — `qa-convert.ps1` is those three, in
-order, over the public tunnel from any machine:
+4.1 to 4.5 exercise create-SO and edit. `qa-convert.ps1` is `/create-po`,
+`/so-to-do` and `/po-to-gr`, in order, over the public tunnel from any machine:
 
 ```
 powershell -ExecutionPolicy Bypass -File qa-convert.ps1 -KeyFile <path> -IReallyMeanIt
 ```
+
+**Which of those three have actually run is NOT recorded here.** This sentence
+used to say all three had never run end to end, and by the time anyone read it
+`/so-to-do` had consumed a real DO number. Run status lives in exactly one
+place now — `docs/generated/autocount-coverage.md` — and nothing else may state
+it.
 
 It proves the convert actually LINKED the documents without needing a database:
 step 6 cancels the parent SO **while its DO still exists and requires that to
