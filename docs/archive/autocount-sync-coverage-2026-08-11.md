@@ -1,3 +1,28 @@
+> # ARCHIVED 2026-08-15 — written 2026-08-11, superseded twice before it moved
+>
+> This file carried TWO stacked "SUPERSEDED IN SUBSTANCE" banners of its own,
+> listing seventeen refuted claims between them, and it was still sitting in
+> `docs/` where the next reader would open it. A document that needs a warning
+> label to be read safely does not belong beside the ones that do not.
+>
+> **What replaced it**
+>
+> | for | read |
+> |---|---|
+> | which operations work, and which have run against the live book | `docs/generated/autocount-coverage.md` — GENERATED |
+> | how to call the service, payload shapes, the master-data chain | `docs/modules/autocount-writeback.md` |
+> | every channel between the two systems | `docs/autocount-integration-map.md` |
+> | the day the write-back was switched on and nothing arrived | `docs/autocount-writeback-golive-coe.md` |
+>
+> Its §2 coverage matrix is one of the four hand-written copies that
+> contradicted each other on 2026-08-15 — this one said *"No cell anywhere is
+> PROVEN"* while another recorded `DO-011260` by number. That is why the
+> replacement is generated from source and why nothing may hand-write a
+> coverage table again.
+>
+> Kept, not deleted, because its §0 blocker analysis is the reasoning that
+> produced the line-identity design that shipped. Read it as history.
+
 > # ⚠ SUPERSEDED IN SUBSTANCE — re-verified against the code 2026-08-13
 >
 > **Do not plan Friday from this document's §0 blockers or §2 matrix.** It was
@@ -24,7 +49,7 @@
 >
 > **What is still true and load-bearing**: the DB toggle
 > `scm.autocount_writeback` is `'off'`, `AC_SYNC_KEY` is unset (so every call
-> would 401/503 — see the runbook step in `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md`),
+> would 401/503 — see the runbook step in `docs/archive/AUTOCOUNT-GOLIVE-HANDOFF-2026-08-12.md`),
 > divergence **D6** is real (`ItemCode` is applied only on the append branch,
 > `AcSyncService.cs:810`, never on `EditDetail` `:840-845`), partial-QUANTITY
 > transfer is still not expressible (`autocount-outbox.ts:727-731`), and there is
@@ -302,25 +327,28 @@ any ERP flow, because no ERP flow was involved.
 Read END-TO-END: "can a user's action in the ERP land in AutoCount". A cell is only as
 strong as its weakest half.
 
-Legend — **PROVEN** = built and demonstrated against the live book · **BUILT** = code
-exists on both sides but has never run end-to-end · **DESIGNED** = written down, code
-missing on at least one side · **NOTHING** = no path exists (the SDK merely *could* do
-it counts as NOTHING).
+> **The matrix that was here has been DELETED. It is generated now:**
+> **`docs/generated/autocount-coverage.md`**
+> (`npm --prefix backend run gen:ac-coverage`, gated by `audit:ac-coverage`).
+>
+> It said *"No cell anywhere is PROVEN"* and that every EDIT cell was `NOTHING`.
+> Both were true when written and both were false by 2026-08-13. Three other
+> documents carried their own copy of the same table and disagreed with this one
+> and with each other — one of them recorded a document number for an operation
+> this file called impossible. On 2026-08-15 that cost two wrong answers to the
+> owner in opposite directions, each read off a different file.
+>
+> Three of the four columns are facts about SOURCE — the operations in
+> `AC_ROUTE`, the `case` labels in `AcSyncService.cs`, the enqueue call sites in
+> `scm/routes/` — so they are re-derived from the tree on every run and nobody
+> types them again. The fourth, *was it ever run against the licensed book*, is
+> not in any source tree: it lives in `backend/scripts/data/ac-live-proof.json`,
+> in one place, and an entry there needs a document number.
+>
+> **Do not write another coverage table, here or anywhere.**
 
-The DELETE column is deliberately absent. Per "不可以删只可以 cancel", delete is not a
-capability we want; CANCEL replaces it.
-
-| Doc | CREATE | CONVERT (in) | EDIT | CANCEL |
-|---|---|---|---|---|
-| **SO** | BUILT | n/a (no parent) | **NOTHING** | BUILT |
-| **PO** | BUILT | n/a (no parent) | **NOTHING** | BUILT |
-| **DO** | NOTHING | BUILT (SO->DO) | NOTHING | BUILT |
-| **GR** | NOTHING | BUILT (PO->GR) | NOTHING | BUILT |
-| **SI** | NOTHING | BUILT (DO->IV) | NOTHING | NOTHING |
-| **PI** | NOTHING | BUILT (GR->PI) | NOTHING | NOTHING |
-
-**No cell anywhere is PROVEN.** The only live-book evidence is a manual SO create by a
-program that is no longer the one being shipped.
+The DELETE column is deliberately absent from the generated table too. Per
+"不可以删只可以 cancel", delete is not a capability we want; CANCEL replaces it.
 
 ### 2.1 Evidence per cell
 

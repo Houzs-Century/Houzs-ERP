@@ -1,3 +1,18 @@
+> **ARCHIVED 2026-08-15. This is a dated SNAPSHOT of 2026-08-12, not current state.**
+>
+> It is kept because it holds the only written record of `DO-011260` — the one
+> conversion ever run against the licensed book — and because two of its lines
+> have since been overtaken:
+>
+> - *"BLOCKED — `create-po` and therefore `po-to-gr` — `FK_PO_PurchaseAgent`"* —
+>   fixed 2026-08-14; `readPoHeader` sends the constant `AC_PURCHASE_AGENT`.
+> - *"Write-back toggle still `off`; `scm.autocount_outbox` still holds zero
+>   rows"* — the toggle went ON for company 1 on 2026-08-13.
+>
+> **For what works now, read `docs/generated/autocount-coverage.md`**, which is
+> generated from source and cannot rot the way this file did. Nothing should
+> ever cite this snapshot as current.
+
 # AutoCount cutover — go-live handoff
 
 ## PAUSED until Friday. Staff stay on AutoCount.
@@ -157,7 +172,7 @@ SDK has no `DeleteDetail` for `PurchaseOrder` at all.
 row ids AND every other line on the document is already keyed (guard read in
 `services/autocount-writeback.ts` on 2026-08-12); PO and the four downstream
 types still refuse keyless lines. Still open: no API or UI for the outbox.
-Coverage matrix and build plan: `docs/autocount-sync-coverage.md` (PR #1931).
+Coverage matrix and build plan: `docs/archive/autocount-sync-coverage-2026-08-11.md` (PR #1931).
 (PR #1931).
 
 ## Criterion 2 — compartment and variant

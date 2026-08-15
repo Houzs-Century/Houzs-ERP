@@ -40,7 +40,7 @@ duplicating or second-guessing them:
 
 | Area | Owner document |
 |---|---|
-| Criterion 1 — the document x operation sync matrix | `docs/autocount-sync-coverage.md` |
+| Criterion 1 — the document x operation sync matrix | `docs/archive/autocount-sync-coverage-2026-08-11.md` |
 | Criterion 3 — ERP vs AutoCount balances, Remark 2 status mapping | `docs/stock-reconciliation.md` |
 | Criterion 2 — field-level compartment completeness re-measure | in flight, see §4.2 |
 
@@ -92,7 +92,7 @@ His words, and where each stands.
 
 | # | Criterion | Verdict | The number that proves it |
 |---|---|---|---|
-| 1 | Every document (SO/PO/DO/GR/PI/SI) syncs to AutoCount on create, convert AND edit | **FAIL — not built** | The write-back is a proven one-shot **program**, not a service the ERP can call. Two orders (`SO-2608-001`, `SO-2608-002`) were written into live `AED_HOUZS` by hand-run SDK code. There is no ERP-side caller, no queue, no retry, no alarm. Coverage matrix: `docs/autocount-sync-coverage.md` |
+| 1 | Every document (SO/PO/DO/GR/PI/SI) syncs to AutoCount on create, convert AND edit | **FAIL — not built** | The write-back is a proven one-shot **program**, not a service the ERP can call. Two orders (`SO-2608-001`, `SO-2608-002`) were written into live `AED_HOUZS` by hand-run SDK code. There is no ERP-side caller, no queue, no retry, no alarm. Coverage matrix: `docs/archive/autocount-sync-coverage-2026-08-11.md` |
 | 2 | Compartment and variant aligned, and their correspondence aligned | **PARTIAL — company 2 clean, company 1 has 5 defect classes** | Company 2: clean on all four legs (run 31412605952). Company 1 LEG 1 (run 31412356560): **0** code mismatches, **8** builds where the PO is short of pieces the SO has, **16** variant-value differences, **14** children carrying no variants, **181** null `so_item_id`, **1** dangling FK |
 | 3a | Stock Balance Record aligned | **FAIL — structurally cannot pass** | Sofa physical stock was **never imported**: prod holds 20 open sofa lots and **0** with a `batch_no`. `import-ac-sofa-stock.mjs` has only ever been DRY-RUN (97 lots / 97 units / 43 batches). Ledger §5 item 14 |
 | 3b | Remark 2 (his stock status) aligned with ERP stock status | **FAIL — and the likely cause is identified** | **13,881 / 13,881** imported SO lines have `warehouse_id = NULL`, so every imported line is permanently PENDING and sofa `findCoveringBatch` returns null on sight. Ledger §5 item 13. Measurement owned by `docs/stock-reconciliation.md` |
@@ -402,7 +402,7 @@ already does the business job. This is a deletion of code, not a new feature.
   (`purchase-returns.ts:1339`). Removing a line while editing a document is ordinary ERP
   behaviour and is not what the ruling is about. **But under live sync it becomes a
   divergence risk** — the ERP drops the line, AutoCount keeps it — and that is line
-  identity, which belongs to criterion 1. **Handed to `docs/autocount-sync-coverage.md`,
+  identity, which belongs to criterion 1. **Handed to `docs/archive/autocount-sync-coverage-2026-08-11.md`,
   not resolved here.**
 
 ### 5.2 "暂时只可以在 erp 改" — the ERP is the only editing surface
@@ -445,7 +445,7 @@ Two things this assessment can contribute:
   fixed as part of this requirement, not separately. A purged PO cannot be cancelled on
   the AutoCount side because the ERP retains nothing to push.
 
-Measurement belongs to `docs/autocount-sync-coverage.md`.
+Measurement belongs to `docs/archive/autocount-sync-coverage-2026-08-11.md`.
 
 ### 5.4 "zerotier 只能保证不断" — transport
 
@@ -610,7 +610,7 @@ Every row maps to one of the owner's three criteria, or is justified as a prereq
 |---|---|---|---|---|---|
 | B1 | **Sofa physical stock was never imported** — 0 lots carry a `batch_no` | 3a | OPEN | Ledger §5 item 14. `import-ac-sofa-stock.mjs` DRY-RUN only: 97 lots / 97 units / 43 batches, 45 builds; drop = 4 over-balance, 9 placeholder | Apply the import. It is written and dry-run clean. Confirm the result with an independent read, not the script's own output (§4.3) |
 | B2 | **All 13,881 imported SO lines have `warehouse_id = NULL`** → every imported line permanently PENDING; sofa `findCoveringBatch` returns null on sight | 3b (and 3a) | OPEN | Ledger §5 item 13, measured on prod 2026-08-10. `import-ac-outstanding-so.mjs` computes `warehouseId` in three places but `ICOLS:467` omits the column | Run `backfill-so-line-warehouse.mjs` with `GROUP=all` (13,881 lines), not the 981-sofa default. This is the most likely single cause of criterion 3b |
-| B3 | **No ERP-callable AutoCount sync service** — the write-back is a hand-run program, not a service | 1 | OPEN | Two orders written into live `AED_HOUZS` by hand. No ERP caller, no queue, no retry, no alarm | See `docs/autocount-sync-coverage.md`. Minimum bar in §5.4 |
+| B3 | **No ERP-callable AutoCount sync service** — the write-back is a hand-run program, not a service | 1 | OPEN | Two orders written into live `AED_HOUZS` by hand. No ERP caller, no queue, no retry, no alarm | See `docs/archive/autocount-sync-coverage-2026-08-11.md`. Minimum bar in §5.4 |
 | B4 | **No durable queue / retry / alarm** — an ERP save can succeed while its sync is silently lost | 1 (ruling 5.4) | OPEN | §5.4. `SCAN_QUEUE` proves the primitive exists; there is no sync queue | Persist the sync intent in the same operation that commits the document; add per-document `sync_status` |
 | B5 | **Company 1 field alignment: 8 short POs, 16 variant-value differences, 14 children with no variants, 181 null `so_item_id`, 1 dangling FK** | 2 | OPEN | Run 31412356560. Company 2 clean (31412605952) | Third agent re-measuring on the field; the 8 short POs need adjudication |
 | B6 | **Cancel divergence unproven** — no test that the outstanding set matches on both sides after a cancel | 1 (ruling 5.3) | OPEN | §5.3 | Reuse the existing outstanding predicate (not-DO, not-IV); the definition already exists in the import data |
@@ -713,7 +713,7 @@ Listed honestly. Each has a specific, cheap next step; none needs the owner.
 | U3 | **How many staff actually hold `scm.admin` or `is_owner`** — i.e. how many people the freeze does not currently stop | Role assignment lives in the database, not in code | One read-only query over the role/permission join. Worth knowing before claiming the freeze is holding |
 | U4 | **Whether the 7 `runScmPgCommand` endpoints persist reliably** (B10) — they share the failing script's driver, `sql.begin()` and `unsafe()`, and `tbc-update` writes the same jsonb keys on the same table | Freeze on, and I was scoped read-only. The root cause itself is owned by another agent | One `tbc-update` on a real SO, then an independent re-read of `variants`. Conclusive because the API appends `RETURNING` and turns a rollback into a 500 — a genuine failure should be loud |
 | U4b | **Whether Hyperdrive query caching is enabled** | The Hyperdrive config lives in the Cloudflare console, not in `wrangler.toml` (`:113-115`), and carries no `caching` block in-repo | A console check. Low priority — §4.3 shows the SCM read and write paths both bypass Hyperdrive, so it cannot affect SO/PO save-then-read |
-| U5 | **Whether DRAFT SOs sync to AutoCount** — decides whether the draft-only SO delete (§5.1) is safe or orphan-producing | Sync is not built, so the question has no answer yet | A design decision for `docs/autocount-sync-coverage.md`. **Recommendation: drafts must not sync.** Then the draft delete is unambiguously safe |
+| U5 | **Whether DRAFT SOs sync to AutoCount** — decides whether the draft-only SO delete (§5.1) is safe or orphan-producing | Sync is not built, so the question has no answer yet | A design decision for `docs/archive/autocount-sync-coverage-2026-08-11.md`. **Recommendation: drafts must not sync.** Then the draft delete is unambiguously safe |
 | U6 | **The true count of criterion-2 field defects on the field**, as opposed to in the audit | The current audit keys on a stale `SOFA UNPARSED` remark; a third agent is re-measuring | That agent's re-measure |
 | U7 | **Whether the 181 null `so_item_id` rows are a data gap or a schema-normal state** | Not investigated here; it belongs to criterion 2 | The criterion-2 adjudication. Flagged because 181 is large enough to change the verdict either way |
 
