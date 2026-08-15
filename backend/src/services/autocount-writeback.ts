@@ -1561,6 +1561,88 @@ export async function callAcService(
   };
 }
 
+// ── clearing a field, which is not the same as never having one ─────────────
+
+/**
+ * WHY THIS EXISTS. `soEditHeader` omits every key the ERP has no value for, and
+ * that rule is right for the case it was written for: an order that never had a
+ * `Ref` must not blank the one an operator typed into AutoCount. But it also
+ * makes the opposite intent inexpressible — an operator who DELETES a value in
+ * the ERP gets silence, and the account book keeps the old one forever. The
+ * owner's rule is that the ERP is master: *"任何情况 ERP update 就是都要跟"*.
+ *
+ * The composer cannot tell the two apart, because it reads the SAVED row and
+ * both look like an empty column. So the ROUTE says which fields this request
+ * wrote — it is the only thing that knows — exactly as it already does for
+ * `newLineIds`, and for the same reason: a keyless line means two opposite
+ * things and the ERP is not allowed to guess.
+ *
+ * NOT EVERY FIELD MAY BE CLEARED, and the exclusions are the point:
+ *
+ *   `agent`          FK_SO_SalesAgent. A blank Agent is not an empty field, it
+ *                    is a foreign-key failure that loses the whole document.
+ *   `sales_location` Same shape, and company 1 cannot save an order without one
+ *                    anyway (so-location-gate.ts).
+ *   `debtor_name`    Also travels as `Attention`. An order with no customer name
+ *                    is not a state the ERP can produce.
+ *   line `ItemCode`  Never re-sent on a line the book owns at all.
+ *
+ * Everything here is free text or a date with no foreign key behind it.
+ */
+export const CLEARABLE_SO_HEADER_FIELDS: Readonly<Record<string, string>> = {
+  ref: 'Ref',
+  phone: 'Phone1',
+  emergency_contact_phone: 'DeliverPhone1',
+};
+
+/**
+ * The ERP columns that pack into `InvAddr1..4`, as ONE unit.
+ *
+ * `soInvoiceAddress` folds five columns into four lines, so clearing any one of
+ * them re-shuffles the rest — line 3 can become line 2. There is no
+ * field-by-field answer, so touching ANY of these sends ALL FOUR keys, nulls
+ * included, and the account book takes the ERP's whole address block.
+ */
+export const SO_ADDRESS_FIELDS: readonly string[] = [
+  'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
+];
+
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
+  processing_date: 'PDate',
+};
+
+/**
+ * The keys this edit must send as an EXPLICIT NULL, from the ERP columns the
+ * request wrote.
+ *
+ * A field is cleared only when the route says it was written AND the saved value
+ * is empty. Written-and-still-empty is the operator deleting it; not written at
+ * all is silence, and silence keeps the book's value.
+ */
+export function clearedAcKeys(
+  touchedFields: readonly string[],
+  saved: Record<string, unknown>,
+): { header: string[]; udf: string[] } {
+  const touched = new Set(touchedFields);
+  const isBlank = (col: string) => String(saved[col] ?? '').trim() === '';
+  const header: string[] = [];
+  for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) header.push(key);
+  }
+  /* The address is a package: if any of its columns was written and the packer
+     now produces fewer lines, the trailing ones have to be nulled or the book
+     keeps a street that is no longer on the order. */
+  if (SO_ADDRESS_FIELDS.some((f) => touched.has(f))) {
+    header.push('InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4');
+  }
+  const udf: string[] = [];
+  for (const [col, key] of Object.entries(CLEARABLE_SO_UDF_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) udf.push(key);
+  }
+  return { header, udf };
+}
+
 /**
  * The `/so-to-po` payload: which sales lines this purchase order buys, and what
  * the ERP agreed to pay for them.
