@@ -47,7 +47,7 @@ were observed RED with the enqueue neutralised. The three route anchors are
 pinned in `tests/autocountWritebackWiring.test.ts` under their own test rather
 than by widening the "every" claim that already failed to hold.
 
-**Ref.** 2026-08-15, PR #2225.
+**Ref.** 2026-08-15, PR #2228.
 
 ## Four things the cutover pulled out of AutoCount that the write-back never put back [high]
 
