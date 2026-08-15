@@ -221,6 +221,11 @@ Written to be followed in one sitting by someone who did not write this change,
 in the shape of `docs/autocount-service-deploy.md`. **§5.1 alone is worth doing
 even if nothing else on this page is ever built**, and it writes nothing.
 
+**§5.1 has been lifted out into `docs/autocount-handling-listing.md`** — a
+standalone sheet that can be handed to whoever has an AutoCount machine, with no
+part of this page needed to follow it. Send that, not this. This section stays
+because the surrounding argument depends on it.
+
 CLAUDE.md's rule is *never ask the owner to run a query, build the check
 instead*. That rule is about the ERP's Postgres, which every workflow here can
 reach with `secrets.DATABASE_URL`. **The AutoCount book has no such channel**:

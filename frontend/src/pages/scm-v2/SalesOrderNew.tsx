@@ -63,9 +63,12 @@ import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
 import {
-  useLocalities, distinctStates, citiesInState, postcodesInCity,
-  countryForState, resolvePostcode, resolveCityState, allCities, allPostcodes,
+  useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback, preferredCustomerTypeValue,
@@ -806,41 +809,24 @@ export const SalesOrderNew = () => {
     return out;
   }, [lines]);
 
-  // ── Locality cascades ──────────────────────────────────────────────
+  // ── Locality cascade — shared layer, both directions (address-cascade.ts) ──
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  const states  = useMemo(() => distinctStates(locRows), [locRows]);
-  const cities  = useMemo(() => state ? citiesInState(locRows, state) : [], [locRows, state]);
-  const postcodes = useMemo(
-    () => (state && city) ? postcodesInCity(locRows, state, city) : [],
-    [locRows, state, city],
-  );
-  /* REVERSE resolve — when no State is picked yet, the City / Postcode selects
-     offer the full cross-state pool so the operator can choose one FIRST and let
-     the State (→ Sales Location) resolve back from it. With a State picked these
-     fall through to the state-scoped lists above, so the forward cascade is
-     unchanged. */
-  const cityChoices     = useMemo(() => (state ? cities : allCities(locRows)),   [state, cities, locRows]);
-  const postcodeChoices = useMemo(() => ((state && city) ? postcodes : allPostcodes(locRows)), [state, city, postcodes, locRows]);
-  /* Set State from a resolved City — raw setState (NOT the State <select>'s
-     handler) so it does NOT clear the City/Postcode the operator just chose; the
-     existing state→warehouse effect below then fills Sales Location. Never
-     clobbers an already-picked State unless the city unambiguously names a
-     different one. */
-  const applyCityReverse = (nextCity: string) => {
-    if (!nextCity) return;
-    const st = resolveCityState(locRows, nextCity);
-    if (st && st !== state) setState(st);
+  const { cities: cityChoices, postcodes: postcodeChoices } =
+    useAddressCascade(locRows, state, city);
+  /* This form holds the triple as three separate atoms, so each pick writes all
+     three back. The raw setters are deliberate: routing a back-filled State
+     through the State picker's own onChange would clear the City/Postcode the
+     operator just chose, because that handler exists to reset the cascade. The
+     existing state→warehouse effect below then fills Sales Location. */
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state);
+    setCity(next.city);
+    setPostcode(next.postcode);
   };
-  /* Set State + City from a resolved Postcode (Malaysian postcode → one
-     locality). Raw setters keep the just-entered Postcode intact (no effect
-     loop). */
-  const applyPostcodeReverse = (nextPostcode: string) => {
-    if (!nextPostcode) return;
-    const res = resolvePostcode(locRows, nextPostcode);
-    if (!res) return;
-    if (res.state && res.state !== state) setState(res.state);
-    if (res.city && res.city !== city) setCity(res.city);
-  };
+  const onCityPick = (nextCity: string) =>
+    applyTriple(pickCity(locRows, { state, city, postcode }, nextCity));
+  const onPostcodePick = (nextPostcode: string) =>
+    applyTriple(pickPostcode(locRows, { state, city, postcode }, nextPostcode));
 
   /* Scan address reconcile (fromScan only) — once the locality cascade for the
      scanned State has options, snap the scanned City to a REAL my_localities
@@ -849,19 +835,22 @@ export const SalesOrderNew = () => {
      localities list doesn't contain is dropped (never free-typed into a
      dropdown). Each holder is cleared once consumed so a later manual edit
      isn't clobbered. */
+  /* Both effects bail unless the State (and, for the postcode, the City) is
+     already set, so the lists they read are the state-scoped ones — the same
+     values the old state-only memos held. */
   useEffect(() => {
-    if (!scanCity || !state || cities.length === 0) return;
-    const hit = cities.find((cc) => cc.toLowerCase() === scanCity.trim().toLowerCase());
+    if (!scanCity || !state || cityChoices.length === 0) return;
+    const hit = cityChoices.find((cc) => cc.toLowerCase() === scanCity.trim().toLowerCase());
     if (hit) setCity((prev) => prev || hit);
     setScanCity('');
-  }, [scanCity, state, cities]);
+  }, [scanCity, state, cityChoices]);
   useEffect(() => {
-    if (!scanPostcode || !state || !city || postcodes.length === 0) return;
+    if (!scanPostcode || !state || !city || postcodeChoices.length === 0) return;
     const want = scanPostcode.trim();
-    const hit = postcodes.find((p) => p === want);
+    const hit = postcodeChoices.find((p) => p === want);
     if (hit) setPostcode((prev) => prev || hit);
     setScanPostcode('');
-  }, [scanPostcode, state, city, postcodes]);
+  }, [scanPostcode, state, city, postcodeChoices]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. Same
      rule as Edit SO: pick a state, the Sales Location auto-fills with the
@@ -2180,7 +2169,7 @@ export const SalesOrderNew = () => {
               <StatePicker
                 value={state}
                 selectClassName={styles.fieldSelect}
-                onChange={(next) => { setState(next); setCity(''); setPostcode(''); }}
+                onChange={(next) => applyTriple(pickState(next))}
               />
             </label>
             <label className={styles.field}>
@@ -2189,9 +2178,9 @@ export const SalesOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(v) => { setCity(v); setPostcode(''); applyCityReverse(v); }}
+                  onChange={onCityPick}
                   disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : 'Pick city'}
+                  placeholder={loc.isLoading ? 'Loading…' : cityPlaceholder(state)}
                   options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -2203,9 +2192,9 @@ export const SalesOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={(v) => { setPostcode(v); applyPostcodeReverse(v); }}
+                  onChange={onPostcodePick}
                   disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : 'Pick postcode'}
+                  placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
                   options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
