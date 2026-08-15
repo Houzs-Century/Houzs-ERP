@@ -1,5 +1,27 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
+> ## OWNER RULING 2026-08-15 — this is the ONLY iNiState gap that is in scope
+>
+> The decompiled `InistateConnector` handles several things our write-back does
+> not: **ARCN / ARDN** (credit and debit notes), **ARInvoice / APInvoice as
+> standalone documents** (we only reach IV and PI through a conversion),
+> `/api/printer/*`, and `/api/SQLAccounting/*`.
+>
+> Asked which of those replacing iNiState requires, the owner answered:
+> **"除了 further description 其他的都不需要"** — only the Further Description
+> photo write-back. **Do not build the others, and do not re-raise them as gaps.**
+>
+> So this listing is not a curiosity. It is the last thing standing between us
+> and replacing iNiState: the photos on our sales-order lines were carved OUT of
+> this field at the cutover (RTF `\pict` blobs, 544 images, 0 failures), and
+> putting them BACK needs the exact stored shape — which `\pict` subtype
+> (`\wmetafile8`, as read, or `\pngblip` / `\jpegblip`), and how the DIB is
+> wrapped. Writing the wrong one renders as nothing in AutoCount.
+>
+> The precedent exists on the write side too: the decompiled connector
+> RTF-encodes any payload key named `furtherdescription`, so this path was
+> already working once. See `docs/autocount-further-description-photos.md`.
+
 > **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
 >
 > Section 8 below said the durable fix was a read-only route on `AcSyncService`
