@@ -65,6 +65,7 @@ import {
   composeDetails,
   composeEdit,
   clearedAcKeys,
+  composePaymentUdf,
   composeSoToPo,
   acUdfDate,
   acUdfMoney,
@@ -82,6 +83,7 @@ import {
   type AcCreatedLine,
   type AcRetiredLine,
   type ErpLine,
+  type ErpPaymentRef,
 } from '../../services/autocount-writeback';
 
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
@@ -92,7 +94,7 @@ import { mastersOf } from './autocount-masters';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
 import {
-  AcReadError, readOrThrow, readSoOutstandingCenti, readPoEnqueueShape,
+  AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs, readPoEnqueueShape,
 } from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -642,7 +644,9 @@ export async function enqueueSoCreate(
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
     const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
-    const body = composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings });
+    const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
+    const body = composeCreateSo(
+      header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -734,10 +738,8 @@ export async function enqueuePoCreate(
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
 
-    /* TRANSFER OR CREATE — the rule is scm/shared/po-transfer-shape.ts, and it
-       falls back to a create on ANY doubt because a create is what happens
-       today and cannot be wrong. Houzs buys in a shape a transfer often cannot
-       express: one PO line serving several customers plus stock (mig 0235). */
+    /* TRANSFER OR CREATE — po-transfer-shape.ts, which falls back on ANY doubt
+       because a create is today's behaviour and cannot be wrong. */
     const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
 
     const body = composeCreatePo(header, lines, { bindings });
@@ -754,7 +756,8 @@ export async function enqueuePoCreate(
         body: (shape.kind === 'transfer'
           ? composeSoToPo(shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
-        /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`. */
+        /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
+           without burning an attempt, until the sales order has its number. */
         ...(shape.kind === 'transfer'
           ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
           : {}),
@@ -1501,6 +1504,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   const outstandingCenti = await readSoOutstandingCenti(sb, h);
+  const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1508,7 +1512,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1516,7 +1520,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti, touchedFields), lines,
+      soEditHeader(h, salespersonName, lines, outstandingCenti, paymentRefs, touchedFields), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1592,6 +1596,10 @@ function soEditHeader(
   /** REQUIRED, never optional: it decides what the account book says a live
    *  customer still owes. `null` omits the key and keeps the book's own. */
   outstandingCenti: number | null,
+  /** The payment references, oldest first — REQUIRED for the same reason as
+   *  the three above: it decides what the book's PAYEMENT field says. An empty
+   *  array omits the key and the book keeps whatever the cutover left. */
+  paymentRefs: readonly ErpPaymentRef[],
   /** ERP columns THIS REQUEST wrote. Optional: absence is the STRICTER
    *  direction. Rule and exclusions live on clearedAcKeys. */
   touchedFields: readonly string[] = [],
@@ -1642,6 +1650,9 @@ function soEditHeader(
   const cleared = clearedAcKeys(touchedFields, h);
   for (const key of cleared.header) out[key] = null;
   for (const key of cleared.udf) udf[key] = '';
+  /* Omit-when-absent like the rest: a blank would erase the book's own text. */
+  const payement = composePaymentUdf(paymentRefs);
+  if (payement) udf.PAYEMENT = payement;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
