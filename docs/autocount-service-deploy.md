@@ -289,13 +289,18 @@ return 0 or less.
 
 ### 4.6a The three cells 4.1-4.5 never touch
 
-4.1 to 4.5 exercise create-SO and edit. **`/create-po`, `/so-to-do` and
-`/po-to-gr` have never run end to end** — `qa-convert.ps1` is those three, in
-order, over the public tunnel from any machine:
+4.1 to 4.5 exercise create-SO and edit. `qa-convert.ps1` is `/create-po`,
+`/so-to-do` and `/po-to-gr`, in order, over the public tunnel from any machine:
 
 ```
 powershell -ExecutionPolicy Bypass -File qa-convert.ps1 -KeyFile <path> -IReallyMeanIt
 ```
+
+**Which of those three have actually run is NOT recorded here.** This sentence
+used to say all three had never run end to end, and by the time anyone read it
+`/so-to-do` had consumed a real DO number. Run status lives in exactly one
+place now — `docs/generated/autocount-coverage.md` — and nothing else may state
+it.
 
 It proves the convert actually LINKED the documents without needing a database:
 step 6 cancels the parent SO **while its DO still exists and requires that to

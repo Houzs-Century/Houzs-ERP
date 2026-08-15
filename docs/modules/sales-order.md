@@ -1406,9 +1406,28 @@ SO-specific wiring:
   add/remove) — the SAME shared diff logic the desktop job card, the desktop diff
   modal and the mobile diff sheet already use, so all three label a row
   identically. **Header** atoms come from `soHeaderFieldKind(key)` in
-  `so-amendment-header.ts`; every amendable SO header key (delivery / processing
-  date, state, postcode, city) is a scheduling / delivery-address change ->
-  `DELIVERY` (Logistics).
+  `so-amendment-header.ts`. **Every** amendable SO header key classifies as
+  `DELIVERY` (Logistics) — `soHeaderFieldKind` returns that literal
+  unconditionally, and `amendment-routing.ts` maps `DELIVERY` to Logistics.
+  Purchasing is reached only through the `SUPPLIER` atom, which is a PO header
+  field with no SO-header counterpart.
+
+  **The list of amendable keys is NOT repeated here, on purpose.** This
+  paragraph used to name five of them — delivery date, processing date, state,
+  postcode, city — and by 2026-08-15 there were **thirteen**: the whole
+  delivery-address block (`address1`..`address4`, `shipToAddress`,
+  `billToAddress`, `installToAddress`) and `replacementDisposal` joined in the
+  two-lane rework, and the prose did not follow. A reader planning an amendment
+  would have concluded the ship-to address could not be amended.
+
+  The list already has a guard the prose never had: `AMENDABLE_HEADER_KEYS` in
+  `so-amendment-header.ts` is asserted equal to `soAmendableHeaderKeys()` by
+  `so-field-policy.test.ts`, and a mismatch fails CI. Read it there:
+
+  ```bash
+  node -e "import('./frontend/src/vendor/scm/lib/so-amendment-header.ts')" # or just open it
+  grep -n 'AMENDABLE_HEADER_KEYS = [' -A 20 frontend/src/vendor/scm/lib/so-amendment-header.ts
+  ```
 - **Surfaces (change together):** `AmendmentDetailV2.tsx` (type badges + per-row
   chips + Department-routing aside), the `AmendmentDiffModal` in
   `SalesOrderDetail.tsx` (a **Dept** column), and `MobileSODetail.tsx`'s
