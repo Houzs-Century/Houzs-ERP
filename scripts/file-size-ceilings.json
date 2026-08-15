@@ -9,7 +9,7 @@
     "backend/scripts/backfill-fifo-divergence.mjs": 2059,
     "backend/scripts/repair-2990-doc-refs.mjs": 2101,
     "backend/src/routes/assr.ts": 3366,
-    "backend/src/routes/mail-center.ts": 2323,
+    "backend/src/routes/mail-center.ts": 2284,
     "backend/src/routes/projects.ts": 5188,
     "backend/src/routes/users.ts": 2306,
     "backend/src/scm/routes/consignment-orders.ts": 2405,
