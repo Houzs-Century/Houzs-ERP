@@ -56,7 +56,7 @@ recurring inbound pull in the table above.
 
 | Half | Where | What it is |
 |---|---|---|
-| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. NINE POST routes (`/create-so`, `/create-po`, `/so-to-do`, `/po-to-gr`, `/do-to-iv`, `/gr-to-pi`, `/cancel`, `/edit`, `/ensure-masters`) plus `GET /health`. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
+| AutoCount | `backend/scripts/autocount-service/AcSyncService.cs` | A .NET 4 HTTP service running ON the AutoCount host, driving the licensed 2.2 SDK. NINE POST routes (`/create-so`, `/create-po`, `/so-to-do`, `/po-to-gr`, `/do-to-iv`, `/gr-to-pi`, `/cancel`, `/edit`, `/ensure-masters`) plus `GET /health`, which since 2026-08-15 answers `builtAt` + `mvid` as well as the book — the only way to establish WHICH BUILD the office host is running. Reflected SDK surface in `sdk-api-reference.txt` — there is no published reference. |
 | ERP | `backend/src/scm/lib/autocount-outbox.ts` + `backend/src/services/autocount-writeback.ts` | An outbox: routes enqueue, a cron drains, the returned AutoCount document number is recorded back onto the ERP row. |
 
 AcSyncService's routes, and the outbox `op` that targets each:
@@ -66,6 +66,7 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/create-so` | `create_so` | SO create |
 | `/create-po` | `create_po` | PO create |
 | `/so-to-do` | `so_to_do` | SO -> Delivery Order |
+| `/so-to-po` | `so_to_po` | SO -> Purchase Order. NOT one of the four below: a purchase document transferring from a sales one uses its own SDK method (`AddSOToPOTransferDetail`), and the ERP sends it only when every line maps 1:1 to a sales line the book has a key for. A consolidated purchase stays a plain `create_po` with the source SO numbers in `Ref` — see `scm/shared/po-transfer-shape.ts` |
 | `/po-to-gr` | `po_to_gr` | PO -> Goods Receipt |
 | `/do-to-iv` | `do_to_iv` | DO -> Sales Invoice |
 | `/gr-to-pi` | `gr_to_pi` | GRN -> Purchase Invoice |

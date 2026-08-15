@@ -14,6 +14,7 @@ and an entry needs a document number.
 | `create_so` | `/create-so` | yes | mfg-sales-orders.ts x2 | **yes** — HC-SO-2608-001, HC-SO-2608-002 (2026-08-14) |
 | `create_po` | `/create-po` | yes | mfg-purchase-orders.ts x3 | no |
 | `so_to_do` | `/so-to-do` | yes | delivery-orders-mfg.ts x3 | **yes** — DO-011260 (2026-08-12) |
+| `so_to_po` | `/so-to-po` | yes | _not queued — the drain calls it inline_ | no |
 | `po_to_gr` | `/po-to-gr` | yes | grns.ts x4 | no |
 | `do_to_iv` | `/do-to-iv` | yes | sales-invoices.ts x2 | no |
 | `gr_to_pi` | `/gr-to-pi` | yes | purchase-invoices.ts x3 | no |

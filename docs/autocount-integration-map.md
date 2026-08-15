@@ -216,7 +216,7 @@ next person spends the time on something new.
 | "The SQL bridge holds the clean current source" | **It is stale** — 31,897 chars, no `/ensure-masters`, no fail-closed auth. Rebuilding from it ships the old service |
 | "`setup.json` tells you which book to build against" | It names **`AED_DEMO`**. The build must be told `AED_HOUZS` explicitly |
 | "`setup.json` tells you the server" | It says `192.168.1.198\A2006`, which the host does not resolve. It resolves `.\A2006` |
-| "`/health` proves the service works" | It answers from **constants** and opens no database. A build that cannot reach the book passes it |
+| "`/health` proves the service works" | It answers from **constants** and opens no database. A build that cannot reach the book passes it. Since 2026-08-15 it does at least say WHICH BUILD is answering — `builtAt` (the assembly's own file timestamp) and `mvid` (unique per compilation) — so "is the host behind" is now a comparison instead of a guess. It still proves nothing about the database |
 | "The masters exist, `ensure-masters` said so" | A sales agent and a **purchase** agent are different tables behind different foreign keys. The report can be true and irrelevant |
 | "`it-houzs.dev` is the AutoCount tunnel" | It is a different, older relay. A 404 there proves nothing about the write service |
 | "The evaluation book is a safe place to test" | `AED_TESTING` exhausted its **500-transaction limit**. Verification happens on the live book, on a throwaway document, cancelled afterwards |
