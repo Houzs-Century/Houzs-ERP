@@ -1568,6 +1568,88 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
+  /* ── CLEARING, which is not the same as never having had a value ──────────
+     Every key above is omitted when the ERP column is empty, and that rule is
+     right for an order that never had a Ref — blanking would destroy what an
+     operator typed into AutoCount. It also made the OPPOSITE intent
+     inexpressible: deleting a value in the ERP produced silence and the book
+     kept the old one. Owner 2026-08-15: "任何情况 ERP update 就是都要跟".
+
+     The composer reads the SAVED row, where both cases are an empty column, so
+     the ROUTE says which fields it wrote — the same contract as newLineIds and
+     for the same reason. */
+  describe('a field the operator DELETED is cleared, not left alone', () => {
+    const linked = (over: Row = {}) =>
+      seed({ linked_ac_docno: 'SO-000021', ...over }, { linked_ac_dtlkey: 991 });
+    const header = (sb: { tables: Record<string, Row[]> }) =>
+      outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+
+    test('an untouched blank field is still OMITTED — the book keeps its own', async () => {
+      const sb = linked({ ref: null });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      expect(header(sb)).not.toHaveProperty('Ref');
+    });
+
+    test('a TOUCHED blank field is sent as an explicit null', async () => {
+      const sb = linked({ ref: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['ref'],
+      });
+      expect(header(sb)).toHaveProperty('Ref', null);
+    });
+
+    /* Touched and still HAS a value is an ordinary change, not a clear. */
+    test('a touched field that still has a value sends the value', async () => {
+      const sb = linked({ ref: 'PO-778' });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['ref'],
+      });
+      expect(header(sb)).toHaveProperty('Ref', 'PO-778');
+    });
+
+    /* THE FOREIGN KEYS ARE NOT CLEARABLE, and this is the case that would lose
+       a document rather than a field: a blank Agent is FK_SO_SalesAgent, not an
+       empty string. Same for the stock location. */
+    test('the salesperson and the stock location are never nulled, even when touched', async () => {
+      const sb = linked();
+      await enqueueEdit(client(sb), {
+        companyId: 1,
+        docType: 'SO',
+        docNo: 'HC-SO-B',
+        touchedFields: ['agent', 'salesperson_id', 'sales_location', 'debtor_name'],
+      });
+      const h = header(sb);
+      expect(h.Agent).not.toBeNull();
+      expect(h.SalesLocation).not.toBeNull();
+      expect(h.DebtorName).not.toBeNull();
+    });
+
+    /* The address is ONE package: soInvoiceAddress folds five ERP columns into
+       four lines, so clearing one re-shuffles the rest and there is no
+       field-by-field answer. Touching any of them sends all four. */
+    test('touching any address column sends all four InvAddr keys', async () => {
+      const sb = linked({ address2: null, address3: null, address4: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['address2'],
+      });
+      const h = header(sb);
+      for (const k of ['InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4']) {
+        expect(h, k).toHaveProperty(k);
+      }
+    });
+
+    /* A UDF clears with an empty string, not a null: ApplyUdf writes
+       `kv.Value == null ? "" : ...` either way, and "" is what the book stores. */
+    test('a cleared processing date empties the PDate UDF', async () => {
+      const sb = linked({ processing_date: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['processing_date'],
+      });
+      const udf = (header(sb).UDF ?? {}) as Record<string, string>;
+      expect(udf).toHaveProperty('PDate', '');
+    });
+  });
+
   // ── DeliverPhone1 — 120 of the extract's 13,015 headers carry one
   describe('DeliverPhone1 — the DELIVERY contact, which is not the customer\'s phone', () => {
     /* Two contacts, two columns (owner 2026-08-15). The pairing is the

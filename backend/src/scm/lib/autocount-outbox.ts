@@ -64,6 +64,7 @@ import {
   composeDescription2,
   composeDetails,
   composeEdit,
+  clearedAcKeys,
   acUdfDate,
   acUdfMoney,
   acServiceConfig,
@@ -1291,6 +1292,16 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
+    /**
+     * ERP columns THIS REQUEST wrote, so a value the operator DELETED reaches
+     * AutoCount as a clear instead of as silence. Same contract as
+     * `newLineIds`: the composer reads the SAVED row and both cases look like
+     * an empty column, so the route that did the writing has to say.
+     *
+     * Absent means nothing was cleared, which is the stricter direction and the
+     * behaviour before this existed — a line route legitimately passes nothing.
+     */
+    touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
   try {
@@ -1299,7 +1310,7 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
@@ -1466,7 +1477,7 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = []) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
@@ -1493,7 +1504,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti), lines,
+      soEditHeader(h, salespersonName, lines, outstandingCenti, touchedFields), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1569,6 +1580,16 @@ function soEditHeader(
   /** REQUIRED, never optional: it decides what the account book says a live
    *  customer still owes. `null` omits the key and keeps the book's own. */
   outstandingCenti: number | null,
+  /**
+   * The ERP columns THIS REQUEST wrote, so a value the operator DELETED can be
+   * told apart from one that was never there. Optional, and the absence is the
+   * STRICTER direction — no touched fields means nothing is cleared, which is
+   * the behaviour before this existed (CLAUDE.md permits an optional parameter
+   * only on that condition). Every other caller is a line operation and did not
+   * touch the header at all, so `[]` is the honest value there, not a default
+   * standing in for one.
+   */
+  touchedFields: readonly string[] = [],
 ): Record<string, string | null | Record<string, string>> {
   const out: Record<string, string | null | Record<string, string>> = present({
     DebtorName: (h.debtor_name as string) ?? null,
@@ -1610,6 +1631,16 @@ function soEditHeader(
      not drop it. Only a null — the ERP has no answer — omits the key. */
   const balance = acUdfMoney(outstandingCenti);
   if (balance != null) udf.BALANCE = balance;
+
+  /* AN EXPLICIT NULL IS THE MESSAGE. Everything above omits what the ERP has no
+     value for, which keeps the account book's own text — right for a field that
+     was never filled, and wrong for one the operator just deleted. Only the
+     route knows which is which, so only a field it says it WROTE, and which is
+     now empty, is nulled here. `Str` turns the null into "" on the service side
+     and the book's value goes. */
+  const cleared = clearedAcKeys(touchedFields, h);
+  for (const key of cleared.header) out[key] = null;
+  for (const key of cleared.udf) udf[key] = '';
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
