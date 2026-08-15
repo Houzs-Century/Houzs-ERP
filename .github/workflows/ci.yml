@@ -115,6 +115,17 @@ jobs:
       # TypeScript object literal. Before this, the JSON and the TS had drifted
       # apart in all four dimensions.
       - run: npm run audit:ac-master-maps
+      # A FOURTH since 2026-08-15, and this one replaces prose rather than a
+      # literal. Four documents each carried their own hand-written table of
+      # which AutoCount operations work, and they contradicted each other
+      # outright — one said five cells were PROVEN, another said none were, a
+      # third said an operation had never run that a fourth recorded by document
+      # number. Whoever opened one first believed it. Three of the four columns
+      # are facts about SOURCE (AC_ROUTE, the service's case labels, the enqueue
+      # call sites), so they are read out of the tree every run; only "was it
+      # ever run against the licensed book" is hand-held, in one JSON, and an
+      # entry there needs a document number.
+      - run: npm run audit:ac-coverage
       # ── The three defect-class checks (2026-08-13) ────────────────────────
       # Each exists because the same class kept coming back. They are PR gates,
       # NEVER deploy gates: audit:routes as a deploy gate jammed production

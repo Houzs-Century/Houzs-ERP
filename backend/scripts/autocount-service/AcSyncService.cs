@@ -494,8 +494,13 @@ class AcSyncService {
         // source PO's header master (supplier/currency/terms) onto the target; with
         // false the GRN is built with no supplier, the purchase detail ctor looks
         // that row up in the master table, IndexOf returns -1, and Save() dies with
-        // "there is no row at position -1". The sales classes tolerate false (DO and
-        // IV are PROVEN with it, DO-011260 / DO-011262) so they are left alone.
+        // "there is no row at position -1". The sales classes tolerate false, so they
+        // are left alone — DO-011260 and DO-011262 were both created that way.
+        //
+        // This comment said "DO and IV are PROVEN with it" and cited those same two
+        // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
+        // and /do-to-iv has still never run. Run status does not belong in a comment:
+        // docs/generated/autocount-coverage.md is the one place that states it.
         doc.AddPartialTransferDetail(fromType, dtlKeys, true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
