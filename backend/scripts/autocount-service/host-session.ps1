@@ -51,7 +51,7 @@ Ok ("fetched; AcSyncService.cs is " + (Get-Item $svc).Length + " bytes")
 Note ("sha256 " + $sha)
 Note "Compare that against the tree: git log -1 --format=%H -- backend/scripts/autocount-service/AcSyncService.cs"
 
-<# The host has carried a STALE copy before — on 2026-08-15 C:\Temp held an
+<# The host has carried a STALE copy before - on 2026-08-15 C:\Temp held an
    08-11 build and C:\Temp\acbuild an 08-12 one, four merged PRs behind, and
    rebuilding from either would have QUIETLY REVERTED the service. Fetching
    into a dated directory of its own and printing the hash is what makes that
