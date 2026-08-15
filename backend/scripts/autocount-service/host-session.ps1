@@ -27,7 +27,7 @@ param(
   [string]$Server  = ".\A2006",
   [string]$Book    = "AED_HOUZS",
   [string]$KeyFile = "C:\Temp\ac-svc-key.txt",
-  [string]$BaseUrl = "http://127.0.0.1:8900",
+  [string]$BaseUrl = "http://localhost:8900",
   [switch]$SkipDeploy
 )
 
@@ -42,7 +42,7 @@ Head "1  fetch the current main"
 New-Item -ItemType Directory -Force $Dir | Out-Null
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $raw = 'https://raw.githubusercontent.com/hello-houzs/Houzs-ERP/main/backend/scripts/autocount-service/'
-foreach ($f in 'AcSyncService.cs','deploy-on-host.ps1','qa-convert.ps1') {
+foreach ($f in 'AcSyncService.cs','deploy-on-host.ps1','qa-convert.ps1','fd-probe.ps1') {
   Invoke-WebRequest -UseBasicParsing ($raw + $f) -OutFile (Join-Path $Dir $f)
 }
 $svc = Join-Path $Dir 'AcSyncService.cs'
