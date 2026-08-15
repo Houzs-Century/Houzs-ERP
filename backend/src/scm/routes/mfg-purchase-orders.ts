@@ -33,6 +33,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
+import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
@@ -308,6 +309,7 @@ async function poHasOutstandingDropshipOut(
   }
 }
 
+/* NOT shared with the PCO — it has no DRAFT. See lib/purchase-doc-vocab.ts. */
 const VALID_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
 /* Filter-pill bucket → the raw purchase_orders.status values it covers. Single
    source of truth for BOTH the status-count queries and the list `status`
@@ -329,8 +331,6 @@ const PO_STATUS_BUCKETS: Record<string, string[]> = {
   received: ['RECEIVED'],
   cancelled: ['CANCELLED'],
 };
-const VALID_CURRENCIES = new Set(['MYR', 'RMB', 'USD', 'SGD']);
-const VALID_KINDS = new Set(['mfg_product', 'fabric', 'raw']);
 
 /* ── PO/MRP source-SO gate (mirror of the DO create-gate) ────────────────────
    Owner ruling: PO and MRP are built ONLY from a CONFIRMED Sales Order. A PO
