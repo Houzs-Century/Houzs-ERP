@@ -49,6 +49,7 @@ import {
 import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
 import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
@@ -92,7 +93,6 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
@@ -595,6 +595,9 @@ export const SalesOrderNew = () => {
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
   const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* Portalled, because this module has no `.field { position: relative }` and
+     `.card { overflow: hidden }` left 130px of room for a 260px list. */
+  const debtorInputRef = useRef<HTMLInputElement>(null);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -1823,6 +1826,7 @@ export const SalesOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Customer Name <span className={styles.req}>*</span></span>
               <input
+                ref={debtorInputRef}
                 className={`${styles.fieldInput} ${editedClass('debtorName', debtorName)}`}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -1831,24 +1835,13 @@ export const SalesOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer SO Ref</span>

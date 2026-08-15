@@ -31,7 +31,6 @@ import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, X, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -70,6 +69,7 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
@@ -771,6 +771,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   const [form, setForm] = useState(() => initialFormFor(header));
   const [showSuggest, setShowSuggest] = useState(false);
+  const custInputRef = useRef<HTMLInputElement>(null);
   const debouncedDebtorQ = useDebouncedValue(form.customerName, 200);
   const debtorQuery = useConsignmentDebtorSearch(debouncedDebtorQ);
   const suggestions = (debtorQuery.data?.debtors ?? []).filter(
@@ -915,6 +916,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={custInputRef}
                 className={styles.fieldInput}
                 value={form.customerName}
                 disabled={inputsDisabled}
@@ -922,24 +924,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 onFocus={() => setShowSuggest(true)}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
               />
-              {showSuggest && suggestions.length > 0 && !inputsDisabled && (
-                <ul className={styles.suggestList}>
-                  {suggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applySuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={custInputRef}
+                open={showSuggest && !inputsDisabled}
+                suggestions={suggestions}
+                onPick={applySuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Ref</span>
