@@ -1085,6 +1085,57 @@ describe('mutation proof — each field is load-bearing', () => {
 
    Re-enable by running the trial against a real AutoCount test book, recording
    what it actually accepts, and deleting the `.skip` one at a time. */
+/* /health has to say WHICH BUILD is answering.
+ *
+ * On 2026-08-15 the question "does the exe on the office host contain commit X"
+ * had no answer anywhere — not from the service, not from this repository. It
+ * was answered from a handoff note instead, and the note was a snapshot three
+ * days old. The claim that followed ("the host is three changes behind") could
+ * not be shown either way; UNKNOWN was the honest verdict and there was no way
+ * to reach a better one.
+ *
+ * Pinned HERE rather than in a C# test because there is no C# test harness: this
+ * file already reads AcSyncService.cs at build time for the payload contract, so
+ * it is the one place that can see the service's source at all. Deleting the
+ * build identity from /health now fails a test instead of quietly restoring the
+ * blind spot. */
+describe('/health reports the build that is answering', () => {
+  test('it returns builtAt and mvid, not just the book name', () => {
+    const health = rawAcSync.slice(
+      rawAcSync.indexOf('static Dictionary<string, object> Health()'),
+      rawAcSync.indexOf('static void Handle(HttpListenerContext ctx)'),
+    );
+    expect(
+      health.length,
+      'Health() was removed or renamed — /health can no longer say which build is running.',
+    ).toBeGreaterThan(0);
+
+    /* The assembly's own file timestamp, NOT a constant somebody has to bump.
+       A hand-maintained version is a fact with an expiry date; this one moves
+       only when the exe is rebuilt, which is exactly the event being detected. */
+    expect(health).toContain('File.GetLastWriteTimeUtc');
+    expect(health).toContain('"builtAt"');
+    /* Unique per compilation — settles "was the rebuild actually swapped in"
+       when two timestamps both look plausible. */
+    expect(health).toContain('ModuleVersionId');
+    expect(health).toContain('"mvid"');
+  });
+
+  test('a host that cannot read its own assembly still answers, with nulls', () => {
+    const health = rawAcSync.slice(
+      rawAcSync.indexOf('static Dictionary<string, object> Health()'),
+      rawAcSync.indexOf('static void Handle(HttpListenerContext ctx)'),
+    );
+    /* /health is the probe that decides whether the host is up at all. It must
+       degrade to a vague answer, never to a 500 — and the keys must still be
+       PRESENT, because an absent key reads as an old build that never had them,
+       which is the confusion this whole change removes. */
+    expect(health).toContain('catch');
+    expect(health).toMatch(/h\["builtAt"\]\s*=\s*null/);
+    expect(health).toMatch(/h\["mvid"\]\s*=\s*null/);
+  });
+});
+
 describe('the skipped assertions stay bounded', () => {
   test('exactly eleven assertions are skipped, and no more', () => {
     const skips = selfSource.match(/\btest\.skip\(/g) ?? [];

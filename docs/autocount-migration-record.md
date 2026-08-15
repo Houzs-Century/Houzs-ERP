@@ -41,10 +41,13 @@
 > ### Verifications that do not verify what they claim
 >
 > - **Step 1** accepts `/health` as proof of the swap. `/health` answers from
->   CONSTANTS (`AcSyncService.cs:167`) — `deploy-on-host.ps1:215-222` records that
->   exact failure on 2026-08-12. The probe that proves both a new binary and a
->   real DB connection is `POST /ensure-masters` with empty arrays; the runbook
->   does not include it. It also omits two preconditions the script refuses
+>   CONSTANTS — `deploy-on-host.ps1:215-222` records that exact failure on
+>   2026-08-12. **Half of this is fixed as of 2026-08-15**: `/health` now also
+>   returns `builtAt` (the assembly's own file timestamp) and `mvid` (unique per
+>   compilation), so it CAN prove a new binary was swapped in — compare `builtAt`
+>   against `git log -1 --date=short -- backend/scripts/autocount-service/AcSyncService.cs`.
+>   It still cannot prove a real DB connection; for that the probe is
+>   `POST /ensure-masters` with empty arrays, and the runbook does not include it. It also omits two preconditions the script refuses
 >   without: `ac-svc-key.txt` must exist, `ac-svc-port.txt` must read 8900.
 > - **Step 3's verification** (`GET /health` "from a Worker") cannot be executed:
 >   no Worker code path calls `/health` — `AC_ROUTE` has no health op, and
