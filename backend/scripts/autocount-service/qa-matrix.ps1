@@ -273,7 +273,17 @@ if ($SkipTeardown) {
   Head "7  teardown SKIPPED - these are LIVE documents, cancel them by hand"
 } else {
   Head "7  teardown - cancel, never delete; child before parent"
-  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('SO',$SO), @('PO',$poNo))) {
+  <# THE PO COMES BEFORE THE SO, and that order is not cosmetic. A sales order
+     transferred to a purchase order cannot be cancelled while that PO is live -
+     AutoCount says so by name:
+
+       SOTransferedToDocumentNotAllowToCancelException:
+       The Sales Order was transfered to Purchase Order, so it is not allow to cancel.
+
+     The first version of this list cancelled the PO last and left a LIVE sales
+     order in the book, which then had to be cancelled by hand. Child before
+     parent means every child, and the PO is one of them. #>
+  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('PO',$poNo), @('SO',$SO))) {
     if (-not $pair[1]) { continue }
     $r = Call '/cancel' @{ DocType = $pair[0]; DocNo = $pair[1] }
     if ($r.status -eq 200 -and $r.json.ok) { Record ("7 cancel " + $pair[0] + " " + $pair[1]) "PASS" "cancelled, not deleted" }
