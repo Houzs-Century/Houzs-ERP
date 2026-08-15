@@ -55,7 +55,7 @@ driven directly on the host by `qa-convert.ps1`, so `scm.autocount_outbox` has
 no row for it — which is exactly how reading only the queue produced the first
 wrong answer. The generated file says so in prose, next to the column.
 
-**Ref.** 2026-08-15, PR #2231.
+**Ref.** 2026-08-15, PR #2230.
 
 ## A recorded payment never reached AutoCount — BALANCE went stale the moment it was sent [high]
 
