@@ -272,41 +272,55 @@ phantom line of slack in a file whose neighbours were measured the other way.
 
 **Ref.** 2026-08-15, file-size debt paydown.
 
-## Desktop auto-derives the Processing Date; mobile makes you work it out — OPEN, owner decides [open-question]
+## WITHDRAWN — "desktop auto-derives the Processing Date; mobile makes you work it out" was wrong [correction]
 
 <!-- area: Sales orders + pricing -->
 
-**Not a fix. A divergence found while extracting the rule, recorded so it stops
-being invisible.** The decision is the owner's, because both readings are
-defensible and only he knows which flow is real.
+**This entry recorded an open question. There was no question, and the framing
+was wrong in a way that would have cost the next reader real time.** Retracted
+2026-08-15 after reading both surfaces end to end instead of the two call sites.
 
-**What the two surfaces do.** On desktop (`pages/scm-v2/SalesOrderNew.tsx`),
-picking a Delivery Date fills the Processing Date in automatically —
-`deriveProcessingDate` at two callsites, 42 days before delivery, clamped so it
-never lands in the past. On mobile (`mobile/MobileNewSO.tsx`) the Processing
-Date is a bare `<input type="date">` with `onChange={(e) =>
-setProcDate(e.target.value)}` and no derivation anywhere in the file. Its only
-non-manual source is `scanPrefill?.slipDate` — the date read off a scanned slip.
+**What the entry claimed.** That desktop auto-fills the Processing Date from the
+Delivery Date while mobile makes the salesperson compute "six weeks before
+delivery, but not in the past" by hand, and that the owner had to decide whether
+mobile should derive too.
 
-So the same salesperson gets the date computed for them at a desk and does
-"six weeks before delivery, but not before today" in their head on a phone.
+**What the source actually does:**
 
-**Why this is a question and not a defect.** Mobile is the scan-driven surface,
-and a scanned paper slip carries its own date. Seeding from the slip rather than
-from an arithmetic rule may be exactly right — the slip is the source document.
-`CLAUDE.md`'s standing rule that a rule fixed on one surface must be fixed on
-both is about RULES; an affordance that only one surface offers is a product
-call.
+| | scanned in | typed by hand |
+|---|---|---|
+| desktop `SalesOrderNew.tsx` | derives it — Delivery − 42, clamped | **does not derive.** The Delivery input's `onChange` is a bare `setDeliveryDate(e.target.value)` |
+| mobile `MobileNewSO.tsx` | seeds it from the slip's own date | does not derive |
 
-**What it would take either way.** The logic is now one importable module,
-`frontend/src/lib/processingDate.ts`, tested. Wiring mobile to it is small.
-Deciding that mobile should NOT derive is also fine — but then that belongs in
-`docs/modules/sales-order.md` as a stated difference, so the next person does not
-"fix" it.
+**Neither surface derives on manual entry.** Both `deriveProcessingDate` call
+sites sit inside the scan-seeding `useEffect`. So the "salesperson does the
+arithmetic in their head on a phone" sentence describes the desktop equally, and
+describes neither accurately.
 
-**Decision owner: the owner.** Until then, neither surface changes.
+**And the mobile half is on a DEAD path.** `scanPrefill` is declared in
+`MobileApp.tsx`'s screen union and passed straight through — and no
+`setScreen({ t: "new-so", ... })` call site anywhere supplies it. The live mobile
+scan path is `createDraftFromPrefill`, which sends `processingDate: null`. The
+seeding I was reading cannot run today.
 
-**Ref.** 2026-08-15, found during the file-size extraction of `deriveProcessingDate`.
+**All of which BOTH FILES ALREADY SAY**, in matching comments, naming the
+conflation, naming the fix as a behaviour change rather than a rename, and
+pointing at `docs/modules/scan-to-so.md` §2b. The codebase had decided this and
+written it down; the entry re-opened it as an unknown.
+
+**The lesson, and it is not a small one.** Two call sites and a grep are enough
+to produce a confident, wrong, and *actionable-looking* finding. A ledger entry
+that turns settled, documented behaviour back into an open question is worse than
+no entry: it spends the owner's attention on a decision that was already made,
+and it makes every other entry in the ledger less believable.
+
+**The one real defect this pass found.** That mobile comment said the live path
+sends `internalExpectedDd: null` — the pre-mig-0286 spelling of a key this file
+no longer sends under that name. The backend still ACCEPTS the legacy key
+(`SO_HEADER_LEGACY_PAYLOAD_KEYS`, pinned by `so-processing-date.test.ts`), so the
+alias is live; what was stale was naming it as the thing WE send. Corrected.
+
+**Ref.** 2026-08-15.
 ## A wiring guard promised the repository and measured one file — a third AutoCount enqueue was invisible to it [low]
 
 <!-- area: Sales orders + pricing -->
