@@ -115,6 +115,24 @@ renders a permanent loading placeholder — indistinguishable from "still
 loading", which is exactly how it ships. See §"Why photos need the proxy" in
 `backend/src/scm/lib/photoProxyFallback.ts`.
 
+### The delivery address block — both directions, shared layer
+
+State / City / Postcode on `SalesOrderNew`, `SalesOrderDetail` and
+`frontend/src/mobile/MobileNewSO.tsx` do NOT hold their own cascade. All three
+call `frontend/src/vendor/scm/lib/address-cascade.ts` — `useAddressCascade` for
+the option pools and `pickState` / `pickCity` / `pickPostcode` for the writes —
+so the desktop and mobile surfaces cannot drift, which is what happened while
+each held its own copy.
+
+The operator may start from **any** of the three: picking a Postcode back-fills
+State and City, picking an unambiguous City back-fills State, and picking a
+State narrows both of the others. The State back-filled by a reverse resolve is
+written in the SAME `setForm` as the value that produced it — routing it through
+the State picker's own handler would clear the cascade and wipe that value.
+
+Full rules, the ambiguity contract and the surfaces that deliberately opt out:
+`docs/modules/address-cascade.md`.
+
 ### Data hooks
 `frontend/src/vendor/scm/lib/sales-order-queries.ts`
 
