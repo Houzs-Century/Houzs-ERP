@@ -65,6 +65,13 @@ export const AC_SKIP_KINDS = [
       'an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)',
   },
   {
+    kind: 'desc2-too-long',
+    needle: 'refused, nothing sent (Desc2TooLongError)',
+    remedy:
+      "a line's Further Description is over AutoCount's nvarchar(100) — shorten the special order or "
+      + 'the colour text on that line, then save again',
+  },
+  {
     kind: 'missing-location',
     needle: 'refused, nothing sent (MissingLocationError)',
     remedy:
@@ -103,7 +110,10 @@ export function isRequeuedNote(lastError) {
 
 /** The state to SHOW for a row — its status, except a re-queued skip. */
 export function acOutboxState(status, lastError) {
-  if (status === 'skipped' && isRequeuedNote(lastError)) return 'requeued';
+  /* Both terminal states, not just skipped — see the TS twin's comment. A
+     re-queued FAILED row is history for the same reason a re-queued skip is:
+     the document went through under a newer row. */
+  if (isRequeuedNote(lastError) && (status === 'skipped' || status === 'failed')) return 'requeued';
   return status;
 }
 

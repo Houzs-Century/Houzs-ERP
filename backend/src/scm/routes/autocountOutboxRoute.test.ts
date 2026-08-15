@@ -276,6 +276,63 @@ describe('GET /autocount-outbox — a re-queued skip is history, not backlog', (
   });
 });
 
+/* THE #2220 SCENARIO, ON THE COUNTS.
+   #2189 gave the re-queue tool an includeFailed opt-in, so a re-queued row can
+   be a FAILED one. #2220 taught acOutboxState that and the ROWS started
+   rendering "Re-queued" — but these counts kept a skipped-only rule of their
+   own, so the tiles and the headline went on saying "2 documents need attention
+   (2 failed)" above a list where every row read Re-queued. Measured against the
+   route on main 2026-08-15: counts {failed 2, requeued 0, attention 2}, rows
+   [requeued, requeued], and ?state=requeued returned []. */
+describe('GET /autocount-outbox — a re-queued FAILED row is history too', () => {
+  const note = `${REQUEUE_NOTE_PREFIX} 2026-08-15T01:00:00.000Z -> outbox ob-new] Gave up after 6 attempts.`;
+  const requeuedFailed = row({
+    id: 'rf', doc_no: 'SO-RF', status: 'failed', attempts: 6, last_error: note,
+  });
+  const openFailure = row({
+    id: 'f', doc_no: 'SO-F', status: 'failed', attempts: 6,
+    last_error: 'Gave up after 6 attempts. Last error: FK_SO_SalesAgent',
+  });
+
+  it('does not count it as failed, or as needing attention', async () => {
+    const { body } = await get(harness({ outbox: [requeuedFailed] }));
+    expect(countsOf(body)).toMatchObject({ failed: 0, requeued: 1, attention: 0 });
+    /* Still one row in the table — outstanding fell, history did not vanish. */
+    expect(countsOf(body).total).toBe(1);
+  });
+
+  it('leaves a genuine failure counted', async () => {
+    const { body } = await get(harness({ outbox: [requeuedFailed, openFailure] }));
+    expect(countsOf(body)).toMatchObject({ failed: 1, requeued: 1, attention: 1, total: 2 });
+  });
+
+  it('shows it under Re-queued and not under Failed', async () => {
+    const both = [requeuedFailed, openFailure];
+    expect(idsOf((await get(harness({ outbox: both }), '?state=requeued')).body)).toEqual(['rf']);
+    expect(idsOf((await get(harness({ outbox: both }), '?state=failed')).body)).toEqual(['f']);
+    expect(idsOf((await get(harness({ outbox: both }), '?state=attention')).body)).toEqual(['f']);
+  });
+
+  it('counts re-queued skips and re-queued failures together', async () => {
+    const requeuedSkip = row({
+      id: 'rs', doc_no: 'SO-RS', status: 'skipped',
+      last_error: `${REQUEUE_NOTE_PREFIX} 2026-08-15T01:00:00.000Z -> outbox ob-2] refused, nothing sent (ItemCodeError): x`,
+    });
+    const { body } = await get(harness({ outbox: [requeuedFailed, requeuedSkip] }));
+    expect(countsOf(body)).toMatchObject({ failed: 0, skipped: 0, requeued: 2, attention: 0, total: 2 });
+  });
+
+  /* A PENDING row carrying the marker is the LIVE attempt, not history — the
+     case #2220's own fix was careful not to swallow, asserted here on the
+     counts as well as on the state. */
+  it('a pending row carrying the marker is still pending', async () => {
+    const pendingMarked = row({ id: 'p', doc_no: 'SO-P', status: 'pending', last_error: note });
+    const { body } = await get(harness({ outbox: [pendingMarked] }));
+    expect(countsOf(body)).toMatchObject({ pending: 1, requeued: 0, attention: 0 });
+    expect(rowsOf(body)[0].state).toBe('pending');
+  });
+});
+
 describe('GET /autocount-outbox — the switch and the empty queue', () => {
   it('reports the raw flag value AND the verdict, so a typo is visible', async () => {
     const { body } = await get(harness({ outbox: [], flag: 'On ' }));
