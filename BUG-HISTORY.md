@@ -1,3 +1,256 @@
+## A recorded payment never reached AutoCount — BALANCE went stale the moment it was sent [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner's goal for the write-back, in his words: *"我们记录新的
+payment，它就是可以进去。"* It did not. #2218 started sending the outstanding
+balance as the `BALANCE` UDF, and from that moment the account book carried a
+figure that was correct when the order was last SAVED and wrong from the next
+payment onwards. A fully settled order kept showing a debt until somebody
+happened to edit a line or the header.
+
+**Root cause, traced by enumerating the call sites, not by reading the design.**
+Every SO mutation route funnels through `queueAcSoEdit`, and there are eleven
+such call sites in `scm/routes/mfg-sales-orders.ts` — the header CAS save, line
+add / edit / delete, the three `tbc-*` swaps, the price override. The last one
+sits at line 10403. The three routes that mutate the payments ledger start at
+10958 (`POST /:docNo/payments`), 11146 (`PATCH`) and 11357 (`DELETE`), and none
+of them queued anything. A payment changed money the account book holds and the
+ERP said nothing about it.
+
+Two things kept it invisible:
+
+- `src/scm/lib/autocount-outbox.test.ts` has a case literally named *"an EDIT
+  carries it too, so a payment taken after the create reaches the book"*. It
+  passes, and it always would have: it calls `enqueueEdit` itself. A composer
+  test cannot see a missing call site.
+- `tests/autocountWritebackWiring.test.ts`'s *"every SO mutation path queues an
+  edit"* checks seven hand-listed places. A payment is an SO mutation and was in
+  none of them, so the word `every` was false and the suite stayed green — the
+  **unverified-completeness-claim** class at the top of this file, this time in a
+  test name rather than a PR body.
+
+**Fix.** The enqueue goes into `recordSoPaymentRow`, the factored insert core,
+NOT into the HTTP route: `scan-so.ts` books scanned receipts through the same
+core with no request context, so a rule written into the route would have
+covered the payments a human typed and silently missed every scanned one — this
+module's recurring shape. `PATCH` and `DELETE` call `queueAcSoEdit` in their own
+closures, having no shared core. `POST /:docNo/payments/:id/slip` deliberately
+does not: it attaches proof and moves no money.
+
+`src/scm/routes/soPaymentQueuesAcEdit.test.ts` pins the core — the queued edit
+must carry the balance AFTER the payment (500.00 ordered, 300.00 taken, `200.00`
+sent), a settling payment must send `0.00` rather than dropping the key, the
+toggle OFF must queue nothing, an order with no AutoCount counterpart must queue
+nothing, and a dead queue must not fail the payment. Its three positive cases
+were observed RED with the enqueue neutralised. The three route anchors are
+pinned in `tests/autocountWritebackWiring.test.ts` under their own test rather
+than by widening the "every" claim that already failed to hold.
+
+**Ref.** 2026-08-15, PR #2228.
+## The address cascade only ran downhill, on eight of the eleven forms [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Owner, 2026-08-15: *"City 和 Postcode … 它可以由上往下，也可以由下往上，
+双边启动都是可以的。"* On New Consignment Order — and seven sibling forms — City sat
+disabled reading *"— pick state first"* and Postcode disabled reading *"— pick city
+first"*. An operator holding a postcode the customer just read out could not enter
+it: the only way in was to already know the State.
+
+**Root cause, traced.** Two distinct faults, both from the wiring being
+hand-copied per form rather than shared.
+
+1. **Reverse resolution existed and was never called on eight forms.**
+   `resolvePostcode` / `resolveCityState` / `allCities` / `allPostcodes` have
+   been in `localities-queries.ts` since the SO work, with tests whose own header
+   names the SO forms as the caller. Only `SalesOrderNew`, `MobileNewSO` and
+   `SalesOrderDetail` (#2117) ever wired them. The other eight kept
+   `disabled={!form.state}` / `disabled={!form.city}`.
+
+2. **Top-down stopped one step short, on ALL of them — including the three that
+   already had the reverse.** Every copy computed the postcode pool as
+   `(state && city) ? postcodesInCity(...) : allPostcodes(rows)`. With a State
+   picked and City still blank, that second arm is the whole country. Observed on
+   production 2026-08-15 in Chrome on `/scm/sales-orders/new`: State set to
+   **Johor**, Postcode typed `43300` — a **Selangor** code — and it was offered.
+   Picking it silently flipped the State the operator had just chosen.
+
+**Fix.** One shared layer, `frontend/src/vendor/scm/lib/address-cascade.ts`:
+`cityOptionsFor` / `postcodeOptionsFor` for the option pools and pure
+`pickState` / `pickCity` / `pickPostcode` returning the whole
+`{state, city, postcode}` triple. Pure and triple-returning because the call
+sites disagree on state shape — some hold three `useState` atoms, some one
+`form` object — and an object-shaped form must write the result in ONE `setForm`
+or the State picker's own handler (which exists to CLEAR the cascade) wipes the
+value just picked. Two new derivations close fault 2: `postcodesInState` for
+State-picked-City-blank, `postcodesForCity` for the ambiguous-city case where
+State legitimately stays empty. All eleven forms now call in; the placeholders
+say *"Pick city — State fills in"* instead of describing a gate that is gone.
+
+**Ambiguity stays refused.** `resolveCityState` still returns null for a city in
+two states and `resolvePostcode` still returns null rather than pick a side —
+`pickCity`/`pickPostcode` leave State alone in that case rather than guess.
+Pinned in `address-cascade.test.ts`.
+
+**Ref.** 2026-08-15. Lesson: **the reverse of "a rule expressed twice is two
+rules" — a rule expressed once per FORM is one rule per form.** Three copies of
+this cascade had already drifted from each other (one cleared the postcode in
+JSX, one inside the resolver) and all three carried the same nationwide-pool
+bug, so the bug that was fixed three times in a row was fixed nowhere. The
+trigger to extract is not elegance, it is the fourth copy.
+
+## Four things the cutover pulled out of AutoCount that the write-back never put back [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner, on the write-back's fidelity: *"之前我们有从 AutoCount 抽取
+数据进来过我们的 ERP … 他抽取了什么东西，就代表什么东西都是要进来的 … 既然我抽出
+来了，就代表我是需要的。"* Concretely, he reported a line delivery date arriving in
+the account book as the DOCUMENT date on orders where the ERP holds none, and it
+should be blank.
+
+**Root cause, traced against the committed extract rather than reasoned about.**
+`backend/scripts/data/ac-fidelity-so-headers.json.gz` (13,015 rows, 18 fields) and
+`ac-fidelity-so-lines.json.gz` (60,939 rows, 13 fields) are exactly what the
+cutover read off the live `AED_HOUZS` book, so the gap is a diff and not an
+opinion. Four findings, each the module's own recurring shape — **the ERP holds
+the fact in one column and the composer reads another**
+(`docs/autocount-writeback-golive-coe.md` section 2, where it had already cost
+three incidents):
+
+1. **`UDF_BALANCE`** — non-zero on **2,339 of 13,015** headers, and never sent.
+   The ERP has three candidates and the obvious one is wrong:
+   `mfg_sales_orders.balance_centi` is rewritten to the GROSS total by
+   `recomputeTotals` on every edit, so it never reflects a payment — and it LOOKS
+   right precisely because the cutover's own `UDF_BALANCE` landed in it
+   (`check-migration-fidelity.mjs:95`). The live answer is total minus the
+   payments ledger, plus the legacy header deposit only where no `is_deposit`
+   ledger row exists, which is what `GET /mfg-sales-orders/:docNo` and the
+   customer print show.
+2. **`DeliverPhone1`** — on **120** headers, genuinely different from `Phone1` on
+   **37**. Two contacts, two columns (owner: *"应该是有一个 Delivery Contact，一个
+   是 Contact"*): the ERP's is `emergency_contact_phone`, which is where
+   `import-ac-outstanding-so.mjs:302` put AutoCount's own `DeliverPhone1` at the
+   cutover. The CREATE was masked by the service's `Or(DeliverPhone1, Phone)`
+   fallback; the EDIT has no fallback, so a changed delivery number never reached
+   the book at all.
+3. **`SODTL.DeliveryDate`** — **NULL on 11,886 of 60,939 lines**, 2,268 documents
+   entirely blank, so the book plainly holds blanks. `SO_ITEM_COLS` did not select
+   `line_delivery_date`, so `soLine` left it undefined and the key was never sent;
+   and `AcSyncService`'s `if (dd.HasValue)` could not tell an absent key from a
+   null one, so no payload could ever have asked for a blank. What landed was
+   AutoCount's own default, which is the document date the owner saw.
+4. **`Desc2` was sent but half-composed.** The cutover PARSED Further Description
+   to get the ERP's variants, so the specification has to go back; the composer
+   emitted `Col / Fabric / Seat / Leg` and read colour off `fabricColor`, the
+   GRN-family key. A bedframe keeps its colour in `fabricCode` / `colourLabel`
+   and its build in `gap` / `divanHeight`, so an ERP-created bedframe reached the
+   book with an EMPTY Further Description — while the book's own text carries
+   `COL` on 6,741 of its 15,950 populated values, `DIVAN` on 5,778 and `GAP` on
+   2,620, its three commonest labels. Two renderers for one string, which is COE
+   lesson 4 exactly.
+
+**`SODTL.UOM` was the fifth candidate and is REFUTED, which is the finding worth
+keeping.** It is in the extract and unsent, so it reads as a gap. Measured against
+the book's own `ItemUOM` rows, **59,582 of the 59,624 lines carrying a UOM carry
+one the ITEM's master row holds** (the 2 exceptions are the `unit`/`UNIT` case
+typo) — the line never decides it. And the ERP's `uom` column is written
+`?? 'UNIT'` at every create path, while **363 of the 758 distinct item codes on
+those lines have no `UNIT` row at all**, their only UOM being `SET`. Sending it
+would have put `UNIT` on a line whose item only has `SET`, against a column the
+detail foreign-keys to `ItemUOM`, and lost the whole document — the same shape as
+`FK_SODTL_Location`. Owner: every SKU already carries a UOM, set when the item is
+opened.
+
+**Fix.** `BALANCE` and `DeliverPhone1` on both create and edit; the line delivery
+date on both, sent PRESENT-AND-NULL on a create and omitted on an edit; `Desc2`
+composed by `buildVariantSummary`, the ERP's own renderer.
+
+The balance rule moved into `backend/src/scm/shared/so-outstanding.ts` and the SO
+detail route now calls it, so the account book and the screen cannot compute
+different numbers. `AcSyncService` guards the delivery date on `ContainsKey`
+instead of `HasValue`, which is what makes a blank expressible at all — the
+property is `DeliveryDate:Nullable`1` on all six detail classes.
+
+Three rules the change keeps: **zero is a value** (a settled order sends `"0.00"`,
+since `udf()` drops a falsy entry and the book would otherwise show a paid debt
+forever); **no total means no key** (zero would declare a real debt settled in a
+licensed ledger); and **an edit never blanks what the book holds** (a null
+delivery date and a blank delivery phone both omit).
+
+A new refusal, `Desc2TooLongError`, comes with the richer Desc2: `SODTL.Desc2` is
+`nvarchar(100)` and the book is AT that ceiling — the longest of its 15,950 values
+is exactly 100 and none is over — so an over-long line becomes a readable
+`skipped` row instead of a lost document behind a 500. Same `AC_DESC2_MAX` the
+sofa collapse already refuses on.
+
+**Ref.** 2026-08-15. Divergence **D3** struck from the register in
+`autocount-writeback.contract.test.ts` (11 -> 10). Lesson: **an extract is a
+specification.** "Which fields should we send?" was answered for months by
+judgement; the committed cutover files answer it by subtraction, and they also
+refute one of the five candidates that judgement would have shipped.
+## #2220 fixed the rows and left the tiles saying the opposite [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The same self-contradiction #2220 was opened for, one component
+further up. For two `failed` rows carrying a re-queue marker, `/autocount-sync`
+now renders both rows as **Re-queued** — and the headline above them still reads
+*"2 documents need attention (2 failed) — in the ERP and not in AutoCount"*, the
+Failed tile still reads **2**, the Re-queued tile reads **0**, and the Re-queued
+filter returns nothing.
+
+**Root cause, traced.** #2220 taught `acOutboxState` that a re-queue marker
+counts on either terminal state. That function decides the per-ROW rendering and
+the JS narrowing. It does not decide the COUNTS: those are five separate
+company-scoped SQL head-counts inside `routes/autocount-outbox.ts`, which kept
+their own skipped-only rule —
+
+```
+countRows(c, (q) => q.eq('status', 'skipped').like('last_error', REQUEUED_LIKE))
+```
+
+— so `failed` was counted raw, `requeued` counted only skips, and
+`attention = nFailed + nSkipped` inherited both. `statusesFor.requeued` was
+`['skipped']` for the same reason, which is why the filter came back empty.
+
+**PROVEN, not inferred.** A probe against the route on `main` (`c464bd386`) with
+exactly two re-queued failed rows returned
+`counts {"pending":0,"sent":0,"failed":2,"skipped":0,"requeued":0,"attention":2}`,
+row states `[["requeued",false],["requeued",false]]`, and `?state=requeued` → `[]`.
+The four new tests fail against that tree and pass against this one.
+
+**Fix.** The marker is honoured per terminal state in SQL too: count re-queued
+failures and re-queued skips separately, subtract each from its own total, and
+sum them for the Re-queued tile. `statusesFor.requeued` takes both statuses and
+`state=failed` narrows out re-queued rows the way `state=skipped` already did.
+`total` switched to the TERMINAL counts — it had been reading the outstanding
+failed count, which would have made re-queued rows vanish from the total while
+still being listed under it.
+
+**Why the first fix stopped where it did.** #2220 changed the shared taxonomy
+and the canonical mirror, which is where the rule belongs — but the route had a
+SECOND copy of the same rule expressed in PostgREST predicates, and no test
+covered a re-queued failed row's COUNTS. The page's own tests all asserted rows.
+
+**A THIRD copy, found by looking for it.** `check-autocount-outbox-health.mjs`
+— the workflow the owner was told to run before the page existed, and still the
+headless reader — selects `WHERE status = 'failed'` and prints the result under
+*"each is a document that is in the ERP and NOT in AutoCount"*. It had the same
+bug, and it is the same false statement about a live account book. Fixed in the
+same PR: the totals query counts the re-queued rows per status with a `FILTER`,
+the failed detail query excludes them, and they are reported under RE-QUEUED
+with the skips. Not found by a test — found by grepping for every place the rule
+is expressed after the first two disagreed.
+
+**Ref.** 2026-08-15. Lesson: **a rule expressed twice in two languages is two
+rules** — and it was expressed three times here. The taxonomy module, the route's
+PostgREST predicates and the health script's SQL all encoded "re-queued means
+history"; #2220 fixed the one written in TypeScript, and both of the ones written
+as queries went on disagreeing with it. When a fix lands in a shared module, grep
+for the rule's other spellings before calling it done.
+
 ## The write-back queue had no reader the owner could open [high]
 
 <!-- area: AutoCount sync + write-back -->

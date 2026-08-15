@@ -95,3 +95,43 @@ describe('autocount-outbox-status', () => {
     expect(remedy).toBeNull();
   });
 });
+
+/* Found by opening /autocount-sync against production on 2026-08-15, not by a
+   test: the page said "2 documents need attention — in the ERP and not in
+   AutoCount" on the same screen that listed both of those documents as IN
+   AutoCount. Both were FAILED rows carrying a re-queue marker, and the marker
+   was only honoured for skips.
+
+   It was right when written — the re-queue tool only ever selected `skipped`.
+   #2189 added an explicit includeFailed opt-in and its first use put the marker
+   on two failed rows. The harness the page was built against had no such row. */
+describe('a re-queued FAILED row is history too', () => {
+  const note = '[re-queued 2026-08-14T17:21:23.415Z -> outbox 6d18d288-6462-4d91-a33b-efaf1e1c82f4]'
+    + ' Gave up after 6 attempts. Last error: Foreign Key Error (Constraint Name=FK_SO_SalesAgent)';
+
+  it('it reads as requeued, not failed', () => {
+    expect(ts.acOutboxState('failed', note)).toBe('requeued');
+  });
+
+  it('and it does NOT need attention — the document went through under a newer row', () => {
+    expect(ts.acNeedsAttention('failed', note)).toBe(false);
+  });
+
+  it('a failed row WITHOUT the marker still needs attention', () => {
+    /* The case the fix must not swallow: a real failure, never re-queued, is
+       still a document in the ERP and not in the book. */
+    expect(ts.acOutboxState('failed', 'Foreign Key Error (Constraint Name=FK_SO_SalesAgent)')).toBe('failed');
+    expect(ts.acNeedsAttention('failed', 'Foreign Key Error (Constraint Name=FK_SO_SalesAgent)')).toBe(true);
+  });
+
+  it('the .mjs mirror agrees, for failed as well as skipped', () => {
+    expect(mjs.acOutboxState('failed', note)).toBe(ts.acOutboxState('failed', note));
+    expect(mjs.acNeedsAttention('failed', note)).toBe(ts.acNeedsAttention('failed', note));
+  });
+
+  it('a PENDING row carrying the marker is NOT history — it is the live attempt', () => {
+    /* Only a terminal row can be history. A pending row IS the re-queued work,
+       so calling it history would hide the thing actually in flight. */
+    expect(ts.acOutboxState('pending', note)).toBe('pending');
+  });
+});

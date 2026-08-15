@@ -117,6 +117,13 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
       'an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)',
   },
   {
+    kind: 'desc2-too-long',
+    needle: 'refused, nothing sent (Desc2TooLongError)',
+    remedy:
+      "a line's Further Description is over AutoCount's nvarchar(100) — shorten the special order or "
+      + 'the colour text on that line, then save again',
+  },
+  {
     kind: 'missing-location',
     needle: 'refused, nothing sent (MissingLocationError)',
     remedy:
@@ -172,7 +179,16 @@ export function acOutboxState(
   status: string,
   lastError: string | null | undefined,
 ): AcOutboxState | string {
-  if (status === 'skipped' && isRequeuedNote(lastError)) return 'requeued';
+  /* A re-queued row is history whether it was SKIPPED or FAILED.
+     This read `status === 'skipped'` until 2026-08-15, and it was right when it
+     was written: the re-queue tool only ever selected skips. #2189 gave it an
+     explicit includeFailed opt-in, and the first use of that opt-in put the
+     marker on two FAILED rows — whose documents then went through. The page
+     kept counting them, so it told the owner "2 documents need attention — in
+     the ERP and not in AutoCount" on the same screen that showed both of them
+     IN AutoCount. Caught by opening the page against production; the stubbed
+     harness it was built on had no re-queued failed row to show. */
+  if (isRequeuedNote(lastError) && (status === 'skipped' || status === 'failed')) return 'requeued';
   return status;
 }
 
@@ -197,9 +213,10 @@ export function classifyAcSkip(
 /**
  * Does this row need somebody to do something?
  *
- * The owner's whole question. `failed` always does — the document is in the ERP
- * and not in the book. An OUTSTANDING `skipped` does — its remedy is named. A
- * re-queued skip does not; it is history. `pending` and `sent` do not.
+ * The owner's whole question. An OUTSTANDING `failed` does — the document is in
+ * the ERP and not in the book. An OUTSTANDING `skipped` does — its remedy is
+ * named. A re-queued row of EITHER kind does not: it was asked again, and its
+ * document is queued or sent under a newer row. `pending` and `sent` do not.
  */
 export function acNeedsAttention(
   status: string,
