@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12124 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12011 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1285 |
@@ -170,13 +170,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1337 files, 549723 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1332 files, 549130 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15128 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12124 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12011 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
@@ -186,10 +186,10 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
-| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4139 |
+| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4328 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4206 |
 | `backend/src/scm/routes/grns.ts` | 3724 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3696 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3721 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
@@ -383,7 +383,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleDetail.tsx` | 1932 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3696 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3721 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/mobile/MobilePOD.tsx` | 536 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
