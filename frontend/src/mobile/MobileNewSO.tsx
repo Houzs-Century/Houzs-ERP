@@ -700,7 +700,12 @@ export function MobileNewSO({
      LATENT, not live: no `setScreen({t:"new-so"})` call site supplies
      `scanPrefill` (MobileApp.tsx declares it in the union and never passes it),
      and the live mobile scan path is createDraftFromPrefill, which sends
-     internalExpectedDd: null. Re-wire that handoff and this starts stamping
+     `processingDate: null` — this comment said `internalExpectedDd: null` until
+     2026-08-15, the pre-0286 spelling of a key this file no longer sends under
+     that name. The backend still ACCEPTS the legacy key (see
+     SO_HEADER_LEGACY_PAYLOAD_KEYS in shared/so-processing-date.ts), so the alias
+     is live; what was stale was naming it as the thing WE send.
+     Re-wire that handoff and this starts stamping
      factory dates off slip handwriting. Fixing it is a behaviour change, not a
      rename — see docs/modules/scan-to-so.md §2b. */
   const [procDate, setProcDate] = useState(scanPrefill?.slipDate ?? "");
