@@ -286,7 +286,7 @@ need translation.)
     source_doc_id?; source_doc_no?; batch_no?; reason_code?; performed_by?: number }`.
 - **2026-06-18 — GRN slice DONE (#60):** verbatim clone → tables `grns`+`grn_items`
   (BARE names, no AutoCount collision), `grn_status` enum (POSTED/CLOSED/CANCELLED),
-  migration `0027_grns.sql`, route at `/api/grns`, lib `grn-rack-sync.ts`, pages
+  migration `0027_grns.sql` [gone], route at `/api/grns`, lib `grn-rack-sync.ts`, pages
   GoodsReceivedList/GrnNew/GrnFromPo/GoodsReceivedDetail + `grn-queries.ts` in
   `pages/scm/`, routes in App.tsx (`/grns`, `/grns/new`, `/grns/from-po`, `/grns/:id`),
   nav "Goods Received" under Supply Chain. GRN POST flow wired faithfully: (a)
@@ -313,7 +313,7 @@ need translation.)
   `purchase_invoices`+`purchase_invoice_items` (`purchase_invoice_status` enum
   POSTED/PARTIALLY_PAID/PAID/CANCELLED) + `purchase_returns`+`purchase_return_items`
   (`purchase_return_status` enum POSTED/COMPLETED/CANCELLED), all BARE names (no
-  AutoCount collision); migration `0028_purchase_billing.sql`; routes at
+  AutoCount collision); migration `0028_purchase_billing.sql` [gone]; routes at
   `/api/purchase-invoices` + `/api/purchase-returns`; query hooks `flow-queries.ts`;
   pages PurchaseInvoicesList/New/FromGrn/Detail + PurchaseReturnsList/New/Detail in
   `pages/scm/`; App.tsx routes (`/purchase-invoices[/new|/from-grn|/:id]`,
@@ -415,7 +415,7 @@ need translation.)
 - **2026-06-18 — Sales Orders slice DONE (#65):** the biggest slice. Verbatim
   clone of 2990s's `customers` + `mfg_sales_orders` + `mfg_sales_order_items` +
   the SO audit / payment tables (BARE names — Houzs has `sales_orders` (AutoCount,
-  different name) + no `customers`/`mfg_*`). Migration `0029_sales_orders.sql`
+  different name) + no `customers`/`mfg_*`). Migration `0029_sales_orders.sql` [renumbered]
   (`mfg_so_status` enum CONFIRMED..CANCELLED + `slip_state` enum; `currency_code`
   reused from 0024). Route at `/api/mfg-sales-orders` (mounted in index.ts,
   owner-only `"*"`). Libs `so-audit.ts` + `so-readiness.ts` + `so-stock-allocation.ts`
@@ -503,7 +503,7 @@ need translation.)
   BARE names — Houzs has none; the bare `/api/delivery` is the AutoCount logistics
   route, untouched). Enums `do_status` / `sales_invoice_status` /
   `delivery_return_status` (EXACTLY 2990s's names + values). Migration
-  `0030_delivery_billing.sql` (runner-safe: single-line enum DO-guards, idempotent,
+  `0030_delivery_billing.sql` [gone] (runner-safe: single-line enum DO-guards, idempotent,
   no BEGIN/COMMIT). Routes `/api/mfg-delivery-orders` + `/api/sales-invoices` +
   `/api/delivery-returns` (mounted in index.ts, owner-only `"*"`). Lib
   `so-downstream.ts` (SO↔DO/SI/DR aggregates) + `so-delivery-sync.ts` COMPLETED
@@ -573,7 +573,7 @@ need translation.)
 - **2026-06-18 — CONSIGNMENT slice (#67) — schema+migration (ALL) + PURCHASE side
   DONE; SALES side DEFERRED.** The last document-flow group. 14 consignment tables
   + the CO audit log appended to `schema.pg.ts` (BARE names — Houzs has none);
-  migration `0031_consignment.sql` (runner-safe: 6 single-line enum DO-guards, 15
+  migration `0031_consignment.sql` [renumbered] (runner-safe: 6 single-line enum DO-guards, 15
   idempotent CREATE TABLE, no BEGIN/COMMIT). Both gates EXIT 0; `window.confirm|
   alert` grep in the new pages = 0 (one `window.prompt` for the CN credit-note ref,
   kept exactly as the PI/PR slices per rule #10). Migration NOT applied (batched #70).
@@ -712,7 +712,7 @@ need translation.)
     schema.pg.ts:1357 — informational only, the actual writes use CS_DO/CS_DR.
   - Migration: NONE (no `0032`). Nothing applied to any DB (batched for staging #70).
 - **2026-06-18 — MRP · Stock Status slice DONE (#64):** verbatim clone of 2990s
-  `mrp.ts` (the PURE CALCULATOR) + `mrp-lead-times.ts`. Migration `0032_mrp_lead_times.sql`
+  `mrp.ts` (the PURE CALCULATOR) + `mrp-lead-times.ts`. Migration `0032_mrp_lead_times.sql` [gone]
   (the ONE persisted MRP table `mrp_category_lead_times`, BARE name, clone of 2990s
   migration 0099; runner-safe: idempotent CREATE + 5 single-line seed INSERTs ON
   CONFLICT DO NOTHING, no BEGIN/COMMIT, RLS policies dropped). Table added to
@@ -784,7 +784,7 @@ need translation.)
 - **2026-06-18 — PRODUCTS & MAINTENANCE slice DONE (#58):** the BIGGEST slice and
   the ONE exception to Strategy-2 — the owner wants the FULL furniture catalogue
   + pricing engine cloned ("全部搬,办完了我再修改"), so it is NOT stripped here.
-  Migration `0033_products_maintenance.sql` (27 tables, 7 enums, all BARE names —
+  Migration `0033_products_maintenance.sql` [gone] (27 tables, 7 enums, all BARE names —
   no Houzs collision). Schema appended to `schema.pg.ts` (camelCase keys + explicit
   snake_case cols, rule #2). 11 routes mounted owner-only (`"*"`): `/api/products`
   `/api/categories` `/api/product-models` `/api/mfg-products` `/api/maintenance-config`

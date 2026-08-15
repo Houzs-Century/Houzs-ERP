@@ -78,7 +78,7 @@ Writes gate on `requireWriteRole`. Frontend hooks:
 - It advertises `POST /sofa-combos/copy-to-customer`. That endpoint was
   **removed on 2026-05-28** (see the comment at `:771`); the header at `:17` was
   never updated.
-- It cites `0090_sofa_combo_pricing.sql` for the schema. In THIS repo `0090` is
+- It cites `0090_sofa_combo_pricing.sql` [gone] for the schema. In THIS repo `0090` is
   `0090_scm_purchase_consignment_tables.sql` — the citation is **2990's**
   migration numbering, carried across with the vendored code. Only `0083`
   (company_id) and `0114` (per-company config split) mention `sofa_combo*` here.

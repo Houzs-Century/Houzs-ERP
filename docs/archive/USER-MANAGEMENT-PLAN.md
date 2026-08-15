@@ -39,7 +39,7 @@ from a Hyperdrive connection throttle) and the Resend key for the email test.
 
 ## Proposed design (concrete, file-level)
 
-### Data model (new migration, e.g. migrations-pg/0003_positions.sql + numbered D1)
+### Data model (new migration, e.g. migrations-pg/0003_positions.sql [renumbered] + numbered D1)
 - `positions` table: id, slug (purchasing|logistic|service_team|driver|helper|
   storekeeper|...sales slugs), name, department ('sales'|'operation'), default_role_id,
   sort_order, active. Seed the 6 Operation positions + map Sales positions.
