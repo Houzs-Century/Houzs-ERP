@@ -1495,6 +1495,67 @@ lives in this repository.
 
 ## 9. Operating it
 
+### The page — `/autocount-sync` (added 2026-08-15)
+
+**Start here. It is the only reader of this queue that does not require a GitHub
+account.** Owner, 2026-08-15: *"你确保有完整的记录，就是我可以看得到 ... 如果它是
+在排队、skip、planning 还是 fail 等等，fail 的话是什么原因？everything 都要呈现出
+来，要不然我就不知道."* Until that date the queue's only reader was the workflow
+below, whose output is an Actions log.
+
+| | |
+|---|---|
+| Desktop | `frontend/src/pages/AutoCountSync.tsx`, route `/autocount-sync`, Sidebar section **System**, next to System Health |
+| Mobile | `frontend/src/mobile/MobileAutoCountSync.tsx`, menu group **System** |
+| Shared logic | `frontend/src/lib/autocountOutbox.ts` — the hook, the filter shape and the words, so the two surfaces differ only in presentation |
+| Endpoint | `GET /api/scm/autocount-outbox` — `backend/src/scm/routes/autocount-outbox.ts` |
+| Permission | `scm.autocount.read` **or** `settings.manage` (Owner / IT Admin pass on `*`) |
+
+**Mounted with NO `scmAreaGuard`** (`backend/src/scm/index.ts`, and therefore
+listed in `SCM_UNGUARDED_PREFIXES` in `backend/src/scm/lib/scm-areas.ts` — the
+two move together or the mirror test fails in both directions). An L2 area key is
+a PAGE key and this page belongs to no SCM area: it spans sales orders, purchase
+orders and all four conversions at once, so any area key here would be an
+arbitrary owner. Authorization is entirely the two flat keys above, checked
+against the REAL caller inside the route — stricter than the coarse `scm.access`
+umbrella `/api/scm/*` already applies, and it has to be, because this endpoint
+quotes what the licensed account book said about every document the company
+pushed. Same reasoning as `/hr`.
+
+It answers the owner's question in his order: a one-line verdict, then five
+counts (failed / skipped / queued / in AutoCount / re-queued) which are exact and
+whole-company regardless of the row filter, then the list, with every row's
+reason printed IN FULL — the health check clips at 300-400 characters because a
+workflow annotation must, and a page does not.
+
+**Company-scoped on every one of its seven statements.** `company_id` is the
+whole tenant boundary here and an unscoped AutoCount report has already cost this
+project most of a day (#2201).
+
+**READ-ONLY, deliberately.** There is no re-queue button. Re-sending is the
+workflow below and it carries an `includeFailed` opt-in with a warning attached
+(#2189), because a `failed` row WAS sent and the C# create has no duplicate
+guard. Putting that behind a button is a decision the owner has not made.
+
+**Filters are in the URL** (`?state=`, `?docType=`, `?docNo=`) on desktop;
+the mobile shell has no router, so they are component state there.
+
+### One taxonomy, three readers
+
+The classification of a `skipped` row lives in
+`backend/src/scm/lib/autocount-outbox-status.ts` — the states, the eight skip
+kinds with their remedies, `REQUEUE_NOTE_PREFIX`, and `MAX_ATTEMPTS`. The route
+reads it, `backend/src/scm/lib/autocount-requeue.ts` re-exports the prefix from
+it, and the health script reads its plain-node mirror
+`backend/scripts/lib/autocount-skip-kinds.mjs`, because that script runs under
+node against postgres.js and cannot import TypeScript. The mirror is refereed by
+`backend/src/scm/lib/autocountOutboxStatus.canonical.test.ts`, which compares
+values AND behaviour and fails on any drift.
+
+**Edit the TypeScript module, then the mirror.** A second opinion about what
+`refused, nothing sent (MissingLocationError)` means is exactly how an operator
+was once sent to backfill DtlKeys for an item-map problem (#2094).
+
 **Turn it on or off** (on only after the write freeze lifts, and never before
 someone has watched a single document land): Actions ->
 **AutoCount write-back (on/off)** -> Run workflow
@@ -1504,13 +1565,16 @@ seconds (the cache TTL). Queued rows stay `pending` while it is off and drain
 when it is turned back on. **Do not hand the owner the SQL** — this workflow is
 what replaced it (repo rule: never ask the owner to run a query).
 
-**What to watch — run the check, do not read the tail.** Actions ->
+**What to watch — the page above, or this check for a headless read.** Actions ->
 **AutoCount write-back queue — health (read-only)** -> Run workflow. It reports
 the queue by status, the FAILED rows in full (each one is a document that is in
 the ERP and not in the account book), the age of the oldest pending row, and the
 `skipped` backlog split by REASON. **The script prints the reason AND its
-remedy — read `backend/scripts/check-autocount-outbox-health.mjs:61-70`
-(`SKIP_KINDS`) for the current set, do not learn the taxonomy from here.** An
+remedy — read `AC_SKIP_KINDS` in
+`backend/src/scm/lib/autocount-outbox-status.ts` for the current set, do not
+learn the taxonomy from here.** (It moved out of
+`backend/scripts/check-autocount-outbox-health.mjs` on 2026-08-15 so the page and
+the script could not disagree; that script now imports the mirror.) An
 unrecognised reason is printed rather than counted away, and a skip that has
 already been re-queued (below) is reported separately rather than counted as
 backlog.
@@ -1526,16 +1590,20 @@ switch**, and the script says which — it reads
 > read: *"It said empty was 'the correct state while scm.autocount_writeback is
 > off' no matter what the flag said — correct until the flag was turned on,
 > misleading after."* See `check-autocount-outbox-health.mjs:143-152`.
-> (2) The `skipped`-reason list above named three remedies. `SKIP_KINDS` carries
-> **eight** entries covering four distinct refusal classes —
+> (2) The `skipped`-reason list above named three remedies. `AC_SKIP_KINDS`
+> carries **eight** entries covering four distinct refusal classes —
 > `KeylessLineError`, `SofaCollapseError`, `ItemCodeError`, `MissingLocationError`
 > — plus compose-failure, masters-not-opened, no-source-document and
 > no-AutoCount-shape. Before #2094 the check matched on the shared prefix
 > `refused, nothing sent`, so three of the four classes were reported as a
 > DtlKey problem; an operator holding a `MissingLocationError` was sent to
-> backfill line keys. The script's own header comment at `:56` still says "FOUR
-> different classes" where `SKIP_KINDS` now has eight entries; that is a source
-> comment and is left alone here (docs-only diff).
+> backfill line keys.
+>
+> **UPDATED 2026-08-15.** The stale "FOUR different classes" header comment this
+> note used to point at went with the list when it moved into
+> `backend/src/scm/lib/autocount-outbox-status.ts`. Each kind now also carries a
+> stable `kind` key, which is what the page filters on, so a reworded message
+> changes what the operator reads and not what a URL means.
 
 The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
 a row reaches `failed` — a failed row means a document

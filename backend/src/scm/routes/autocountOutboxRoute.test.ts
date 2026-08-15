@@ -1,0 +1,359 @@
+// GET /api/scm/autocount-outbox — the page the owner reads.
+//
+// Harness follows tests/companyScopeMastersConfig.test.ts: a bare Hono app whose
+// middleware injects a fake scm supabase client and a company context, mounting
+// the EXPORTED handler rather than the router (the supabaseAuth bridge cannot
+// run here). The client is scm/lib/fake-postgrest's fakeSb, the same PostgREST
+// stand-in autocount-outbox.test.ts and autocount-requeue.test.ts already use.
+//
+// Each leak test is paired with a same-company test proving the legitimate
+// request still works — a scope assertion that only ever checks the negative
+// half passes just as happily when the endpoint returns nothing at all.
+import { Hono } from 'hono';
+import type { Env, Variables } from '../env';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { fakeSb } from '../lib/fake-postgrest';
+import { REQUEUE_NOTE_PREFIX } from '../lib/autocount-outbox-status';
+import { resetWritebackFlagCache } from '../lib/autocount-writeback-flag';
+import { listAutocountOutboxHandler, REQUEUED_LIKE } from './autocount-outbox';
+
+/* The flag is cached for 30 seconds by design (a toggle must be readable
+   without a query per request), and the cache is module-level, so without this
+   the second test in a file inherits the first one's switch. Its own test seam,
+   used the way autocount-outbox.test.ts uses it. */
+beforeEach(() => resetWritebackFlagCache());
+
+type Row = Record<string, unknown>;
+
+const row = (over: Row = {}): Row => ({
+  id: `ob-${Math.random().toString(36).slice(2, 9)}`,
+  company_id: 1,
+  op: 'create_so',
+  doc_type: 'SO',
+  doc_no: 'HC-SO-2608-001',
+  doc_id: null,
+  status: 'pending',
+  attempts: 0,
+  last_error: null,
+  ac_doc_no: null,
+  created_at: '2026-08-15T00:00:00.000Z',
+  updated_at: '2026-08-15T00:00:00.000Z',
+  sent_at: null,
+  ...over,
+});
+
+function harness(opts: {
+  outbox?: Row[];
+  flag?: string | null;
+  companyId?: number | undefined;
+  perms?: string[];
+  /** Make the app_config read FAIL rather than come back empty. */
+  missingAppConfigValue?: boolean;
+}) {
+  const sb = fakeSb(
+    {
+      autocount_outbox: opts.outbox ?? [],
+      app_config:
+        opts.flag === undefined || opts.flag === null
+          ? []
+          : [{ key: 'scm.autocount_writeback', value: opts.flag }],
+    },
+    opts.missingAppConfigValue ? { app_config: ['value'] } : {},
+  );
+  /* Typed with the app's OWN Variables rather than a bare Hono plus `as never`
+     casts at every c.set. The casts are what the other harnesses in this tree
+     use, and they are exactly the thing that would let this file keep compiling
+     after the handler started reading a context key nobody sets here. */
+  const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+  app.use('*', async (c, next) => {
+    c.set('supabase', sb as unknown as Variables['supabase']);
+    c.set('companyId', opts.companyId as Variables['companyId']);
+    c.set('user', { id: 'u1' } as unknown as Variables['user']);
+    c.set('houzsUser', {
+      id: 9,
+      name: 'Tester',
+      permissions_set: new Set(opts.perms ?? ['scm.autocount.read']),
+    } as unknown as Variables['houzsUser']);
+    await next();
+  });
+  app.get('/autocount-outbox', listAutocountOutboxHandler);
+  return app;
+}
+
+/** What the route answers with — every field the assertions below read. */
+interface Body {
+  error?: string;
+  reason?: string;
+  message?: string;
+  allowed?: readonly string[];
+  writeback?: { value: string | null; on: boolean; scope: string };
+  counts?: Record<string, number>;
+  oldest_pending?: { doc_type: string; doc_no: string; op: string; attempts: number } | null;
+  rows?: Array<Record<string, unknown>>;
+  truncated?: boolean;
+  meta?: {
+    max_attempts: number;
+    state_meaning: Record<string, string>;
+    skip_kinds: Array<{ kind: string; remedy: string }>;
+  };
+}
+
+const get = async (app: Hono<{ Bindings: Env; Variables: Variables }>, qs = '') => {
+  const res = await app.request(`/autocount-outbox${qs}`);
+  return { status: res.status, body: (await res.json()) as Body };
+};
+
+/** The rows, non-null, so an assertion cannot silently pass on `undefined`. */
+const rowsOf = (body: Body): Array<Record<string, unknown>> => {
+  if (!body.rows) throw new Error('the response carried no rows array');
+  return body.rows;
+};
+const idsOf = (body: Body): string[] => rowsOf(body).map((r) => String(r.id));
+const countsOf = (body: Body): Record<string, number> => {
+  if (!body.counts) throw new Error('the response carried no counts');
+  return body.counts;
+};
+
+describe('GET /autocount-outbox — permission gate', () => {
+  it('refuses a caller holding neither key, and names what is needed', async () => {
+    const app = harness({ outbox: [row()], perms: ['scm.access'] });
+    const { status, body } = await get(app);
+    expect(status).toBe(403);
+    expect(body.error).toBe('forbidden');
+    expect(body.message).toContain('scm.autocount.read');
+    /* The refusal must not leak the thing it is refusing. */
+    expect(body.rows).toBeUndefined();
+    expect(body.counts).toBeUndefined();
+  });
+
+  it('admits the narrow key', async () => {
+    const { status, body } = await get(harness({ outbox: [row()], perms: ['scm.autocount.read'] }));
+    expect(status).toBe(200);
+    expect(rowsOf(body)).toHaveLength(1);
+  });
+
+  /* A key nobody has been granted is an endpoint nobody can call, so the route
+     also takes the key that already owns the sync connection. */
+  it('admits settings.manage', async () => {
+    const { status } = await get(harness({ outbox: [row()], perms: ['settings.manage'] }));
+    expect(status).toBe(200);
+  });
+
+  it('admits the wildcard the owner and IT Admin hold', async () => {
+    const { status } = await get(harness({ outbox: [row()], perms: ['*'] }));
+    expect(status).toBe(200);
+  });
+});
+
+describe('GET /autocount-outbox — company scope', () => {
+  const mixed = [
+    row({ id: 'mine', company_id: 1, doc_no: 'HC-SO-2608-001', status: 'failed', last_error: 'FK_SO_SalesAgent' }),
+    row({ id: 'theirs', company_id: 2, doc_no: 'OTHER-SO-1', status: 'failed', last_error: 'FK_SO_SalesAgent' }),
+  ];
+
+  it('never returns another company row, and still returns its own', async () => {
+    const { body } = await get(harness({ outbox: mixed, companyId: 1 }));
+    expect(idsOf(body)).toEqual(['mine']);
+    expect(countsOf(body).failed).toBe(1);
+    expect(countsOf(body).total).toBe(1);
+  });
+
+  it('scopes the OTHER direction too — company 2 sees only its own', async () => {
+    const { body } = await get(harness({ outbox: mixed, companyId: 2 }));
+    expect(idsOf(body)).toEqual(['theirs']);
+    expect(countsOf(body).failed).toBe(1);
+  });
+
+  /* The counts are computed by their own statements, so they are their own
+     chance to leak — a scoped list over unscoped tiles would still tell the
+     owner another company's document is stuck. */
+  it('scopes the oldest-pending probe as well', async () => {
+    const { body } = await get(harness({
+      outbox: [
+        row({ id: 'theirs', company_id: 2, doc_no: 'OTHER-SO-1', status: 'pending', created_at: '2026-01-01T00:00:00.000Z' }),
+        row({ id: 'mine', company_id: 1, doc_no: 'HC-SO-2608-009', status: 'pending', created_at: '2026-08-15T00:00:00.000Z' }),
+      ],
+      companyId: 1,
+    }));
+    expect(body.oldest_pending?.doc_no).toBe('HC-SO-2608-009');
+    expect(countsOf(body).pending).toBe(1);
+  });
+});
+
+describe('GET /autocount-outbox — every state renders its reason', () => {
+  const requeuedNote = `${REQUEUE_NOTE_PREFIX} 2026-08-14T10:00:00.000Z -> outbox ob-new] refused, nothing sent (ItemCodeError): 9028-1S maps to two AutoCount items`;
+  const all = [
+    row({ id: 'p', doc_no: 'SO-P', status: 'pending', attempts: 2, last_error: 'AcSyncService threw: timeout opening the book' }),
+    row({ id: 's', doc_no: 'SO-S', status: 'sent', ac_doc_no: 'SO-00123', sent_at: '2026-08-15T01:00:00.000Z' }),
+    row({ id: 'f', doc_no: 'SO-F', status: 'failed', attempts: 6, last_error: 'Gave up after 6 attempts. Last error: FK_SO_SalesAgent' }),
+    row({ id: 'k', doc_no: 'SO-K', status: 'skipped', last_error: 'refused, nothing sent (MissingLocationError): line 2 carries no warehouse' }),
+    row({ id: 'r', doc_no: 'SO-R', status: 'skipped', last_error: requeuedNote }),
+  ];
+
+  it('gives every row a state and a reason, and never truncates the reason', async () => {
+    const { body } = await get(harness({ outbox: all }));
+    const by = Object.fromEntries(rowsOf(body).map((r) => [String(r.id), r]));
+
+    expect(by.p.state).toBe('pending');
+    expect(by.p.reason).toBe('AcSyncService threw: timeout opening the book');
+    expect(by.p.attempts).toBe(2);
+
+    expect(by.s.state).toBe('sent');
+    expect(by.s.ac_doc_no).toBe('SO-00123');
+
+    expect(by.f.state).toBe('failed');
+    expect(by.f.reason).toContain('FK_SO_SalesAgent');
+    expect(by.f.needs_attention).toBe(true);
+
+    expect(by.k.state).toBe('skipped');
+    expect(by.k.reason_kind).toBe('missing-location');
+    expect(by.k.remedy).toContain('stock location');
+    expect(by.k.needs_attention).toBe(true);
+
+    expect(by.r.state).toBe('requeued');
+    expect(by.r.needs_attention).toBe(false);
+  });
+
+  it('keeps a long AutoCount error whole', async () => {
+    const long = `AutoCount refused it: ${'x'.repeat(900)}`;
+    const { body } = await get(harness({ outbox: [row({ status: 'failed', last_error: long })] }));
+    expect(rowsOf(body)[0].reason).toBe(long);
+    expect(rowsOf(body)[0].reason).toHaveLength(long.length);
+  });
+
+  it('names an unrecognised skip rather than filing it under a neighbour', async () => {
+    const { body } = await get(harness({
+      outbox: [row({ status: 'skipped', last_error: 'a refusal class written next month' })],
+    }));
+    expect(rowsOf(body)[0].reason_kind).toBe('unrecognised');
+    expect(rowsOf(body)[0].remedy).toBeNull();
+    expect(rowsOf(body)[0].reason).toBe('a refusal class written next month');
+  });
+
+  it('ships the legend with the data so the page holds no second copy', async () => {
+    const { body } = await get(harness({ outbox: [] }));
+    expect(body.meta?.max_attempts).toBe(6);
+    expect(body.meta?.state_meaning.failed).toContain('NOT in the account book');
+    expect(body.meta?.skip_kinds.map((k) => k.kind)).toContain('keyless-line');
+  });
+});
+
+describe('GET /autocount-outbox — a re-queued skip is history, not backlog', () => {
+  const requeued = row({
+    id: 'r', doc_no: 'SO-R', status: 'skipped',
+    last_error: `${REQUEUE_NOTE_PREFIX} 2026-08-14T10:00:00.000Z -> outbox ob-new] refused, nothing sent (ItemCodeError): x`,
+  });
+  const openSkip = row({
+    id: 'k', doc_no: 'SO-K', status: 'skipped',
+    last_error: 'refused, nothing sent (KeylessLineError): line 3 has no DtlKey',
+  });
+
+  it('does not count a re-queued skip as outstanding or as needing attention', async () => {
+    const { body } = await get(harness({ outbox: [requeued, openSkip] }));
+    expect(countsOf(body).skipped).toBe(1);
+    expect(countsOf(body).requeued).toBe(1);
+    expect(countsOf(body).attention).toBe(1);
+  });
+
+  it('state=attention returns the open refusal and not the settled one', async () => {
+    const { body } = await get(harness({ outbox: [requeued, openSkip] }), '?state=attention');
+    expect(idsOf(body)).toEqual(['k']);
+  });
+
+  it('state=skipped excludes it and state=requeued is where it shows', async () => {
+    const app = harness({ outbox: [requeued, openSkip] });
+    expect(idsOf((await get(app, '?state=skipped')).body)).toEqual(['k']);
+    expect(idsOf((await get(harness({ outbox: [requeued, openSkip] }), '?state=requeued')).body)).toEqual(['r']);
+  });
+
+  /* The LIKE pattern the count is built from. A metacharacter creeping into the
+     marker would widen it silently and start reporting open refusals as
+     settled — the one error the whole distinction exists to prevent. */
+  it('the re-queued LIKE pattern carries no wildcard but its own trailing %', () => {
+    expect(REQUEUED_LIKE).toBe(`${REQUEUE_NOTE_PREFIX}%`);
+    expect(REQUEUE_NOTE_PREFIX).not.toMatch(/[%_\\]/);
+  });
+});
+
+describe('GET /autocount-outbox — the switch and the empty queue', () => {
+  it('reports the raw flag value AND the verdict, so a typo is visible', async () => {
+    const { body } = await get(harness({ outbox: [], flag: 'On ' }));
+    expect(body.writeback?.value).toBe('On ');
+    expect(body.writeback?.on).toBe(false);
+  });
+
+  it('reads an on flag as on, for the named company', async () => {
+    const { body } = await get(harness({ outbox: [], flag: '1' }));
+    expect(body.writeback?.on).toBe(true);
+    expect(body.writeback?.scope).toBe('1');
+  });
+
+  /* An UNREADABLE switch and an ABSENT switch render as opposite claims — "OFF"
+     versus "row absent" — and supabase-js does not throw, so only the bound
+     error tells them apart. Printing either one from a read that failed would be
+     a definite statement about a live account book that nobody actually made. */
+  it('refuses the whole response when the switch cannot be read', async () => {
+    /* fakeSb's `missing` map makes the column read fail the WHOLE query with
+       42703, which is what a real unreadable app_config looks like to
+       supabase-js: an error and a null body. */
+    const app = harness({ outbox: [row()], missingAppConfigValue: true });
+    const { status, body } = await get(app);
+    expect(status).toBe(500);
+    expect(body.error).toBe('load_failed');
+    expect(body.reason).toContain('write-back switch could not be read');
+    expect(body.writeback).toBeUndefined();
+    expect(body.counts).toBeUndefined();
+  });
+
+  it('an absent row is off, and an empty queue is zero of everything', async () => {
+    const { body } = await get(harness({ outbox: [], flag: null }));
+    expect(body.writeback?.value).toBeNull();
+    expect(body.writeback?.on).toBe(false);
+    expect(countsOf(body)).toEqual({
+      pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0,
+    });
+    expect(body.oldest_pending).toBeNull();
+    expect(rowsOf(body)).toEqual([]);
+  });
+});
+
+describe('GET /autocount-outbox — filters', () => {
+  const rows = [
+    row({ id: 'so', doc_type: 'SO', doc_no: 'HC-SO-2608-001', status: 'sent' }),
+    row({ id: 'po', doc_type: 'PO', doc_no: 'PO-000136', status: 'failed', last_error: 'FK_PO_Creditor' }),
+  ];
+
+  it('filters by document type', async () => {
+    const { body } = await get(harness({ outbox: rows }), '?docType=PO');
+    expect(idsOf(body)).toEqual(['po']);
+    /* The tiles stay whole-company: the owner's "is anything stuck" must not
+       change because he narrowed the list. */
+    expect(countsOf(body).total).toBe(2);
+  });
+
+  it('searches a document number case-insensitively', async () => {
+    const { body } = await get(harness({ outbox: rows }), '?docNo=hc-so');
+    expect(idsOf(body)).toEqual(['so']);
+  });
+
+  it('refuses an unknown state instead of silently returning everything', async () => {
+    const { status, body } = await get(harness({ outbox: rows }), '?state=planning');
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_state');
+  });
+
+  it('refuses an unknown document type', async () => {
+    const { status, body } = await get(harness({ outbox: rows }), '?docType=XX');
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_doc_type');
+  });
+
+  it('reports truncation as a fact rather than leaving it to be inferred', async () => {
+    const many = Array.from({ length: 5 }, (_, i) => row({ id: `n${i}`, doc_no: `SO-${i}` }));
+    const { body } = await get(harness({ outbox: many }), '?limit=2');
+    expect(rowsOf(body)).toHaveLength(2);
+    expect(body.truncated).toBe(true);
+    expect(countsOf(body).pending).toBe(5);
+  });
+});
