@@ -195,9 +195,124 @@ class AcSyncService {
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
       case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
       case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
+      /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
+         no SDK session. See FurtherDescription() for why it exists. */
+      case "/further-description": Json(ctx, 200, FurtherDescription(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
+  }
+
+  /* ── /further-description — the read that retires a manual instruction sheet ──
+     WHY THIS EXISTS. `docs/autocount-handling-listing.md` is a sheet someone has
+     to carry to the AutoCount machine and run three SELECTs by hand. It exists
+     only because this service exposed no read route at all, and `CLAUDE.md`'s
+     standing rule — never ask a human to run a query, build the check — could
+     not be honoured for the one database no workflow can reach. The listing's
+     own section 8 names this route as the durable fix. This is it.
+
+     IT DISCOVERS THE COLUMN RATHER THAN NAMING IT. The listing's step 1 exists
+     because the SDK calls the field `FurtherDescription` and NOBODY HAS LOOKED
+     at what the column is called. Hard-coding a guess would turn "the column has
+     another name" — a real answer — into a SQL error that reads like a broken
+     service. So step 1 is the first query here, and "no such column" comes back
+     as a successful answer with `column: null`.
+
+     TRUNCATION IS REPORTED, NEVER SILENT. The listing warns that `sqlcmd` cuts a
+     long text column and the reader never sees it happen; that is the failure
+     mode this route must not reproduce. The value is capped, and when it is cut
+     the response says so and gives the full length, so the caller knows the
+     bytes it holds are incomplete.
+
+     READ-ONLY, and mechanically so: two SELECTs on one connection, no SDK
+     session, no transaction, and the table name comes from an ALLOW-LIST rather
+     than from the caller's string. */
+  static readonly string[] DtlTables = { "SODTL", "PODTL", "DODTL", "GRDTL", "IVDTL", "PIDTL" };
+  /* 4 MB of RTF is far past any real Further Description; the cap is here so one
+     pathological row cannot make the service allocate without bound. */
+  const int MaxFurtherDescription = 4 * 1024 * 1024;
+
+  static Dictionary<string, object> FurtherDescription(Dictionary<string, object> p) {
+    var table = Or(Str(p, "Table"), "SODTL").ToUpperInvariant();
+    if (Array.IndexOf(DtlTables, table) < 0)
+      return Err("Table must be one of " + string.Join(", ", DtlTables) + " (got '" + table + "')");
+
+    long dtlKey;
+    if (!long.TryParse(Str(p, "DtlKey"), out dtlKey) || dtlKey <= 0)
+      return Err("DtlKey must be a positive integer");
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+
+      /* Step 1 of the listing. More than one match is not something to pick
+         from — it is the finding, and the caller decides. */
+      var cols = new List<Dictionary<string, object>>();
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText =
+          "SELECT name, system_type_id, max_length FROM sys.columns " +
+          "WHERE object_id = OBJECT_ID(@t) AND name LIKE '%Further%' ORDER BY name";
+        var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+        cmd.Parameters.Add(pt);
+        using (var rd = cmd.ExecuteReader()) {
+          while (rd.Read()) {
+            cols.Add(new Dictionary<string, object> {
+              { "name", rd.GetString(0) },
+              { "system_type_id", (int) rd.GetByte(1) },
+              { "max_length", (int) rd.GetInt16(2) },
+            });
+          }
+        }
+      }
+
+      if (cols.Count == 0) {
+        /* NOT an error. "The field is stored somewhere else" is the answer the
+           listing asks for when step 1 returns nothing, and a 200 is what makes
+           it readable as an answer instead of an outage. */
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", null }, { "columns", cols },
+          { "note", "no column matching %Further% on " + table + " - the field is stored elsewhere" },
+        };
+      }
+      if (cols.Count > 1) {
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", null }, { "columns", cols },
+          { "note", "more than one %Further% column - refusing to guess which one holds the description" },
+        };
+      }
+
+      var col = (string) cols[0]["name"];
+      /* The name came out of sys.columns for this very table, so it is not
+         caller input; the DtlKey is still parameterised. */
+      string value = null;
+      var found = false;
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText = "SELECT [" + col + "] FROM [" + table + "] WHERE DtlKey = @k";
+        var pk = cmd.CreateParameter(); pk.ParameterName = "@k"; pk.Value = dtlKey;
+        cmd.Parameters.Add(pk);
+        using (var rd = cmd.ExecuteReader()) {
+          if (rd.Read()) { found = true; if (!rd.IsDBNull(0)) value = rd.GetValue(0).ToString(); }
+        }
+      }
+
+      if (!found)
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", col }, { "columns", cols },
+          { "dtlKey", dtlKey }, { "found", false },
+          { "note", "no row with that DtlKey in " + table },
+        };
+
+      var full = value == null ? 0 : value.Length;
+      var truncated = full > MaxFurtherDescription;
+      return new Dictionary<string, object> {
+        { "ok", true }, { "table", table }, { "column", col }, { "columns", cols },
+        { "dtlKey", dtlKey }, { "found", true },
+        { "isNull", value == null },
+        { "length", full },
+        { "truncated", truncated },
+        { "value", truncated ? value.Substring(0, MaxFurtherDescription) : value },
+      };
+    }
   }
 
   /* The DtlKeys of the document we just created, in the order AutoCount stored
