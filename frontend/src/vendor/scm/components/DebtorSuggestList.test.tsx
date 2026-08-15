@@ -91,7 +91,7 @@ describe('DebtorSuggestList behaviour', () => {
 
   test('commits on mouseDown, before the input`s blur can close the list', () => {
     const picked: string[] = [];
-    render(<Host onPick={(r) => picked.push(r.debtor_name ?? '')} />);
+    render(<Host onPick={(r) => picked.push(r.debtor_name)} />);
     fireEvent.mouseDown(screen.getByText('Ng Wei Ming'));
     expect(picked).toEqual(['Ng Wei Ming']);
   });

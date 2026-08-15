@@ -1,6 +1,6 @@
 ## #2110 said every other floating menu was already portalled. Four were not [high]
 
-<!-- area: SCM forms — floating menus -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Owner, after #2110 fixed the State dropdown: *"这个你要全系统看一下,
 还有没有同类的问题。如果全部都有这个问题的话,都是要修复掉"*. On production's
