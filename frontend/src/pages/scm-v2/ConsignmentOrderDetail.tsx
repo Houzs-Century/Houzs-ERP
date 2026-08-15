@@ -52,11 +52,12 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
   useLocalities,
-  distinctStates,
-  citiesInState,
-  postcodesInCity,
   countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -806,15 +807,14 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     setForm((s) => ({ ...s, salesLocation: code }));
   }, [form.state, stateWarehousesQ.data, form.salesLocation]);
 
-  const states = useMemo(() => distinctStates(localityRows), [localityRows]);
-  const cities = useMemo(
-    () => (form.state ? citiesInState(localityRows, form.state) : []),
-    [localityRows, form.state],
-  );
-  const postcodes = useMemo(
-    () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
-    [localityRows, form.state, form.city],
-  );
+  /* Shared address cascade, BOTH directions (address-cascade.ts). One setForm
+     per pick so the value just chosen survives — the State picker's own handler
+     resets the cascade, so a back-filled State must not route through it. */
+  const { cities, postcodes } = useAddressCascade(localityRows, form.state, form.city);
+  const onCityPick = (next: string) =>
+    setForm((s) => ({ ...s, ...pickCity(localityRows, s, next) }));
+  const onPostcodePick = (next: string) =>
+    setForm((s) => ({ ...s, ...pickPostcode(localityRows, s, next) }));
   const country = useMemo<string>(() => {
     const headerCountry = (header.customer_country as string | null | undefined) ?? null;
     if (headerCountry) return headerCountry;
@@ -1141,7 +1141,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={form.state}
-                onChange={(next) => setForm((s) => ({ ...s, state: next, city: '', postcode: '' }))}
+                onChange={(next) => setForm((s) => ({ ...s, ...pickState(next) }))}
                 disabled={inputsDisabled}
               />
             </label>
@@ -1151,9 +1151,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.city}
-                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
-                  disabled={inputsDisabled || !form.state}
-                  placeholder={form.state ? 'Pick city' : '— pick state first'}
+                  onChange={onCityPick}
+                  disabled={inputsDisabled}
+                  placeholder={cityPlaceholder(form.state)}
                   options={sortByText(cities).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -1165,9 +1165,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.postcode}
-                  onChange={(v) => set('postcode', v)}
-                  disabled={inputsDisabled || !form.city}
-                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
+                  onChange={onPostcodePick}
+                  disabled={inputsDisabled}
+                  placeholder={postcodePlaceholder(form.state, form.city)}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
