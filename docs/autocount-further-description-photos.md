@@ -184,8 +184,9 @@ IDENTICAL
 ```
 
 The test file asserts the same round trip against a real 24x16 baseline JPEG
-carried inline, plus the parts that are easy to get subtly and permanently
-unnoticeably incorrect:
+carried inline — real on purpose, because a hand-assembled marker sequence would
+let a parser reading the wrong offset pass. It also pins the parts that fail
+QUIETLY, which are the ones worth a test:
 
 - the frame dimensions come from the JPEG's own SOF header, and a truncated
   file that leaves only a Huffman table (`FF C4`, which sits inside the
@@ -362,6 +363,29 @@ The 109 unattached PO keys are a separate, pre-existing gap: the PO import's
 last APPLY run attached 51 and the resolver now maps 160. It is recorded here
 because it changes the sizing if it is ever closed, not because this change
 touches it.
+
+**Do not size this from the migration record.**
+`docs/autocount-migration-record.md` line 1096 says *"983 SO + 242 PO keys in
+R2"*. That number predates the owner's 2026-08-10 instruction that a sofa
+photograph hangs on the first compartment only (*"每个 SKU 的照片都一样,留第一个
+就可以了"*) and the prune that carried it out — `Prune duplicate sofa photos`,
+run 31384579900, 2026-08-10T11:44Z:
+
+```
+SALES ORDER:    APPLIED — 405 rows updated, 457 keys removed
+PURCHASE ORDER: APPLIED — 103 rows updated, 127 keys removed
+```
+
+The sales-order side reconciles exactly: 983 − 457 = **526**, which is what the
+RESOLVE run three hours later that same day reported as `already attached`. It
+is 520 today.
+
+**The purchase-order side does not reconcile and this page is not going to
+pretend it does.** 242 − 127 = 115, and the RESOLVE run after the prune reported
+51 attached, as does today's. Either the 242 counts something other than
+attached keys, or a step between is unrecorded. Whichever it is, **51** is the
+measured present-day figure and 242 should not be used for sizing until someone
+establishes what it counted.
 
 ### 6.2 Line identity is already there, and in two places
 
