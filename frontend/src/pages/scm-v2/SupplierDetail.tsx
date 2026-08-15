@@ -63,6 +63,7 @@ import {
   distinctCountries,
   citiesInState,
   postcodesInCity,
+  postcodesInState,
   PAYMENT_TERMS_OPTIONS,
 } from '../../vendor/scm/lib/localities-queries';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
@@ -4244,10 +4245,7 @@ const PostcodeSelect = ({
   const rows = localities.data ?? [];
   const list = useMemo(() => {
     if (!state) return [];
-    if (city) return postcodesInCity(rows, state, city);
-    const s = new Set<string>();
-    for (const r of rows) if (r.state === state) s.add(r.postcode);
-    return Array.from(s).sort();
+    return city ? postcodesInCity(rows, state, city) : postcodesInState(rows, state);
   }, [rows, state, city]);
   const isEmpty = !localities.isLoading && list.length === 0;
   return (

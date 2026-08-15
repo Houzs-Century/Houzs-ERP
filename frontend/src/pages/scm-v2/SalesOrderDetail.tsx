@@ -110,15 +110,16 @@ import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendm
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
   useLocalities,
-  distinctStates,
-  citiesInState,
-  postcodesInCity,
   countryForState,
-  resolvePostcode,
-  resolveCityState,
-  allCities,
-  allPostcodes,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade,
+  pickState,
+  pickCity,
+  pickPostcode,
+  cityPlaceholder,
+  postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -2916,56 +2917,16 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     setForm((s) => ({ ...s, salesLocation: code }));
   }, [form.state, stateWarehousesQ.data, form.salesLocation]);
 
-  // Cascade derivations
-  const states = useMemo(() => distinctStates(localityRows), [localityRows]);
-  const cities = useMemo(
-    () => (form.state ? citiesInState(localityRows, form.state) : []),
-    [localityRows, form.state],
-  );
-  const postcodes = useMemo(
-    () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
-    [localityRows, form.state, form.city],
-  );
-  /* START ANYWHERE — the same reverse resolution SalesOrderNew and MobileNewSO
-     have had. With no State picked, City and Postcode offer the full
-     cross-state pool so the operator can choose one FIRST and let the State
-     (and through it the Sales Location) resolve back from it. With a State
-     picked these fall through to the state-scoped lists above, so the forward
-     cascade is unchanged.
-
-     This page never had it: City stayed disabled until State and Postcode until
-     City, which on an EDIT means re-deriving an address the operator can already
-     read off the order. The resolvers and their tests already existed — the test
-     file even documents the SO forms as the caller — only this surface was never
-     wired, which is the desktop/mobile split CLAUDE.md warns about. */
-  const cityChoices = useMemo(
-    () => (form.state ? cities : allCities(localityRows)),
-    [form.state, cities, localityRows],
-  );
-  const postcodeChoices = useMemo(
-    () => ((form.state && form.city) ? postcodes : allPostcodes(localityRows)),
-    [form.state, form.city, postcodes, localityRows],
-  );
-  /* Set State from a resolved City, and State + City from a resolved Postcode.
-     Written in ONE setForm each so the value the operator just picked survives —
-     going through the State picker's own handler would clear it, because that
-     handler exists to reset the cascade. Only an UNAMBIGUOUS city resolves;
-     resolvePostcode returns null rather than guessing. */
-  const applyCityReverse = (nextCity: string) => {
-    const st = nextCity ? resolveCityState(localityRows, nextCity) : null;
-    setForm((s) => ({
-      ...s, city: nextCity, postcode: '',
-      state: st && st !== s.state ? st : s.state,
-    }));
-  };
-  const applyPostcodeReverse = (nextPostcode: string) => {
-    const res = nextPostcode ? resolvePostcode(localityRows, nextPostcode) : null;
-    setForm((s) => ({
-      ...s, postcode: nextPostcode,
-      state: res?.state && res.state !== s.state ? res.state : s.state,
-      city: res?.city && res.city !== s.city ? res.city : s.city,
-    }));
-  };
+  /* Cascade derivations — shared layer, both directions (address-cascade.ts).
+     One setForm per pick so the value the operator just chose survives; routing
+     a back-filled State through the State picker's own handler would clear it,
+     because that handler exists to reset the cascade. */
+  const { cities: cityChoices, postcodes: postcodeChoices } =
+    useAddressCascade(localityRows, form.state, form.city);
+  const applyCityReverse = (nextCity: string) =>
+    setForm((s) => ({ ...s, ...pickCity(localityRows, s, nextCity) }));
+  const applyPostcodeReverse = (nextPostcode: string) =>
+    setForm((s) => ({ ...s, ...pickPostcode(localityRows, s, nextPostcode) }));
   /* Task #121 — Country auto-derives from the picked state. Read-only on
      the form; the API re-derives + snapshots it on PATCH. Prefer the
      header's stored customer_country (so historic SOs whose locality
@@ -3493,7 +3454,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={form.state}
-                onChange={(next) => setForm((s) => ({ ...s, state: next, city: '', postcode: '' }))}
+                onChange={(next) => setForm((s) => ({ ...s, ...pickState(next) }))}
                 disabled={inputsDisabled || stateLocked}
               />
             </label>
@@ -3513,7 +3474,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   onChange={applyCityReverse}
                   disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
-                  placeholder={form.state ? 'Pick city' : 'Pick city — State fills in'}
+                  placeholder={cityPlaceholder(form.state)}
                   options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -3528,7 +3489,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   onChange={applyPostcodeReverse}
                   disabled={inputsDisabled || stateLocked}
                   title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
-                  placeholder={form.city ? 'Pick postcode' : 'Pick postcode — State and City fill in'}
+                  placeholder={postcodePlaceholder(form.state, form.city)}
                   options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

@@ -71,7 +71,7 @@ refs: .github/workflows/deploy.yml:212, backend/src/db/migrations-pg/, backend/s
 <!-- /explain -->
 
 <!-- explain: route-guides -->
-70 of 135 route modules are named in none of the 27 module guides.
+70 of 135 route modules are named in none of the 28 module guides.
 first ten with no guide:
   backend/src/scm/routes/accounting.ts
   backend/src/scm/routes/addons.ts
