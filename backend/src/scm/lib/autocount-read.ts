@@ -82,3 +82,33 @@ export async function readSoOutstandingCenti(
     depositInLedger,
   });
 }
+
+/**
+ * The payment REFERENCES this order carries, oldest first, for the `PAYEMENT`
+ * UDF.
+ *
+ * A SEPARATE READ FROM THE BALANCE ABOVE, on purpose. That one needs two
+ * numeric columns off every row and collapses them to one figure; this one
+ * needs two text columns and the ORDER they were taken in, because the field it
+ * builds is read by a person. Merging them would make one caller pay for the
+ * other's columns on every document, and would tie a money rule to a text one.
+ *
+ * Ordered by `paid_at` then `id` — `paid_at` is a DATE on this table, so a
+ * day with two payments has no order of its own and would otherwise reshuffle
+ * between reads, rewriting the account book's text for no reason on every edit.
+ */
+export async function readSoPaymentRefs(
+  sb: Sb,
+  docNo: string,
+): Promise<Array<{ account_sheet: string | null; approval_code: string | null }>> {
+  const rows = await readOrThrow('mfg_sales_order_payments',
+    sb.from('mfg_sales_order_payments')
+      .select('account_sheet, approval_code, paid_at, id')
+      .eq('so_doc_no', docNo)
+      .order('paid_at', { ascending: true })
+      .order('id', { ascending: true }));
+  return ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    account_sheet: (r.account_sheet as string | null) ?? null,
+    approval_code: (r.approval_code as string | null) ?? null,
+  }));
+}

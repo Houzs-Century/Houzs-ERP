@@ -1040,6 +1040,56 @@ export function acUdfMoney(centi: number | null | undefined): string | null {
   return (Math.round(centi) / 100).toFixed(2);
 }
 
+/** One payment's two reference texts, as the ledger holds them. */
+export interface ErpPaymentRef {
+  account_sheet: string | null;
+  approval_code: string | null;
+}
+
+/** The three characters AutoCount's PAYEMENT format uses as delimiters. */
+const PAYEMENT_DELIMITERS = /[()/]/g;
+
+const cleanPayemenPart = (v: string | null | undefined): string | null => {
+  const s = String(v ?? '').replace(PAYEMENT_DELIMITERS, ' ').replace(/\s+/g, ' ').trim();
+  return s || null;
+};
+
+/**
+ * The `PAYEMENT` UDF — where the account sheet and the approval code go back.
+ *
+ * THE CUTOVER READ THIS FIELD AND NOTHING EVER WROTE IT BACK.
+ * `import-ac-outstanding-so.mjs` filled `mfg_sales_order_payments.account_sheet`
+ * and `.approval_code` from `SO.UDF_PAYEMENT` on 13,015 headers; the write-back
+ * sent five UDFs and not this one, so an ERP-recorded payment reference reached
+ * the account book nowhere. The owner's rule is that whatever the cutover
+ * extracted must go back.
+ *
+ * THE FORMAT IS NOT MINE TO CHOOSE. It is whatever `parsePayment` reads, and
+ * that function is the one the cutover actually ran, so it is the
+ * specification. It lives beside its inverse in
+ * `backend/scripts/lib/ac-payment-udf.mjs`, and
+ * `autocountPaymentUdf.roundtrip.test.ts` composes with THIS function and
+ * parses with THAT one — a format written in one place and read in another is
+ * how the two stop agreeing, and this field is free text with no schema to
+ * catch it.
+ *
+ * Returns null when there is nothing to say, so `udf()` drops the key. Omitting
+ * is not sending a blank: `Str` turns a present-null into `""`, which would
+ * ERASE the cutover's own text on an order whose payments predate the ERP.
+ */
+export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | null {
+  const groups: string[] = [];
+  for (const p of payments) {
+    const acct = cleanPayemenPart(p?.account_sheet);
+    const appr = cleanPayemenPart(p?.approval_code);
+    /* `(/)` is skipped by the parser anyway — emitting it is noise in a field
+       people read off a printed document. */
+    if (!acct && !appr) continue;
+    groups.push(`(${acct ?? ''}/${appr ?? ''})`);
+  }
+  return groups.length ? groups.join(' ') : null;
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
@@ -1071,6 +1121,15 @@ export function composeCreateSo(
    * the same division `withLocations` and `readSalespersonName` draw.
    */
   outstandingCenti: number | null,
+  /**
+   * The payment references this order carries, oldest first — REQUIRED, never
+   * optional, for the same reason as the two above: it DECIDES what the account
+   * book's `PAYEMENT` field says, and a caller that says nothing would keep the
+   * old behaviour of never sending it with no compile error. Pass an empty
+   * array to state that the ERP has no references; the key is then omitted and
+   * the book keeps whatever the cutover left there.
+   */
+  paymentRefs: readonly ErpPaymentRef[],
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   const agent = resolveAcAgent(header.agent, salespersonName);
@@ -1110,6 +1169,9 @@ export function composeCreateSo(
       ToPONo: soCustomerRef(header),
       PDate: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingCenti),
+      /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
+         book, and the cutover read it (import-ac-outstanding-so.mjs). */
+      PAYEMENT: composePaymentUdf(paymentRefs),
     }),
     Details: details,
   };

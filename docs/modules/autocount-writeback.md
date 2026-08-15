@@ -966,6 +966,7 @@ number below came from reading the two `.gz` files on 2026-08-15.
 | `UDF_BALANCE` — non-zero on **2,339 of 13,015** headers | no | **yes**, create + edit |
 | `DeliverPhone1` — on **120 of 13,015**, and genuinely different from `Phone1` on **37** | no | **yes**, create + edit |
 | `SODTL.DeliveryDate` — **NULL on 11,886 of 60,939 lines**, across 2,268 whole documents | no | **yes**, including the blank |
+| `UDF_PAYEMENT` — the free text the cutover parsed into `account_sheet` + `approval_code` (`import-ac-outstanding-so.mjs:16`; the misspelling is AutoCount's) | no | **yes**, create + edit |
 | `SODTL.UOM` | no | **still no — and that is correct**, see below |
 | `Cancelled` — `T` on 5 of 13,015 | the separate `/cancel` op (§7f) | unchanged |
 | `Seq`, `DtlKey`, `TransferedQty`, `TransferedPOQty` | AutoCount's own | never ours to send |

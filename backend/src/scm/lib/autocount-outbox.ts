@@ -64,6 +64,7 @@ import {
   composeDescription2,
   composeDetails,
   composeEdit,
+  composePaymentUdf,
   acUdfDate,
   acUdfMoney,
   acServiceConfig,
@@ -80,6 +81,7 @@ import {
   type AcCreatedLine,
   type AcRetiredLine,
   type ErpLine,
+  type ErpPaymentRef,
 } from '../../services/autocount-writeback';
 
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
@@ -89,7 +91,7 @@ export type { AcRetiredLine } from '../../services/autocount-writeback';
 import { mastersOf } from './autocount-masters';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
-import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
+import { AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs } from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -638,7 +640,9 @@ export async function enqueueSoCreate(
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
     const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
-    const body = composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings });
+    const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
+    const body = composeCreateSo(
+      header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -1478,6 +1482,10 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   const outstandingCenti = await readSoOutstandingCenti(sb, h);
+  /* The payment REFERENCES, which is a different read from the balance above:
+     that one collapses two numeric columns to a figure, this one needs two text
+     columns and the order they were taken in. */
+  const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1485,7 +1493,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1493,7 +1501,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti), lines,
+      soEditHeader(h, salespersonName, lines, outstandingCenti, paymentRefs), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1569,6 +1577,10 @@ function soEditHeader(
   /** REQUIRED, never optional: it decides what the account book says a live
    *  customer still owes. `null` omits the key and keeps the book's own. */
   outstandingCenti: number | null,
+  /** The payment references, oldest first — REQUIRED for the same reason as
+   *  the three above: it decides what the book's PAYEMENT field says. An empty
+   *  array omits the key and the book keeps whatever the cutover left. */
+  paymentRefs: readonly ErpPaymentRef[],
 ): Record<string, string | null | Record<string, string>> {
   const out: Record<string, string | null | Record<string, string>> = present({
     DebtorName: (h.debtor_name as string) ?? null,
@@ -1610,6 +1622,11 @@ function soEditHeader(
      not drop it. Only a null — the ERP has no answer — omits the key. */
   const balance = acUdfMoney(outstandingCenti);
   if (balance != null) udf.BALANCE = balance;
+  /* The payment references the cutover took OUT of this same field. Omit-when-
+     absent like the rest: an order whose payments predate the ERP has nothing
+     to say, and a blank would erase the book's own text. */
+  const payement = composePaymentUdf(paymentRefs);
+  if (payement) udf.PAYEMENT = payement;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;

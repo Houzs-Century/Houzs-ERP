@@ -23,6 +23,7 @@
 //   node scripts/import-ac-outstanding-so.mjs            # dry-run report
 //   APPLY=1 node scripts/import-ac-outstanding-so.mjs    # write
 import fs from "node:fs";
+import { parsePayment } from "./lib/ac-payment-udf.mjs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,14 +80,10 @@ function stateOf(pc) {
   for (const [[a, b], s] of R) if (p >= a && p <= b) return s; return null;
 }
 
-function parsePayment(p) {
-  const s = (p || "").trim();
-  if (!s) return { acct: null, appr: null, extra: null };
-  const groups = [...s.matchAll(/\(([^)]*)\)/g)].map((m) => m[1]);
-  let acct = null, appr = null; const kept = [];
-  for (const g of groups) { if (g === "/" || g === "") continue; const parts = g.split("/"); if (!acct && parts[0]) acct = parts[0].trim(); if (!appr && parts[1]) appr = parts[1].trim(); kept.push(g); }
-  return { acct, appr, extra: kept.length > 1 ? kept.join(" | ") : null };
-}
+/* parsePayment moved to scripts/lib/ac-payment-udf.mjs, beside its INVERSE.
+   The write-back has to emit this same format to send account_sheet and
+   approval_code back, and a format read in one file and written in another is
+   how the two stop agreeing. */
 
 
 // SOFA decomposition lives in scripts/lib/parse-sofa.mjs (shared with the PO import).
