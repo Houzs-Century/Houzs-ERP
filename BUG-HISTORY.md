@@ -1,3 +1,38 @@
+## Desktop auto-derives the Processing Date; mobile makes you work it out — OPEN, owner decides [open-question]
+
+<!-- area: Sales orders + pricing -->
+
+**Not a fix. A divergence found while extracting the rule, recorded so it stops
+being invisible.** The decision is the owner's, because both readings are
+defensible and only he knows which flow is real.
+
+**What the two surfaces do.** On desktop (`pages/scm-v2/SalesOrderNew.tsx`),
+picking a Delivery Date fills the Processing Date in automatically —
+`deriveProcessingDate` at two callsites, 42 days before delivery, clamped so it
+never lands in the past. On mobile (`mobile/MobileNewSO.tsx`) the Processing
+Date is a bare `<input type="date">` with `onChange={(e) =>
+setProcDate(e.target.value)}` and no derivation anywhere in the file. Its only
+non-manual source is `scanPrefill?.slipDate` — the date read off a scanned slip.
+
+So the same salesperson gets the date computed for them at a desk and does
+"six weeks before delivery, but not before today" in their head on a phone.
+
+**Why this is a question and not a defect.** Mobile is the scan-driven surface,
+and a scanned paper slip carries its own date. Seeding from the slip rather than
+from an arithmetic rule may be exactly right — the slip is the source document.
+`CLAUDE.md`'s standing rule that a rule fixed on one surface must be fixed on
+both is about RULES; an affordance that only one surface offers is a product
+call.
+
+**What it would take either way.** The logic is now one importable module,
+`frontend/src/lib/processingDate.ts`, tested. Wiring mobile to it is small.
+Deciding that mobile should NOT derive is also fine — but then that belongs in
+`docs/modules/sales-order.md` as a stated difference, so the next person does not
+"fix" it.
+
+**Decision owner: the owner.** Until then, neither surface changes.
+
+**Ref.** 2026-08-15, found during the file-size extraction of `deriveProcessingDate`.
 ## A wiring guard promised the repository and measured one file — a third AutoCount enqueue was invisible to it [low]
 
 <!-- area: Sales orders + pricing -->
