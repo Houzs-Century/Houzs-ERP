@@ -168,16 +168,16 @@ Total: 1021 route registrations across 136 files.
 - L3283  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
-- L1170  GET    /
-- L1897  GET    /customers
-- L1972  GET    /my-mtd
-- L2013  GET    /mine
-- L2193  GET    /:docNo/slip-url
-- L2291  GET    /cross-category-eligibility
-- L2314  GET    /cross-category-match
-- L2368  GET    /customer-search
-- L2485  GET    /active-venue
-- L2539  GET    /:docNo
+- L1171  GET    /
+- L1898  GET    /customers
+- L1973  GET    /my-mtd
+- L2014  GET    /mine
+- L2194  GET    /:docNo/slip-url
+- L2292  GET    /cross-category-eligibility
+- L2315  GET    /cross-category-match
+- L2369  GET    /customer-search
+- L2486  GET    /active-venue
+- L2540  GET    /:docNo
 - L2936  GET    /:docNo/items
 - L3033  GET    /customer-credit/:debtorCode
 - L3098  POST   /backfill-warehouses

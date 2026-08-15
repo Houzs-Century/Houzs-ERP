@@ -23,6 +23,11 @@
     "db:migrate": "npm --prefix backend run db:migrate",
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
     "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
-    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update"
+    "lint:update": "npm --prefix backend run lint:update && npm --prefix frontend run lint:update",
+    "explain": "node scripts/explain.mjs",
+    "explain:check": "node scripts/explain.mjs --check",
+    "explain:write": "node scripts/explain.mjs --write",
+    "explain:check-docs": "node scripts/explain.mjs --check-docs",
+    "explain:test": "node --test scripts/explain.test.mjs"
   }
 }
