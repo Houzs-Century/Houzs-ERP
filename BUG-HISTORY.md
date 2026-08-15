@@ -1,6 +1,6 @@
 ## The address cascade only ran downhill, on eight of the eleven forms [high]
 
-<!-- area: SCM address / localities -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Owner, 2026-08-15: *"City 和 Postcode … 它可以由上往下，也可以由下往上，
 双边启动都是可以的。"* On New Consignment Order — and seven sibling forms — City sat
