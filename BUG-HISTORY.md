@@ -58,7 +58,7 @@ Mig 0295 widens the outbox `op` CHECK, which 0277 pinned. The contract test
 gained a `/so-to-po` case, so the new route's keys are held against the C#
 source like the rest.
 
-**Ref.** 2026-08-15, PR #2250.
+**Ref.** 2026-08-15, PR #2251.
 
 ## My own matcher reported "10 of 10 missing" on ten functions that were all there [low]
 
