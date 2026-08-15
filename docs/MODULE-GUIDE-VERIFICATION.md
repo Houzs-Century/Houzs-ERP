@@ -67,6 +67,7 @@ hard to check.
 
 | guide | status | verified by / PR | what was found |
 |---|---|---|---|
+| `address-cascade.md` | not verified | — | — |
 | `announcements.md` | not verified | — | — |
 | `autocount-writeback.md` | not verified | — | — |
 | `combo-pricing.md` | not verified | — | — |
@@ -95,7 +96,7 @@ hard to check.
 | `team-members.md` | not verified | — | — |
 | `warehouses.md` | not verified | — | — |
 
-**27 guides, 0 verified** as of 2026-08-15. Re-count rather than trust that line:
+**28 guides, 0 verified** as of 2026-08-15 — `address-cascade.md` landed on `main` while this PR was in flight, and the guard below is what noticed. Do not type this pair either; the commands under it are the answer. Re-count rather than trust that line:
 
 ```bash
 grep -c '| not verified |' docs/MODULE-GUIDE-VERIFICATION.md
