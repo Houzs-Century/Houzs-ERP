@@ -1,3 +1,48 @@
+## Sixteen empty SOs auto-advanced to READY_TO_SHIP because "every main line is READY" is true of no lines [medium]
+
+**Symptom.** The 2990 SO list for August showed 16 orders with a customer name
+like `testRM500voucher` or `was testin promo voucher`, RM0.00, no lines at all —
+every one of them sitting at `READY_TO_SHIP`, indistinguishable at a glance from
+real work in the ship queue. June: 50 SOs, 0 empty. July: 28, 0. August: 35, 16.
+
+**How they were created.** Staff exercised the promo-voucher and free-gift
+campaign work on the production POS on 2026-08-13/14 — each test checkout mints
+a real SO and burns a real running number. An SO cannot be removed, so they were
+"undone" by deleting every line and its payment, which leaves a husk behind. The
+audit trail is the same nine rows on each: `CREATE` (POS, web) → `ADD_PAYMENT`
+(automation) → `DELETE_PAYMENT` + N × `DELETE_LINE` (web, by hand) →
+`UPDATE_STATUS` → `READY_TO_SHIP` (automation).
+
+**Root cause.** `summariseReadiness.isMainReady` asks "is every MAIN product line
+(sofa / bedframe / mattress) allocated?" and is *deliberately* true when there is
+no MAIN line — the correct convention for an accessory-only order, which really
+does ship without a mattress on it. On an order with no stock-bearing lines at
+all the same flag is vacuously true, and the auto-allocation sweep gated straight
+on it: zero unready main lines, therefore advance, with the audit note "every
+main product line is READY (stock allocation)" — true of nothing.
+
+**The part that makes it a class, not an incident.** Delivery Planning had
+already found this hole and worked around it *locally*, writing
+`mainCount > 0 ? isMainReady : isFullyReady` inline in two places with a comment
+warning that `isMainReady` is "VACUOUSLY true". The rule stayed private to that
+module, so the two writers that actually auto-advance an SO header —
+`recomputeSoStockAllocation` and `PATCH /:docNo/items/:itemId/stock-status` —
+never inherited it. A correct fix that stays local leaves the next caller to
+rediscover the bug.
+
+**Fix.** The gate gets one home: `summariseReadiness.isShipReady` — main-ready
+when there IS a main line, else `isFullyReady`, which already requires at least
+one live line. All four call sites read it, `derivePlanningState`'s parameter is
+narrowed to `{ isShipReady }` so no caller can pick the wrong flag off it, and
+the regress arm inherits the same gate — so the 16 live husks fall back to
+`CONFIRMED` on the next sweep with no data fix. Tests pin both directions plus
+source assertions that neither auto-advance writer drifts back to the bare flag;
+this bug shipped by using the *nearly*-right flag, so that is what is watched.
+
+**Ref** — 2026-08-14, PR #2186 `fix/ship-gate-empty-so-0814`. No migration.
+Left open deliberately: those SOs want `CANCELLED` (the enum has had it all
+along) rather than emptying, and production POS still has no test mode.
+
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
 **Symptom.** `node scripts/coverage-ratchet.mjs --check --report <file>` on a

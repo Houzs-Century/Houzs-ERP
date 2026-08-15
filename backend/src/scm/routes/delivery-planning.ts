@@ -303,7 +303,9 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
-  readiness: { mainCount: number; isMainReady: boolean; isFullyReady: boolean; isShipReady: boolean };
+  /* Only the ship gate is read — narrowed from the full summariseReadiness
+     shape so no caller can pick the wrong flag off it. */
+  readiness: { isShipReady: boolean };
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
