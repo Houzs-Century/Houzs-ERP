@@ -33,9 +33,14 @@ Added 2026-08-15 because the answer to *"what else needs the AutoCount host?"*
 was scattered across four documents. **This is the whole list.** Nothing else in
 the project is waiting on that machine.
 
+> Updated 2026-08-15 with job 7 — `/so-to-po` landed after this section was first
+> written, which is the exact way a hand-written list goes stale. If you add an
+> operation to `AcSyncService.cs`, add its row here in the same PR.
+
 **Read the order, not just the rows: job 1 unblocks every other job.** Until the
-exe is rebuilt, four merged changes are sitting in the repository and not
-running, including the read route the banner above depends on.
+exe is rebuilt, FIVE merged changes are sitting in the repository and not
+running, including the read route the banner above depends on and the SO-to-PO
+transfer.
 
 | # | Job | Writes? | What it needs | What it unblocks |
 |---|---|---|---|---|
@@ -45,6 +50,7 @@ running, including the read route the banner above depends on.
 | 4 | Read one `FurtherDescription` | no | job 1, then `read-further-description.mjs` (the banner above) | which picture format the photos are in — the last unknown blocking photo sync |
 | 5 | `qa-convert.ps1` | **YES — writes to the LIVE book and consumes real DO / GR running numbers** | job 1, plus the owner saying go | `create-po`, `so-to-do`, `po-to-gr` — three operations never proven end to end |
 | 6 | The `FurtherDescription` write probe | **YES — scratch document only** | job 4 first | whether AutoCount will render RTF it did not write |
+| 7 | Convert one sales order to a purchase order and look at the PO's **Transfer From** | **YES — a real PO** | job 1 | that `/so-to-po` works, and that a CONSOLIDATED purchase correctly falls back to a plain create with the source SO numbers in `Ref` |
 
 ### 0.05 ROOT CAUSE — why these six cannot be done from the development side
 
@@ -95,6 +101,7 @@ predates all of them:
 | `#2200` | eight fields the ERP holds and the write-back was not sending |
 | `#2218` | a line with no delivery date arrives BLANK instead of carrying the document date |
 | `#2243` | `POST /further-description` — the read route the banner above needs |
+| `#2251` | `POST /so-to-po` — the SO-to-PO **Transfer From** link. Without it a purchase order raised from a sales order still reaches AutoCount, but as a standalone document with no provenance |
 
 Verify rather than trust this table: compare `builtAt` from job 2 against
 
