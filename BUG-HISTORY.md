@@ -1,3 +1,222 @@
+## The SO-to-PO transfer produces a PO with no transferable lines, and only half a Transfer link [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Two symptoms, one document, found once `/so-to-po` stopped failing outright.**
+Measured on the live book 2026-08-15, run `ZZQA-SO-20260815-233528` ->
+`ZZQA-PO-20260815-233528`:
+
+1. **The link is half written.** `/doc-read` on the PO's lines reports
+   `FromDocNo = 'ZZQA-SO-20260815-233528'` and `FromDocType = ''`. The document
+   number came across; the TYPE did not. Every other conversion writes both —
+   `DO<-SO` and `IV<-DO` both carry `FromDocType` and `FromDocNo` on every line.
+2. **The PO has nothing to transfer onward.** `/po-to-gr` refused with our own
+   guard: `no transferable lines on PO ZZQA-PO-20260815-233528`. That guard
+   reads AutoCount's own outstanding predicate,
+   `Qty - ISNULL(TransferedQty, 0) > 0`, so the PO's line is either zero-qty or
+   already counted as transferred the moment it was created.
+
+**Why they are probably one fault.** The four ordinary conversions go through
+`AddPartialTransferDetail(fromType, keys, transferMaster)`, which is handed the
+source TYPE explicitly. `SO->PO` is the odd one: the SDK offers only
+`AddSOToPOTransferDetail(Int64)` — one key at a time and **no type argument** —
+so whatever that method does with provenance and outstanding quantity, it does
+alone. Both symptoms are consistent with the PO line being created in a state
+the rest of the system reads as "already dealt with".
+
+**NOT yet traced, and deliberately not guessed at.** The PO was cancelled in
+teardown before its lines could be read a second time. The next run must call
+`/doc-read` on the PO **immediately** and record `Qty`, `TransferedQty`,
+`Transferable` and `FullTransferFromDocList` per line — those four settle it.
+
+**Consequence while it stands:** a purchase order raised from a sales order
+reaches AutoCount, but AutoCount does not consider it convertible, so `PO->GR`
+and `GR->PI` cannot run from it at all. The two purchase-side conversions remain
+unproven end to end.
+
+**Ref:** this PR, 2026-08-15.
+
+## The QA teardown cancelled the PO after the SO and left a live sales order [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `qa-matrix.ps1` ended with
+`FAIL 7 cancel SO ... status=500 ... CANCEL BY HAND`, leaving a real,
+uncancelled sales order in the live book.
+
+**Root cause.** The teardown order was `PI, GR, IV, DO, SO, PO` — the PO last.
+A sales order transferred to a purchase order cannot be cancelled while that PO
+is live, and AutoCount says exactly that:
+
+```
+SOTransferedToDocumentNotAllowToCancelException:
+The Sales Order was transfered to Purchase Order, so it is not allow to cancel.
+```
+
+So "child before parent" was written into the list but not fully applied: the PO
+is a child of the SO too, and it was ordered after it.
+
+**Fix.** `PI, GR, IV, DO, PO, SO`, with the exception quoted at the site.
+
+**The leftover was cleaned up rather than left:** the SO was cancelled once its
+PO was gone, and the cancel was verified by reading the document back —
+`Cancelled: "T"` — not by trusting the 200.
+
+**Worth keeping:** this is the second time the cancel guard has proved to be
+working after being suspected. It refuses by a NAMED exception in both
+directions, SO->DO/IV and SO->PO.
+
+**Ref:** this PR, 2026-08-15.
+
+## `/so-to-po` dropped the creditor, and died on a foreign key naming the payment term [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `POST /so-to-po` answered 500 with no body. `qa-convert.ps1`
+reported it as `status=0 ... (500)` for days because it never read the response
+stream, so the failure had a symptom and no cause.
+
+**Root cause, traced.** The service's own log had it the whole time
+(`C:\Temp\ac-sync-service.log`, written by the catch-all in `Serve()`):
+
+```
+2026-08-15 23:07:33 ERROR /so-to-po: AutoCount.Data.ForeignKeyException:
+  Foreign Key Error (Constraint Name=FK_PO_DisplayTerm)
+```
+
+`SoToPo()` called `AddSOToPOTransferDetail` for each line and then
+`PurchaseHeader()`, which writes `DocDate` / `DocNo` / `Ref` / `Description` /
+UDF and **not the creditor**. AutoCount defaults a purchase order's
+`DisplayTerm` — its payment term — **from the supplier**, so a PO reaching
+`Save()` with no creditor has no term, and the insert dies on the TERM's foreign
+key rather than on anything mentioning a supplier.
+
+That is why `/create-po` passed on the same night while `/so-to-po` did not:
+`CreatePo()` assigns `CreditorCode` directly. **The payload had always carried a
+creditor. This route simply never read it.**
+
+**Third of a kind.** `FK_SODTL_Location` (the line's warehouse),
+`FK_SO_SalesLocation` (the header's sales location), now `FK_PO_DisplayTerm`.
+Each is a lookup AutoCount defaults from something the payload failed to set,
+and each names a DIFFERENT field than the one actually missing.
+
+**Fix.** `SoToPo` sets `CreditorCode` (refusing when absent, naming the trap in
+the message) and `CreditorName`. `DisplayTerm` also becomes a `ContainsKey`
+passthrough on both header helpers, because a blank term is a foreign key error
+rather than an empty field.
+
+**Ref:** this PR, 2026-08-15.
+
+## The cancel guard was working, and the earlier finding against it is unresolved [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Withdrawn, in part.** `qa-convert.ps1` reported on 2026-08-15 that a sales
+order cancelled while its delivery order was still live, and that was written up
+as "the link did not hold". A second run the same night refutes it:
+
+```
+2026-08-15 23:07:35 ERROR /cancel:
+  AutoCount.Invoicing.TransferedDocNotAllowToCancelException:
+  The document was transfered to other document, so it is not allow to cancel.
+```
+
+So AutoCount does refuse, by a named exception, and `/doc-read` separately
+proved the link exists on that document's lines (`FromDocType=SO`,
+`FromDocNo=...`).
+
+**What is NOT resolved, and is deliberately not smoothed over:** the earlier run
+really did cancel — the log carries no `ERROR /cancel` at that timestamp, so it
+was not refused and then retried. Two runs of the same shape behaved
+differently and the difference has not been established. Recorded as an open
+question rather than bridged with a story that makes both fit.
+
+**Ref:** this PR, 2026-08-15.
+
+## `/create-so` saved a document with a BLANK number and answered ok:true [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Found by doing it to the live book, 2026-08-15.** Not a production defect —
+proven below — but an unrecoverable one when it fires.
+
+**Symptom.** `POST /create-so` without a `DocNo` answered
+`{"ok":true,"docNo":"","lines":[]}` and created a real, uncancelled sales order
+in `AED_HOUZS`: `DocKey 906099`, `DocNo` blank, one line `DtlKey 906100`
+(`AK-SLEEP ESSENTIAL 7 HOLES`, qty 1, RM1, KL). `lines` came back empty because
+the read-back finds lines BY `DocNo`, and there was none to find.
+
+**Root cause (traced).** `AcSyncService.cs` had `so.DocNo = Str(p, "DocNo")`,
+and `Str()` answers `""` for an absent key — not null, not an error. AutoCount
+accepted the blank and `Save()` succeeded.
+
+**Why it is worse than a failure.** Every route addresses a document BY `DocNo`:
+`/edit`, the converts, and `/cancel`. A blank-numbered document therefore cannot
+be edited, converted, or even CANCELLED through this service — the owner's
+"never delete, only cancel" rule has no instrument. It can only be reached by
+hand in the AutoCount UI.
+
+**Production was never exposed, and this is the check rather than the claim.**
+On the live book, `SELECT COUNT(*) FROM SO WHERE DocNo IS NULL OR
+LTRIM(RTRIM(DocNo)) = ''` returned **1**, and that row is the one just created,
+`CreatedTimeStamp 8/15/2026 10:11:29 PM`. The ERP has never done this — it
+always sends its own number (module guide 7g) — and `qa-convert.ps1` sends one
+too. Only a hand-written payload can reach it.
+
+**Fix.** `RequireDocNo()` on `/create-so` and `/create-po`: refuse, naming the
+reason, instead of saving something nobody can address. Nothing in the book
+relies on AutoCount auto-numbering for us, so refusing costs nothing.
+
+**Cleared 2026-08-15.** `DocKey 906099` was found in the AutoCount Sales Order
+list and **voided, not deleted**. It did not appear until the grid was
+REFRESHED - that list is cached, so a document created behind its back is
+invisible until then. Worth knowing the next time something is "not in
+AutoCount".
+
+**Ref:** this PR, 2026-08-15.
+
+## The write probe was refused by the live book: FK_SO_SalesLocation, and two more defects in the same scripts [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Three defects, all found by RUNNING the scripts against the live host rather
+than by reading them. None reached production; all three sat in scripts shipped
+hours earlier in #2253.**
+
+**1. `FK_SO_SalesLocation` — the probe could not create its scratch order.**
+Symptom: `/create-so` answered
+`{"ok":false,"error":"Foreign Key Error (Constraint Name=FK_SO_SalesLocation)"}`.
+Root cause: `SalesLocation` is a HEADER field and is not optional;
+`fd-probe.ps1` sent `Agent`, `DebtorCode` and a line `Location` but no header
+`SalesLocation`. It is the header-level twin of `FK_SODTL_Location`, the line
+one already documented. **The ERP itself never trips this** — `autocount-outbox.ts`
+raises `MissingSalesLocationError` naming this exact constraint and refuses to
+enqueue — so the constraint is invisible until something hand-writes a payload.
+`qa-convert.ps1` has always sent it. Fix: send it, with the refusal quoted at the
+site.
+
+**2. Both new scripts defaulted to an unreachable base URL.** Symptom:
+`Invoke-RestMethod : Bad Request - Invalid Hostname`, HTTP 400, on every call.
+Root cause: they defaulted to `http://127.0.0.1:8900`, but the service registers
+the prefix `http://localhost:<port>/` (`AcSyncService.cs:100`) and `HttpListener`
+matches on the Host header, so a numeric-IP request is refused before any route
+runs. `deploy-on-host.ps1` had always used `localhost`, which is why its own
+health check passed in the same run that my step 3 failed. Fix: default to
+`localhost` in both.
+
+**3. `host-session.ps1` did not fetch the probe it tells you to run.** Its
+fetch list was `AcSyncService.cs`, `deploy-on-host.ps1`, `qa-convert.ps1`;
+running `fd-probe.ps1` afterwards died on
+`The argument ... does not exist`. Fix: added to the list.
+
+**Lesson.** #2253 claimed the C# was compiled and run — it was — but the
+PowerShell around it had never executed against anything. A script that has not
+been run is not evidence, and the same rule the repo already applies to
+`workflow_dispatch` workflows ("not shipped until dispatched once") applies
+here.
+
+**Ref:** this PR, 2026-08-15.
+
 ## `Desc2` was documented as being AutoCount's Further Description; they are two different columns [medium]
 
 <!-- area: AutoCount sync + write-back -->
