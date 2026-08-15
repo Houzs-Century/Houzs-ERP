@@ -59,15 +59,21 @@ export const AC_DEBTOR_CODE = '300-C002';
  *   location code. Passes through unmapped (`bookSpellingOrOwn`).
  * - `VENUE_MAP` — ERP venue -> the book's VENUE UDF option. Passes through
  *   unmapped; venue is deliberately free text (mig 0229).
- * - `BRANDING_MAP` — ERP branding -> the book's BRANDING UDF option. THE ONE
- *   ALLOW-LIST OF THE FOUR, and production decided that rather than taste: the
- *   ERP column behind it is snapshotted from `mfg_products.branding`, which
- *   holds CATEGORIES, and a pass-through was measured on 2026-08-14 as opening
- *   `2990s Sofa` (44 orders), `Accessories` (8), `2990s Mattress` (8), `2990`
- *   (3), `Bedframe` (3) and `Happi.S` (2) as permanent brands in a licensed
- *   book. `CARRESS` and `DUNLOP` are in the map for the opposite reason — real
- *   brands in the book's own history it had never been told about. A matcher may
- *   PROPOSE an addition; it may not turn this into a pass-through.
+ * - `BRANDING_MAP` — ERP branding -> the book's BRANDING UDF option. Passes
+ *   through unmapped, like the other three, since 2026-08-15.
+ *
+ *   It was the one allow-list, and the measurement that made it one was wrong.
+ *   On 2026-08-14 a pass-through was measured as opening `2990s Sofa` (44
+ *   orders), `Accessories` (8), `2990s Mattress` (8), `2990` (3) — and every one
+ *   of those is 2990's, counted only because the report had no company predicate
+ *   (#2201). The write-back runs for company 1. Scoped to it, the whole
+ *   pass-through is `BEDFRAME` (1 order) and `SERVICE` (0).
+ *
+ *   Those two are still categories rather than brands, and the owner was told
+ *   so before deciding: "bedframe和service的branding也开进去autocount ... 之后
+ *   再有新的，如果 match 不上的，你都开进去". His book, his vocabulary. What
+ *   the allow-list was really protecting against was a fiftyfold-inflated
+ *   number, which is a reason to fix the number, not to keep the rule.
  */
 export {
   AGENT_MAP,
@@ -138,7 +144,7 @@ export function bookSpelling(
  * values out of `body.Header`.
  *
  * AND THE SOURCE COLUMN HAS TO BE A VOCABULARY OF THE RIGHT KIND. Three of the
- * four maps use this; `BRANDING_MAP` does not, and its own comment says why —
+ * all four maps use this now; BRANDING_MAP was the exception until 2026-08-15 —
  * the ERP column behind it holds categories, so a pass-through would open
  * `Bedframe` and `Accessories` as brands. Same distinction `resolveAcAgent`
  * draws for the raw `agent` text: a value with a trustworthy writer may pass
@@ -920,9 +926,7 @@ export function composeCreateSo(
     Attention: header.debtor_name,
     ...soInvoiceAddress(header),
     UDF: udf({
-      /* bookSpelling, NOT bookSpellingOrOwn — the map is an allow-list here.
-         See BRANDING_MAP. */
-      BRANDING: bookSpelling(soBranding(header.branding, lines), BRANDING_MAP),
+      BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
       PDate: acUdfDate(header.processing_date),

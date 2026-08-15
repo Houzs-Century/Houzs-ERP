@@ -443,19 +443,29 @@ describe('BRANDING — the header column is empty on every ERP-created order (fi
       .toBe('DUNLOP');
   });
 
-  /* BRANDING_MAP IS THE ONE ALLOW-LIST OF THE FOUR, and production is what
-     decided that. Running the field-alignment check on the branch that first
-     passed branding through reported the six values it would OPEN as brands in
-     the licensed book: `2990s Sofa` (44 orders), `Accessories` (8),
-     `2990s Mattress` (8), `2990` (3), `Bedframe` (3), `Happi.S` (2). Four are
-     CATEGORIES and one is a company name — `mfg_products.branding` is simply
-     not a brand vocabulary. Sending nothing costs a UDF that stays empty;
-     passing through costs a category that is a brand in AutoCount forever. */
-  test('a value the map does not know is DROPPED, not opened as a brand', () => {
-    for (const notABrand of ['Bedframe', 'Accessories', '2990s Sofa', '2990s Mattress']) {
-      const p = composeCreateSo({ ...header, branding: notABrand }, [line()], SALESPERSON, opts);
-      expect(p.UDF.BRANDING, notABrand).toBeUndefined();
+  /* BRANDING PASSES THROUGH SINCE 2026-08-15, like the other three maps.
+     It was the one allow-list, on the strength of a field-alignment run that
+     reported a pass-through would open `2990s Sofa` (44 orders), `Accessories`
+     (8), `2990s Mattress` (8), `2990` (3) — all of them COMPANY 2's, counted
+     only because that report had no company predicate (#2201). The write-back
+     runs for company 1, where the entire pass-through is `BEDFRAME` (1 order)
+     and `SERVICE` (0).
+     Those two are categories rather than brands and the owner was told so
+     before ruling: "bedframe和service的branding也开进去autocount". His book. */
+  test('a value the map does not know is PASSED THROUGH, so /ensure-masters opens it', () => {
+    for (const own of ['BEDFRAME', 'SERVICE']) {
+      const p = composeCreateSo({ ...header, branding: own }, [line()], SALESPERSON, opts);
+      expect(p.UDF.BRANDING, own).toBe(own);
     }
+  });
+
+  test('a mapped value is still corrected to the book spelling, not passed through', () => {
+    /* Pass-through must not become "send whatever the ERP holds": where the map
+       knows the book's own spelling, that still wins. */
+    const [erp, book] = Object.entries(BRANDING_MAP)[0];
+    expect(book).toBeTruthy();
+    const p = composeCreateSo({ ...header, branding: erp }, [line()], SALESPERSON, opts);
+    expect(p.UDF.BRANDING).toBe(book);
   });
 
   /* A CANCELLED line is not on the document AutoCount is being sent, so its
