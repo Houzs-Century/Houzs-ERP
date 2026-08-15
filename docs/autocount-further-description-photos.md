@@ -200,7 +200,15 @@ QUIETLY, which are the ones worth a test:
 - the reader recognises all five forms, finds pictures nested inside
   `{\*\shppict{\pict …}}` and `{\nonshppict{\pict …}}`, reports an
   unrecognised keyword as `null` rather than as a default, and surfaces an odd
-  hex-digit count instead of silently rounding a nibble away.
+  hex-digit count instead of silently rounding a nibble away;
+- **a `{\*\blipuid <32 hex digits>}` sub-group does not become part of the
+  photograph.** Word and the Win32 RichEdit both emit one immediately before the
+  picture data, and those 32 characters are a legal hex run — a reader that
+  takes "everything after the last control word" from the raw text prepends 16
+  bytes of somebody's identifier and returns a file that is corrupt in a way no
+  length check notices. Given `WMF->DIB->JPEG`, this is the shape most likely to
+  be in the live values §5.1 dumps, so it is pinned by a test that has been
+  observed RED with the guard removed.
 
 **The reader is the more important half.** It is what turns §5.1 from an opinion
 into a measurement.

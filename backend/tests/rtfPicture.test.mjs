@@ -21,6 +21,7 @@ import {
   rtfHex,
   rtfPayloadBytes,
   rtfPicture,
+  stripNestedGroups,
 } from '../scripts/lib/rtf-picture.mjs';
 
 /* A REAL baseline JPEG, 24x16, 689 bytes — not a hand-assembled marker
@@ -203,6 +204,37 @@ describe('the reader, which is the half that settles the open question', () => {
     assert.deepEqual(pics.map((p) => p.blip), ['jpegblip', 'wmetafile']);
     assert.deepEqual([...pics[0].bytes], [0xaa, 0xbb]);
     assert.deepEqual([...pics[1].bytes], [0xcc, 0xdd]);
+  });
+
+  test('a blipuid does not become part of the photograph', () => {
+    /* Word and the Win32 RichEdit both emit `{\*\blipuid <32 hex digits>}`
+       inside the picture group, right before the data. Those 32 characters are
+       a legal hex run: a reader that takes everything after the last control
+       word from the RAW text prepends 16 bytes of somebody's identifier to the
+       picture and returns a file that is corrupt in a way no length check
+       catches. Whatever the live book turns out to hold, this is the shape most
+       likely to be in it. */
+    const rtf = '{\\rtf1{\\pict\\wmetafile8\\picw10\\pich10'
+      + '{\\*\\blipuid 0123456789abcdef0123456789abcdef}\n'
+      + 'deadbeef}}';
+    const [p] = parseRtfPictures(rtf);
+    assert.equal(p.blip, 'wmetafile');
+    assert.deepEqual([...p.bytes], [0xde, 0xad, 0xbe, 0xef], 'the uid must not be in the picture');
+    assert.equal(p.hexChars, 8);
+  });
+
+  test('a picprop group before the data does not shift where the data starts', () => {
+    const rtf = '{\\rtf1{\\pict{\\*\\picprop\\shplid1025{\\sp{\\sn fFlipV}{\\sv 0}}}'
+      + '\\jpegblip\\picw10\\pich10 aabbcc}}';
+    const [p] = parseRtfPictures(rtf);
+    assert.equal(p.blip, 'jpegblip');
+    assert.deepEqual([...p.bytes], [0xaa, 0xbb, 0xcc]);
+  });
+
+  test('stripNestedGroups keeps an unbalanced brace rather than eating the data', () => {
+    assert.equal(stripNestedGroups('\\pict{\\*\\x 1}\\jpegblip aabb'), '\\pict\\jpegblip aabb');
+    assert.equal(stripNestedGroups('\\pict{ aabb'), '\\pict{ aabb');
+    assert.equal(stripNestedGroups('\\pict\\{literal\\} aabb'), '\\pict\\{literal\\} aabb');
   });
 
   test('an unrecognised group is reported as unrecognised, never as empty', () => {

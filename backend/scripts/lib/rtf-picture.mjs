@@ -271,6 +271,29 @@ export function parseRtfPictures(rtf) {
   return out;
 }
 
+/**
+ * Every balanced `{...}` sub-group removed, the rest of the text kept in place.
+ *
+ * An UNBALANCED `{` is left alone rather than swallowing the remainder: the
+ * picture data is what follows, and losing it silently is the outcome this
+ * whole function exists to prevent.
+ */
+export function stripNestedGroups(inner) {
+  let out = '';
+  for (let i = 0; i < inner.length; i += 1) {
+    const c = inner[i];
+    if (c === '\\') { out += c + (inner[i + 1] ?? ''); i += 1; continue; }
+    if (c === '{') {
+      const close = matchGroup(inner, i);
+      if (close < 0) { out += c; continue; }
+      i = close;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
 /** Index of the `}` closing the group that opens at `open`, or -1. */
 function matchGroup(s, open) {
   let depth = 0;
@@ -289,14 +312,24 @@ function readPicture(inner, start) {
     picw: null, pich: null, picwgoal: null, pichgoal: null,
     bytes: new Uint8Array(0), hexChars: 0, oddHexDigit: false, start,
   };
-  // Where the control words stop and the hex payload begins: the last control
-  // word before the data. `\bin` is not handled — none of RTF's binary picture
-  // form appears in this field and pretending to read it would be worse than
-  // saying so.
   if (/\\bin(?![a-z])/i.test(inner)) throw new Error('this {\\pict} uses \\bin (binary) data, which this reader does not decode');
+
+  /* NESTED GROUPS COME OUT FIRST, and this is not tidiness.
+     Word and the Win32 RichEdit both emit `{\*\blipuid <32 hex digits>}` inside
+     the picture group, immediately before the data. Those 32 characters are a
+     LEGAL HEX RUN. A reader that takes "everything after the last control word"
+     from the raw text prepends 16 bytes of somebody's identifier to the
+     photograph and hands back a file that is corrupt in a way no length check
+     notices — the byte count is merely 16 too big. `{\*\picprop ...}` is the
+     same shape. Stripping balanced sub-groups leaves only the picture group's
+     own control words and its own data. */
+  const flat = stripNestedGroups(inner);
+
+  // Where the control words stop and the hex payload begins: the last control
+  // word before the data.
   let dataFrom = 0;
   CONTROL_WORD.lastIndex = 0;
-  for (let m = CONTROL_WORD.exec(inner); m; m = CONTROL_WORD.exec(inner)) {
+  for (let m = CONTROL_WORD.exec(flat); m; m = CONTROL_WORD.exec(flat)) {
     const [, word, arg] = m;
     const n = arg == null ? null : Number(arg);
     switch (word) {
@@ -310,9 +343,9 @@ function readPicture(inner, start) {
     dataFrom = m.index + m[0].length;
     // A control word may be followed by exactly one space, which is a delimiter
     // and not data.
-    if (inner[dataFrom] === ' ') dataFrom += 1;
+    if (flat[dataFrom] === ' ') dataFrom += 1;
   }
-  const hex = inner.slice(dataFrom).replace(/[^0-9a-f]/gi, '');
+  const hex = flat.slice(dataFrom).replace(/[^0-9a-f]/gi, '');
   rec.hexChars = hex.length;
   rec.oddHexDigit = hex.length % 2 === 1;
   const even = rec.oddHexDigit ? hex.slice(0, -1) : hex;
