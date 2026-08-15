@@ -261,6 +261,13 @@ sqlcmd -S <server> -d AED_HOUZS -E -y 0 -h -1 -W ^
   -o ac-34553.rtf
 ```
 
+**Check the size before you trust the file.** `sqlcmd` truncates a
+variable-length column to 256 characters unless `-y 0` is given, and a truncated
+RTF looks exactly like a small photograph. The file must be about half the
+`bytes` figure from (b) if the column is `ntext`/`nvarchar` (two bytes per
+character), or about the same if it is `varchar`. **If it is 256 bytes, it was
+truncated — use the SSMS route.**
+
 **d. Read it.** On any machine with node:
 
 ```
