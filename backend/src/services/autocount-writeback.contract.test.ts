@@ -88,6 +88,10 @@ const CS_CREATE_PO = slice('static string CreatePo(', '// ── conversions');
    #2041/#2043. The slice boundary is unchanged — Convert_ still ends on the
    line before it. */
 const CS_CONVERT = slice('static string Convert_(', '/* OVER-TRANSFER:');
+/* SO -> PO is its own route because a purchase document transferring from a
+   sales order uses its own SDK method. Sliced separately so its keys are
+   contract-checked like the rest — the whole point of layer 1. */
+const CS_SO_TO_PO = slice('static string SoToPo(', 'static void SalesHeader(');
 const CS_SALES_HEADER = slice('static void SalesHeader(', 'static void PurchaseHeader(');
 const CS_PURCHASE_HEADER = slice('static void PurchaseHeader(', '/* Source line keys');
 const CS_DTLKEYS = slice('static long[] DtlKeys(', '// ── cancel');
@@ -118,6 +122,17 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
     expect(detailKeys(CS_CREATE_SO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
     );
+  });
+
+  test('/so-to-po', () => {
+    /* FromDocNo and DtlKeys, and DtlKeys is REQUIRED here unlike the four
+       conversions — those may omit it and fall through to every outstanding
+       line on the parent, which a purchase order must never do: the ERP decides
+       what it buys. The per-line keys are the COST the ERP agreed with the
+       supplier, applied after the transfer brought the sales line's own price
+       across. */
+    expect(headerKeys(CS_SO_TO_PO)).toEqual(['Details', 'DtlKeys', 'FromDocNo']);
+    expect(detailKeys(CS_SO_TO_PO)).toEqual(['DeliveryDate', 'DtlKey', 'Location', 'Qty', 'UnitPrice']);
   });
 
   test('/create-po', () => {

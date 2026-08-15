@@ -190,6 +190,7 @@ class AcSyncService {
       case "/create-po": docNo = CreatePo(p); dtlTable = "PODTL"; break;
       case "/so-to-do":  docNo = Convert_("SO", "DO", p); dtlTable = "DODTL"; break;
       case "/po-to-gr":  docNo = Convert_("PO", "GR", p); dtlTable = "GRDTL"; break;
+      case "/so-to-po":  docNo = SoToPo(p); dtlTable = "PODTL"; break;
       case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
@@ -533,6 +534,56 @@ class AcSyncService {
      Exception (or a sibling) and the service returns that as an error — the
      failure mode is a refused call, never a silently accepted over-ship. */
 
+  /* SO -> PO, which is NOT one of the four above and cannot use Convert_.
+     AddPartialTransferDetail("SO", keys, ...) is the sales-side primitive; a
+     purchase document transferring FROM a sales order has its own method, one
+     key at a time:
+         AddSOToPOTransferDetail(Int64)      (sdk-api-reference.txt, the
+                                              PurchaseOrder METH list)
+     The ERP only sends this when every purchase line maps 1:1 to a sales line
+     the book already has a key for. A consolidated purchase -- one line serving
+     several customers plus stock, which is a shape Houzs buys in deliberately
+     (mig 0235) -- is sent as a plain /create-po instead, because a transfer
+     would split it or drop the stock quantity. That decision is made ERP-side
+     in scm/shared/po-transfer-shape.ts; this route only executes it.
+
+     DtlKeys is REQUIRED here, unlike the four conversions. Those may omit it
+     and fall through to "every still-outstanding line on the parent", which is
+     a safe default when the two documents are the same document one step on.
+     A purchase order is not: the ERP decides what it buys, and guessing would
+     transfer sales lines nobody ordered from this supplier. */
+  static string SoToPo(Dictionary<string, object> p) {
+    var s = Session();
+    var fromDocNo = Str(p, "FromDocNo");
+    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
+    var keys = LongList(p, "DtlKeys");
+    if (keys.Length == 0) throw new Exception("DtlKeys required for /so-to-po - the ERP decides which sales lines this purchase order buys");
+
+    var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
+    var po = cmd.AddNew();
+    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    PurchaseHeader(po, p);
+    /* AFTER the transfer, deliberately. The transfer brings the sales line's
+       own price across, and a purchase order needs the COST the ERP agreed with
+       the supplier. Applied only for the lines the payload names, by DtlKey, so
+       a line the ERP said nothing about keeps whatever the transfer gave it. */
+    foreach (var od in List(p, "Details")) {
+      var it = (Dictionary<string, object>) od;
+      if (!it.ContainsKey("DtlKey")) continue;
+      var dtl = System.Convert.ToInt64(it["DtlKey"]);
+      var d = po.EditDetail(dtl);
+      if (d == null) continue;
+      if (it.ContainsKey("UnitPrice")) Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
+      if (it.ContainsKey("Qty"))       Set(() => d.Qty = Dec(it, "Qty", 1));
+      if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));
+      if (it.ContainsKey("DeliveryDate")) {
+        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
+    }
+    po.Save();
+    return po.DocNo;
+  }
+
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
@@ -553,6 +604,15 @@ class AcSyncService {
      decides which lines ship) or we take every outstanding line on the source
      document. Read straight from the book's own detail table so the set always
      matches what AutoCount considers untransferred. */
+  /* The payload's DtlKeys, and NOTHING ELSE. DtlKeys() below falls back to
+     "every outstanding line on the parent" when the list is empty; /so-to-po
+     must not, so it reads the list through this instead. */
+  static long[] LongList(Dictionary<string, object> p, string key) {
+    var outp = new List<long>();
+    foreach (var k in List(p, key)) if (k != null) outp.Add(System.Convert.ToInt64(k));
+    return outp.ToArray();
+  }
+
   static long[] DtlKeys(Dictionary<string, object> p, string fromType, string fromDocNo) {
     var given = List(p, "DtlKeys");
     var outp = new List<long>();
