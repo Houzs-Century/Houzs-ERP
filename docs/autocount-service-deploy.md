@@ -195,6 +195,44 @@ It contains the DB password.
 
 ## 3. Deploy
 
+> **What is RUNNING on the host right now — 2026-08-15.** `deploy-on-host.ps1
+> -Server ".\A2006"`, exit 0. The source it built is `main`'s
+> `AcSyncService.cs` at SHA256 `b51e60a9…c933da` (57,382 bytes), fetched onto
+> the host from the public raw URL — the two copies already on the machine were
+> stale (`C:\Temp` 08-11, `C:\Temp\acbuild` 08-12) and would have rebuilt code
+> four merged PRs behind. It compiled to **51,712 bytes** and reported:
+>
+> ```
+> OK   health: {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+> OK   database reachable: /ensure-masters answered 200 - the connection line works
+> OK   listening on port 8900, as expected
+> ```
+>
+> So `/ensure-masters` and `/further-description` — both of which the previous
+> exe answered `404 unknown route` — are live. Rollback is
+> `C:\Temp\AcSyncService.prev.exe`, and §5 is the procedure.
+>
+> Two things worth knowing before the next deploy:
+>
+> - **`setup.json` names `AED_DEMO`, not `AED_HOUZS`.** The script says so and
+>   proceeds with the `-Book` value; that NOTE line is expected, not a warning
+>   to chase. The book comes from `-Book` (default `AED_HOUZS`), the server from
+>   `-Server`, and only the credentials come from the file.
+> - **`-Server ".\A2006"` is not optional here.** Without it the value is taken
+>   from `setup.json` and the build fails every real request with "Error
+>   Locating Server/Instance Specified" while `/health` still passes — the exact
+>   trap §4 was written against. `.\A2006` is what the host's own LINQPad
+>   connection uses.
+>
+> **Getting a command onto that host is harder than it looks.** It is driven
+> through UltraViewer, which does NOT pass Ctrl key combinations — so `Ctrl+V`
+> pastes nothing, in the console and in LINQPad alike. In LINQPad use the
+> **Edit menu's** Select All / Paste; in `conhost` use right-click, and note
+> that a left-click first puts the console into QuickEdit selection, which
+> FREEZES it and makes the next right-click copy instead of paste. Running the
+> deploy from LINQPad's C# mode via `Process.Start` with the output redirected
+> is more reliable than the console, and it captures the whole transcript.
+
 1. Stop the running `AcSyncService.exe`.
 2. Keep the previous `.exe` as `AcSyncService.prev.exe` — this is the rollback.
 3. Copy the new `.exe` into place and start it.
