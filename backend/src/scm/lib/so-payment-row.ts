@@ -99,7 +99,18 @@ export async function recordSoPaymentRow(
 
   // Multi-company (mig 0061): the payment inherits the SO's company (resolved by
   // doc_no — this factored writer has no request context). No-op when unresolved.
-  const { data: soCo } = await sb.from('mfg_sales_orders').select('company_id').eq('doc_no', p.docNo).maybeSingle();
+  const { data: soCo, error: soCoErr } = await sb.from('mfg_sales_orders').select('company_id').eq('doc_no', p.docNo).maybeSingle();
+  /* REFUSE on a failed read rather than carrying on with a null company.
+     supabase-js does not throw, so the old `const { data }` could not tell "this
+     order is in company 1" from "the database blipped" — and the next statement
+     inserts the money either way. The SCM client is service-role, so the
+     company_id predicate is the entire tenant boundary; a company-less payment
+     row is invisible and unscoped, and it would also make the AutoCount enqueue
+     below no-op silently. A refusal the operator can retry is the better
+     failure. A row that is genuinely ABSENT still yields null, unchanged. */
+  if (soCoErr) {
+    return { payment: null, errorMessage: `could not resolve the order's company: ${soCoErr.message}` };
+  }
   const companyId = (soCo as { company_id?: number | null } | null)?.company_id ?? null;
 
   const { data, error } = await sb.from('mfg_sales_order_payments').insert({
