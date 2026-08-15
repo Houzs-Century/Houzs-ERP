@@ -561,9 +561,13 @@ class AcSyncService {
           var r = Ok(null);
           r["table"] = table;
           if (rd.Read()) {
-            r["linesWithAValue"] = rd.IsDBNull(0) ? 0 : rd.GetInt32(0);
-            r["maxPictures"]     = rd.IsDBNull(1) ? 0 : rd.GetInt32(1);
-            r["linesOverOne"]    = rd.IsDBNull(2) ? 0 : rd.GetInt32(2);
+            /* Convert, never GetInt32. LEN() over nvarchar(MAX) returns BIGINT,
+               so the arithmetic that follows is bigint too, and GetInt32 throws
+               "Specified cast is not valid" - which is what the first run of
+               this route did, on the host, against the real table. */
+            r["linesWithAValue"] = rd.IsDBNull(0) ? 0L : System.Convert.ToInt64(rd.GetValue(0));
+            r["maxPictures"]     = rd.IsDBNull(1) ? 0L : System.Convert.ToInt64(rd.GetValue(1));
+            r["linesOverOne"]    = rd.IsDBNull(2) ? 0L : System.Convert.ToInt64(rd.GetValue(2));
           }
           return r;
         }

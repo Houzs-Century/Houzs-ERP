@@ -105,6 +105,21 @@ $SO = "ZZQA-SO-$stamp"
 $PO = "ZZQA-PO-$stamp"
 
 # ---------------------------------------------------------------- 0 preflight
+<# The census is asked FIRST and its failure is recorded, never fatal. On
+   2026-08-15 it threw and, because the caller had ErrorActionPreference=Stop,
+   the whole QA run never happened - a diagnostic took down the thing it was
+   diagnosing. #>
+Head "0a  does ANY line in the book hold more than one picture"
+foreach ($t in 'SODTL','PODTL') {
+  $c = Call '/picture-census' @{ Table = $t }
+  if ($c.status -eq 200 -and $c.json.ok) {
+    $v = if ($c.json.maxPictures -le 1) { 'PASS' } else { 'FAIL' }
+    Record ("0a census " + $t) $v ("lines=" + $c.json.linesWithAValue + " maxPictures=" + $c.json.maxPictures + " over1=" + $c.json.linesOverOne)
+  } else {
+    Record ("0a census " + $t) "FAIL" ("status=" + $c.status + " " + $c.raw)
+  }
+}
+
 Head "0  which build is answering"
 $h = Call '/health' @{}
 if ($h.status -ne 200) { Record "0 health" "FAIL" ("status=" + $h.status + " " + $h.raw); exit 1 }
