@@ -65,7 +65,9 @@ import {
   composeDetails,
   composeEdit,
   acUdfDate,
+  acUdfMoney,
   acServiceConfig,
+  Desc2TooLongError,
   ItemCodeError,
   KeylessLineError,
   MissingAgentError,
@@ -85,6 +87,9 @@ import {
 export type { AcRetiredLine } from '../../services/autocount-writeback';
 
 import { mastersOf } from './autocount-masters';
+/* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
+   reason mastersOf was: this file is at the 2,000-line cap. */
+import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -240,16 +245,32 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    customer's own reference — PR #140 left `customer_so_no` as the only one any
    surface still writes, so reading po_doc_no alone sent ToPONo nowhere
    (soCustomerRef). */
+/* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
+   Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
+   the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
+   DeliverPhone1 when it differs from Phone1 and inserts it as
+   emergency_contact_phone (:390/:412). Reading `phone` for both would put the
+   customer's number in front of the driver.
+   total_revenue_centi + deposit_centi are two of the three inputs to the
+   outstanding balance the BALANCE UDF carries; the third is the payments ledger
+   (readSoOutstandingCenti). NOT balance_centi — recomputeTotals rewrites that to
+   the gross total on every edit, and it is the column the cutover's UDF_BALANCE
+   landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, total_revenue_centi, deposit_centi, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
    PostgREST for a column a table does not have fails the whole query with
    42703. `branding` is where an ERP-created order actually keeps its brand —
    the header column is NULL on every one of them (soBranding). */
+/* line_delivery_date is AutoCount's SODTL.DeliveryDate. Unselected, `soLine`
+   left it undefined and composeDetails omitted the key, so the account book
+   filled in its own default — the document date — on every ERP-created line
+   (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
+   of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -259,7 +280,7 @@ const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, 
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -305,6 +326,13 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   unit_price_centi: Number(r.unit_price_centi ?? 0),
   variants: (r.variants as Record<string, unknown> | null) ?? null,
   linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
+  /* `line_delivery_date` on a sales-order line, `delivery_date` on a purchase
+     one — the same fact under two column names. Null on the four DOWNSTREAM
+     tables, whose column lists select neither, and that costs them nothing:
+     those documents only ever reach `/edit`, where composeEdit drops a null
+     DeliveryDate rather than blanking the date the conversion gave the book.
+     Same reasoning DOWNSTREAM's header already records for DocDate. */
+  delivery_date: (r.line_delivery_date as string | null) ?? (r.delivery_date as string | null) ?? null,
   /* undefined on the five tables that have no such column, which composeEdit
      reads as "live" — the same answer the column's own default gives. */
   cancelled: r.cancelled === true,
@@ -494,26 +522,6 @@ const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 
 };
 
 /**
- * A read that FAILED, as opposed to a read that found nothing.
- *
- * The distinction is the whole point. PostgREST answers a bad column with an
- * error and a null body; `data ?? []` then turns a failure into "this document
- * has no lines", and the write-back composes a header with an empty Details
- * array — an order pushed into a live account book with nothing on it. Every
- * read below therefore throws this instead of defaulting.
- */
-class AcReadError extends Error {}
-
-async function readOrThrow<T>(
-  what: string,
-  q: PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
-): Promise<T> {
-  const { data, error } = await q;
-  if (error) throw new AcReadError(`${what}: ${error.code ?? ''} ${error.message ?? ''}`.trim());
-  return data;
-}
-
-/**
  * Write a failed compose down instead of dropping it.
  *
  * Same rule as recordConvertSkipped: an operation the ERP will not send is
@@ -535,6 +543,10 @@ async function readOrThrow<T>(
  *   ItemCodeError     — a line has no single AutoCount ItemCode (D10): either
  *                       the cutover map has never heard of it, or it maps to
  *                       several items and the document names no supplier.
+ *   Desc2TooLongError — the line's Further Description is over nvarchar(100).
+ *                       SQL Server refuses the Save and takes the document with
+ *                       it, and truncating a specification is a wrong
+ *                       instruction rather than a short one (7q).
  *   MissingAgentError — the order names no salesperson AutoCount can be given,
  *                       and a blank one is refused by FK_SO_SalesAgent (the
  *                       2026-08-13 go-live failure). MissingLocationError's
@@ -557,6 +569,7 @@ async function noteReadFailure(
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
     || e instanceof ItemCodeError
+    || e instanceof Desc2TooLongError
     || e instanceof MissingLocationError
     || e instanceof MissingAgentError
     || e instanceof MissingSalesLocationError
@@ -624,7 +637,8 @@ export async function enqueueSoCreate(
        gets, and it can only choose between values it has been given. */
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
-    const body = composeCreateSo(header as never, lines, salespersonName, { bindings });
+    const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
+    const body = composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -1463,6 +1477,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
+  const outstandingCenti = await readSoOutstandingCenti(sb, h);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1470,14 +1485,15 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
-      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h, salespersonName, lines), lines,
+      'SO', String(h.linked_ac_docno ?? docNo),
+      soEditHeader(h, salespersonName, lines, outstandingCenti), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1550,12 +1566,20 @@ function soEditHeader(
   /** REQUIRED, never optional: it decides what BRANDING is, and the header
    *  column is NULL on every ERP-created order. See `soBranding`. */
   lines: ErpLine[],
+  /** REQUIRED, never optional: it decides what the account book says a live
+   *  customer still owes. `null` omits the key and keeps the book's own. */
+  outstandingCenti: number | null,
 ): Record<string, string | null | Record<string, string>> {
   const out: Record<string, string | null | Record<string, string>> = present({
     DebtorName: (h.debtor_name as string) ?? null,
     Attention: (h.debtor_name as string) ?? null,
     Ref: (h.ref as string) ?? null,
     Phone1: (h.phone as string) ?? null,
+    /* The DELIVERY contact, which is not `phone`. On a CREATE the service falls
+       back to Phone when this is absent; on an EDIT nothing falls back, so a
+       changed delivery number never reached the book at all until this key did.
+       Blank still omits — the book keeps whatever it has. */
+    DeliverPhone1: (h.emergency_contact_phone as string) ?? null,
     ...soInvoiceAddress(h),
   });
   const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
@@ -1580,6 +1604,12 @@ function soEditHeader(
      one that cannot destroy data. */
   const pdate = acUdfDate(h.processing_date as string | null | undefined);
   if (pdate) udf.PDate = pdate;
+  /* The outstanding balance, and the one UDF whose ZERO must be sent: an order
+     the customer has now settled has to stop showing a debt in the account
+     book, and `acUdfMoney` renders that as "0.00" precisely so this `if` does
+     not drop it. Only a null — the ERP has no answer — omits the key. */
+  const balance = acUdfMoney(outstandingCenti);
+  if (balance != null) udf.BALANCE = balance;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
