@@ -89,14 +89,14 @@ hard to check.
 | `purchase-return.md` | not verified | — | — |
 | `quote.md` | not verified | — | — |
 | `sales-invoice.md` | not verified | — | — |
-| `sales-order.md` | not verified | — | — |
+| `sales-order.md` | partial (5 of ~24 sections) | Claude, #2231 | 4 sections correct in full; 1 finding. FINDING: the guide claimed the AutoCount create-enqueue invariant was held at "exactly two places, both gated" and cited a test that "fails if a THIRD callsite appears" — there were three, and the test counted inside ONE imported file so it could never see the others. The third (`autocount-requeue.ts`) is safe by a DIFFERENT mechanism: `enqueueSoCreate` catches MissingLocationError and writes a `skipped` outbox row. Guide + test header corrected, guard now walks the tree. CORRECT IN FULL: discard locks (fails closed), cancel + PWP vouchers (all 4 outcomes, no void/restore collision), downstream lock (9 sites, all mutation/cancel; DO router uses its own sibling lock), warehouse resolution (`salesLocation ?? fromState`; 0173 rebinds NULL lines only, so-revision every non-cancelled line). NOT READ: dates, pricing, address block, list handler, amendments. |
 | `scan-to-so.md` | not verified | — | — |
 | `service-case.md` | not verified | — | — |
 | `stock-take.md` | not verified | — | — |
 | `team-members.md` | not verified | — | — |
 | `warehouses.md` | not verified | — | — |
 
-**28 guides, 0 verified** as of 2026-08-15 — `address-cascade.md` landed on `main` while this PR was in flight, and the guard below is what noticed. Do not type this pair either; the commands under it are the answer. Re-count rather than trust that line:
+**28 guides, 0 verified, 1 partial** as of 2026-08-15 — `address-cascade.md` landed on `main` while this PR was in flight, and the guard below is what noticed. Do not type this pair either; the commands under it are the answer. Re-count rather than trust that line:
 
 ```bash
 grep -c '| not verified |' docs/MODULE-GUIDE-VERIFICATION.md
