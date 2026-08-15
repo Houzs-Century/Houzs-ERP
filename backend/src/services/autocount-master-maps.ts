@@ -134,6 +134,8 @@ export const VENUE_MAP: Record<string, string> = {
   "AEON SERI MANJUNG": "AEON SERI MANJUNG SOLO",
   "MELAWATI MALL": "MELAWATI MALL SOLO",
   "MESA MALL": "MESA MALL SOLO",
+  "AUTO CITY": "AUTO CITY PENANG SOLO",
+  "SUNSHINE CENTRAL": "SUNSHINE PENANG SOLO",
 };
 
 /** ERP branding -> AutoCount BRANDING UDF option. ALLOW-LIST — see branding_note. */
