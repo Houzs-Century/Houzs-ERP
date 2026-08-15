@@ -54,6 +54,7 @@ import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth } from '../../vendor/scm/lib/auth';
@@ -116,22 +117,6 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
 });
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
-
-/* Coupled-dates rule (spec 3) — given a Delivery date, the Processing date is
-   when procurement should start: ~6 weeks (42 days) before delivery, but never
-   before today (don't buy stock too soon, and never a past date). Returns a
-   local YYYY-MM-DD matching the `today`/date-input format. The caller only
-   invokes this when a Delivery date exists; with no Delivery date BOTH dates
-   stay empty (the order is un-proceeded). */
-const PROCESSING_LEAD_DAYS = 42;
-const deriveProcessingDate = (deliveryDate: string): string => {
-  const today = todayMyt();
-  const d = new Date(`${deliveryDate}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return today;
-  d.setDate(d.getDate() - PROCESSING_LEAD_DAYS);
-  const lead = d.toLocaleDateString('en-CA');
-  return lead < today ? today : lead;
-};
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
