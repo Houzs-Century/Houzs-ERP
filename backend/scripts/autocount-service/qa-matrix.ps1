@@ -241,7 +241,7 @@ function CheckLink($name, $docType, $docNo, $expectType, $expectNo) {
    a payload saying `Lines` is accepted and silently ignored, so the purchase
    order would carry the SALES price and nothing would say so. #>
 $r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); CreditorCode = $Creditor; CreditorName = "ERP QA"
-                         Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Location = $Location } ) }
+                         Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Qty = 4; Location = $Location } ) }
 if ($r.status -ne 200 -or -not $r.json.ok) { Record "5a so-to-po" "FAIL" ("status=" + $r.status + " " + $r.raw); $poNo = $null }
 else {
   $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo)

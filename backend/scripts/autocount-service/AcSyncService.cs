@@ -957,6 +957,26 @@ class AcSyncService {
         var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
       }
     }
+    /* A LINE WITH NO QUANTITY IS AN UNUSABLE DOCUMENT, so refuse rather than
+       save one. Measured on the live book 2026-08-16: AddSOToPOTransferDetail
+       creates the purchase line with a NULL Qty - it does NOT carry the sales
+       line's quantity across - and AutoCount's outstanding predicate is
+
+         Qty - ISNULL(TransferedQty, 0) > 0
+
+       which is NULL, never true, for such a line. The purchase order therefore
+       saves, looks right, and can never be converted: /po-to-gr answers
+       "no transferable lines on PO", and the failure surfaces a step later on a
+       different document than the one at fault.
+
+       So the ERP must send Qty per line in Details, and if it did not, this is
+       the place that says so. */
+    foreach (var d in po.Details) {
+      if (d.Qty == null || Convert.ToDecimal(d.Qty) <= 0)
+        throw new Exception("SO-to-PO produced a line with no quantity (DtlKey " + d.DtlKey +
+          "). AddSOToPOTransferDetail does not carry the sales quantity across, so every line needs a Qty in Details - without it the purchase order saves and can never be converted.");
+    }
+
     po.Save();
     return po.DocNo;
   }
