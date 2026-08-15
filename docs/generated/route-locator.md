@@ -960,11 +960,11 @@ Total: 1021 route registrations across 136 files.
 - L211  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L429  GET    /
-- L1582  GET    /geo
-- L1885  GET    /:docNo/lines
-- L1989  PATCH  /:type/:id/fields
-- L2294  PATCH  /:type/:id/schedule
+- L386  GET    /
+- L1539  GET    /geo
+- L1842  GET    /:docNo/lines
+- L1946  PATCH  /:type/:id/fields
+- L2251  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
 - L256  POST   /
