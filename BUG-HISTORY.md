@@ -49,7 +49,7 @@ reads `AcSyncService.cs` at build time for the payload contract and is the only
 place that can see the service's source — there is no C# test harness. Both new
 cases were observed RED against `origin/main`'s service.
 
-**Ref.** 2026-08-15, PR #2240.
+**Ref.** 2026-08-15, PR #2241.
 
 ## Three same-named constants across two purchase routers; two were copies, one was a real difference nobody had written down [low]
 
