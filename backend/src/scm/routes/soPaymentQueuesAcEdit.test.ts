@@ -9,7 +9,8 @@
 // BALANCE stayed at whatever the last line-or-header save had left there. A
 // composer test cannot see a missing call site. This one is about the wiring.
 //
-// It exercises `recordSoPaymentRow` — the factored insert core — rather than
+// It exercises `recordSoPaymentRow` — the factored insert core, in scm/lib so
+// both writers reach it without importing a 12,000-line router — rather than
 // the HTTP route, because that is the seam BOTH writers share: the interactive
 // POST /:docNo/payments and scan-so.ts's background receipt booking, which has
 // no request context. A rule proven only through the route would leave the scan
@@ -23,7 +24,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import { resetWritebackFlagCache } from '../lib/autocount-writeback-flag';
-import { recordSoPaymentRow } from './mfg-sales-orders';
+import { recordSoPaymentRow } from '../lib/so-payment-row';
 
 /* Cached for 30 seconds by design, and the cache is module-level — without this
    the second test in the file inherits the first one's switch. Same seam
