@@ -29,13 +29,14 @@
 param(
   [switch]$IReallyMeanIt,
   [switch]$SkipCancel,
-  [string]$BaseUrl  = "http://127.0.0.1:8900",
+  [string]$BaseUrl  = "http://localhost:8900",
   [string]$KeyFile  = "C:\Temp\ac-svc-key.txt",
   [string]$Debtor   = "300-C002",
   [string]$Agent    = "OTHERS",
   [string]$Location = "KL",
   [string]$ItemCode = "AK-SLEEP ESSENTIAL 7 HOLES",
-  [string]$Jpeg     = ""
+  [string]$Jpeg     = "",
+  [string]$DocNo    = "ERP-FDPROBE-1"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,8 +93,21 @@ Ok ("jpeg " + $bytes.Length + " bytes; base64 " + $b64.Length + " chars")
 
 # ------------------------------------------------------------- 2  scratch SO
 Head "2  create the scratch sales order"
+<# SalesLocation is on the HEADER and is NOT optional. Omitting it cost this
+   probe its first run against the live book on 2026-08-15:
+
+     {"ok":false,"error":"Foreign Key Error (Constraint Name=FK_SO_SalesLocation)"}
+
+   It is the header-level twin of FK_SODTL_Location, which is the line one and
+   is already documented. The ERP itself never trips this - autocount-outbox.ts
+   raises MissingSalesLocationError and refuses to enqueue rather than send a
+   document AutoCount will reject - so the constraint is invisible until
+   something hand-writes a payload, which is exactly what this script does.
+   qa-convert.ps1 has always sent it. #>
 $create = @{
+  DocNo = $DocNo
   DocDate = (Get-Date).ToString("yyyy-MM-dd"); DebtorCode = $Debtor; Agent = $Agent
+  SalesLocation = $Location
   Description = "ERP FURTHER DESCRIPTION PROBE - CANCEL ME"
   Details = @( @{ ItemCode = $ItemCode; Qty = 1; UnitPrice = 1; Location = $Location; Desc2 = "PROBE" } )
 } | ConvertTo-Json -Depth 6

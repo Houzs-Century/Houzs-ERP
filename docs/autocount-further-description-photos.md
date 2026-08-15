@@ -402,6 +402,31 @@ matters is whether the picture is the same picture and the same size.
 
 ### 5.2 The write probe (WRITES — scratch document only)
 
+> **RUN 2026-08-15, and it PASSED on all four observations.** The procedure
+> below is kept as written because it is the method; what follows is what it
+> answered. It is now a script — `backend/scripts/autocount-service/fd-probe.ps1`
+> — rather than a hand procedure, and the script REFUSES to write onto a line
+> that already holds a value, which was step 2's rule.
+>
+> Scratch order `ERP-FDPROBE-1`, `DtlKey 906102`, live `AED_HOUZS`:
+>
+> | | result |
+> |---|---|
+> | i entry screen | **renders** — right way up, `240 x 159`, caption above it |
+> | ii printed Preview | **renders** — this is `XRRichText`, and it was the real risk |
+> | iii read back | `chars=389549 truncated=False pict=1 wmetafile8=1` — AutoCount kept **our own bytes** unchanged rather than rewriting them |
+> | iv the Save | no dialog, no truncation |
+>
+> §5.3 lists what would have made this a failure worth stopping on. None of it
+> happened. The scratch order was **cancelled, not deleted**.
+>
+> Two things the run cost, both recorded in `BUG-HISTORY.md` rather than
+> smoothed over: the probe's first attempt was refused by
+> `FK_SO_SalesLocation` (a header field it was not sending), and its second
+> created a **blank-numbered** sales order because `/create-so` accepted an
+> absent `DocNo` — since fixed with `RequireDocNo()`. That document was found
+> and voided too.
+
 Only after 5.1. **Never on a customer document**, and never on a line that
 already holds a `FurtherDescription`: the whole risk of this feature is
 overwriting a value AutoCount owns.

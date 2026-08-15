@@ -131,7 +131,12 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        what it buys. The per-line keys are the COST the ERP agreed with the
        supplier, applied after the transfer brought the sales line's own price
        across. */
-    expect(headerKeys(CS_SO_TO_PO)).toEqual(['Details', 'DtlKeys', 'FromDocNo']);
+    /* CreditorCode joined this list on 2026-08-15 because the live book refused
+       the route without it: AutoCount defaults a purchase order's payment term
+       FROM THE SUPPLIER, so a PO saved with no creditor died on
+       FK_PO_DisplayTerm - a foreign key naming the TERM, not the supplier. The
+       payload had always carried a creditor; this route simply never read it. */
+    expect(headerKeys(CS_SO_TO_PO)).toEqual(['CreditorCode', 'CreditorName', 'Details', 'DtlKeys', 'FromDocNo']);
     expect(detailKeys(CS_SO_TO_PO)).toEqual(['DeliveryDate', 'DtlKey', 'Location', 'Qty', 'UnitPrice']);
   });
 
@@ -153,8 +158,10 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        which is the only authority on that. */
     expect(headerKeys(CS_DTLKEYS)).toEqual(['DtlKeys']);
     // Shared header handling — identical on the sales and purchase side.
-    expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DocDate', 'DocNo', 'Ref'].sort());
-    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(['Description', 'DocDate', 'DocNo', 'Ref'].sort());
+    /* DisplayTerm is the payment term, and it is sent only when the ERP has one
+       (ContainsKey): a BLANK term is a foreign key error, not an empty field. */
+    expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
+    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
   });
 
   test.skip('/cancel takes exactly two fields', () => {
