@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import rawRouteSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
 
 /* NORMALISE LINE ENDINGS. This file's assertions are source-TEXT anchors that
@@ -13,10 +16,17 @@ const routeSource = rawRouteSource.replace(/\r\n/g, '\n');
    location, because AutoCount refuses a document line whose Location is not in
    dbo.Location (HC-SO-2608-002: "refused, nothing sent — MissingLocationError").
 
-   THE INVARIANT THESE PIN: wherever the router enqueues an AutoCount CREATE, the
-   location gate has already run. There are exactly two such places — the create
-   path and the DRAFT -> live status transition — and this file fails if a third
-   ever appears un-gated, or if either existing one loses its guard.
+   THE INVARIANT THESE PIN: wherever an AutoCount SO CREATE is enqueued, a stock
+   location has already been settled. In THIS ROUTER that is the location gate,
+   at exactly two places — the create path and the DRAFT -> live status
+   transition — and this file fails if a third appears un-gated there, or if
+   either existing one loses its guard.
+
+   Outside the router the mechanism differs, so the tree-wide test below holds
+   the whole population rather than this one file: a callsite elsewhere must be
+   named with the mechanism that makes it safe. Say "the gate covers every
+   enqueue" only about the router; repo-wide, the sentence is "every enqueue has
+   a settled location, by one of two mechanisms".
 
    Same source-anchored style as soConfirmGateWiring.test.ts: the LOGIC is
    unit-tested in src/scm/lib/so-location-gate.test.ts; this makes sure a
@@ -35,8 +45,78 @@ describe('every AutoCount create enqueue is gated', () => {
     const enqueues = routeSource.match(/enqueueSoCreate\(/g) ?? [];
     expect(
       enqueues.length,
-      'a new enqueueSoCreate callsite needs its own location gate — see so-location-gate.ts',
+      'a new enqueueSoCreate callsite in this ROUTER needs its own location gate — see so-location-gate.ts',
     ).toBe(2);
+  });
+
+  /* THE SENTENCE ABOVE WAS WIDER THAN THE CHECK UNDER IT (2026-08-15).
+     Its failure message says "a new enqueueSoCreate callsite needs its own
+     location gate", which reads as a promise about the repository — but it
+     counts inside ONE imported file, so a callsite in any other module is
+     invisible to it. There already was one: `scm/lib/autocount-requeue.ts`,
+     the operator re-send tool. Nothing was broken by it; the guard simply did
+     not cover what its own message claimed, which is the failure shape
+     CLAUDE.md records twice over ("a checker that cannot match reports a clean
+     run", "a verdict computed over nothing must never read as a pass").
+
+     So the population is the TREE, and every callsite outside the router is
+     named here with the mechanism that makes it safe. A new one fails until
+     someone writes that mechanism down. */
+  const KNOWN_OUTSIDE_ROUTER: Record<string, string> = {
+    'scm/lib/autocount-requeue.ts':
+      're-sends an outbox row that already exists, so the document already went '
+      + 'through a gated create. It is safe WITHOUT so-location-gate for a second '
+      + 'reason worth knowing: enqueueSoCreate itself catches MissingLocationError '
+      + 'and writes a `skipped` outbox row with the reason (autocount-outbox.ts), '
+      + 'rather than sending a create AutoCount would refuse.',
+  };
+
+  test('every enqueueSoCreate callsite in the tree is either the router or a named exception', () => {
+    const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'src');
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const abs = path.join(dir, e.name);
+        if (e.isDirectory()) walk(abs);
+        else if (e.name.endsWith('.ts') && !e.name.endsWith('.test.ts')) files.push(abs);
+      }
+    };
+    walk(SRC);
+
+    /* A scan that read nothing would "find" no callsite and pass. */
+    expect(files.length, `only ${files.length} source file(s) walked — the path is wrong, not the tree`)
+      .toBeGreaterThan(200);
+
+    const hits: string[] = [];
+    for (const abs of files) {
+      const text = fs.readFileSync(abs, 'utf8');
+      /* The definition and its re-exports are not callsites. */
+      const calls = text.split('\n').filter((l) => /\benqueueSoCreate\(/.test(l)
+        && !/^\s*(import|export)\b/.test(l)
+        && !/export\s+(async\s+)?function\s+enqueueSoCreate/.test(l));
+      if (calls.length > 0) hits.push(path.relative(SRC, abs).replace(/\\/g, '/'));
+    }
+
+    expect(hits.length, 'enqueueSoCreate is called nowhere — this guard is reading the wrong tree')
+      .toBeGreaterThan(0);
+
+    const unexpected = hits.filter((f) => f !== 'scm/routes/mfg-sales-orders.ts' && !(f in KNOWN_OUTSIDE_ROUTER));
+    expect(
+      unexpected,
+      'these files enqueue an AutoCount SO create and are covered by NO location gate and NO recorded '
+      + 'exception:\n  ' + unexpected.join('\n  ')
+      + '\nEither run soLocationProblem before the enqueue, or add the file to KNOWN_OUTSIDE_ROUTER above '
+      + 'with the mechanism that makes it safe. "It looked fine" is not a mechanism.',
+    ).toEqual([]);
+
+    /* An exception whose file is gone is a stale promise, and it hides the day
+       the callsite comes back somewhere else. */
+    const staleExceptions = Object.keys(KNOWN_OUTSIDE_ROUTER).filter((f) => !hits.includes(f));
+    expect(
+      staleExceptions,
+      'these files are recorded as known enqueueSoCreate exceptions but no longer call it — delete the '
+      + 'entry:\n  ' + staleExceptions.join('\n  '),
+    ).toEqual([]);
   });
 });
 

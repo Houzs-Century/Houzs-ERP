@@ -60,12 +60,23 @@ test("every guide on disk has a ledger row, and every row is a real guide", () =
   );
 });
 
-test("a verified row names its evidence — a bare `verified` is not a verification", () => {
+/* `partial` counts as a claim, not as an absence.
+   The first real day of verification produced one: sales-order.md is 1,400 lines
+   and checking it is several sittings, so the row has to be able to say "some of
+   it, and here is which". Left out of the check below, `partial` would be the
+   one status that can claim progress and record nothing — and it is the status a
+   half-finished session reaches for, which is exactly when the next reader needs
+   the PR and the finding most. Anything that is not literally `not verified` now
+   owes its evidence. */
+const CLAIMS_PROGRESS = (status: string) =>
+  /verified|partial/i.test(status) && !/not verified/i.test(status);
+
+test("a row claiming progress names its evidence — a bare `verified` or `partial` is not a verification", () => {
   const text = fs.readFileSync(path.join(ROOT, LEDGER), "utf8");
   const bad: string[] = [];
   for (const m of text.matchAll(/^\|\s*`([a-z0-9-]+\.md)`\s*\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|/gm)) {
     const [, guide, status, by, found] = m;
-    if (!/verified/i.test(status) || /not verified/i.test(status)) continue;
+    if (!CLAIMS_PROGRESS(status)) continue;
     /* The method in the ledger's own header requires a PR and a finding. A row
        claiming `verified` with neither is the shape that makes the whole table
        untrustworthy — it looks like progress and records nothing. */
