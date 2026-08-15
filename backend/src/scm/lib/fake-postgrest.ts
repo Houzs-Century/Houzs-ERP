@@ -169,6 +169,14 @@ export function fakeSb(
         filters.push((r) => rx.test(String(r[col] ?? '')));
         return builder;
       },
+      /* `ilike` is `like` with the `i` flag and nothing else — same anchoring,
+         same escaping. The outbox page searches a document number the operator
+         typed off paper, where case is not a fact about the document. */
+      ilike(col: string, pattern: string) {
+        const rx = new RegExp(`^${String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+        filters.push((r) => rx.test(String(r[col] ?? '')));
+        return builder;
+      },
       order(col?: string, opts?: { ascending?: boolean }) {
         if (col) sorts.push({ col, asc: opts?.ascending !== false });
         return builder;

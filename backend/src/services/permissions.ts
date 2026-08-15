@@ -178,6 +178,18 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.hr.close",  resource: "Supply Chain", verb: "manage", label: "Close HR payout period", description: "Freeze a commission period so later rate changes cannot alter what it pays — the payroll approval step" },
   { key: "scm.hr.reopen", resource: "Supply Chain", verb: "manage", label: "Reopen HR payout period", description: "Un-freeze a closed commission period so it recomputes again — reverses an approved payout and is always recorded with a reason" },
 
+  // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
+  // what the ERP has told the licensed account book and what came back. It is a
+  // narrow key rather than a reuse of scm.access because the queue names every
+  // document the company pushed and quotes AutoCount's own refusals, and because
+  // the owner wanted to be able to hand somebody this page WITHOUT handing them
+  // settings.manage, which is the other key the route accepts (whoever may edit
+  // the sync connection may obviously read the queue it feeds, and that grant
+  // already exists — a key nobody holds is an endpoint nobody can call).
+  // Read-only: re-sending stays in requeue-autocount-skipped.yml, behind its
+  // includeFailed opt-in. Owner + IT Admin cover it via "*".
+  { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+
   // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
   // nav/page gate (grant broadly); mail_center.manage gates the alias / access /
   // scope-level admin grids. Owner + IT Admin cover both via "*". Per-thread

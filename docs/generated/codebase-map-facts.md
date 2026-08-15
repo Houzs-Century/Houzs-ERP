@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-134 route modules (40 in `backend/src/routes`, 94 in `backend/src/scm/routes`), 1037 endpoint registrations.
+135 route modules (40 in `backend/src/routes`, 95 in `backend/src/scm/routes`), 1038 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -63,6 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 1 | 374 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2475 |
@@ -169,7 +170,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1317 files, 545516 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1327 files, 547977 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -197,7 +198,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-142 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+143 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -209,6 +210,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/assistant` | `frontend/src/pages/Assistant` |
 | `/assr` | `frontend/src/pages/ServiceCases` |
 | `/assr/:id` | (inline) |
+| `/autocount-sync` | `frontend/src/pages/AutoCountSync` |
 | `/fair-report-fill` | `frontend/src/pages/FairReportFill` |
 | `/fleet-health` | `frontend/src/pages/FleetHealth` |
 | `/fleet-health/:lorryId` | `frontend/src/pages/LorryRecord` |
@@ -349,7 +351,7 @@ Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 32 |
+| `frontend/src/pages` | 33 |
 | `frontend/src/pages/MailCenter` | 3 |
 | `frontend/src/pages/scm-v2` | 119 |
 | `frontend/src/pages/scm-v2/products` | 1 |
@@ -357,7 +359,7 @@ Page files by directory:
 
 ## 5. Mobile screen inventory
 
-36 screen/component modules in `frontend/src/mobile`.
+37 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
@@ -365,8 +367,9 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
 | `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 153 |
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1071 |
-| `frontend/src/mobile/MobileApp.tsx` | 1027 |
+| `frontend/src/mobile/MobileApp.tsx` | 1046 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 275 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1033 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2427 |
@@ -410,6 +413,7 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | `/activity-inbox` | Inbox | (no desktop route) | dedicated: inbox |
 | `/announcements` | Announcements | `frontend/src/pages/Announcements` | dedicated: announcements |
 | `/assr` | Service Case | `frontend/src/pages/ServiceCases` | dedicated: service |
+| `/autocount-sync` | AutoCount Sync | `frontend/src/pages/AutoCountSync` | dedicated: autocount-sync |
 | `/fleet-health` | Fleet Mileage | `frontend/src/pages/FleetHealth` | dedicated: mileage-capture |
 | `/mail-center` | Mail Center | `frontend/src/pages/MailCenter/Inbox` | dedicated: mail |
 | `/projects` | Projects | `frontend/src/pages/Projects` | dedicated: pms |
