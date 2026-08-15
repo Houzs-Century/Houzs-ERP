@@ -96,7 +96,7 @@ Add the missing 7th type as a Model‑A ASSR leg.
 
 **DB (respect the D1‑vs‑PG split — `assr_cases` is mirrored in both):**
 - `backend/src/db/migrations/127_assr_inspection_visit.sql` (**D1 test mirror**): `ALTER TABLE assr_cases ADD COLUMN inspection_visit_at TEXT;` (match `customer_pickup_at`'s type from `107`).
-- `backend/src/db/migrations-pg/0140_assr_inspection_visit.sql` (**prod PG**): `ALTER TABLE assr_cases ADD COLUMN IF NOT EXISTS inspection_visit_at DATE;` (match `customer_pickup_at`'s PG type from `0064`).
+- `backend/src/db/migrations-pg/0140_assr_inspection_visit.sql` [renumbered] (**prod PG**): `ALTER TABLE assr_cases ADD COLUMN IF NOT EXISTS inspection_visit_at DATE;` (match `customer_pickup_at`'s PG type from `0064`).
 - `backend/src/db/migrations-pg/0165_scm_trip_stop_type_inspection.sql` (**PG enum** — SHIPPED; drafted here as `0141`/renumbered `0158`, landed as `0165` after main's numbering advanced): `ALTER TYPE scm.trip_stop_type ADD VALUE IF NOT EXISTS 'INSPECTION';` (mirror `0128`). The P3 trip wiring itself landed via `0166_scm_trip_stops_assr_case.sql` + PR #947. *(The D1 mirror models `trip_stops.stop_type` as a CHECK constraint listing values — extend it too only if a test exercises an INSPECTION stop.)*
 
 **Backend — `backend/src/scm/routes/delivery-planning.ts` (ASSR union + schedule):**

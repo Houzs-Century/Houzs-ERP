@@ -49,11 +49,11 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -207,6 +207,9 @@ export const ConsignmentOrderNew = () => {
   // ── Debtor autocomplete ─────────────────────────────────────────────
   const debtors = useConsignmentDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* SalesOrderDetail's copy of this field was portalled in an earlier pass; this
+     one and ConsignmentOrderDetail's were the twins that pass missed. */
+  const debtorInputRef = useRef<HTMLInputElement>(null);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -604,6 +607,7 @@ export const ConsignmentOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={debtorInputRef}
                 className={styles.fieldInput}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -612,24 +616,13 @@ export const ConsignmentOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Ref</span>

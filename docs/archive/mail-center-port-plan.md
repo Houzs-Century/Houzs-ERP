@@ -50,9 +50,9 @@ camelCase, org_id), the verified Houzs reality below **overrides** them.
 
 | Hookka file | Houzs target path | Action |
 |---|---|---|
-| `migrations-postgres/0081_email_outbox.sql` | — | **SKIP** — Houzs `email_outbox` already exists (mig 0005). |
-| `migrations-postgres/0161_outbox_attachments.sql` | — | **SKIP** — Houzs outbox doesn't carry attachments and mail replies bypass the outbox; not needed. |
-| `migrations-postgres/0171_email_labels.sql` | folded into the new `0039` | **ADAPT** — drop `org_id`; `email_labels(id text pk, name text not null, color text, created_at text, created_by integer)` + `ux_email_labels_name` unique. |
+| `migrations-postgres/0081_email_outbox.sql` [renumbered] | — | **SKIP** — Houzs `email_outbox` already exists (mig 0005). |
+| `migrations-postgres/0161_outbox_attachments.sql` [gone] | — | **SKIP** — Houzs outbox doesn't carry attachments and mail replies bypass the outbox; not needed. |
+| `migrations-postgres/0171_email_labels.sql` [gone] | folded into the new `0039` | **ADAPT** — drop `org_id`; `email_labels(id text pk, name text not null, color text, created_at text, created_by integer)` + `ux_email_labels_name` unique. |
 | all the lazy `CREATE TABLE` DDL inside Hookka `ensureMailSchema()` | **`backend/src/db/migrations-pg/0039_mail_center.sql`** (NET-NEW, one migration) | **ADAPT → real migration** — create the 8 tables below as Houzs convention (no `org_id`, TEXT timestamps, `users.id` integer FKs). Houzs migrates-before-deploy, so this is a real file, not runtime self-apply. |
 
 `0039_mail_center.sql` tables (org_id removed, ids reconciled):
@@ -164,7 +164,7 @@ houzscentury.com mailboxes actually live (see §5 owner-action).
 **Permissions** (`backend/src/services/permissions.ts`): add **two** flat keys —
 `mail_center.read` (nav/page gate; grant broadly) and `mail_center.manage` (alias/access/scope
 admin; owner gets it via `"*"`). Seed onto the appropriate roles in `0039` (or a sibling
-`0040_seed_mail_permissions.sql`, per the repo rule "keep schema + data in separate migrations
+`0040_seed_mail_permissions.sql` [gone], per the repo rule "keep schema + data in separate migrations
 when both are large").
 
 ---
@@ -177,7 +177,7 @@ Branding (0038), `app_settings`, `sessions`, `users`. So the **only** new migrat
 - **`0039_mail_center.sql`** — the 8 tables in §1 (addresses, address_access, user_scope, threads,
   messages, attachments, labels). No outbox, no labels-as-separate-file, no org_id.
 - **Email Alias column** (see §6): `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_alias text;`
-  — fold into `0039` or a small `0040_users_email_alias.sql`.
+  — fold into `0039` or a small `0040_users_email_alias.sql` [gone].
 - **Permission seed**: `mail_center.read` / `mail_center.manage` into roles (`0040`/`0041`).
 
 **Next free migration number is `0039`** (highest present = `0038`; note the two existing

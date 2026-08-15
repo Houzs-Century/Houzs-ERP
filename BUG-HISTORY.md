@@ -56,6 +56,537 @@ no row for it — which is exactly how reading only the queue produced the first
 wrong answer. The generated file says so in prose, next to the column.
 
 **Ref.** 2026-08-15, PR #2230.
+## Three same-named constants across two purchase routers; two were copies, one was a real difference nobody had written down [low]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** None. Found while attempting to shrink
+`scm/routes/mfg-purchase-orders.ts`.
+
+**What was there.** Both purchase routers — the Purchase Order and the Purchase
+Consignment Order — declared three constants under the SAME names:
+
+```
+VALID_CURRENCIES   identical in both
+VALID_KINDS        identical in both
+VALID_STATUSES     PO  : DRAFT, SUBMITTED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED
+                   PCO :        SUBMITTED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED
+```
+
+A PCO has no draft state. **That difference is deliberate, and NEITHER file said
+so.** It sat between two constants that were straight copies, under a matching
+name — which is the arrangement that makes a real difference read as an
+oversight, and an oversight read as a real difference. Either mistake is one
+"tidy-up" away: hand a PCO a draft state it does not have, or take the PO's away.
+
+**Fix.** The two that ARE the same move to `scm/lib/purchase-doc-vocab.ts`.
+`VALID_STATUSES` stays LOCAL in both, each with a one-line note naming the other,
+and `backend/tests/purchaseDocVocab.test.ts` asserts the two sets differ by
+**exactly `DRAFT`** — so harmonising them fails a test instead of silently
+changing a document model.
+
+**The guard had a hole, found by proving it red.** Its first version asked
+`declaredSet(...)` to come back empty, and `declaredSet` reads the quoted strings
+inside the `Set` — so a re-declaration holding anything else (`new Set([1])`)
+parsed as zero entries and PASSED. It now looks for the DECLARATION, and carries
+a test asserting the matcher can still SEE one, so the two "must not be declared"
+assertions cannot pass over a dead pattern. Both arms proven red afterwards.
+
+Then it caught a real one within the minute: reverting a broken extraction on the
+PO side left the PCO importing the shared module and the PO re-declaring its own,
+and the guard failed on exactly that.
+
+**NOT DONE, and why.** This was meant to be the seventh file-size payment.
+`mfg-purchase-orders.ts` is 113 lines over its ceiling and it is NOT shrunk here:
+an automated extraction of its inert half cut two blocks mid-expression
+(`HEADER_COLS` is a multi-line concatenation whose COMMENTS contain braces, and
+`parseBulkSupplierDateBody`'s return type spans lines before its opening brace),
+and the result did not compile. It was reverted rather than patched. The file
+ends this change at exactly the line count it started with — the note in the
+router is one line, not four, because a file already over its ceiling may not
+grow even by a comment.
+
+**Ref.** 2026-08-15.
+
+## The seed script's hand-copied project name had no solo branch — re-seeds could not converge [medium]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** None reported. Found while shrinking `services/projects.ts`.
+
+**The defect, against the code's OWN stated contract.**
+`backend/scripts/seed-projects.mjs` carried its own `buildName()` under this
+comment:
+
+> Canonical project name format. Must match `deriveProjectName()` in
+> services/projects.ts and the backfill in mig 071 so re-seeds converge on the
+> same string.
+
+It did not match. `deriveProjectName` forces the organizer slot to the literal
+`SOLO` for a solo event **even when an organizer was picked** — a solo event is
+by definition not organised by anyone. The hand copy had no such branch:
+
+```js
+const organizer = (row["ORGANIZER"] || "").trim() || "SOLO";
+```
+
+**And the same script reads the field it needed, twelve lines below**:
+`EVENT_TYPE_ID[(row["EVENT TYPE"] ?? "").toUpperCase()]` stamps
+`event_type_id = 2` for SOLO. So one row could be inserted as a solo event whose
+NAME names an organizer, while the app would have named the same event
+`... SOLO @ ...`.
+
+Measured, not argued — same input through both:
+
+```
+app  / shared rule : SABAH [AKEMI] SOLO @ SURIA
+seed / hand copy   : SABAH [AKEMI] KAI HAO @ SURIA
+```
+
+Two different names for one event, from a script whose comment asked for
+convergence. This is the failure `CLAUDE.md` names directly: a rule hand-copied
+into a `.mjs` because it cannot import TypeScript, with a comment instead of a
+check holding the two together.
+
+**Fix.** The two format rules moved out of `services/projects.ts` into
+`src/services/project-naming.ts`, with a plain-JS mirror at
+`scripts/lib/project-naming.mjs` and `tests/projectNamingMirror.test.ts` pinning
+them across seven inputs chosen so a dropped rule shows as a MISMATCH rather
+than as two functions agreeing on easy cases. `seed-projects.mjs` now imports the
+mirror instead of re-implementing. Exactly the arrangement
+`scripts/lib/variant-axes.mjs` already uses, and for the same reason.
+
+21 tests where there were none. Proven red by forcing `isSolo` false in the
+mirror — a mutation that stays syntactically valid, because the first attempt
+produced a parse error and the suite reported "no tests", which is a guard dying
+with the thing it guards rather than catching it.
+
+**NOT claimed, and it is a question for the owner:** whether any ALREADY-SEEDED
+project carries the organizer spelling where it should say SOLO. That needs a
+production read, and nothing here has looked.
+
+`services/projects.ts` 3210 -> 3137 lines, ceiling follows.
+
+**Ref.** 2026-08-15, file-size debt paydown.
+
+## Four consignment helpers have SO twins; three of the four pairs differ [open-question]
+
+<!-- area: Sales orders + pricing -->
+
+**Not a fix.** Three divergences found while shrinking
+`scm/routes/consignment-orders.ts`, none of which I could show is reachable, and
+each of which needs a decision rather than a refactor. Recorded so they stop
+being invisible.
+
+The Consignment Order router is a `mfg-sales-orders` clone. Four helpers exist in
+both files. `extFromMime` is byte-identical. The other three are not:
+
+| helper | Sales Order | Consignment Order |
+|---|---|---|
+| `deriveCountryFromState` | canonicalises the state first (`canonicalizeMyState`), so "PENANG" resolves via "Pulau Pinang" | looks up the raw string |
+| `snapshotUnitCostSen` | wraps both the explicit value and the DB read in `senOrZero` | returns the explicit value raw; `Number(...)` on the DB read |
+| `deriveSalesLocationFromState` | differs only in formatting, as far as a normalised comparison shows | — |
+
+**Reachability, checked rather than assumed:**
+
+- `snapshotUnitCostSen` — all three CO callsites already wrap the argument in
+  `Number(...)`, so a string cannot reach it, and `NaN > 0` is false. The DB side
+  reads `mfg_products.cost_price_sen`, which is `integer DEFAULT 0 NOT NULL`, so
+  it can be neither null nor non-numeric. `Number(x)` and `senOrZero(x)` agree on
+  every value that column can hold. **Unreachable.**
+- `deriveCountryFromState` — both versions fall back to `'Malaysia'` when the
+  lookup misses, and the only strings `canonicalizeMyState` rewrites are
+  Malaysian states, whose country is Malaysia either way. `my_localities` DOES
+  hold non-Malaysia rows (mig 0181 seeds SG + CN), but their state names are not
+  ones the canonicaliser rewrites. **I could not construct a case where the
+  outputs differ; that is weaker than proving there is none.**
+
+**Why they are not consolidated in this PR.** Unifying them CHANGES behaviour —
+the CO would start canonicalising, and start clamping. `CLAUDE.md` asks for
+changes that can be shown to be behaviour-preserving, and these cannot be. Which
+version is right is the owner's call.
+
+**Related, and the same shape as the SERVICE finding recorded above.** That entry
+should be read with one more fact this pass turned up: `consignment-orders.ts`
+carries a deliberate comment saying the CO "has no `service_centi` /
+`service_cost_centi`, because the consignment order carries no service category"
+— and the schema agrees, there is no such column. So the missing SERVICE branch
+in its `normCategory` may be CONSISTENT with the document model rather than an
+oversight. Nothing validates `item_group` on a CO line, so a service-shaped line
+is still possible in data. **Which reading is right is an owner decision, and the
+copy was deliberately left alone here because of it.**
+
+**What this PR did do.** Moved the inert half — the HEADER/ITEM select lists, the
+finance-key set and gate, the identity-lock column set, and the photo constants —
+into `scm/lib/consignment-order-shape.ts`. Verified by comparing the COLUMN SET
+rather than the raw text: 108 columns before, 108 after, none lost, none added.
+(The raw-text comparison said "different" and was answering a different question
+— it counted the added `export` keyword and the indentation.)
+
+`consignment-orders.ts` 2475 -> 2379 lines, ceiling follows.
+
+**Ref.** 2026-08-15, file-size debt paydown.
+
+## normCategory is hand-written SIX times, and one copy silently drops SERVICE [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** None observable today, and the reason it is not observable is the
+whole finding. Found while paying file-size debt on `delivery-planning.ts`.
+
+**The divergence, proven.** `normCategory` — free-text `item_group` to one of
+six buckets — exists in six hand-written copies:
+
+| where | has a SERVICE branch |
+|---|---|
+| `scm/lib/so-readiness.ts` (exported, the natural shared one) | yes |
+| `scm/lib/so-display-branding.ts` (private) | yes |
+| `scm/routes/delivery-planning.ts` (private) | yes |
+| `scm/routes/delivery-zones.ts` (private, different return type) | yes |
+| `scm/routes/mfg-sales-orders.ts` (inline) | yes |
+| **`scm/routes/consignment-orders.ts` (inline)** | **NO — SERVICE falls to OTHERS** |
+
+So a SERVICE line on a consignment order buckets as `OTHERS`, and the same line
+on a Sales Order buckets as `SERVICE`.
+
+**Why nothing shows it, traced rather than assumed.** That copy feeds
+`item_categories`, written in exactly two places
+(`consignment-orders.ts`, `mfg-sales-orders.ts` — where its own comment calls it
+"kept for back-compat"). Its only other appearance anywhere in the tree is a
+TYPE DECLARATION at `frontend/src/pages/scm-v2/ConsignmentOrders.tsx`. Nothing
+reads the value. This is latent, not live — and it is latent by luck, not by
+design: the day someone renders that column, two pages disagree about one line.
+
+**What was NOT wrong, checked in the same pass.** `deriveBranding` also exists
+twice — `delivery-planning.ts` and the frontend `ConsignmentOrders.tsx` — and
+those two ARE behaviourally identical, including the `/^2990('?s)?$/i`
+house-brand test. And the Malaysia +8 "today" rule is hand-written at 20 sites
+tree-wide in 4 shapes; the 17 that produce a date string are all equivalent. No
+live bug in either. Both are the same shape of debt as this one.
+
+**Fix (partial, by design).** `delivery-planning.ts` now imports the shared
+`normCategory` from `so-readiness.ts` and the shared `todayMyt` from
+`my-time.ts`, and its `deriveBranding` moved to `so-display-branding.ts` as an
+export — which also deleted THAT file's private `normCategory`. Three copies
+gone, twelve tests added, including one that asserts SERVICE is its own bucket
+precisely because a copy dropped it.
+
+The `consignment-orders.ts` copy is deliberately left for the PR that shrinks
+that file (it is 70 lines over its own ceiling, so removing it is both the fix
+and the payment). `delivery-zones.ts` returns a different type and needs a
+reader, not a sweep.
+
+`delivery-planning.ts` 2950 -> 2907 lines, ceiling follows.
+
+**Ref.** 2026-08-15, file-size debt paydown.
+
+## Eight coercers decided what reaches the fleet tables, with no test and a duplicated clock [medium]
+
+<!-- area: Fleet, trips, TMS -->
+
+**Symptom.** None reported. Found while paying file-size debt on
+`scm/routes/fleet-maintenance.ts`, 27 lines over its ceiling.
+
+**What was there.** Eight private functions — `dateOrNull`, `intOrNull`,
+`numOrNull`, `floatOrNull`, `tsOrNull`, `refsOrNull`, `iso`, `normPlate` — used
+103 times across the router, with no test of any kind. Each returns
+`{ ok: true, value } | { ok: false }`, and that shape exists for ONE reason:
+
+```
+{ ok: true, value: null }   the caller sent nothing        -> write NULL
+{ ok: false }               the caller sent something bad  -> refuse, 400
+```
+
+Collapse those two and a typo'd mileage becomes a silent NULL on a compliance
+row instead of a refusal the operator can see. Nothing pinned the distinction.
+That is precisely the combination `CLAUDE.md`'s coverage section names as the
+one worth attacking: a file that decides what reaches the database, with no test.
+
+**Also found: a second `todayMyt`.** The router carried its own copy —
+`new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10)` — beside the
+canonical `scm/lib/my-time.ts`, which documents itself as the backend mirror of
+the frontend's. The two are numerically identical today (`8 * 3_600_000` ===
+`8 * 60 * 60 * 1000`), so this was not a live bug — it was a second place the
+Malaysia-offset rule could drift, and that rule already has a BUG-HISTORY entry
+for stamping every document a day early before 08:00 MYT.
+
+**Fix.** The eight moved verbatim into `scm/lib/fleet-coerce.ts` with 22 tests,
+and the private clock is gone in favour of the library one. The tests assert the
+distinction as a PROPERTY over all six `*OrNull` coercers at once, so a new one
+cannot quietly disagree, plus the individual rules that actually differ:
+`intOrNull` refuses a fraction (12.5 km is a typo, not a reading), `numOrNull`
+refuses a negative because it is money, `floatOrNull` ACCEPTS one because it is
+a GPS coordinate, and `refsOrNull` stores NULL rather than `[]` so "no
+attachments" has one representation.
+
+Proven red before being trusted: making `intOrNull` swallow bad input fails 4;
+making `refsOrNull` accept a non-array fails 2.
+
+`fleet-maintenance.ts` 2144 -> 2096 lines, ceiling follows to 2096 — the
+numbers `npm run check:file-size` prints. It counts newlines
+(`split(String.fromCharCode(10)).length - 1`); a hand-count that includes the
+trailing line is one higher, and a ceiling written in the wrong unit leaves a
+phantom line of slack in a file whose neighbours were measured the other way.
+
+**Ref.** 2026-08-15, file-size debt paydown.
+
+## Desktop auto-derives the Processing Date; mobile makes you work it out — OPEN, owner decides [open-question]
+
+<!-- area: Sales orders + pricing -->
+
+**Not a fix. A divergence found while extracting the rule, recorded so it stops
+being invisible.** The decision is the owner's, because both readings are
+defensible and only he knows which flow is real.
+
+**What the two surfaces do.** On desktop (`pages/scm-v2/SalesOrderNew.tsx`),
+picking a Delivery Date fills the Processing Date in automatically —
+`deriveProcessingDate` at two callsites, 42 days before delivery, clamped so it
+never lands in the past. On mobile (`mobile/MobileNewSO.tsx`) the Processing
+Date is a bare `<input type="date">` with `onChange={(e) =>
+setProcDate(e.target.value)}` and no derivation anywhere in the file. Its only
+non-manual source is `scanPrefill?.slipDate` — the date read off a scanned slip.
+
+So the same salesperson gets the date computed for them at a desk and does
+"six weeks before delivery, but not before today" in their head on a phone.
+
+**Why this is a question and not a defect.** Mobile is the scan-driven surface,
+and a scanned paper slip carries its own date. Seeding from the slip rather than
+from an arithmetic rule may be exactly right — the slip is the source document.
+`CLAUDE.md`'s standing rule that a rule fixed on one surface must be fixed on
+both is about RULES; an affordance that only one surface offers is a product
+call.
+
+**What it would take either way.** The logic is now one importable module,
+`frontend/src/lib/processingDate.ts`, tested. Wiring mobile to it is small.
+Deciding that mobile should NOT derive is also fine — but then that belongs in
+`docs/modules/sales-order.md` as a stated difference, so the next person does not
+"fix" it.
+
+**Decision owner: the owner.** Until then, neither surface changes.
+
+**Ref.** 2026-08-15, found during the file-size extraction of `deriveProcessingDate`.
+## A wiring guard promised the repository and measured one file — a third AutoCount enqueue was invisible to it [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** None in production. Found by verifying `docs/modules/sales-order.md`
+against source, which is the point of that exercise: nothing was failing, and the
+guide told a reader something that was not true.
+
+The guide said the AutoCount create-enqueue invariant was held at *"exactly two
+such places, and both are gated"*, and that
+`backend/tests/soLocationGateWiring.test.ts` *"fails if a THIRD `enqueueSoCreate`
+callsite ever appears un-gated"*. The test's own failure message said the same:
+*"a new enqueueSoCreate callsite needs its own location gate"*.
+
+There were **three** callsites. `scm/lib/autocount-requeue.ts:382` was the third,
+and had been all along.
+
+**Root cause (traced).** The guard imported ONE module —
+`import rawRouteSource from '../src/scm/routes/mfg-sales-orders.ts?raw'` — and
+asserted `routeSource.match(/enqueueSoCreate\(/g).length === 2`. A callsite in
+any other file is structurally outside what it can see, so it could never fail
+the way its message claimed. Same shape CLAUDE.md already records twice: *"a
+checker that cannot match reports a clean run"* and *"a verdict computed over
+nothing must never read as a pass"* — except here the verdict was computed over
+a population narrower than the sentence citing it, which reads identically from
+the outside.
+
+**Why nothing broke.** The third callsite is safe, by a DIFFERENT mechanism than
+the one the guide names. `autocount-requeue.ts` re-sends an outbox row that
+already exists, so the document already passed a gated create; and
+`enqueueSoCreate` itself catches `MissingLocationError` and writes a `skipped`
+outbox row with the reason (`scm/lib/autocount-outbox.ts`) instead of sending a
+create AutoCount would refuse. That second mechanism is the one that matters,
+because it is what holds for an order created before the gate existed.
+
+**Fix.** The guard now walks `backend/src` and holds the whole population: any
+callsite that is neither the router nor a named exception fails, and a named
+exception whose file has stopped calling it ALSO fails — a stale exemption is a
+promise about nothing, and it hides the day the callsite reappears elsewhere.
+The exception carries the mechanism in prose, so the next reader inherits the
+reason rather than the permission. All three arms proven red before trusting
+them (missing exception, stale exception, empty walk).
+
+The guide and the test header now say the repo-wide sentence — *"every enqueue
+has a settled location, by one of two mechanisms"* — and reserve *"the gate
+covers every enqueue"* for the router.
+
+**Ref.** 2026-08-15, module-guide verification of `sales-order.md`.
+
+## 41 migration references nobody could mark, so nobody triaged any of them [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** `check-docs-drift` reported **41** `renamed-migration` advisories —
+each one a doc naming a migration filename that no longer exists, where the
+NUMBER now resolves to a completely different migration. A reader following
+`0210_so_amendments.sql` [external] opens `0210_scm_threepl_companies.sql` and finds
+something unrelated.
+
+Nobody acted on any of them, and that was rational: the list was mostly correct
+references with no way to say so.
+
+**Root cause.** The path check honours three markers — `[gone]`, `[planned]`,
+`[external]` — and the migration-FILENAME check honoured none. So a doc could not
+declare an honest reference, the advisory could never shrink below 41, and the
+real drift sat inside it unread. **A list that can only grow is a list nobody
+reads.**
+
+And the markers that existed did not cover the commonest honest case here. The
+migration usually still EXISTS and simply carries a different number, because
+parallel PRs collide and the loser renumbers. `[gone]` would have been a new lie.
+
+**What the 41 actually were** — established by reading each one's context, not by
+pattern:
+
+| kind | count | marker |
+|---|---|---|
+| 2990's migration tree, said so in the sentence (`migrations-postgres/`, "2990's ...") | 8 | `[external]` |
+| the migration exists under a new number | 16 | `[renumbered]` (new) |
+| genuinely deleted, incl. `MIGRATION-RETIREMENTS.md`, whose subject IS retirement | 17 | `[gone]` |
+
+**The trap avoided.** The obvious fix — a script that renumbers every reference
+to the current file — would have rewritten *2990's* `0210_so_amendments.sql` [external] into
+a Houzs migration number. That reference was CORRECT; the checker resolves
+against this repo's tree and the doc was talking about another repo's. Reading
+one line of context is what caught it.
+
+**Fix.** The migration-filename check honours the same markers, plus a fourth,
+`[renumbered]`, which tells the reader the file is findable — just not at that
+number. All 41 marked with what is TRUE of each.
+
+**Measured: 41 -> 0.** Not because anything was suppressed — every reference now
+carries a reader-facing statement — but because the list is finally a list of
+problems. Proven by adding one fake reference to a doc: it appears immediately
+against a clean baseline, and removing it returns to zero.
+
+**Ref.** 2026-08-15. Lesson: **a detector with no way to record a legitimate
+finding produces a backlog instead of a signal** — and the fix is vocabulary, not
+suppression. CLAUDE.md already said it: *"Do not add a silent exemption list
+instead. A suppression the reader cannot see is a suppression nobody
+re-checks."*
+## Five docs sent the reader to a line number that no longer exists [low]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** `check-docs-drift` reported five `line-past-eof` advisories — a doc
+citing `file.ts:161` where the file has 140 lines. Following one lands nowhere;
+following a line number that is merely WRONG rather than past the end lands on
+unrelated code and is not detected at all.
+
+**Root cause.** A line number in prose is a fact with a very short expiry — it
+rots the moment anything ABOVE it is edited, which is most edits. The worst
+example here was not past EOF at all: `docs/2990-mirror-full-design.md` cited
+`so-revision.ts:157-428` for `applySoAmendment`, and that function begins at line
+271. The number was inside the file, so nothing flagged it, and it pointed at
+something else entirely.
+
+**Fix, and it is a convention rather than five edits.** Cite the SYMBOL, not the
+line: a function name, an exported const, a route path. Those move with the code
+and survive an edit above them.
+
+| was | now |
+|---|---|
+| `so-revision.ts:157-428`; `so-mirror.ts:161-169` | `so-revision.ts` -> `applySoAmendment()`; `so-mirror.ts` -> the `soMirror` router |
+| `backend/src/routes/users.ts:2291` (x2) | `users.ts` -> the second `POST /:id/impersonate` registration |
+| `backfill-sofa-special-orders.mjs:237` | the filename alone — the entry's point was the CONTENT it wrote |
+| `schema.pg.ts:905-1307` | "the `scm_*` table block in `schema.pg.ts`" |
+
+Each replacement was checked to RESOLVE before it was written:
+`export async function applySoAmendment` and `export const soMirror` both exist,
+and `users.ts` carries four `/:id/impersonate` mentions.
+
+**Measured: 5 -> 0.**
+
+**Not fixed here, and characterised rather than left as noise.** Six
+`unknown-permission` advisories remain and all six are FALSE POSITIVES — the
+checker's own message admits it ("or it is a table.column that shares a prefix
+with a real key"). `projects.venue`, `projects.state`, `projects.stage`,
+`projects.name` and `projects.setup_start_at` are COLUMNS, read in prose about
+data: *"`projects.venue` is free[-text]"*, *"read `projects.setup_start_at`"*.
+Teaching the checker to tell a table.column from an `<area>.<verb>` permission
+needs the real column set, which is a separate change.
+
+**Ref.** 2026-08-15. Lesson: **a line number is the most perishable thing you can
+put in a document**, and the dangerous half of that class is invisible — a number
+still inside the file points confidently at the wrong code and no checker can see
+it.
+## #2110 said every other floating menu was already portalled. Four were not [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Owner, after #2110 fixed the State dropdown: *"这个你要全系统看一下,
+还有没有同类的问题。如果全部都有这个问题的话,都是要修复掉"*. On production's
+**New Sales Order**, opening the **country dial code** next to Phone shows the
+search box and **not one country**.
+
+**Root cause, traced.** The same mechanism as #2110, in components that PR's own
+body listed as already converted. `position: absolute` escapes layout FLOW but
+not an ancestor's OVERFLOW clip, so a menu rendered as a sibling of its trigger
+is sliced by the card it sits in. `#2110`'s note — *"Every other floating picker
+in this repo … had already been converted"* — was true of the three it named and
+false of the rest; this entry is what re-checking it found.
+
+**PROVEN in the browser, on prod, not inferred.** Measured with
+`getBoundingClientRect()` + `elementFromPoint()` through the Chrome tooling
+against `erp.houzscentury.com`, 2026-08-15:
+
+| site | measurement |
+|---|---|
+| `PhoneInput`, `/scm/sales-orders/new` | 287px panel, **247px cut** by `SalesOrderNew.module.css .card { overflow: hidden }`; **0 of 25** countries hit-testable |
+| `SalesOrderNew` debtor list, same page | panel painted **49px ABOVE** the input (top 314 vs input bottom 363) at **1678px** wide against the input's 1200px, and the card left **130px** of room for a `max-height: 260px` list |
+| `SearchableSelect` (City, Postcode), same page | portalled, so no ancestor clip — but the panel ran to y=890 in a **779px** viewport, and `position: fixed` puts that beyond any scroll |
+
+The debtor list's misplacement has its own cause worth recording:
+`SalesOrderNew.module.css` never had a `.field { position: relative }` (its
+sibling `SalesOrderDetail.module.css` does, at `:208`), so the absolute list
+resolved against the card body rather than the field. One bug hid inside the
+other — the clip was visible, the wrong anchor read as "the list is just wide".
+
+**Fix.** One shared implementation, `frontend/src/lib/anchoredPanel.ts`
+(`measureAnchoredPanel` + `useAnchoredPanel` + `anchoredPanelStyle`): portal to
+`<body>`, `position: fixed`, geometry from the trigger's rect, re-measured on
+capture-phase `scroll` and on `resize`, flipped above when the room below cannot
+hold the list, `max-height` clamped to the room actually available. Lifted out of
+`StatePicker`, which now consumes it, so the pattern is shared rather than copied
+five times. Converted: `PhoneInput` (≈20 call sites), `SalesOrderNew`,
+`ConsignmentOrderNew` and `ConsignmentOrderDetail` debtor lists;
+`SearchableSelect` and `SalesOrderDetail`'s already-portalled list gained the
+flip and the clamp they were missing.
+
+**The trap a portal introduces, and the guard for it.** A document-level
+outside-click handler tests `rootRef.contains(e.target)`. Once the panel is in a
+`<body>` portal it is no longer inside `rootRef` **in the DOM**, so a `mousedown`
+on an option reads as "outside", closes the list, and the option unmounts before
+its `click` can fire — the menu becomes unpickable. `PhoneInput` is the one
+converted component with that handler; it now tests the panel too, and
+`PhoneInput.test.tsx` asserts a mousedown inside the panel does not close it.
+
+**Two things the hook does that the copies did not.** An unchanged measurement
+returns the PREVIOUS object — a scroll gesture fires dozens of events and each
+fresh object re-rendered the whole picker. And that same identity check is what
+stops a caller with an unstable ref from spinning; both are pinned by tests.
+
+**Verified.** `PhoneInput.test.tsx`'s 4 placement tests fail against
+`origin/main`'s component and its 5 behaviour tests pass — the intended split.
+In a browser: the pre-fix component in the real `.card` markup reproduced prod's
+numbers exactly (`cutBottom: 247`, 0 of 25 countries), and the fixed one is
+`parentIsBody: true`, `position: fixed`, no clippers, 8 countries visible and all
+25 reachable; near the window bottom it flips above and stays on screen.
+
+**What this did NOT cover.** Native `<select>` is not this bug — the browser
+paints those above everything — and the ones on these forms were left alone.
+`RowActionsMenu` on Project Maintenance, the eight `SplitDropdown` toolbar menus,
+`Inventory`'s warehouse filter and mobile `SoSearchField` all carry the
+anti-pattern; each was opened on a real page and measured `cutBottom: 0`, so
+they were left alone rather than converted on suspicion. Four more —
+`ServiceCases`' QC Result select, `Team`'s "Reports to" autocomplete and
+`MailCenter/Inbox`'s bulk-label and label-colour menus — sit inside an ancestor
+that a code read shows is `overflow-hidden`, but were **not** reproduced live and
+are **not** fixed here. That is the open item.
+
+**Ref.** PR #2223 · 2026-08-15 · follows #2110 (2026-08-13).
 
 ## The same question about this repo gave a different answer every time it was asked [high]
 
@@ -2451,7 +2982,7 @@ replaced, `company_id` restamped to 2. The scoped Houzs GET then matched nothing
 write, and filtered on every read. Everything you can see in the route file is
 correct. Only the DDL says otherwise.
 
-**Fix** - migration `0284_scm_pos_cart_company_key.sql`: backfill NULL
+**Fix** - migration `0284_scm_pos_cart_company_key.sql` [renumbered]: backfill NULL
 `company_id` to HOUZS, `SET NOT NULL`, then drop the single-column PK and add
 `PRIMARY KEY (staff_id, company_id)`. `pos-cart.ts` upserts
 `onConflict: 'staff_id,company_id'` **in the same change** — per the
@@ -2500,7 +3031,7 @@ changed unilaterally.
 history.** The two tables looked identical and are not, and telling them apart
 needed the PARENT table, not the child's column list.
 
-- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql`
+- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql` [renumbered]
   re-keys `scm.compartment_fabric_tier_overrides` to `(compartment_id,
   company_id)`, and the PUT moved to `onConflict: 'compartment_id,company_id'`
   in the same change (`fabric-tier-addon.ts:274`) — the constraint and the
@@ -2979,7 +3510,7 @@ time by re-listing the tree, not when you branch* — and the same shape as the
 invisible here until the rebase, because the duplicate only exists in a tree
 that contains BOTH branches.
 
-**Fix** — renamed to `0280_scm_grn_zero_cost_ack.sql`, the number the failing
+**Fix** — renamed to `0280_scm_grn_zero_cost_ack.sql` [renumbered], the number the failing
 test itself names. **Rename only, body untouched**, per the runner's own rule:
 `pg-migrate` tracks by full filename, so an edited body would read to it as an
 orphaned tracker row plus an unknown file to apply. The migration has never been
@@ -3283,7 +3814,7 @@ migration files numbered `0284`, and two assertions still expecting the old
 
 **Root cause (traced, not guessed)** — neither failure is a defect in isolation;
 both are the shape of assembling thirteen branches against a moving `main` and
-then not re-verifying. (1) `0284_scm_processing_date_one_name.sql` was written
+then not re-verifying. (1) `0284_scm_processing_date_one_name.sql` [renumbered] was written
 on a branch while `main` took `0284` for
 `0284_retire_consignment_proceeded_at.sql`; `backend/tests/migrationNumbers.test.ts`
 is a ratchet — historical duplicates are frozen as accepted, a NEW one fails —
@@ -9235,7 +9766,7 @@ things on different platforms — and this one runs on the owner's Windows box.
 ## Two migrations both numbered 0276 [medium]
 
 **Symptom** — `main` carried `0276_scm_migrated_documents.sql` and the open
-#1855 carried `0276_scm_autocount_outbox.sql`. Merged as they stood, `pg-migrate`
+#1855 carried `0276_scm_autocount_outbox.sql` [renumbered]. Merged as they stood, `pg-migrate`
 would have two files claiming one number.
 
 **Root cause** — Exactly the case `CLAUDE.md` warns about: #1855 picked its
@@ -9246,7 +9777,7 @@ safe and duplicates are not.
 **Fix** — Renamed the unapplied one to `0277_scm_autocount_outbox.sql` and
 updated the four references to it in `docs/modules/autocount-writeback.md`. Safe
 because it has never run anywhere: #1855 is not merged, so no deployment has an
-`APPLIED 0276_scm_autocount_outbox.sql` line to be confused by the rename.
+`APPLIED 0276_scm_autocount_outbox.sql` [renumbered] line to be confused by the rename.
 
 **Ref** — 2026-08-10, PR test/ac-writeback-trial.
 ## "APPLIED - stamped 146 sofa lines", three times, and it was corrupting them [high]
@@ -9632,7 +10163,7 @@ line recompute, so the first UI edit of a migrated line would have erased the
 backfill even where it had landed.
 
 Three defects, not one. The field was wrong (derived output, not the picker's
-input); the CONTENT was wrong (`backfill-sofa-special-orders.mjs:237` wrote the
+input); the CONTENT was wrong (`backfill-sofa-special-orders.mjs` wrote the
 verbatim slip phrases parseSofa returns — "BOTTOM USE UMBRELLA FABRIC" — beside
 the codes, and a phrase is not a pickable code); and the SHAPE was wrong —
 `mfg-pricing-recompute.ts:117` declares

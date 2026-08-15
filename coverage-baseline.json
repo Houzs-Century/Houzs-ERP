@@ -60,14 +60,14 @@
       "files": 379
     },
     "frontend/src": {
-      "pct": 12.64,
-      "zeroCoverageFiles": 353,
+      "pct": 13.01,
+      "zeroCoverageFiles": 351,
       "lines": {
-        "total": 59866,
-        "covered": 7624
+        "total": 60076,
+        "covered": 7877
       },
-      "files": 593
+      "files": 603
     }
   },
-  "measuredAt": "2026-08-13"
+  "measuredAt": "2026-08-15"
 }
