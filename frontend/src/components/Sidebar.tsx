@@ -27,6 +27,7 @@ import {
   FolderKanban,
   ShieldCheck,
   Activity,
+  RefreshCw,
   Bot,
   Boxes,
   Package,
@@ -773,6 +774,18 @@ export const NAV_TABS: NavTab[] = [
     label: "System Health",
     icon: Activity,
     pageAccess: "system_health",
+  },
+  // Next to System Health because it answers the same shape of question — "is
+  // the thing that runs in the background still working" — and because the
+  // owner's is "did my sales order reach AutoCount". anyPerm mirrors the two
+  // keys GET /api/scm/autocount-outbox accepts; the server is still the
+  // boundary, this only decides whether the row is worth showing.
+  {
+    section: "system",
+    to: "/autocount-sync",
+    label: "AutoCount Sync",
+    icon: RefreshCw,
+    anyPerm: ["*", "scm.autocount.read", "settings.manage"],
   },
   {
     section: "system",

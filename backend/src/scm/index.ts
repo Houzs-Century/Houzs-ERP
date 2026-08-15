@@ -28,6 +28,7 @@ import { grns } from "./routes/grns";
 import { purchaseInvoices } from "./routes/purchase-invoices";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { entityAuditLog } from "./routes/entity-audit-log";
+import { autocountOutbox } from "./routes/autocount-outbox";
 import { paymentAuditLog } from "./routes/payment-audit-log";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
@@ -402,6 +403,16 @@ scm.route("/payment-audit-log", paymentAuditLog);
 // Narrowing later is safe; nothing consumes this endpoint yet (backend-only, no
 // UI in this PR).
 scm.route("/entity-audit-log", entityAuditLog);
+// AutoCount write-back queue, READ ONLY (scm.autocount_outbox, mig 0277). NO
+// scmAreaGuard, for hr's reason and not for the umbrella's: an L2 area key is a
+// PAGE key and this page belongs to no SCM area — it spans sales orders,
+// purchase orders and all four conversions at once, so any area key here would
+// be an arbitrary owner. Authorization is entirely the flat scm.autocount.read /
+// settings.manage keys checked inside the route against the REAL caller, which
+// is stricter than the coarse scm.access umbrella /api/scm/* already applies —
+// and it has to be, because this endpoint quotes what the licensed account book
+// said about every document the company pushed.
+scm.route("/autocount-outbox", autocountOutbox);
 // Currency MASTER — owner-maintained list + rate_to_myr, read by the GRN/PI/PV
 // currency dropdowns across areas. Like state-warehouse-mappings, it's a shared
 // lookup left on the coarse scm gate (reads open); writes are gated inside the
