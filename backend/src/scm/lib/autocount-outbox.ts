@@ -737,10 +737,8 @@ export async function enqueuePoCreate(
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
 
-    /* TRANSFER OR CREATE — the rule is scm/shared/po-transfer-shape.ts, and it
-       falls back to a create on ANY doubt because a create is what happens
-       today and cannot be wrong. Houzs buys in a shape a transfer often cannot
-       express: one PO line serving several customers plus stock (mig 0235). */
+    /* TRANSFER OR CREATE — po-transfer-shape.ts, which falls back on ANY doubt
+       because a create is today's behaviour and cannot be wrong. */
     const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
 
     const body = composeCreatePo(header, lines, { bindings });
@@ -753,18 +751,13 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo is resolved at DRAIN, like the four conversions. DtlKeys
-           names the lines this order buys and is REQUIRED; the per-line values
-           are the ERP's agreed COST, which replaces the sales price the
-           transfer carries over. */
+        /* FromDocNo resolves at DRAIN. composeSoToPo carries why the per-line
+           cost is re-applied after the transfer. */
         body: (shape.kind === 'transfer'
           ? composeSoToPo(shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
-        /* THE PARENT MUST EXIST FIRST. dispatchOne holds a row whose fromDoc has
-           no AutoCount number yet as `waiting` — without burning an attempt —
-           which is exactly right here: a purchase order raised the same minute
-           as its sales order would otherwise fail on a document the book has
-           not been told about. */
+        /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
+           without burning an attempt, until the sales order has its number. */
         ...(shape.kind === 'transfer'
           ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
           : {}),
@@ -1508,9 +1501,6 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   const outstandingCenti = await readSoOutstandingCenti(sb, h);
-  /* The payment REFERENCES, which is a different read from the balance above:
-     that one collapses two numeric columns to a figure, this one needs two text
-     columns and the order they were taken in. */
   const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
@@ -1648,9 +1638,7 @@ function soEditHeader(
      not drop it. Only a null — the ERP has no answer — omits the key. */
   const balance = acUdfMoney(outstandingCenti);
   if (balance != null) udf.BALANCE = balance;
-  /* The payment references the cutover took OUT of this same field. Omit-when-
-     absent like the rest: an order whose payments predate the ERP has nothing
-     to say, and a blank would erase the book's own text. */
+  /* Omit-when-absent like the rest: a blank would erase the book's own text. */
   const payement = composePaymentUdf(paymentRefs);
   if (payement) udf.PAYEMENT = payement;
   if (Object.keys(udf).length) out.UDF = udf;
