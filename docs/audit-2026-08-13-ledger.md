@@ -31,7 +31,7 @@ are its labels, not disjoint sets.
 | money / quantity arithmetic | 47 (12 high) | B1/B2/B3/B5/B6 **DONE** — B6 by mig 0286 in the direction the owner chose. B4 **DONE** — the workflow was clicked on 2026-08-14, the data answered it, and the engine now carries sen |
 | silent failure | 33 (5 high) | **CLOSED** — frontend 39 → 0 across two passes; backend all 9 §D items done |
 | old/new competing implementations | 29 | ASSR company-pin divergence fixed (search.ts kept a stale copy of a rule the owner changed on 2026-07-20); the rest are duplicated-but-agreeing and now refereed by `check-shared-mirrors` |
-| dead code | 12 claimed — **at least 184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts:2291`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
+| dead code | 12 claimed — **at least 184 actual** | **SWEPT — the list is §K.** The "12" was never written down and never verified; this row used to be a count with no list, which is unusable and uncheckable. The real sweep found 74 dead `42501 -> 403` branches, 1 duplicate route handler (`users.ts`, the second `POST /:id/impersonate`, and the dead half is the newer design — owner decision), 108 exported symbols with zero references repo-wide, and 1 unmounted page file. **Acted on:** 28 files annotated, 4 orphans deleted, everything else LEFT with a written reason — including two the repo had already recorded as deliberate keeps |
 
 ---
 
@@ -356,7 +356,7 @@ the same information.
 
 | # | site | what it is | evidence | disposition |
 |---|---|---|---|---|
-| K2 | `backend/src/routes/users.ts:2291` | `POST /:id/impersonate` registered a **second** time | One `new Hono` in the file (`:377`), one `export default app`. The same method+path is already registered at `:2031`. Hono composes both chains in registration order and the `:2031` handler returns on every branch — **no handler in this file ever continues the chain** — so the second registration is never entered. | **ANNOTATED, left in place — OWNER** |
+| K2 | `backend/src/routes/users.ts` -> the second `POST /:id/impersonate` registration | `POST /:id/impersonate` registered a **second** time | One `new Hono` in the file (`:377`), one `export default app`. The same method+path is already registered at `:2031`. Hono composes both chains in registration order and the `:2031` handler returns on every branch — **no handler in this file ever continues the chain** — so the second registration is never entered. | **ANNOTATED, left in place — OWNER** |
 
 **This one is worth the owner's attention, because the dead half is the newer
 design.** What runs (`:2031`) is wildcard-`*`-only with a 1-hour session. What is
