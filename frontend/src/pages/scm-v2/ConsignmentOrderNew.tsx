@@ -36,9 +36,12 @@ import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import {
-  useLocalities, distinctStates, citiesInState, postcodesInCity,
-  countryForState,
+  useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -299,12 +302,15 @@ export const ConsignmentOrderNew = () => {
 
   // ── Locality cascades ──────────────────────────────────────────────
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  const states  = useMemo(() => distinctStates(locRows), [locRows]);
-  const cities  = useMemo(() => state ? citiesInState(locRows, state) : [], [locRows, state]);
-  const postcodes = useMemo(
-    () => (state && city) ? postcodesInCity(locRows, state, city) : [],
-    [locRows, state, city],
-  );
+  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
+     so each pick writes all three back — the raw setters keep the value just
+     chosen, which routing through the State picker's handler would clear. */
+  const { cities, postcodes } = useAddressCascade(locRows, state, city);
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state); setCity(next.city); setPostcode(next.postcode);
+  };
+  const onCityPick = (next: string) => applyTriple(pickCity(locRows, { state, city, postcode }, next));
+  const onPostcodePick = (next: string) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next));
 
   const stateWarehousesQ = useStateWarehouseMappings();
   useEffect(() => {
@@ -901,7 +907,7 @@ export const ConsignmentOrderNew = () => {
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={state}
-                onChange={(next) => { setState(next); setCity(''); setPostcode(''); }}
+                onChange={(next) => applyTriple(pickState(next))}
               />
             </label>
             <label className={styles.field}>
@@ -910,9 +916,8 @@ export const ConsignmentOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(v) => { setCity(v); setPostcode(''); }}
-                  disabled={!state}
-                  placeholder={state ? 'Pick city' : '— pick state first'}
+                  onChange={onCityPick}
+                  placeholder={cityPlaceholder(state)}
                   options={sortByText(cities).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -924,9 +929,8 @@ export const ConsignmentOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={setPostcode}
-                  disabled={!state || !city}
-                  placeholder={(state && city) ? 'Pick postcode' : '— pick city first'}
+                  onChange={onPostcodePick}
+                  placeholder={postcodePlaceholder(state, city)}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
