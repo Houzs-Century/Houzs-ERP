@@ -15,10 +15,18 @@
 //   3. DELETE the old row
 //
 // Step 3 is the dangerous one and it is why step 2 is verified before it runs.
-// Six of the child tables are ON DELETE CASCADE, so ANY row this script failed
-// to repoint would be silently DESTROYED by the delete rather than left behind
-// as a visible orphan. The transaction therefore re-scans for the old number
-// after step 2 and ABORTS the whole thing if a single row still carries it.
+// FIVE of the seven child tables are ON DELETE CASCADE (the other two are SET
+// NULL — `git grep 'REFERENCES "public"."mfg_sales_orders"'`), so a row this
+// script failed to repoint would be silently DESTROYED by the delete rather
+// than left behind as a visible orphan. The transaction therefore re-scans for
+// the old number after step 2 and ABORTS the whole thing if a single row still
+// carries it.
+//
+// AND THE WRITER IS NOT THE WITNESS. After the transactions commit, a SECOND
+// connection re-reads every renamed order and asserts its SHAPE — the header
+// fields and the child-row counts captured before the move, not merely that a
+// row exists. The session that performed the write is the worst possible judge
+// of whether it landed.
 //
 // WHAT COUNTS AS A REFERENCE IS MEASURED, NOT LISTED. Hand-maintained table
 // lists rot — and the references that matter most here are the ones with NO
@@ -154,12 +162,25 @@ async function main() {
   // ── Preconditions, per pair ───────────────────────────────────────────────
   const todo = [];
   for (const p of PAIRS) {
-    const [src] = await db`SELECT doc_no, status, company_id FROM scm.mfg_sales_orders WHERE doc_no = ${p.from}`;
+    /* The SHAPE is captured here, before anything moves, because it is what the
+       fresh-connection check at the end asserts. A row count would pass while
+       every field on it was wrong. */
+    const [src] = await db`
+      SELECT doc_no, status, company_id, debtor_name, so_date, local_total_centi,
+             (SELECT count(*)::int FROM scm.mfg_sales_order_items    i WHERE i.doc_no    = s.doc_no) AS items,
+             (SELECT count(*)::int FROM scm.mfg_sales_order_payments y WHERE y.so_doc_no = s.doc_no) AS payments
+        FROM scm.mfg_sales_orders s WHERE doc_no = ${p.from}`;
     const [dst] = await db`SELECT doc_no FROM scm.mfg_sales_orders WHERE doc_no = ${p.to}`;
     if (!src && dst) { out(`SKIP  ${p.from} -> ${p.to}: already done (source gone, target present)`); continue; }
     if (!src) refuse(`${p.from} does not exist`);
     if (dst) refuse(`${p.to} is already taken — renaming ${p.from} onto it would collide`);
-    out(`PLAN  ${p.from} -> ${p.to}  (status=${src.status}, company_id=${src.company_id})`);
+    p.shape = {
+      status: src.status, company_id: String(src.company_id), debtor_name: src.debtor_name,
+      so_date: String(src.so_date), local_total_centi: String(src.local_total_centi),
+      items: src.items, payments: src.payments,
+    };
+    out(`PLAN  ${p.from} -> ${p.to}  (status=${src.status}, company_id=${src.company_id}, ` +
+        `customer=${src.debtor_name}, items=${src.items}, payments=${src.payments})`);
     todo.push(p);
   }
   if (!todo.length) { out("Nothing to do."); return; }
@@ -225,8 +246,9 @@ async function main() {
       out(`Moved   ${moved} referencing row(s) in total`);
 
       /* 3. PROVE nothing still points at the old number BEFORE deleting it.
-            Six child tables are ON DELETE CASCADE: anything still referencing
-            the old doc_no would be destroyed by the delete, not orphaned. */
+            Five of the seven child tables are ON DELETE CASCADE: anything still
+            referencing the old doc_no would be destroyed by the delete, not
+            orphaned. */
       const stillThere = await tablesMentioning(tables, p.from, tx);
       const leftovers = stillThere.filter((h) =>
         !(h.schema === PARENT.schema && h.table === PARENT.table));
@@ -247,12 +269,49 @@ async function main() {
     out(`DONE    ${p.from} -> ${p.to}`);
   }
 
-  // ── After-proof, outside the transactions ─────────────────────────────────
-  for (const p of todo) {
-    const left = await tablesMentioning(tables, p.from);
-    const [now] = await db`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${p.to}`;
-    out(`After   ${p.from}: ${left.length ? `STILL FOUND in ${left.map((l) => `${l.schema}.${l.table}`).join(", ")}` : "gone everywhere"} | ${p.to} present? ${now.n === 1 ? "yes" : "NO"}`);
+  // ── After-proof on a FRESH connection ─────────────────────────────────────
+  /* A new client, not the one that wrote. The writing session has seen its own
+     uncommitted work all along and is the worst available witness that anything
+     landed; and what is asserted is the SHAPE captured before the move, because
+     "one row exists" is true of a row with every field wrong. */
+  const verify = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  const bad = [];
+  try {
+    for (const p of todo) {
+      const [now] = await verify`
+        SELECT status, company_id, debtor_name, so_date, local_total_centi,
+               (SELECT count(*)::int FROM scm.mfg_sales_order_items    i WHERE i.doc_no    = s.doc_no) AS items,
+               (SELECT count(*)::int FROM scm.mfg_sales_order_payments y WHERE y.so_doc_no = s.doc_no) AS payments
+          FROM scm.mfg_sales_orders s WHERE doc_no = ${p.to}`;
+      const [old] = await verify`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${p.from}`;
+      const left = await tablesMentioning(tables, p.from, verify);
+
+      if (!now) { bad.push(`${p.to} is NOT PRESENT on a fresh read`); continue; }
+      const got = {
+        status: now.status, company_id: String(now.company_id), debtor_name: now.debtor_name,
+        so_date: String(now.so_date), local_total_centi: String(now.local_total_centi),
+        items: now.items, payments: now.payments,
+      };
+      const diffs = Object.keys(p.shape).filter((k) => String(p.shape[k]) !== String(got[k]))
+        .map((k) => `${k}: was ${p.shape[k]}, now ${got[k]}`);
+      if (diffs.length) bad.push(`${p.to} shape changed — ${diffs.join("; ")}`);
+      if (old.n !== 0) bad.push(`${p.from} is STILL PRESENT (${old.n} row)`);
+      if (left.length) bad.push(`${p.from} still referenced by ${left.map((l) => `${l.schema}.${l.table}`).join(", ")}`);
+
+      out(`VERIFY  ${p.from} -> ${p.to} | old gone: ${old.n === 0 ? "yes" : "NO"} | ` +
+          `references to old: ${left.length ? left.map((l) => l.table).join(",") : "none"} | ` +
+          `shape: ${diffs.length ? "MISMATCH" : "identical"} ` +
+          `(status=${got.status}, customer=${got.debtor_name}, items=${got.items}, payments=${got.payments}, total_centi=${got.local_total_centi})`);
+    }
+  } finally {
+    await verify.end();
   }
+  if (bad.length) {
+    out(`VERIFY FAILED — the writes are COMMITTED and a fresh read disagrees with them:`);
+    for (const b of bad) out(`  ${b}`);
+    throw new Error(`fresh-connection verification found ${bad.length} problem(s); the rename is NOT safe to trust`);
+  }
+  out(`VERIFY  all ${todo.length} rename(s) confirmed on a second connection: old number gone, new number carries the same shape.`);
 
   const prefix = todo[0].to.replace(/\d+$/, "");
   const rows = await db.unsafe(

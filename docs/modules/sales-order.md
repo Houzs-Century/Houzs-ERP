@@ -1378,10 +1378,13 @@ are a VIEW; allocation is computed; SO readiness is binary.
   reference -> delete the old row**, in one transaction:
   `backend/scripts/renumber-sales-orders.mjs` + the `Renumber sales orders`
   workflow (dry-run by default).
-- Why that order is not optional: six child tables are `ON DELETE CASCADE`, so a
-  reference the rename MISSED is **destroyed** by the delete rather than left as
-  a visible orphan. The script re-scans for the old number and aborts before
-  deleting. The references that a hand-written table list forgets are the ones
+- Why that order is not optional: **five** of the seven FK'd child tables are
+  `ON DELETE CASCADE` (the other two are `SET NULL`), so a reference the rename
+  MISSED is **destroyed** by the delete rather than left as a visible orphan.
+  The script re-scans for the old number and aborts before deleting, and a
+  SECOND connection re-reads the renamed order afterwards and asserts its shape
+  — the session that wrote is the worst witness that the write landed.
+  The references that a hand-written table list forgets are the ones
   with **no FK at all** — `scm.pwp_codes.source_doc_no` / `redeemed_doc_no` are
   plain text, as is the AutoCount outbox — which is why the script discovers
   them by scanning `to_jsonb(t.*)` over every base table instead of trusting a
