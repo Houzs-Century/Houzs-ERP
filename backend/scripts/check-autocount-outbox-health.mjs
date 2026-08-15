@@ -30,6 +30,14 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
+/* The taxonomy is no longer this script's private property. The ERP now has a
+   PAGE over the same table (scm/routes/autocount-outbox.ts), and two readers
+   with two copies of the classification is how a screen and a workflow log
+   start disagreeing about the same row. src/scm/lib/autocount-outbox-status.ts
+   is the source; this is its plain-node mirror, and a canonical test fails if
+   they drift. */
+import { AC_SKIP_KINDS, REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
+
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
   try {
@@ -48,26 +56,11 @@ if (!url) {
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
-/* The reason strings the ERP writes when it declines to send. Each is produced
-   by a named code path, so a bucket that grows tells you WHICH path.
-
-   MATCH ON THE ERROR CLASS NAME, NOT ON "refused, nothing sent". noteReadFailure
-   (autocount-outbox.ts) writes `refused, nothing sent (${e.name}): ${message}`
-   for FOUR different classes, and each has a different remedy — backfill a
-   DtlKey, fix a sofa build, map an item code, set a stock location. Matching the
-   shared prefix labelled all four "line identity missing", which sends an
-   operator to backfill DtlKeys for an item-map problem. Every class sets
-   this.name in its constructor, so the parenthesised name is reliable. */
-const SKIP_KINDS = [
-  ["refused, nothing sent (KeylessLineError)", "line identity missing — backfill linked_ac_dtlkey, then save again"],
-  ["refused, nothing sent (SofaCollapseError)", "sofa build cannot be folded into AutoCount's one line without inventing Desc2 text"],
-  ["refused, nothing sent (ItemCodeError)", "an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)"],
-  ["refused, nothing sent (MissingLocationError)", "a line carries no stock location — set the warehouse on the line, or the sales location on the document"],
-  ["compose failed, nothing sent", "the ERP could not read its own document while composing — a read fault, not a refusal"],
-  ["masters not opened", "an item or salesperson could not be opened in AutoCount"],
-  ["no source document to transfer from", "raised with no parent — cannot exist in AutoCount at all"],
-  ["AutoCount has no shape", "merged conversion (N sources -> 1 document) — must be worked by hand"],
-];
+/* The reason strings the ERP writes when it declines to send live in
+   AC_SKIP_KINDS, imported above. Each is produced by a named code path, so a
+   bucket that grows tells you WHICH path — and each carries a stable `kind`
+   that the ERP page uses as its URL filter, which is why the list moved out of
+   this file rather than being copied into a second one. */
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
@@ -143,9 +136,8 @@ try {
      lives in both places). The row keeps status 'skipped', because it IS still
      true that nothing was ever sent for it; what changed is that it is no longer
      the open question. */
-  const REQUEUED_PREFIX = "[re-queued";
-  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUED_PREFIX));
-  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUED_PREFIX));
+  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
@@ -212,7 +204,7 @@ try {
      new refusal, and rolling it into 'other' is how it stays invisible. */
   if (outstanding.length > 0) {
     const seen = new Set();
-    for (const [needle, meaning] of SKIP_KINDS) {
+    for (const { needle, remedy: meaning } of AC_SKIP_KINDS) {
       const hits = outstanding.filter((r) => r.last_error.includes(needle));
       hits.forEach((r) => seen.add(r.doc_no + r.op));
       if (!hits.length) continue;
