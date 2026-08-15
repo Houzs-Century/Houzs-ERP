@@ -87,7 +87,9 @@ import {
 export type { AcRetiredLine } from '../../services/autocount-writeback';
 
 import { mastersOf } from './autocount-masters';
-import { soOutstandingCenti } from '../shared/so-outstanding';
+/* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
+   reason mastersOf was: this file is at the 2,000-line cap. */
+import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -388,52 +390,6 @@ async function withLocations(
  * send them after an order that already has one. AcReadError says what actually
  * happened.
  */
-/**
- * What the sales order still owes, in sen — AutoCount's `UDF_BALANCE`.
- *
- * THE ERP HOLDS THIS IN THREE PLACES AND THE OBVIOUS ONE IS WRONG. The rule is
- * `scm/shared/so-outstanding.ts`, lifted out of `GET /mfg-sales-orders/:docNo`
- * so the account book and the SO detail page cannot compute different numbers;
- * this function is only the READ, the same division `withLocations` and
- * `readSalespersonName` draw for the warehouse and the salesperson.
- *
- * WHY THE BOOK'S FIELD AND THE ERP'S NUMBER ARE THE SAME QUANTITY, rather than
- * two things that happen to look alike: the cutover turned one INTO the other.
- * `import-ac-outstanding-so.mjs:294` computed `paid = total - UDF_BALANCE` and
- * wrote that as a payments-ledger row, so `total - SUM(payments)` reproduces
- * `UDF_BALANCE` for every imported order by construction.
- *
- * A FAILED READ THROWS rather than degrading to zero, and A MISSING TOTAL
- * ANSWERS `null`. Both guard the same trap from opposite sides: zero is not
- * "unknown", it is "this customer owes nothing", and writing it into a live
- * account book declares a real debt settled. `recomputeTotals` fills
- * `total_revenue_centi` on every write, so a row without one is a legacy or
- * half-built order the ERP cannot speak for — the key is omitted and the book
- * keeps whatever it holds. The SO detail page reads the same absence as 0
- * because it is drawing a screen; this is writing a ledger.
- */
-async function readSoOutstandingCenti(sb: Sb, h: Record<string, unknown>): Promise<number | null> {
-  const total = Number(h.total_revenue_centi);
-  if (h.total_revenue_centi == null || !Number.isFinite(total)) return null;
-  const docNo = String(h.doc_no ?? '');
-  const rows = await readOrThrow('mfg_sales_order_payments',
-    sb.from('mfg_sales_order_payments')
-      .select('amount_centi, is_deposit')
-      .eq('so_doc_no', docNo));
-  let ledgerPaidCenti = 0;
-  let depositInLedger = false;
-  for (const p of (rows ?? []) as Array<{ amount_centi?: number | null; is_deposit?: boolean | null }>) {
-    ledgerPaidCenti += Number(p.amount_centi ?? 0);
-    if (p.is_deposit) depositInLedger = true;
-  }
-  return soOutstandingCenti({
-    totalRevenueCenti: total,
-    headerDepositCenti: Number(h.deposit_centi ?? 0),
-    ledgerPaidCenti,
-    depositInLedger,
-  });
-}
-
 async function readSalespersonName(sb: Sb, salespersonId: unknown): Promise<string | null> {
   const id = typeof salespersonId === 'string' ? salespersonId.trim() : '';
   if (!id) return null;
@@ -564,26 +520,6 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
 const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 'DO' | 'GR' | 'IV' | 'PI'> = {
   so_to_do: 'DO', po_to_gr: 'GR', do_to_iv: 'IV', gr_to_pi: 'PI',
 };
-
-/**
- * A read that FAILED, as opposed to a read that found nothing.
- *
- * The distinction is the whole point. PostgREST answers a bad column with an
- * error and a null body; `data ?? []` then turns a failure into "this document
- * has no lines", and the write-back composes a header with an empty Details
- * array — an order pushed into a live account book with nothing on it. Every
- * read below therefore throws this instead of defaulting.
- */
-class AcReadError extends Error {}
-
-async function readOrThrow<T>(
-  what: string,
-  q: PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
-): Promise<T> {
-  const { data, error } = await q;
-  if (error) throw new AcReadError(`${what}: ${error.code ?? ''} ${error.message ?? ''}`.trim());
-  return data;
-}
 
 /**
  * Write a failed compose down instead of dropping it.

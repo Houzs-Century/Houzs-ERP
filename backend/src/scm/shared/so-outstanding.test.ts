@@ -1,5 +1,31 @@
 import { describe, expect, test } from 'vitest';
-import { soPaidCenti, soOutstandingCenti } from './so-outstanding';
+import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from './so-outstanding';
+
+/* WHICH COLUMN is the load-bearing half of this module, not the arithmetic.
+   `balance_centi` is the one that looks like the answer — the cutover's own
+   UDF_BALANCE landed in it and `recomputeTotals` then overwrote it with the
+   gross total — so a reader that picked it would be wrong in a way no unit test
+   of the arithmetic could catch. */
+describe('the columns the rule reads off a mfg_sales_orders row', () => {
+  test('the total comes from total_revenue_centi, and balance_centi is ignored', () => {
+    const inputs = soPaidInputsOf(
+      { total_revenue_centi: 500_00, balance_centi: 999_00, deposit_centi: 100_00 },
+      0, false,
+    );
+    expect(inputs.totalRevenueCenti).toBe(500_00);
+    expect(inputs.headerDepositCenti).toBe(100_00);
+    expect(soOutstandingCenti(inputs)).toBe(400_00);
+  });
+
+  test('an absent or non-numeric column reads as 0 rather than NaN', () => {
+    expect(soPaidInputsOf({}, 0, false)).toEqual({
+      totalRevenueCenti: 0, headerDepositCenti: 0, ledgerPaidCenti: 0, depositInLedger: false,
+    });
+    expect(soPaidInputsOf({ total_revenue_centi: null, deposit_centi: '5' }, 0, false).totalRevenueCenti)
+      .toBe(0);
+    expect(soPaidInputsOf(null, 0, false).headerDepositCenti).toBe(0);
+  });
+});
 
 /* The rule GET /mfg-sales-orders/:docNo has always applied, now shared with the
    AutoCount write-back so the account book and the SO detail page cannot show

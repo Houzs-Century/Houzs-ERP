@@ -73,7 +73,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti } from '../shared/so-outstanding';
+import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -2609,19 +2609,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       if (p.is_deposit) depositInLedger = true;
     }
   }
-  const headerDepositCenti = typeof (h.data as { deposit_centi?: number }).deposit_centi === 'number'
-    ? (h.data as { deposit_centi: number }).deposit_centi : 0;
-  const totalRevenueCenti = typeof (h.data as { total_revenue_centi?: number }).total_revenue_centi === 'number'
-    ? (h.data as { total_revenue_centi: number }).total_revenue_centi : 0;
-  /* The rule itself moved to scm/shared/so-outstanding.ts so the AutoCount
-     write-back can send the SAME number as this page shows — a second
-     implementation of a money rule is how the two worlds disagree quietly, and
-     `balance_centi` is already a column that looks like this answer and is not
-     (recomputeTotals rewrites it to the gross total). Same inputs, same
-     arithmetic; nothing about what this endpoint returns changes. */
-  const paidInputs = {
-    totalRevenueCenti, headerDepositCenti, ledgerPaidCenti: paidLedgerCenti, depositInLedger,
-  };
+  /* ONE rule, shared with the AutoCount write-back's BALANCE UDF so the account
+     book and this page cannot disagree. Why not `balance_centi`: so-outstanding.ts. */
+  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerCenti, depositInLedger);
   const paidCentiTotal = soPaidCenti(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead

@@ -61,3 +61,27 @@ export function soPaidCenti(a: SoPaidInputs): number {
 export function soOutstandingCenti(a: SoPaidInputs): number {
   return Math.max(0, a.totalRevenueCenti - soPaidCenti(a));
 }
+
+/**
+ * The two header numbers this rule needs, off a raw `mfg_sales_orders` row.
+ *
+ * Here rather than at the call site so the COLUMN NAMES live beside the rule
+ * that uses them — the whole failure mode is a reader picking `balance_centi`,
+ * and that is a decision about which column, not about arithmetic. An absent or
+ * non-numeric value reads as 0, which is what the SO detail page has always
+ * done; the write-back's own reader refuses the document instead, because a
+ * screen showing 0 and a ledger asserting 0 are different acts.
+ */
+export function soPaidInputsOf(
+  header: Record<string, unknown> | null | undefined,
+  ledgerPaidCenti: number,
+  depositInLedger: boolean,
+): SoPaidInputs {
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    totalRevenueCenti: num(header?.total_revenue_centi),
+    headerDepositCenti: num(header?.deposit_centi),
+    ledgerPaidCenti,
+    depositInLedger,
+  };
+}
