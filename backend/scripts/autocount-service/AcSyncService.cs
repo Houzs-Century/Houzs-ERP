@@ -264,6 +264,8 @@ class AcSyncService {
       case "/doc-read": Json(ctx, 200, DocRead(p)); return;
       /* READ-ONLY, and it reads a FILE rather than the book. See LastErrors(). */
       case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
+      /* READ-ONLY, one aggregate. See PictureCensus(). */
+      case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -514,6 +516,59 @@ class AcSyncService {
     }
     r["lines"] = picked;
     return r;
+  }
+
+  /* ── /picture-census — does ANY line hold more than one picture ───────────
+     THE ONLY REASON THIS MATTERS. FurtherDescription is replaced WHOLESALE -
+     there is no append - so if a line we rewrite holds two pictures and we send
+     one, the second is DESTROYED and nothing says so.
+
+     The photo manifest says one picture per line for all 554 of its rows, but
+     the manifest is the output of an extractor nobody kept, so it cannot rule
+     out that the extractor took only the first. This asks the BOOK instead, in
+     one aggregate over the whole table.
+
+     max_pictures = 1 closes it. Anything higher is a finding, and the composer
+     needs a read-before-write on those lines before it may touch them. */
+  /* VERBATIM on purpose. In a normal C# literal "\p" is not a valid
+     escape and does not compile; @ turns escape processing off, so the marker
+     is exactly the six characters SQL must match. */
+  static readonly string PictMarker = @"{\pict";
+
+  static Dictionary<string, object> PictureCensus(Dictionary<string, object> p) {
+    var table = Or(Str(p, "Table"), "SODTL").ToUpperInvariant();
+    if (Array.IndexOf(DtlTables, table) < 0)
+      return Err("Table must be one of " + string.Join(", ", DtlTables) + " (got '" + table + "')");
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var cols = ExistingColumns(cn, table, new[] { "FurtherDescription" }, missing);
+      if (cols.Count == 0) { var e = Ok(null); e["table"] = table; e["column"] = null; return e; }
+
+      using (var cmd = cn.CreateCommand()) {
+        /* LEN() ignores trailing spaces but the marker is 6 characters of
+           punctuation, so the subtraction is exact. */
+        cmd.CommandText =
+          "SELECT COUNT(*) AS lines_with_a_value, " +
+          "       MAX((LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6) AS max_pictures, " +
+          "       SUM(CASE WHEN (LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6 > 1 THEN 1 ELSE 0 END) AS lines_over_one " +
+          "FROM [" + table + "] " +
+          "WHERE FurtherDescription IS NOT NULL AND LEN(FurtherDescription) > 0";
+        cmd.CommandTimeout = 180;
+        using (var rd = cmd.ExecuteReader()) {
+          var r = Ok(null);
+          r["table"] = table;
+          if (rd.Read()) {
+            r["linesWithAValue"] = rd.IsDBNull(0) ? 0 : rd.GetInt32(0);
+            r["maxPictures"]     = rd.IsDBNull(1) ? 0 : rd.GetInt32(1);
+            r["linesOverOne"]    = rd.IsDBNull(2) ? 0 : rd.GetInt32(2);
+          }
+          return r;
+        }
+      }
+    }
   }
 
   static Dictionary<string, object> DocRead(Dictionary<string, object> p) {

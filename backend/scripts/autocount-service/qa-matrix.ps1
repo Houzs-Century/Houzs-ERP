@@ -152,12 +152,19 @@ $procDate    = (Get-Date).AddDays(3).ToString('yyyy-MM-dd')
 $lineDeliv   = (Get-Date).AddDays(7).ToString('yyyy-MM-dd')
 $editBody = @{
   DocType = 'SO'; DocNo = $SO
-  Header = @{ DocDate = $newDocDate; Description = "EDITED BY QA MATRIX"; Ref = "QA-REF-1"; Remark1 = "QA-R1" }
-  <# Processing date and payment are NOT native columns on a sales order - the
-     book keeps them in UDF_PDate and UDF_PAYEMENT (their spelling). So they go
-     through the UDF channel, which the service has always had and nothing has
-     ever used. #>
-  UDF = @{ PDate = $procDate; PAYEMENT = '250.00' }
+  <# UDF sits INSIDE Header, and getting that wrong cost a wrong conclusion.
+     Edit() does `var h = Dict(p, "Header"); ApplyUdf(h, ...)` - it reads the
+     UDF map out of the HEADER, not off the top level. The first run of this
+     file put UDF beside Header, so ApplyUdf never saw it, the values did not
+     land, and that was written up as "the service does not apply UDF on edit".
+     It applies them; the payload was in the wrong place.
+
+     Processing date and payment are not native columns on a sales order - the
+     book keeps them in UDF_PDate and UDF_PAYEMENT (their spelling). #>
+  Header = @{
+    DocDate = $newDocDate; Description = "EDITED BY QA MATRIX"; Ref = "QA-REF-1"; Remark1 = "QA-R1"
+    UDF = @{ PDate = $procDate; PAYEMENT = '250.00' }
+  }
   Lines = @( @{ DtlKey = $soKeys[0]; Desc2 = "LINE ONE EDITED"; Qty = 4; UnitPrice = 12.5; DeliveryDate = $lineDeliv } )
 }
 $r = Call '/edit' $editBody
@@ -221,7 +228,22 @@ function CheckLink($name, $docType, $docNo, $expectType, $expectNo) {
 $r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); CreditorCode = $Creditor; CreditorName = "ERP QA"
                          Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Location = $Location } ) }
 if ($r.status -ne 200 -or -not $r.json.ok) { Record "5a so-to-po" "FAIL" ("status=" + $r.status + " " + $r.raw); $poNo = $null }
-else { $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo); CheckLink "5a link PO<-SO" 'PO' $poNo 'SO' $SO }
+else {
+  $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo)
+  CheckLink "5a link PO<-SO" 'PO' $poNo 'SO' $SO
+  <# READ IT NOW, not in teardown. /po-to-gr refuses this PO with "no
+     transferable lines", and AutoCount's outstanding predicate is
+     Qty - ISNULL(TransferedQty,0) > 0 - so these four columns say whether the
+     line is zero-qty, born already-transferred, or marked untransferable. Last
+     run the PO was cancelled before anyone thought to look. #>
+  $pd = ReadDoc 'PO' $poNo
+  foreach ($pl in @($pd.json.lines)) {
+    Note ("PO line " + $pl.DtlKey + ": Qty=" + $pl.Qty + " TransferedQty=" + $pl.TransferedQty +
+          " Transferable=" + $pl.Transferable + " FromDocType='" + $pl.FromDocType + "'" +
+          " FromDocNo='" + $pl.FromDocNo + "' FromDocDtlKey=" + $pl.FromDocDtlKey +
+          " FullTransferFromDocList='" + $pl.FullTransferFromDocList + "'")
+  }
+}
 
 # 5b SO -> DO
 $r = Call '/so-to-do' @{ FromDocNo = $SO; DebtorCode = $Debtor; DebtorName = "ERP QA"; SalesLocation = $Location }

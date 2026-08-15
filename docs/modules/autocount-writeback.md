@@ -1268,6 +1268,28 @@ READ-ONLY and mechanically so: SELECTs on one connection, no SDK session, no
 transaction, and the table names come from a fixed map, never from the caller's
 string.
 
+### 7q4. `POST /picture-census` — the one query that makes a wholesale rewrite safe
+
+`FurtherDescription` is replaced **wholesale**; there is no append. So if a line
+we rewrite holds TWO pictures and the composer sends one, the second is
+destroyed and nothing says so.
+
+The photo manifest reports one picture per line for all 554 of its rows — but
+the manifest is the output of an extractor nobody kept (§2.1 of the photos
+doc), so it cannot rule out that the extractor took only the first. This route
+asks the BOOK instead, in one aggregate over the whole detail table:
+
+```
+POST /picture-census   { "Table": "SODTL" }
+  -> { ok, table, linesWithAValue, maxPictures, linesOverOne }
+```
+
+`maxPictures = 1` closes it outright. Anything higher is a finding, and the
+composer needs a read-before-write on those lines before it may touch them.
+
+Read-only: one `SELECT`, no SDK session, table from the same allow-list
+`/further-description` uses.
+
 ## 7e. The masters a document names are opened first
 
 A document naming a master AutoCount does not have does not fail politely: it
