@@ -52,7 +52,7 @@ transfer.
 | 6 | The `FurtherDescription` write probe | **YES — scratch document only** | job 4 first | whether AutoCount will render RTF it did not write |
 | 7 | Convert one sales order to a purchase order and look at the PO's **Transfer From** | **YES — a real PO** | job 1 | that `/so-to-po` works, and that a CONSOLIDATED purchase correctly falls back to a plain create with the source SO numbers in `Ref` |
 
-### 0.05 ROOT CAUSE — why these six cannot be done from the development side
+### 0.05 ROOT CAUSE — why none of these can be done from the development side
 
 Written 2026-08-15 after measuring, not assuming. Everything else the ERP owes
 AutoCount has been built; what is left is here because of ONE property, and it
@@ -92,7 +92,7 @@ master creation. Those wait on a DEPLOY, not on an answer — see 0.1.
 
 ### 0.1 What job 1 actually brings live
 
-Four merged changes are in the repository and not on the host. The running exe
+Five merged changes are in the repository and not on the host. The running exe
 predates all of them:
 
 | change | what stops working without it |
