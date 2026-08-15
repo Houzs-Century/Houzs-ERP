@@ -495,7 +495,8 @@ only saying so afterwards in an outbox row.
 | shape | one `SaveProblem` in the shared `validation_failed` + `problems[]` 422, so every SO surface renders it through the existing `humanApiError` / `SaveProblemsList` path |
 
 **Where it runs — the invariant is "wherever we enqueue an AutoCount create, a
-location exists".** There are exactly two such places, and both are gated:
+location exists".** The ROUTER has exactly two such places and both are gated by
+`so-location-gate.ts`:
 
 1. **Create** (`createSalesOrderCore`), on `asDraft !== true`, immediately after
    `derivedSalesLocation` is resolved and before the header insert. A refusal
@@ -507,8 +508,30 @@ location exists".** There are exactly two such places, and both are gated:
 
 **Drafts are exempt**, same as the confirm gate and for the same reason: a
 draft is the scan job's guess awaiting an operator's verdict, is never written
-to AutoCount, and blocking it would break the scan flow. `backend/tests/soLocationGateWiring.test.ts`
-fails if a THIRD `enqueueSoCreate` callsite ever appears un-gated.
+to AutoCount, and blocking it would break the scan flow.
+
+**There is a THIRD `enqueueSoCreate` callsite, and it is not gated by this rule
+— it is safe for a different reason (corrected 2026-08-15).** This paragraph
+used to end *"`soLocationGateWiring.test.ts` fails if a THIRD `enqueueSoCreate`
+callsite ever appears un-gated"*, and the test's own failure message says the
+same thing. Both were wider than the check: it counted `enqueueSoCreate(` inside
+the imported `mfg-sales-orders.ts` and asserted `=== 2`, so a callsite in any
+OTHER file was invisible to it — and one was already there.
+
+`scm/lib/autocount-requeue.ts` (the operator re-send tool) re-queues an outbox
+row that already exists, so the document has already been through a gated
+create. It is also safe by a second mechanism worth knowing, because it is the
+one that would hold for a legacy order created before this gate existed:
+`enqueueSoCreate` itself catches `MissingLocationError` and writes a **`skipped`
+outbox row** carrying the reason (`scm/lib/autocount-outbox.ts`) rather than
+sending a create AutoCount would refuse.
+
+So the repo-wide sentence is *"every enqueue has a settled location, by one of
+two mechanisms"*; *"the gate covers every enqueue"* is true only of the router.
+The test now walks `backend/src` and fails on any callsite that is neither the
+router nor a named exception carrying its mechanism — and on a named exception
+whose file has stopped calling it, which would otherwise sit there as a promise
+about nothing.
 
 **Frontend twins (change together).** The rule is `soStockLocationError` in the
 shared `frontend/src/vendor/scm/lib/so-form-validate.ts`, called by all four
