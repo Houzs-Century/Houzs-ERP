@@ -1568,6 +1568,53 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
+  /* ── PAYEMENT — the account sheet and approval code the cutover took OUT of
+     this same field. import-ac-outstanding-so.mjs:16 filled
+     mfg_sales_order_payments.account_sheet and .approval_code from
+     SO.UDF_PAYEMENT, and nothing ever wrote it back. The FORMAT is proven in
+     autocountPaymentUdf.roundtrip.test.ts against the cutover's own parser;
+     these two are the WIRING, which is the half that keeps getting missed —
+     the composer carried BALANCE correctly for two days while no payment path
+     ever asked it to. */
+  describe('PAYEMENT — the payment references go back into the field they came from', () => {
+    test('a create carries the account sheet and approval code', async () => {
+      const sb = seed({}, {}, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 200_00, is_deposit: true, account_sheet: 'MAYBANK', approval_code: '111', paid_at: '2026-08-01', id: 'p1' },
+          { so_doc_no: 'HC-SO-B', amount_centi: 100_00, is_deposit: false, account_sheet: 'CIMB', approval_code: '222', paid_at: '2026-08-02', id: 'p2' },
+        ],
+      });
+      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      const udf = (outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF;
+      expect(udf.PAYEMENT).toBe('(MAYBANK/111) (CIMB/222)');
+    });
+
+    test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+        ],
+      });
+      expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' })).toBe(true);
+      const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+      expect(h.UDF.PAYEMENT).toBe('(Cash/)');
+    });
+
+    /* OMITTED, NOT BLANKED. An order whose payments carry no reference — every
+       cash sale — must leave the book's own text alone: `Str` turns a
+       present-null into "" and would erase what the cutover put there. */
+    test('payments with no references send no PAYEMENT key', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: null, approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+        ],
+      });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+      expect(h.UDF).not.toHaveProperty('PAYEMENT');
+    });
+  });
+
   // ── DeliverPhone1 — 120 of the extract's 13,015 headers carry one
   describe('DeliverPhone1 — the DELIVERY contact, which is not the customer\'s phone', () => {
     /* Two contacts, two columns (owner 2026-08-15). The pairing is the
