@@ -135,18 +135,29 @@ Record "2 doc-read" "PASS" ("header cols=" + ($d.json.header.PSObject.Properties
 $missing = @($d.json.missingColumns)
 if ($missing.Count) { Note ("columns AutoCount does NOT have: " + ($missing -join ', ')) }
 
-foreach ($f in 'ProcessingDate','DeliveryDate','PaymentAmt','PaymentTerm','CreditTerm') {
-  if ($missing -contains ("SO." + $f)) { Record ("2." + $f) "N/A" "no such column on SO - AutoCount cannot hold this" }
+<# The first run of this block said "AutoCount cannot hold this" and that was
+   WRONG for four of its five rows. The wanted list is built from SDK PROPERTY
+   names, and the columns are named differently: Agent is SalesAgent, the
+   processing date is UDF_PDate, payment is UDF_PAYEMENT. Absent by that NAME is
+   all this can prove, so it is all it now says. #>
+foreach ($f in 'ProcessingDate','DeliveryDate','PaymentAmt','PaymentTerm','CreditTerm','SalesAgent','DisplayTerm','UDF_PDate','UDF_PAYEMENT') {
+  if ($missing -contains ("SO." + $f)) { Record ("2." + $f) "N/A" "no column of that NAME on SO (it may exist under another)" }
   else { Record ("2." + $f) "PASS" ("column exists, currently = " + $d.json.header.$f) }
 }
 
 # ---------------------------------------------------------------- 3 EDIT header + lines
 Head "3  edit: header dates, line delivery date, line fields"
 $newDocDate  = (Get-Date).AddDays(1).ToString('yyyy-MM-dd')
+$procDate    = (Get-Date).AddDays(3).ToString('yyyy-MM-dd')
 $lineDeliv   = (Get-Date).AddDays(7).ToString('yyyy-MM-dd')
 $editBody = @{
   DocType = 'SO'; DocNo = $SO
   Header = @{ DocDate = $newDocDate; Description = "EDITED BY QA MATRIX"; Ref = "QA-REF-1"; Remark1 = "QA-R1" }
+  <# Processing date and payment are NOT native columns on a sales order - the
+     book keeps them in UDF_PDate and UDF_PAYEMENT (their spelling). So they go
+     through the UDF channel, which the service has always had and nothing has
+     ever used. #>
+  UDF = @{ PDate = $procDate; PAYEMENT = '250.00' }
   Lines = @( @{ DtlKey = $soKeys[0]; Desc2 = "LINE ONE EDITED"; Qty = 4; UnitPrice = 12.5; DeliveryDate = $lineDeliv } )
 }
 $r = Call '/edit' $editBody
@@ -167,6 +178,8 @@ else {
   Cmp "3.5 line Qty"            $l1.Qty           "4"
   Cmp "3.6 line UnitPrice"      $l1.UnitPrice     "12.5"
   Cmp "3.7 line DeliveryDate"   $l1.DeliveryDate  $lineDeliv
+  Cmp "3.8 UDF_PDate processing date"  $hdr.UDF_PDate     $procDate
+  Cmp "3.9 UDF_PAYEMENT payment"       $hdr.UDF_PAYEMENT  "250"
 }
 
 # ---------------------------------------------------------------- 4 retire a line
@@ -202,8 +215,11 @@ function CheckLink($name, $docType, $docNo, $expectType, $expectNo) {
 }
 
 # 5a SO -> PO
-$r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); CreditorCode = $Creditor; CreditorName = "ERP QA"; Agent = $Agent
-                         Lines = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Qty = 4; Location = $Location } ) }
+<# Details, NOT Lines. SoToPo reads `Details` for its per-line cost override;
+   a payload saying `Lines` is accepted and silently ignored, so the purchase
+   order would carry the SALES price and nothing would say so. #>
+$r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); CreditorCode = $Creditor; CreditorName = "ERP QA"
+                         Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Location = $Location } ) }
 if ($r.status -ne 200 -or -not $r.json.ok) { Record "5a so-to-po" "FAIL" ("status=" + $r.status + " " + $r.raw); $poNo = $null }
 else { $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo); CheckLink "5a link PO<-SO" 'PO' $poNo 'SO' $SO }
 
