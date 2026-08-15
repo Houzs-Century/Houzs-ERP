@@ -170,8 +170,21 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
       'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4', 'Note', 'Phone1', 'Ref',
       'Remark1', 'Remark2', 'Remark3', 'Remark4', 'SalesLocation',
     ].sort());
+    /* FurtherDescription and Photos are the photograph field, and they are
+       ALTERNATIVES rather than two fields: the service takes the raw RTF if it
+       is given one, and otherwise renders the JPEGs itself, because the live
+       book stores `\wmetafile8` and a JPEG cannot go in verbatim
+       (docs/autocount-further-description-photos.md section 4.2).
+
+       Both belong in this list precisely BECAUSE they are the dangerous kind of
+       key: FurtherDescription is nvarchar(MAX) and is replaced WHOLESALE, so a
+       payload that reaches it by accident does not truncate or error — it
+       silently destroys whatever photographs the line was holding. This
+       assertion is what makes adding a third way to write it impossible to do
+       quietly. */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
+       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 
