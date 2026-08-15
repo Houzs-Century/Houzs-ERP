@@ -30,6 +30,7 @@
 // no guide" is unusable and unarguable; "76 of 141, here are the paths" can be
 // checked by someone who does not believe it.
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +93,25 @@ function fencedRanges(text) {
   return out;
 }
 const inFence = (ranges, i) => ranges.some(([a, b]) => i >= a && i < b);
+
+/**
+ * Docs this change touched, against the merge base. `null` when the base cannot
+ * be resolved — the caller then charges EVERY stale doc, because a gate that
+ * cannot tell whose drift it is must not let anything through.
+ */
+function changedDocsAgainstBase() {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { cwd: ROOT, stdio: 'pipe' });
+    const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: ROOT, encoding: 'utf8' }).trim();
+    if (!base) return null;
+    const out = execFileSync('git', ['diff', '--name-only', '-z', `${base}...HEAD`], {
+      cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26,
+    });
+    return new Set(out.split('\0').filter(Boolean));
+  } catch {
+    return null;
+  }
+}
 
 function docsWithBlocks() {
   const out = [];
@@ -185,10 +205,35 @@ if (has('--write') || has('--check-docs')) {
     console.log(`explain: filled ${filled} block(s) across ${docs.length} doc(s).`);
     process.exit(0);
   }
-  if (stale.length) {
+  /* BLAME THE PR THAT MOVED THE ANSWER, NOT WHICHEVER RUNS NEXT.
+     An embedded answer goes stale when the SOURCE moves — a migration lands, a
+     route module appears — so on a busy day every open PR inherits that drift
+     the moment it merges `main`, through no act of its own. This repo has
+     already watched that exact shape deadlock two gates: `audit:bug-index` (five
+     PRs red at once over the previous author's entry) and `check-file-size` (a
+     production fix blocked by a file it never opened). Shipping it a third time
+     would be careless.
+
+     So: a doc THIS change touched must be current, and fails. A doc it did not
+     touch is REPORTED in full with the fix, and does not fail the run — it is
+     caught the moment anyone edits it. Inherited drift is never silent; it is
+     just not charged to a stranger. */
+  const touched = changedDocsAgainstBase();
+  const mine = touched === null ? stale : stale.filter((d) => touched.has(d));
+  const inherited = stale.filter((d) => !mine.includes(d));
+
+  if (inherited.length) {
+    console.log(
+      `explain: ${inherited.length} doc(s) hold an answer the source has moved past, ` +
+        'not touched by this change — reported, not charged:\n' +
+        inherited.map((d) => `  ${d}`).join('\n') +
+        '\n  Whoever edits one of these next owns bringing it current: node scripts/explain.mjs --write',
+    );
+  }
+  if (mine.length) {
     console.error(
-      `explain: ${stale.length} doc(s) hold an answer that no longer matches the source:\n` +
-        stale.map((d) => `  ${d}`).join('\n') +
+      `explain: ${mine.length} doc(s) THIS change touched hold an answer that no longer matches the source:\n` +
+        mine.map((d) => `  ${d}`).join('\n') +
         '\n\nRun: node scripts/explain.mjs --write\n' +
         'This is the drift a path-checker cannot see — the file exists, the number is wrong.',
     );
