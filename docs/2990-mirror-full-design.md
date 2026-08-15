@@ -762,7 +762,7 @@ Ordered by how much they change the design.
 | Mirror is SO-only, 3 triggers, `entity='sales_order'` | `docs/2990-live-sync/01_outbox_2990.sql`, `02_worker_2990.sql:32`, `backend/src/scm/routes/so-mirror.ts` |
 | Import = 33 tables, INSERT-only, no id remap, `staff` forceInactive + no `company_id`, no `user_id` handling | `backend/scripts/migrate-2990-into-houzs.mjs` (ORDER line 12, insert line 41, `NO_CID` line 21) |
 | **F1** Houzs `so_amendments` has `header_changes`; 2990 does not | `backend/src/db/migrations-pg/0119_scm_so_amendment_header_changes.sql` vs `2990s/packages/db/migrations/0210_so_amendments.sql` |
-| **F2** `applySoAmendment` mutates SO header + items, bumps `revision`; mirror delete-and-reinserts items | `backend/src/scm/lib/so-revision.ts:157-428`; `so-mirror.ts:161-169` |
+| **F2** `applySoAmendment` mutates SO header + items, bumps `revision`; mirror delete-and-reinserts items | `backend/src/scm/lib/so-revision.ts` -> `applySoAmendment()`; `backend/src/scm/routes/so-mirror.ts` -> the `soMirror` router |
 | **F3** `companyDocPrefix` → `2990-`; minter `.like()` + max+1 over the mirrored set | `backend/src/scm/lib/companyScope.ts:191-199`; `backend/src/scm/routes/mfg-sales-orders.ts:747-760` |
 | **F4** mutations not company-scoped | `backend/src/scm/routes/so-amendments.ts:222-233` (approve-so loads `.eq('id', id)`, no `scopeToCompany`) |
 | `staff.user_id` scope mapping | `backend/src/scm/lib/salesScope.ts:49-79` |
