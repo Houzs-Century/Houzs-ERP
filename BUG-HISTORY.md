@@ -32,8 +32,11 @@ too. Only a hand-written payload can reach it.
 reason, instead of saving something nobody can address. Nothing in the book
 relies on AutoCount auto-numbering for us, so refusing costs nothing.
 
-**Outstanding:** `DocKey 906099` is still in the book, uncancelled, and needs
-cancelling by hand in the AutoCount UI. Recorded rather than quietly left.
+**Cleared 2026-08-15.** `DocKey 906099` was found in the AutoCount Sales Order
+list and **voided, not deleted**. It did not appear until the grid was
+REFRESHED - that list is cached, so a document created behind its back is
+invisible until then. Worth knowing the next time something is "not in
+AutoCount".
 
 **Ref:** this PR, 2026-08-15.
 

@@ -1209,11 +1209,27 @@ Both lines are **character-for-character what the live book stores on `DtlKey`
 the caption ordering are therefore all confirmed against a real measurement
 rather than against the code that produced them.
 
-**Still NOT proven, and it is the next thing:** that AutoCount RENDERS a
-metafile it did not write itself. Matching bytes is necessary, not sufficient —
-the entry screen and the report's `XRRichText` are different renderers, so a
-picture that appears in one may not appear in the other. §5.2 of that document
-is the probe; until it has run on the host, this route is built and unrendered.
+**AND AUTOCOUNT RENDERS IT — PROVEN on the live book, 2026-08-15.** This
+paragraph used to say the opposite: that matching bytes were necessary and not
+sufficient, that the entry screen and the report's `XRRichText` are different
+renderers, and that the route was "built and unrendered". The probe (§5.2) has
+now been run, and **both** renderers draw it.
+
+Scratch sales order `ERP-FDPROBE-1`, one line, written through
+`POST /edit` with `Photos`, then read with all four of §5.2's observations:
+
+| | what was looked at | result |
+|---|---|---|
+| i | the line's Further Description editor, entry screen | **the picture renders** — right way up (the probe image says `TOP` at the top and `BOTTOM` at the bottom), at its stated `240 x 159`, with the `Image on 8/15/2026 10:21:09 PM` caption above it |
+| ii | *Preview* of the printed sales order, report `0. Sales Order` | **the picture renders** — under the item, after the `PROBE` Desc2 line. This is the `XRRichText` path, and it was the real risk |
+| iii | `/further-description` on the same `DtlKey` | `chars=389549`, `truncated=False`, `pict=1`, `wmetafile8=1` — AutoCount stored **our own bytes**, unchanged, rather than rewriting them |
+| iv | the Save | no dialog, no truncation |
+
+So the return path is complete end to end: the ERP sends JPEG bytes, this host
+renders them to a metafile, AutoCount stores them verbatim, and the picture
+appears both on screen and on the document the customer receives.
+
+The scratch order was **cancelled, not deleted** (Void), per the owner's rule.
 
 ## 7e. The masters a document names are opened first
 
