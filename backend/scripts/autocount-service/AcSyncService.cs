@@ -434,7 +434,29 @@ class AcSyncService {
   }
 
   // ── create (SO / PO) ──────────────────────────────────────────────────────
+  /* A DOCUMENT NUMBER IS NOT OPTIONAL, and an absent one used to be silent.
+     Str() answers "" for a key that is not there - not null, not an error - so
+     `DocNo = Str(p, "DocNo")` on a payload without one saved a document with a
+     BLANK number and answered {"ok":true,"docNo":"","lines":[]}. That reads as
+     success and is worse than a failure: every route that addresses a document
+     does it BY DocNo, so a blank-numbered document cannot be edited, cannot be
+     converted, and cannot even be CANCELLED through this service. It can only
+     be reached by hand in the AutoCount UI.
+
+     Measured on the live book 2026-08-15, after doing exactly that by accident:
+     SELECT COUNT(*) FROM SO WHERE DocNo IS NULL OR LTRIM(RTRIM(DocNo)) = ''
+     returned 1, and it was the one just created. So the ERP has never done this
+     - it always sends its own number (module guide 7g) - and nothing in the
+     book depends on AutoCount auto-numbering a document for us. Refusing is
+     therefore free, and it converts an unrecoverable silent success into a
+     visible 400. */
+  static void RequireDocNo(Dictionary<string, object> p, string what) {
+    if (string.IsNullOrEmpty(Str(p, "DocNo").Trim()))
+      throw new Exception("DocNo required for " + what + " - the ERP owns document numbering, and a blank number cannot be addressed, edited or cancelled afterwards");
+  }
+
   static string CreateSo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-so");
     var s = Session();
     var cmd = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting);
     var so = cmd.AddNew();
@@ -488,6 +510,7 @@ class AcSyncService {
   }
 
   static string CreatePo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-po");   // same reasoning as CreateSo above
     var s = Session();
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();

@@ -35,7 +35,8 @@ param(
   [string]$Agent    = "OTHERS",
   [string]$Location = "KL",
   [string]$ItemCode = "AK-SLEEP ESSENTIAL 7 HOLES",
-  [string]$Jpeg     = ""
+  [string]$Jpeg     = "",
+  [string]$DocNo    = "ERP-FDPROBE-1"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -104,6 +105,7 @@ Head "2  create the scratch sales order"
    something hand-writes a payload, which is exactly what this script does.
    qa-convert.ps1 has always sent it. #>
 $create = @{
+  DocNo = $DocNo
   DocDate = (Get-Date).ToString("yyyy-MM-dd"); DebtorCode = $Debtor; Agent = $Agent
   SalesLocation = $Location
   Description = "ERP FURTHER DESCRIPTION PROBE - CANCEL ME"
