@@ -1,6 +1,6 @@
 ## A wiring guard promised the repository and measured one file — a third AutoCount enqueue was invisible to it [low]
 
-<!-- area: SCM: sales orders -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** None in production. Found by verifying `docs/modules/sales-order.md`
 against source, which is the point of that exercise: nothing was failing, and the
