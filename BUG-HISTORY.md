@@ -42,10 +42,22 @@ and the canonical mirror, which is where the rule belongs — but the route had 
 SECOND copy of the same rule expressed in PostgREST predicates, and no test
 covered a re-queued failed row's COUNTS. The page's own tests all asserted rows.
 
+**A THIRD copy, found by looking for it.** `check-autocount-outbox-health.mjs`
+— the workflow the owner was told to run before the page existed, and still the
+headless reader — selects `WHERE status = 'failed'` and prints the result under
+*"each is a document that is in the ERP and NOT in AutoCount"*. It had the same
+bug, and it is the same false statement about a live account book. Fixed in the
+same PR: the totals query counts the re-queued rows per status with a `FILTER`,
+the failed detail query excludes them, and they are reported under RE-QUEUED
+with the skips. Not found by a test — found by grepping for every place the rule
+is expressed after the first two disagreed.
+
 **Ref.** 2026-08-15. Lesson: **a rule expressed twice in two languages is two
-rules.** The taxonomy module and the SQL predicates both encoded "re-queued means
-history"; fixing the one written in TypeScript left the one written in
-`.eq().like()` untouched, and the page contradicted itself across the two.
+rules** — and it was expressed three times here. The taxonomy module, the route's
+PostgREST predicates and the health script's SQL all encoded "re-queued means
+history"; #2220 fixed the one written in TypeScript, and both of the ones written
+as queries went on disagreeing with it. When a fix lands in a shared module, grep
+for the rule's other spellings before calling it done.
 
 ## The write-back queue had no reader the owner could open [high]
 
