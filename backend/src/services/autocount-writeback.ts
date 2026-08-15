@@ -29,11 +29,13 @@ import {
   type AcItemIndex,
 } from './autocount-item-code';
 import {
+  AC_DESC2_MAX,
   collapseSofaLines,
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
 import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
+import { buildVariantSummary } from '../scm/shared/variant-summary';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
 export const AC_DEBTOR_CODE = '300-C002';
@@ -184,6 +186,17 @@ export interface ErpSoHeader {
   postcode: string | null;
   customer_state: string | null;
   phone: string | null;
+  /**
+   * AutoCount's `SO.DeliverPhone1`, on the ERP side. NOT `phone`.
+   *
+   * This is the column the cutover POURED DeliverPhone1 into:
+   * `import-ac-outstanding-so.mjs:302` takes `DeliverPhone1` when it differs
+   * from `Phone1` (else the second number out of a slash-separated `Phone1`)
+   * and :390/:412 insert it as `emergency_contact_phone`. It is a live field —
+   * the SO header PATCH allow-list carries it, the SO detail select reads it,
+   * and `so-to-do-fields.ts` copies it onto the delivery order.
+   */
+  emergency_contact_phone: string | null;
   ref: string | null;
   /** The customer's own reference for this order, in the three columns that
    *  have held it. Only the third is still WRITTEN: PR #140 dropped the
@@ -278,8 +291,42 @@ export interface AcDetail {
   Qty: number;
   UnitPrice: number;
   Location?: string | null;
+  /**
+   * PRESENT-AND-NULL IS THE MESSAGE, not an accident. On a CREATE the key is
+   * always sent: a date when the ERP has one, `null` when it does not, and the
+   * service assigns `d.DeliveryDate = (DateTime?) null` for the second — which
+   * is the only way to get the BLANK the account book itself holds on 11,886 of
+   * its 60,939 sales-order lines. Omitting the key leaves AutoCount's own
+   * default, which is what put the document date on every ERP-created line.
+   * An EDIT omits it instead when the ERP has none; see composeEdit.
+   */
   DeliveryDate?: string | null;
 }
+
+/*
+ * NO `UOM` KEY, DELIBERATELY — and the extract is the reason it looked like one.
+ *
+ * `SODTL.UOM` is in the cutover's export and the ERP never sends it, so it reads
+ * as a gap. It is not one: AutoCount's UOM is a property of the ITEM, echoed
+ * onto the line. Measured over `ac-fidelity-so-lines.json.gz` against the book's
+ * own `ItemUOM` rows (`ac-item-costs.json.gz` + `ac-utd-stock-cost.json.gz`),
+ * 59,582 of the 59,624 lines carrying a UOM carry one the ITEM's master row
+ * holds — the 2 exceptions are the case typo `unit` for `UNIT`. So the line
+ * never decides it.
+ *
+ * The ERP has nothing to add. `mfg_sales_order_items.uom` and
+ * `purchase_order_items.uom` are written `(it.uom as string) ?? 'UNIT'` at every
+ * create path, so the column is a default, not a fact — and 363 of the 758
+ * distinct item codes on those lines have NO `UNIT` row at all (their only UOM
+ * is `SET`). Sending the ERP's value would put `UNIT` on a line whose item only
+ * has `SET`, against a column the detail foreign-keys to `ItemUOM`, and lose the
+ * whole document.
+ *
+ * The item's UOM is instead set where it belongs — at the moment the item is
+ * opened. `/ensure-masters` gives a new item `NewUom(uom, 1m)` + `BaseUom`
+ * (AcSyncService.cs), so the line inherits it, and an item the book already
+ * holds keeps its own. Owner 2026-08-15: every SKU already carries a UOM.
+ */
 
 export interface AcCreateSoPayload {
   DocNo: string;
@@ -290,6 +337,16 @@ export interface AcCreateSoPayload {
   SalesLocation: string | null;
   Ref: string | null;
   Phone: string | null;
+  /**
+   * The DELIVERY contact number, which is a different fact from `Phone`.
+   *
+   * `CreateSo` already falls back to `Phone` when this is absent
+   * (`Or(Str(p,"DeliverPhone1"), Str(p,"Phone"))`), and that fallback is
+   * exactly the cutover's own rule read backwards — `import-ac-outstanding-so.mjs:302`
+   * kept `DeliverPhone1` only when it DIFFERED from `Phone1`. So null here
+   * means "the same number", not "no number".
+   */
+  DeliverPhone1: string | null;
   Attention: string | null;
   InvAddr1: string | null;
   InvAddr2: string | null;
@@ -755,24 +812,71 @@ export function soSalesLocation(
 export { ItemCodeError };
 
 /**
- * Build the Description 2 string from ERP variants when the line has none.
- * Sofa fabric/leg/seat collapse into one text blob because AutoCount has no
- * per-variant fields; bedframe lines usually already carry description2.
- * Carried over from PR #1696.
+ * Thrown when the line's Description 2 does not fit AutoCount's field.
+ *
+ * `SODTL.Desc2` / `PODTL.Desc2` are `nvarchar(100)` and the live book is
+ * already AT that ceiling — measured over `ac-fidelity-so-lines.json.gz`, the
+ * longest of its 15,950 populated values is exactly 100 characters and none is
+ * over. So an over-long spec is not a warning: SQL Server refuses the Save and
+ * the whole document is lost with a 500 nobody can read.
+ *
+ * Truncating is not the alternative. Desc2 IS the specification the factory
+ * builds from — the colour, the divan, the gap, the special order — and half a
+ * specification is a wrong instruction, not a short one. Same reasoning, and
+ * the same `AC_DESC2_MAX`, as the sofa collapse's own refusal.
+ */
+export class Desc2TooLongError extends Error {
+  readonly lines: ReadonlyArray<{ index: number; itemCode: string; length: number }>;
+  constructor(lines: Array<{ index: number; itemCode: string; length: number }>) {
+    super(
+      `${lines.length} line(s) carry a Description 2 longer than AutoCount's ${AC_DESC2_MAX} `
+      + `characters: ${lines.map((l) => `${l.index + 1} (${l.itemCode}, ${l.length})`).join(', ')}. `
+      + 'AutoCount stores SODTL.Desc2 / PODTL.Desc2 as nvarchar(100) and refuses the whole '
+      + 'document rather than truncating, and a truncated specification is a wrong instruction '
+      + 'to the factory. Shorten the special order or the colour text on that line, then save again.',
+    );
+    this.name = 'Desc2TooLongError';
+    this.lines = lines;
+  }
+}
+
+/**
+ * The line's Description 2 — AutoCount's "Further Description".
+ *
+ * OWNER, 2026-08-15: *"照片那一边是从 Further Description 那边抽出来的，所以你录入
+ * 的时候，也是要录入回 Further Description"*. The cutover PARSED this field to
+ * get the ERP's variants — `import-ac-outstanding-so.mjs` turns a bedframe's
+ * `Desc2` into `variants.fabricCode` / `gap` / `divanHeight` / `legHeight` /
+ * `totalHeight` / `specials` — so the write-back has to put the same
+ * specification back.
+ *
+ * IT USES THE ERP'S OWN RENDERER, and that is the fix rather than a detail of
+ * it. This function used to be a SECOND implementation of `buildVariantSummary`
+ * — it emitted `Col / Fabric / Seat / Leg` and read colour off `fabricColor`,
+ * which is the GRN-family editors' key. A bedframe keeps its colour in
+ * `fabricCode` / `colourLabel` and its spec in `gap` / `divanHeight`, so on an
+ * ERP-created bedframe line the account book got NONE of it — while the book's
+ * own text is `COL` on 6,741 lines, `DIVAN` on 5,778 and `GAP` on 2,620, the
+ * three most common labels it has. Two renderers for one string is the shape
+ * COE lesson 4 names: when a pipeline decides a shape, nothing downstream may
+ * re-derive it.
+ *
+ * `buildVariantSummary` is the SO / PO / DO / GRN line's Description 2
+ * everywhere else in this system, it is pure, it is mirrored to the frontend
+ * with a drift check, and its vocabulary is the book's own — `DIVAN`, `GAP`,
+ * `LEG`, `SEAT`. Using it means the account book reads what the paperwork
+ * reads, and a new attribute reaches AutoCount the day it reaches the screen.
+ *
+ * A STORED `description2` STILL WINS, VERBATIM. That is the echo path, and it
+ * is load-bearing: both cutover importers wrote the book's original text onto
+ * every migrated line, and D9's sofa collapse hands this function a collapsed
+ * line whose `description2` is the build text it has already decided (echoed
+ * character-for-character when the build is unchanged, composed and re-gated
+ * when it is not). Re-deriving either from variants would be lossy.
  */
 export function composeDescription2(line: ErpLine): string | null {
   if (line.description2 && line.description2.trim()) return line.description2.trim();
-  const v = line.variants ?? {};
-  const parts: string[] = [];
-  const push = (label: string, key: string) => {
-    const val = (v as Record<string, unknown>)[key];
-    if (val != null && String(val).trim() !== '') parts.push(`${label}: ${String(val).trim()}`);
-  };
-  push('Col', 'fabricColor');
-  push('Fabric', 'fabricLabel');
-  push('Seat', 'seatHeight');
-  push('Leg', 'legHeight');
-  return parts.length ? parts.join(' / ') : null;
+  return buildVariantSummary(line.item_group ?? null, line.variants ?? null) || null;
 }
 
 /**
@@ -801,6 +905,7 @@ export function composeDetails(
 
   const failures: Array<{ index: number; erpItemCode: string; detail: string }> = [];
   const locationless: Array<{ index: number; itemCode: string }> = [];
+  const overlong: Array<{ index: number; itemCode: string; length: number }> = [];
   const details: AcDetail[] = [];
   collapsed.forEach((l, i) => {
     const r = resolveAcItemCode(l.item_code, {
@@ -818,10 +923,19 @@ export function composeDetails(
       locationless.push({ index: i, itemCode: r.acItemCode });
       return;
     }
+    const desc2 = composeDescription2(l as ErpLine);
+    /* The sofa collapse applies this same ceiling to a BUILD and refuses over
+       it (autocount-sofa-collapse.ts). Nothing applied it to an ordinary line,
+       which was harmless only while Desc2 was four short attributes; a bedframe
+       spec with a special order can reach it. */
+    if (desc2 && desc2.length > AC_DESC2_MAX) {
+      overlong.push({ index: i, itemCode: r.acItemCode, length: desc2.length });
+      return;
+    }
     const d: AcDetail = {
       ItemCode: r.acItemCode,
       Description: l.description ?? null,
-      Desc2: composeDescription2(l as ErpLine),
+      Desc2: desc2,
       Qty: Number(l.qty) || 0,
       UnitPrice: price(l.unit_price_centi),
     };
@@ -834,11 +948,31 @@ export function composeDetails(
      * and PO_ITEM_COLS select no `location`, so emitting the key unconditionally
      * wiped the stock location off every line of every edited document. */
     if (location) d.Location = location;
-    if (l.delivery_date) d.DeliveryDate = l.delivery_date;
+    /* DELIVERY DATE IS THE ONE KEY THAT IS SENT PRESENT-AND-NULL, and it is the
+     * exception that proves the omission rule rather than a breach of it.
+     *
+     * The rule everywhere else — omit, never null — exists because `Str()` turns
+     * a present-null into `""` and blanks the book. `DeliveryDate` does not go
+     * through `Str()`: it goes through `Date()`, which answers `null` for an
+     * absent key AND for a null one, so an omitted key could never mean anything
+     * but "leave AutoCount's default". And AutoCount's default is the DOCUMENT
+     * DATE, which is what the owner reported seeing on every ERP-created line.
+     *
+     * A blank IS expressible and IS what the book itself holds: 11,886 of the
+     * 60,939 lines in `ac-fidelity-so-lines.json.gz` have a NULL DeliveryDate,
+     * across 2,268 whole documents, and the reflected SDK surface types the
+     * property `DeliveryDate:Nullable\`1` on all six detail classes. So the null
+     * is sent explicitly and the service assigns it — see AcSyncService's
+     * ContainsKey guard, which is what makes the two cases different.
+     *
+     * `composeEdit` drops the key again on a line the book already holds, where
+     * a blank WOULD be destructive. */
+    d.DeliveryDate = l.delivery_date ?? null;
     details.push(d);
   });
   if (failures.length) throw new ItemCodeError(failures);
   if (locationless.length) throw new MissingLocationError(locationless);
+  if (overlong.length) throw new Desc2TooLongError(overlong);
 
   return { details, collapsed };
 }
@@ -883,6 +1017,29 @@ export function acUdfDate(v: string | null | undefined): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * A sen amount on its way into AutoCount's numeric `UDF_BALANCE`, as the
+ * decimal string every other UDF is sent as.
+ *
+ * ZERO IS A VALUE, NOT AN ABSENCE, and this is the one place that matters:
+ * `udf()` drops a falsy entry, so the amount has to arrive as `"0.00"` rather
+ * than as `0` or `null` — otherwise a fully-paid order silently keeps whatever
+ * balance the account book last held, which is the exact staleness this field
+ * exists to remove. `null` means the ERP could not compute one at all.
+ *
+ * Sent as a STRING because `ApplyUdf` stringifies every UDF value it is given
+ * (`kv.Value.ToString()`), so the type is not ours to choose from here. That is
+ * the same path `PDate` already takes into `SO.UDF_PDate`, which is a date
+ * column — so a typed UDF column taking a string is the established shape in
+ * this book, not a new bet. It is not PROVEN, and it cannot fail loudly: every
+ * UDF write is wrapped in the service's exception-swallowing `Set()`. What
+ * settles it is one document and one look at `SO.UDF_BALANCE` for that DocNo.
+ */
+export function acUdfMoney(centi: number | null | undefined): string | null {
+  if (centi == null || !Number.isFinite(centi)) return null;
+  return (Math.round(centi) / 100).toFixed(2);
+}
+
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
@@ -900,6 +1057,20 @@ export function composeCreateSo(
    * uses for the line-level warehouse.
    */
   salespersonName: string | null,
+  /**
+   * What the order still owes, in sen — REQUIRED, never optional, because it
+   * DECIDES what the account book's `UDF_BALANCE` says about a live customer
+   * debt. An optional parameter would let a caller that says nothing keep the
+   * old behaviour of never sending it, with no compile error and no failing
+   * test (CLAUDE.md, "a parameter that DECIDES something is required").
+   *
+   * Pass an explicit `null` to state that the ERP has no answer; the key is
+   * then omitted and the book keeps its own. The computation is
+   * `soOutstandingCenti` in `scm/shared/so-outstanding.ts` and the payments
+   * read lives beside the other header reads in `scm/lib/autocount-outbox.ts`,
+   * the same division `withLocations` and `readSalespersonName` draw.
+   */
+  outstandingCenti: number | null,
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   const agent = resolveAcAgent(header.agent, salespersonName);
@@ -923,6 +1094,14 @@ export function composeCreateSo(
     SalesLocation: salesLocation,
     Ref: header.ref,
     Phone: header.phone,
+    /* TWO CONTACTS, TWO COLUMNS (owner 2026-08-15: "应该是有一个 Delivery
+       Contact，一个是 Contact"). `phone` is the customer's; the delivery-day
+       number is `emergency_contact_phone`, which is where the cutover put
+       AutoCount's own DeliverPhone1 and where the SO detail page renders it as
+       "Emergency contact". Null leaves CreateSo's Or() to reuse Phone, which is
+       the cutover's rule read backwards — it kept DeliverPhone1 only when it
+       DIFFERED. */
+    DeliverPhone1: tidy(header.emergency_contact_phone),
     Attention: header.debtor_name,
     ...soInvoiceAddress(header),
     UDF: udf({
@@ -930,6 +1109,7 @@ export function composeCreateSo(
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
       PDate: acUdfDate(header.processing_date),
+      BALANCE: acUdfMoney(outstandingCenti),
     }),
     Details: details,
   };
@@ -1083,6 +1263,15 @@ export function composeEdit(
      * an in-place item change on a line the book owns is dropped, and the ERP
      * has no such operation. */
     const { ItemCode: _ownedByAutoCount, ...rest } = d;
+    /* AN EXPLICIT BLANK IS A CREATE'S PRIVILEGE. On a create there is nothing
+     * to preserve and AutoCount's default would invent the document date; on a
+     * line the book already holds, sending null would ERASE a delivery date an
+     * operator may have set in AutoCount itself. Same asymmetry as Location and
+     * the header's own omit-when-absent rule, at line level.
+     *
+     * A date the ERP DOES hold still travels — the ERP is master, and that is
+     * the whole point of D8. */
+    if (rest.DeliveryDate == null) delete rest.DeliveryDate;
     return { ...rest, DtlKey: dtlKey } as AcEditLine;
   });
 

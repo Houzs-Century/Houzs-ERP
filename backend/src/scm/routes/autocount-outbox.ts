@@ -234,19 +234,26 @@ export const listAutocountOutboxHandler = async (
   }
   const flagValue = ((flagRow as { value?: string } | null)?.value ?? null);
 
-  const [pending, sent, failed, skippedTotal, requeued] = await Promise.all([
+  /* A re-queued row is HISTORY, not backlog — and that is true of a FAILED row
+     as well as a skipped one. The table is append-only and neither is ever
+     deleted, so without this split the original refusal sits on the page
+     forever, sending someone to fix what is already fixed and already queued.
+     BOTH terminal states, since #2189 gave the re-queue tool an includeFailed
+     opt-in: #2220 taught acOutboxState that rule but these counts kept their
+     own, so the tiles went on reporting two re-queued FAILED rows as
+     "2 documents need attention" while the rows underneath rendered Re-queued
+     — the same self-contradiction #2220 fixed, one component further up. */
+  const [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped] = await Promise.all([
     countRows(c, (q) => q.eq('status', 'pending')),
     countRows(c, (q) => q.eq('status', 'sent')),
     countRows(c, (q) => q.eq('status', 'failed')),
     countRows(c, (q) => q.eq('status', 'skipped')),
-    /* A re-queued skip is HISTORY, not backlog. The table is append-only and a
-       skipped row is never deleted, so without this split the original refusal
-       sits on the page forever, sending someone to fix what is already fixed and
-       already queued. */
+    countRows(c, (q) => q.eq('status', 'failed').like('last_error', REQUEUED_LIKE)),
     countRows(c, (q) => q.eq('status', 'skipped').like('last_error', REQUEUED_LIKE)),
   ]);
 
-  const firstError = [pending, sent, failed, skippedTotal, requeued].find((r) => r.error);
+  const firstError = [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped]
+    .find((r) => r.error);
   if (firstError) {
     return c.json({ error: 'load_failed', reason: firstError.error?.message ?? 'count failed' }, 500);
   }
@@ -254,17 +261,22 @@ export const listAutocountOutboxHandler = async (
      with a null, and rendering that as 0 would tell the owner "nothing is stuck"
      on the strength of a query that did not run — the exact shape CLAUDE.md
      calls a verdict computed over nothing. */
-  const missing = [pending, sent, failed, skippedTotal, requeued].some((r) => r.count === null);
+  const missing = [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped]
+    .some((r) => r.count === null);
   if (missing) {
     return c.json({ error: 'load_failed', reason: 'the queue counts could not be read' }, 500);
   }
 
   const nPending = pending.count as number;
   const nSent = sent.count as number;
-  const nFailed = failed.count as number;
+  const nFailedTotal = failedTotal.count as number;
   const nSkippedTotal = skippedTotal.count as number;
-  const nRequeued = requeued.count as number;
-  const nSkipped = Math.max(0, nSkippedTotal - nRequeued);
+  /* OUTSTANDING = terminal minus already-asked-again, per state. `Math.max`
+     because the two counts are separate statements against a live table: a row
+     re-queued between them would otherwise produce a negative tile. */
+  const nRequeued = (requeuedFailed.count as number) + (requeuedSkipped.count as number);
+  const nFailed = Math.max(0, nFailedTotal - (requeuedFailed.count as number));
+  const nSkipped = Math.max(0, nSkippedTotal - (requeuedSkipped.count as number));
 
   /* The oldest pending row, because a climbing age is the early warning that the
      tunnel is down and the dead-lettering has started — MAX_ATTEMPTS on a
@@ -302,7 +314,10 @@ export const listAutocountOutboxHandler = async (
     sent: ['sent'],
     failed: ['failed'],
     skipped: ['skipped'],
-    requeued: ['skipped'],
+    /* BOTH terminal states: since #2189's includeFailed opt-in a re-queued row
+       can be a failed one, and asking only for skips made the Re-queued filter
+       answer "nothing" on a page whose rows were rendering Re-queued. */
+    requeued: ['skipped', 'failed'],
   };
 
   let rowsQ = sb.from('autocount_outbox').select(SELECT);
@@ -322,6 +337,10 @@ export const listAutocountOutboxHandler = async (
   let presented = ((rowData as unknown as Row[] | null) ?? []).map(present);
   if (stateParam === 'attention') presented = presented.filter((r) => r.needs_attention);
   else if (stateParam === 'skipped') presented = presented.filter((r) => r.state === 'skipped');
+  /* `failed` narrows the same way `skipped` does, and for the same reason: a
+     re-queued failed row is history and belongs under Re-queued, not under the
+     filter an operator opens to see what is still broken. */
+  else if (stateParam === 'failed') presented = presented.filter((r) => r.state === 'failed');
   else if (stateParam === 'requeued') presented = presented.filter((r) => r.state === 'requeued');
 
   const truncated = presented.length > limit;
@@ -345,7 +364,10 @@ export const listAutocountOutboxHandler = async (
       requeued: nRequeued,
       /* The owner's question, as one number. */
       attention: nFailed + nSkipped,
-      total: nPending + nSent + nFailed + nSkippedTotal,
+      /* TOTAL is every row ever written, so it takes the TERMINAL counts, not
+         the outstanding ones — otherwise re-queued rows vanish from the total
+         while still being listed underneath it. */
+      total: nPending + nSent + nFailedTotal + nSkippedTotal,
     },
     oldest_pending: oldestRaw
       ? {

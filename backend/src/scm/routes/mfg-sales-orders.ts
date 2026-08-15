@@ -32,6 +32,13 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+/* The payment insert core, the Account Sheet rule and the payment column list
+   moved to scm/lib so scan-so.ts's background writer reaches the same rules
+   without importing a 12,000-line router. Re-exported below for the callers
+   that still name this module. */
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, type SoPaymentRowInput } from '../lib/so-payment-row';
+export { recordSoPaymentRow };
+export type { SoPaymentRowInput };
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
@@ -73,6 +80,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -2608,11 +2616,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       if (p.is_deposit) depositInLedger = true;
     }
   }
-  const headerDepositCenti = typeof (h.data as { deposit_centi?: number }).deposit_centi === 'number'
-    ? (h.data as { deposit_centi: number }).deposit_centi : 0;
-  const totalRevenueCenti = typeof (h.data as { total_revenue_centi?: number }).total_revenue_centi === 'number'
-    ? (h.data as { total_revenue_centi: number }).total_revenue_centi : 0;
-  const paidCentiTotal = (depositInLedger ? 0 : headerDepositCenti) + paidLedgerCenti;
+  /* ONE rule, shared with the AutoCount write-back's BALANCE UDF so the account
+     book and this page cannot disagree. Why not `balance_centi`: so-outstanding.ts. */
+  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerCenti, depositInLedger);
+  const paidCentiTotal = soPaidCenti(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead
      go through the amendment request flow: the SO IS processing-locked (already
@@ -2689,7 +2696,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: Math.max(0, totalRevenueCenti - paidCentiTotal),
+    balance_centi: soOutstandingCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -10768,35 +10775,6 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
 // balance computes from header.local_total_centi − sum(amount_centi).
 //
 // Legacy single-row payment fields on mfg_sales_orders (payment_method,
-/* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
-   Derived from the payment's own method fields whenever the operator didn't
-   type one, so the Detail Listing column stops rendering dashes:
-     merchant / installment → the acquiring bank (merchant_provider)
-     transfer               → the online sub-type (DuitNow / TNG / …)
-     cash                   → 'Cash'
-   A hand-typed value (Finance, backend PaymentsTable) ALWAYS wins — this is
-   a default, not an overwrite. Hoisted `function` so the SO-create deposit
-   paths above can call it too. */
-function deriveAccountSheet(
-  method: string,
-  merchantProvider?: string | null,
-  onlineType?: string | null,
-): string {
-  if (method === 'merchant' || method === 'installment') {
-    return merchantProvider?.trim() || 'Card terminal';
-  }
-  if (method === 'transfer') return onlineType?.trim() || 'Bank transfer';
-  return 'Cash';
-}
-
-// merchant_provider, installment_months, approval_code, payment_date,
-// paid_centi) are NOT touched here — those columns are scheduled for
-// drop in a follow-up migration once live data is migrated.
-const PAYMENT_COLS =
-  'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, slip_key, collected_by, note, ' +
-  'created_at, created_by, version, updated_at';
-
 mfgSalesOrders.get('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const { data, error } = await sb
@@ -10849,111 +10827,6 @@ const paymentCreateSchema = z.object({
      `.min(1)` (required). */
   uploadSessionId:    z.string().min(1).optional().nullable(),
 });
-
-/* ── recordSoPaymentRow — the factored insert+audit core of
-   POST /:docNo/payments (same pattern as createSalesOrderCore). ONE place
-   derives the method-scoped fields (merchant/installment vs transfer vs cash),
-   auto-fills the Account Sheet, inserts the mfg_sales_order_payments row and
-   appends the ADD_PAYMENT audit entry. The HTTP route keeps its own guards
-   (self-scope, SO existence, overpayment, slip-session resolution + promote)
-   and calls this for the write; the background scan job (scan-so.ts) calls it
-   directly with an R2 key it already owns (scan-jobs/{jobId}/{n}) — payment
-   field derivation is never reimplemented outside this function. */
-export type SoPaymentRowInput = {
-  docNo: string;
-  paidAt: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
-  merchantProvider?: string | null;
-  installmentMonths?: number | null;
-  onlineType?: string | null;
-  approvalCode?: string | null;
-  amountCenti: number;
-  accountSheet?: string | null;
-  slipKey: string | null;
-  collectedBy?: string | null;
-  note?: string | null;
-  createdBy: string;
-  actorName?: string | null;
-  /* First-deposit marker — the list/detail paid-rollup adds the header
-     deposit_centi on top of the ledger UNLESS an is_deposit row marks the
-     deposit as already booked (migration 0155 semantics). The scan job's
-     first receipt row IS the header deposit, so it sets this. */
-  isDeposit?: boolean;
-  auditSource?: string;
-  auditNote?: string;
-};
-
-export async function recordSoPaymentRow(
-  sb: any,
-  p: SoPaymentRowInput,
-): Promise<{ payment: Record<string, unknown> | null; errorMessage: string | null }> {
-  // Method-scoped fields per the cascade:
-  //   merchant    → merchant_provider + installment_months (0 / null = One-off)
-  //   installment → merchant_provider + installment_months (merchant-like —
-  //                 mirrors the SO-create deposit path, which keeps both)
-  //   transfer    → online_type
-  //   cash        → no extras
-  const merchantLike      = p.method === 'merchant' || p.method === 'installment';
-  const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
-  // 0 = "One-off" — store as NULL so the integer column carries semantic
-  // "no installment". Anything > 0 is the term in months.
-  const installmentMonths = merchantLike
-    ? (typeof p.installmentMonths === 'number' && p.installmentMonths > 0 ? p.installmentMonths : null)
-    : null;
-  const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
-
-  // Multi-company (mig 0061): the payment inherits the SO's company (resolved by
-  // doc_no — this factored writer has no request context). No-op when unresolved.
-  const { data: soCo } = await sb.from('mfg_sales_orders').select('company_id').eq('doc_no', p.docNo).maybeSingle();
-  const companyId = (soCo as { company_id?: number | null } | null)?.company_id ?? null;
-
-  const { data, error } = await sb.from('mfg_sales_order_payments').insert({
-    ...(companyId != null ? { company_id: companyId } : {}),
-    so_doc_no:          p.docNo,
-    paid_at:            p.paidAt,
-    method:             p.method,
-    merchant_provider:  merchantProvider,
-    installment_months: installmentMonths,
-    online_type:        onlineType,
-    approval_code:      p.approvalCode ?? null,
-    amount_centi:       p.amountCenti,
-    /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
-       blank/whitespace falls back to the method-derived default. */
-    account_sheet:      p.accountSheet?.trim() || deriveAccountSheet(p.method, merchantProvider, onlineType),
-    slip_key:           p.slipKey,
-    collected_by:       p.collectedBy ?? null,
-    note:               p.note ?? null,
-    created_by:         p.createdBy,
-    /* Only set when explicitly asked — the manual route's rows are balance
-       payments and keep the column default (false). */
-    ...(p.isDeposit === true ? { is_deposit: true } : {}),
-  }).select(PAYMENT_COLS).single();
-  if (error) return { payment: null, errorMessage: error.message };
-
-  /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
-     Field-changes list mirrors what the user typed so the History panel
-     can render a readable diff. Best-effort inside recordSoAudit. */
-  await recordSoAudit(sb, {
-    docNo: p.docNo,
-    action: 'ADD_PAYMENT',
-    actorId: p.createdBy,
-    actorName: p.actorName ?? null,
-    ...(p.auditSource ? { source: p.auditSource } : {}),
-    ...(p.auditNote ? { note: p.auditNote } : {}),
-    fieldChanges: [
-      { field: 'paidAt',             from: null, to: p.paidAt },
-      { field: 'method',             from: null, to: p.method },
-      { field: 'amountCenti',        from: null, to: p.amountCenti },
-      ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
-      ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
-      ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
-      ...(p.approvalCode    ? [{ field: 'approvalCode',      from: null, to: p.approvalCode    } satisfies FieldChange] : []),
-      ...(p.accountSheet    ? [{ field: 'accountSheet',      from: null, to: p.accountSheet    } satisfies FieldChange] : []),
-    ],
-  });
-
-  return { payment: data as Record<string, unknown>, errorMessage: null };
-}
 
 mfgSalesOrders.post('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
@@ -11350,6 +11223,14 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     fieldChanges: changes,
   });
 
+  /* Same reason as the insert: an edited amount moves the outstanding balance,
+     which is a value AutoCount holds. Unlike the insert this one lives in the
+     route, because the UPDATE above is the route's own and has no shared core.
+     Fires even when only the method changed — recomposing an unchanged BALANCE
+     costs one queued edit, while deciding here which fields matter would put a
+     second opinion about the balance rule next to so-outstanding.ts. */
+  await queueAcSoEdit(c, docNo);
+
   const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
 });
@@ -11451,6 +11332,12 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });
+
+  /* A deleted payment raises the outstanding balance, so the account book has
+     to be told in the same way an added one does. This is the direction that
+     matters most: a book left showing a settled order after the payment was
+     reversed understates what the customer owes. */
+  await queueAcSoEdit(c, docNo);
 
   return c.json({ ok: true });
 });

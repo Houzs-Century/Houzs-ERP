@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import rawSo from '../src/scm/routes/mfg-sales-orders.ts?raw';
+/* The payment insert core lives below the route layer, because scan-so.ts
+   writes through it with no request context. Its anchor has to be read from
+   there or this test pins a function that is no longer in the file. */
+import rawPaymentRow from '../src/scm/lib/so-payment-row.ts?raw';
 import rawSdk from '../scripts/autocount-service/sdk-api-reference.txt?raw';
 import rawPo from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import rawDo from '../src/scm/routes/delivery-orders-mfg.ts?raw';
@@ -13,6 +17,7 @@ import rawCron from '../src/index.ts?raw';
    matches in CI and not on the machine the owner actually runs this on. */
 const lf = (s: string) => s.replace(/\r\n/g, '\n');
 const soSource = lf(rawSo);
+const paymentRowSource = lf(rawPaymentRow);
 const poSource = lf(rawPo);
 const doSource = lf(rawDo);
 const grnSource = lf(rawGrn);
@@ -144,6 +149,30 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
       const block = between(soSource, `mfgSalesOrders.post('/:docNo/items/:itemId/${route}'`, '});\n');
       expect(block, route).toContain('queueAcSoEditAfter(c, c.req.param(\'docNo\'), await runScmPgCommand(');
     }
+  });
+
+  /* SEPARATE TEST, DELIBERATELY, and the reason is the test above it.
+     That one is called "every SO mutation path queues an edit" and checks seven
+     hand-listed places. A payment is an SO mutation — it moves the outstanding
+     balance, which is a value the account book holds in UDF_BALANCE — and none
+     of the three payment paths were in the list, so the word "every" was false
+     from the day BALANCE started being sent and the suite stayed green. The
+     lesson is the one in CLAUDE.md's unverified-completeness-claim class, and
+     the remedy here is to name the paths rather than widen the other test's
+     claim any further. */
+  test('every SO PAYMENT path queues an edit — insert, amend, delete', () => {
+    /* The insert is pinned on the CORE, not on the route. scan-so.ts books its
+       receipts through recordSoPaymentRow with no request context, so an
+       enqueue written into POST /:docNo/payments would cover the payments a
+       human typed and silently miss every scanned one. */
+    expect(between(paymentRowSource, 'export async function recordSoPaymentRow(', 'return { payment: data as Record<string, unknown>, errorMessage: null };'))
+      .toContain('await enqueueEdit(sb, {');
+    expect(between(soSource, "action: 'UPDATE_PAYMENT',", 'collected_by_name: staff?.name ?? null'))
+      .toContain('queueAcSoEdit(c, docNo)');
+    /* The delete direction matters most: a book left showing a settled order
+       after the payment was reversed understates what the customer owes. */
+    expect(between(soSource, "action: 'DELETE_PAYMENT',", 'return c.json({ ok: true });'))
+      .toContain('queueAcSoEdit(c, docNo)');
   });
 
   test('every PO mutation path queues an edit', () => {

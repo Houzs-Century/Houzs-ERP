@@ -295,7 +295,21 @@ class AcSyncService {
       d.Qty = Dec(it, "Qty", 1);
       d.UnitPrice = Dec(it, "UnitPrice", 0);
       Set(() => d.Location = Str(it, "Location"));
-      var dd = Date(it, "DeliveryDate"); if (dd.HasValue) Set(() => d.DeliveryDate = dd.Value);
+      /* PRESENT-AND-NULL BLANKS IT; ABSENT LEAVES AUTOCOUNT'S DEFAULT.
+         Owner 2026-08-15: a line the ERP has no delivery date for was arriving
+         carrying the DOCUMENT date, and it should be BLANK - which is what the
+         cutover left, on 11,886 of this book's own 60,939 sales-order lines.
+         This was `if (dd.HasValue)`, and that is exactly why it could not:
+         Date() answers null for an absent key and a null one alike, so the old
+         guard had no way to say "blank it" and every dateless line fell through
+         to AutoCount's default. ContainsKey separates the two, the same way the
+         Edit header loop below separates them. The property is
+         DeliveryDate:Nullable`1 on all six detail classes, so the null is the
+         SDK's own shape; Set() stays because a class that refused the null must
+         cost the default, never the document. */
+      if (it.ContainsKey("DeliveryDate")) {
+        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
     }
     so.Save();
     return so.DocNo;
@@ -322,7 +336,10 @@ class AcSyncService {
       d.Qty = Dec(it, "Qty", 1);
       d.UnitPrice = Dec(it, "UnitPrice", 0);
       Set(() => d.Location = Str(it, "Location"));
-      var dd = Date(it, "DeliveryDate"); if (dd.HasValue) Set(() => d.DeliveryDate = dd.Value);
+      // Present-and-null blanks it; absent leaves AutoCount's default. See CreateSo.
+      if (it.ContainsKey("DeliveryDate")) {
+        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
     }
     po.Save();
     return po.DocNo;
@@ -866,7 +883,13 @@ class AcSyncService {
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("UnitPrice"))   Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Location"))    Set(() => d.Location = Str(it, "Location"));
-      var dd = Date(it, "DeliveryDate"); if (dd.HasValue) Set(() => d.DeliveryDate = dd.Value);
+      /* Same ContainsKey rule as CreateSo — but the ERP never sends a NULL here.
+         composeEdit drops the key on a line the book already holds, because a
+         blank there would ERASE a date an operator may have set in AutoCount
+         itself. A date the ERP DOES hold still travels. */
+      if (it.ContainsKey("DeliveryDate")) {
+        var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd);
+      }
     }
     doc.Save();
   }
