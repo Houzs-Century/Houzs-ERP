@@ -1340,3 +1340,503 @@ describe('a sofa resolves through the binding recorded for its model', () => {
       .toEqual(['AMN-SF9028 SOFA', '9028-2A(RHF)']);
   });
 });
+
+/* The fake, in the shape the enqueue helpers are typed for. Named once so a
+   test that needs it does not spend another `as never` — the lint rule that
+   bans those exists because a cast is how a wrong type gets past the compiler
+   that was about to help (3PL lorry types, BUG-HISTORY 2026-08-02). The older
+   blocks above still carry theirs; this is the shape new ones should use. */
+type FakeClient = Parameters<typeof enqueueSoCreate>[0];
+const client = (sb: unknown): FakeClient => sb as FakeClient;
+
+/* ── THE FIELD-ALIGNMENT AUDIT, 2026-08-14 ───────────────────────────────────
+   docs/autocount-field-alignment-audit.md. One bug class in eight places: the
+   ERP holds a value in one column, the composer reads another, and nothing
+   opens it on the AutoCount side. These tests are the END-TO-END half — the
+   composer's own are in services/autocount-writeback.test.ts — because most of
+   the defect was in the SELECT LIST, and a column list is only exercised by a
+   read. `fakeSb` fails a query that asks for a column the table does not have,
+   the same 42703 PostgREST answers, so a phantom column here is a red test
+   rather than a silent zero. */
+describe('the columns the write-back reads are the columns the ERP writes', () => {
+  /* An ERP-created sales order, in the shape production actually holds:
+     `branding` NULL on the header and set on the LINE, the customer reference
+     in `customer_so_no`, the address in city / postcode / customer_state, and a
+     venue no 7-entry map was ever going to know. */
+  const so = {
+    doc_no: 'HC-SO-A', so_date: '2026-08-10', debtor_name: 'ACME', company_id: 1,
+    agent: null, salesperson_id: 'staff-1',
+    sales_location: 'KL WAREHOUSE', branding: null, venue: '2990s PJ',
+    address1: 'No 1, Jalan Besar', address2: 'Taman Sentosa',
+    address3: null, address4: null,
+    city: 'Seri Kembangan', postcode: '43300', customer_state: 'Selangor',
+    phone: '012', ref: null,
+    po_doc_no: null, customer_po: null, customer_so_no: 'THEIR-SO-88',
+    processing_date: null, linked_ac_docno: null,
+  };
+  const item = {
+    doc_no: 'HC-SO-A', item_code: ERP_A, branding: 'DUNLOPILLO',
+    description: 'Mattress', qty: 1, unit_price_centi: 100,
+  };
+  const seeded = () => withFlag('1', {
+    mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }],
+  });
+
+  test('a create carries the venue, the line brand, the customer ref and the full address', async () => {
+    const sb = seeded();
+    expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).toBe(true);
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(body.UDF).toEqual({
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+    });
+    expect(body.InvAddr1).toBe('No 1, Jalan Besar');
+    expect(body.InvAddr2).toBe('Taman Sentosa');
+    expect(body.InvAddr3).toBe('43300 Seri Kembangan');
+    expect(body.InvAddr4).toBe('Selangor');
+    expect(body.SalesLocation).toBe('KL');
+  });
+
+  /* THE HALF THAT MAKES THE PASS-THROUGH SAFE. A venue the book has never held
+     is only writable because /ensure-masters appends it to the VENUE list
+     first, and mastersOf is what asks. */
+  test('and the venue it passed through is one /ensure-masters is asked to open', async () => {
+    const sb = seeded();
+    await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' });
+    const m = mastersOf(outbox(sb)[0].payload.body as Record<string, unknown>) as {
+      UdfOptions: Array<Record<string, string>>; Locations: Array<Record<string, string>>;
+    };
+    expect(m.UdfOptions).toContainEqual({ List: 'VENUE', Value: '2990s PJ' });
+    expect(m.UdfOptions).toContainEqual({ List: 'BRANDING', Value: 'DUNLOPILLO' });
+    expect(m.Locations).toEqual([{ Location: 'KL' }]);
+  });
+
+  /* 21 of 115 unpushed orders had a blank sales_location on 2026-08-14, and a
+     blank reaches AcSyncService as "" — FK_SO_SalesLocation, whole document
+     lost. The lines already name a warehouse the document is opening anyway. */
+  test('an order with no sales location takes one from its lines rather than failing the FK', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, sales_location: null }],
+      mfg_sales_order_items: [{ ...item, warehouse_id: 'wh-pg' }],
+      warehouses: [{ id: 'wh-pg', code: 'PG', name: 'PG WAREHOUSE' }],
+    });
+    expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).toBe(true);
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(body.SalesLocation).toBe('PG');
+    expect(outbox(sb)[0].status).not.toBe('skipped');
+  });
+
+  /* Finding 10. The function's own doc comment said "A NULL VALUE IS OMITTED,
+     NEVER SENT" while eight keys were emitted as `x ?? null` regardless —
+     `ref` is blank on 112 of 115 unpushed orders and address3/address4 on 94,
+     so an edit blanked whatever the account book held in them. */
+  test('an edit omits every header field the ERP has nothing for, instead of blanking the book', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{
+        ...so, linked_ac_docno: 'SO-000021',
+        debtor_name: null, phone: null, ref: null,
+        address1: null, address2: null, city: null, postcode: null, customer_state: null,
+      }],
+      mfg_sales_order_items: [{ ...item, linked_ac_dtlkey: 991 }],
+    });
+    expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-A' })).toBe(true);
+    const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+    for (const k of ['DebtorName', 'Attention', 'Ref', 'Phone1',
+      'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4']) {
+      expect(Object.prototype.hasOwnProperty.call(h, k), k).toBe(false);
+    }
+  });
+
+  test('an edit still SENDS the fields the ERP does have', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
+      mfg_sales_order_items: [{ ...item, linked_ac_dtlkey: 991 }],
+    });
+    await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-A' });
+    const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+    expect(h.InvAddr3).toBe('43300 Seri Kembangan');
+    expect(h.InvAddr4).toBe('Selangor');
+    expect(h.UDF).toEqual({
+      VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
+    });
+  });
+});
+
+/* ── WHAT THE CUTOVER EXTRACTED, SENT BACK ───────────────────────────────────
+   Owner's rule: "他抽取了什么东西，就代表什么东西都是要进来的" — whatever the
+   cutover pulled OUT of AutoCount is what the write-back has to put back. Three
+   header/line fields were in `backend/scripts/data/ac-fidelity-so-*.json.gz`
+   and in no payload, and each one is the recurring shape: the ERP holds the
+   value in a column the composer was not reading.
+
+   END-TO-END, not composer-only, for the reason the block above gives: the
+   defect lives in the SELECT LIST as much as in the compose, and a column list
+   is only exercised by a read. */
+describe('the three fields the extract carries and the write-back did not send', () => {
+  const so = {
+    doc_no: 'HC-SO-B', so_date: '2026-08-10', debtor_name: 'ACME', company_id: 1,
+    agent: null, salesperson_id: 'staff-1',
+    sales_location: 'KL WAREHOUSE', branding: null, venue: null,
+    address1: 'A1', address2: null, address3: null, address4: null,
+    city: null, postcode: null, customer_state: null,
+    phone: '012-1111111', emergency_contact_phone: '019-2222222',
+    ref: null, po_doc_no: null, customer_po: null, customer_so_no: null,
+    processing_date: null,
+    /* recomputeTotals writes local_total_centi = balance_centi =
+       total_revenue_centi = grandTotal on every edit. Only the third is read
+       here, and `balance_centi` is deliberately seeded to the GROSS total so a
+       composer that read it would be caught by the assertions below. */
+    total_revenue_centi: 500_00, balance_centi: 500_00, deposit_centi: 0,
+    linked_ac_docno: null,
+  };
+  const item = {
+    doc_no: 'HC-SO-B', item_code: ERP_A, description: 'Mattress',
+    qty: 1, unit_price_centi: 500_00, line_delivery_date: null,
+  };
+  const seed = (soOver: Row = {}, itemOver: Row = {}, extra: Record<string, Row[]> = {}) =>
+    withFlag('1', {
+      mfg_sales_orders: [{ ...so, ...soOver }],
+      mfg_sales_order_items: [{ ...item, ...itemOver }],
+      ...extra,
+    });
+
+  // ── UDF_BALANCE — 2,339 of the extract's 13,015 headers carry a non-zero one
+  describe('BALANCE — the outstanding amount, from the payments ledger and NOT from balance_centi', () => {
+    /* THE TRAP THIS TEST EXISTS FOR. `mfg_sales_orders.balance_centi` is the
+       column the cutover's own UDF_BALANCE landed in
+       (check-migration-fidelity.mjs:95), which makes it look like the answer —
+       and recomputeTotals overwrites it with the GROSS total on every edit, so
+       it is 500.00 here while the customer owes 200.00. */
+    test('a create sends total minus the payments ledger, not the stored balance_centi', async () => {
+      const sb = seed({}, {}, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 200_00, is_deposit: true },
+          { so_doc_no: 'HC-SO-B', amount_centi: 100_00, is_deposit: false },
+        ],
+      });
+      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      const udf = (outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF;
+      expect(udf.BALANCE).toBe('200.00');
+    });
+
+    /* The legacy half of the same rule (`soPaidCenti`): a deposit that never
+       reached the ledger still counts, and one that DID must not count twice. */
+    test('a legacy header deposit counts once — and only when the ledger has no is_deposit row', async () => {
+      const legacy = seed({ deposit_centi: 150_00 }, {}, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 50_00, is_deposit: false }],
+      });
+      await enqueueSoCreate(client(legacy), { companyId: 1, docNo: 'HC-SO-B' });
+      expect((outbox(legacy)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
+        .toBe('300.00');
+
+      const modern = seed({ deposit_centi: 150_00 }, {}, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 150_00, is_deposit: true }],
+      });
+      await enqueueSoCreate(client(modern), { companyId: 1, docNo: 'HC-SO-B' });
+      expect((outbox(modern)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
+        .toBe('350.00');
+    });
+
+    /* ZERO IS A VALUE. `udf()` drops a falsy entry, so a settled order has to
+       arrive as the string "0.00" — otherwise the account book keeps showing a
+       debt that has been paid, which is the staleness this field removes. */
+    test('a fully paid order sends 0.00 rather than dropping the key', async () => {
+      const sb = seed({}, {}, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 500_00, is_deposit: true }],
+      });
+      await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
+      expect((outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
+        .toBe('0.00');
+    });
+
+    test('an EDIT carries it too, so a payment taken after the create reaches the book', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true }],
+      });
+      expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' })).toBe(true);
+      const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+      expect(h.UDF.BALANCE).toBe('100.00');
+    });
+
+    /* A DOCUMENT WITH NO VALUE SENDS NO KEY. Zero is "nothing outstanding" and
+       would declare a real debt settled in a licensed ledger, so an order with
+       no `total_revenue_centi` says nothing and the book keeps its own. */
+    test('an order with no total sends no BALANCE at all', async () => {
+      const sb = seed({ total_revenue_centi: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+      expect(h).not.toHaveProperty('UDF');
+    });
+  });
+
+  // ── DeliverPhone1 — 120 of the extract's 13,015 headers carry one
+  describe('DeliverPhone1 — the DELIVERY contact, which is not the customer\'s phone', () => {
+    /* Two contacts, two columns (owner 2026-08-15). The pairing is the
+       cutover's own, read backwards: import-ac-outstanding-so.mjs:302 took
+       AutoCount's DeliverPhone1 into emergency_contact_phone. Reading `phone`
+       for both would put the customer's number in front of the driver. */
+    test('a create sends emergency_contact_phone, and the customer phone stays Phone', async () => {
+      const sb = seed();
+      await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
+      const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+      expect(body.Phone).toBe('012-1111111');
+      expect(body.DeliverPhone1).toBe('019-2222222');
+    });
+
+    test('an EDIT sends it too — this is where a changed delivery number was lost', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+      expect(h.Phone1).toBe('012-1111111');
+      expect(h.DeliverPhone1).toBe('019-2222222');
+    });
+
+    /* No second contact is the normal case — 12,895 of the 13,015 extracted
+       headers. On an edit the key is omitted so the book keeps its own; on a
+       create the service's own Or() reuses Phone, which is exactly the rule the
+       cutover applied when it kept DeliverPhone1 only where it DIFFERED. */
+    test('no second contact sends no key on an edit, and null on a create', async () => {
+      const edit = seed({ emergency_contact_phone: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
+      await enqueueEdit(client(edit), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      expect(outbox(edit)[0].payload.body.Header as Record<string, unknown>)
+        .not.toHaveProperty('DeliverPhone1');
+
+      const create = seed({ emergency_contact_phone: null });
+      await enqueueSoCreate(client(create), { companyId: 1, docNo: 'HC-SO-B' });
+      expect((outbox(create)[0].payload.body as Record<string, unknown>).DeliverPhone1).toBeNull();
+    });
+  });
+
+  /* Desc2 is AutoCount's Further Description, which the cutover PARSED to get
+     the ERP's variants — so the specification goes back through the ERP's own
+     renderer. The ceiling comes with it: SODTL.Desc2 is nvarchar(100) and the
+     book is AT it (longest of the extract's 15,950 values is exactly 100), so a
+     richer string can now reach it and SQL Server would take the whole document.
+     A refusal nobody can see is indistinguishable from a write-back that quietly
+     stopped working, so it lands under its own CLASS NAME — the health check
+     buckets on that name, and matching the shared "refused, nothing sent" prefix
+     is the mislabelling #2094 already had to undo. */
+  describe('Further Description — the ERP\'s own renderer, and AutoCount\'s 100-character ceiling', () => {
+    test('a bedframe carries the colour, the divan, the leg and the gap into Desc2', async () => {
+      const sb = seed({}, {
+        description2: null,
+        item_group: 'bedframe',
+        variants: { fabricCode: 'PC151-01', colourLabel: 'Sand', divanHeight: '8"', legHeight: '2"', gap: '12"' },
+      });
+      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
+      expect(d.Desc2).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12"');
+    });
+
+    test('a Further Description over nvarchar(100) is refused into a NAMED skipped row', async () => {
+      const sb = seed({}, {
+        description2: null,
+        item_group: 'bedframe',
+        variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
+      });
+      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(false);
+      const [row] = outbox(sb);
+      expect(row.status).toBe('skipped');
+      expect(row.last_error).toContain('refused, nothing sent (Desc2TooLongError)');
+      expect(outbox(sb).some((r) => r.status === 'pending')).toBe(false);
+    });
+  });
+
+  // ── DeliveryDate — 11,886 of the extract's 60,939 lines carry a BLANK
+  describe('the line delivery date, including the BLANK the book itself holds', () => {
+    test('a create sends the ERP line date', async () => {
+      const sb = seed({}, { line_delivery_date: '2026-09-01' });
+      await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
+      const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
+      expect(d.DeliveryDate).toBe('2026-09-01');
+    });
+
+    /* THE OWNER'S REPORT. With no key at all AutoCount fills its own default —
+       the document date — on a line the ERP has no date for. The key is now
+       sent PRESENT-AND-NULL, which the service's ContainsKey guard turns into a
+       real blank, and a blank is what the cutover left on 11,886 lines. */
+    test('a create with no ERP date sends the key as an explicit null, not as an omission', async () => {
+      const sb = seed();
+      await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
+      const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
+      expect(Object.prototype.hasOwnProperty.call(d, 'DeliveryDate')).toBe(true);
+      expect(d.DeliveryDate).toBeNull();
+    });
+
+    /* The create/edit asymmetry, same as Location one level down: on a line the
+       book already holds, a blank would ERASE a date an operator may have set
+       in AutoCount itself. */
+    test('an EDIT omits the key when the ERP has none, and sends it when it does', async () => {
+      const blank = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
+      await enqueueEdit(client(blank), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const noDate = (outbox(blank)[0].payload.body as { Lines: Array<Record<string, unknown>> }).Lines[0];
+      expect(Object.prototype.hasOwnProperty.call(noDate, 'DeliveryDate')).toBe(false);
+
+      const dated = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991, line_delivery_date: '2026-09-05' });
+      await enqueueEdit(client(dated), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const withDate = (outbox(dated)[0].payload.body as { Lines: Array<Record<string, unknown>> }).Lines[0];
+      expect(withDate.DeliveryDate).toBe('2026-09-05');
+    });
+
+    /* A PURCHASE order keeps the same fact under a different column name. */
+    test('a purchase order reads purchase_order_items.delivery_date', async () => {
+      const sb = withFlag('1', {
+        purchase_orders: [{
+          id: 'po-b', po_number: 'HC-PO-B', po_date: '2026-08-10',
+          supplier_id: 'sup-1', notes: null, company_id: 1, linked_ac_docno: null,
+        }],
+        suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
+        purchase_order_items: [{
+          purchase_order_id: 'po-b', material_code: ERP_A, description: 'M',
+          qty: 1, unit_price_centi: 100, warehouse_id: 'wh-kl', delivery_date: '2026-10-02',
+        }],
+        warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
+      });
+      expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-b' })).toBe(true);
+      const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
+      expect(d.DeliveryDate).toBe('2026-10-02');
+    });
+  });
+});
+
+/* Finding 11. `dispatchOne` calls mastersOf for `edit` as well as the two
+   creates, but an edit payload keeps its header one level down —
+   {DocType, DocNo, Header{…, UDF{…}}, Lines[]} — so every top-level read
+   missed it and only the line items were ever opened. Harmless only while the
+   edit sent nothing the book did not hold; the pass-through above ends that,
+   which is why this landed in the same pull request. */
+describe("mastersOf can see an EDIT payload's header, not just its lines", () => {
+  const editBody = (over: Record<string, unknown> = {}) => ({
+    DocType: 'SO', DocNo: 'SO-000021',
+    Header: {
+      Agent: 'Nurul Hidayah', SalesLocation: 'SUNWAY',
+      UDF: { VENUE: 'AEON BIG KEPONG', BRANDING: 'CARRESS' },
+      ...over,
+    },
+    Lines: [{ DtlKey: 991, Qty: 1 }],
+  });
+
+  test('the agent, the location and both dropdown options are opened', () => {
+    const m = mastersOf(editBody()) as {
+      Agents: Array<Record<string, string>>;
+      Locations: Array<Record<string, string>>;
+      UdfOptions: Array<Record<string, string>>;
+    };
+    expect(m.Agents).toEqual([{ Agent: 'Nurul Hidayah' }]);
+    expect(m.Locations).toEqual([{ Location: 'SUNWAY' }]);
+    expect(m.UdfOptions).toContainEqual({ List: 'VENUE', Value: 'AEON BIG KEPONG' });
+    expect(m.UdfOptions).toContainEqual({ List: 'BRANDING', Value: 'CARRESS' });
+  });
+
+  /* A PURCHASE edit carries no CreditorCode at all — composePoState sends only
+     CreditorName and Description — so the sales/purchase discriminator has to
+     fall back to DocType. Opening an agent in the wrong table reads as success
+     and refuses the document anyway (the 2026-08-12 finding). */
+  test("a PO edit's agent goes to the PURCHASE agent master, with no CreditorCode to say so", () => {
+    const m = mastersOf({
+      DocType: 'PO', DocNo: 'PO-000021',
+      Header: { Agent: 'OTHERS', CreditorName: 'NICOLLO' },
+      Lines: [{ DtlKey: 5, Qty: 1 }],
+    }) as { Agents: unknown[]; PurchaseAgents: Array<Record<string, string>> };
+    expect(m.PurchaseAgents).toEqual([{ PurchaseAgent: 'OTHERS' }]);
+    expect(m.Agents).toEqual([]);
+  });
+
+  test('a create payload is unaffected — the top level still wins', () => {
+    const m = mastersOf({
+      Agent: 'TOP', SalesLocation: 'KL', UDF: { VENUE: 'V1' },
+      Details: [{ ItemCode: 'A' }],
+    }) as { Agents: Array<Record<string, string>>; UdfOptions: Array<Record<string, string>> };
+    expect(m.Agents).toEqual([{ Agent: 'TOP' }]);
+    expect(m.UdfOptions).toEqual([{ List: 'VENUE', Value: 'V1' }]);
+  });
+});
+
+/* Finding 2. `scm.purchase_orders` has no agent column at all, so readPoHeader
+   sent null for every one of the 60 unpushed purchase orders — and CreatePo
+   assigns po.Agent unconditionally while Str turns a present-null into "",
+   which is FK_PO_PurchaseAgent. Omitting the key would not have helped. */
+describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', () => {
+  const seeded = () => withFlag('1', {
+    purchase_orders: [{
+      id: 'po-1', company_id: 1, po_number: 'HC-PO-1', po_date: '2026-08-10',
+      supplier_id: 'sup-1', notes: null, linked_ac_docno: null,
+    }],
+    purchase_order_items: [{
+      id: 'poi-1', purchase_order_id: 'po-1', material_code: ERP_A, description: 'M',
+      qty: 1, unit_price_centi: 100, warehouse_id: 'wh-kl',
+    }],
+    warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
+    suppliers: [{ id: 'sup-1', code: '400-N002', name: 'NICOLLO SDN BHD' }],
+  });
+
+  test('the payload carries the constant, never a null', async () => {
+    const sb = seeded();
+    expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).toBe(true);
+    expect(outbox(sb)[0].payload.body.Agent).toBe('OTHERS');
+  });
+
+  test('and /ensure-masters is asked for it as a PURCHASE agent, not a sales one', async () => {
+    const sb = seeded();
+    await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' });
+    const m = mastersOf(outbox(sb)[0].payload.body as Record<string, unknown>) as {
+      Agents: unknown[]; PurchaseAgents: Array<Record<string, string>>;
+    };
+    expect(m.PurchaseAgents).toEqual([{ PurchaseAgent: 'OTHERS' }]);
+    expect(m.Agents).toEqual([]);
+  });
+
+  /* Finding 4. CreditorCode is assigned DIRECTLY by CreatePo — not through
+     Set — so a supplier with no code is FK_PO_Creditor and the whole document
+     is lost. Zero purchase orders are in that shape today; the refusal is what
+     stops the first one being a mystery 500 in the host's log. */
+  test('a supplier with no code lands a SKIPPED row naming the constraint', async () => {
+    const sb = seeded();
+    sb.tables.suppliers[0].code = null;
+    /* false = "nothing was queued for AutoCount", the same answer every other
+       refusal gives its caller; the visible half is the skipped row. */
+    expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).toBe(false);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('FK_PO_Creditor');
+    expect(row.last_error).toContain('MissingCreditorError');
+  });
+});
+
+/* Finding 13, the half that can destroy a value. Every caller of
+   enqueueConvert omits `ref` and `docDate`, so the body was always
+   {DocNo, DocDate: null, Ref: null} — and SalesHeader / PurchaseHeader apply
+   `Set(() => doc.Ref = Str(p, "Ref"))` unconditionally, so "" was written over
+   whatever the transfer had put there. Passing the ERP's own reference at the
+   six call sites is the other half and is still open. */
+describe("a conversion says nothing rather than blanking the target's reference", () => {
+  const seeded = () => withFlag('1', {
+    delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-1', linked_ac_docno: null }],
+    delivery_order_items: [],
+  });
+
+  test('no ref and no date means neither key is present at all', async () => {
+    const sb = seeded();
+    expect(await enqueueConvert(client(sb), {
+      companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    })).toBe(true);
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(body, 'Ref')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(body, 'DocDate')).toBe(false);
+    expect(body.DocNo).toBe('HC-DO-1');
+  });
+
+  test('a ref the caller DOES pass is still sent', async () => {
+    const sb = seeded();
+    await enqueueConvert(client(sb), {
+      companyId: 1, op: 'so_to_do', docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+      ref: 'DN-99', docDate: '2026-08-14',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-1' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    });
+    const body = outbox(sb)[0].payload.body as Record<string, unknown>;
+    expect(body.Ref).toBe('DN-99');
+    expect(body.DocDate).toBe('2026-08-14');
+  });
+});

@@ -341,7 +341,7 @@ Each of these was a live theory and each is refuted, so nobody re-chases them:
 
 **`npm --prefix backend run audit:jsonb-binds`** — `backend/scripts/check-jsonb-binds.mjs`,
 wired into `.github/workflows/ci.yml` (`backend-typecheck`), proved by
-`backend/tests/jsonbBindScan.node.mjs`.
+`backend/tests/jsonbBindScan.test.mjs`.
 
 It fails on any `JSON.stringify` bound as a query parameter anywhere in
 `backend/src` or `backend/scripts`, in both shapes this repo writes: interpolated

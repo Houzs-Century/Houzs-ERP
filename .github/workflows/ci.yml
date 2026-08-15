@@ -66,12 +66,26 @@ jobs:
       # backend suite runs in workerd and has no filesystem.
       - run: npm run audit:job-types
       - run: npm run audit:work-order-states
-      # Bug index drift. PR-only on purpose: it is NOT in deploy.yml, because a
-      # stale doc must never block a release (audit:routes as a deploy gate jammed
-      # prod twice in one day). But it IS gated here, because the ungated
-      # audit:map crashed unnoticed for three weeks — see
-      # docs/staging-bench-rot-coe.md. PR-gated, deploy-free is the shape that
-      # survives both failure modes.
+      # Does every test suite on disk actually get RUN? A suite collected by no
+      # vitest project does not fail — it is absent, and CI reports fewer files
+      # and goes green. Deliberately a script step and not a test: written as a
+      # test first, it turned out to be one of the files that stops being
+      # collected, so it would have vanished with the 17 suites it guards.
+      - run: npm run audit:test-projects
+      # The two DERIVED docs. Neither is in deploy.yml — a stale doc must never
+      # block a release (audit:routes as a deploy gate jammed prod twice in one
+      # day) — and since 2026-08-14 neither fails a PR on DRIFT either. They
+      # mirror things every PR is required to move: BUG-HISTORY.md, which the
+      # working agreement makes every code PR append to, and line numbers, which
+      # shift on every backend merge. With serial merges that made them a
+      # deadlock: five PRs failed here at once, were regenerated one by one, and
+      # were stale again after the next merge.
+      #
+      # What they DO still fail on is the reason they are here at all — the
+      # generator producing nothing, the failure docs/staging-bench-rot-coe.md
+      # records going unnoticed for three weeks. Drift prints on every run with
+      # both counts; `--strict` fails on it for anyone who wants that.
+      # Pinned by backend/tests/derivedDocsDoNotDeadlock.test.mjs.
       - run: npm run audit:bug-index
       - run: npm run audit:map
       - run: npm run audit:doc-refs
@@ -83,6 +97,13 @@ jobs:
       # against last month's account book while the suite stayed green.
       - run: npm run audit:ac-item-map
       - run: npm run audit:ac-sofa-corpus
+      # And a THIRD since 2026-08-14: the four master-data spelling maps
+      # (agent / location / venue / branding) are compiled from
+      # autocount-so-writeback-mappings.json, so that CONFIRMING a binding is an
+      # edit to the JSON that also carries its reason — never a hand-edit of a
+      # TypeScript object literal. Before this, the JSON and the TS had drifted
+      # apart in all four dimensions.
+      - run: npm run audit:ac-master-maps
       # ── The three defect-class checks (2026-08-13) ────────────────────────
       # Each exists because the same class kept coming back. They are PR gates,
       # NEVER deploy gates: audit:routes as a deploy gate jammed production
@@ -184,7 +205,12 @@ jobs:
       # Same class this repo keeps finding: a check that cannot run reports
       # nothing, and reads as a pass. Named explicitly so a future rename of the
       # test script cannot orphan them again silently. ~0.4s.
-      - run: npm run test:scale-contract
+      # test:scale-contract is GONE, and so is the pretest that ran it. Those
+      # seventeen files were `node --test`, whose runs contribute NOTHING to the
+      # merged coverage report — so twelve genuinely-tested scripts/lib modules
+      # read to the coverage ratchet as having no test at all. They are ordinary
+      # vitest files now (`*.test.mjs`, node:assert kept, only the `test` import
+      # swapped) and run in the light project above, where they are MEASURED.
 
       # The two artefacts a revert cannot undo: a migration, which pg-migrate
       # applies to prod on the next push to main and records by filename AND
@@ -221,18 +247,13 @@ jobs:
       # spread across the four workerd shards below at ~1.76s of startup per
       # file. Not sharded: sharding 7s of work across runners costs more in
       # checkout than it saves.
-      # `test:coverage:light` and not `test:light`: the SAME files, with
-      # istanbul on (measured 2026-08-13: 7s -> 41s, still inside this job's
-      # minute). Its report is half of what the coverage-ratchet job merges —
-      # the other half comes from the workers shards below, and merging the two
-      # is the only way to get one honest number per area.
-      - run: npm run test:coverage:light
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-backend-light
-          path: backend/coverage/light/coverage-final.json
-          if-no-files-found: error
-          retention-days: 3
+      # BARE, not instrumented — and this half is cheap (7s -> 41s), so it is
+      # dropped for a different reason than the workers half: a HALF report is
+      # worse than none. The ratchet merges light + workers + frontend into one
+      # number per area; feeding it only the light half would report the workers
+      # areas as near-zero and fail floors that nothing actually broke. Coverage
+      # is measured whole, on main, by .github/workflows/coverage.yml.
+      - run: npm run test:light
 
   # The backend suite is 112 files and it runs them SERIALLY inside a single
   # workerd worker (`singleWorker: true` in backend/vitest.config.mts). That is
@@ -321,17 +342,19 @@ jobs:
       # LAST command only — so every shard would re-run all 221 light files to
       # shard the 44 workers ones. Same append trap documented for `pretest` in
       # docs/SCALE-PERFORMANCE-HARNESS.md, one script along.
-      # `test:coverage:workers`, so this shard's slice of the workers project
-      # lands in the merged coverage report. Measured 2026-08-13: the whole
-      # workers project is 106s bare and 265s instrumented, so a quarter of it
-      # is well under this job's existing budget.
-      - run: npm run test:coverage:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-backend-workers-${{ matrix.shard }}
-          path: backend/coverage/workers/coverage-final.json
-          if-no-files-found: error
-          retention-days: 3
+      # BARE, not instrumented. This ran `test:coverage:workers` from 2026-08-13
+      # until 2026-08-14, and the sizing comment that justified it ("106s bare,
+      # 265s instrumented") was already stale when it was written.
+      #
+      # Re-measured 2026-08-14 across the whole shard set:
+      #   without coverage  217s of test work   (run 31779735023)
+      #   with coverage     746s of test work   (run on perf/ci-critical-path)
+      #
+      # 529 seconds, on every PR, on the job that IS the critical path. That is
+      # not a coverage problem, it is a placement problem: the number only has
+      # to be true per MERGE, not per push. It is measured on main instead, by
+      # .github/workflows/coverage.yml. See that file for what is given up.
+      - run: npm run test:workers -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
   # Roll-up so the backend gate keeps ONE stable check name. Before this PR the
   # required-looking check was `backend`; after the split the real work lives in
@@ -355,51 +378,88 @@ jobs:
           [ "${{ needs.backend-typecheck.result }}" = "success" ] || exit 1
           [ "${{ needs.backend-tests.result }}" = "success" ] || exit 1
 
-  # EVERY area against its floor, from ONE merged report.
+  # ── Lint ──────────────────────────────────────────────────────────────────
+  # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
+  # no "lint" script in any of the seven package.json files — while backend/src
+  # and frontend/src carried 514 hand-written `eslint-disable` comments that had
+  # never suppressed anything, because nothing ever ran.
   #
-  # It has to be its own job because the inputs are produced by three different
-  # jobs: the backend light suite (backend-typecheck), the four workers shards
-  # (backend-tests), and the frontend suite (frontend-checks). Each of those already
-  # checks what it can see on its own — `frontend-checks` fails immediately on a
-  # frontend/src regression, which is the fast feedback that matters — but no
-  # single one of them can compute the backend numbers, because a file in
-  # scm/lib is executed by BOTH backend projects and only the union is true.
+  # Its own job and NOT a step inside `backend`/`frontend`, for the reason
+  # backend-typecheck was split out of backend-tests: a lint finding is reported
+  # in ~1 minute instead of behind 334s of tests it does not depend on. It also
+  # keeps the two apps' verdicts separate — `lint (backend)` and
+  # `lint (frontend)` — so one app's ratchet cannot hide the other's.
   #
-  # It depends on `frontend-checks` and not the `frontend` roll-up on purpose: the
-  # roll-up also waits on the bundle and perf jobs, and a bundle-size failure must
-  # not SKIP the coverage verdict — a skipped check is not a failed check.
+  # `npm run lint` is scripts/lint-ratchet.mjs, not a bare eslint: every rule is
+  # a WARNING and the ratchet is the gate (a per-file ceiling that may only
+  # fall). It prints the per-rule ceiling->now table on every run, pass or fail,
+  # so a green job is evidence the check RAN and not merely that nothing tripped.
   #
-  # This job is NOT in the repo's required-check ruleset (only `backend-typecheck`
-  # and `frontend` are, and that list is the owner's to change). It shows as a
-  # red X on the PR. The frontend area is the one that hard-blocks today, from
-  # inside `frontend-checks`, which the `frontend` roll-up covers.
-  coverage-ratchet:
-    needs: [backend-typecheck, backend-tests, frontend-checks]
+  # Do NOT make this a required status check until it has run green on a few
+  # merges. Adding it to the ruleset is a separate, deliberate step.
+  lint:
     runs-on: ubuntu-latest
+    # FRONTEND ENFORCES. BACKEND REPORTS. Deliberate, with a written exit
+    # condition — read it before "fixing" the backend leg.
+    #
+    # The backend ratchet is 16 file/rule pairs over ceiling, and every one is
+    # debt MAIN grew while this PR waited, not something this PR wrote. Twelve
+    # are @typescript-eslint/no-unnecessary-condition in the money routes
+    # (consignment, delivery, GRN, purchase-invoices, sales-invoices), and they
+    # are NOT safe to "fix" by deleting the condition. Worked example,
+    # scm/routes/consignment-notes.ts:294 —
+    #
+    #     const noteNo = (header as { do_number: string }).do_number ?? noteId;
+    #
+    # eslint calls the `??` unnecessary because the hand-written `as` cast
+    # promises a non-null string. The cast is a LIE: `header` came from a
+    # `sb: any` supabase read and the column is nullable. That `??` is the only
+    # thing standing between a null and a document number used for inventory
+    # resync. Deleting it to green a linter would put a real bug in a money path.
+    #
+    # The real fix is upstream — honest types instead of `any` + casts — and it
+    # is NOT available today: backend/src/db/schema.pg.ts contains ZERO of the
+    # SCM money tables, so there is nothing to derive types FROM, and
+    # hand-writing them from migration DDL is the same guess in a new costume.
+    # The schema file's own header names the prerequisite: `drizzle-kit pull`
+    # against the live database.
+    #
+    # So: land the linter, enforce it where it is clean, and make the backend
+    # leg advisory rather than leave a permanent red X — a check that is always
+    # red is a check everyone learns to ignore, which is the exact failure the
+    # ratchet exists to prevent. The findings still print in the log.
+    #
+    # REMOVE continue-on-error WHEN schema.pg.ts covers the SCM tables from
+    # `drizzle-kit pull`, the money routes are typed off it, and
+    # `npm --prefix backend run lint` is green. Not before.
+    #
+    # The suppression is `--advisory` ON THE SCRIPT, not `continue-on-error` on
+    # the job. Measured 2026-08-14: continue-on-error stops the workflow failing
+    # but GitHub still publishes the job's check run as FAILURE, so the red X
+    # survives and the wallpaper problem is not solved. --advisory makes the
+    # verdict where the verdict is made. Hard errors — ESLint missing, config
+    # broken — are NEVER advisory, so a gate that did not execute still fails.
+    strategy:
+      # Both legs always run: seeing which app moved is the whole point, and a
+      # cancelled sibling would report as neither pass nor fail.
+      fail-fast: false
+      matrix:
+        app: [backend, frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      # The gate's own logic first: if these fail, nothing it says about
-      # coverage means anything.
-      - run: node --test scripts/check-coverage-verdict.mjs
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/coverage
-          pattern: coverage-*
-      # A gate whose scan found nothing must SAY SO. Printing the inputs is how
-      # you tell "the ratchet passed" from "the ratchet found no reports", and
-      # the script itself exits non-zero on an empty set rather than passing.
-      - name: List the reports that were downloaded
-        run: find /tmp/coverage -name coverage-final.json | sort
-      - name: Check every area against its floor
-        run: |
-          set -euo pipefail
-          REPORTS=()
-          while IFS= read -r f; do REPORTS+=(--report "$f"); done < <(find /tmp/coverage -name coverage-final.json | sort)
-          echo "found ${#REPORTS[@]} report arguments"
-          node scripts/coverage-ratchet.mjs --check "${REPORTS[@]}"
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      # Backend reports, frontend enforces. A developer running
+      # `npm --prefix backend run lint` locally still gets exit 1 and the truth;
+      # only this leg, in CI, is told to report instead of fail.
+      - run: npm run lint ${{ matrix.app == 'backend' && '-- --advisory' || '' }}
 
   scale-postgres-contract:
     # The full 100k evidence run is deliberately PR-only. GitHub emits both a
@@ -539,12 +599,6 @@ jobs:
       # suite and no report — a typed number in a doc is how CLAUDE.md came to
       # claim the database was D1 SQLite for a month after the Postgres cutover.
       - run: node ../scripts/coverage-ratchet.mjs --check-docs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage-frontend
-          path: frontend/coverage/coverage-final.json
-          if-no-files-found: error
-          retention-days: 3
       # Zero-dependency node:test checks for the gate scripts' own logic.
       # Not part of `npm test` (vitest only collects src/**), so they are run
       # explicitly here — a checker nobody runs is not a checker.

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-13
 **Trigger:** The owner turned the write-back on and saved a Sales Order: *"所以我可以去开单，然后看它会不会进到去 AutoCount，是吗？"* Then, an hour and two orders later: *"我开了一张 Sales Order，帮我看一下这张通道去 AutoCount 会打通吗？"* It had not. Neither had the second.
-**Status:** Root causes TRACED, all seven of them, each against source or production rather than inference. Twelve fixes shipped the same day, and fault 7 — the one that was "in flight at time of writing" — landed as #2148. **Not resolved:** no document has reached the account book yet. Nothing was written to the licensed book at any point; every failure was refused before it landed. The two orders are `failed` at `MAX_ATTEMPTS`, and the re-queue tool refuses a non-`skipped` row by design, so re-sending them is an owner decision (§5).
+**Status:** RESOLVED 2026-08-15. Root causes TRACED, all seven, each against source or production rather than inference. Twelve fixes shipped on the day and fault 7 landed as #2148. **`HC-SO-2608-001` and `-002` are in the account book** — the health check reads `sent 2`, and every one of the 2,725 company-1 sales orders now carries a `linked_ac_docno`. Nothing was written to the licensed book before that point: every failure was refused first, and the two orders reached it only after the master data they name was bound to what the book already held (#2208, #2209).
 
 ---
 
@@ -71,12 +71,12 @@ In all three the ERP was right, the screen was right, and the write-back read th
 
 | Item | Owner |
 |---|---|
-| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | in progress, `docs/autocount-field-alignment-audit.md` [planned] |
+| A field-by-field alignment audit — venue, branding, debtor, customer PO — for more instances of the shape in section 2 | DONE. `docs/autocount-field-alignment-audit.md` found 8 BROKEN, all fixed by #2200. Its row counts were inflated about fiftyfold by a missing company predicate (#2201): scoped to Houzs the whole picture is TWO orders, and the audit now carries that correction at the top |
 | `recompute-2990-so-allocation.yml` is wired to secrets that do not exist and has never run; it is also what the re-queue was copied from | flagged with a header, own task |
 | `wrangler secret list` cannot be run here — the authenticated account does not match `account_id` in `wrangler.toml` | unassigned |
 | The C# create has no guard against a duplicate ERP document number, so a lost response on a retry could create a second document | unassigned; narrow, needs a mid-flight failure |
 | Browser verification of the payment-slip and address UI changes | owner |
-| `HC-SO-2608-001` / `-002` are `failed` at `MAX_ATTEMPTS` and the re-queue tool refuses a non-`skipped` row on purpose ("a failed create WAS sent"). Here the health check says `sent 0` and a foreign key rejects before any write, so nothing landed and both are safe to re-attempt — but relaxing that guard is a decision, not a cleanup | owner |
+| `HC-SO-2608-001` / `-002` re-sent | DONE. #2189 gave the re-queue an explicit `includeFailed` opt-in rather than widening its default, because a `failed` row WAS sent and the C# create has no duplicate guard. Here a foreign key rejects before any write, so nothing had landed; both are now `sent` |
 | A PURCHASE order has no agent at all: `readPoHeader` hardcodes `agent: null`, so every `/create-po` sends `Agent: ""` into `FK_PO_PurchaseAgent` — fault 7's shape on the other document type. Needs a decision about what AutoCount's purchase reports should attribute an ERP order to | owner |
 
 ---

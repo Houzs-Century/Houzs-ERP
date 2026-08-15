@@ -68,7 +68,22 @@ Rollout is staged (lenses/docs → DO-time live allocator → pooled caps →
 display demotion); until every stage lands, the transitional guard remains:
 rejecting an SO-revision follow-up auto-releases the PO to STOCK.
 
-
+> **The DO-time live allocator stage LANDS WITH PR-4 (this branch, owner-gated
+> — NOT on main until the flip merges).** From that merge,
+> `resolveShipCommitments` binds `committed_po_batch_no` from
+> `allocateExpectedBatches` (`backend/src/scm/lib/do-live-allocator.ts`) —
+> pooled open-PO supply minus outstanding commitments, owner tiebreaks
+> encoded (supply: earliest effective ETA nulls-last then smaller PO number;
+> demand: delivery date then smaller doc number; sofa sets picked whole; ties
+> auto-pick + operator confirms in the existing short-stock dialog). What
+> remains of the stored `so_item_id` link on the SHIP path after the flip:
+> **provenance display and evidence only** — the BIND_SHADOW divergence rows,
+> the DO detail's bound-PO Source-PO fallback (`resolveExpectedBatchBySoItem`
+> at the detail read), the legacy pre-0230 drop-ship batch re-resolution in
+> `resolveDoSofaBatchMap` (anchored history, not a new binding), and — flagged
+> as an open review item on the flip PR — the Type-A sofa no-batch guard's
+> drop-ship waiver. It decides no cap, no batch expectation, no coverage
+> precedence. See `docs/modules/delivery-order.md` §5 for the mechanism.
 
 ### Why — the owner's business case (2026-08-06, verbatim intent)
 
@@ -300,7 +315,9 @@ UUID**; use `houzsUser.id` for the public bigint.
 
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
 finds the expected batch through it, `/po-so-coverage` treats it as the STATIC
-link, and `recomputeSoPicked` counts from it. Measured on prod 2026-07-31, **67
+link, and `recomputeSoPicked` counts from it. (**Post-PR-4** the first of those
+three is provenance/evidence only — the ship-time batch expectation comes from
+the live allocator; see the §Decision callout above.) Measured on prod 2026-07-31, **67
 of 101 live PO lines carried none** — the From-SO and convert-from-SO paths stamp
 it, but a hand-typed line never could.
 

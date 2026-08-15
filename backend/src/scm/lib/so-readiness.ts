@@ -53,6 +53,9 @@ export type ReadinessSummary = {
   isMainReady:  boolean;
   /** True when EVERY non-cancelled line — incl. accessories — is READY. */
   isFullyReady: boolean;
+  /** THE ship gate — use this, never bare isMainReady (see below). False for a
+   *  line-less SO. */
+  isShipReady:  boolean;
   /** UI label per the contract above (empty string when SO has no lines). */
   stockRemark:  string;
   /** Category labels still PENDING, dedup'd + sorted. ACC collapses to one
@@ -102,6 +105,22 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
 
   const isMainReady  = mainCount > 0 ? mainReady === mainCount : true;  // no-main SO = main-ready by convention
   const isFullyReady = (mainCount + accCount) > 0 && mainReady === mainCount && accReady === accCount;
+  /* THE ship gate. isMainReady is VACUOUSLY true when mainCount === 0, which is
+     the right convention for an accessory-only SO but a trap everywhere else:
+     an SO with NO stock-bearing lines at all also reports main-ready, so any
+     caller gating on bare isMainReady ships an empty document.
+
+     That is not hypothetical. On 2026-08-13/14 the 2990 POS minted 16 test SOs;
+     staff "undid" them by deleting every line, and the auto-allocation sweep
+     then advanced all 16 empty husks to READY_TO_SHIP — "every main product
+     line is READY" is trivially satisfied by zero lines. Delivery Planning had
+     already worked around this locally; the gate now lives here so that every
+     caller inherits it.
+
+     Rule: when the SO HAS a main line, main-ready is enough (accessories don't
+     block ship). Otherwise fall back to isFullyReady, which requires at least
+     one live line AND all of them READY — so a line-less SO is never ship-able. */
+  const isShipReady  = mainCount > 0 ? isMainReady : isFullyReady;
 
   /* Stock remark — shows WHAT IS READY (so warehouse staff know what they
      can pull NOW without asking the salesperson). */
@@ -131,5 +150,5 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
   const pc = [...pendingMainCats].sort();
   if (anyAccPending) pc.push('ACC');
 
-  return { mainCount, mainReady, accCount, accReady, isMainReady, isFullyReady, stockRemark, pendingCategories: pc };
+  return { mainCount, mainReady, accCount, accReady, isMainReady, isFullyReady, isShipReady, stockRemark, pendingCategories: pc };
 }

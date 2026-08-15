@@ -40,6 +40,11 @@ on:
         required: false
         default: "0"
         type: string
+      include_failed:
+        description: "1 to ALSO re-send documents AutoCount refused. Only when the refusal changed nothing there (a foreign key does not, an ambiguous 500 might)"
+        required: false
+        default: "0"
+        type: string
 
 # Its own group. A recovery run must never queue behind — or displace — a deploy.
 concurrency:
@@ -69,6 +74,7 @@ jobs:
           DOC_NO: ${{ inputs.doc_no }}
           DOC_TYPE: ${{ inputs.doc_type }}
           APPLY: ${{ inputs.apply }}
+          INCLUDE_FAILED: ${{ inputs.include_failed }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first

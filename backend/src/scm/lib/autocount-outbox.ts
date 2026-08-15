@@ -52,19 +52,28 @@ import {
   LOCATION_MAP,
   BRANDING_MAP,
   VENUE_MAP,
-  mapOrPassthrough,
+  AC_PURCHASE_AGENT,
+  bookSpelling,
+  bookSpellingOrOwn,
   resolveAcAgent,
+  soBranding,
+  soCustomerRef,
+  soInvoiceAddress,
   composeCreatePo,
   composeCreateSo,
   composeDescription2,
   composeDetails,
   composeEdit,
   acUdfDate,
+  acUdfMoney,
   acServiceConfig,
+  Desc2TooLongError,
   ItemCodeError,
   KeylessLineError,
   MissingAgentError,
+  MissingCreditorError,
   MissingLocationError,
+  MissingSalesLocationError,
   SofaCollapseError,
   type AcDocType,
   type AcOp,
@@ -76,6 +85,11 @@ import {
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
    also importing the composer module. */
 export type { AcRetiredLine } from '../../services/autocount-writeback';
+
+import { mastersOf } from './autocount-masters';
+/* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
+   reason mastersOf was: this file is at the 2,000-line cap. */
+import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -223,14 +237,40 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    `agent` is the legacy free text beside it. Both are read because the write-
    back needs the second only when the first is empty — see readSalespersonName
    and resolveAcAgent. */
+/* city / postcode / customer_state are the town, postcode and state of an
+   ERP-created order: address3 and address4 were written ONLY by the cutover
+   import, so without these three the AutoCount document carried the street
+   lines and nothing else (soInvoiceAddress packs the five into four).
+   customer_po / customer_so_no are the other two columns that have held the
+   customer's own reference — PR #140 left `customer_so_no` as the only one any
+   surface still writes, so reading po_doc_no alone sent ToPONo nowhere
+   (soCustomerRef). */
+/* emergency_contact_phone is AutoCount's DeliverPhone1 and `phone` is its
+   Phone1 — two contacts, two columns (owner 2026-08-15). The cutover decided
+   the pairing in this direction already: import-ac-outstanding-so.mjs:302 takes
+   DeliverPhone1 when it differs from Phone1 and inserts it as
+   emergency_contact_phone (:390/:412). Reading `phone` for both would put the
+   customer's number in front of the driver.
+   total_revenue_centi + deposit_centi are two of the three inputs to the
+   outstanding balance the BALANCE UDF carries; the third is the payments ledger
+   (readSoOutstandingCenti). NOT balance_centi — recomputeTotals rewrites that to
+   the gross total on every edit, and it is the column the cutover's UDF_BALANCE
+   landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, phone, ref, po_doc_no, processing_date, linked_ac_docno';
-/* `cancelled` is on THIS list and on no other, because only
-   scm.mfg_sales_order_items has the column (the other five line tables are
-   still to get it — docs/autocount-line-retirement-plan.md). Asking PostgREST
-   for a column a table does not have fails the whole query with 42703. */
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, total_revenue_centi, deposit_centi, linked_ac_docno';
+/* `cancelled` and `branding` are on THIS list and on no other, because only
+   scm.mfg_sales_order_items has them (the other five line tables are
+   still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
+   PostgREST for a column a table does not have fails the whole query with
+   42703. `branding` is where an ERP-created order actually keeps its brand —
+   the header column is NULL on every one of them (soBranding). */
+/* line_delivery_date is AutoCount's SODTL.DeliveryDate. Unselected, `soLine`
+   left it undefined and composeDetails omitted the key, so the account book
+   filled in its own default — the document date — on every ERP-created line
+   (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
+   of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -240,7 +280,7 @@ const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, 
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id';
+  'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -277,12 +317,22 @@ const soLine = (r: Record<string, unknown>): ErpLine => ({
   id: r.id == null ? null : String(r.id),
   item_code: String(r.item_code ?? r.material_code ?? ''),
   item_group: (r.item_group as string) ?? null,
+  /* undefined on the five tables that do not select it, which soBranding reads
+     as "this line has no brand" — the same convention `cancelled` runs under. */
+  branding: (r.branding as string) ?? null,
   description: (r.description as string) ?? null,
   description2: (r.description2 as string) ?? null,
   qty: Number(r.qty ?? 0),
   unit_price_centi: Number(r.unit_price_centi ?? 0),
   variants: (r.variants as Record<string, unknown> | null) ?? null,
   linked_ac_dtlkey: (r.linked_ac_dtlkey as number | null) ?? null,
+  /* `line_delivery_date` on a sales-order line, `delivery_date` on a purchase
+     one — the same fact under two column names. Null on the four DOWNSTREAM
+     tables, whose column lists select neither, and that costs them nothing:
+     those documents only ever reach `/edit`, where composeEdit drops a null
+     DeliveryDate rather than blanking the date the conversion gave the book.
+     Same reasoning DOWNSTREAM's header already records for DocDate. */
+  delivery_date: (r.line_delivery_date as string | null) ?? (r.delivery_date as string | null) ?? null,
   /* undefined on the five tables that have no such column, which composeEdit
      reads as "live" — the same answer the column's own default gives. */
   cancelled: r.cancelled === true,
@@ -364,10 +414,33 @@ interface AcDownstreamSpec {
   /** The human document number, for the outbox row's doc_no. */
   docNoOf: (h: Record<string, unknown>) => string;
   line: (r: Record<string, unknown>) => ErpLine;
-  header: (h: Record<string, unknown>) => Record<string, string | null>;
+  /** NEVER `string | null`: a present-null key BLANKS the book. See `present`. */
+  header: (h: Record<string, unknown>) => Record<string, string>;
 }
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
+
+/**
+ * A header with every BLANK KEY REMOVED. The one rule /edit runs under.
+ *
+ * `AcSyncService.Edit()` is `ContainsKey`-gated and `Str` turns a present-null
+ * into `""`, so `{Ref: null}` does not mean "unchanged" — it means "blank the
+ * reference the account book holds". Every one of these builders emitted
+ * `x ?? null` unconditionally, so an edit blanked whatever the ERP's column did
+ * not answer for; on the SO that was `ref`, `address3` and `address4` on
+ * essentially every ERP-created order (audit 2026-08-14, finding 10).
+ *
+ * Applied at the ONE place a header is built rather than per key, so the next
+ * field added to one of these cannot reintroduce it.
+ */
+const present = (o: Record<string, string | null>): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(o)) {
+    const s = (v ?? '').trim();
+    if (s) out[k] = s;
+  }
+  return out;
+};
 
 const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
   DO: {
@@ -380,7 +453,7 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => ({
+    header: (h) => present({
       DebtorName: str(h.debtor_name),
       Attention: str(h.debtor_name),
       Ref: str(h.ref),
@@ -403,7 +476,7 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
        counterpart at all, so sending qty_received would make AutoCount's PO
        outstanding disagree with the ERP's by exactly the rejected quantity. */
     line: (r) => soLine({ ...r, qty: r.qty_accepted }),
-    header: (h) => ({
+    header: (h) => present({
       Ref: str(h.delivery_note_ref),
       Description: str(h.notes),
     }),
@@ -418,7 +491,7 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => ({
+    header: (h) => present({
       DebtorName: str(h.debtor_name),
       Attention: str(h.debtor_name),
       Ref: str(h.ref),
@@ -436,7 +509,7 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
     line: soLine,
-    header: (h) => ({
+    header: (h) => present({
       Ref: str(h.supplier_invoice_ref),
       Description: str(h.notes),
     }),
@@ -447,26 +520,6 @@ const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
 const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 'DO' | 'GR' | 'IV' | 'PI'> = {
   so_to_do: 'DO', po_to_gr: 'GR', do_to_iv: 'IV', gr_to_pi: 'PI',
 };
-
-/**
- * A read that FAILED, as opposed to a read that found nothing.
- *
- * The distinction is the whole point. PostgREST answers a bad column with an
- * error and a null body; `data ?? []` then turns a failure into "this document
- * has no lines", and the write-back composes a header with an empty Details
- * array — an order pushed into a live account book with nothing on it. Every
- * read below therefore throws this instead of defaulting.
- */
-class AcReadError extends Error {}
-
-async function readOrThrow<T>(
-  what: string,
-  q: PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
-): Promise<T> {
-  const { data, error } = await q;
-  if (error) throw new AcReadError(`${what}: ${error.code ?? ''} ${error.message ?? ''}`.trim());
-  return data;
-}
 
 /**
  * Write a failed compose down instead of dropping it.
@@ -490,10 +543,20 @@ async function readOrThrow<T>(
  *   ItemCodeError     — a line has no single AutoCount ItemCode (D10): either
  *                       the cutover map has never heard of it, or it maps to
  *                       several items and the document names no supplier.
+ *   Desc2TooLongError — the line's Further Description is over nvarchar(100).
+ *                       SQL Server refuses the Save and takes the document with
+ *                       it, and truncating a specification is a wrong
+ *                       instruction rather than a short one (7q).
  *   MissingAgentError — the order names no salesperson AutoCount can be given,
  *                       and a blank one is refused by FK_SO_SalesAgent (the
  *                       2026-08-13 go-live failure). MissingLocationError's
  *                       twin, one level up.
+ *   MissingSalesLocationError
+ *                     — the SO names no stock location and has no live line to
+ *                       take one from. FK_SO_SalesLocation.
+ *   MissingCreditorError
+ *                     — the PO's supplier has no `scm.suppliers.code`, and
+ *                       CreatePo assigns CreditorCode DIRECTLY. FK_PO_Creditor.
  *
  * All of them must land in the outbox. A refusal nobody can see is
  * indistinguishable from a write-back that quietly stopped working.
@@ -506,8 +569,11 @@ async function noteReadFailure(
   const refused = e instanceof KeylessLineError
     || e instanceof SofaCollapseError
     || e instanceof ItemCodeError
+    || e instanceof Desc2TooLongError
     || e instanceof MissingLocationError
-    || e instanceof MissingAgentError;
+    || e instanceof MissingAgentError
+    || e instanceof MissingSalesLocationError
+    || e instanceof MissingCreditorError;
   if (!refused && !(e instanceof AcReadError)) return;
   const message = (e as Error).message;
   // eslint-disable-next-line no-console
@@ -571,7 +637,8 @@ export async function enqueueSoCreate(
        gets, and it can only choose between values it has been given. */
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
-    const body = composeCreateSo(header as never, lines, salespersonName, { bindings });
+    const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
+    const body = composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -602,9 +669,16 @@ export async function enqueueSoCreate(
  * Read a purchase order in the shape composeCreatePo wants.
  *
  * The creditor comes from scm.suppliers through supplier_id — the PO table
- * carries the foreign key, not the code or the name. Agent and Ref are null
- * because the ERP has no such field on a purchase order at all; on a CREATE
- * that writes "" into a document that had nothing there anyway.
+ * carries the foreign key, not the code or the name.
+ *
+ * `agent` is the CONSTANT AC_PURCHASE_AGENT, not null. The ERP has no
+ * purchase-agent field and never will have one without an owner decision, but
+ * "the ERP has no value" and "send nothing" are not the same thing here:
+ * `CreatePo` assigns `po.Agent` unconditionally and `Str` turns both an absent
+ * key and a present-null into `""`, so a null was `FK_PO_PurchaseAgent` on
+ * every one of the 60 unpushed purchase orders (measured 2026-08-14). `Ref`
+ * stays null because the PO's Ref is applied through `Set(() => po.Ref = ...)`
+ * on a document that has nothing there yet, and there is no foreign key on it.
  */
 async function readPoHeader(sb: Sb, poId: string) {
   const header = await readOrThrow('purchase_orders header',
@@ -627,7 +701,7 @@ async function readPoHeader(sb: Sb, poId: string) {
     po_date: (h.po_date as string | null) ?? null,
     creditor_code: s?.code ?? null,
     creditor_name: s?.name ?? null,
-    agent: null,
+    agent: AC_PURCHASE_AGENT,
     ref: null,
     notes: (h.notes as string | null) ?? null,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
@@ -744,8 +818,16 @@ export async function enqueueConvert(
            raised in its own UI keeps its own series in parallel — which is
            what tells the two apart. */
         DocNo: opts.docNo ?? null,
-        DocDate: opts.docDate ?? null,
-        Ref: opts.ref ?? null,
+        /* OMITTED WHEN THE ERP HAS NONE, not sent as null. `SalesHeader` /
+           `PurchaseHeader` apply `Set(() => doc.Ref = Str(p, "Ref"))`
+           unconditionally, and `Str` turns a present-null into "" — so every
+           conversion was writing an empty Ref over whatever the transfer had
+           put there. No caller passes `ref` yet (audit finding 13); until they
+           do, saying nothing is the only answer that cannot destroy a value.
+           `DocDate` was already correct and is written the same way for the
+           same reason: the target keeps the transfer's own posting date. */
+        ...(opts.docDate ? { DocDate: opts.docDate } : {}),
+        ...(opts.ref ? { Ref: opts.ref } : {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
       },
       fromDoc: opts.from,
@@ -1395,6 +1477,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const h = header as Record<string, unknown>;
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
+  const outstandingCenti = await readSoOutstandingCenti(sb, h);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1402,14 +1485,15 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
        document that has never reached AutoCount cannot possibly have line keys
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
-      'SO', String(h.linked_ac_docno ?? docNo), soEditHeader(h, salespersonName), lines,
+      'SO', String(h.linked_ac_docno ?? docNo),
+      soEditHeader(h, salespersonName, lines, outstandingCenti), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1435,10 +1519,10 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
        only the keys it is GIVEN (AcSyncService.cs:369 `h.ContainsKey`). Sending
        null would blank whatever the account book has there. */
-    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), {
+    edit: () => composeEdit('PO', String(header.linked_ac_docno ?? header.po_number), present({
       CreditorName: header.creditor_name,
       Description: header.notes,
-    }, lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
+    }), lines, { supplierCode: header.creditor_code, bindings: poBindings }, retired),
   };
 }
 
@@ -1459,39 +1543,60 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
  * the account book has". The same rule as the line-level Location, one level up.
  *
+ * THAT RULE IS NOW APPLIED TO EVERY KEY, WHICH IT WAS NOT. Eight of them —
+ * `DebtorName`, `Attention`, `Ref`, `Phone1` and the four `InvAddr` lines —
+ * were emitted as `x ?? null` unconditionally while the doc comment above
+ * already said they were not, so every edit of a sales order blanked whatever
+ * the account book held in those fields wherever the ERP's column was empty.
+ * Measured on production 2026-08-14: `ref` is blank on 112 of 115 unpushed
+ * orders and `address3` / `address4` on 94 of them (audit finding 10).
+ *
  * AN EDIT IS NEVER REFUSED FOR A MISSING AGENT, which is where it parts company
  * with the create. On a create a blank Agent is a foreign-key failure that
  * loses the whole document; here the account book already holds a value and
  * omitting the key leaves it alone. Refusing would strand every legacy order
- * that has no salesperson on either source and gain nothing.
+ * that has no salesperson on either source and gain nothing. `SalesLocation`
+ * runs under the same asymmetry — the create falls back to the lines because
+ * it MUST send something, the edit simply says nothing.
  */
 function soEditHeader(
   h: Record<string, unknown>,
   /** REQUIRED, never optional: it decides whether Agent is sent at all. */
   salespersonName: string | null,
+  /** REQUIRED, never optional: it decides what BRANDING is, and the header
+   *  column is NULL on every ERP-created order. See `soBranding`. */
+  lines: ErpLine[],
+  /** REQUIRED, never optional: it decides what the account book says a live
+   *  customer still owes. `null` omits the key and keeps the book's own. */
+  outstandingCenti: number | null,
 ): Record<string, string | null | Record<string, string>> {
-  const out: Record<string, string | null | Record<string, string>> = {
+  const out: Record<string, string | null | Record<string, string>> = present({
     DebtorName: (h.debtor_name as string) ?? null,
     Attention: (h.debtor_name as string) ?? null,
     Ref: (h.ref as string) ?? null,
     Phone1: (h.phone as string) ?? null,
-    InvAddr1: (h.address1 as string) ?? null,
-    InvAddr2: (h.address2 as string) ?? null,
-    InvAddr3: (h.address3 as string) ?? null,
-    InvAddr4: (h.address4 as string) ?? null,
-  };
+    /* The DELIVERY contact, which is not `phone`. On a CREATE the service falls
+       back to Phone when this is absent; on an EDIT nothing falls back, so a
+       changed delivery number never reached the book at all until this key did.
+       Blank still omits — the book keeps whatever it has. */
+    DeliverPhone1: (h.emergency_contact_phone as string) ?? null,
+    ...soInvoiceAddress(h),
+  });
   const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
   if (agent) out.Agent = agent;
-  const loc = mapOrPassthrough((h.sales_location as string) ?? null, LOCATION_MAP);
+  const loc = bookSpellingOrOwn((h.sales_location as string) ?? null, LOCATION_MAP);
   if (loc) out.SalesLocation = loc;
   if (h.so_date) out.DocDate = String(h.so_date);
 
   const udf: Record<string, string> = {};
-  const branding = mapOrPassthrough((h.branding as string) ?? null, BRANDING_MAP);
+  /* bookSpelling, NOT bookSpellingOrOwn: BRANDING_MAP is the one allow-list of
+     the four, because the ERP column behind it holds CATEGORIES. */
+  const branding = bookSpelling(soBranding((h.branding as string) ?? null, lines), BRANDING_MAP);
   if (branding) udf.BRANDING = branding;
-  const venue = mapOrPassthrough((h.venue as string) ?? null, VENUE_MAP);
+  const venue = bookSpellingOrOwn((h.venue as string) ?? null, VENUE_MAP);
   if (venue) udf.VENUE = venue;
-  if (h.po_doc_no) udf.ToPONo = String(h.po_doc_no);
+  const customerRef = soCustomerRef(h);
+  if (customerRef) udf.ToPONo = customerRef;
   /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
      in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
      this function — a cleared date sends nothing rather than blanking the
@@ -1499,6 +1604,12 @@ function soEditHeader(
      one that cannot destroy data. */
   const pdate = acUdfDate(h.processing_date as string | null | undefined);
   if (pdate) udf.PDate = pdate;
+  /* The outstanding balance, and the one UDF whose ZERO must be sent: an order
+     the customer has now settled has to stop showing a debt in the account
+     book, and `acUdfMoney` renders that as "0.00" precisely so this `if` does
+     not drop it. Only a null — the ERP has no answer — omits the key. */
+  const balance = acUdfMoney(outstandingCenti);
+  if (balance != null) udf.BALANCE = balance;
   if (Object.keys(udf).length) out.UDF = udf;
 
   return out;
@@ -1570,103 +1681,11 @@ async function bindingsFor(
   return out;
 }
 
-/**
- * The masters a payload NAMES, in the shape /ensure-masters consumes.
- *
- * Read off the payload that is about to be sent, never recomposed from the
- * database: the payload is the snapshot of what the user's save produced, and a
- * master derived from anything else could differ from the one the document
- * actually references.
- *
- * The debtor is deliberately absent. Houzs writes every order against ONE fixed
- * AutoCount debtor and overwrites the name field per customer, so there is no
- * per-customer account to open — and opening one would create an AR account
- * nobody asked for. If that convention ever changes, this is where it changes.
- */
-export function mastersOf(body: Record<string, unknown>): Record<string, unknown> | null {
-  const items = new Map<string, { ItemCode: string; Description: string; UOM?: string }>();
-  const details = [
-    ...(Array.isArray(body.Details) ? body.Details : []),
-    ...(Array.isArray(body.Lines) ? body.Lines : []),
-  ] as Array<Record<string, unknown>>;
-  for (const d of details) {
-    const code = typeof d?.ItemCode === 'string' ? d.ItemCode.trim() : '';
-    /* A retired line names a code the book already has, by construction — it is
-       addressed by a DtlKey AutoCount issued. Nothing to open. */
-    if (!code || d?.Retire === true) continue;
-    if (!items.has(code)) {
-      items.set(code, {
-        ItemCode: code,
-        Description: typeof d.Description === 'string' && d.Description ? d.Description : code,
-        ...(typeof d.UOM === 'string' && d.UOM ? { UOM: d.UOM } : {}),
-      });
-    }
-  }
-
-  /* A PURCHASE agent is a different master from a sales one: different table
-     (dbo.PurchaseAgent), different foreign key (FK_PO_PurchaseAgent), different
-     SDK command. Opening 'OTHERS' as a sales agent does nothing for a purchase
-     order that names it — /create-po is refused and the whole document is lost.
-     Proved on the live book 2026-08-12, after ensure-masters had already
-     reported agent:OTHERS as existing.
-     CreditorCode is the discriminator because it is the one field only a
-     purchase document carries; CreatePo applies it unconditionally. */
-  const isPurchase = typeof body.CreditorCode === 'string' && body.CreditorCode.trim().length > 0;
-  const agents: Array<{ Agent: string }> = [];
-  const purchaseAgents: Array<{ PurchaseAgent: string }> = [];
-  const agent = typeof body.Agent === 'string' ? body.Agent.trim() : '';
-  if (agent) {
-    if (isPurchase) purchaseAgents.push({ PurchaseAgent: agent });
-    else agents.push({ Agent: agent });
-  }
-
-  /* A PURCHASE ORDER NAMES A CREDITOR, and CreatePo applies CreditorCode
-     unconditionally — so a supplier the account book does not have fails the
-     same foreign key a missing item does, and takes the whole PO with it. The
-     DEBTOR stays absent for the opposite reason: Houzs writes every order
-     against ONE fixed account and overwrites the name, so there is no
-     per-customer account to open. */
-  const creditors: Array<{ AccNo: string; CompanyName: string }> = [];
-  const cred = typeof body.CreditorCode === 'string' ? body.CreditorCode.trim() : '';
-  if (cred) {
-    creditors.push({
-      AccNo: cred,
-      CompanyName: typeof body.CreditorName === 'string' && body.CreditorName
-        ? body.CreditorName : cred,
-    });
-  }
-
-  /* THE STOCK LOCATIONS THE DOCUMENT ACTUALLY USES — the header's sales
-     location and every line's own. This is the one the live book already
-     proved: FK_SODTL_Location, on a line whose Location was empty. */
-  const locations = new Map<string, { Location: string }>();
-  const addLoc = (v: unknown) => {
-    const code = typeof v === 'string' ? v.trim() : '';
-    if (code && !locations.has(code)) locations.set(code, { Location: code });
-  };
-  addLoc(body.SalesLocation);
-  for (const d of details) if (d?.Retire !== true) addLoc(d?.Location);
-
-  /* THE DROPDOWN OPTIONS. Read off the UDF block the payload is sending, so
-     the list only ever learns a value a real document is carrying. */
-  const udfOptions: Array<{ List: string; Value: string }> = [];
-  const udf = (body.UDF ?? null) as Record<string, unknown> | null;
-  for (const listName of ['BRANDING', 'VENUE']) {
-    const v = udf && typeof udf[listName] === 'string' ? (udf[listName] as string).trim() : '';
-    if (v) udfOptions.push({ List: listName, Value: v });
-  }
-
-  if (!items.size && !agents.length && !purchaseAgents.length && !creditors.length
-      && !locations.size && !udfOptions.length) return null;
-  return {
-    Items: [...items.values()],
-    Agents: agents,
-    PurchaseAgents: purchaseAgents,
-    Creditors: creditors,
-    Locations: [...locations.values()],
-    UdfOptions: udfOptions,
-  };
-}
+/* mastersOf lives in its own module since 2026-08-14 — autocount-outbox.ts
+   crossed the 2,000-line cap and that function is the one PURE seam in it.
+   Re-exported here because every caller and every test names it through this
+   module, and moving a file should not move an import. */
+export { mastersOf };
 
 /** Read one ERP document's AutoCount counterpart number. */
 async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {

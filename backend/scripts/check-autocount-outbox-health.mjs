@@ -11,7 +11,11 @@
 // It answers four questions, and each one has a different remedy:
 //
 //   FAILED       a document gave up. It is in the ERP and not in the account
-//                book. Someone has to look.
+//                book. Someone has to look. OUTSTANDING ones only — a failed
+//                row carrying the re-queue marker has already been asked again
+//                (#2189's includeFailed opt-in) and is reported under RE-QUEUED,
+//                because calling it a divergence is a false statement about a
+//                live account book.
 //   PENDING AGE  the oldest row that has not gone. With MAX_ATTEMPTS = 6 on a
 //                fixed 5-minute cron, a row gives up permanently after roughly
 //                30 minutes of outage, so a climbing age is the early warning
@@ -29,6 +33,14 @@
 // ANSWER is the output. Only an unreachable database exits non-zero.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
+
+/* The taxonomy is no longer this script's private property. The ERP now has a
+   PAGE over the same table (scm/routes/autocount-outbox.ts), and two readers
+   with two copies of the classification is how a screen and a workflow log
+   start disagreeing about the same row. src/scm/lib/autocount-outbox-status.ts
+   is the source; this is its plain-node mirror, and a canonical test fails if
+   they drift. */
+import { AC_SKIP_KINDS, REQUEUE_NOTE_PREFIX } from "./lib/autocount-skip-kinds.mjs";
 
 function resolveUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -48,31 +60,16 @@ if (!url) {
 const notice = (msg) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${msg}` : msg);
 
-/* The reason strings the ERP writes when it declines to send. Each is produced
-   by a named code path, so a bucket that grows tells you WHICH path.
-
-   MATCH ON THE ERROR CLASS NAME, NOT ON "refused, nothing sent". noteReadFailure
-   (autocount-outbox.ts) writes `refused, nothing sent (${e.name}): ${message}`
-   for FOUR different classes, and each has a different remedy — backfill a
-   DtlKey, fix a sofa build, map an item code, set a stock location. Matching the
-   shared prefix labelled all four "line identity missing", which sends an
-   operator to backfill DtlKeys for an item-map problem. Every class sets
-   this.name in its constructor, so the parenthesised name is reliable. */
-const SKIP_KINDS = [
-  ["refused, nothing sent (KeylessLineError)", "line identity missing — backfill linked_ac_dtlkey, then save again"],
-  ["refused, nothing sent (SofaCollapseError)", "sofa build cannot be folded into AutoCount's one line without inventing Desc2 text"],
-  ["refused, nothing sent (ItemCodeError)", "an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)"],
-  ["refused, nothing sent (MissingLocationError)", "a line carries no stock location — set the warehouse on the line, or the sales location on the document"],
-  ["compose failed, nothing sent", "the ERP could not read its own document while composing — a read fault, not a refusal"],
-  ["masters not opened", "an item or salesperson could not be opened in AutoCount"],
-  ["no source document to transfer from", "raised with no parent — cannot exist in AutoCount at all"],
-  ["AutoCount has no shape", "merged conversion (N sources -> 1 document) — must be worked by hand"],
-];
+/* The reason strings the ERP writes when it declines to send live in
+   AC_SKIP_KINDS, imported above. Each is produced by a named code path, so a
+   bucket that grows tells you WHICH path — and each carries a stable `kind`
+   that the ERP page uses as its URL filter, which is why the list moved out of
+   this file rather than being copied into a second one. */
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [flag, counts, oldest, failed, skipped] = await Promise.all([
+  const [flag, counts, oldest, failed, requeuedFailed, skipped] = await Promise.all([
     /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
        script described `scm.autocount_writeback` in prose and never read it, so
        "is the write-back on" could only be answered from a document — and the
@@ -80,7 +77,14 @@ try {
        (autocount-outbox.ts) and it decides whether saving an SO queues anything
        at all, so it belongs at the top of this report. */
     pg`SELECT value FROM scm.app_config WHERE key = 'scm.autocount_writeback'`,
-    pg`SELECT status, count(*)::int AS n FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
+    /* The re-queued split comes back WITH the totals, per status, because it
+       has to be exact and the detail queries below are capped. `FILTER` counts
+       the annotated rows in the same pass; the pattern is parameterised off the
+       shared constant so the marker is never typed twice. */
+    pg`SELECT status,
+              count(*)::int AS n,
+              count(*) FILTER (WHERE last_error LIKE ${`${REQUEUE_NOTE_PREFIX}%`})::int AS requeued
+         FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
     /* EVERY pending row, WITH last_error. A retrying row carries the reason its
        last attempt failed, and that reason is the whole diagnosis — 4xx fails
        immediately, so a row that is still RETRYING means the request reached
@@ -94,11 +98,21 @@ try {
          FROM scm.autocount_outbox
         WHERE status = 'pending'
         ORDER BY created_at ASC`,
+    /* OUTSTANDING failures only. A failed row carrying the re-queue marker has
+       already been asked again — #2189 gave the tool an includeFailed opt-in —
+       and listing it under "each is a document that is in the ERP and NOT in
+       AutoCount" is a false statement about a live account book. It is reported
+       under RE-QUEUED instead, with the skips. */
     pg`SELECT doc_type, doc_no, op, attempts, last_error, created_at
          FROM scm.autocount_outbox
         WHERE status = 'failed'
+          AND (last_error IS NULL OR last_error NOT LIKE ${`${REQUEUE_NOTE_PREFIX}%`})
         ORDER BY created_at DESC
         LIMIT 25`,
+    pg`SELECT doc_type, doc_no, op, attempts, last_error
+         FROM scm.autocount_outbox
+        WHERE status = 'failed' AND last_error LIKE ${`${REQUEUE_NOTE_PREFIX}%`}
+        ORDER BY created_at DESC`,
     pg`SELECT doc_type, doc_no, op, coalesce(last_error, '') AS last_error
          FROM scm.autocount_outbox
         WHERE status = 'skipped'
@@ -130,7 +144,11 @@ try {
   }
 
   const by = Object.fromEntries(counts.map((r) => [r.status, r.n]));
+  const byRequeued = Object.fromEntries(counts.map((r) => [r.status, r.requeued]));
   const total = counts.reduce((a, r) => a + r.n, 0);
+  /* OUTSTANDING per terminal state = the total minus the ones already asked
+     again. Both, not just skips: see the query comment above. */
+  const failedOutstanding = (by.failed ?? 0) - (byRequeued.failed ?? 0);
 
   /* A RE-QUEUED skip is history, not backlog.
      This table is append-only and a skipped row is never deleted, so once the
@@ -140,12 +158,11 @@ try {
      prefixes the reason with `[re-queued <when> -> outbox <id>]`
      (REQUEUE_NOTE_PREFIX in src/scm/lib/autocount-requeue.ts — this script runs
      under plain node against postgres.js and cannot import it, so the literal
-     lives in both places). The row keeps status 'skipped', because it IS still
-     true that nothing was ever sent for it; what changed is that it is no longer
-     the open question. */
-  const REQUEUED_PREFIX = "[re-queued";
-  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUED_PREFIX));
-  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUED_PREFIX));
+     lives in both places). The row keeps its terminal status, because it IS
+     still true that nothing was ever sent for it (or that it failed); what
+     changed is that it is no longer the open question. */
+  const settled = skipped.filter((r) => r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
+  const outstanding = skipped.filter((r) => !r.last_error.startsWith(REQUEUE_NOTE_PREFIX));
 
   if (total === 0) {
     notice("QUEUE EMPTY — zero rows of any status.");
@@ -167,18 +184,21 @@ try {
         ["pending", "sent", "failed", "skipped"]
           .map((s) => `${s} ${by[s] ?? 0}`)
           .join(" / ") +
-        (settled.length ? ` (${settled.length} of the skipped have been re-queued)` : ""),
+        (settled.length + requeuedFailed.length
+          ? ` (${settled.length + requeuedFailed.length} of those have been re-queued)`
+          : ""),
     );
   }
 
-  /* FAILED is the one that means a document diverged. */
-  if ((by.failed ?? 0) > 0) {
-    notice(`FAILED: ${by.failed} — each is a document that is in the ERP and NOT in AutoCount.`);
+  /* FAILED is the one that means a document diverged — the OUTSTANDING ones.
+     A re-queued failure is history and is listed under RE-QUEUED below. */
+  if (failedOutstanding > 0) {
+    notice(`FAILED: ${failedOutstanding} — each is a document that is in the ERP and NOT in AutoCount.`);
     for (const r of failed) {
       notice(`  ${r.doc_type} ${r.doc_no} (${r.op}, ${r.attempts} attempts): ${String(r.last_error ?? "").slice(0, 300)}`);
     }
   } else {
-    notice("FAILED: 0");
+    notice(`FAILED: 0 outstanding${requeuedFailed.length ? ` (${requeuedFailed.length} re-queued, below)` : ""}`);
   }
 
   if (oldest.length) {
@@ -212,7 +232,7 @@ try {
      new refusal, and rolling it into 'other' is how it stays invisible. */
   if (outstanding.length > 0) {
     const seen = new Set();
-    for (const [needle, meaning] of SKIP_KINDS) {
+    for (const { needle, remedy: meaning } of AC_SKIP_KINDS) {
       const hits = outstanding.filter((r) => r.last_error.includes(needle));
       hits.forEach((r) => seen.add(r.doc_no + r.op));
       if (!hits.length) continue;
@@ -234,14 +254,16 @@ try {
     notice(`SKIPPED: 0 outstanding${settled.length ? ` (${settled.length} re-queued, below)` : ""}`);
   }
 
-  if (settled.length) {
+  const requeuedAll = [...requeuedFailed, ...settled];
+  if (requeuedAll.length) {
     notice(
-      `RE-QUEUED: ${settled.length} skipped row(s) have been asked again by the re-queue workflow. ` +
+      `RE-QUEUED: ${requeuedAll.length} row(s) (${requeuedFailed.length} failed, ${settled.length} skipped) ` +
+        "have been asked again by the re-queue workflow. " +
         "Each one's document is a PENDING row above (or already sent); these are the record of the " +
         "refusal, not an open item.",
     );
-    for (const r of settled) {
-      notice(`  - ${r.doc_type} ${r.doc_no} (${r.op}): ${r.last_error.slice(0, 300)}`);
+    for (const r of requeuedAll) {
+      notice(`  - ${r.doc_type} ${r.doc_no} (${r.op}): ${String(r.last_error ?? "").slice(0, 300)}`);
     }
   }
 } finally {

@@ -55,6 +55,7 @@
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueuePoCreate, enqueueSoCreate } from './autocount-outbox';
+import { REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -66,12 +67,13 @@ export type RequeueDocType = keyof typeof CREATE_OP;
 /**
  * What a re-queued row's ORIGINAL skip is rewritten to start with.
  *
- * Also matched, as a literal, by check-autocount-outbox-health.mjs — that script
- * runs under plain node against postgres.js and cannot import this module. Keep
- * the two in step; the health report is the only place an operator sees the
- * distinction between a backlog and a settled row.
+ * Re-exported, not declared: it is now read by three things — this writer, the
+ * health script (through its plain-node mirror) and the ERP's own outbox page —
+ * so the definition lives in the one module all three can reach, with a
+ * canonical test refereeing the mirror. Kept exported from here because callers
+ * and tests already import it by this path.
  */
-export const REQUEUE_NOTE_PREFIX = '[re-queued';
+export { REQUEUE_NOTE_PREFIX };
 
 export type RequeueOutcome =
   /** DRY RUN: the composer accepted it. APPLY would queue it. */
@@ -118,11 +120,31 @@ export interface RequeueOptions {
   apply?: boolean;
   /** Cap on rows examined, so a pathological backlog cannot run forever. */
   limit?: number;
+  /**
+   * ALSO re-send documents that FAILED, not only ones the ERP refused.
+   *
+   * Off by design, and the default must stay off. A `skipped` row never left
+   * the ERP, so re-composing it is free. A `failed` row WAS sent and AutoCount
+   * refused it — and "refused" is not the same as "changed nothing". The C#
+   * create has no guard against a duplicate ERP document number, so if a
+   * document landed and only the reply was lost, re-sending writes a SECOND one
+   * into a licensed account book, where a sales order cannot simply be deleted.
+   *
+   * Turn it on only when the failure is known to have changed nothing on the
+   * AutoCount side. A foreign key is the clear case: it rejects before the
+   * insert, so nothing was written — that is what `FK_SO_SalesAgent` did to
+   * HC-SO-2608-001 and -002 on 2026-08-13, six attempts each, and the whole
+   * reason this option exists. An ambiguous 500 carrying AutoCount's own words
+   * is NOT that case; look in the book first.
+   */
+  includeFailed?: boolean;
 }
 
 interface SkippedRow {
   id: string;
   company_id: number;
+  /** 'skipped', or 'failed' when includeFailed asked for those too. */
+  status?: string;
   op: string;
   doc_type: string;
   doc_no: string;
@@ -230,6 +252,28 @@ async function readCreateTarget(
 }
 
 /** Any outbox row for the same create that is NOT a skip. */
+/**
+ * A create row for this document that is NOT the one we are re-sending, and is
+ * not another dead one. Only `pending` and `sent` can make a re-send wrong:
+ * pending means the drain is already going to do it, sent means it is in the
+ * book. Another `failed` row is just more history.
+ */
+async function liveCreateRowOtherThan(
+  sb: Sb,
+  row: SkippedRow,
+): Promise<{ status: string } | null> {
+  const { data, error } = await sb.from('autocount_outbox')
+    .select('id, status')
+    .eq('company_id', row.company_id)
+    .eq('op', row.op)
+    .eq('doc_no', row.doc_no)
+    .in('status', ['pending', 'sent'])
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { status: String((data as { status?: unknown }).status ?? '') };
+}
+
 async function existingCreateRow(
   sb: Sb,
   row: SkippedRow,
@@ -255,9 +299,10 @@ async function existingCreateRow(
  */
 export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise<RequeueResult[]> {
   const apply = opts.apply === true;
+  const includeFailed = opts.includeFailed === true;
   let q = sb.from('autocount_outbox')
-    .select('id, company_id, op, doc_type, doc_no, doc_id, last_error')
-    .eq('status', 'skipped')
+    .select('id, company_id, op, doc_type, doc_no, doc_id, status, last_error')
+    .in('status', includeFailed ? ['skipped', 'failed'] : ['skipped'])
     .order('created_at', { ascending: true })
     .limit(opts.limit ?? 200);
   if (opts.docNo) q = q.eq('doc_no', opts.docNo);
@@ -314,7 +359,15 @@ export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise
         + 'again would duplicate the document in the live account book.');
       continue;
     }
-    const existing = await existingCreateRow(sb, raw);
+    /* The probe asks "is there already a live create row for this document".
+       When we were asked to re-send the FAILED row itself, the row it finds is
+       that very row, so vetoing on it would make the option a no-op. Skip the
+       probe for the row we are re-sending; a PENDING or SENT row still vetoes,
+       which is the case that actually matters. */
+    const selfIsFailed = includeFailed && raw.status === 'failed';
+    const existing = selfIsFailed
+      ? await liveCreateRowOtherThan(sb, raw)
+      : await existingCreateRow(sb, raw);
     if (existing) {
       say('already-queued', `a ${existing.status} ${raw.op} row for this document already exists. `
         + (existing.status === 'failed'

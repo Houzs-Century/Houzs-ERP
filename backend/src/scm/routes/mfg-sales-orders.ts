@@ -73,6 +73,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -1794,6 +1795,7 @@ mfgSalesOrders.get('/', async (c) => {
           mainCount: readiness?.mainCount ?? 0,
           isMainReady: readiness?.isMainReady ?? false,
           isFullyReady: readiness?.isFullyReady ?? false,
+          isShipReady: readiness?.isShipReady ?? false,
         },
         delivered: dDelivered,
         remaining: dRemaining,
@@ -2607,11 +2609,10 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       if (p.is_deposit) depositInLedger = true;
     }
   }
-  const headerDepositCenti = typeof (h.data as { deposit_centi?: number }).deposit_centi === 'number'
-    ? (h.data as { deposit_centi: number }).deposit_centi : 0;
-  const totalRevenueCenti = typeof (h.data as { total_revenue_centi?: number }).total_revenue_centi === 'number'
-    ? (h.data as { total_revenue_centi: number }).total_revenue_centi : 0;
-  const paidCentiTotal = (depositInLedger ? 0 : headerDepositCenti) + paidLedgerCenti;
+  /* ONE rule, shared with the AutoCount write-back's BALANCE UDF so the account
+     book and this page cannot disagree. Why not `balance_centi`: so-outstanding.ts. */
+  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerCenti, depositInLedger);
+  const paidCentiTotal = soPaidCenti(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead
      go through the amendment request flow: the SO IS processing-locked (already
@@ -2688,7 +2689,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: Math.max(0, totalRevenueCenti - paidCentiTotal),
+    balance_centi: soOutstandingCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -11700,15 +11701,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). So auto-advance fires on main-ready, not
-  // all-ready.
+  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
     .select('item_group, stock_status, cancelled')
     .eq('doc_no', docNo);
   const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
   const readiness = summariseReadiness(liveRows);
-  const allReady = readiness.isMainReady;
+  const allReady = readiness.isShipReady;
 
   let advancedTo: string | null = null;
   if (allReady) {
