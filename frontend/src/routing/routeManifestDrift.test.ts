@@ -44,9 +44,9 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    // 140 since 2026-08-03: /scm/dp-orders, the DP Order list.
-    // (139 since 2026-08-02: /fleet-health/:lorryId, one lorry's full record.)
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(140);
+    // 141 since 2026-08-15: /autocount-sync, the AutoCount write-back queue.
+    // (140 since 2026-08-03: /scm/dp-orders, the DP Order list.)
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(141);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -67,9 +67,9 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 149 since 2026-08-06: /privacy, the App Store's policy URL.
-    // (148 since 2026-08-03 — see the staff-route count above.)
-    expect(ROUTE_CONTRACT).toHaveLength(149);
+    // 150 since 2026-08-15 — see the staff-route count above.
+    // (149 since 2026-08-06: /privacy, the App Store's policy URL.)
+    expect(ROUTE_CONTRACT).toHaveLength(150);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -96,11 +96,12 @@ describe("executable route contract", () => {
 
 describe("mobile route drift gate", () => {
   it("pins the complete runtime destination inventory", () => {
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(34);
+    // 35 since 2026-08-15: the System group and its one row, /autocount-sync.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(35);
     expect(PROFILE_ORG_ITEMS).toHaveLength(5);
-    expect(allMobile).toHaveLength(39);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(39);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(38);
+    expect(allMobile).toHaveLength(40);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(40);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(39);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {
