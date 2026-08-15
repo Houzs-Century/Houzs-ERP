@@ -26,8 +26,9 @@ import { MIGRATED_NO_GL_MESSAGE } from '../lib/migrated-chain';
 import { paginateAll } from '../lib/paginate-all';
 import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
-import { nextJeNo, jePrefixForCompany } from '../lib/doc-no';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { postJournal, reverseJournal } from '../../acc/engine';
+import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -161,43 +162,37 @@ accounting.post('/journal-entries', async (c) => {
   if (dr === 0) return c.json({ error: 'zero_amount' }, 400);
 
   const sb = c.get('supabase');
-  const jeNo = await nextJeNo(sb, new Date(entryDate), companyDocPrefix(c));
-
   const jeCompanyId = activeCompanyId(c);
-  const { data: je, error: jeErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(jeCompanyId != null ? { company_id: jeCompanyId } : {}),
-      je_no: jeNo,
-      entry_date: entryDate,
-      source_type: sourceType,
-      source_doc_no: sourceDocNo,
-      narration,
-      total_debit_sen: dr,
-      total_credit_sen: cr,
-    })
-    .select('*')
-    .single();
-  if (jeErr) return c.json({ error: 'insert_failed', reason: jeErr.message }, 500);
 
-  const lineRows = lines.map((l, i) => ({
-    ...(jeCompanyId != null ? { company_id: jeCompanyId } : {}),
-    journal_entry_id: je.id,
-    line_no: i + 1,
-    account_code: l.accountCode,
-    debit_sen: Number(l.debitSen ?? 0),
-    credit_sen: Number(l.creditSen ?? 0),
-    party_type: l.partyType ?? null,
-    party_code: l.partyCode ?? null,
-    party_name: l.partyName ?? null,
-    notes: l.notes ?? null,
-  }));
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', je.id);
-    return c.json({ error: 'lines_insert_failed', reason: linesErr.message }, 500);
+  /* Through the ONE gate (acc/engine), as a DRAFT — posting stays a separate,
+     gated step. The engine additionally validates the chart, which this route
+     never did: an account code the company does not have (or a parent header,
+     or a deactivated account) is now a 400 instead of a line the trial balance
+     can see but the chart cannot explain. */
+  const r = await postJournal(sb, {
+    companyId: jeCompanyId ?? null,
+    entryDate,
+    sourceType,
+    sourceDocNo,
+    narration,
+    lines: lines.map((l) => ({
+      accountCode: l.accountCode,
+      debitSen: Number(l.debitSen ?? 0),
+      creditSen: Number(l.creditSen ?? 0),
+      partyType: l.partyType ?? null,
+      partyCode: l.partyCode ?? null,
+      partyName: l.partyName ?? null,
+      notes: l.notes ?? null,
+    })),
+    postNow: false,
+  });
+  if (!r.ok) {
+    if (r.status === 'account_invalid' || r.status === 'bad_line') return c.json({ error: r.status, reason: r.reason }, 400);
+    if (r.status === 'lines_insert_failed') return c.json({ error: 'lines_insert_failed', reason: r.reason }, 500);
+    return c.json({ error: 'insert_failed', reason: r.reason }, 500);
   }
-  return c.json({ journalEntry: je, lineCount: lineRows.length }, 201);
+  const { data: je } = await sb.from('journal_entries').select('*').eq('id', r.jeId).single();
+  return c.json({ journalEntry: je ?? { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
 });
 
 /* POST /journal-entries/:id/post — mark a journal entry posted.
@@ -330,29 +325,6 @@ export type PostPiResult =
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
-  // Idempotency — an ACTIVE (non-reversed) PI JE already exists?
-  /* This guard is the ONLY thing that makes posting idempotent, and `?? []` folded
-     a failed read into "no JE exists yet" — so a transient blip does not skip the
-     posting, it posts a SECOND Dr Inventory / Cr AP for the same invoice and
-     doubles the supplier's payable in the GL. Nothing is written before this
-     point, so returning strands nothing: the PI simply stays unposted and a later
-     call (this function is called on confirm and by resyncPiAccounting) posts it
-     once, correctly. A PI that has genuinely never been posted resolves
-     error === null with data === [] and MUST still fall through. */
-  const { data: existingRows, error: existErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no, reversed')
-    .eq('source_type', 'PI')
-    .eq('source_doc_no', invoiceNumber);
-  if (existErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-accounting] idempotency read failed — PI NOT posted:', invoiceNumber, existErr.message);
-    return { ok: false, status: 'post_failed', reason: existErr.message };
-  }
-  const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>)
-    .find((r) => !r.reversed);
-  if (active) return { ok: true, status: 'already_posted', jeNo: active.je_no, jeId: active.id };
-
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
     .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
@@ -396,66 +368,35 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
   const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate); // MYR posted to the GL
 
   const supplier = pi.suppliers ?? { code: null, name: null };
-  const lines: JeLineIn[] = [
-    {
-      accountCode: '1200',                                   // Inventory (simplification: all PI → Inventory)
-      debitSen: totalSen,
-      notes: `Inventory from ${pi.invoice_number}`,
-    },
-    {
-      accountCode: '2000',                                   // Accounts Payable
-      creditSen: totalSen,
-      partyType: 'SUPPLIER',
-      partyCode: supplier.code ?? null,
-      partyName: supplier.name ?? null,
-      notes: `AP for ${pi.invoice_number}`,
-    },
-  ];
-
-  const jeNo = await nextJeNo(sb, new Date(pi.invoice_date), jePrefixForCompany(pi.company_id));
   // Multi-company (mig 0061): the JE + its lines belong to the PI's company.
   const companyId = pi.company_id ?? null;
-  const { data: je, error: jeErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(companyId != null ? { company_id: companyId } : {}),
-      je_no: jeNo,
-      entry_date: pi.invoice_date,
-      source_type: 'PI',
-      source_doc_no: pi.invoice_number,
-      narration: `Purchase invoice ${pi.invoice_number} — ${supplier.name ?? ''}`,
-      total_debit_sen: totalSen,
-      total_credit_sen: totalSen,
-    })
-    .select('*')
-    .single();
-  if (jeErr) return { ok: false, status: 'je_insert_failed', reason: jeErr.message };
 
-  const lineRows = lines.map((l, i) => ({
-    ...(companyId != null ? { company_id: companyId } : {}),
-    journal_entry_id: je.id,
-    line_no: i + 1,
-    account_code: l.accountCode,
-    debit_sen: l.debitSen ?? 0,
-    credit_sen: l.creditSen ?? 0,
-    party_type: l.partyType ?? null,
-    party_code: l.partyCode ?? null,
-    party_name: l.partyName ?? null,
-    notes: l.notes ?? null,
-  }));
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', je.id);
-    return { ok: false, status: 'lines_insert_failed', reason: linesErr.message };
+  /* Through the ONE gate (acc/engine). The engine owns the idempotency guard
+     (fails closed on a read blip — a blip must never book a SECOND payable),
+     the je_no mint, and the write sequence; this function owns the PI
+     specifics: the fetch, the migrated guard, FX, and the rule's lines. */
+  const roles = await resolveRoles(sb, companyId);
+  const r = await postJournal(sb, {
+    companyId,
+    entryDate: pi.invoice_date,
+    sourceType: 'PI',
+    sourceDocNo: pi.invoice_number,
+    narration: `Purchase invoice ${pi.invoice_number} — ${supplier.name ?? ''}`,
+    lines: piLines(roles, pi, supplier, totalSen),
+  });
+  if (r.ok) {
+    if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
+    return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId, totalSen };
   }
-
-  const { error: postErr } = await sb
-    .from('journal_entries')
-    .update({ posted: true })
-    .eq('id', je.id);
-  if (postErr) return { ok: false, status: 'post_failed', reason: postErr.message };
-
-  return { ok: true, status: 'posted', jeNo: je.je_no, jeId: je.id, totalSen };
+  if (r.status === 'idempotency_read_failed') {
+    /* eslint-disable-next-line no-console */
+    console.error('[pi-accounting] idempotency read failed — PI NOT posted:', invoiceNumber, r.reason);
+    return { ok: false, status: 'post_failed', reason: r.reason };
+  }
+  if (r.status === 'je_insert_failed' || r.status === 'lines_insert_failed' || r.status === 'post_failed') {
+    return { ok: false, status: r.status, reason: r.reason };
+  }
+  return { ok: false, status: 'post_failed', reason: `${r.status}: ${r.reason ?? ''}` };
 }
 
 accounting.post('/post/pi/:invoiceNumber', async (c) => {
@@ -516,119 +457,22 @@ export async function reversePiAccounting(
   sb: any,
   invoiceNumber: string,
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
-  // Find the ACTIVE (non-reversed) PI JE — an invoice may carry several
-  // historical PI JEs after edit-driven void+repost cycles (resyncPiAccounting),
-  // so we void the live one, not an arbitrary `.limit(1)` row. Nothing live →
-  // nothing to reverse.
-  /* A failed read used to return { ok:true, 'nothing_to_reverse' }: the PI is
-     cancelled, the caller logs nothing, and Dr Inventory / Cr Payables stays live
-     against it — payables and inventory value both left overstated, which is the
-     exact condition the contra above exists to undo ("取消 PI 要追溯回去"). */
-  const { data: origRows, error: origErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, narration, company_id')
-    .eq('source_type', 'PI')
-    .eq('source_doc_no', invoiceNumber);
-  if (origErr) return { ok: false, status: 'reversal_read_failed', reason: `origRows: ${origErr.message}` };
-  const orig = ((origRows ?? []) as Array<{ id: string; je_no: string; entry_date: string; reversed: boolean; total_debit_sen: number; total_credit_sen: number; narration: string | null; company_id: number | null }>)
-    .find((r) => !r.reversed);
-  if (!orig) return { ok: true, status: 'nothing_to_reverse' };
-
-  // Idempotency guard — a reversing JE already tied to THIS original exists (the
-  // flag never stuck). Keyed on reversed_by_je = orig.id, NOT just "any reversal
-  // for this invoice", so a prior cycle's reversal doesn't block voiding the
-  // current live JE.
-  /* Idempotency guard — a blip defeats it rather than degrading it, writing a
-     SECOND contra JE so the cancellation is booked twice. Nothing written yet. */
-  const { data: revExisting, error: revExistErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no')
-    .eq('source_type', 'PI_REVERSAL')
-    .eq('reversed_by_je', orig.id)
-    .limit(1);
-  if (revExistErr) return { ok: false, status: 'reversal_read_failed', reason: `revExisting: ${revExistErr.message}` };
-  if (revExisting && revExisting.length > 0) {
-    // The reversing JE exists but the flag never got set — make the flag stick.
-    await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revExisting[0].id }).eq('id', orig.id);
-    return { ok: true, status: 'already_reversed' };
-  }
-
-  const totalSen = Number(orig.total_debit_sen ?? orig.total_credit_sen ?? 0);
-  if (totalSen <= 0) {
-    // Nothing of value to reverse — just flag it so re-cancels no-op.
-    await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
-    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id };
-  }
-
-  // Load the original lines so the reversal mirrors the SAME accounts + parties,
-  // just with debit/credit swapped (a faithful contra entry).
-  /* Caught before the `?? []` fold, which cannot tell a failed read from a
-     line-less original and would silently contra the canonical Dr 2000 / Cr 1200
-     instead of the accounts the original actually used. Still pre-write. */
-  const { data: origLines, error: origLinesErr } = await sb
-    .from('journal_entry_lines')
-    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes')
-    .eq('journal_entry_id', orig.id)
-    .order('line_no');
-  if (origLinesErr) return { ok: false, status: 'reversal_read_failed', reason: `origLines: ${origLinesErr.message}` };
-  const oLines = (origLines ?? []) as Array<{
-    account_code: string; debit_sen: number; credit_sen: number;
-    party_type: string | null; party_code: string | null; party_name: string | null; notes: string | null;
-  }>;
-
-  // Multi-company (mig 0061): a reversal belongs to the same company as the JE it undoes.
-  const companyId = orig.company_id ?? null;
-  const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), jePrefixForCompany(companyId));
-  const { data: revJe, error: revErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(companyId != null ? { company_id: companyId } : {}),
-      je_no: revJeNo,
-      entry_date: todayMyt(),
-      source_type: 'PI_REVERSAL',
-      source_doc_no: invoiceNumber,
-      narration: `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
-      total_debit_sen: totalSen,
-      total_credit_sen: totalSen,
-      reversed_by_je: orig.id,
-    })
-    .select('*')
-    .single();
-  if (revErr) return { ok: false, status: 'reversal_insert_failed', reason: revErr.message };
-
-  // Swap each original line's debit/credit so the reversal nets the original to
-  // zero (Dr Payables / Cr Inventory). Fall back to the canonical 2-line entry
-  // if the original had no lines.
-  const companyLine = companyId != null ? { company_id: companyId } : {};
-  const swapped = oLines.length > 0
-    ? oLines.map((l, i) => ({
-        ...companyLine,
-        journal_entry_id: revJe.id,
-        line_no: i + 1,
-        account_code: l.account_code,
-        debit_sen: Number(l.credit_sen ?? 0),
-        credit_sen: Number(l.debit_sen ?? 0),
-        party_type: l.party_type ?? null,
-        party_code: l.party_code ?? null,
-        party_name: l.party_name ?? null,
-        notes: `Reversal — ${l.notes ?? ''}`.trim(),
-      }))
-    : [
-        { ...companyLine, journal_entry_id: revJe.id, line_no: 1, account_code: '2000', debit_sen: totalSen, credit_sen: 0, party_type: null, party_code: null, party_name: null, notes: `Reverse AP ${invoiceNumber}` },
-        { ...companyLine, journal_entry_id: revJe.id, line_no: 2, account_code: '1200', debit_sen: 0, credit_sen: totalSen, party_type: null, party_code: null, party_name: null, notes: `Reverse inventory ${invoiceNumber}` },
-      ];
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(swapped);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', revJe.id);
-    return { ok: false, status: 'reversal_lines_failed', reason: linesErr.message };
-  }
-
-  // Post the reversal + flag the original. Order matters: if the flag update
-  // fails the reversing JE still exists, so guard #2 makes a retry idempotent.
-  await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
-  await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
-
-  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id };
+  /* Through the ONE gate (acc/engine): find the ACTIVE PI JE, write a faithful
+     contra (same accounts + parties, sides swapped), post it, flag the
+     original. The engine fails CLOSED on every read - a failed lookup must
+     never read as "nothing to reverse" while Dr Inventory / Cr Payables stays
+     live against a cancelled invoice. Fallback (line-less original) mirrors
+     the historical canonical contra: Dr AP / Cr Inventory. */
+  return reverseJournal(sb, {
+    sourceType: 'PI',
+    sourceDocNo: invoiceNumber,
+    narration: (orig) => `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
+    entryDate: todayMyt(),
+    fallbackLines: (totalSen) => [
+      { accountCode: DEFAULT_ROLE_CODES.AP, debitSen: totalSen, creditSen: 0, notes: `Reverse AP ${invoiceNumber}` },
+      { accountCode: DEFAULT_ROLE_CODES.INVENTORY, debitSen: 0, creditSen: totalSen, notes: `Reverse inventory ${invoiceNumber}` },
+    ],
+  });
 }
 
 /* ── resyncPiAccounting (2026-06-01) — re-align a posted PI's GL after a line edit
