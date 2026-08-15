@@ -440,12 +440,14 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'always null: soLine (autocount-outbox.ts:142-151) never reads a location, and the selects (:169,:203) do not fetch one — though scm.mfg_sales_order_items has warehouse_id and the PO items table has one too.',
     severity: 'medium',
   },
-  {
-    id: 'D3', flow: 'create_so + create_po', field: 'Details[].DeliveryDate',
-    service: 'sets the line delivery date when one is given (AcSyncService.cs:187/214).',
-    erp: 'always null. mfg_sales_order_items.line_delivery_date and purchase_order_items.delivery_date both exist and are not selected.',
-    severity: 'medium',
-  },
+  /* D3 STRUCK 2026-08-15 — Details[].DeliveryDate. It was a plain bug on both
+     sides and needed no decision, so it leaves the register rather than staying
+     in it: `mfg_sales_order_items.line_delivery_date` /
+     `purchase_order_items.delivery_date` are now selected and sent, and the
+     service's `if (dd.HasValue)` became a `ContainsKey` guard so a present-null
+     BLANKS the line instead of leaving AutoCount to fill in the document date.
+     The blank is the book's own shape: 11,886 of the 60,939 lines in
+     `ac-fidelity-so-lines.json.gz` carry a NULL DeliveryDate. */
   {
     id: 'D4', flow: 'the four conversions', field: 'Ref / Description / SupplierDONo / SupplierInvoiceNo',
     service: 'assigns all four unconditionally on a conversion (AcSyncService.cs:255,265,283-284,291-292); an ABSENT key is "" through Str(), so the transferred document\'s Ref and Description are blanked and a GRN/PI never carries the supplier\'s own document number.',
@@ -608,11 +610,20 @@ describe('/create-so — the body dispatchOne would POST', () => {
     const body = await wireBody(sb);
     const sent = new Set(Object.keys(body));
     expect(headerKeys(CS_CREATE_SO).filter((k) => !sent.has(k) && k !== 'Details')).toEqual([
-      /* All four fall back to the invoice address, and DeliverContact /
-         DeliverPhone1 to the debtor name and phone — AcSyncService.cs:169-176
-         does the Or() itself, so omitting them is the intended shape. */
+      /* All four fall back to the invoice address, and DeliverContact to the
+         debtor name — AcSyncService's create does the Or() itself, so omitting
+         them is the intended shape.
+
+         DELIVERPHONE1 LEFT THIS LIST on 2026-08-15. It was here on the strength
+         of that same Or(), and the Or() is not the same statement: it makes the
+         DELIVERY number a copy of the CUSTOMER's, and the owner's ruling is that
+         they are two contacts ("应该是有一个 Delivery Contact，一个是 Contact").
+         The ERP has both — `phone` and `emergency_contact_phone` — and the
+         cutover already paired them in this direction. It is now sent, so a
+         delivery-day number that differs from the customer's survives, and an
+         EDIT that changes it reaches the book at all. */
       'DeliverAddr1', 'DeliverAddr2', 'DeliverAddr3', 'DeliverAddr4',
-      'DeliverContact', 'DeliverPhone1',
+      'DeliverContact',
     ]);
   });
 });
@@ -901,16 +912,18 @@ describe('the divergence register', () => {
   });
 
   test('the count is pinned — a new divergence has to be written down to land', () => {
-    /* If this fails you have either found a twelfth or fixed one of the eleven.
+    /* If this fails you have either found an eleventh or fixed one of the ten.
        Both are good news; update the list and section 11 of
        docs/modules/autocount-writeback.md together.
 
-       Started at thirteen. D11 and D13 were struck off when #1855 fixed them —
-       they were plain bugs, not decisions; the eleven that remain each need one. */
-    expect(DIVERGENCES).toHaveLength(11);
+       Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
+       and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
+       not decisions; the ten that remain each need one. */
+    expect(DIVERGENCES).toHaveLength(10);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D3');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D11');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D13');
   });

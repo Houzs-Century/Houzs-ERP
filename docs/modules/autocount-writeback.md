@@ -946,6 +946,192 @@ Director`, on a live writable order as of 2026-08-14) instead of adding it.
 so a staff name that no company-1 document has ever named cannot be attributed
 to this company. Those are counted and listed, never bucketed as work.
 
+## 7q. What the cutover EXTRACTED is what the write-back SENDS BACK
+
+*Added 2026-08-15, on the owner's rule:* **"他抽取了什么东西，就代表什么东西都是要
+进来的 … 既然我抽出来了，就代表我是需要的。"** Whatever the one-time import pulled
+OUT of AutoCount is what the write-back has to put back. That makes the gap
+CHECKABLE rather than a matter of taste, because the extract is committed:
+`backend/scripts/data/ac-fidelity-so-headers.json.gz` (13,015 rows, 18 header
+fields) and `ac-fidelity-so-lines.json.gz` (60,939 rows, 13 line fields), both
+written by `backend/scripts/export-ac-fidelity-truth.py` straight off the live
+`AED_HOUZS` book.
+
+**Re-derive the counts from the files rather than trusting this table.** Every
+number below came from reading the two `.gz` files on 2026-08-15.
+
+| extracted | sent before | now |
+|---|---|---|
+| `UDF_BALANCE` — non-zero on **2,339 of 13,015** headers | no | **yes**, create + edit |
+| `DeliverPhone1` — on **120 of 13,015**, and genuinely different from `Phone1` on **37** | no | **yes**, create + edit |
+| `SODTL.DeliveryDate` — **NULL on 11,886 of 60,939 lines**, across 2,268 whole documents | no | **yes**, including the blank |
+| `SODTL.UOM` | no | **still no — and that is correct**, see below |
+| `Cancelled` — `T` on 5 of 13,015 | the separate `/cancel` op (§7f) | unchanged |
+| `Seq`, `DtlKey`, `TransferedQty`, `TransferedPOQty` | AutoCount's own | never ours to send |
+
+### BALANCE — three ERP columns, and the obvious one is wrong
+
+`SO.UDF_BALANCE` is the customer's outstanding amount. It is not the document
+total: measured against the lines' own `Qty x UnitPrice`, it is LESS on 2,222 of
+the 2,339 non-zero headers and equal on 114.
+
+The two sides are the same quantity by CONSTRUCTION, not by resemblance — **the
+cutover turned one into the other.** `import-ac-outstanding-so.mjs:294` computed
+`paid = total - UDF_BALANCE` and wrote that as a payments-ledger row, so
+`total - SUM(payments)` reproduces `UDF_BALANCE` for every imported order.
+
+Which ERP column, therefore, matters more than usual, and the trap is live:
+
+| candidate | verdict |
+|---|---|
+| `scm.mfg_sales_orders.balance_centi` | **NO.** `recomputeTotals` writes `balance_centi = local_total_centi = total_revenue_centi = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
+| the view's `balance_centi_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger |
+| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES.** What `GET /mfg-sales-orders/:docNo` and the customer-facing print show. The rule was lifted out of that route into a shared pure module so the account book and the screen cannot compute different numbers |
+
+Paid is the payments ledger PLUS the header `deposit_centi` **only when no
+`is_deposit` ledger row exists** — modern orders write the deposit as a ledger
+row, so adding the column on top would double count, and legacy orders would be
+under-counted without it. `paid_centi` is deprecated and read by nothing.
+
+Three rules the composer keeps:
+
+- **Zero is a value.** `udf()` drops a falsy entry, so a settled order is sent as
+  the string `"0.00"` (`acUdfMoney`). Dropping the key would leave a paid order
+  showing a debt in the account book forever.
+- **No total means NO KEY.** `readSoOutstandingCenti` answers `null` when
+  `total_revenue_centi` is absent, because zero would declare a real debt settled
+  in a licensed ledger. The SO detail page reads the same absence as `0` — it is
+  drawing a screen, this is writing a ledger.
+- **Negative is not expressible.** The book holds a negative `UDF_BALANCE` on 47
+  of the 13,015 headers; the ERP clamps at zero on both its own paths (the view's
+  `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
+  credit instead. The write-back sends what the ERP holds.
+
+**IT GOES STALE ON A PAYMENT, and that is the open half.** Recording a payment is
+not one of §6's enqueue anchors, so the balance in AutoCount is the one the
+document last carried when something else was edited. Sending it is strictly
+better than never sending it; keeping it live needs a payment-side hook.
+
+### DeliverPhone1 — two contacts, two columns
+
+Owner 2026-08-15: *"我们的电话号码 … 应该是有一个 Delivery Contact，一个是
+Contact."* They are not interchangeable, and getting them crossed puts the
+customer's number in front of a driver.
+
+| AutoCount | ERP |
+|---|---|
+| `Phone1` | `mfg_sales_orders.phone` |
+| `DeliverPhone1` | `mfg_sales_orders.emergency_contact_phone` |
+
+**The pairing is the cutover's own, read backwards** — not an inference from the
+field names. `import-ac-outstanding-so.mjs:302` kept `DeliverPhone1` only when it
+DIFFERED from `Phone1` (otherwise the second number out of a slash-separated
+`Phone1`) and inserted it as `emergency_contact_phone` (`:390`, `:412`). It is a
+live field: the SO header PATCH allow-list carries it, the SO detail page renders
+it as "Emergency contact", and `so-to-do-fields.ts` copies it onto the delivery
+order beside `phone`.
+
+The CREATE never needed the C#'s help and had it anyway —
+`Or(Str(p,"DeliverPhone1"), Str(p,"Phone"))` makes the delivery number a copy of
+the customer's, which is the cutover's rule and the right default. **The EDIT is
+where it was lost:** nothing falls back there, so a delivery number changed after
+the order was written back never reached the book at all. Blank still omits.
+
+### The line delivery date — and the BLANK
+
+The owner reported a line arriving in the book carrying the DOCUMENT date when
+the ERP holds none, and said it should be blank, as the cutover left it. All
+three halves of that check out:
+
+| question | answer |
+|---|---|
+| does the book hold blanks? | **yes — 11,886 of 60,939 lines are NULL**, and 2,268 documents are entirely blank. Only 309 non-null lines equal their document's date, so the book does not routinely default |
+| can the SDK be told null? | **yes.** The reflected surface types it `DeliveryDate:Nullable\`1` on all six detail classes |
+| what was happening? | the ERP never sent the key at all — `SO_ITEM_COLS` did not select `line_delivery_date`, so `soLine` left it undefined — and the service's `if (dd.HasValue)` could not tell an absent key from a null one. The value was AutoCount's own default |
+
+Both sides changed, and they had to:
+
+- the ERP now selects `mfg_sales_order_items.line_delivery_date` /
+  `purchase_order_items.delivery_date`, and **always sends the key on a create** —
+  a date, or an explicit `null`;
+- `AcSyncService` guards on `ContainsKey` instead of `HasValue`, so a
+  present-and-null assigns `(DateTime?) null` and blanks the line.
+
+**This is the one key sent present-and-null, and it does not break the omission
+rule — it is why the rule exists.** Everywhere else a null blanks the book
+because `Str()` turns it into `""`. `DeliveryDate` goes through `Date()`, which
+answers null for absent AND null alike, so an omitted key could only ever mean
+"leave AutoCount's default". An **EDIT** omits the key again when the ERP has
+none (`composeEdit`), because there a blank would erase a date an operator may
+have set in AutoCount itself — the same create/edit asymmetry as `Location`.
+
+### UOM is in the extract and is NOT a gap
+
+`SODTL.UOM` is `UNIT` 43,498 / `SET` 12,770 / `.` 3,332 / blank 1,315 / `PCS` 16,
+plus the typos `UMIT` 6 and `unit` 2. It is unsent, so it reads as a gap. It is
+not one, and sending it would lose documents.
+
+**AutoCount's UOM is a property of the ITEM, echoed onto the line.** Checked
+against the book's own `ItemUOM` rows (`ac-item-costs.json.gz` +
+`ac-utd-stock-cost.json.gz`), **59,582 of the 59,624 lines carrying a UOM carry
+one the item's master row holds** — the 2 exceptions are the `unit` / `UNIT` case
+typo. Only 3 items in the snapshot have more than one UOM at all.
+
+**The ERP has nothing to add.** `mfg_sales_order_items.uom` and
+`purchase_order_items.uom` are written `(it.uom as string) ?? 'UNIT'` at every
+create path, so the column is a default rather than a fact — and **363 of the 758
+distinct item codes on those lines have no `UNIT` row at all**, their only UOM
+being `SET`. Sending the ERP's value would put `UNIT` on a line whose item only
+has `SET`, against a column the detail foreign-keys to `ItemUOM`, and take the
+whole document with it — the same shape as `FK_SODTL_Location` in §7m.
+
+The UOM is set where it belongs: `/ensure-masters` gives a NEW item
+`NewUom(uom, 1m)` + `BaseUom`, so the line inherits it, and an item the book
+already holds keeps its own. Owner 2026-08-15: every SKU already carries a UOM.
+
+### Desc2 is the Further Description, and what we composed was a second opinion
+
+Owner 2026-08-15: *"照片那一边是从 Further Description 那边抽出来的，所以你录入的
+时候，也是要录入回 Further Description"*. The cutover PARSED this field to get the
+ERP's variants — `import-ac-outstanding-so.mjs` turns a bedframe's `Desc2` into
+`variants.fabricCode` / `gap` / `divanHeight` / `legHeight` / `totalHeight` /
+`specials` — so the specification has to go back.
+
+`Desc2` was already being sent, so this was missing CONTENT, not a missing field.
+`composeDescription2` emitted `Col / Fabric / Seat / Leg` and read colour off
+`fabricColor`, which is the GRN-family editors' key. A bedframe keeps its colour
+in `fabricCode` / `colourLabel` and its build in `gap` / `divanHeight`, so an
+ERP-created bedframe reached the account book with an EMPTY Further Description
+— while the book's own text carries `COL` on 6,741 of its 15,950 populated
+values, `DIVAN` on 5,778 and `GAP` on 2,620, its three commonest labels.
+
+**The fix is deleting the second opinion, not improving it** (COE lesson 4).
+`composeDescription2` now calls `buildVariantSummary` from
+`scm/shared/variant-summary.ts` — the same pure, frontend-mirrored function that
+renders Description 2 on every SO, PO, DO and GRN line, whose vocabulary is
+already the book's (`DIVAN`, `GAP`, `LEG`, `SEAT`). The account book reads what
+the paperwork reads, and a new attribute reaches AutoCount the day it reaches the
+screen.
+
+Two things survive unchanged, and both are load-bearing:
+
+- **a stored `description2` still wins, verbatim** — the ECHO path. Both cutover
+  importers wrote the book's original text onto every migrated line, and D9 hands
+  the composer a collapsed sofa whose `description2` is the build text the
+  collapse has already decided and gated (§7b);
+- one visible difference on a SOFA: the fabric SERIES is no longer printed beside
+  a known colour. That is `buildVariantSummary`'s rule — the series shows only
+  when the colour is still KIV — and it is what the SO line already prints.
+
+**A new refusal comes with it: `Desc2TooLongError`.** `SODTL.Desc2` /
+`PODTL.Desc2` are `nvarchar(100)` and the live book is AT that ceiling — the
+longest of its 15,950 values is exactly 100 characters and none is over. A richer
+Desc2 can reach it, SQL Server refuses the Save, and the whole document is lost
+behind an unreadable 500. So an over-long line is refused into a `skipped` row
+naming it, using the same `AC_DESC2_MAX` the sofa collapse already refuses on.
+Truncating is not the alternative: Desc2 IS the specification the factory builds
+from, and half a specification is a wrong instruction rather than a short one.
+
 ## 7e. The masters a document names are opened first
 
 A document naming a master AutoCount does not have does not fail politely: it
@@ -1467,8 +1653,9 @@ never be mistaken for a cancel divergence.
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_centi` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
 | `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
+| `src/scm/shared/so-outstanding.test.ts` | **§7q.** The outstanding-balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment is 0 rather than negative |
 | `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened. Plus §7o's composer half: `bookSpelling` vs `bookSpellingOrOwn`, the address packing, the customer-reference chain, branding off the lines with no `BEDFRAME` pseudo-brand, the sales-location fallback, and the two new refusals (`MissingSalesLocationError`, `MissingCreditorError`) |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |

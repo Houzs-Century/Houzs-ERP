@@ -73,6 +73,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import { soPaidCenti, soOutstandingCenti } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -2612,7 +2613,16 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     ? (h.data as { deposit_centi: number }).deposit_centi : 0;
   const totalRevenueCenti = typeof (h.data as { total_revenue_centi?: number }).total_revenue_centi === 'number'
     ? (h.data as { total_revenue_centi: number }).total_revenue_centi : 0;
-  const paidCentiTotal = (depositInLedger ? 0 : headerDepositCenti) + paidLedgerCenti;
+  /* The rule itself moved to scm/shared/so-outstanding.ts so the AutoCount
+     write-back can send the SAME number as this page shows — a second
+     implementation of a money rule is how the two worlds disagree quietly, and
+     `balance_centi` is already a column that looks like this answer and is not
+     (recomputeTotals rewrites it to the gross total). Same inputs, same
+     arithmetic; nothing about what this endpoint returns changes. */
+  const paidInputs = {
+    totalRevenueCenti, headerDepositCenti, ledgerPaidCenti: paidLedgerCenti, depositInLedger,
+  };
+  const paidCentiTotal = soPaidCenti(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead
      go through the amendment request flow: the SO IS processing-locked (already
@@ -2689,7 +2699,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: Math.max(0, totalRevenueCenti - paidCentiTotal),
+    balance_centi: soOutstandingCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:

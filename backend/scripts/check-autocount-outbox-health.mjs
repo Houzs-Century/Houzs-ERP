@@ -62,6 +62,7 @@ const SKIP_KINDS = [
   ["refused, nothing sent (KeylessLineError)", "line identity missing — backfill linked_ac_dtlkey, then save again"],
   ["refused, nothing sent (SofaCollapseError)", "sofa build cannot be folded into AutoCount's one line without inventing Desc2 text"],
   ["refused, nothing sent (ItemCodeError)", "an ERP item resolves to no single AutoCount ItemCode — fix the cutover map (scm.autocount_item_bindings)"],
+  ["refused, nothing sent (Desc2TooLongError)", "a line's Further Description is over AutoCount's nvarchar(100) — shorten the special order or the colour text on that line, then save again"],
   ["refused, nothing sent (MissingLocationError)", "a line carries no stock location — set the warehouse on the line, or the sales location on the document"],
   ["compose failed, nothing sent", "the ERP could not read its own document while composing — a read fault, not a refusal"],
   ["masters not opened", "an item or salesperson could not be opened in AutoCount"],
