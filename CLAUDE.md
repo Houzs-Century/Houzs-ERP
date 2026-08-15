@@ -351,12 +351,26 @@ the STALE-BRANCH mechanism behind the incidents below:
    `DRIFT ... probable_renumber` and the runner exits 1, blocking the deploy
    until the tracker row is repointed by hand. So renumber freely; edit an
    applied file's body never.
-3. **After merging, confirm the backend job said `success`, not `skipped`.**
-   `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`. Required status
-   checks gate the MERGE; nothing gates the deploy that follows. On 2026-07-31
-   the backend sat un-deployed for over two hours while `main` was green, and it
-   happened again on 2026-08-13 — two `Deploy` runs, both `failure` with
-   `backend: skipped`. **Treat `skipped` on `backend` as a failed deploy.**
+3. **After merging, check the Deploy run — and read the RUN's conclusion beside
+   the job's.** `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`.
+   Required status checks gate the MERGE; nothing gates the deploy that follows.
+   On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
+   green, and it happened again on 2026-08-13 — two `Deploy` runs, both
+   **`failure`** with `backend: skipped`.
+
+   | run conclusion | `backend` job | what it means |
+   | --- | --- | --- |
+   | `failure` | `skipped` | **the deploy FAILED.** Something upstream died and the backend never shipped. This is the incident shape above. |
+   | `success` | `skipped` | nothing backend CHANGED. `deploy.yml`'s path filter is `backend/**` + `.github/workflows/deploy.yml`; a docs-or-root-scripts PR legitimately skips it. |
+   | `success` | `success` | shipped. |
+
+   > **CORRECTED 2026-08-15.** This rule read "**Treat `skipped` on `backend` as
+   > a failed deploy**", full stop, and that is over-broad in the direction that
+   > costs you: on 2026-08-15 PR #2207 touched only `BUG-HISTORY.md`,
+   > `docs/generated/` and `scripts/check-file-size.mjs` — all outside the
+   > filter — and its run was `success` with `backend: skipped`, which the old
+   > wording would have had you call a failed production deploy. The signal is
+   > the PAIR, not the job alone.
 4. **`frontend` is `npm run typecheck` (`tsc -b`), never `npx tsc --noEmit`.**
    *Added 2026-08-14.* `frontend/tsconfig.json` is `{"files": [], "references":
    [...]}` — a solution-style config with no inputs of its own. In `frontend/`,
@@ -538,27 +552,29 @@ never nullish.
   which folders are vendored, where desktop and mobile diverge, and which
   files are too big to open whole. Read this INSTEAD of exploring from
   scratch; it is the hand-written judgement layer.
-- **`docs/generated/`** — the mechanical inventory (routes, migrations,
-  largest files). It is COMPUTED from the tree, which is not the same as
-  being current: only `route-capability-matrix` is a CI gate (`audit:routes`,
-  in `ci.yml` + both deploy workflows). `route-locator.md` and
-  `codebase-map-facts.md` are regenerated ON DEMAND and nothing in CI runs
-  their `--check`; `gen-codebase-map.mjs` says so in its own output. As of
-  2026-08-13 `codebase-map-facts.md` IS drifted at HEAD — it records
-  `consignment-returns.ts` at 957 lines against an actual 1118. Run
-  `npm --prefix backend run audit:map` / `audit:route-locator` before trusting
-  a number from either.
+- **`docs/generated/`** — the mechanical inventory (routes, migrations, largest
+  files), COMPUTED from the tree. Which of them can DRIFT is not uniform, and
+  guessing wrong in either direction costs you:
 
-  largest files), regenerated from the tree. **"Cannot drift" is only true of
-  the CI-gated half, and this bullet used to claim it of all four.** CI runs
-  `audit:routes` (the capability matrix) on every PR; it does NOT run
-  `audit:route-locator` or `audit:map`, and both of those artifacts were found
-  STALE on `main` on 2026-08-14. That is deliberate, not an oversight — both
-  generators say so in their own headers ("a navigation doc going stale must
-  never block a deploy"). The practical rule: **treat `route-locator.md` and
-  `codebase-map-facts.md` as hints and re-run the generator before trusting a
-  line number**, and do not "fix" the gap by adding a CI gate without the owner,
-  because the absence is a decision.
+  | artifact | gated in CI? |
+  | --- | --- |
+  | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
+  | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
+  | `bug-index.md` | in CI, but it REPORTS drift and does not fail on it (see the job's own comment: with serial merges, gating it deadlocks every open PR on the previous author's entry) |
+  | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
+
+  > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two
+  > paragraphs that contradicted each other, that CI runs neither
+  > `audit:route-locator` nor `audit:map`. `audit:map` HAS been a `ci.yml` step
+  > since 2026-08-14 — verify with `grep -c audit:map .github/workflows/ci.yml`
+  > rather than believing this line either. The old text also carried a worked
+  > drift example (`consignment-returns.ts` "957 lines against an actual 1118")
+  > which no longer holds: the map and the file now agree. A stale worked example
+  > is worse than none — it reads as freshly measured evidence.
+  >
+  > The second paragraph was a partial paste that began mid-sentence
+  > ("largest files), regenerated from the tree."). If you are correcting a
+  > paragraph here, DELETE the one you are replacing.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -822,11 +838,15 @@ Not generic narrative.
   is the property that matters — but three of them do NOT live in
   `scripts/lib/`: `scale-pg-real-schema.mjs`, `scale-target-guard.mjs`
   and `repair-so-fee-line-integrity.mjs` sit directly in
-  `backend/scripts/`, imported by `tests/scale*.node.mjs` and
+  `backend/scripts/`, imported by `tests/scale*.test.mjs` and
   `tests/soFeeLineRepairRow.test.ts`. Adding a `#!` to any of those three
   breaks local Windows and CI will not tell you. If a runnable script
   needs to expose a function to a test, put the pure part in
   `scripts/lib/` and import it from the script.
+  *(Said `tests/scale*.node.mjs` until 2026-08-15. Those files were renamed to
+  `*.test.mjs` by #2180 — a `node:test` suite contributed nothing to the merged
+  coverage report — and this line was not updated with them, so it pointed at
+  files that do not exist. Re-check with `ls backend/tests/scale*`.)
 - **Keep schema and data in separate migrations when both are large.**
   An `ALTER TABLE` + 100-line `INSERT` block in the same file makes
   rollback awkward and the diff hard to read. Numbered migrations are
