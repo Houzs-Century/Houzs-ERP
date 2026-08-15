@@ -1735,16 +1735,27 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
-  /* Desc2 is AutoCount's Further Description, which the cutover PARSED to get
-     the ERP's variants — so the specification goes back through the ERP's own
-     renderer. The ceiling comes with it: SODTL.Desc2 is nvarchar(100) and the
+  /* Desc2 is the SECOND DESCRIPTION LINE, and the cutover PARSED it to get the
+     ERP's variants — so the specification goes back through the ERP's own
+     renderer.
+
+     It is NOT `FurtherDescription`, and this comment said it was until
+     2026-08-15. They are separate columns on the same detail class
+     (`sdk-api-reference.txt` lists both in every `SET:` list): Desc2 is
+     nvarchar(100) and carries the build text; FurtherDescription is
+     nvarchar(MAX) and carries the PHOTOGRAPHS, which is what
+     `import-so-line-photos.mjs` pulled out at cutover. The names mattered
+     little while nothing wrote FurtherDescription; now that something does,
+     conflating them points a photograph at a 100-character column.
+
+     The ceiling belongs to Desc2 alone: SODTL.Desc2 is nvarchar(100) and the
      book is AT it (longest of the extract's 15,950 values is exactly 100), so a
      richer string can now reach it and SQL Server would take the whole document.
      A refusal nobody can see is indistinguishable from a write-back that quietly
      stopped working, so it lands under its own CLASS NAME — the health check
      buckets on that name, and matching the shared "refused, nothing sent" prefix
      is the mislabelling #2094 already had to undo. */
-  describe('Further Description — the ERP\'s own renderer, and AutoCount\'s 100-character ceiling', () => {
+  describe('Desc2 — the ERP\'s own renderer, and AutoCount\'s 100-character ceiling', () => {
     test('a bedframe carries the colour, the divan, the leg and the gap into Desc2', async () => {
       const sb = seed({}, {
         description2: null,

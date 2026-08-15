@@ -60,7 +60,7 @@ try {
     "$AutoCountDir\AutoCount.StockMaint.dll"
   ) | ForEach-Object { "/r:$_" }
 
-  & $csc /nologo /platform:x64 /target:exe "/out:$exe" @refs /r:System.Web.Extensions.dll /r:System.Data.dll $tmp
+  & $csc /nologo /platform:x64 /target:exe "/out:$exe" @refs /r:System.Web.Extensions.dll /r:System.Data.dll /r:System.Drawing.dll $tmp
   if ($LASTEXITCODE -ne 0) { Write-Error "AcSyncService.cs DOES NOT COMPILE (csc exit $LASTEXITCODE)." }
   Write-Output ("COMPILES CLEAN - " + (Get-Item $exe).Length + " bytes (discarded; this is a check, not a deploy)")
 } finally {
