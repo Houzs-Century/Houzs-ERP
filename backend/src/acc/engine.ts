@@ -30,7 +30,7 @@
 
 import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
-import { REVERSAL_SOURCE } from './rules';
+import { REVERSAL_SOURCE, CONTROL_ROLES, resolveRoles } from './rules';
 import type { RuleLine } from './rules';
 
 export type EngineLine = RuleLine;
@@ -62,6 +62,7 @@ export type PostJournalErr = {
     | 'unbalanced'
     | 'zero_total'
     | 'account_invalid'
+    | 'control_account_manual'
     | 'account_check_failed'
     | 'idempotency_read_failed'
     | 'je_insert_failed'
@@ -140,6 +141,23 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   // 3 — the chart allows every named account.
   const chartOk = await checkAccounts(sb, companyId, [...new Set(lines.map((l) => l.accountCode))]);
   if (!chartOk.ok) return { ok: false, status: chartOk.status, reason: chartOk.reason };
+
+  // 3b — control accounts are SYSTEM-maintained (brief §2.4): a MANUAL journal
+  // may not name them. Every AR/AP movement must come from a document through
+  // its rule, or the "control balance = detail sum" self-check stops meaning
+  // anything.
+  if (sourceType === 'MANUAL') {
+    const roles = await resolveRoles(sb, companyId);
+    const controlCodes = new Set(CONTROL_ROLES.map((role) => roles[role]));
+    const hit = lines.find((l) => controlCodes.has(l.accountCode));
+    if (hit) {
+      return {
+        ok: false,
+        status: 'control_account_manual',
+        reason: `${hit.accountCode} is a control account — it is maintained by documents, not manual journals`,
+      };
+    }
+  }
 
   // 4 — one ACTIVE entry per source document. The read fails CLOSED (a blip
   // must never read as "no entry exists yet" — that is precisely how a second
@@ -241,7 +259,10 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
 export type ReverseJournalInput = {
   /** source_type of the ORIGINAL entry (e.g. 'SI'); the contra's own type comes from REVERSAL_SOURCE. */
   sourceType: string;
-  sourceDocNo: string;
+  /** Find the original by source document… */
+  sourceDocNo?: string;
+  /** …or by its journal-entry id (manual JVs carry no source_doc_no). One of the two is required. */
+  jeId?: string;
   /** When provided, both the lookup and the write are scoped to the company (PV path). SI/PI pass null: doc numbers are globally unique by prefix. */
   companyId?: number | null;
   /** narration for the contra entry, given the original. */
@@ -260,13 +281,17 @@ export type ReverseJournalResult =
 export async function reverseJournal(sb: any, input: ReverseJournalInput): Promise<ReverseJournalResult> {
   const revType = REVERSAL_SOURCE[input.sourceType] ?? `${input.sourceType}_REVERSAL`;
 
+  if (!input.sourceDocNo && !input.jeId) {
+    return { ok: false, status: 'reversal_read_failed', reason: 'reverseJournal needs sourceDocNo or jeId' };
+  }
+
   // The ACTIVE original — a document may carry several historical entries
   // after edit-driven void+repost cycles; the live one is the one to void.
   let q = sb
     .from('journal_entries')
-    .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, narration, company_id')
-    .eq('source_type', input.sourceType)
-    .eq('source_doc_no', input.sourceDocNo);
+    .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, narration, company_id, source_doc_no')
+    .eq('source_type', input.sourceType);
+  q = input.jeId ? q.eq('id', input.jeId) : q.eq('source_doc_no', input.sourceDocNo);
   if (input.companyId != null) q = q.eq('company_id', input.companyId);
   const { data: origRows, error: origErr } = await q;
   if (origErr) return { ok: false, status: 'reversal_read_failed', reason: `origRows: ${origErr.message}` };
@@ -279,6 +304,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
       total_debit_sen: number;
       total_credit_sen: number;
       company_id: number | null;
+      source_doc_no: string | null;
     }>
   ).find((r) => !r.reversed);
   if (!orig) return { ok: true, status: 'nothing_to_reverse' };
@@ -340,7 +366,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
         je_no: revJeNo,
         entry_date: input.entryDate ?? todayMyt(),
         source_type: revType,
-        source_doc_no: input.sourceDocNo,
+        source_doc_no: input.sourceDocNo ?? orig.source_doc_no ?? null,
         narration: input.narration(orig),
         total_debit_sen: totalSen,
         total_credit_sen: totalSen,

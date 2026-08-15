@@ -67,6 +67,7 @@ hard to check.
 
 | guide | status | verified by / PR | what was found |
 |---|---|---|---|
+| `accounting.md` | not verified | — | — |
 | `address-cascade.md` | not verified | — | — |
 | `announcements.md` | not verified | — | — |
 | `autocount-writeback.md` | not verified | — | — |

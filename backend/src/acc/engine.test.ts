@@ -11,10 +11,10 @@ import { postJournal, reverseJournal } from './engine';
 import { DEFAULT_ROLE_CODES, resolveRoles, siLines } from './rules';
 
 const CHART_C1: Row[] = [
-  { account_code: '1100', account_name: 'Accounts Receivable', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
-  { account_code: '4000', account_name: 'Sales Revenue', account_type: 'INCOME', parent_code: null, is_active: true, company_id: 1 },
-  { account_code: '5100', account_name: 'Operating Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1 },
-  { account_code: '5110', account_name: 'Rental Expense', account_type: 'EXPENSE', parent_code: '5100', is_active: true, company_id: 1 },
+  { account_code: '300-0000', account_name: 'Accounts Receivable', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
+  { account_code: '500-0000', account_name: 'Sales Revenue', account_type: 'INCOME', parent_code: null, is_active: true, company_id: 1 },
+  { account_code: '900-0000', account_name: 'Operating Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1 },
+  { account_code: '905-0000', account_name: 'Rental Expense', account_type: 'EXPENSE', parent_code: '900-0000', is_active: true, company_id: 1 },
   { account_code: '9000', account_name: 'Dead Account', account_type: 'EXPENSE', parent_code: null, is_active: false, company_id: 1 },
 ];
 
@@ -30,8 +30,8 @@ const world = (over: { accounts?: Row[]; jes?: Row[]; jeLines?: Row[]; missing?:
   );
 
 const drCr = (dr: number, cr: number) => [
-  { accountCode: '1100', debitSen: dr, creditSen: 0 },
-  { accountCode: '4000', debitSen: 0, creditSen: cr },
+  { accountCode: '300-0000', debitSen: dr, creditSen: 0 },
+  { accountCode: '500-0000', debitSen: 0, creditSen: cr },
 ];
 
 const base = {
@@ -53,7 +53,7 @@ describe('postJournal — the one gate', () => {
     expect(je.posted).toBe(true);
     expect(je.total_debit_sen).toBe(388800);
     expect(sb.tables.journal_entry_lines).toHaveLength(2);
-    expect(sb.tables.journal_entry_lines[0]).toMatchObject({ account_code: '1100', debit_sen: 388800, line_no: 1 });
+    expect(sb.tables.journal_entry_lines[0]).toMatchObject({ account_code: '300-0000', debit_sen: 388800, line_no: 1 });
   });
 
   it('numbers sequentially within a company month', async () => {
@@ -75,8 +75,8 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, {
       ...base,
       lines: [
-        { accountCode: '1100', debitSen: 100, creditSen: 100 },
-        { accountCode: '4000', debitSen: 100, creditSen: 100 },
+        { accountCode: '300-0000', debitSen: 100, creditSen: 100 },
+        { accountCode: '500-0000', debitSen: 100, creditSen: 100 },
       ],
     });
     expect(out).toMatchObject({ ok: false, status: 'bad_line' });
@@ -87,8 +87,8 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, {
       ...base,
       lines: [
-        { accountCode: '1100', debitSen: 100.5, creditSen: 0 },
-        { accountCode: '4000', debitSen: 0, creditSen: 100.5 },
+        { accountCode: '300-0000', debitSen: 100.5, creditSen: 0 },
+        { accountCode: '500-0000', debitSen: 0, creditSen: 100.5 },
       ],
     });
     expect(out).toMatchObject({ ok: false, status: 'bad_line' });
@@ -100,7 +100,7 @@ describe('postJournal — the one gate', () => {
       ...base,
       lines: [
         { accountCode: 'NOPE', debitSen: 100, creditSen: 0 },
-        { accountCode: '4000', debitSen: 0, creditSen: 100 },
+        { accountCode: '500-0000', debitSen: 0, creditSen: 100 },
       ],
     });
     expect(out).toMatchObject({ ok: false, status: 'account_invalid' });
@@ -113,7 +113,7 @@ describe('postJournal — the one gate', () => {
       ...base,
       lines: [
         { accountCode: '9000', debitSen: 100, creditSen: 0 },
-        { accountCode: '4000', debitSen: 0, creditSen: 100 },
+        { accountCode: '500-0000', debitSen: 0, creditSen: 100 },
       ],
     });
     expect(out).toMatchObject({ ok: false, status: 'account_invalid' });
@@ -124,8 +124,8 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, {
       ...base,
       lines: [
-        { accountCode: '5100', debitSen: 100, creditSen: 0 }, // has child 5110
-        { accountCode: '4000', debitSen: 0, creditSen: 100 },
+        { accountCode: '900-0000', debitSen: 100, creditSen: 0 }, // has child 905-0000
+        { accountCode: '500-0000', debitSen: 0, creditSen: 100 },
       ],
     });
     expect(out).toMatchObject({ ok: false, status: 'account_invalid' });
@@ -163,9 +163,24 @@ describe('postJournal — the one gate', () => {
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 
+  it('a MANUAL journal may NOT touch a control account — documents maintain those (§2.4)', async () => {
+    const sb = world();
+    const out = await postJournal(sb, { ...base, sourceType: 'MANUAL', sourceDocNo: null, lines: drCr(100, 100) });
+    expect(out).toMatchObject({ ok: false, status: 'control_account_manual' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    // The SAME lines through a document rule are exactly how AR moves — allowed.
+    const viaRule = await postJournal(sb, { ...base, lines: drCr(100, 100) });
+    expect(viaRule).toMatchObject({ ok: true, status: 'posted' });
+  });
+
+  const manualLines = (dr: number, cr: number) => [
+    { accountCode: '905-0000', debitSen: dr, creditSen: 0 },
+    { accountCode: '500-0000', debitSen: 0, creditSen: cr },
+  ];
+
   it('postNow:false writes a DRAFT — entry + lines exist, posted stays false', async () => {
     const sb = world();
-    const out = await postJournal(sb, { ...base, sourceType: 'MANUAL', sourceDocNo: null, postNow: false, lines: drCr(500, 500) });
+    const out = await postJournal(sb, { ...base, sourceType: 'MANUAL', sourceDocNo: null, postNow: false, lines: manualLines(500, 500) });
     expect(out).toMatchObject({ ok: true, status: 'draft' });
     expect(sb.tables.journal_entries[0].posted).not.toBe(true);
     expect(sb.tables.journal_entry_lines).toHaveLength(2);
@@ -202,8 +217,8 @@ describe('reverseJournal — voiding through the same gate', () => {
     total_credit_sen: 388800,
   };
   const LIVE_LINES = [
-    { journal_entry_id: 'je-1', line_no: 1, account_code: '1100', debit_sen: 388800, credit_sen: 0, party_type: 'CUSTOMER', party_code: 'C-1', party_name: 'Ah Meng', notes: 'AR' },
-    { journal_entry_id: 'je-1', line_no: 2, account_code: '4000', debit_sen: 0, credit_sen: 388800, party_type: null, party_code: null, party_name: null, notes: 'Rev' },
+    { journal_entry_id: 'je-1', line_no: 1, account_code: '300-0000', debit_sen: 388800, credit_sen: 0, party_type: 'CUSTOMER', party_code: 'C-1', party_name: 'Ah Meng', notes: 'AR' },
+    { journal_entry_id: 'je-1', line_no: 2, account_code: '500-0000', debit_sen: 0, credit_sen: 388800, party_type: null, party_code: null, party_name: null, notes: 'Rev' },
   ];
   const revInput = {
     sourceType: 'SI',
@@ -219,7 +234,7 @@ describe('reverseJournal — voiding through the same gate', () => {
     expect(rev.posted).toBe(true);
     expect(rev.reversed_by_je).toBe('je-1');
     const revLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === rev.id);
-    expect(revLines[0]).toMatchObject({ account_code: '1100', debit_sen: 0, credit_sen: 388800, party_code: 'C-1' });
+    expect(revLines[0]).toMatchObject({ account_code: '300-0000', debit_sen: 0, credit_sen: 388800, party_code: 'C-1' });
     expect(sb.tables.journal_entries.find((j) => j.id === 'je-1')!.reversed).toBe(true);
   });
 
@@ -255,6 +270,30 @@ describe('reverseJournal — voiding through the same gate', () => {
     expect(out).toMatchObject({ ok: false, status: 'reversal_read_failed' });
     expect(sb.tables.journal_entries).toHaveLength(1);
   });
+
+  it('reverses by journal id — the manual-JV path, which has no source document', async () => {
+    const MANUAL_JE = { ...LIVE, id: 'je-m', je_no: 'JE-2608-0009', source_type: 'MANUAL', source_doc_no: null };
+    const sb = world({
+      jes: [{ ...MANUAL_JE }],
+      jeLines: LIVE_LINES.map((l) => ({ ...l, journal_entry_id: 'je-m' })),
+    });
+    const out = await reverseJournal(sb, {
+      sourceType: 'MANUAL',
+      jeId: 'je-m',
+      narration: (o) => `Reversal of ${o.je_no}`,
+    });
+    expect(out).toMatchObject({ ok: true, status: 'reversed' });
+    const rev = sb.tables.journal_entries.find((j) => j.source_type === 'MANUAL_REVERSAL')!;
+    expect(rev.reversed_by_je).toBe('je-m');
+    expect(rev.source_doc_no ?? null).toBeNull();
+    expect(sb.tables.journal_entries.find((j) => j.id === 'je-m')!.reversed).toBe(true);
+  });
+
+  it('refuses to reverse with neither a source document nor a journal id', async () => {
+    const sb = world();
+    const out = await reverseJournal(sb, { sourceType: 'MANUAL', narration: (o) => o.je_no });
+    expect(out).toMatchObject({ ok: false, status: 'reversal_read_failed' });
+  });
 });
 
 describe('rules — role resolution', () => {
@@ -274,7 +313,7 @@ describe('rules — role resolution', () => {
   it('siLines books Dr AR / Cr SALES with the customer stamped on the AR leg', () => {
     const lines = siLines({ ...DEFAULT_ROLE_CODES }, { invoice_number: 'X', debtor_code: 'C1', debtor_name: 'A' }, 500);
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ accountCode: '1100', debitSen: 500, partyType: 'CUSTOMER' });
-    expect(lines[1]).toMatchObject({ accountCode: '4000', creditSen: 500 });
+    expect(lines[0]).toMatchObject({ accountCode: '300-0000', debitSen: 500, partyType: 'CUSTOMER' });
+    expect(lines[1]).toMatchObject({ accountCode: '500-0000', creditSen: 500 });
   });
 });

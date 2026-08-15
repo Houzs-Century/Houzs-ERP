@@ -65,10 +65,24 @@ marker other teams can rely on.
 Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
 (v_gl_entries), `/balances` (v_account_balances), `/ar-aging`, `/ap-aging` —
 all company-scoped, all paginated past PostgREST's 1000-row cap.
-Writes: `POST /journal-entries` (manual JV **draft** through the gate — the
-route now also validates the chart), `POST /journal-entries/:id/post`
-(company-scoped, status-checked, trigger-enforced), `POST /post/si/:inv`,
-`POST /post/pi/:inv` (manual re-post endpoints; DRAFT guarded).
+Writes: `POST /journal-entries` (manual JV **draft** through the gate; source
+type is FORCED to MANUAL and the chart is validated), `POST
+/journal-entries/:id/post`, `POST /journal-entries/:id/reverse` (MANUAL only
+— documents reverse through their own cancel flows), `POST /post/si/:inv`,
+`POST /post/pi/:inv` (manual re-post endpoints; DRAFT guarded), `POST
+/accounts` + `PATCH /accounts/:code` (chart management: code immutable,
+parent must share the type, deactivation refused for parents-with-children
+and role accounts), `GET /control-check` (reconciliation layer 1: AR/AP
+control vs documents, drift named to the doc, foreign lines listed).
+
+**Phase 1 (2026-08-16).** One AutoCount-style chart for every company
+(migration 0297; company 2 template copied to company 1, ledger lines
+remapped, roles repointed to 300-0000 / 310-0000 / 400-0000 / 500-0000,
+legacy codes deactivated as alias records). MANUAL journals are blocked from
+control accounts by the engine. The Accounting page carries seven tabs:
+Chart of Accounts (add/rename/deactivate), Journal Entries (+ manual JV
+form, post, reverse), General Ledger, Trial Balance (born with its own
+zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on

@@ -147,7 +147,11 @@ accounting.post('/journal-entries', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const entryDate = body.entryDate ?? todayMyt();
-  const sourceType = String(body.sourceType ?? 'MANUAL');
+  /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
+     body.sourceType, which let an operator mint an entry that impersonates a
+     document type ('SI', 'PV', …) — colliding with the real document's
+     idempotency and dodging the manual-journal control-account block. */
+  const sourceType = 'MANUAL';
   const sourceDocNo = body.sourceDocNo ?? null;
   const narration = body.narration ?? null;
   const lines = Array.isArray(body.lines) ? (body.lines as JeLineIn[]) : [];
@@ -598,4 +602,240 @@ accounting.get('/ap-aging', async (c) => {
     .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ apAging: data ?? [] });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 1 — chart management, manual-JV reversal, control-account self-check
+   ════════════════════════════════════════════════════════════════════════ */
+
+const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']);
+
+/* POST /accounts — add an account to the ACTIVE company's chart. */
+accounting.post('/accounts', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const code = String(body.accountCode ?? '').trim();
+  const name = String(body.accountName ?? '').trim();
+  const type = String(body.accountType ?? '').trim().toUpperCase();
+  const parent = body.parentCode ? String(body.parentCode).trim() : null;
+  if (!code) return c.json({ error: 'code_required' }, 400);
+  if (!name) return c.json({ error: 'name_required' }, 400);
+  if (!ACCOUNT_TYPES.has(type)) return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE' }, 400);
+
+  const sb = c.get('supabase');
+  if (parent) {
+    const { data: p } = await sb.from('accounts').select('account_code, account_type')
+      .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+    if (!p) return c.json({ error: 'parent_not_found', message: `Parent ${parent} does not exist in this company's chart` }, 400);
+    if ((p as { account_type?: string }).account_type !== type) {
+      return c.json({ error: 'parent_type_mismatch', message: 'A child must carry the same type as its parent' }, 400);
+    }
+  }
+  const { data: dup } = await sb.from('accounts').select('account_code')
+    .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (dup) return c.json({ error: 'code_exists' }, 409);
+
+  const { data: created, error } = await sb.from('accounts')
+    .insert({ company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true })
+    .select('account_code, account_name, account_type, parent_code, is_active')
+    .single();
+  if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  return c.json({ account: created }, 201);
+});
+
+/* PATCH /accounts/:code — rename / re-parent / activate-deactivate. The CODE
+   itself is immutable: history references it, and a deactivated row is the
+   alias record a rename leaves behind (brief 2.9). */
+accounting.patch('/accounts/:code', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const code = c.req.param('code');
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const sb = c.get('supabase');
+  const { data: existing } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active, account_type')
+    .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (!existing) return c.json(NOT_THIS_COMPANY, 404);
+
+  const patch: Record<string, unknown> = {};
+  if (body.accountName != null) {
+    const name = String(body.accountName).trim();
+    if (!name) return c.json({ error: 'name_required' }, 400);
+    patch.account_name = name;
+  }
+  if (body.parentCode !== undefined) {
+    const parent = body.parentCode ? String(body.parentCode).trim() : null;
+    if (parent === code) return c.json({ error: 'parent_self' }, 400);
+    if (parent) {
+      const { data: p } = await sb.from('accounts').select('account_code, account_type')
+        .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+      if (!p) return c.json({ error: 'parent_not_found' }, 400);
+      if ((p as { account_type?: string }).account_type !== (existing as { account_type?: string }).account_type) {
+        return c.json({ error: 'parent_type_mismatch' }, 400);
+      }
+    }
+    patch.parent_code = parent;
+  }
+  if (body.isActive !== undefined) {
+    const active = body.isActive === true;
+    if (!active) {
+      /* Deactivating a PARENT would orphan its children's grouping, and
+         deactivating a ROLE account would stop the posting rules dead —
+         refuse both, and say why. */
+      const { data: kids } = await sb.from('accounts').select('account_code')
+        .eq('company_id', co.companyId).eq('parent_code', code).eq('is_active', true).limit(1);
+      if (kids && kids.length > 0) return c.json({ error: 'has_active_children' }, 409);
+      const { data: role } = await sb.from('acc_account_roles').select('role')
+        .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+      if (role) return c.json({ error: 'role_account', message: `This account is the ${(role as { role?: string }).role} role account - repoint the role first` }, 409);
+    }
+    patch.is_active = active;
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_update' }, 400);
+
+  const { data: updated, error } = await sb.from('accounts').update(patch)
+    .eq('company_id', co.companyId).eq('account_code', code)
+    .select('account_code, account_name, account_type, parent_code, is_active')
+    .maybeSingle();
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  return c.json({ account: updated });
+});
+
+/* POST /journal-entries/:id/reverse — void a MANUAL journal with a contra.
+   Document-sourced entries are NOT reversible here: cancel the document and
+   its own flow writes the contra (one lifecycle per document, brief 2.8). */
+accounting.post('/journal-entries/:id/reverse', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = c.req.param('id');
+  const sb = c.get('supabase');
+
+  const { data: je } = await scopeToCompanyId(
+    sb.from('journal_entries').select('id, je_no, source_type, posted, reversed').eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (!je) return c.json(NOT_THIS_COMPANY, 404);
+  const row = je as { je_no: string; source_type: string; posted?: boolean; reversed?: boolean };
+  if (row.source_type !== 'MANUAL') {
+    return c.json({ error: 'not_manual', message: 'Only manual journals reverse here - cancel the source document instead.' }, 409);
+  }
+  if (row.posted !== true) return c.json({ error: 'not_posted', message: 'A draft has booked nothing - post it first or leave it.' }, 409);
+  if (row.reversed === true) return c.json({ error: 'already_reversed' }, 409);
+
+  const r = await reverseJournal(sb, {
+    sourceType: 'MANUAL',
+    jeId: id,
+    companyId: co.companyId,
+    narration: (orig) => `Reversal of ${orig.je_no} - manual journal voided`,
+  });
+  if (!r.ok) return c.json({ error: r.status, reason: r.reason }, 500);
+  return c.json({ ok: true, ...('jeNo' in r ? { jeNo: r.jeNo, jeId: r.jeId } : {}), status: r.status });
+});
+
+/* GET /control-check — reconciliation layer 1 (brief 3.5): control account
+   vs the documents that are supposed to explain it, named to the doc.
+
+   For each control role (AR from SI documents, AP from PI documents) it
+   reports DRIFT docs (document total != its ACTIVE journal total, including
+   a confirmed doc with NO journal and a journal whose doc is gone) and
+   FOREIGN lines (control-account lines from a source no rule maps there).
+   Sums run over POSTED, non-reversed entries — the same predicate every
+   balance view uses. */
+accounting.get('/control-check', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const roles = await resolveRoles(sb, companyId);
+
+  type Drift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
+  type Foreign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
+  type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
+  type CheckErr = { role: string; accountCode: string; error: string };
+
+  const runCheck = async (role: 'AR' | 'AP', accountCode: string): Promise<CheckOk | CheckErr> => {
+    const expectedSource = role === 'AR' ? 'SI' : 'PI';
+
+    const { data: jes, error: jesErr } = await sb.from('journal_entries')
+      .select('id, je_no, source_doc_no, total_debit_sen')
+      .eq('company_id', companyId).eq('source_type', expectedSource)
+      .eq('posted', true).eq('reversed', false);
+    if (jesErr) return { role, accountCode, error: jesErr.message };
+    const jeByDoc = new Map<string, { jeTotal: number }>();
+    for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+      if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+    }
+
+    const drift: Drift[] = [];
+    if (role === 'AR') {
+      const { data: docs, error } = await sb.from('sales_invoices')
+        .select('invoice_number, total_centi, status, migrated_no_stock')
+        .eq('company_id', companyId);
+      if (error) return { role, accountCode, error: error.message };
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; status: string | null; migrated_no_stock: boolean | null }>) {
+        const s = (d.status ?? '').toUpperCase();
+        const je = jeByDoc.get(d.invoice_number);
+        if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
+          if (je) drift.push({ docNo: d.invoice_number, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: `journal active but document is ${d.migrated_no_stock ? 'migrated' : s}` });
+          jeByDoc.delete(d.invoice_number);
+          continue;
+        }
+        const docTotal = Number(d.total_centi ?? 0);
+        if (!je) {
+          if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+        } else {
+          if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total' });
+          jeByDoc.delete(d.invoice_number);
+        }
+      }
+    } else {
+      const { data: docs, error } = await sb.from('purchase_invoices')
+        .select('invoice_number, total_centi, exchange_rate, status, migrated_no_stock')
+        .eq('company_id', companyId);
+      if (error) return { role, accountCode, error: error.message };
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
+        const s = (d.status ?? '').toUpperCase();
+        const je = jeByDoc.get(d.invoice_number);
+        if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
+          if (je) drift.push({ docNo: d.invoice_number, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: `journal active but document is ${d.migrated_no_stock ? 'migrated' : s}` });
+          jeByDoc.delete(d.invoice_number);
+          continue;
+        }
+        /* PI posts on demand — a confirmed PI with no journal is NORMAL here,
+           not drift (the AP aging is the place that surfaces unposted PIs). */
+        if (!je) continue;
+        const docTotal = toMyrSen(Number(d.total_centi ?? 0), safeRate(d.exchange_rate));
+        if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total (MYR)' });
+        jeByDoc.delete(d.invoice_number);
+      }
+    }
+    for (const [docNo, je] of jeByDoc) {
+      drift.push({ docNo, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: 'journal active but document not found' });
+    }
+
+    const { data: lines, error: linesErr } = await paginateAll<Record<string, unknown>>((from, to) =>
+      sb.from('v_gl_entries').select('*').eq('company_id', companyId).eq('account_code', accountCode).order('line_id').range(from, to));
+    if (linesErr) return { role, accountCode, error: linesErr.message };
+    let bal = 0;
+    const foreign: Foreign[] = [];
+    const family = new Set([expectedSource, `${expectedSource}_REVERSAL`]);
+    for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
+      bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
+      if (!family.has(l.source_type)) {
+        foreign.push({ jeNo: l.je_no, sourceType: l.source_type, debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0) });
+      }
+    }
+
+    return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
+  };
+
+  const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
+  return c.json({ checks });
 });

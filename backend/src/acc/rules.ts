@@ -21,17 +21,20 @@
 
 export type AccountRole = 'AR' | 'SALES' | 'INVENTORY' | 'AP';
 
-/* The codes every company's postings used before roles existed (PR #36 era
-   hardcodes). Company 2's chart did not even contain them — migration
-   acc_gl_foundation backfills those four codes into its chart so history and
-   validation agree. Phase 1's AutoCount-style renumbering edits the ROLES
-   TABLE + chart, not this fallback. */
+/* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
+   owner decision 2026-08-16). Every company carries these codes, so a company
+   whose roles rows are missing or unreadable still books onto real accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '1100',
-  SALES: '4000',
-  INVENTORY: '1200',
-  AP: '2000',
+  AR: '300-0000',        // Trade Debtor
+  SALES: '500-0000',     // Sales Revenue
+  INVENTORY: '310-0000', // Inventory
+  AP: '400-0000',        // Trade Creditor
 };
+
+/* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
+   not touch them — the engine enforces this. AR and AP today; the
+   settlement-in-transit roles join in phase 2. */
+export const CONTROL_ROLES: AccountRole[] = ['AR', 'AP'];
 
 /** source_type of the contra entry that voids a given source_type. */
 export const REVERSAL_SOURCE: Record<string, string> = {
