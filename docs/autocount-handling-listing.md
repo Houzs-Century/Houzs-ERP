@@ -46,6 +46,44 @@ running, including the read route the banner above depends on.
 | 5 | `qa-convert.ps1` | **YES — writes to the LIVE book and consumes real DO / GR running numbers** | job 1, plus the owner saying go | `create-po`, `so-to-do`, `po-to-gr` — three operations never proven end to end |
 | 6 | The `FurtherDescription` write probe | **YES — scratch document only** | job 4 first | whether AutoCount will render RTF it did not write |
 
+### 0.05 ROOT CAUSE — why these six cannot be done from the development side
+
+Written 2026-08-15 after measuring, not assuming. Everything else the ERP owes
+AutoCount has been built; what is left is here because of ONE property, and it
+is worth stating plainly so nobody spends another session trying to route
+around it.
+
+**There is no channel from here into that machine.** The four that were supposed
+to exist were each checked:
+
+| channel | expected | measured, 2026-08-15 |
+|---|---|---|
+| ZeroTier -> `10.147.17.100,55500`, direct SQL to `AED_HOUZS` | how the cutover read the book | **ZeroTier is not installed on the development machine, and the address is not reachable** |
+| a SQL client | `sqlcmd` / `tsql` / `isql` | **none installed** |
+| a driver, to write one | `mssql` / `tedious` in `backend/` | **neither is a dependency** |
+| `AcSyncService` over the tunnel | the automated path | reachable, but it is a WRITE service with no read route until `#2243`, and its key is a Cloudflare Worker secret that cannot be read from here |
+
+So the account book is not readable, not writable and not inspectable from the
+development side by any route. That is not a gap to be closed with more code:
+the licensed SDK assemblies exist on exactly one machine, and everything below
+either runs there or does not run.
+
+**Each item, and what would actually settle it:**
+
+| # | The question that cannot be answered here | What settles it | Why it is stuck |
+|---|---|---|---|
+| 1 | Which build is the host running? | rebuild once, then `GET /health` | Until `#2241` merges, `/health` answers `{ok, book, service}` — no version, no timestamp. The repository records nothing about what is deployed either, so the only material that looks like an answer is prose, and prose about a deployment goes stale in days. **The same class already cost a fortnight on staging**, where `/health` answered `sha:null` and a two-week-old build passed the nightly check (`docs/SECURITY-DX-ROADMAP.md`). |
+| 2 | Can the new build reach the account book? | `POST /ensure-masters` with empty arrays | `/health` answers from CONSTANTS and opens no database, so a build that cannot connect passes it. The probe that proves a connection is not in the runbook. |
+| 3 | Which picture format does AutoCount store photos in? | job 1, then `read-further-description.mjs` | The photographs came OUT of `FurtherDescription` at cutover, and **the raw RTF was not kept and neither was the extractor** — `git ls-files \| grep -c '\.rtf$'` is 0. The only copy of the answer is the 554 sales-order lines in the live book still holding it. Sending the wrong picture form renders a red X or a blank, and a blank photograph is worse than none. |
+| 4 | Do `create-po`, `so-to-do`, `po-to-gr` work end to end? | `qa-convert.ps1` | Never run since the blocker was fixed. `FK_PO_PurchaseAgent` stopped `create-po` on 2026-08-12; the cause is fixed in source (`AC_PURCHASE_AGENT`) and nothing has been sent since. A conversion cannot be tested against anything but a real book: `AED_TESTING` exhausted its 500-transaction limit. |
+| 5 | Will AutoCount RENDER RTF it did not write? | the write probe, job 6 | Two different renderers are involved — the entry screen and the report's `XRRichText` — so a picture that appears in one may not appear in the other. Only the host can show that. |
+| 6 | Does a document actually move stock? | job 5, then read a stock card | `qa-convert.ps1`'s own header says the GR posts a real stock IN. Nobody has looked at a stock card afterwards, so it is documented and unobserved. |
+
+**What is NOT on this list, deliberately.** Everything that can be built without
+the host has been: the payment balance and its references, the blank line
+delivery date, the eight unsent fields, clearing a field, the item-code chain,
+master creation. Those wait on a DEPLOY, not on an answer — see 0.1.
+
 ### 0.1 What job 1 actually brings live
 
 Four merged changes are in the repository and not on the host. The running exe
