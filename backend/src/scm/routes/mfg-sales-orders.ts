@@ -298,6 +298,12 @@ async function queueAcSoEdit(
      "new" appends a duplicate into a live account book. Only the route that
      did the inserting can say, so only the route that did it passes this. */
   newLineIds: string[] = [],
+  /* ERP columns THIS request wrote. Only the header PATCH passes any: a value
+     the operator DELETED and a value that was never there look identical in the
+     saved row, so the composer cannot tell them apart and the route has to say.
+     Absent is the STRICTER direction — nothing is cleared — which is why this
+     one is allowed to be optional where `itemCode` was not. */
+  touchedFields: readonly string[] = [],
 ): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
@@ -305,6 +311,7 @@ async function queueAcSoEdit(
     docNo,
     retire,
     newLineIds,
+    touchedFields,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 }
@@ -7392,7 +7399,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     console.warn('[mfg-so] header saved but edit lease was no longer ours to release:', docNo, savedVersion);
   }
 
-  await queueAcSoEdit(c, docNo);
+  /* The header PATCH is the ONE caller that can clear a field, and
+     Object.keys(updates) is exactly the set it wrote — the loop above only adds
+     a key when the request body carried it. */
+  await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
   return c.json({
     ok: true,
