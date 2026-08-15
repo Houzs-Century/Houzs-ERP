@@ -10952,6 +10952,29 @@ export async function recordSoPaymentRow(
     ],
   });
 
+  /* AutoCount's BALANCE UDF is what the order still owes, so a payment CHANGES
+     a value the account book holds — and no other path re-sends it. Without
+     this the figure in the book stays whatever it was at the last line or
+     header save, which for a fully-settled order reads as still outstanding.
+
+     Queued from the CORE and not from the HTTP route because scan-so.ts inserts
+     through here too, with no request context. A rule written into the route
+     would cover the payments a human typed and silently miss every receipt the
+     scan job books — this module's recurring shape.
+
+     enqueueEdit never throws and returns false when the write-back is off or
+     the order has no AutoCount counterpart, so the payment's own success does
+     not depend on it. */
+  await enqueueEdit(sb, {
+    companyId,
+    docType: 'SO',
+    docNo: p.docNo,
+    /* p.createdBy is a Supabase auth uuid; the outbox's created_by is the
+       numeric houzs user id, and there is no mapping to hand here. Provenance
+       for this row lives in the ADD_PAYMENT audit entry above. */
+    createdBy: null,
+  });
+
   return { payment: data as Record<string, unknown>, errorMessage: null };
 }
 
@@ -11350,6 +11373,14 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     fieldChanges: changes,
   });
 
+  /* Same reason as the insert: an edited amount moves the outstanding balance,
+     which is a value AutoCount holds. Unlike the insert this one lives in the
+     route, because the UPDATE above is the route's own and has no shared core.
+     Fires even when only the method changed — recomposing an unchanged BALANCE
+     costs one queued edit, while deciding here which fields matter would put a
+     second opinion about the balance rule next to so-outstanding.ts. */
+  await queueAcSoEdit(c, docNo);
+
   const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
 });
@@ -11451,6 +11482,12 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });
+
+  /* A deleted payment raises the outstanding balance, so the account book has
+     to be told in the same way an added one does. This is the direction that
+     matters most: a book left showing a settled order after the payment was
+     reversed understates what the customer owes. */
+  await queueAcSoEdit(c, docNo);
 
   return c.json({ ok: true });
 });
