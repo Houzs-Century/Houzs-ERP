@@ -48,14 +48,19 @@ function harness(opts: {
   flag?: string | null;
   companyId?: number | undefined;
   perms?: string[];
+  /** Make the app_config read FAIL rather than come back empty. */
+  missingAppConfigValue?: boolean;
 }) {
-  const sb = fakeSb({
-    autocount_outbox: opts.outbox ?? [],
-    app_config:
-      opts.flag === undefined || opts.flag === null
-        ? []
-        : [{ key: 'scm.autocount_writeback', value: opts.flag }],
-  });
+  const sb = fakeSb(
+    {
+      autocount_outbox: opts.outbox ?? [],
+      app_config:
+        opts.flag === undefined || opts.flag === null
+          ? []
+          : [{ key: 'scm.autocount_writeback', value: opts.flag }],
+    },
+    opts.missingAppConfigValue ? { app_config: ['value'] } : {},
+  );
   /* Typed with the app's OWN Variables rather than a bare Hono plus `as never`
      casts at every c.set. The casts are what the other harnesses in this tree
      use, and they are exactly the thing that would let this file keep compiling
@@ -79,6 +84,7 @@ function harness(opts: {
 /** What the route answers with — every field the assertions below read. */
 interface Body {
   error?: string;
+  reason?: string;
   message?: string;
   allowed?: readonly string[];
   writeback?: { value: string | null; on: boolean; scope: string };
@@ -281,6 +287,23 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     const { body } = await get(harness({ outbox: [], flag: '1' }));
     expect(body.writeback?.on).toBe(true);
     expect(body.writeback?.scope).toBe('1');
+  });
+
+  /* An UNREADABLE switch and an ABSENT switch render as opposite claims — "OFF"
+     versus "row absent" — and supabase-js does not throw, so only the bound
+     error tells them apart. Printing either one from a read that failed would be
+     a definite statement about a live account book that nobody actually made. */
+  it('refuses the whole response when the switch cannot be read', async () => {
+    /* fakeSb's `missing` map makes the column read fail the WHOLE query with
+       42703, which is what a real unreadable app_config looks like to
+       supabase-js: an error and a null body. */
+    const app = harness({ outbox: [row()], missingAppConfigValue: true });
+    const { status, body } = await get(app);
+    expect(status).toBe(500);
+    expect(body.error).toBe('load_failed');
+    expect(body.reason).toContain('write-back switch could not be read');
+    expect(body.writeback).toBeUndefined();
+    expect(body.counts).toBeUndefined();
   });
 
   it('an absent row is off, and an empty queue is zero of everything', async () => {

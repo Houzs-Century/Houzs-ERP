@@ -215,8 +215,23 @@ export const listAutocountOutboxHandler = async (
      check does: a typo like 'On ' is visible rather than hidden behind the word
      "off". */
   const scope = await readWritebackScope(sb);
-  const { data: flagRow } = await sb
+  const { data: flagRow, error: flagErr } = await sb
     .from('app_config').select('value').eq('key', WRITEBACK_KEY).maybeSingle();
+  /* THE ERROR IS BOUND AND BRANCHED ON, not discarded. supabase-js does not
+     throw, so `const { data }` alone cannot tell "the row is absent" from "the
+     query failed" — and those two render as opposite claims here: ROW ABSENT
+     says the switch was never configured, which reads as a definite fact about
+     a live account book. readWritebackScope's own fallback ("last known state,
+     else off") is right for an enqueue that must never be harmed and wrong for
+     a REPORT, which would then print OFF on the strength of a read that did not
+     happen. Refusing the whole response is the only answer that cannot mislead:
+     the page already has a banner for it. */
+  if (flagErr) {
+    return c.json(
+      { error: 'load_failed', reason: `the write-back switch could not be read: ${flagErr.message}` },
+      500,
+    );
+  }
   const flagValue = ((flagRow as { value?: string } | null)?.value ?? null);
 
   const [pending, sent, failed, skippedTotal, requeued] = await Promise.all([
