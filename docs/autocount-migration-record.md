@@ -810,7 +810,7 @@ them on Friday morning:
 **`AED_TESTING` cannot be used.** It is an evaluation book and it has exhausted its
 **500-transaction limit**. That is why the plan of "prove it on the test book first" — which is
 what `docs/autocount-service-deploy.md` section 4 tells you to do, and what
-`docs/autocount-sync-coverage.md` step 9 assumes — does not survive contact. The verification has
+`docs/archive/autocount-sync-coverage-2026-08-11.md` step 9 assumes — does not survive contact. The verification has
 to happen on the live book, on a throwaway document, cancelled afterwards.
 
 **The live book enforces master-data foreign keys the test book does not.** Two were hit in
@@ -926,16 +926,21 @@ never run end-to-end. `NOTHING` = no path (the SDK merely *could* do it counts a
 
 DELETE is deliberately absent: per 不可以删只可以 cancel, delete is not a capability we want.
 
-| Doc | CREATE | CONVERT (in) | EDIT | CANCEL |
-|---|---|---|---|---|
-| **SO** | **PROVEN** | n/a (no parent) | **PROVEN** (4.2-4.5) — **2,316 of 2,723** documents editable | **PROVEN** |
-| **PO** | **REFUSED** — `FK_PO_PurchaseAgent` | n/a (no parent) | BUILT — **127 of 449** documents editable | BUILT |
-| **DO** | n/a by design | **PROVEN** (SO to DO) | **NOTHING** | **PROVEN** |
-| **GR** | n/a by design | BUILT (PO to GR) | **NOTHING** | BUILT |
-| **SI** | n/a by design | BUILT (DO to IV) | **NOTHING** | **NOTHING** |
-| **PI** | n/a by design | BUILT (GR to PI) | **NOTHING** | **NOTHING** |
+> **The matrix that was here has been DELETED — it is generated now:**
+> **`docs/generated/autocount-coverage.md`**.
+>
+> This copy was the most nearly right of the four that existed, and it still
+> went stale in one direction that mattered: it recorded `PO CREATE` as
+> **REFUSED — `FK_PO_PurchaseAgent`**, which stopped being true on 2026-08-14
+> when `readPoHeader` started sending the constant `AC_PURCHASE_AGENT`. A reader
+> would have concluded purchase orders still cannot be sent.
+>
+> The live-book evidence below is kept as a dated record of what was run that
+> day. It is NOT the source of truth for what works now — that is the generated
+> file, whose live-book column comes from
+> `backend/scripts/data/ac-live-proof.json`.
 
-**Five cells are PROVEN as of 2026-08-12**, all against the live `AED_HOUZS` book through the
+**Five cells were PROVEN as of 2026-08-12**, all against the live `AED_HOUZS` book through the
 rebuilt service, all over the tunnel or its loopback:
 
 ```
@@ -990,7 +995,7 @@ lines is the only transfer primitive the SDK has, and the detail classes expose 
 fields, so the link cannot be faked. That is why those cells read `n/a by design` and not as a gap.
 A DO raised in the ERP with no parent SO simply has no path, and the ERP must not pretend otherwise.
 
-Three real caveats on convert, all from `docs/autocount-sync-coverage.md`:
+Three real caveats on convert, all from `docs/archive/autocount-sync-coverage-2026-08-11.md`:
 
 - **One source document only.** The ERP can merge N SOs into one DO. AutoCount has no shape for
   that, so `recordConvertSkipped` writes a `skipped` outbox row with the reason. Merged conversions
@@ -1277,10 +1282,10 @@ price is strictly better and is still open.
 
 | Document | What it owns |
 |---|---|
-| `tasks/AUTOCOUNT-GOLIVE-HANDOFF.md` | the index — where the cutover stands against the three criteria |
+| `docs/generated/autocount-coverage.md` | the generated coverage table. The 2026-08-12 handoff snapshot it replaced is archived at `docs/archive/AUTOCOUNT-GOLIVE-HANDOFF-2026-08-12.md` |
 | `docs/autocount-cutover-ledger.md` | the chronological run log, W0 to W18, every run id |
 | `docs/golive-readiness.md` | the write freeze, whether the write path is trustworthy, the risk register |
-| `docs/autocount-sync-coverage.md` | the coverage matrix in full, the divergence register D1-D14, the build plan |
+| `docs/archive/autocount-sync-coverage-2026-08-11.md` | the coverage matrix in full, the divergence register D1-D14, the build plan |
 | `docs/autocount-service-deploy.md` | build and deploy on the AutoCount host; the `Retire: true` contract; runbook 4.1-4.6 |
 | `docs/autocount-line-retirement-plan.md` | what has to change before a line can be cancelled instead of deleted |
 | `docs/write-freeze-staged-lift.md` | the freeze grammar, the area table, the staged lift, the rollback |
