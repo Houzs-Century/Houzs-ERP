@@ -264,6 +264,8 @@ class AcSyncService {
       case "/doc-read": Json(ctx, 200, DocRead(p)); return;
       /* READ-ONLY, and it reads a FILE rather than the book. See LastErrors(). */
       case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
+      /* READ-ONLY, one aggregate. See PictureCensus(). */
+      case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
@@ -514,6 +516,63 @@ class AcSyncService {
     }
     r["lines"] = picked;
     return r;
+  }
+
+  /* ── /picture-census — does ANY line hold more than one picture ───────────
+     THE ONLY REASON THIS MATTERS. FurtherDescription is replaced WHOLESALE -
+     there is no append - so if a line we rewrite holds two pictures and we send
+     one, the second is DESTROYED and nothing says so.
+
+     The photo manifest says one picture per line for all 554 of its rows, but
+     the manifest is the output of an extractor nobody kept, so it cannot rule
+     out that the extractor took only the first. This asks the BOOK instead, in
+     one aggregate over the whole table.
+
+     max_pictures = 1 closes it. Anything higher is a finding, and the composer
+     needs a read-before-write on those lines before it may touch them. */
+  /* VERBATIM on purpose. In a normal C# literal "\p" is not a valid
+     escape and does not compile; @ turns escape processing off, so the marker
+     is exactly the six characters SQL must match. */
+  static readonly string PictMarker = @"{\pict";
+
+  static Dictionary<string, object> PictureCensus(Dictionary<string, object> p) {
+    var table = Or(Str(p, "Table"), "SODTL").ToUpperInvariant();
+    if (Array.IndexOf(DtlTables, table) < 0)
+      return Err("Table must be one of " + string.Join(", ", DtlTables) + " (got '" + table + "')");
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var cols = ExistingColumns(cn, table, new[] { "FurtherDescription" }, missing);
+      if (cols.Count == 0) { var e = Ok(null); e["table"] = table; e["column"] = null; return e; }
+
+      using (var cmd = cn.CreateCommand()) {
+        /* LEN() ignores trailing spaces but the marker is 6 characters of
+           punctuation, so the subtraction is exact. */
+        cmd.CommandText =
+          "SELECT COUNT(*) AS lines_with_a_value, " +
+          "       MAX((LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6) AS max_pictures, " +
+          "       SUM(CASE WHEN (LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6 > 1 THEN 1 ELSE 0 END) AS lines_over_one " +
+          "FROM [" + table + "] " +
+          "WHERE FurtherDescription IS NOT NULL AND LEN(FurtherDescription) > 0";
+        cmd.CommandTimeout = 180;
+        using (var rd = cmd.ExecuteReader()) {
+          var r = Ok(null);
+          r["table"] = table;
+          if (rd.Read()) {
+            /* Convert, never GetInt32. LEN() over nvarchar(MAX) returns BIGINT,
+               so the arithmetic that follows is bigint too, and GetInt32 throws
+               "Specified cast is not valid" - which is what the first run of
+               this route did, on the host, against the real table. */
+            r["linesWithAValue"] = rd.IsDBNull(0) ? 0L : System.Convert.ToInt64(rd.GetValue(0));
+            r["maxPictures"]     = rd.IsDBNull(1) ? 0L : System.Convert.ToInt64(rd.GetValue(1));
+            r["linesOverOne"]    = rd.IsDBNull(2) ? 0L : System.Convert.ToInt64(rd.GetValue(2));
+          }
+          return r;
+        }
+      }
+    }
   }
 
   static Dictionary<string, object> DocRead(Dictionary<string, object> p) {
@@ -875,11 +934,48 @@ class AcSyncService {
     if (string.IsNullOrEmpty(creditor))
       throw new Exception("CreditorCode required for /so-to-po - AutoCount defaults the payment term from the supplier, and without one the save dies on FK_PO_DisplayTerm, which names the term and not the supplier");
 
+    /* EVERY LINE NEEDS A QUANTITY, and it must be checked BEFORE anything is
+       written. Measured on the live book 2026-08-16, reading the PO back the
+       moment it was created:
+
+         PO line 906183: Qty=  TransferedQty=0  Transferable=T
+
+       Qty is NULL. AddSOToPOTransferDetail does NOT carry the sales line's
+       quantity across. AutoCount's outstanding predicate is
+       Qty - ISNULL(TransferedQty, 0) > 0, which is NULL and never true for such
+       a line, so the purchase order saves, looks right in every list, and can
+       never be converted: /po-to-gr answers "no transferable lines on PO" and
+       the failure surfaces a step later on a different document than the one at
+       fault.
+
+       Checked against the PAYLOAD rather than the saved document on purpose -
+       this refuses before a single row is written, and PurchaseOrder exposes no
+       Details collection to walk afterwards anyway. */
+    var qtyByKey = new Dictionary<long, decimal>();
+    foreach (var od in List(p, "Details")) {
+      var itq = od as Dictionary<string, object>;
+      if (itq == null || !itq.ContainsKey("DtlKey")) continue;
+      if (itq.ContainsKey("Qty")) qtyByKey[System.Convert.ToInt64(itq["DtlKey"])] = Dec(itq, "Qty", 0);
+    }
+    foreach (var k in keys) {
+      decimal q;
+      if (!qtyByKey.TryGetValue(k, out q) || q <= 0)
+        throw new Exception("/so-to-po needs a positive Qty in Details for source DtlKey " + k +
+          " - AddSOToPOTransferDetail does not carry the sales quantity across, and a purchase order whose line has no quantity saves but can never be converted");
+    }
+
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();
     po.CreditorCode = creditor;
     Set(() => po.CreditorName = Str(p, "CreditorName"));
-    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    /* KEEP WHAT THE TRANSFER RETURNS, keyed by the SOURCE line. The override
+       loop below used to call po.EditDetail(sourceDtlKey) - but that key is the
+       SALES line's, and the purchase lines the transfer just made have keys of
+       their own. EditDetail returned null every time, `continue` swallowed it,
+       and NOT ONE override was applied: the PO came out with a null Qty and the
+       sales price, silently, on 2026-08-16. */
+    var madeBySourceKey = new Dictionary<long, object>();
+    foreach (var k in keys) madeBySourceKey[k] = po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
     /* AFTER the transfer, deliberately. The transfer brings the sales line's
        own price across, and a purchase order needs the COST the ERP agreed with
@@ -889,8 +985,10 @@ class AcSyncService {
       var it = (Dictionary<string, object>) od;
       if (!it.ContainsKey("DtlKey")) continue;
       var dtl = System.Convert.ToInt64(it["DtlKey"]);
-      var d = po.EditDetail(dtl);
-      if (d == null) continue;
+      object madeObj;
+      if (!madeBySourceKey.TryGetValue(dtl, out madeObj) || madeObj == null)
+        throw new Exception("/so-to-po was given an override for DtlKey " + dtl + ", which is not one of the source lines it transferred");
+      dynamic d = madeObj;
       if (it.ContainsKey("UnitPrice")) Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Qty"))       Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));

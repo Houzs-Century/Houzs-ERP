@@ -1,3 +1,113 @@
+## `/po-to-gr` is broken on its own, and calling it "blocked behind SO-to-PO" was wrong [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Correction first.** This thread twice reported `PO->GR` as blocked by the
+SO-to-PO defect, on the reasoning that the only PO available to convert was the
+unusable one. The log refutes it: **eight** `/po-to-gr` failures are recorded,
+and one is against a healthy `/create-po` purchase order, on the CURRENT build:
+
+```
+2026-08-15 22:22:39 ERROR /po-to-gr: System.IndexOutOfRangeException: There is no row at position -1.
+  at System.Data.RBTree`1.GetNodeByIndex(Int32 userIndex)
+  at System.Data.DataRowCollection.get_Item(Int32 index)
+  at AutoCount.Invoicing.Purchase.GeneralPurchasePartialTransferDetail..ctor(
+        PurchaseDocument document, String fromDocType, Int64[] fromDocDtlKey,
+        Boolean transferMaster, Boolean mergeTrans...)
+```
+
+Two more of the eight are from 2026-08-12, same exception, same frame.
+
+**What it means.** "There is no row at position -1" is a master lookup that
+returned -1 — not found — being used as a row index. The GRN's partial-transfer
+constructor is reaching for a purchase-side master row that is not there. That
+is the same family as `FK_SODTL_Location` (the line warehouse),
+`FK_SO_SalesLocation` (the header sales location) and `FK_PO_DisplayTerm` (the
+payment term, defaulted from the supplier): **a master the payload does not
+carry.** It differs only in that it names no constraint, just an index.
+
+**`transferMaster = true` does NOT cure it.** #2043 added that flag precisely
+because `false` produced this shape, and the comment above the call says so. The
+flag was already deployed when the 2026-08-15 failure fired, so the remaining
+cause is something else on the purchase side.
+
+**Not yet traced, and deliberately not guessed.** The constructor's arguments
+are in the frame — `fromDocType`, `fromDocDtlKey[]`, `transferMaster` — so the
+next step is to log those three at the call site and read which lookup is
+empty. `/last-errors` now makes that a single call rather than a remote-desktop
+session.
+
+**Consequence.** `PO->GR` has never succeeded, so `GR->PI` has never been
+reachable either. Of the five conversions, `SO->DO` and `DO->IV` are proven with
+their Transfer links; the three purchase-side ones are not.
+
+**The lesson.** "Blocked by X" is a causal claim and needs the same evidence as
+any other. Both times it was asserted from the order things failed in, not from
+the log, and the log was one call away.
+
+**Ref:** this PR, 2026-08-16.
+
+## `AddSOToPOTransferDetail` returns a TRANSFER INSTRUCTION, not a purchase line — so every override was dropped [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Traced to the exact type, on the live book 2026-08-16.** Three wrong theories
+died on the way, which is why the trace is written out rather than the
+conclusion alone.
+
+**Symptom.** `/so-to-po` creates a purchase order whose line has a **NULL
+`Qty`**, so AutoCount's outstanding predicate
+`Qty - ISNULL(TransferedQty, 0) > 0` is NULL and never true. The PO looks right
+in every list and can never be converted: `/po-to-gr` answers
+`no transferable lines on PO`, one step later, on a different document than the
+one at fault. Read back the moment it was made:
+
+```
+PO line 906215: Qty=  TransferedQty=0  Transferable=T
+                FromDocType=''  FromDocNo='ZZQA-SO-...'  FromDocDtlKey=
+```
+
+**Wrong theory 1 — "the payload is missing Qty".** It was, once. Adding it
+changed nothing.
+
+**Wrong theory 2 — "the override addresses the wrong line".** It did:
+`po.EditDetail(dtlKey)` was called with the SOURCE (sales) key, the new purchase
+lines have keys of their own, `EditDetail` returned null and `continue`
+swallowed it. Fixed by keeping what the transfer returns. Still nothing changed.
+
+**The actual cause, from the service's own log via `/last-errors`:**
+
+```
+set skipped: 'AutoCount.Invoicing.Purchase.TransferSOToPODetail'
+             does not contain a definition for 'Qty'
+```
+
+`AddSOToPOTransferDetail(Int64)` does **not** return a `PurchaseOrderDetail`. It
+returns a `TransferSOToPODetail` — a transfer INSTRUCTION object with a
+different shape, which has no `Qty` at all. Assigning to it went through
+`Set()`, which logs and swallows, so the failure was invisible at the call site
+and the document saved looking fine.
+
+**`TransferSOToPODetail` is not in `sdk-api-reference.txt`.** That dump covers
+the six document classes only, so this type's real property names are UNKNOWN
+and are not being guessed at here.
+
+**Next step, and it is a measurement, not a fix:** reflect over
+`TransferSOToPODetail` on the host — `GetType().GetProperties()` — and record
+the names. The quantity is either on that object under another name, or the
+resulting line has to be edited AFTER `Save()`, when the purchase lines finally
+have keys `EditDetail` can address (a deliberate two-phase write, not a patch).
+
+**Standing consequence.** `SO->PO` produces an unusable purchase order, so
+`PO->GR` and `GR->PI` remain unproven end to end. `SO->DO` and `DO->IV` are
+proven, both carrying `FromDocType` + `FromDocNo` on every line.
+
+**The lesson worth keeping:** `Set()` swallowing a property assignment turned a
+type mismatch into a silently wrong document. Three rounds of live writes were
+spent before the log was read. Fields whose absence makes a document UNUSABLE
+should not go through `Set()`.
+
+**Ref:** this PR, 2026-08-16.
 ## The SO renumber guard used a substring scan, so a cached response body blocked the delete [low]
 
 <!-- area: Sales orders + pricing -->
