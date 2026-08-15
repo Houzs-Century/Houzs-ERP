@@ -19,14 +19,12 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronDown, Plus, Save, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useIdempotencyKey } from '../../lib/idempotency';
-import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import {
   useCreateConsignmentOrder, useConsignmentDebtorSearch, useAddConsignmentOrderPayment,
   useUploadConsignmentItemPhoto, useConsignmentOrderDetail,
@@ -48,11 +46,11 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -206,12 +204,9 @@ export const ConsignmentOrderNew = () => {
   // ── Debtor autocomplete ─────────────────────────────────────────────
   const debtors = useConsignmentDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* SalesOrderDetail's copy of this field was portalled in an earlier pass; this
+     one and ConsignmentOrderDetail's were the twins that pass missed. */
   const debtorInputRef = useRef<HTMLInputElement>(null);
-  /* Portalled + measured from the input: the same `.suggestList` rule inside
-     the same `.card { overflow: hidden }` that sliced the New Sales Order list
-     after three rows. SalesOrderDetail's copy of this field was portalled in an
-     earlier pass; this one and ConsignmentOrderDetail's were the twins missed. */
-  const debtorSuggestPos = useAnchoredPanel(debtorInputRef, showDebtorSuggest, 260);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -615,28 +610,13 @@ export const ConsignmentOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && debtorSuggestPos && createPortal(
-                <ul
-                  className={styles.suggestList}
-                  style={{ ...anchoredPanelStyle(debtorSuggestPos), right: 'auto', marginTop: 0 }}
-                >
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>,
-                document.body,
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Ref</span>

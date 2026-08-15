@@ -20,7 +20,6 @@ import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
   type CSSProperties,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Plus, X, Printer, Save,
@@ -32,7 +31,6 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtDateTime, fmtMoneyCenti, lineIdentity, missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -126,6 +124,7 @@ import {
 import { useStaff, usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
@@ -134,7 +133,6 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
-import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
 import styles from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -3155,11 +3153,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      semantics intact. */
   const inputsDisabled = !isEditing || locked;
 
-  /* Pin the portaled debtor dropdown to the Customer Name input while open.
-     Was a hand-rolled copy of this measurement that only ever placed the list
-     BELOW the input, so near the bottom of the window it ran off-screen where
-     `position: fixed` puts it beyond any scroll; the shared hook flips it. */
-  const menuPos = useAnchoredPanel(custInputRef, showSuggest && !inputsDisabled, 260);
 
   /* PR #168 — Commander 2026-05-27 screenshot diff vs. Create SO: Detail
      was using one big "Customer · Addresses" card with 4 hairline-divided
@@ -3193,28 +3186,17 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 onFocus={() => setShowSuggest(true)}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
               />
-              {showSuggest && suggestions.length > 0 && !inputsDisabled && menuPos && createPortal(
-                <ul
-                  className={styles.suggestList}
-                  style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
-                >
-                  {suggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applySuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>,
-                document.body,
-              )}
+              {/* Shared with the New SO / consignment forms. It was portalled
+                  here already but only ever placed BELOW the input, so near the
+                  window bottom it ran off-screen where `position: fixed` puts it
+                  beyond any scroll; the shared component flips it. */}
+              <DebtorSuggestList
+                anchorRef={custInputRef}
+                open={showSuggest && !inputsDisabled}
+                suggestions={suggestions}
+                onPick={applySuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer SO Ref</span>

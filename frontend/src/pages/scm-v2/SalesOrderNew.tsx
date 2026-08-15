@@ -32,7 +32,6 @@ import { postScanLearningSample, reportScanLearningSkipped } from '../../vendor/
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useQuery as useTanstackQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Camera, ChevronDown, Plus, Save, X } from 'lucide-react';
@@ -50,7 +49,7 @@ import {
 import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
 import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
 import { useIdempotencyKey } from '../../lib/idempotency';
-import { useAnchoredPanel, anchoredPanelStyle } from '../../lib/anchoredPanel';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
@@ -91,7 +90,6 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
@@ -594,14 +592,9 @@ export const SalesOrderNew = () => {
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
   const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* Portalled, because this module has no `.field { position: relative }` and
+     `.card { overflow: hidden }` left 130px of room for a 260px list. */
   const debtorInputRef = useRef<HTMLInputElement>(null);
-  /* The list is PORTALLED and measured from the input. Two things were wrong
-     with the in-place version, both seen on prod 2026-08-15: this module has no
-     `.field { position: relative }`, so the absolute list resolved against the
-     card body and painted 49px ABOVE the input at the card's full 1678px rather
-     than the input's 1200px; and `.card { overflow: hidden }` left 130px of room
-     for a 260px list, so a full result set was sliced after three rows. */
-  const debtorSuggestPos = useAnchoredPanel(debtorInputRef, showDebtorSuggest, 260);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -1853,28 +1846,13 @@ export const SalesOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && debtorSuggestPos && createPortal(
-                <ul
-                  className={styles.suggestList}
-                  style={{ ...anchoredPanelStyle(debtorSuggestPos), marginTop: 0 }}
-                >
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>,
-                document.body,
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer SO Ref</span>
