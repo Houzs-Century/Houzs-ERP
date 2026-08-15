@@ -105,7 +105,7 @@ Apply these *consistently* at every seam so ported routes/pages compile unchange
 - These AutoCount tables are removed only at the **gated cutover** (task #71), never
   on the branch casually. On the branch, 2990s tables are added under their own
   names and coexist until cutover.
-- The rejected **`scm_*` island** (schema.pg.ts:905–1307) is dead/unreferenced and
+- The rejected **`scm_*` island** (the `scm_*` table block in `schema.pg.ts`) is dead/unreferenced and
   is dropped by migration `0023` + removed from schema.pg.ts (Phase 0).
 
 ## Phase order → tracked tasks
