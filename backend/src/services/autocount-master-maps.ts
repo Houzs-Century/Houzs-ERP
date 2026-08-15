@@ -136,6 +136,7 @@ export const VENUE_MAP: Record<string, string> = {
   "MESA MALL": "MESA MALL SOLO",
   "AUTO CITY": "AUTO CITY PENANG SOLO",
   "SUNSHINE CENTRAL": "SUNSHINE PENANG SOLO",
+  "WORLD TRADE CENTRE KUALA LUMPUR": "PWTC",
 };
 
 /** ERP branding -> AutoCount BRANDING UDF option. ALLOW-LIST — see branding_note. */
