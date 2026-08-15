@@ -242,7 +242,25 @@ It contains the DB password.
 curl -X POST http://localhost:8900/health -H "X-API-KEY: %ACKEY%"
 ```
 
-Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}`.
+Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService","builtAt":"…Z","mvid":"…"}`.
+
+**`builtAt` is the whole point of this step.** It is the exe's own file
+timestamp, and it is how you tell whether the swap actually happened — compare
+it against the last change to the service's source:
+
+```
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+`builtAt` **earlier than that date means the host is running an old binary**, no
+matter what anybody remembers about deploying it. Before 2026-08-15 `/health`
+returned no build identity at all, so this question had no answer from the
+service, from the repository, or from any document that could be trusted to be
+current — the same blind spot that let a two-week-old staging build pass a
+nightly check for a fortnight (`docs/SECURITY-DX-ROADMAP.md`).
+
+`mvid` is unique per compilation. Use it when two timestamps both look
+plausible, or to confirm two hosts are running the same bytes.
 
 ---
 

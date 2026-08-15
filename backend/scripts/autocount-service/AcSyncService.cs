@@ -148,6 +148,59 @@ class AcSyncService {
      request takes the service down. */
   const int MaxBody = 2 * 1024 * 1024;
 
+  /* WHAT IS ACTUALLY RUNNING ON THIS HOST.
+     Until 2026-08-15 /health answered {ok, book, service} and nothing else, so
+     the question "does the exe on that machine contain commit X" had no answer
+     anywhere: not from this service, not from the repository, not from any
+     document that could be trusted to be current. It was answered by reading a
+     handoff note instead, which is how a reader concluded the host was three
+     changes behind without being able to show it. UNKNOWN was the honest
+     answer and there was no way to reach a better one.
+
+     builtAt is the assembly's own file timestamp. Compare it against the date
+     of the last commit that touched THIS FILE:
+
+       git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+
+     builtAt earlier than that date means the host is behind, full stop.
+
+     DELIBERATELY NOT a version constant someone has to bump, and not a git SHA
+     injected at build time. Both are things a person must remember, and this
+     repo's own rule is that a hand-maintained fact is a fact with an expiry
+     date. The timestamp maintains itself: rebuilding the exe moves it, and
+     nothing else can.
+
+     mvid is the module version id, unique per COMPILATION. Two hosts reporting
+     the same mvid are running the same bytes; two builds of identical source
+     differ. It is what settles "did the rebuild actually get swapped in" when a
+     timestamp alone looks plausible.
+
+     Both are read defensively: a single-file compile can run from a location
+     the process cannot stat, and /health failing is worse than /health being
+     vague — it is the probe used to decide whether the host is up at all. */
+  static Dictionary<string, object> Health() {
+    var h = new Dictionary<string, object> {
+      { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" },
+    };
+    try {
+      var asm = Assembly.GetExecutingAssembly();
+      try {
+        var loc = asm.Location;
+        if (!string.IsNullOrEmpty(loc) && File.Exists(loc)) {
+          h["builtAt"] = File.GetLastWriteTimeUtc(loc).ToString("yyyy-MM-ddTHH:mm:ssZ");
+        }
+      } catch { h["builtAt"] = null; }
+      h["mvid"] = asm.ManifestModule.ModuleVersionId.ToString();
+    } catch {
+      /* Report the gap rather than omitting the keys: an absent key reads as an
+         old build that never had them, which is the exact confusion this
+         removes. */
+      h["builtAt"] = null;
+      h["mvid"] = null;
+    }
+    return h;
+  }
+
   static void Handle(HttpListenerContext ctx) {
     var path = ctx.Request.Url.AbsolutePath;
 
@@ -164,7 +217,7 @@ class AcSyncService {
     /* AFTER the key, deliberately: which account book this is connected to is
        not something to hand an anonymous caller on a public hostname. */
     if (path == "/health") {
-      Json(ctx, 200, new Dictionary<string, object> { { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" } });
+      Json(ctx, 200, Health());
       return;
     }
     if (ctx.Request.HttpMethod != "POST") { Json(ctx, 405, Err("POST only")); return; }
