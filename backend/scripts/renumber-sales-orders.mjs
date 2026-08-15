@@ -22,6 +22,13 @@
 // the old number after step 2 and ABORTS the whole thing if a single row still
 // carries it.
 //
+// That guard tests for the old number as the WHOLE VALUE of a column, not as a
+// substring. A cascade fires through a foreign key and an FK column holds the
+// exact value; a doc number quoted inside a longer string cannot delete
+// anything. The first APPLY run of this script aborted (correctly writing
+// nothing) because the guard used the substring scan and counted one cached API
+// response body in public.idempotency_keys as a live reference.
+//
 // AND THE WRITER IS NOT THE WITNESS. After the transactions commit, a SECOND
 // connection re-reads every renamed order and asserts its SHAPE — the header
 // fields and the child-row counts captured before the move, not merely that a
@@ -102,9 +109,49 @@ async function textCols(schema, table) {
   return rows.map((r) => r.col);
 }
 
+/* Every writable text column in scm + public, in ONE query. Used by the exact
+   scan below so it can skip the (many) tables that have no text column at all. */
+async function loadTextColumns() {
+  const rows = await db`
+    SELECT table_schema AS schema, table_name AS table, column_name AS col
+      FROM information_schema.columns
+     WHERE table_schema IN ('scm', 'public')
+       AND data_type IN ('text', 'character varying', 'character')
+       AND is_generated = 'NEVER'
+     ORDER BY table_schema, table_name, ordinal_position`;
+  const map = new Map();
+  for (const r of rows) {
+    const k = `${r.schema}.${r.table}`;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(r.col);
+  }
+  return map;
+}
+
+/* Tables holding this doc number as the WHOLE value of some text column.
+   This — not the LIKE scan below — is what the pre-delete guard must use.
+   A cascade fires through a FOREIGN KEY, and an FK column holds the exact
+   value; a doc number quoted INSIDE a longer string (a remark, a cached API
+   response body) has no constraint behind it and cannot delete anything. The
+   first APPLY run aborted because the guard used the LIKE scan and counted one
+   such mention in public.idempotency_keys.response_body as a live reference. */
+async function tablesWithExactRef(tables, docNo, exec, colMap) {
+  const hits = [];
+  for (const t of tables) {
+    const cols = colMap.get(`${t.schema}.${t.table}`);
+    if (!cols?.length) continue;
+    const where = cols.map((c) => `"${c}" = $1`).join(" OR ");
+    const [r] = await exec.unsafe(
+      `SELECT count(*)::int AS n FROM ${t.schema}.${t.table} WHERE ${where}`, [docNo]);
+    if (r.n > 0) hits.push({ ...t, n: r.n });
+  }
+  return hits;
+}
+
 /* Which tables carry this doc number ANYWHERE in any column. One query per
    table over the whole row as jsonb — cheaper than one per column, and it
-   cannot miss a column nobody thought of. */
+   cannot miss a column nobody thought of. Used for the DRY-RUN report, where
+   showing a mention is the point; never as the delete guard. */
 async function tablesMentioning(tables, docNo, exec = db) {
   const hits = [];
   for (const t of tables) {
@@ -157,7 +204,8 @@ async function main() {
   for (const t of tos) if (froms.includes(t)) refuse(`${t} is both a source and a target — chain renames are not supported in one run`);
 
   const tables = await allTables();
-  out(`scanning ${tables.length} base table(s) in scm + public`);
+  const colMap = await loadTextColumns();
+  out(`scanning ${tables.length} base table(s) in scm + public (${colMap.size} of them have a text column)`);
 
   // ── Preconditions, per pair ───────────────────────────────────────────────
   const todo = [];
@@ -249,14 +297,14 @@ async function main() {
             Five of the seven child tables are ON DELETE CASCADE: anything still
             referencing the old doc_no would be destroyed by the delete, not
             orphaned. */
-      const stillThere = await tablesMentioning(tables, p.from, tx);
+      const stillThere = await tablesWithExactRef(tables, p.from, tx, colMap);
       const leftovers = stillThere.filter((h) =>
         !(h.schema === PARENT.schema && h.table === PARENT.table));
       if (leftovers.length) {
         throw new Error(
-          `after repointing, ${p.from} is STILL referenced by ` +
+          `after repointing, ${p.from} is STILL held as the whole value of a column in ` +
           `${leftovers.map((l) => `${l.schema}.${l.table}(${l.n})`).join(", ")} — ` +
-          `deleting now would CASCADE-DESTROY those rows. Rolled back, nothing changed.`);
+          `deleting now could CASCADE-DESTROY those rows. Rolled back, nothing changed.`);
       }
       out(`Proved  no row outside ${PARENT.schema}.${PARENT.table} still references ${p.from}`);
 
@@ -284,7 +332,7 @@ async function main() {
                (SELECT count(*)::int FROM scm.mfg_sales_order_payments y WHERE y.so_doc_no = s.doc_no) AS payments
           FROM scm.mfg_sales_orders s WHERE doc_no = ${p.to}`;
       const [old] = await verify`SELECT count(*)::int AS n FROM scm.mfg_sales_orders WHERE doc_no = ${p.from}`;
-      const left = await tablesMentioning(tables, p.from, verify);
+      const left = await tablesWithExactRef(tables, p.from, verify, colMap);
 
       if (!now) { bad.push(`${p.to} is NOT PRESENT on a fresh read`); continue; }
       const got = {
