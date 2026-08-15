@@ -25,6 +25,80 @@
 > Keep it afterwards for the case it still covers: a machine that cannot reach
 > the service, or a service that will not start.
 
+---
+
+## 0. EVERYTHING that needs this machine, in one place
+
+Added 2026-08-15 because the answer to *"what else needs the AutoCount host?"*
+was scattered across four documents. **This is the whole list.** Nothing else in
+the project is waiting on that machine.
+
+**Read the order, not just the rows: job 1 unblocks every other job.** Until the
+exe is rebuilt, four merged changes are sitting in the repository and not
+running, including the read route the banner above depends on.
+
+| # | Job | Writes? | What it needs | What it unblocks |
+|---|---|---|---|---|
+| **1** | **Rebuild and swap the exe** — `deploy-on-host.ps1` | replaces a binary; touches no document | one PowerShell line, on that machine | **everything below** |
+| 2 | Confirm the swap — `GET /health`, read `builtAt` | no | one call, with the key | proof that job 1 actually happened |
+| 3 | Prove it can reach the book — `POST /ensure-masters` with **empty arrays** | no (empty arrays open nothing) | one call | that the new build has a live DB connection, which `/health` cannot tell you |
+| 4 | Read one `FurtherDescription` | no | job 1, then `read-further-description.mjs` (the banner above) | which picture format the photos are in — the last unknown blocking photo sync |
+| 5 | `qa-convert.ps1` | **YES — writes to the LIVE book and consumes real DO / GR running numbers** | job 1, plus the owner saying go | `create-po`, `so-to-do`, `po-to-gr` — three operations never proven end to end |
+| 6 | The `FurtherDescription` write probe | **YES — scratch document only** | job 4 first | whether AutoCount will render RTF it did not write |
+
+### 0.1 What job 1 actually brings live
+
+Four merged changes are in the repository and not on the host. The running exe
+predates all of them:
+
+| change | what stops working without it |
+|---|---|
+| `#2043` | purchase-side converts pass `transferMaster=true`; without it `po-to-gr` and `gr-to-pi` die on save |
+| `#2200` | eight fields the ERP holds and the write-back was not sending |
+| `#2218` | a line with no delivery date arrives BLANK instead of carrying the document date |
+| `#2243` | `POST /further-description` — the read route the banner above needs |
+
+Verify rather than trust this table: compare `builtAt` from job 2 against
+
+```
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+### 0.2 Sequencing — do NOT rebuild twice
+
+A fifth change is open and not yet merged: it adds `builtAt` and `mvid` to
+`/health`, which is what makes job 2 possible at all. Before that lands,
+`/health` answers `{ok, book, service}` and there is no way to tell which build
+is running — the exact blind spot this list exists to close.
+
+**Land it first, then rebuild once.** Rebuilding before it merges means doing
+job 1 twice.
+
+### 0.3 Two things nobody needs to supply
+
+- **A purchase agent for the PO.** The ERP has no such field and is not getting
+  one. AutoCount's `FK_PO_PurchaseAgent` insists on a value, so the write-back
+  sends the constant `OTHERS` (`AC_PURCHASE_AGENT`). Do not go looking for this
+  data; it does not exist and it is already handled.
+- **A customer account per debtor.** Every Houzs order is written against one
+  fixed account with the name overwritten, so there is nothing per-customer to
+  open.
+
+### 0.4 Preconditions job 1 refuses without
+
+Both live on the host, and `deploy-on-host.ps1` stops rather than guessing:
+
+- `C:\Temp\ac-svc-key.txt` must exist — this is the same value as the
+  `AC_SYNC_KEY` Worker secret.
+- `C:\Temp\ac-svc-port.txt` must read `8900`. The tunnel ingress points at that
+  port; any other value and the service is unreachable even when it starts.
+
+And two values in `setup.json` that cannot be trusted: it names the book
+`AED_DEMO` (must be `AED_HOUZS`) and the server `192.168.1.198\A2006` (the host
+resolves `.\A2006`). Pass `-Server ".\A2006"` explicitly.
+
+---
+
 **For:** somebody who has an AutoCount machine. Nobody on the development side
 has one, so this task cannot be done here and cannot be automated yet.
 **Costs:** about ten minutes.
