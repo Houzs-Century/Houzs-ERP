@@ -47,6 +47,58 @@ covers every enqueue"* for the router.
 
 **Ref.** 2026-08-15, module-guide verification of `sales-order.md`.
 
+## 41 migration references nobody could mark, so nobody triaged any of them [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** `check-docs-drift` reported **41** `renamed-migration` advisories —
+each one a doc naming a migration filename that no longer exists, where the
+NUMBER now resolves to a completely different migration. A reader following
+`0210_so_amendments.sql` [external] opens `0210_scm_threepl_companies.sql` and finds
+something unrelated.
+
+Nobody acted on any of them, and that was rational: the list was mostly correct
+references with no way to say so.
+
+**Root cause.** The path check honours three markers — `[gone]`, `[planned]`,
+`[external]` — and the migration-FILENAME check honoured none. So a doc could not
+declare an honest reference, the advisory could never shrink below 41, and the
+real drift sat inside it unread. **A list that can only grow is a list nobody
+reads.**
+
+And the markers that existed did not cover the commonest honest case here. The
+migration usually still EXISTS and simply carries a different number, because
+parallel PRs collide and the loser renumbers. `[gone]` would have been a new lie.
+
+**What the 41 actually were** — established by reading each one's context, not by
+pattern:
+
+| kind | count | marker |
+|---|---|---|
+| 2990's migration tree, said so in the sentence (`migrations-postgres/`, "2990's ...") | 8 | `[external]` |
+| the migration exists under a new number | 16 | `[renumbered]` (new) |
+| genuinely deleted, incl. `MIGRATION-RETIREMENTS.md`, whose subject IS retirement | 17 | `[gone]` |
+
+**The trap avoided.** The obvious fix — a script that renumbers every reference
+to the current file — would have rewritten *2990's* `0210_so_amendments.sql` [external] into
+a Houzs migration number. That reference was CORRECT; the checker resolves
+against this repo's tree and the doc was talking about another repo's. Reading
+one line of context is what caught it.
+
+**Fix.** The migration-filename check honours the same markers, plus a fourth,
+`[renumbered]`, which tells the reader the file is findable — just not at that
+number. All 41 marked with what is TRUE of each.
+
+**Measured: 41 -> 0.** Not because anything was suppressed — every reference now
+carries a reader-facing statement — but because the list is finally a list of
+problems. Proven by adding one fake reference to a doc: it appears immediately
+against a clean baseline, and removing it returns to zero.
+
+**Ref.** 2026-08-15. Lesson: **a detector with no way to record a legitimate
+finding produces a backlog instead of a signal** — and the fix is vocabulary, not
+suppression. CLAUDE.md already said it: *"Do not add a silent exemption list
+instead. A suppression the reader cannot see is a suppression nobody
+re-checks."*
 ## Five docs sent the reader to a line number that no longer exists [low]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
@@ -2563,7 +2615,7 @@ replaced, `company_id` restamped to 2. The scoped Houzs GET then matched nothing
 write, and filtered on every read. Everything you can see in the route file is
 correct. Only the DDL says otherwise.
 
-**Fix** - migration `0284_scm_pos_cart_company_key.sql`: backfill NULL
+**Fix** - migration `0284_scm_pos_cart_company_key.sql` [renumbered]: backfill NULL
 `company_id` to HOUZS, `SET NOT NULL`, then drop the single-column PK and add
 `PRIMARY KEY (staff_id, company_id)`. `pos-cart.ts` upserts
 `onConflict: 'staff_id,company_id'` **in the same change** — per the
@@ -2612,7 +2664,7 @@ changed unilaterally.
 history.** The two tables looked identical and are not, and telling them apart
 needed the PARENT table, not the child's column list.
 
-- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql`
+- COMPARTMENT: real, and now closed. Mig `0287_scm_compartment_tier_override_company_key.sql` [renumbered]
   re-keys `scm.compartment_fabric_tier_overrides` to `(compartment_id,
   company_id)`, and the PUT moved to `onConflict: 'compartment_id,company_id'`
   in the same change (`fabric-tier-addon.ts:274`) — the constraint and the
@@ -3091,7 +3143,7 @@ time by re-listing the tree, not when you branch* — and the same shape as the
 invisible here until the rebase, because the duplicate only exists in a tree
 that contains BOTH branches.
 
-**Fix** — renamed to `0280_scm_grn_zero_cost_ack.sql`, the number the failing
+**Fix** — renamed to `0280_scm_grn_zero_cost_ack.sql` [renumbered], the number the failing
 test itself names. **Rename only, body untouched**, per the runner's own rule:
 `pg-migrate` tracks by full filename, so an edited body would read to it as an
 orphaned tracker row plus an unknown file to apply. The migration has never been
@@ -3395,7 +3447,7 @@ migration files numbered `0284`, and two assertions still expecting the old
 
 **Root cause (traced, not guessed)** — neither failure is a defect in isolation;
 both are the shape of assembling thirteen branches against a moving `main` and
-then not re-verifying. (1) `0284_scm_processing_date_one_name.sql` was written
+then not re-verifying. (1) `0284_scm_processing_date_one_name.sql` [renumbered] was written
 on a branch while `main` took `0284` for
 `0284_retire_consignment_proceeded_at.sql`; `backend/tests/migrationNumbers.test.ts`
 is a ratchet — historical duplicates are frozen as accepted, a NEW one fails —
@@ -9347,7 +9399,7 @@ things on different platforms — and this one runs on the owner's Windows box.
 ## Two migrations both numbered 0276 [medium]
 
 **Symptom** — `main` carried `0276_scm_migrated_documents.sql` and the open
-#1855 carried `0276_scm_autocount_outbox.sql`. Merged as they stood, `pg-migrate`
+#1855 carried `0276_scm_autocount_outbox.sql` [renumbered]. Merged as they stood, `pg-migrate`
 would have two files claiming one number.
 
 **Root cause** — Exactly the case `CLAUDE.md` warns about: #1855 picked its
@@ -9358,7 +9410,7 @@ safe and duplicates are not.
 **Fix** — Renamed the unapplied one to `0277_scm_autocount_outbox.sql` and
 updated the four references to it in `docs/modules/autocount-writeback.md`. Safe
 because it has never run anywhere: #1855 is not merged, so no deployment has an
-`APPLIED 0276_scm_autocount_outbox.sql` line to be confused by the rename.
+`APPLIED 0276_scm_autocount_outbox.sql` [renumbered] line to be confused by the rename.
 
 **Ref** — 2026-08-10, PR test/ac-writeback-trial.
 ## "APPLIED - stamped 146 sofa lines", three times, and it was corrupting them [high]

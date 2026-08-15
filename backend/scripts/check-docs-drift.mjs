@@ -318,6 +318,26 @@ for (const file of docFiles) {
     }
     // 3b. Migrations named in FULL — the renumber trap. See MIG_FILE_REF.
     for (const m of line.matchAll(MIG_FILE_REF)) {
+      /* THE SAME THREE MARKERS THE PATH CHECK HONOURS. They did not apply here,
+         and that is why this advisory could never shrink: a doc naming 2990's
+         `0210_so_amendments.sql`, or a retirement note naming the file it
+         retired, is CORRECT and had no way to say so. 41 hits with no way to
+         mark any of them is a list nobody triages, and the real drift sits
+         inside it unread.
+
+         Checked BEFORE the existence test on purpose — a marked reference is a
+         statement about a file that is deliberately not here, so looking for it
+         first would be asking the wrong question. */
+      /* A FOURTH marker, and only migration filenames need it. `[gone]` says the
+         file was deleted; `[external]` says it lives in the 2990 repo. Neither
+         fits the commonest honest case here: the migration EXISTS and carries a
+         different number, because parallel PRs collide on numbers and the loser
+         renumbers. A `BUG-HISTORY` entry naming the number a migration carried
+         on the day it broke something is CORRECT and must stay that way, and
+         `[renumbered]` is the reader-facing way to say so — it tells them the
+         file is findable, just not at that number. */
+      const tail = line.slice(m.index + m[0].length, m.index + m[0].length + 20);
+      if (/^["'`)\]]?\s*\[(gone|planned|external|renumbered)\]/.test(tail)) continue;
       claimsChecked++;
       if (migrationFiles.has(m[1])) continue;
       const num = /^(\d{3,4})_/.exec(m[1])?.[1];
