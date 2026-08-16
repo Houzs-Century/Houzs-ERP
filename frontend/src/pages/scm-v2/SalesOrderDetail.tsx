@@ -2224,7 +2224,7 @@ export const SalesOrderDetail = () => {
           <h2 className={styles.cardTitle}>
             Line Items ({visibleLines.total})
             {addingDrafts.length > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', color: '#a6471e' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.04em', color: '#a6471e' }}>
                 {addingDrafts.length} new · not saved yet
               </span>
             )}
