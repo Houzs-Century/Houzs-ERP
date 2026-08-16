@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import coSource from '../src/scm/routes/consignment-orders.ts?raw';
 import soSource from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import { senOrZero } from '../src/scm/lib/sales-doc-derive';
+import { canonicalizeMyState } from '../src/scm/lib/canonical-state';
 
 /* Three derivations used to exist in BOTH the Sales Order and the Consignment
    Order routers, and two of them had drifted. They are one module now.
@@ -89,6 +90,34 @@ describe('PROOF 1 — canonicalising cannot change the derived country', () => {
       'A state name that canonicalizeMyState can PRODUCE is also seeded under a non-Malaysia\n' +
         'country. deriveCountryFromState canonicalises before the lookup, so such a row would make\n' +
         'the derived country depend on the spelling the caller typed:\n  ' + clashes.join('\n  '),
+    ).toEqual([]);
+  });
+
+  test('every non-Malaysia locality state is canonicalisation-STABLE', () => {
+    /* The check above compares against the canonical TARGETS — the VALUES of
+       ALIAS_MAP ('Johor'). The divergence it is meant to exclude can also come
+       from a KEY ('JOHOR'), which is not in that set, so the original proof did
+       not cover it. Worked example: a row `state = 'JOHOR', country =
+       'Singapore'` makes the CO's raw lookup answer Singapore while the SO's
+       canonicalised lookup ('Johor') answers Malaysia — the two implementations
+       this PR merges disagreeing on the same input.
+
+       This is the property that actually settles it: if canonicalising a
+       non-Malaysia state is a NO-OP, both implementations use the identical
+       lookup key and cannot diverge. Stated over the seeded rows; see the note
+       in the PR body about the live table, which operators can also write. */
+    const unstable: string[] = [];
+    for (const [country, states] of nonMalaysiaStates()) {
+      for (const s of states) {
+        const canon = canonicalizeMyState(s) ?? s;
+        if (canon !== s) unstable.push(`${s} -> ${canon} (${country})`);
+      }
+    }
+    expect(
+      unstable,
+      'A non-Malaysia locality carries a state spelling that canonicalizeMyState REWRITES.\n' +
+        'The CO looked the raw string up and the SO looked the canonical one up, so merging\n' +
+        'them changes the derived country for that row:\n  ' + unstable.join('\n  '),
     ).toEqual([]);
   });
 });

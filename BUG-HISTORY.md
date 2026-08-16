@@ -1,4 +1,4 @@
-## The CO/SO helper twins: two had drifted, and both drifts are now PROVEN harmless [low]
+## The CO/SO helper twins: two had drifted, and the drifts are bounded by an asserted proof [low]
 
 <!-- area: Sales orders + pricing -->
 
@@ -14,17 +14,37 @@ Three derivations existed in both `routes/mfg-sales-orders.ts` and its clone
 | `deriveCountryFromState` | the SO canonicalises the state before the lookup; the CO used the raw string |
 | `snapshotUnitCostSen` | the SO wraps both the explicit value and the DB read in `senOrZero`; the CO did neither |
 
-**Both drifts are now PROVEN harmless, where #2236 could only say "I could not
-construct a differing case".**
+**Both drifts are bounded by assertions, where #2236 could only say "I could not
+construct a differing case". The bound is stated honestly below — it is not
+unconditional.**
 
 *Country.* Both fall back to `'Malaysia'` on a miss, so they can only diverge if
-canonicalising turns a string into one that names a NON-Malaysia locality.
+the raw string and the canonicalised string hit DIFFERENT `my_localities` rows.
 Measured: the **16** values `canonicalizeMyState` can produce (its
-`CANONICAL_STATES` plus every `ALIAS_MAP` target) and the **38** `state` values
-seeded into `my_localities` under a country other than Malaysia (China +
-Singapore, mig 0181) share **ZERO** entries. No input can canonicalise across the
-country boundary. Same output for every input — a proof, not an absence of
-counter-examples.
+`CANONICAL_STATES` plus every `ALIAS_MAP` target) and the `state` values seeded
+into `my_localities` under a country other than Malaysia (China + Singapore, mig
+0181) share **ZERO** entries.
+
+**That check alone was NOT sufficient, and the gap was found while reviving this
+PR (2026-08-16).** It compares against the alias TARGETS (`Johor`); the
+divergence can equally come from an alias KEY (`JOHOR`), which is not in that
+set. A row `state = 'JOHOR', country = 'Singapore'` would make the CO's raw
+lookup answer Singapore while the SO's canonicalised lookup answers Malaysia —
+precisely the disagreement the consolidation is claimed not to have. The test
+now also asserts the property that actually settles it: **every non-Malaysia
+locality state is canonicalisation-STABLE** (`canonicalizeMyState(s) === s`), so
+both implementations use an identical lookup key. Proven red by adding
+`['BEIJING', 'Johor']` to `ALIAS_MAP` — the file goes to `1 failed | 6 passed`
+and names `Beijing -> Johor (China)`.
+
+**What is still NOT proven, and must not be read as if it were.** Both scans
+read the SEEDED data in `src/db/migrations-pg`. `scm.my_localities` is also
+writable at runtime — `routes/localities.ts` exposes POST / PATCH / DELETE, and
+`state` and `country` are free-form strings on both (`z.string().trim().min(1)`),
+gated only by `canWriteScmConfig`. So an operator-created row is outside what
+these assertions can see, and CLAUDE.md's standing rule applies: a migration file
+describes intent, the running system is the fact. Settling it needs a read-only
+probe of the live table.
 
 *Unit cost.* All three CO callsites already wrapped the argument in `Number(...)`
 and `NaN > 0` is false; the DB side reads `mfg_products.cost_price_sen`, which is
