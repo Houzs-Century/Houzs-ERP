@@ -1,27 +1,30 @@
 import { useCallback, useState } from "react";
 import {
+  AC_DEFAULT_STATE,
   AC_DOC_TYPES,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
   AC_NOT_ASKED_NOTE,
   AC_REPLY_LABEL,
+  AC_REQUEUED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
   acAge,
   acDocTypePlural,
   acDocTypeCounts,
+  acEmptyLine,
   acHeadline,
   acListTitle,
-  acReasonCopy,
   acReplySource,
-  acRowKind,
-  acRowStatusLine,
+  acRowDetail,
+  acRowStandsAt,
   acRowsOfType,
   acStateCount,
   acStateLabel,
   acStateTone,
   acWritebackLine,
+  useAcExpandedRows,
   useAcRequeue,
   useAutoCountOutbox,
   type AcDocType,
@@ -30,27 +33,36 @@ import {
   type AcRequeueNote,
   type AcTone,
 } from "../lib/autocountOutbox";
-import { fmtDateTime } from "../vendor/shared/format";
+import { MobileVirtualList } from "./MobileVirtualList";
 import "./mobile.css";
 
 /*
  * MobileAutoCountSync — the phone twin of pages/AutoCountSync.tsx.
  *
  * It reuses the SAME hook (useAutoCountOutbox -> GET /api/scm/autocount-outbox)
- * and the SAME words — the state labels, the type labels, the three-part reason,
+ * and the SAME words — the state labels, the type labels, the reason headline,
  * the "AutoCount replied" / "AutoCount was not asked" distinction, all from
  * lib/autocountOutbox — so the two surfaces differ only in presentation, the
- * owner's standing rule. Every label this file used to keep its own copy of
- * (STATE_CHIP) is gone; there is one list now.
+ * owner's standing rule.
  *
- * REBUILT 2026-08-16 alongside the desktop page: the five tiles became two
- * filter strips with the counts on the chips, the refusal reason became three
- * plain-language lines on the row, and the ERP's own vocabulary came off the
- * screen.
+ * SIMPLIFIED 2026-08-16 alongside the desktop page, and for his complaint about
+ * it: "一个 sales order 那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？"
+ * A card is now the document and where it stands; the reason is one headline
+ * line that opens the rest; a document already in the account book has nothing
+ * to open; and the page arrives on Needs attention rather than on everything.
+ * The list is windowed by MobileVirtualList, the same component MobileSalesOrders
+ * uses for its own thousands.
+ *
+ * A phone cannot hold the state, the number and where it stands on ONE visual
+ * line at 375 px, so a quiet card here is two short lines rather than the
+ * desktop's one. What matters is the same on both: nothing to open, and no
+ * reason block.
  *
  * The mobile shell has no router and does not keep filters in the URL (unlike
  * the desktop page's useSearchParams), so the status chip, the type chip and the
  * document search are plain component state, matching every other mobile screen.
+ * The two strips live in `.hdr`, which mobile.css already pins, so they stay put
+ * while the list scrolls.
  *
  * Send again is here too, and it has to be: a rule or a control on one surface
  * and not the other is the recurring bug class this repo names. Same shared
@@ -105,167 +117,176 @@ function CountChip(
  * What a machine said, quoted, and WHO said it.
  *
  * "AutoCount replied" and "AutoCount was not asked" are different facts and
- * they change what the reader does about the document. The ERP's own note stays
- * collapsed because it carries class names and method names — except where
- * nobody has plain words for the refusal yet, which is the one case where that
- * note IS the answer.
+ * they change what the reader does about the document. Behind the opener since
+ * the cards had to get short — never flattened into one label, which would lose
+ * the distinction rather than tidy it.
  */
 function WhatWasSaid({ row }: { row: AcOutboxRow }) {
   const source = acReplySource(row.state, row.reason);
-  const lbl = (
-    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--mut)" }}>
-      {AC_REPLY_LABEL[source]}
-    </span>
-  );
-  const quote = (
-    <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace", color: "var(--ink2)" }}>
-      {row.reason}
-    </div>
-  );
-
   return (
-    <div style={{ marginTop: 9, paddingTop: 8, borderTop: "1px dashed var(--line)" }}>
-      {lbl}
+    <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px dashed var(--line)" }}>
+      <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--mut)" }}>
+        {AC_REPLY_LABEL[source]}
+      </span>
       {source === "erp" && (
-        <>
-          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--mut)" }}>{AC_NOT_ASKED_NOTE}</span>
-          {row.reason && (
-            <details open={row.reason_kind === "unrecognised"} style={{ marginTop: 5 }}>
-              <summary style={{ fontSize: 11, color: "var(--mut)" }}>
-                Show the exact note the ERP wrote down
-              </summary>
-              {quote}
-            </details>
-          )}
-        </>
+        <span style={{ marginLeft: 6, fontSize: 11, color: "var(--mut)" }}>{AC_NOT_ASKED_NOTE}</span>
       )}
-      {source !== "erp" && (row.reason
-        ? quote
-        : <span style={{ marginLeft: 6, fontSize: 11, fontStyle: "italic", color: "var(--mut)" }}>Nothing came back with it.</span>)}
+      {row.reason
+        ? (
+          <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace", color: "var(--ink2)" }}>
+            {row.reason}
+          </div>
+        )
+        : <span style={{ marginLeft: 6, fontSize: 11, fontStyle: "italic", color: "var(--mut)" }}>Nothing came back with it.</span>}
     </div>
   );
 }
 
 function OutboxCard(
-  { row, maxAttempts, sending, note, onSendAgain }: {
+  { row, maxAttempts, sending, note, open, onToggle, onSendAgain }: {
     row: AcOutboxRow;
     maxAttempts: number;
     sending: boolean;
     note: AcRequeueNote | undefined;
+    open: boolean;
+    onToggle: () => void;
     onSendAgain: () => void;
   },
 ) {
   const tone = acStateTone(row.state);
   const c = TONE_COLOR[tone];
   /* Cleared the moment the re-send is accepted — see the desktop twin. */
-  const why = note?.clearsReason ? null : acReasonCopy(row.state, row.reason_kind);
-  const showSaid = !note?.clearsReason
-    && (why !== null || (row.reason !== null && row.state !== "sent"));
+  const detail = acRowDetail(row, note?.clearsReason === true);
 
   return (
     <div
+      data-ac-row=""
       className="card"
       style={{
         border: `1px solid ${row.needs_attention ? "#e6cccc" : "var(--line-card)"}`,
         borderLeft: `3px solid ${c.fg}`,
       }}
     >
-      <div className="card-b" style={{ padding: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+      <div style={{ padding: "7px 10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <StateBadge state={row.state} />
-          <b style={{ fontSize: 13.5, color: "var(--ink)", fontFamily: "ui-monospace, monospace" }}>
+          <b style={{ fontSize: 12.5, color: "var(--ink)", fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>
             {row.doc_no}
           </b>
+          {/* Offered only where the SERVER says a re-send can mean anything. */}
+          {row.can_requeue && (
+            <button
+              onClick={onSendAgain}
+              disabled={sending}
+              style={{
+                marginLeft: "auto", fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                borderRadius: 7, padding: "3px 8px", cursor: sending ? "default" : "pointer",
+                border: "1px solid var(--brand)", background: "var(--brand-bg)", color: "var(--brand-d)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+            </button>
+          )}
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 4 }}>
-          {acRowKind(row.doc_type, row.op)}
+        <div
+          style={{
+            fontSize: 10.5, color: "var(--mut2)", marginTop: 2,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}
+        >
+          {acRowStandsAt(row, maxAttempts)}
         </div>
-        <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 3 }}>
-          Queued {fmtDateTime(row.created_at ?? "")}
-          {` · ${acRowStatusLine(row, maxAttempts)}`}
-          {row.state === "pending" && ` · waiting ${acAge(row.created_at)}`}
-          {row.sent_at ? ` · arrived ${fmtDateTime(row.sent_at)}` : ""}
-        </div>
-
-        {(why || showSaid) && (
-          <div
-            style={{
-              marginTop: 9, borderRadius: 9, padding: "9px 10px",
-              background: c.bg, border: "1px solid var(--line)",
-            }}
-          >
-            {why && (
-              <>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: c.fg }}>{why.headline}</div>
-                <p style={{ margin: "3px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "var(--mut)" }}>
-                  {why.explain}
-                </p>
-                <p style={{ margin: "6px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "var(--ink2)" }}>
-                  <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: c.fg, marginRight: 6 }}>
-                    To fix
-                  </b>
-                  {why.toFix}
-                </p>
-              </>
-            )}
-            {showSaid && <WhatWasSaid row={row} />}
-          </div>
-        )}
-
-        {row.state === "requeued" && (
-          <div style={{ marginTop: 7, fontSize: 11, color: "var(--mut)" }}>
-            Already sent again — the record of the first refusal, not something to act on.
-          </div>
-        )}
-
-        {/* Offered only where the SERVER says a re-send can mean anything. */}
-        {row.can_requeue && (
-          <button
-            onClick={onSendAgain}
-            disabled={sending}
-            style={{
-              marginTop: 9, width: "100%", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
-              borderRadius: 9, padding: "9px 10px", cursor: sending ? "default" : "pointer",
-              border: "1px solid var(--brand)", background: sending ? "var(--brand-bg)" : "var(--brand)",
-              color: sending ? "var(--brand-d)" : "#fff",
-            }}
-          >
-            {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
-          </button>
-        )}
-
-        {/* Accepted, refused, or never answered — all three land on the row. */}
-        {note && (
-          <div
-            style={{
-              marginTop: 8, fontSize: 11.5, lineHeight: 1.45, borderRadius: 9, padding: "8px 10px",
-              background: TONE_COLOR[note.tone].bg, color: TONE_COLOR[note.tone].fg,
-              border: "1px solid var(--line)", fontWeight: 600,
-            }}
-          >
-            {note.text}
-            {note.todo && (
-              <div style={{ marginTop: 5, fontWeight: 400, color: "var(--ink2)" }}>
-                <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: TONE_COLOR[note.tone].fg, marginRight: 6 }}>
-                  To do
-                </b>
-                {note.todo}
-              </div>
-            )}
-            {note.quote && (
-              <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                {note.quote}
-              </div>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* THE REASON, ONE LINE, ALWAYS VISIBLE — and it is the opener. */}
+      {detail.line !== null && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          style={{
+            display: "flex", alignItems: "center", gap: 5, width: "100%", textAlign: "left",
+            fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: c.fg, background: c.bg,
+            border: "none", borderTop: "1px solid var(--line)", padding: "6px 10px", cursor: "pointer",
+          }}
+        >
+          {/* The same angle mark the Back control uses, rotated. A filled
+              triangle would be the obvious glyph and is one of the code points
+              that renders as an EMOJI on some platforms, which this repo does
+              not allow anywhere. */}
+          <span
+            aria-hidden
+            className="chev"
+            style={{
+              flex: "none", lineHeight: 1, display: "inline-block",
+              transform: open ? "rotate(90deg)" : undefined,
+            }}
+          >
+            ›
+          </span>
+          <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {detail.line}
+          </span>
+        </button>
+      )}
+
+      {open && detail.expandable && (
+        <div style={{ padding: "8px 10px", background: c.bg, borderTop: "1px solid var(--line)" }}>
+          {detail.copy && (
+            <>
+              <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--mut)" }}>
+                {detail.copy.explain}
+              </p>
+              <p style={{ margin: "6px 0 0", fontSize: 11.5, lineHeight: 1.5, color: "var(--ink2)" }}>
+                <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: c.fg, marginRight: 6 }}>
+                  To fix
+                </b>
+                {detail.copy.toFix}
+              </p>
+            </>
+          )}
+          {detail.showRequeuedNote && (
+            <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--mut)" }}>
+              {AC_REQUEUED_NOTE}
+            </p>
+          )}
+          {detail.showSaid && <WhatWasSaid row={row} />}
+        </div>
+      )}
+
+      {/* Accepted, refused, or never answered — all three land on the row, and
+          never behind the opener: nobody presses a button then goes looking. */}
+      {note && (
+        <div
+          style={{
+            fontSize: 11.5, lineHeight: 1.45, padding: "8px 10px",
+            background: TONE_COLOR[note.tone].bg, color: TONE_COLOR[note.tone].fg,
+            borderTop: "1px solid var(--line)", fontWeight: 600,
+          }}
+        >
+          {note.text}
+          {note.todo && (
+            <div style={{ marginTop: 5, fontWeight: 400, color: "var(--ink2)" }}>
+              <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: TONE_COLOR[note.tone].fg, marginRight: 6 }}>
+                To do
+              </b>
+              {note.todo}
+            </div>
+          )}
+          {note.quote && (
+            <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {note.quote}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
-  const [state, setState] = useState<AcFilterState>("all");
+  const [state, setState] = useState<AcFilterState>(AC_DEFAULT_STATE);
   const [docType, setDocType] = useState<AcDocType | "">("");
   const [docNo, setDocNo] = useState("");
 
@@ -273,6 +294,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const d = q.data;
   const reload = q.reload;
   const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
+  const expanded = useAcExpandedRows();
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
   const loaded = d?.rows ?? [];
@@ -293,7 +315,8 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
         </div>
 
         {/* Two strips, the same two the desktop page shows, in the same order.
-            The counts are the whole reason they are chips and not headings. */}
+            `.hdr` is sticky in mobile.css, so they stay put while the list
+            scrolls — which is the whole point at a thousand rows. */}
         <div className="chips" style={{ marginTop: 11 }}>
           {AC_FILTER_STATES.map((s) => (
             <CountChip
@@ -394,23 +417,27 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
             {rows.length === 0 ? (
               <div style={{ textAlign: "center", padding: "34px 12px", fontSize: 12, color: "var(--mut)" }}>
-                {d.counts.total === 0
-                  ? "Nothing has ever been queued for AutoCount in this company."
-                  : "Nothing here. Try another status or another document type."}
+                {acEmptyLine(d, state)}
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                {rows.map((r) => (
+              <MobileVirtualList
+                items={rows}
+                getKey={(r) => r.id}
+                gap={8}
+                estimateHeight={62}
+                ariaLabel={`${rows.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
+                renderItem={(r) => (
                   <OutboxCard
-                    key={r.id}
                     row={r}
                     maxAttempts={maxAttempts}
                     sending={requeue.sendingId === r.id}
                     note={requeue.notes[r.id]}
+                    open={expanded.isOpen(r)}
+                    onToggle={() => expanded.toggle(r)}
                     onSendAgain={() => void requeue.sendAgain(r.id)}
                   />
-                ))}
-              </div>
+                )}
+              />
             )}
 
             <details style={{ marginTop: 14, background: "var(--card)", border: "1px solid var(--line-card)", borderRadius: 11, padding: "10px 12px" }}>
