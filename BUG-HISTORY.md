@@ -1,3 +1,81 @@
+## Refusing an over-payment pushed the money onto the customer's line items [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-16: 「我的 payment 是不能超收的…如果我多收 250，
+它不是应该 show balance negative 250 代表我超收吗？但它现在是直接把我的 item
+upgrade 上去，加多了 250 块」. A receipt larger than the outstanding total was
+refused, and the order's line value grew by the excess instead.
+
+**Root cause (traced).** NOT an automatic write — no code path adds a payment's
+excess to a line, and production agrees: price rises whose delta equals a
+payment amount on the same order = 0 across the whole book
+(probe-so-overpay.mjs, run 31938039273 section 5). The guard itself was the
+cause. POST/PATCH /:docNo/payments refused Σ(ledger) + this payment >
+total_revenue_centi, so an operator holding cash the customer had already paid
+had exactly one way to bank it: re-price the ORDER until the total covered it.
+On HC-SO-2608-002 that is the audit trail — UPDATE_LINE at 08:26:22 put RM 250
+of "Right Drawer" special on a JAGER-(K) line (unitPriceCenti 0 -> 25000), and
+the RM 2,250 payment landed 76 seconds later at 08:27:38, accepted because the
+total was now exactly 425000. The order silently grew a drawer nobody sold, and
+an item is what gets manufactured and delivered.
+
+**Fix.** Over-collection is allowed: the guard is deleted from both payment
+routes with the two lookups it needed. so-outstanding.ts gains soBalanceCenti
+(signed) beside soOutstandingCenti (still clamped, because it feeds AutoCount's
+UDF_BALANCE and a licensed ledger is not where a credit belongs); migration 0301
+un-floors the view's balance_centi_live so the list agrees with the detail page.
+Negative renders red on every SO balance surface, and the print flips BALANCE
+DUE to CREDIT BALANCE. Both signed rules refuse to go negative on a ZERO total —
+that is every AutoCount import, 2,687 of prod's 2,824 live orders, so a bare
+total - paid would have reddened 2,121 legacy orders for RM 9.26m nobody
+over-collected.
+
+**Ref.** fix/allow-overcollection-negative-balance, 2026-08-16.
+## The stock remark said READY (PARTIAL) on an order that could not ship [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, on a real accessory-only sales order with one accessory
+line short: the Stock Status column read `READY (PARTIAL)` while the same
+order was not ship-able — 骗人. Separately, a service-only SO (delivery fee
+only, nothing to allocate) could never become ready at all: it showed a blank
+remark and sat in CONFIRMED forever.
+
+**Root cause (traced).** Both defects were one line each in
+`backend/src/scm/lib/so-readiness.ts`.
+
+`isMainReady = mainCount > 0 ? mainReady === mainCount : true` is VACUOUSLY
+true when the SO has no MAIN (sofa/bedframe/mattress) line — the right reading
+for an accessory-only order, and the wrong one for a label. The remark branched
+on it (`else if (isMainReady) stockRemark = 'READY (PARTIAL)'`) three lines
+below the ship gate that branched on `isShipReady`, so the two answered the
+same question differently in the same function.
+
+`if (isServiceLine(...)) continue` dropped every service line before it could
+be counted, so a service-only SO ended with `mainCount + accCount === 0` and
+was byte-identical to an SO with no lines at all — the husk case #2186 had
+deliberately made un-shippable.
+
+Compounding both: `isServiceLine` documents `category` (mfg_products.category)
+as its strongest signal, but the `ReadinessLine` type had no field for it, so
+no caller could pass it and a delivery fee saved with `item_group: 'others'`
+counted as a short accessory.
+
+**Fix.** The remark now names what is MISSING — `''` for a line-less SO,
+`'READY'`, or `'SHORT: BEDFRAME, ACCESSORY'` — and never contains the substring
+READY while anything is short. It no longer reads `isMainReady` at all. Service
+lines are COUNTED (`svcCount`) rather than dropped, which is what makes
+"had lines, all of them service" distinguishable from "no lines"; `isFullyReady`
+requires at least one live line (service included) plus every stock-bearing line
+allocated, so service-only is ready and the husk still is not. `isShipReady`'s
+formula is untouched: every SO carrying a main line gates exactly as before.
+`ReadinessLine.category` was added and is resolved at all five construction
+sites through the new `lib/so-readiness-category.ts`, which also replaced three
+hand-rolled copies of the same chunked catalog read.
+
+**Ref.** PR #2295, fix/so-readiness-says-what-is-missing, 2026-08-16.
+
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
 <!-- area: Accounting + GL -->

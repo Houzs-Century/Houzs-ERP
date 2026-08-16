@@ -1,0 +1,57 @@
+name: probe-so-stock-competition
+
+# Why is a line stored PENDING when the stock is physically on hand?
+#
+# Two causes with OPPOSITE fixes:
+#   (A) an earlier-priority live SO line already consumed the bucket — the
+#       stored PENDING is CORRECT and the drill's live-MRP READY pill misleads;
+#   (B) nothing else claims it — the stored PENDING is STALE and a recompute
+#       would flip it.
+# This probe lists every competing live claim in the auto-allocation sweep's
+# own priority order (customer_delivery_date ASC NULLS LAST, created_at ASC —
+# so-stock-allocation.ts:112-128) and compares cumulative need to on-hand.
+#
+# Read-only. SELECT only, no DDL, no writes, no transaction.
+# See backend/scripts/probe-so-stock-competition.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      docno:
+        description: "SO doc_no to drill (e.g. 2990-SO-2608-004)"
+        required: true
+        default: "2990-SO-2608-004"
+        type: string
+
+concurrency:
+  group: probe-so-stock-competition
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Competing claims behind the stored-PENDING lines
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          DOCNO: ${{ inputs.docno }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-so-stock-competition.mjs | tee so-competition.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-so-stock-competition
+          path: backend/so-competition.txt
+          retention-days: 14
