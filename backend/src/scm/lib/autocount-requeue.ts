@@ -318,6 +318,9 @@ interface SkippedRow {
   doc_no: string;
   doc_id: string | null;
   last_error: string | null;
+  /** The intent key 0277's pending-dedupe index is unique on. Re-used verbatim
+   *  by a transfer re-send rather than rebuilt — see transferVerdict. */
+  dedupe_key?: string | null;
 }
 
 interface CapturedWrite {
@@ -613,8 +616,17 @@ async function transferVerdict(
      `.lt('attempts', MAX_ATTEMPTS)`, so re-opening it would produce a pending
      row no sweep can ever pick up. The insert sets no `attempts`, and 0277's
      `NOT NULL DEFAULT 0` supplies zero.
-     The dedupe key is enqueueConvert's own, so 0277's pending-dedupe index is
-     the backstop under the live-row check above rather than a second rule. */
+     THE DEDUPE KEY IS THE ROW'S OWN, READ BACK — not rebuilt from the op and
+     the id. Rebuilding it was wrong for exactly one op and that op is in this
+     set: enqueueConvert writes `${op}:${docId ?? docNo}`, but a `so_to_po` row
+     is written by enqueuePoCreate, which keys it `create_po:${poId}` (it is the
+     transfer-shaped alternative to a plain create, and the two must not both be
+     queued). A reconstructed `so_to_po:…` would not collide with either, so
+     0277's pending-dedupe index — the backstop under the live-row check above —
+     would silently stop being a backstop for that one shape. Reading the key
+     the row already carries cannot drift: it is the same recorded-intent
+     argument as the payload, one column over. A `failed` row still holds it,
+     because the unique index covers only `status = 'pending'`. */
   const queued = await enqueueAcOp(sb, {
     companyId: Number(raw.company_id),
     op: raw.op as AcOp,
@@ -622,7 +634,7 @@ async function transferVerdict(
     docNo: raw.doc_no,
     docId: raw.doc_id,
     payload,
-    dedupeKey: `${raw.op}:${raw.doc_id ?? raw.doc_no}`,
+    dedupeKey: raw.dedupe_key ?? null,
   });
   if (!queued) {
     return {
@@ -835,7 +847,8 @@ export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise
 
 /** The columns the ladder reads. Named once so the two entry points cannot
  *  select different ones and hand requeueOneRow a row missing a field. */
-const REQUEUE_ROW_COLS = 'id, company_id, op, doc_type, doc_no, doc_id, status, last_error';
+const REQUEUE_ROW_COLS =
+  'id, company_id, op, doc_type, doc_no, doc_id, status, last_error, dedupe_key';
 
 export interface RequeueRowOptions {
   /** The `scm.autocount_outbox` row to send again. */

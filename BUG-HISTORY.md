@@ -125,6 +125,17 @@ code `requeued-as-recorded`, because the promise it makes differs from
 `already-sent` moved INTO the ladder, so a caller that forgets the check cannot
 put a second copy of a document into a live licensed book.
 
+**One trap found while re-reading the fix, before it shipped.** The re-send
+first REBUILT the dedupe key as `${op}:${docId}`, which is enqueueConvert's
+formula — and wrong for exactly one op in the set. A `so_to_po` row is written by
+`enqueuePoCreate` under `create_po:${poId}`, because it is the transfer-shaped
+alternative to a plain create and the two must never both be queued. A
+reconstructed `so_to_po:…` collides with neither, so 0277's pending-dedupe index
+would have quietly stopped backing up the live-row check for that one shape. The
+re-send now carries the row's OWN `dedupe_key` across, which cannot drift — a
+`failed` row still holds it, because the unique index covers only
+`status = 'pending'`. Pinned by a test that fails when the key is rebuilt.
+
 **Also fixed in the same pass.** `requeueSkipped` was selecting its own copy of
 the column list the constant `REQUEUE_ROW_COLS` exists to prevent (they agreed,
 which is how that class survives); `reasonFor` answered every non-`edit` op with

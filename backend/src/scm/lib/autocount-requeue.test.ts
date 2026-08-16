@@ -645,7 +645,11 @@ describe('a conversion the SERVICE refused', () => {
      all answered `Invalid transfer item.` by a build that no longer exists. */
   const failedConversion = (extra: Row = {}) => ({
     id: 'conv-1', company_id: 1, op: 'so_to_do', doc_type: 'DO', doc_no: 'HC-DO-2608-002',
-    doc_id: 'do-1', payload: doPayload(), status: 'failed', attempts: 6, dedupe_key: null,
+    doc_id: 'do-1', payload: doPayload(), status: 'failed', attempts: 6,
+    /* enqueueConvert's own key, kept because 0277's unique index covers only
+       `status = 'pending'` — a failed row still carries the intent it was
+       queued under, which is what the re-send re-uses. */
+    dedupe_key: 'so_to_do:do-1',
     last_error: 'Invalid transfer item.',
     created_at: '2026-08-16T02:00:00Z',
     ...extra,
@@ -684,13 +688,51 @@ describe('a conversion the SERVICE refused', () => {
        reference and the line-key capture all survive — rebuilding them here
        would mean copying the delivery-order route into this module. */
     expect(queued.payload).toEqual(doPayload());
-    /* enqueueConvert's own dedupe key, so 0277's pending index is the backstop
-       under the live-row check rather than a second rule. */
+    /* The row's OWN dedupe key, carried across verbatim, so 0277's pending index
+       stays the backstop under the live-row check rather than a second rule. */
     expect(queued.dedupe_key).toBe('so_to_do:do-1');
     /* A failed row has spent all six attempts and the drain selects
        `.lt('attempts', 6)`, so a re-opened row would be queued and dead. */
     expect(queued.attempts ?? 0).toBe(0);
     expect(rows(sb).find((x) => x.id === 'conv-1')?.attempts).toBe(6);
+  });
+
+  test('a so_to_po keeps the key enqueuePoCreate gave it, which is NOT its own op name', async () => {
+    /* THE ONE OP IN THIS SET WHOSE KEY IS NOT `${op}:${docId}`. enqueuePoCreate
+       writes the transfer-shaped purchase order under `create_po:<poId>`,
+       because it is the alternative to a plain create and the two must never
+       both be queued. Rebuilding the key here as `so_to_po:<poId>` would collide
+       with neither, so 0277's pending-dedupe index would quietly stop backing up
+       the live-row check for this one shape. The re-send therefore carries the
+       row's own key across rather than deriving one. */
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+      autocount_outbox: [{
+        id: 'xfer-po', company_id: 1, op: 'so_to_po', doc_type: 'PO', doc_no: 'HC-PO-9',
+        doc_id: 'po-1', status: 'failed', attempts: 6,
+        dedupe_key: 'create_po:po-1',
+        last_error: 'Invalid transfer item.',
+        payload: {
+          body: { DocNo: 'HC-PO-9', DtlKeys: [905348] },
+          fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: SO_DOC },
+          writeback: { table: 'purchase_orders', keyCol: 'id', key: 'po-1' },
+        },
+        created_at: '2026-08-16T02:00:00Z',
+      }],
+      purchase_orders: [{ id: 'po-1', linked_ac_docno: null }],
+    }, {}, DEDUPE_IDX);
+
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'xfer-po', companyId: 1 });
+    expect(r.outcome).toBe('requeued-as-recorded');
+    expect(pending(sb)[0].dedupe_key).toBe('create_po:po-1');
+
+    /* And the index really does refuse a second create for that purchase order,
+       which is the property the key exists for — asserted, not argued. */
+    const clash = await sb.from('autocount_outbox').insert({
+      company_id: 1, op: 'create_po', doc_type: 'PO', doc_no: 'HC-PO-9',
+      status: 'pending', dedupe_key: 'create_po:po-1', payload: { body: {} },
+    });
+    expect(clash.error?.code).toBe('23505');
   });
 
   test('the old row is annotated so it stops reading as backlog', async () => {
