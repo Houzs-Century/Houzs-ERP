@@ -270,7 +270,9 @@ async function main() {
   const byDoc = new Map();
   for (const r of allRows) {
     const k = `${r.company_id}|${r.doc_no}`;
-    const cur = byDoc.get(k) ?? { company_id: r.company_id, doc_no: r.doc_no, status: r.status, gated: r.alloc_gated, lines: [] };
+    /* company_id is bigint — postgres.js hands it back as a STRING, so an
+       === against a number silently matches nothing. Normalise at the edge. */
+    const cur = byDoc.get(k) ?? { company_id: Number(r.company_id), doc_no: r.doc_no, status: r.status, gated: r.alloc_gated, lines: [] };
     cur.lines.push(r);
     byDoc.set(k, cur);
   }
@@ -307,8 +309,14 @@ async function main() {
   }
   note(`  buckets with any on-hand row: ${onHand.size}`);
 
+  const coSeen = new Map();
+  for (const v of byDoc.values()) coSeen.set(v.company_id, (coSeen.get(v.company_id) ?? 0) + 1);
+  note(`  live orders grouped: ${byDoc.size}  by company: ${JSON.stringify([...coSeen])}`);
+  if (byDoc.size === 0) throw new Error('grouped 0 orders from a non-empty line pull — grouping is broken, do not report zeros');
+
   for (const co of [1, 2]) {
     const docs = [...byDoc.values()].filter((v) => v.company_id === co);
+    if (docs.length === 0) throw new Error(`company ${co} grouped to 0 live orders from ${allRows.length} lines — refusing to report a zero denominator`);
     let bare = 0, staleUncontended = 0, staleAnyStock = 0, genuinelyShort = 0;
     const bareList = [];
     for (const v of docs) {
