@@ -11,8 +11,8 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
-vi.mock("../api/client", () => ({ api: { get: apiGet } }));
+const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
+vi.mock("../api/client", () => ({ api: { get: apiGet, post: apiPost } }));
 
 import { MobileAutoCountSync } from "./MobileAutoCountSync";
 import {
@@ -26,7 +26,7 @@ import {
 afterEach(cleanup);
 /* Braces, not a concise arrow — see the comment in pages/autoCountSync.test.tsx
    and the BUG-HISTORY entry. A returned mock becomes vitest's teardown. */
-beforeEach(() => { apiGet.mockReset(); });
+beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); });
 
 const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   id: "ob-1",
@@ -41,6 +41,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   reason_kind: null,
   remedy: null,
   needs_attention: false,
+  can_requeue: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -83,7 +84,8 @@ const busy = payload({
   counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
   rows: [
     row({ id: "f", doc_no: "SO-F", doc_type: "SO", status: "failed", state: "failed", attempts: 6,
-      needs_attention: true, reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent" }),
+      needs_attention: true, can_requeue: true,
+      reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent" }),
     row({ id: "k", doc_no: "DO-K", doc_type: "DO", op: "so_to_do", status: "skipped", state: "skipped",
       needs_attention: true,
       reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
@@ -181,5 +183,51 @@ describe("MobileAutoCountSync — the failures it must not swallow", () => {
     await mount(busy);
     await userEvent.click(await screen.findByRole("button", { name: /Purchase orders\s*0/ }));
     expect(await screen.findByText(/Try another status or another document type/)).toBeTruthy();
+  });
+});
+
+/* Send again exists on BOTH surfaces or the pairing is broken. A control on the
+   desktop page and not the phone is the recurring bug class this repo names. */
+describe("MobileAutoCountSync — Send again", () => {
+  const answer = (over: Record<string, unknown> = {}) => ({
+    accepted: true,
+    code: "requeued",
+    message: "Sent back to the queue. It goes to AutoCount on the next five-minute sweep.",
+    row_id: "f", doc_type: "SO", doc_no: "SO-F", op: "create_so",
+    new_row_id: "ob-9", reason: null,
+    ...over,
+  });
+
+  it("offers the button on the same rows the desktop page offers it on", async () => {
+    await mount(busy);
+    const offered = (await screen.findByText("SO-F")).closest(".card")!;
+    expect(within(offered as HTMLElement).getByRole("button", { name: "Send again" })).toBeTruthy();
+    const notOffered = screen.getByText("DO-K").closest(".card")!;
+    expect(within(notOffered as HTMLElement).queryByRole("button", { name: "Send again" })).toBeNull();
+  });
+
+  it("says so on the row when the document is on its way again", async () => {
+    apiPost.mockResolvedValue(answer());
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/f/requeue");
+    expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
+  });
+
+  it("prints a refusal rather than letting the press look like nothing", async () => {
+    apiPost.mockResolvedValue(answer({
+      accepted: false, code: "already-sent", new_row_id: null,
+      message: "AutoCount already accepted this one.",
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/AutoCount already accepted this one/)).toBeTruthy();
+  });
+
+  it("says the call never got through, rather than swallowing the throw", async () => {
+    apiPost.mockRejectedValue(new Error("the worker is unreachable"));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
   });
 });

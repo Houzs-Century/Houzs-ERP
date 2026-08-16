@@ -12,8 +12,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
-vi.mock("../api/client", () => ({ api: { get: apiGet } }));
+const { apiGet, apiPost } = vi.hoisted(() => ({ apiGet: vi.fn(), apiPost: vi.fn() }));
+vi.mock("../api/client", () => ({ api: { get: apiGet, post: apiPost } }));
 
 import { AutoCountSync } from "./AutoCountSync";
 import type { AcOutboxResponse, AcOutboxRow } from "../lib/autocountOutbox";
@@ -25,7 +25,7 @@ afterEach(cleanup);
    the rejection armed by the load-failure test below surfaced as that test
    failing with "the queue is unreachable" thrown from nowhere it could see.
    Proven 2026-08-15; see BUG-HISTORY. */
-beforeEach(() => { apiGet.mockReset(); });
+beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); });
 
 const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   id: "ob-1",
@@ -40,6 +40,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   reason_kind: null,
   remedy: null,
   needs_attention: false,
+  can_requeue: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -83,7 +84,7 @@ const chip = (name: RegExp) => screen.getByRole("button", { name });
 
 const rows = [
   row({ id: "f", doc_no: "SO-F", doc_type: "SO", op: "create_so", status: "failed", state: "failed",
-    attempts: 6, needs_attention: true,
+    attempts: 6, needs_attention: true, can_requeue: true,
     reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent" }),
   row({ id: "k", doc_no: "DO-K", doc_type: "DO", op: "so_to_do", status: "skipped", state: "skipped",
     needs_attention: true,
@@ -345,5 +346,83 @@ describe("AutoCountSync — filters and failure", () => {
   it("says try another filter when the filters emptied the list", async () => {
     await mount(busy, "/autocount-sync?docType=PI");
     expect(await screen.findByText(/Try another status or another document type/)).toBeTruthy();
+  });
+});
+
+/* The button the previous version of this page deliberately did NOT have. It
+   ships now because #2321 landed POST /:id/requeue; what is asserted here is the
+   half that gets forgotten — the answer, on the row, in every direction it can
+   go. */
+describe("AutoCountSync — Send again", () => {
+  const requeueAnswer = (over: Record<string, unknown> = {}) => ({
+    accepted: true,
+    code: "requeued",
+    message: "Sent back to the queue. It goes to AutoCount on the next five-minute sweep.",
+    row_id: "f",
+    doc_type: "SO",
+    doc_no: "SO-F",
+    op: "create_so",
+    new_row_id: "ob-9",
+    reason: null,
+    ...over,
+  });
+
+  it("offers the button only where the server says a re-send can mean something", async () => {
+    await mount(busy);
+    const offered = (await screen.findByText("SO-F")).closest("li")!;
+    expect(within(offered).getByRole("button", { name: "Send again" })).toBeTruthy();
+    /* DO-K is held back and can_requeue is false on it — no button rather than
+       a button that always answers no. */
+    const notOffered = screen.getByText("DO-K").closest("li")!;
+    expect(within(notOffered).queryByRole("button", { name: "Send again" })).toBeNull();
+  });
+
+  it("says so on the row when the document is on its way again", async () => {
+    apiPost.mockResolvedValue(requeueAnswer());
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/f/requeue");
+    expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
+    /* An accepted re-send makes a NEW row, so the page re-reads rather than
+       patching the one it has. */
+    expect(apiGet.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  /* THE BRANCH THAT GETS FORGOTTEN. A refusal RESOLVES — it is the server
+     answering — and its sentence is the whole value of pressing the button when
+     the answer is "AutoCount already has it". Rendering only the accepted half
+     is "the button does nothing" wearing a success path. */
+  it("prints the refusal on the row instead of looking like nothing happened", async () => {
+    apiPost.mockResolvedValue(requeueAnswer({
+      accepted: false,
+      code: "already-sent",
+      message: "AutoCount already accepted this one. Sending it again would put a SECOND copy of the document in the account book.",
+      new_row_id: null,
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/AutoCount already accepted this one/)).toBeTruthy();
+  });
+
+  it("shows the ERP's own words when it refuses the document a second time", async () => {
+    apiPost.mockResolvedValue(requeueAnswer({
+      accepted: false,
+      code: "still-refused",
+      message: "The ERP still will not send it.",
+      new_row_id: null,
+      reason: "refused, nothing sent (MissingAgentError): no salesperson on HC-SO-2608-004",
+    }));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/The ERP still will not send it/)).toBeTruthy();
+    expect(screen.getByText(/no salesperson on HC-SO-2608-004/)).toBeTruthy();
+  });
+
+  it("says the call never got through, rather than swallowing the throw", async () => {
+    apiPost.mockRejectedValue(new Error("the worker is unreachable"));
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
+    expect(screen.getByText(/the worker is unreachable/)).toBeTruthy();
   });
 });

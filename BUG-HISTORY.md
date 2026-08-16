@@ -1,3 +1,212 @@
+## Four refusal classes the AutoCount Sync page could not name, and one needle that matched nothing [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Found while enumerating every reason a row can end up `failed` or
+`skipped` for `docs/autocount-sync-reasons.md` — the catalogue the page's new
+Send-again button reads its sentences from. `AC_SKIP_KINDS` is what turns a
+`skipped` row's raw text into a `reason_kind` and a REMEDY, and for a large
+group of live refusals it produced `unrecognised` with a **null remedy**: the
+page names the problem and offers no next step, on rows whose next step is one
+field on one form.
+
+**Root cause (traced, by reading every writer of a `skipped` reason rather than
+the table).** Three separate holes, and they have the same shape — a needle
+written from something other than the writer.
+
+1. **Three refusal classes had no needle at all.** `noteReadFailure`
+   (`backend/src/scm/lib/autocount-outbox.ts`) writes
+   `refused, nothing sent (${e.name})` for **eight** error classes;
+   `AC_SKIP_KINDS` carried five of them. Missing: `MissingAgentError`,
+   `MissingSalesLocationError`, `MissingCreditorError`. The first is not
+   hypothetical — it is the class written for exactly the failure the live book
+   answered on go-live day, 2026-08-13, `FK_SO_SalesAgent` on HC-SO-2608-001 and
+   -002.
+
+2. **`no-autocount-shape`'s needle matched nothing any code path writes.** It
+   was `'AutoCount has no shape'`, which is a phrase from
+   `recordConvertSkipped`'s own DOC COMMENT. The five call sites that record a
+   merged conversion — `delivery-orders-mfg.ts`, `grns.ts` (twice),
+   `sales-invoices.ts`, `purchase-invoices.ts` — all write
+   `"AutoCount transfers from ONE source document"`. So every merged conversion
+   in the queue has classified as `unrecognised` since the feature shipped.
+
+3. **Four more reasons were never in the table**: the DtlKey-subset refusal
+   (`readConvertSourceKeys`), `cancelled in the ERP before it was written to
+   AutoCount` (`enqueueCancel`), `edited before its AutoCount counterpart
+   existed` (`enqueueEdit`), and the mislinked-GRN refusal (`grnLinkIsReallyAPo`).
+
+This is the same failure as #2094 one turn of the screw further on. That one
+matched the shared PREFIX and so gave three classes the fourth's remedy; this
+one matched a comment, and a phrase nobody writes, and so gave several classes
+no remedy at all. Both come from taking the needle from near the writer instead
+of from the writer.
+
+**Fix.** Eight entries added or corrected in `AC_SKIP_KINDS`
+(`backend/src/scm/lib/autocount-outbox-status.ts`) and in its plain-node mirror
+`backend/scripts/lib/autocount-skip-kinds.mjs`, which
+`autocountOutboxStatus.canonical.test.ts` refereed as usual. Every one of the
+needles was taken from the string the writer actually produces, quoted in the
+same PR into `docs/autocount-sync-reasons.md` beside its trigger, whether a
+re-send can fix it, and what a person should do.
+
+**Not fixed, recorded instead** (`docs/autocount-sync-reasons.md` §5): these
+needles are still strings typed twice with nothing checking them against the
+writers, which is exactly how hole 2 survived from the day it shipped. A
+generated check over the reason-producing call sites is the thing that closes
+the class; a bigger table is not. Also recorded there: `masters-not-opened` can
+never classify, because the route only classifies rows whose status is
+`skipped` and the drain writes that message onto a `failed` row.
+
+**Ref:** this PR, 2026-08-16.
+
+## The AutoCount Sync page could show a refusal and do nothing about it [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Owner's standing complaint about this screen, in its own subtitle:
+*"re-sending a refused document is still the re-queue workflow"*. A `failed` or
+`skipped` row means a document is in the ERP and not in the licensed account
+book; the page named the reason and the remedy, and then the only way to ACT was
+to dispatch a GitHub Action — which the owner cannot do.
+
+**Root cause (not a defect, a deliberate omission that outlived its reason).**
+`backend/src/scm/routes/autocount-outbox.ts` said so in its own header: *"There
+is no re-queue here … Putting that behind a button is a separate decision the
+owner has not made."* The decision has been made. The reason for the caution was
+real and remains real: `AcSyncService`'s create has **no guard against a
+duplicate ERP document number**, so re-sending a document AutoCount has already
+accepted writes a SECOND one into a live licensed book, where a sales order
+cannot simply be deleted. The workflow managed that risk by selecting `skipped`
+rows only and hiding `failed` behind an `includeFailed` opt-in (#2189). Neither
+of those mechanisms can protect a button, which is pointed at whatever row the
+reader is looking at — including a `sent` one.
+
+**Fix.** `POST /api/scm/autocount-outbox/:id/requeue`.
+
+- **The ladder is SHARED, not copied.** `requeueSkipped`'s loop body was
+  extracted into `requeueOneRow` and both callers climb it. Two ladders would be
+  two answers to "may this document be sent again", and the looser one writes the
+  duplicate.
+- **A `sent` row is refused OUTRIGHT**, before the document is read or composed —
+  the refusal the workflow never needed and the opt-in could not express.
+  `pending` is refused too (the sweep is already going to send it), and a row id
+  belonging to another company answers `row-not-found`, identically to an unknown
+  id, because confirming somebody else's id exists is itself a leak.
+- **Authorization is a NEW, NARROWER key.** `scm.autocount.requeue` **or**
+  `settings.manage`; deliberately not `scm.autocount.read`, which is catalogued
+  as the key you hand somebody so they can WATCH the queue. Company resolution
+  is `requireActiveCompanyId` — the strict helper — because the lenient one
+  degrades to "no predicate", which on a write means every company's rows.
+- **The answer is a structured outcome, never an exception string**: `accepted`,
+  a stable `code`, and a plain-English `message` shipped from the server so the
+  page holds no dictionary of its own. `docs/autocount-sync-reasons.md` is the
+  catalogue, pinned to the code by
+  `backend/tests/autocountSyncReasonsCatalogue.test.ts` in both directions.
+- **The attempt counter needed no reset code**, and the reason is worth keeping:
+  a re-queue is an INSERT of a new row, not a re-open of the dead one. A `failed`
+  row sits at `attempts = 6` and the drain selects `.lt('attempts',
+  MAX_ATTEMPTS)`, so re-opening it would produce a `pending` row no sweep can
+  ever pick up — queued, visibly waiting, and dead. The new row sets no
+  `attempts`, so 0277's `DEFAULT 0` supplies it. Asserted rather than assumed.
+
+**Ref:** this PR, 2026-08-16.
+## Migration 0301 rejected its own rewrite and blocked every production deploy [critical]
+
+**Symptom.** From 2026-08-16 11:16:41Z (#2297 merged) production stopped
+shipping. Every `Deploy` run concluded `failure` with `wrangler publish`
+skipped, on:
+
+```
+FAILED  0301_so_balance_live_signed.sql: 0301: rewrite reported success
+        but balance_centi_live is still floored.
+```
+
+`pg-migrate` stops at the first failure, so #2282, #2302, #2305 and everything
+else merged that afternoon sat on `main` and none of it was live. Last good
+deploy: 11:12:53Z (`a1d1badd0`).
+
+**Root cause, traced.** 0301 rewrites the view by string substitution on
+`pg_get_viewdef(..., true)`, then demanded its replacement literal back from the
+catalogue. `CREATE OR REPLACE VIEW` does not store the text it is handed —
+Postgres parses it to a tree and `pg_get_viewdef` deparses that tree afresh. In
+pretty mode it emits only the parentheses precedence requires, so the outer pair
+in `(a - b) AS x` is dropped and the literal could never match. Measured on this
+exact view, both spellings read from the live catalogue at the same instant
+(`why-0301-refuses.mjs`, dispatched read-only against prod, #2319):
+
+```
+pretty=false  GREATEST((so.local_total_centi - COALESCE(p.paid_total, (0)::bigint)), (0)::bigint) AS balance_centi_live
+pretty=true   GREATEST(so.local_total_centi - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_centi_live
+```
+
+The `DO` block raises, the block rolls back, the view stays floored, and the
+next deploy repeats it. The same literal also backed the "already signed"
+early-return, so a re-run would have fallen through to the migration's own
+"refusing to guess" abort — a second instance of one mistake.
+
+**Fix.** The post-condition asserts what the migration is FOR — the `GREATEST`
+floor is no longer in the deployed definition — plus that `balance_centi_live`
+survived, so a dropped column cannot pass as success. The idempotency check
+accepts either spelling. Not a weaker guard: the original could not pass at all.
+
+**What this rules out.** The rewrite was never broken. `CREATE OR REPLACE VIEW`
+parsed and applied; only the read-back assertion was unsatisfiable. A "relax the
+post-condition" patch written without the measurement above would have been
+indistinguishable from forging the evidence the post-condition exists to check,
+which is why the probe shipped first as its own PR.
+
+**Lesson.** An assertion that compares deparsed SQL to a hand-written literal is
+asserting a formatting convention, not a fact. Assert the property you changed.
+
+**Ref.** probe #2319, fix this PR, 2026-08-16.
+
+## The delivery date never reached the AutoCount header [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner: *"AutoCount 有一个 Sales Exemption Date，怎么没有 update
+进去？"* — and then, when told the ERP has no exemption field: *"这个就是
+delivery date 来的 … 就是用我们 delivery date 放进去 sales exemption date 而已，
+一样的东西."*
+
+**Root cause, and the first answer was wrong.** The first answer was that the
+ERP has no such field, so there is nothing to send. That was true about the
+NAME and false about the THING. AutoCount's sales-order HEADER has no delivery
+date of its own — the SDK lists `DeliveryDate` on the six DETAIL classes and
+nowhere else, which is why an earlier query for `SO.DeliveryDate` returned
+`Error 207: Invalid column name` — so this book keeps the header delivery date
+in `SalesExemptionExpiryDate`, and Inistate, the connector the ERP replaces,
+writes it there.
+
+`mfg_sales_orders.customer_delivery_date` is the value. It was not even being
+READ: `SO_HEADER_COLS` did not list it.
+
+**Fix, four places, because a date needs different handling from a string at
+every one:**
+
+| where | what |
+|---|---|
+| `SO_HEADER_COLS` | read `customer_delivery_date` |
+| `composeCreateSo` | `SalesExemptionExpiryDate` on the payload |
+| `soEditHeader` | the same key, omit-when-absent |
+| `AcSyncService.cs` | apply it on BOTH create and edit |
+
+**The C# is the part that would have failed silently.** `Edit`'s header loop
+reads every key with `Str()` and assigns through reflection; a
+`Nullable<DateTime>` property given a string throws — inside `Set()`, which
+swallows exceptions. Adding the key to that allow-list would have produced a
+field that looks wired and writes nothing. It is handled beside `DocDate`
+instead, which is the existing precedent for a date on that path.
+
+`ContainsKey` rather than `HasValue` on both paths, so present-and-null blanks
+it and absent leaves the book's own — the same rule the line delivery date
+already follows, and the reason `#2218` exists.
+
+Registered as clearable: it is a date with no foreign key behind it, so an
+operator who deletes it has that reach the book.
+
+**Ref.** 2026-08-16, PR #2305.
 ## SO-to-PO wrote the source document but not the source TYPE [high]
 
 <!-- area: AutoCount sync + write-back -->

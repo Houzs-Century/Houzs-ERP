@@ -28,6 +28,8 @@
 // exact technical note still matters — an unrecognised refusal — it is shown as
 // a QUOTE of what a machine wrote, never as the page's own voice.
 // ----------------------------------------------------------------------------
+import { useCallback, useState } from "react";
+
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 
@@ -120,6 +122,13 @@ export interface AcOutboxRow {
   reason_kind: string | null;
   remedy: string | null;
   needs_attention: boolean;
+  /**
+   * Whether to OFFER this row a "Send again" button. Decided by the SERVER
+   * (backend scm/lib/autocount-outbox-status.ts) for the same reason nothing
+   * else here is decided locally, and it is a HINT: the POST re-reads the row
+   * and can still refuse, with a code and a sentence.
+   */
+  can_requeue: boolean;
   ac_doc_no: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -181,6 +190,120 @@ export function useAutoCountOutbox(filters: AcOutboxFilters, enabled = true) {
     [qs],
     { staleTime: 30_000, keepPreviousData: true, enabled },
   );
+}
+
+/**
+ * What POST /autocount-outbox/:id/requeue answers.
+ *
+ * `code` is the stable key to branch on; `message` is the sentence to show. The
+ * sentence comes from the SERVER (AC_REQUEUE_MEANING in
+ * backend/src/scm/lib/autocount-requeue.ts) and is never rewritten here — a
+ * dictionary on this side would be a second set of words for the same event,
+ * and the first outcome added would render on the owner's page as a bare
+ * hyphenated key. The catalogue of codes is docs/autocount-sync-reasons.md.
+ */
+export interface AcRequeueResult {
+  /** True only when the document is now queued and will be sent. */
+  accepted: boolean;
+  code: string;
+  message: string;
+  row_id: string;
+  doc_type: string;
+  doc_no: string;
+  op: string;
+  /** The live attempt this created, when it created one. */
+  new_row_id: string | null;
+  /** The ERP's own words, present only when the composer refused it again. */
+  reason: string | null;
+}
+
+/**
+ * Send one refused document again.
+ *
+ * THROWS on 403 / 409 / 500 like every other api.post, and RESOLVES with
+ * `accepted: false` on a refusal — those are two different things and the
+ * caller must show both. A refusal is the server answering the question ("that
+ * one is already in AutoCount"); a throw is the call never being answered. A
+ * component that renders only the resolved branch is the silent-mutation shape
+ * frontend/scripts/check-silent-mutations.mjs exists to catch.
+ */
+export async function requeueAcOutboxRow(rowId: string): Promise<AcRequeueResult> {
+  return api.post<AcRequeueResult>(
+    `/api/scm/autocount-outbox/${encodeURIComponent(rowId)}/requeue`,
+  );
+}
+
+/** The word on the button, in both places, so the two cannot drift apart. */
+export const AC_SEND_AGAIN_LABEL = "Send again";
+export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
+
+/** What is shown on the row after Send again has been pressed. */
+export interface AcRequeueNote {
+  tone: AcTone;
+  /** The SERVER's sentence, verbatim, or — on a throw — what went wrong. */
+  text: string;
+  /** The ERP's own words, when it refused the document a second time. */
+  quote: string | null;
+}
+
+/**
+ * Send again, for one row at a time, with the answer kept ON that row.
+ *
+ * A HOOK rather than two handlers, because the desktop page and the mobile
+ * screen must not have separate opinions about what pressing this does — and
+ * because the thing most easily got wrong here is the branch nobody sees:
+ *
+ * - a REFUSAL resolves. `accepted: false` with a code and a sentence is the
+ *   server answering the question, and the sentence is the whole point of
+ *   pressing the button when the answer is "AutoCount already has it".
+ * - a THROW is the call never being answered at all.
+ *
+ * Both are shown. Rendering only the resolved branch is the silent-mutation
+ * shape (`frontend/scripts/check-silent-mutations.mjs`), and rendering only the
+ * accepted half of the resolved branch is the same bug one level in: the owner
+ * would press a button, see nothing change, and be right to call it broken.
+ *
+ * The answer lands on the ROW, not in a toast: a toast about HC-SO-2608-004 is
+ * gone by the time the reader has found HC-SO-2608-004.
+ */
+export function useAcRequeue(onAccepted: () => void) {
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, AcRequeueNote>>({});
+
+  const sendAgain = useCallback(
+    async (rowId: string) => {
+      setSendingId(rowId);
+      try {
+        const r = await requeueAcOutboxRow(rowId);
+        setNotes((prev) => ({
+          ...prev,
+          [rowId]: {
+            /* `wait`, not `bad`: most refusals are the system protecting the
+               account book ("AutoCount already accepted this one"), which is
+               news, not a fault. A thrown call IS a fault. */
+            tone: r.accepted ? "good" : "wait",
+            text: r.message,
+            quote: r.reason,
+          },
+        }));
+        if (r.accepted) onAccepted();
+      } catch (e) {
+        setNotes((prev) => ({
+          ...prev,
+          [rowId]: {
+            tone: "bad",
+            text: `Nothing was sent — the request did not get through: ${e instanceof Error ? e.message : String(e)}`,
+            quote: null,
+          },
+        }));
+      } finally {
+        setSendingId(null);
+      }
+    },
+    [onAccepted],
+  );
+
+  return { sendingId, notes, sendAgain };
 }
 
 /**
@@ -325,48 +448,93 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     explain:
       "A change only goes across if every line on the document can be matched to the same line in the account book, and at least one line here cannot be.",
     toFix:
-      "Open the document and save it again. If it is held back a second time, the lines have to be matched up against AutoCount before it can go.",
+      "The lines have to be matched up against AutoCount, and then the document saved again. Send again cannot do it — a change has nothing to re-create.",
   },
   "sofa-collapse": {
     headline: "This sofa build will not fit on one AutoCount line",
     explain:
       "AutoCount holds a sofa as a single line. This build cannot be folded into one without the ERP making up wording nobody chose.",
     toFix:
-      "Enter this one in AutoCount by hand, or simplify the build in the ERP until it is one line and save again.",
+      "Fix the build in the ERP so it fits one line, save it, then use Send again. Failing that, enter this one in AutoCount by hand.",
   },
   "item-code": {
     headline: "An item on this document is not matched to AutoCount",
     explain:
       "One of the items does not point at exactly one item in AutoCount, and the ERP will not guess which of them was meant.",
-    toFix: "Have the item matched to its AutoCount item, then save the document again.",
+    toFix: "Have the item matched to its AutoCount item, then use Send again.",
   },
   "desc2-too-long": {
     headline: "The further description on a line is too long for AutoCount",
     explain:
       "AutoCount keeps only 100 characters of further description on a line, and one line here is over that.",
     toFix:
-      "Shorten the special order or the colour wording on that line, then save the document again.",
+      "Shorten the special order or the colour wording on that line, save it, then use Send again.",
   },
   "missing-location": {
     headline: "A line does not say which warehouse the stock comes from",
     explain:
       "AutoCount will not take a document whose lines carry no warehouse, so the ERP stopped it before sending.",
     toFix:
-      "Set the warehouse on that line, or set the sales location on the document, then save it again.",
+      "Set the warehouse on that line, then use Send again.",
+  },
+  "missing-sales-location": {
+    headline: "The order does not say which warehouse it sells from",
+    explain:
+      "The order carries no stock location of its own and has no live line to take one from, and AutoCount will not accept it without one.",
+    toFix:
+      "Set the sales location on the order, or add a line that carries a warehouse, then use Send again.",
+  },
+  "missing-agent": {
+    headline: "The order names no salesperson AutoCount knows",
+    explain:
+      "AutoCount will not take a sales order without a salesperson it has on file, so the ERP stopped it before sending.",
+    toFix: "Assign a salesperson on the order, then use Send again.",
+  },
+  "missing-creditor": {
+    headline: "The supplier on this order has no AutoCount code",
+    explain:
+      "AutoCount identifies a supplier by its own code, and the supplier named here does not have one recorded in the ERP.",
+    toFix: "Give the supplier its AutoCount code, then use Send again.",
+  },
+  "dtlkey-subset": {
+    headline: "Only part of the earlier document was taken, and AutoCount cannot be told which part",
+    explain:
+      "Some line on the document this came from is not matched to AutoCount, so the ERP cannot name the lines to carry across. Sending it anyway would move every outstanding line in the account book, including ones that never moved here.",
+    toFix:
+      "Have the earlier document's lines matched to AutoCount, then raise this document again.",
+  },
+  "cancelled-before-send": {
+    headline: "It was cancelled before it ever went",
+    explain:
+      "The document was cancelled in the ERP while it was still queued, so the ERP withdrew it. Neither the document nor its cancellation ever reached the account book.",
+    toFix: "Nothing. There is no difference between the two systems to put right.",
+  },
+  "edit-before-counterpart": {
+    headline: "It was changed before AutoCount had it",
+    explain:
+      "The document that creates this one in AutoCount is still waiting to go, and it will carry the earlier document's lines across, not this change.",
+    toFix: "Save this document again once the one before it has gone through.",
+  },
+  "grn-mislinked": {
+    headline: "This goods received is filed under its purchase order's number",
+    explain:
+      "It carries the AutoCount number of the purchase order rather than its own, which is how the changeover recorded them. Sending anything for it would name the wrong document in the account book.",
+    toFix:
+      "The real receipt numbers are on the purchase order. Picking the right one is a judgement, so this needs a person who knows the delivery.",
   },
   "compose-failed": {
     headline: "The ERP could not read its own document",
     explain:
       "Something went wrong reading this document before anything was sent. AutoCount never saw it and nothing is wrong in the account book.",
     toFix:
-      "Open the document and save it again. If it fails a second time, this one needs somebody to look at it.",
+      "Use Send again — this often clears by itself. If the same thing happens twice, it needs somebody to look at it.",
   },
   "masters-not-opened": {
     headline: "A customer, item or salesperson is not set up in AutoCount",
     explain:
       "AutoCount would not open one of the names on this document, so the whole document was left out.",
     toFix:
-      "Add the missing customer, item or salesperson in AutoCount, then save the document again.",
+      "Add the missing customer, item or salesperson in AutoCount, then use Send again.",
   },
   "no-source-document": {
     headline: "There is no earlier document to carry across",

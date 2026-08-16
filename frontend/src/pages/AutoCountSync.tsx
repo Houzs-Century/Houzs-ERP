@@ -25,14 +25,14 @@
 // lib/autocountOutbox, keyed by what the server decided. The mobile twin is
 // mobile/MobileAutoCountSync.tsx and renders the SAME hook and the SAME words.
 //
-// STILL READ-ONLY. There is no Send again button: the backend re-queue action
-// has not merged, and a control that looks live and is not is the failure the
-// owner once reported as "the button does nothing". Re-sending remains
-// requeue-autocount-skipped.yml, which carries a deliberate includeFailed
-// opt-in because a `failed` row WAS sent and the C# create has no duplicate
-// guard (#2189).
+// SEND AGAIN, per row, since #2321 landed the backend action. Offered only
+// where the server's `can_requeue` says an answer other than a flat no is
+// possible, and the answer — accepted, refused, or never answered — is printed
+// on the row that was pressed. `AC_REQUEUE_MEANING`'s sentence is shown
+// verbatim: it comes from the module that produced the outcome, so a new
+// outcome can never reach the owner as a bare hyphenated key.
 // ---------------------------------------------------------------------------
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 
@@ -48,6 +48,8 @@ import {
   AC_FILTER_STATE_LABEL,
   AC_NOT_ASKED_NOTE,
   AC_REPLY_LABEL,
+  AC_SEND_AGAIN_BUSY_LABEL,
+  AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
   acAge,
   acDocTypePlural,
@@ -63,10 +65,12 @@ import {
   acStateLabel,
   acStateTone,
   acWritebackLine,
+  useAcRequeue,
   useAutoCountOutbox,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
+  type AcRequeueNote,
   type AcTone,
 } from "../lib/autocountOutbox";
 
@@ -177,7 +181,15 @@ function WhatWasSaid({ row }: { row: AcOutboxRow }) {
  * screen is to say why a document is not in the account book, and a reason you
  * have to go looking for is a reason nobody reads.
  */
-function OutboxRowCard({ row, maxAttempts }: { row: AcOutboxRow; maxAttempts: number }) {
+function OutboxRowCard(
+  { row, maxAttempts, sending, note, onSendAgain }: {
+    row: AcOutboxRow;
+    maxAttempts: number;
+    sending: boolean;
+    note: AcRequeueNote | undefined;
+    onSendAgain: () => void;
+  },
+) {
   const tone = acStateTone(row.state);
   const why = acReasonCopy(row.state, row.reason_kind);
   const showSaid = why !== null || (row.reason !== null && row.state !== "sent");
@@ -215,7 +227,36 @@ function OutboxRowCard({ row, maxAttempts }: { row: AcOutboxRow; maxAttempts: nu
             </>
           )}
         </div>
+        {/* Offered only where the SERVER says a re-send can mean anything
+            (`can_requeue`). Everywhere else there is no button rather than a
+            button that always answers no. */}
+        {row.can_requeue && (
+          <div className="ml-auto">
+            <Button
+              variant="primary"
+              className="h-8 px-3 text-[12.5px]"
+              disabled={sending}
+              onClick={onSendAgain}
+            >
+              {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+            </Button>
+          </div>
+        )}
       </div>
+
+      {/* The answer lands HERE, on the row that was pressed — accepted, refused
+          or never answered at all. A refusal is the most useful of the three
+          and is the one a toast would lose. */}
+      {note && (
+        <div className={cn("border-t px-3 py-2.5 text-[13px] sm:px-4", TONE_WHY[note.tone])}>
+          <span className={cn("font-semibold", TONE_TEXT[note.tone])}>{note.text}</span>
+          {note.quote && (
+            <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
+              {note.quote}
+            </p>
+          )}
+        </div>
+      )}
 
       {(why || showSaid) && (
         <div className={cn("border-t px-3 py-3 sm:px-4", TONE_WHY[tone])}>
@@ -279,6 +320,11 @@ export function AutoCountSync() {
     else next.set(key, value);
     setParams(next, { replace: true });
   };
+
+  /* An accepted re-send changes the queue, so the page re-reads it rather than
+     patching the row it already has — the new row is a different row. */
+  const reload = q.reload;
+  const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
 
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
@@ -406,7 +452,14 @@ export function AutoCountSync() {
             ) : (
               <ul className="space-y-2">
                 {rows.map((r) => (
-                  <OutboxRowCard key={r.id} row={r} maxAttempts={maxAttempts} />
+                  <OutboxRowCard
+                    key={r.id}
+                    row={r}
+                    maxAttempts={maxAttempts}
+                    sending={requeue.sendingId === r.id}
+                    note={requeue.notes[r.id]}
+                    onSendAgain={() => void requeue.sendAgain(r.id)}
+                  />
                 ))}
               </ul>
             )}

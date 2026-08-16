@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { apiPost } = vi.hoisted(() => ({ apiPost: vi.fn() }));
+vi.mock("../api/client", () => ({ api: { get: vi.fn(), post: apiPost } }));
+
 import {
   AC_DOC_TYPES,
   AC_DOC_TYPE_LABEL,
@@ -26,9 +30,14 @@ import {
   acStateTone,
   acWritebackLine,
   buildAcOutboxQs,
+  requeueAcOutboxRow,
   type AcOutboxResponse,
   type AcOutboxRow,
 } from "./autocountOutbox";
+
+/* Braces, not a concise arrow — a returned mock becomes vitest's teardown and
+   fires api.post after every test. Same trap as the two page suites. */
+beforeEach(() => { apiPost.mockReset(); });
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   writeback: { value: "1", on: true, scope: "1" },
@@ -53,6 +62,7 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
   reason_kind: null,
   remedy: null,
   needs_attention: false,
+  can_requeue: false,
   ac_doc_no: null,
   created_at: "2026-08-15T00:00:00.000Z",
   updated_at: "2026-08-15T00:00:00.000Z",
@@ -225,16 +235,20 @@ describe("the refusal, in three parts", () => {
     const c = acReasonCopy("skipped", "missing-location");
     expect(c?.headline).toMatch(/warehouse/i);
     expect(c?.explain.length).toBeGreaterThan(20);
-    expect(c?.toFix).toMatch(/save it again/i);
+    expect(c?.toFix).toMatch(/Send again/);
   });
 
   it("has copy for every skip kind the server can classify", () => {
-    /* The nine kinds in backend/src/scm/lib/autocount-outbox-status.ts, plus the
-       key it uses when it recognises nothing. A kind with no copy would fall to
-       the unrecognised text and quietly lose its remedy. */
+    /* Every kind in AC_SKIP_KINDS (backend/src/scm/lib/autocount-outbox-status.ts,
+       catalogued in docs/autocount-sync-reasons.md §2), plus the key the server
+       uses when it recognises nothing. A kind with no copy here falls through to
+       the unrecognised text and quietly loses its remedy — which is what
+       happened on the server side to three refusal classes until 2026-08-16. */
     for (const kind of [
       "keyless-line", "sofa-collapse", "item-code", "desc2-too-long", "missing-location",
+      "missing-agent", "missing-sales-location", "missing-creditor",
       "compose-failed", "masters-not-opened", "no-source-document", "no-autocount-shape",
+      "dtlkey-subset", "cancelled-before-send", "edit-before-counterpart", "grn-mislinked",
       "unrecognised",
     ]) {
       expect(AC_REASON_COPY[kind], kind).toBeTruthy();
@@ -377,5 +391,53 @@ describe("acAge", () => {
   it("does not invent an age it does not have", () => {
     expect(acAge(null, now)).toBe("—");
     expect(acAge("not a date", now)).toBe("—");
+  });
+});
+
+describe("requeueAcOutboxRow", () => {
+  it("POSTs the row id and no body — the company is the header, never a parameter", async () => {
+    /* Passing a company would be inventing a second, weaker boundary beside the
+       route's own predicate. Same argument as useAutoCountOutbox above. */
+    const answer = {
+      accepted: true,
+      code: "requeued",
+      message: "Sent back to the queue.",
+      row_id: "ob-1",
+      doc_type: "SO",
+      doc_no: "HC-SO-2608-001",
+      op: "create_so",
+      new_row_id: "ob-9",
+      reason: null,
+    };
+    apiPost.mockResolvedValueOnce(answer);
+    await expect(requeueAcOutboxRow("ob-1")).resolves.toEqual(answer);
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/ob-1/requeue");
+  });
+
+  it("escapes the id rather than pasting it into the path", async () => {
+    apiPost.mockResolvedValueOnce({});
+    await requeueAcOutboxRow("ob 1/../2");
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/ob%201%2F..%2F2/requeue");
+  });
+
+  it("RESOLVES on a refusal — it is the server answering, not the call failing", async () => {
+    /* The distinction a caller must render: a refusal has a code and a sentence
+       to show, a throw has neither. A component that only handled the throw
+       would leave the owner pressing a button that does nothing visible, which
+       is the silent-mutation shape check-silent-mutations.mjs exists to catch. */
+    apiPost.mockResolvedValueOnce({
+      accepted: false,
+      code: "already-sent",
+      message: "AutoCount already accepted this one.",
+      row_id: "ob-2",
+      doc_type: "SO",
+      doc_no: "HC-SO-2608-003",
+      op: "create_so",
+      new_row_id: null,
+      reason: null,
+    });
+    const r = await requeueAcOutboxRow("ob-2");
+    expect(r.accepted).toBe(false);
+    expect(r.code).toBe("already-sent");
   });
 });

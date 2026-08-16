@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   AC_DOC_TYPES,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
   AC_NOT_ASKED_NOTE,
   AC_REPLY_LABEL,
+  AC_SEND_AGAIN_BUSY_LABEL,
+  AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
   acAge,
   acDocTypePlural,
@@ -20,10 +22,12 @@ import {
   acStateLabel,
   acStateTone,
   acWritebackLine,
+  useAcRequeue,
   useAutoCountOutbox,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
+  type AcRequeueNote,
   type AcTone,
 } from "../lib/autocountOutbox";
 import { fmtDateTime } from "../vendor/shared/format";
@@ -48,9 +52,9 @@ import "./mobile.css";
  * the desktop page's useSearchParams), so the status chip, the type chip and the
  * document search are plain component state, matching every other mobile screen.
  *
- * Read-only, like the desktop page: the backend re-queue action has not merged,
- * and a Send again button that did nothing is the exact failure this repo
- * records as "the button does nothing".
+ * Send again is here too, and it has to be: a rule or a control on one surface
+ * and not the other is the recurring bug class this repo names. Same shared
+ * hook, same server sentence, same place for the answer — on the row.
  *
  * English · DD/MM/YYYY · no emoji.
  */
@@ -142,7 +146,15 @@ function WhatWasSaid({ row }: { row: AcOutboxRow }) {
   );
 }
 
-function OutboxCard({ row, maxAttempts }: { row: AcOutboxRow; maxAttempts: number }) {
+function OutboxCard(
+  { row, maxAttempts, sending, note, onSendAgain }: {
+    row: AcOutboxRow;
+    maxAttempts: number;
+    sending: boolean;
+    note: AcRequeueNote | undefined;
+    onSendAgain: () => void;
+  },
+) {
   const tone = acStateTone(row.state);
   const c = TONE_COLOR[tone];
   const why = acReasonCopy(row.state, row.reason_kind);
@@ -203,6 +215,40 @@ function OutboxCard({ row, maxAttempts }: { row: AcOutboxRow; maxAttempts: numbe
             Already sent again — the record of the first refusal, not something to act on.
           </div>
         )}
+
+        {/* Offered only where the SERVER says a re-send can mean anything. */}
+        {row.can_requeue && (
+          <button
+            onClick={onSendAgain}
+            disabled={sending}
+            style={{
+              marginTop: 9, width: "100%", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+              borderRadius: 9, padding: "9px 10px", cursor: sending ? "default" : "pointer",
+              border: "1px solid var(--brand)", background: sending ? "var(--brand-bg)" : "var(--brand)",
+              color: sending ? "var(--brand-d)" : "#fff",
+            }}
+          >
+            {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+          </button>
+        )}
+
+        {/* Accepted, refused, or never answered — all three land on the row. */}
+        {note && (
+          <div
+            style={{
+              marginTop: 8, fontSize: 11.5, lineHeight: 1.45, borderRadius: 9, padding: "8px 10px",
+              background: TONE_COLOR[note.tone].bg, color: TONE_COLOR[note.tone].fg,
+              border: "1px solid var(--line)", fontWeight: 600,
+            }}
+          >
+            {note.text}
+            {note.quote && (
+              <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {note.quote}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -215,6 +261,8 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
   const q = useAutoCountOutbox({ state, docNo });
   const d = q.data;
+  const reload = q.reload;
+  const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
   const loaded = d?.rows ?? [];
@@ -342,7 +390,16 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-                {rows.map((r) => <OutboxCard key={r.id} row={r} maxAttempts={maxAttempts} />)}
+                {rows.map((r) => (
+                  <OutboxCard
+                    key={r.id}
+                    row={r}
+                    maxAttempts={maxAttempts}
+                    sending={requeue.sendingId === r.id}
+                    note={requeue.notes[r.id]}
+                    onSendAgain={() => void requeue.sendAgain(r.id)}
+                  />
+                ))}
               </div>
             )}
 
