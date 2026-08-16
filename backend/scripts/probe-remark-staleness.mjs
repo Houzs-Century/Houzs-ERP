@@ -180,14 +180,26 @@ async function main() {
        staleness cannot be dated from the database at all. */
     try {
       const au = await sql`
-        SELECT id::text AS id, action, field, old_value, new_value,
-               actor_email, created_at::text AS created_at
+        SELECT action, actor_name_snapshot, source, note,
+               field_changes::text AS field_changes,
+               status_snapshot::text AS status_snapshot,
+               created_at::text AS created_at
           FROM scm.mfg_so_audit_log
-         WHERE doc_no = ${target.doc_no}
+         WHERE so_doc_no = ${target.doc_no}
          ORDER BY created_at DESC
          LIMIT 40`;
       note(`\n    --- mfg_so_audit_log rows for ${target.doc_no}: ${au.length} ---`);
-      for (const a of au) note(`      ${a.created_at}  ${a.action ?? '-'} ${a.field ?? '-'}  ${JSON.stringify(a.old_value)} -> ${JSON.stringify(a.new_value)}  by ${a.actor_email ?? '-'}`);
+      for (const a of au) {
+        note(`      ${a.created_at}  action=${a.action ?? '-'} src=${a.source ?? '-'} by=${a.actor_name_snapshot ?? '-'} status=${a.status_snapshot ?? '-'}`);
+        note(`          field_changes=${String(a.field_changes ?? '').slice(0, 400)}`);
+        if (a.note) note(`          note=${String(a.note).slice(0, 200)}`);
+      }
+      /* Does the allocator write audit rows AT ALL? If not, its silence here
+         proves nothing either way and staleness stays undatable. */
+      const anyAlloc = await sql`
+        SELECT count(*)::int AS n FROM scm.mfg_so_audit_log
+         WHERE field_changes::text ILIKE '%stock_status%'`;
+      note(`    audit rows anywhere mentioning stock_status: ${anyAlloc[0].n}`);
     } catch (e) {
       note(`    (audit log unavailable: ${e.message})`);
       const cols = await sql`
