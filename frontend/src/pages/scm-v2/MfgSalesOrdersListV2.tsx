@@ -72,6 +72,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
@@ -1175,7 +1176,7 @@ export function MfgSalesOrdersListV2() {
       { docNo: r.doc_no, status: "confirmed" },
       { onSuccess: () => setSelected(null) }
     );
-  const doDeliver = (r: SoRow) => navigate(`/scm/delivery-orders/from-so?so=${r.doc_no}`);
+  const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SoRow) => {
