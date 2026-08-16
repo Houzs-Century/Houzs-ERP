@@ -1,13 +1,21 @@
-// Unit tests for computeMrp's legacy-variant coverage math (audit R4).
+// Unit tests for computeMrp's variant coverage math and its read paging.
 //
 // The MRP coverage engine is FLOATING by design: coverage is recomputed at read
 // time, pooled globally across SOs, and evaporates on delivery (owner-confirmed
-// intentional — NOT under test here). What IS under test is the legacy '' variant
-// double-count: a PO raised BEFORE SO→PO carried variants keys under '' (the
-// unclassified bucket). That legacy pool is meant to back-fill a real-variant row
-// as a FALLBACK, but the engine used to fold it in ON TOP of the variant's own PO
-// supply — so one physical legacy PO line counted its quantity twice (inflating PO
-// Outstanding and over-covering demand, hiding a real shortage).
+// intentional — NOT under test here).
+//
+// TWO RULES ARE PINNED HERE.
+//
+// 1. SUPPLY MATCHES DEMAND ON THE FULL BUCKET KEY. There used to be a fallback
+//    that let the same-warehouse EMPTY-variant ('') PO pool cover a
+//    specific-variant demand bucket that had no PO of its own. The owner ruled it
+//    out twice (2026-08-16) — 「variant 不一样的话 应该不能拿来给那个SO 用不是吗?」
+//    — so a PO whose variants differ may not cover that SO line, and the tests
+//    that used to assert the fallback now assert its absence. What survives from
+//    audit R4 is the other half of that rule: a variant bucket's own PO is its
+//    only supply, never doubled by anything.
+//
+// 2. EVERY MULTI-ROW READ IS PAGED. See the fake's row ceiling below.
 //
 // Route-level coverage isn't possible in this harness (scm rides Supabase
 // Postgres; the harness rebuilds only the D1 side), so these drive computeMrp
@@ -19,6 +27,18 @@ import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
 
 type Row = Record<string, unknown>;
+
+/* THE FAKE ENFORCES POSTGREST'S REAL ROW CEILING, and that is the whole point of
+   it. A live PostgREST returns at most `max-rows` (1000 on this project) per
+   response, drops the remainder, and reports NOTHING — no error, no flag. A
+   `.limit(5000)` does not lift it. The old fake honoured `.limit(n)` literally,
+   so the engine's `rows.length >= 5000` truncation guard looked testable here
+   while being unfireable in production (1000 >= 5000 is false), and a read that
+   silently lost 12,920 of prod's 13,920 demand rows had a green test suite.
+
+   Capping every response at 1000 makes the fake lie the way the server lies, so
+   a fixture larger than the cap can only be read in full by code that PAGES. */
+const PGRST_MAX_ROWS = 1000;
 
 // A fake PostgREST query: chainable filters, awaitable, paginable via range().
 function fakeSb(tables: Record<string, Row[]>) {
@@ -33,13 +53,15 @@ function fakeSb(tables: Record<string, Row[]>) {
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
     not() { return this; }
-    // Real slice, so the mrp_load_truncated guard (rows === cap) is testable.
+    // An UPPER bound only, exactly like the real one — it can lower the ceiling,
+    // never raise it past PGRST_MAX_ROWS. Nothing in mrp.ts chains it any more.
     limit(n: number) { this.rows = this.rows.slice(0, n); return this; }
     order() { return this; }
     range(from: number, to: number) { this.window = [from, to]; return this; }
     private result() {
-      const rows = this.window ? this.rows.slice(this.window[0], this.window[1] + 1) : this.rows;
-      return { data: rows, error: null as null };
+      const windowed = this.window ? this.rows.slice(this.window[0], this.window[1] + 1) : this.rows;
+      // The server-side ceiling: silently truncate, never signal.
+      return { data: windowed.slice(0, PGRST_MAX_ROWS), error: null as null };
     }
     then<T>(onF: (v: { data: Row[]; error: null }) => T, onR?: (e: unknown) => T) {
       return Promise.resolve(this.result()).then(onF, onR);
@@ -87,7 +109,7 @@ const poLine = (poNumber: string, qty: number, variant: Row | null, eta: string)
   },
 });
 
-describe('computeMrp — legacy-variant double-count (audit R4)', () => {
+describe('computeMrp — supply must match demand on the FULL variant key', () => {
   test('a real variant with its own PO does NOT also count the stale "" PO on top', async () => {
     // Demand 8 of RED. Supply: a real RED PO for 5 + a stale legacy '' PO for 5.
     // The legacy PO belongs to nobody here (there is no '' demand) — it must not
@@ -122,33 +144,139 @@ describe('computeMrp — legacy-variant double-count (audit R4)', () => {
     expect(res.totals.shortageUnits).toBe(3);
   });
 
-  test('a real variant with NO own PO still draws the legacy "" pool (fallback preserved)', async () => {
-    // Demand 5 of RED, no RED PO — only a legacy '' PO for 5. The fallback must
-    // still fire so a pre-variant PO covers the variant row (the behaviour the
-    // fold-in exists for). Correct answer: covered by PO-LEGACY, shortage 0.
+  test('a variant demand with NO own PO is NOT covered by an empty-variant PO', async () => {
+    // Demand 5 of RED, no RED PO — only an empty-variant '' PO for 5 in the same
+    // warehouse for the same SKU. That PO is for a bedframe with no fabric
+    // recorded; RED is a bedframe with one. Owner 2026-08-16: different variant,
+    // different thing, so it cannot be handed to this SO.
+    //
+    // This test asserted the OPPOSITE until 2026-08-16 ("fallback preserved").
+    // The fallback is gone: shortage 5, and PO Outstanding shows 0 rather than
+    // parking 5 units on the row that will never receive them.
     const sb = fakeSb({
+      ...BASE_TABLES,
       mfg_sales_order_items: [demandRed(5)],
       purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
-      inventory_balances: [],
-      mfg_products: [],
-      warehouses: [],
-      supplier_material_bindings: [],
-      suppliers: [],
-      mrp_category_lead_times: [],
-      fabric_trackings: [],
-      delivery_order_items: [],
-      delivery_return_items: [],
     });
 
     const res = await computeMrp(sb as any, opts);
     expect(res.skus).toHaveLength(1);
     const row = res.skus[0]!;
     expect(row.variantKey).toBe('fabriccode=red');
+    expect(row.poOutstanding).toBe(0);  // the '' pool is not this row's supply
+    expect(row.shortage).toBe(5);       // …so the whole order is still to buy
+    expect(row.lines).toHaveLength(1);
+    expect(row.lines[0]!.source).toBe('shortage');
+    expect(row.lines[0]!.poNumber).toBeNull();
+    expect(res.totals.shortageUnits).toBe(5);
+  });
+
+  test('the empty-variant demand bucket still draws the empty-variant PO (its OWN pool)', async () => {
+    // The rule is "match on the full key", not "distrust ''". A line that really
+    // has no variant belongs in the '' bucket, and the '' PO is that bucket's own
+    // supply — nothing about removing the fallback may break this direction.
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [{ ...demandRed(5), variants: {} }],
+      purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const row = res.skus[0]!;
+    expect(row.variantKey).toBe('');
     expect(row.poOutstanding).toBe(5);
     expect(row.shortage).toBe(0);
-    expect(row.lines).toHaveLength(1);
-    expect(row.lines[0]!.source).toBe('po');
     expect(row.lines[0]!.poNumber).toBe('PO-LEGACY');
+  });
+
+  test('two different real variants never cover each other', async () => {
+    // The fallback only ever reached the '' bucket, so RED-vs-BLUE was already
+    // correct. Pinned anyway: it is the same rule, and it is the one a reader
+    // will assume the fix was about.
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [demandRed(4)],
+      purchase_order_items: [poLine('PO-BLUE', 9, { fabricCode: 'BLUE' }, '2026-10-01')],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const red = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(red.poOutstanding).toBe(0);
+    expect(red.shortage).toBe(4);
+  });
+
+  test('MATTRESS is unaffected: no key attributes, so its key is "" either way', async () => {
+    // ATTRS_BY_GROUP.mattress is [] (shared/variant-key.ts), so a mattress line
+    // keys to '' whatever variants it carries — it was never eligible for the
+    // fallback (`bucket.vkey !== ''` was false) and nothing about it moves. The
+    // fabricCode below is deliberately noise: it must not enter the key.
+    const mattress: Row = {
+      ...demandRed(3), id: 'si-mat', doc_no: 'SO-MAT', item_code: 'MAT-100',
+      item_group: 'mattress', variants: { fabricCode: 'RED' },
+    };
+    const matPo: Row = {
+      ...poLine('PO-MAT', 3, null, '2026-10-01'), material_code: 'MAT-100', item_group: 'mattress',
+    };
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [mattress],
+      purchase_order_items: [matPo],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    expect(res.skus).toHaveLength(1);
+    const row = res.skus[0]!;
+    expect(row.itemCode).toBe('MAT-100');
+    expect(row.variantKey).toBe('');   // mattress carries no soft attrs
+    expect(row.poOutstanding).toBe(3); // same bucket, so still covered
+    expect(row.shortage).toBe(0);
+  });
+
+  test('a NULL item_group line keys to "" on BOTH sides, so it matches its own kind and nothing else', async () => {
+    /* THE NULL-GROUP TRAP, pinned as it actually behaves. variantKeyOf resolves
+       attributes through `ATTRS_BY_GROUP[group] ?? []`, so a null/unknown group
+       yields NO attributes and the line keys to '' EVEN THOUGH it carries a real
+       fabric. That is true of demand and of PO supply alike, and it is unchanged
+       by this fix — deliberately. See the long note in routes/mrp.ts section 7
+       for why the group is NOT re-derived from the product master: stock's key is
+       the STORED inventory_balances.variant_key, which MRP cannot re-derive, so
+       deriving here would move demand and supply off the stock they must match.
+
+       Consequence, asserted below: a null-group line with a RED fabric does NOT
+       join the RED bucket — it sits in '' with the other unclassified rows, and
+       is covered by '' supply. Mis-grouped, but mis-grouped identically on every
+       side, which is what keeps the arithmetic self-consistent. */
+    const nullGroup: Row = {
+      ...demandRed(2), id: 'si-null', doc_no: 'SO-NULL',
+      item_group: null, variants: { fabricCode: 'RED' },
+    };
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      // Two demand lines, same SKU + warehouse, both claiming fabric RED: one
+      // properly grouped as a bedframe, one with a null group.
+      mfg_sales_order_items: [demandRed(2), nullGroup],
+      purchase_order_items: [
+        poLine('PO-RED', 2, { fabricCode: 'RED' }, '2026-10-01'),
+        { ...poLine('PO-NULLGRP', 2, { fabricCode: 'RED' }, '2026-10-02'), item_group: null },
+      ],
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    // TWO buckets, not one: the null-group line did not join 'fabriccode=red'.
+    expect(res.skus.map((s) => s.variantKey).sort()).toEqual(['', 'fabriccode=red']);
+
+    const red = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
+    expect(red.qtyNeeded).toBe(2);
+    expect(red.poOutstanding).toBe(2);   // PO-RED only
+    expect(red.shortage).toBe(0);
+
+    // The null-group demand is matched by the null-group PO — same '' bucket on
+    // both sides. It is NOT left stranded by the fallback removal.
+    const unclassified = res.skus.find((s) => s.variantKey === '')!;
+    expect(unclassified.qtyNeeded).toBe(2);
+    expect(unclassified.poOutstanding).toBe(2);
+    expect(unclassified.shortage).toBe(0);
+    expect(unclassified.lines[0]!.poNumber).toBe('PO-NULLGRP');
   });
 });
 
@@ -277,11 +405,16 @@ const sofaPoLine = (poNumber: string, qty: number, variant: Row | null, eta: str
   },
 });
 
-describe('computeMrp — sofa legacy "" pool fallback (audit D2, mirrors section 7 R4)', () => {
-  test('a sofa variant with NO own PO draws the legacy "" pool (no more phantom shortage)', async () => {
-    // Demand a 5-set of RED sofa; the ONLY supply is a legacy '' PO for 5.
-    // Before the fix the sofa path never looked at the legacy pool, so this
-    // read as shortage 5 while the same-warehouse PO sat open — over-ordering.
+describe('computeMrp — sofa supply matches on the full variant key too', () => {
+  test('a sofa variant with NO own PO is NOT covered by an empty-variant sofa PO', async () => {
+    // Demand a 5-set of RED sofa; the ONLY supply is an empty-variant '' PO
+    // for 5. Sofa's key is fabricCode + seatHeight + legHeight, so that PO is a
+    // sofa with no fabric, no seat and no leg recorded — it cannot stand in for
+    // a colour-matched set (owner 2026-08-16).
+    //
+    // Audit D2 (2026-08-01) added the fallback here to mirror section 7's; this
+    // test asserted coverage until the owner's ruling. Both mirrors are now
+    // removed together, which is the property that keeps the two paths honest.
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
@@ -293,12 +426,13 @@ describe('computeMrp — sofa legacy "" pool fallback (audit D2, mirrors section
     expect(res.sofaSets).toHaveLength(1);
     const set = res.sofaSets[0]!;
     expect(set.variantKey).toBe('fabriccode=red');
-    expect(set.orderedQty).toBe(5);
-    expect(set.shortageQty).toBe(0);
-    expect(set.poNumber).toBe('PO-LEGACY-SOFA');
+    expect(set.orderedQty).toBe(0);
+    expect(set.shortageQty).toBe(5);
+    expect(set.poNumber).toBeNull();
+    expect(res.totals.sofaSetShortageCount).toBe(1);
   });
 
-  test('a sofa variant WITH its own PO ignores the legacy pool entirely (fallback, never additive)', async () => {
+  test('a sofa variant WITH its own PO draws only that PO, never doubled', async () => {
     // Demand 8; own RED PO 5 + legacy '' PO 5. The R4 rule: legacy answers ONLY
     // when the variant's own pool is empty. Correct: covered 5 by PO-RED-SOFA,
     // shortage 3. (Additive bug shape: covered 8, shortage 0 — the same
@@ -400,22 +534,126 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   });
 });
 
-describe('computeMrp — mrp_load_truncated guard (audit D3)', () => {
-  test('a demand read that fills the row cap throws instead of planning on a slice', async () => {
-    const flood: Row[] = Array.from({ length: 5001 }, (_, i) => ({
-      ...demandRed(1), id: `si-${i}`, doc_no: `SO-${i}`,
+/* WHAT THIS DESCRIBE REPLACED, because deleting a test needs a reason on the
+   record. It used to be `computeMrp — mrp_load_truncated guard (audit D3)`, two
+   tests that flooded a table with 5,001 rows and asserted computeMrp threw
+   `mrp_load_truncated`. They passed, and they were measuring the fake rather
+   than the server: the old fake honoured `.limit(5000)` literally, so 5,001 rows
+   really did come back as 5,000 and really did trip `rows.length >= 5000`.
+   Against a live PostgREST capped at 1000, that comparison is 1000 >= 5000 — the
+   guard could not fire, and prod confirmed it never had (2026-08-16: 13,920
+   matching demand rows, page served, no throw, ~93% of demand silently absent).
+
+   A guard that cannot detect the thing it is named after is worse than none, so
+   it is gone rather than re-tuned, and the tests that certified it are gone with
+   it. What replaces them asserts the property that actually matters — the engine
+   READS EVERY ROW — against a fake that now enforces the real 1000-row ceiling.
+   Every test below fails on the pre-fix engine. */
+describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-row cap', () => {
+  test('demand: 2,500 open SO lines all reach the plan, not the first 1,000', async () => {
+    // One line per SKU so each becomes its own bucket and the count is exact.
+    // Pre-fix this returned 1,000 rows and 1,000 buckets, with no error anywhere.
+    const flood: Row[] = Array.from({ length: 2500 }, (_, i) => ({
+      ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${i}`, item_code: `BF-${i}`,
     }));
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: flood });
-    await expect(computeMrp(sb as any, opts)).rejects.toThrow(/mrp_load_truncated/);
+
+    const res = await computeMrp(sb as any, opts);
+    expect(res.skus).toHaveLength(2500);
+    expect(res.totals.skuCount).toBe(2500);
+    expect(res.totals.shortageUnits).toBe(2500); // no supply anywhere → all short
   });
 
-  test('a PO-supply read that fills the row cap throws too', async () => {
-    const flood: Row[] = Array.from({ length: 5001 }, () => poLine('PO-N', 1, { fabricCode: 'RED' }, '2026-11-01'));
+  test('demand: the LAST line by id is planned — the owner\'s "new SO is invisible" bug', async () => {
+    // The read is ordered by id, and prod's ids are uuids, so a brand-new sales
+    // order lands at an arbitrary rank — 10,687th of 13,920 for the one the owner
+    // hit on 2026-08-16, i.e. far past the ceiling. Here the tail line is the one
+    // that used to be dropped; it must appear, and be convertible to a PO
+    // (soItemId is what the UI one-clicks).
+    const flood: Row[] = Array.from({ length: 1500 }, (_, i) => ({
+      ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${i}`, item_code: `BF-${i}`,
+    }));
+    const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: flood });
+
+    const res = await computeMrp(sb as any, opts);
+    const tail = res.skus.find((s) => s.itemCode === 'BF-1499');
+    expect(tail).toBeDefined();
+    expect(tail!.lines[0]).toMatchObject({ soItemId: 'si-01499', soDocNo: 'SO-1499', source: 'shortage' });
+  });
+
+  test('PO supply: 1,500 open PO lines all count as supply', async () => {
+    // 1,500 POs of 1 unit each against demand for 1,500. Pre-fix only 1,000 were
+    // read, so 500 units of real, open, already-ordered supply read as shortage
+    // and the page invited a duplicate purchase.
+    const poFlood: Row[] = Array.from({ length: 1500 }, (_, i) =>
+      poLine(`PO-${i}`, 1, { fabricCode: 'RED' }, '2026-11-01'));
     const sb = fakeSb({
       ...BASE_TABLES,
-      mfg_sales_order_items: [demandRed(1)],
-      purchase_order_items: flood,
+      mfg_sales_order_items: [demandRed(1500)],
+      purchase_order_items: poFlood,
     });
-    await expect(computeMrp(sb as any, opts)).rejects.toThrow(/mrp_load_truncated/);
+
+    const res = await computeMrp(sb as any, opts);
+    const row = res.skus[0]!;
+    expect(row.qtyNeeded).toBe(1500);
+    expect(row.poOutstanding).toBe(1500);
+    expect(row.shortage).toBe(0);
+  });
+
+  test('stock: a balance row past the cap is still stock, not a phantom shortage', async () => {
+    // 1,200 balance buckets; the demanded SKU's balance is the last one. Pre-fix
+    // it fell outside the 1,000-row response and MRP planned a purchase for goods
+    // already sitting in the warehouse (prod holds 1,065 balance rows).
+    const balances: Row[] = Array.from({ length: 1199 }, (_, i) => ({
+      product_code: `OTHER-${String(i).padStart(5, '0')}`, warehouse_id: 'W1', variant_key: '', qty: 1,
+    }));
+    balances.push({ product_code: 'ZZ-LAST', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 7 });
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [{ ...demandRed(7), item_code: 'ZZ-LAST' }],
+      inventory_balances: balances,
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const row = res.skus[0]!;
+    expect(row.stock).toBe(7);
+    expect(row.shortage).toBe(0);
+    expect(row.lines[0]!.source).toBe('stock');
+  });
+
+  test('supplier bindings: a binding past the cap still names the SKU\'s supplier', async () => {
+    // 1,400 bindings (prod: 2,660). A SKU whose binding fell past the cap showed
+    // no supplier at all — the difference between a row staff can convert to a
+    // purchase order and a row they cannot.
+    const codes = Array.from({ length: 1400 }, (_, i) => `BF-${i}`);
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: codes.map((code, i) => ({
+        ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${i}`, item_code: code,
+      })),
+      supplier_material_bindings: codes.map((code, i) => ({
+        material_code: code, material_kind: 'mfg_product', is_main_supplier: true,
+        supplier_id: `sup-${i}`, supplier: { code: `S${i}`, name: `Supplier ${i}` },
+      })),
+    });
+
+    const res = await computeMrp(sb as any, opts);
+    const last = res.skus.find((s) => s.itemCode === 'BF-1399')!;
+    expect(last.mainSupplierCode).toBe('S1399');
+    expect(last.mainSupplierName).toBe('Supplier 1399');
+    // …and nothing lost its supplier along the way.
+    expect(res.skus.every((s) => s.mainSupplierCode !== null)).toBe(true);
+  });
+
+  test('product master: a category owned only by a row past the cap still lists', async () => {
+    // The category tab list walks the whole catalogue (2,293 rows in prod).
+    const products: Row[] = Array.from({ length: 1300 }, (_, i) => ({
+      code: `P-${String(i).padStart(5, '0')}`, name: `P${i}`, category: 'BEDFRAME',
+    }));
+    products.push({ code: 'ZZ-LAST', name: 'Last', category: 'ACCESSORY' });
+    const sb = fakeSb({ ...BASE_TABLES, mfg_products: products });
+
+    const res = await computeMrp(sb as any, opts);
+    expect(res.categories).toEqual(['ACCESSORY', 'BEDFRAME']);
   });
 });
