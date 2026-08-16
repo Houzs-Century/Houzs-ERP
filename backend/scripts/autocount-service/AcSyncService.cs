@@ -1029,7 +1029,39 @@ class AcSyncService {
        can address. This does not depend on what TransferSOToPODetail exposes,
        which is deliberate: that type is not in sdk-api-reference.txt and is not
        being guessed at. */
-    foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    /* THE TYPED PRIMITIVE FIRST, because the untyped one leaves no type behind.
+       Measured on the live book 2026-08-16: every PODTL row this route has ever
+       written carries FromDocNo but FromDocType NULL, while every DODTL row from
+       Convert_ carries both. The reason is in the two signatures —
+
+           AddPartialTransferDetail(String fromDocType, Int64[] keys, Boolean)
+           AddSOToPOTransferDetail(Int64)
+
+       — the first is TOLD the type and records it; the second has nowhere to
+       take one from. AutoCount's own transfer relationship reads that column, so
+       a PO written by the second is linked on one side only.
+
+       transferMaster is FALSE here, unlike the purchase-side conversions. That
+       flag copies the SOURCE document's master, and this source is a SALES
+       order: true would put a debtor onto a purchase document. PurchaseHeader
+       below sets the creditor explicitly, which is what /po-to-gr needed
+       transferMaster for and this route does not.
+
+       FALLING BACK IS THE POINT. AddPartialTransferDetail with a sales type on a
+       purchase document is not in sdk-api-reference.txt as a supported pairing,
+       and this file cannot be compiled or run anywhere but the office host. If
+       it throws, the old call runs and the document is written exactly as it is
+       written today — one-sided link and all. The worst case is what we already
+       have; the best case is the link AutoCount actually reads. */
+    var typedTransfer = false;
+    try {
+      po.AddPartialTransferDetail("SO", keys, false);
+      typedTransfer = true;
+    } catch (Exception ex) {
+      Log("so-to-po: typed AddPartialTransferDetail(\"SO\") refused (" + ex.Message
+        + ") - falling back to AddSOToPOTransferDetail, which leaves FromDocType null");
+    }
+    if (!typedTransfer) foreach (var k in keys) po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
     po.Save();
     var docNo = po.DocNo;
