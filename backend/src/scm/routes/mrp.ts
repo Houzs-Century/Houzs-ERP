@@ -83,6 +83,7 @@ import {
 } from '../lib/ship-commitment';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
@@ -117,6 +118,15 @@ const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
    draft PO would make an SO line look "covered" and hide a real shortage from
    MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
+
+/* How many of this engine's independent reads may be in flight at once.
+   6 is a BOUND, not a target: the reads it governs are I/O-bound round trips
+   through Hyperdrive's pooled connections, so the win is in overlapping latency
+   and the risk is exhausting the pool — past ~6 the curve flattens while the
+   pool pressure does not. Raising it is not free and is not a tuning knob to
+   turn without re-running backend/scripts/probe-mrp-roundtrip-cost.mjs, which
+   measures both arms against production and prints the round-trip count. */
+const MRP_READ_CONCURRENCY = 6;
 
 /* EVERY MULTI-ROW READ ON THIS PAGE IS PAGED (2026-08-16). It used to carry a
    `.limit(5000)` plus a `rows.length >= 5000` throw named `mrp_load_truncated`,
@@ -435,6 +445,58 @@ export async function computeMrp(
   const scoped = <Q>(q: Q): Q =>
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
 
+  /* ── ONE WAVE FOR THE READS THAT NEED NOTHING FROM EACH OTHER (2026-08-17) ──
+     Five of this engine's reads depend on no earlier result — they key off the
+     function's own arguments and nothing else — yet they ran strictly one after
+     another, each paying a full round trip of latency before the next was even
+     issued. They are STARTED here and AWAITED at their original sites below, so
+     every line of arithmetic still runs in exactly the order it did; only the
+     waiting overlaps. Same idiom, and the same reason, as the SO list's
+     enrichment wave in mfg-sales-orders.ts.
+
+     `eager` rather than a bare promise: an un-awaited rejection is an unhandled
+     rejection, which in a Worker is a killed request instead of the 500 this
+     route returns today. eager holds the error and re-throws it at the point of
+     use, so BOTH the error and the order in which errors surface are unchanged —
+     leadBase still throws before the demand read is inspected, exactly as when
+     the two were sequential. That precedence is why this is not a Promise.all.
+
+     Deliberately NOT in this wave: mfg_products by code, the fabric enrichment,
+     suppliers and the bindings all read keys derived from the demand rows, and
+     loadCommittedShipments reads the PO rows. Those dependencies are real. */
+  const leadBaseProm = eager(loadLeadTimeBase(
+    scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
+  ));
+  /* The category walk (section 2), the two warehouse masters (section 2) and the
+     stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
+     query that stood at its own site; only the moment it is ISSUED moved. */
+  const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
+    scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
+  const warehousesProm = eager((async () => (await scoped(sb
+    .from('warehouses')
+    .select('id, code, name')
+    .eq('is_active', true))
+    .order('code')).data as Array<{ id: string; code: string; name: string }> | null)());
+  const stateMappingsProm = eager((async () => (await scoped(
+    sb.from('state_warehouse_mappings').select('state, warehouse_id'),
+  )).data as Array<{ state: string | null; warehouse_id: string | null }> | null)());
+  const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
+    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
+    if (whFilter) q = q.eq('warehouse_id', whFilter);
+    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
+  }));
+  const poRawProm = eager(paginateAll<PoLineRow>((from, to) => scoped(sb
+    .from('purchase_order_items')
+    .select(`
+      material_code, item_group, variants, qty, received_qty, delivery_date,
+      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
+      warehouse_id, so_item_id,
+      po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
+    `)
+    .not('po.status', 'in', PO_DEAD_SQL))
+    .order('id')
+    .range(from, to)));
+
   // ── 0. Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
   //       (Commander 2026-06-22, migration 0184 / SCM mig 0036) ────────────
   // order-by date = delivery date − lead_days[warehouse, category].
@@ -450,9 +512,7 @@ export async function computeMrp(
   // zeroed EVERY lead time -> order-by date = production date = delivery date
   // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
   // schedule.
-  const leadBase = await loadLeadTimeBase(
-    scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
-  );
+  const leadBase = (await leadBaseProm)();
   /* supplierCode is the SKU's MAIN supplier — an approximation, and a stated
      one: the convert may end up on a different supplier via a per-pick or
      per-SKU override, in which case that supplier's buffer applies instead and
@@ -539,10 +599,27 @@ export async function computeMrp(
      groups by doc_no and walks each SO's own build order ("the walk MUST run per
      doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
      partial maps is a union of disjoint key sets. */
+  /* RUN THE BATCHES CONCURRENTLY, BOUNDED (2026-08-17). This loop is the single
+     largest cost in the engine: ~2,800 open docs / 200 = ~14 batches, each of
+     which is itself ~5 sequential reads, so ~70 of the engine's ~105 round trips
+     were spent here one at a time. Nothing about them is sequential — the very
+     paragraph above establishes it, because "merging the partial maps is a union
+     of disjoint key sets" is exactly the property that makes batch order
+     irrelevant. `mapBounded` preserves INPUT order anyway, so the merge below
+     writes the same keys in the same sequence a `for` loop did; a key can only
+     be written once either way.
+
+     BOUNDED, not Promise.all: Hyperdrive pools a finite number of connections
+     and an unbounded fan-out over every batch would trade latency for pool
+     exhaustion. The bound is stated once, here, rather than defaulted inside the
+     helper — see concurrency.ts on why it is a required argument. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
+  const docBatches: string[][] = [];
+  for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
   const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
-  for (let i = 0; i < demandDocNos.length; i += 200) {
-    const part = await soDeliverableRemaining(sb, demandDocNos.slice(i, i + 200));
+  const parts = await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) =>
+    soDeliverableRemaining(sb, batch));
+  for (const part of parts) {
     for (const [soItemId, d] of part) deliverable.set(soItemId, d);
   }
   const deliveredNetOf = (soItemId: string): number => {
@@ -602,18 +679,13 @@ export async function computeMrp(
   // 2026-08-16), so it must be paged — unpaged it saw the first 1000 products
   // and a category owned only by later rows would be missing from the tab list.
   const categorySet = new Set<string>();
-  const { data: catRows, error: catErr } = await paginateAll<{ category: string | null }>((from, to) =>
-    scoped(sb.from('mfg_products').select('category')).order('id').range(from, to));
+  const { data: catRows, error: catErr } = (await catRowsProm)();
   if (catErr) throw new Error(`mrp_load_failed: ${catErr.message}`);
   for (const c of catRows ?? []) {
     if (c.category) categorySet.add(c.category);
   }
 
-  const { data: warehouses } = await scoped(sb
-    .from('warehouses')
-    .select('id, code, name')
-    .eq('is_active', true))
-    .order('code');
+  const warehouses = (await warehousesProm)();
   const whById = new Map<string, { code: string; name: string }>();
   for (const w of (warehouses ?? []) as Array<{ id: string; code: string; name: string }>) {
     whById.set(w.id, { code: w.code, name: w.name });
@@ -640,9 +712,7 @@ export async function computeMrp(
      read ONCE for the whole computation, not per line. */
   const soWarehouseMasters: SoWarehouseMasters = {
     warehouses: (warehouses ?? []) as Array<{ id: string; code: string; name: string }>,
-    stateMappings: ((await scoped(
-      sb.from('state_warehouse_mappings').select('state, warehouse_id'),
-    )).data ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
+    stateMappings: ((await stateMappingsProm)() ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
   };
   /* Stamped onto the row in place — the same enrichment idiom as
      enrichLinesWithFabricSupplierCode above — so every downstream bucket key,
@@ -657,16 +727,13 @@ export async function computeMrp(
   // warehouse's balance lands in its own bucket.
   // PAGED: 1,065 balance rows in prod on 2026-08-16 — unpaged, the last ~65
   // buckets read as zero stock and MRP invented a shortage for each of them.
-  const { data: balances, error: balErr } = await paginateAll<BalanceRow>((from, to) => {
-    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
-    if (whFilter) q = q.eq('warehouse_id', whFilter);
-    // inventory_balances is a VIEW (migration 0084) grouped by
-    // (warehouse_id, product_code, variant_key, company_id) and has no id, so
-    // that four-column tuple IS its unique key — order by all four or the
-    // paging is not total. company_id matters precisely when it is NOT filtered
-    // (companyId null), which is the case that would otherwise tie.
-    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
-  });
+  // inventory_balances is a VIEW (migration 0084) grouped by
+  // (warehouse_id, product_code, variant_key, company_id) and has no id, so
+  // that four-column tuple IS its unique key — order by all four or the
+  // paging is not total. company_id matters precisely when it is NOT filtered
+  // (companyId null), which is the case that would otherwise tie. The query
+  // itself is unchanged; it is ISSUED in the wave at the top of this function.
+  const { data: balances, error: balErr } = (await balancesProm)();
   if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
   for (const b of balances ?? []) {
@@ -685,17 +752,7 @@ export async function computeMrp(
   // The read error is THROWN: it used to be silently discarded, and a failed
   // supply read produced a plan with ZERO PO supply — phantom shortage
   // everywhere, rendered as if it were true.
-  const { data: poRaw, error: poErr } = await paginateAll<PoLineRow>((from, to) => scoped(sb
-    .from('purchase_order_items')
-    .select(`
-      material_code, item_group, variants, qty, received_qty, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      warehouse_id, so_item_id,
-      po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
-    `)
-    .not('po.status', 'in', PO_DEAD_SQL))
-    .order('id')
-    .range(from, to));
+  const { data: poRaw, error: poErr } = (await poRawProm)();
   if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
   // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
   // can display it read-only (a raised PO's supplier is fixed). Name resolved
