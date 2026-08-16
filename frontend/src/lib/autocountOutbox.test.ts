@@ -4,6 +4,8 @@ const { apiPost } = vi.hoisted(() => ({ apiPost: vi.fn() }));
 vi.mock("../api/client", () => ({ api: { get: vi.fn(), post: apiPost } }));
 
 import {
+  AC_DEFAULT_FILTERS,
+  AC_DEFAULT_STATE,
   AC_DOC_TYPES,
   AC_DOC_TYPE_LABEL,
   AC_DOC_TYPE_PLURAL,
@@ -12,19 +14,25 @@ import {
   AC_FILTER_STATE_LABEL,
   AC_REASON_COPY,
   AC_REPLY_LABEL,
+  AC_REQUEUED_LINE,
+  AC_REQUEUED_NOTE,
   AC_REQUEUE_TODO,
   AC_STATE_PLAIN_MEANING,
   AC_UNRECOGNISED_COPY,
   acAge,
   acDocTypeCounts,
   acDocTypePlural,
+  acEmptyLine,
   acHeadline,
   acListTitle,
   acOpLabel,
+  acOpensItself,
   acReasonCopy,
   acReplySource,
   acRequeueTodo,
+  acRowDetail,
   acRowKind,
+  acRowStandsAt,
   acRowStatusLine,
   acRowsOfType,
   acStateCount,
@@ -473,5 +481,124 @@ describe("requeueAcOutboxRow", () => {
     const r = await requeueAcOutboxRow("ob-2");
     expect(r.accepted).toBe(false);
     expect(r.code).toBe("already-sent");
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   HOW MUCH OF A ROW IS ON SCREEN BEFORE ANYBODY CLICKS.
+
+   Owner, 2026-08-16, on the page rebuilt that morning: "这一个东西下面的地方太复杂
+   了，你尽量简单化一点。一个 sales order 那么宽，那如果我有一千个 sales order 的时
+   候，我不是完蛋？" These are the rules that shortened it, and the two that must
+   NOT be shortened away with them — the headline is never hidden, and who was
+   asked is never flattened.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("the page opens on what is stuck", () => {
+  it("defaults to the attention filter rather than to everything", () => {
+    expect(AC_DEFAULT_STATE).toBe("attention");
+    expect(AC_DEFAULT_FILTERS.state).toBe(AC_DEFAULT_STATE);
+  });
+
+  it("is one of the filters the server accepts", () => {
+    expect(AC_FILTER_STATES).toContain(AC_DEFAULT_STATE);
+  });
+
+  it("says nothing is stuck rather than telling a healthy company to try another filter", () => {
+    const healthy = payload({
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+    });
+    expect(acEmptyLine(healthy, "attention")).toMatch(/Nothing needs your attention/);
+    /* Same company, a filter the reader CHOSE: "try another" is the right
+       answer there and the wrong one on arrival. */
+    expect(acEmptyLine(healthy, "failed")).toMatch(/Try another status/);
+    expect(acEmptyLine(payload(), "attention")).toMatch(/Nothing has ever been queued/);
+  });
+});
+
+describe("acRowStandsAt — one line, not five fragments", () => {
+  it("puts the kind first and the timestamp last, so clipping loses the least", () => {
+    const line = acRowStandsAt(
+      row({ op: "so_to_do", doc_type: "DO", state: "sent", ac_doc_no: "DO-9",
+        sent_at: "2026-08-15T01:00:00.000Z" }),
+      6,
+    );
+    expect(line.startsWith("Delivery order from a sales order · ")).toBe(true);
+    expect(line).toContain("In the account book as DO-9");
+    expect(line).toMatch(/arrived .+$/);
+  });
+
+  it("says how long a waiting document has waited, and queued-at for everything else", () => {
+    expect(acRowStandsAt(row({ state: "pending", attempts: 2 }), 6)).toMatch(/waiting/);
+    expect(acRowStandsAt(row({ state: "failed", attempts: 6 }), 6)).toMatch(/queued/);
+    expect(acRowStandsAt(row({ state: "failed", attempts: 6 }), 6)).not.toMatch(/waiting/);
+  });
+});
+
+describe("acRowDetail — the headline stays, the rest goes behind the opener", () => {
+  it("gives a document already in the account book nothing to open", () => {
+    const d = acRowDetail(row({ state: "sent", ac_doc_no: "SO-9", reason: null }), false);
+    expect(d).toEqual({
+      line: null, copy: null, showSaid: false, showRequeuedNote: false, expandable: false,
+    });
+  });
+
+  /* Even a `sent` row that carries a note has nothing to open: it ARRIVED, and
+     a warning on a document that is in the book is noise on the majority row. */
+  it("keeps a sent row quiet even when the server left a note on it", () => {
+    expect(acRowDetail(row({ state: "sent", reason: "a stale note" }), false).expandable).toBe(false);
+  });
+
+  it("keeps the plain-language headline visible on a held-back document", () => {
+    const d = acRowDetail(
+      row({ state: "skipped", reason_kind: "missing-location", reason: "MissingLocationError" }),
+      false,
+    );
+    expect(d.line).toBe(AC_REASON_COPY["missing-location"]!.headline);
+    /* The sentence and the To fix line are reachable, not printed. */
+    expect(d.copy).toBe(AC_REASON_COPY["missing-location"]);
+    expect(d.showSaid).toBe(true);
+    expect(d.expandable).toBe(true);
+  });
+
+  it("labels a refusal AutoCount answered, and one it was never asked about", () => {
+    const failed = acRowDetail(row({ state: "failed", reason: "FK_SO_SalesAgent" }), false);
+    expect(failed.line).toBe(AC_FAILED_COPY.headline);
+    expect(acReplySource("failed", "FK_SO_SalesAgent")).toBe("autocount");
+    expect(acReplySource("skipped", "MissingLocationError")).toBe("erp");
+  });
+
+  /* No copy exists for this one — a waiting row carrying its last attempt's
+     note — so the line says WHO spoke rather than inventing a headline. */
+  it("falls back to who spoke when there is no plain wording for the row", () => {
+    const d = acRowDetail(row({ state: "pending", attempts: 2, reason: "timeout" }), false);
+    expect(d.line).toBe(AC_REPLY_LABEL.attempt);
+    expect(d.copy).toBeNull();
+    expect(d.expandable).toBe(true);
+  });
+
+  it("marks a re-sent refusal as history and keeps the why-not out of the way", () => {
+    const d = acRowDetail(row({ state: "requeued", reason: "[re-queued …] ItemCodeError" }), false);
+    expect(d.line).toBe(AC_REQUEUED_LINE);
+    expect(d.copy).toBeNull();
+    expect(d.showRequeuedNote).toBe(true);
+    expect(AC_REQUEUED_NOTE).toMatch(/record of the first refusal/);
+  });
+
+  /* An accepted re-send takes the WHOLE reason off, opener included: "To fix:
+     go and change it in AutoCount" on a document that has just gone back into
+     the queue is a false instruction. */
+  it("takes the reason off a document that has just been accepted back", () => {
+    const d = acRowDetail(
+      row({ state: "failed", reason: "FK_SO_SalesAgent", reason_kind: null }),
+      true,
+    );
+    expect(d.line).toBeNull();
+    expect(d.expandable).toBe(false);
+  });
+
+  it("opens by itself only for a refusal nobody has words for yet", () => {
+    expect(acOpensItself(row({ reason_kind: "unrecognised" }))).toBe(true);
+    expect(acOpensItself(row({ reason_kind: "missing-location" }))).toBe(false);
+    expect(acOpensItself(row({ reason_kind: null }))).toBe(false);
   });
 });
