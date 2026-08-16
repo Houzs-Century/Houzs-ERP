@@ -69,9 +69,12 @@
 //
 // The SQL connection line (__DBLINE__) is injected at build time so the DB
 // password never lives in source control; the API key is read from
-// C:\Temp\ac-svc-key.txt. It now appears in THREE methods — Session, DtlKeys
-// and CreatedLines — so the build step must replace EVERY occurrence, not the
-// first one.
+// C:\Temp\ac-svc-key.txt. That placeholder appears in every method that opens
+// the book directly, and the build step must replace EVERY occurrence, not the
+// first. No count is written here any more: this line said "THREE methods —
+// Session, DtlKeys and CreatedLines" while there were already seven sites,
+// which is the kind of number that goes stale in silence. Grep for it to count
+// them, and deploy-on-host.ps1 refuses to compile if any placeholder survives.
 using System;
 using System.IO;
 using System.Net;
@@ -755,6 +758,12 @@ class AcSyncService {
     so.DeliverAddr4 = Or(Str(p, "DeliverAddr4"), Str(p, "InvAddr4"));
     Set(() => so.DeliverContact = Or(Str(p, "DeliverContact"), Str(p, "DebtorName")));
     Set(() => so.DeliverPhone1 = Or(Str(p, "DeliverPhone1"), Str(p, "Phone")));
+    /* The delivery date, in the field this book keeps it in — see the note in
+       Edit(). Present-and-null blanks it; absent leaves AutoCount's default. */
+    if (p.ContainsKey("SalesExemptionExpiryDate")) {
+      var xd = Date(p, "SalesExemptionExpiryDate");
+      Set(() => so.SalesExemptionExpiryDate = xd);
+    }
     ApplyUdf(p, k => so.UDF[k], (k, v) => so.UDF[k] = v);
     foreach (var od in List(p, "Details")) {
       var it = (Dictionary<string, object>) od;
@@ -858,62 +867,207 @@ class AcSyncService {
        purchase invoice from several GRNs. */
     var keysByDoc = KeysBySourceDoc(fromType, dtlKeys);
 
-    switch (toType) {
-      case "DO": {
-        var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
-        SalesHeader(doc, p);
-        doc.Save();
-        return doc.DocNo;
+    /* THE FAILURE HAS TO NAME THE LINES. AutoCount answers a source line it
+       will not take with
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       and that sentence names nothing: not the key, not the document, not the
+       reason. Serve's catch-all returns ex.Message alone, so the ERP's outbox
+       row records those eleven words and nothing else. On 2026-08-16
+       HC-DO-2608-001 spent all six of its attempts on it and HC-DO-2608-002
+       five more, and none of the eleven runs produced a single new fact.
+
+       Why the message is so empty HERE in particular: when the ERP names the
+       lines, DtlKeys() returns the supplied list VERBATIM, so neither of the
+       predicates this service otherwise applies -
+
+           h.Cancelled = 'F'    and    (d.Qty - ISNULL(d.TransferedQty,0)) > 0
+
+       - is evaluated for them, and AutoCount is the first thing in the chain to
+       look at those lines at all. So the numbers are read back out of the book
+       and appended to whatever the SDK threw.
+
+       WRAPS THE WHOLE ARM, not just the transfer call. Where the SDK raises
+       this is not established from off the host - AddPartialTransferDetail is
+       where a mixed key array raises it, and Save() is equally able to - so
+       narrowing the catch to the Add would be a guess about the frame, and a
+       wrong guess costs the diagnostic exactly on the runs that need it.
+
+       DELIBERATELY NOT A PRE-FLIGHT REFUSAL. Re-applying those two predicates
+       to the supplied keys and refusing early reads as the obvious fix, and it
+       cannot be justified from off the host: this file compiles nowhere but the
+       office machine, so a predicate even slightly stricter than AutoCount's
+       own would turn working transfers into refusals with nobody able to see it
+       first. Every call below is unchanged, and so are its arguments; only the
+       text a failure carries is better. The worst case is today. */
+    try {
+      switch (toType) {
+        case "DO": {
+          var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          SalesHeader(doc, p);
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "IV": {
+          var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          SalesHeader(doc, p);
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "GR": {
+          var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          /* This conversion has failed since 2026-08-12 with
+               IndexOutOfRangeException: There is no row at position -1
+             inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
+             returning -1 and used as an index. The frame names its arguments but
+             not their VALUES, so they go in the log before the call: whichever
+             run fails next, the inputs are on record rather than reconstructed. */
+          Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
+          // transferMaster MUST be true on the purchase side. That flag copies the
+          // source PO's header master (supplier/currency/terms) onto the target; with
+          // false the GRN is built with no supplier, the purchase detail ctor looks
+          // that row up in the master table, IndexOf returns -1, and Save() dies with
+          // "there is no row at position -1". The sales classes tolerate false, so they
+          // are left alone — DO-011260 and DO-011262 were both created that way.
+          //
+          // This comment said "DO and IV are PROVEN with it" and cited those same two
+          // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
+          // and /do-to-iv has still never run. Run status does not belong in a comment:
+          // docs/generated/autocount-coverage.md is the one place that states it.
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          PurchaseHeader(doc, p);
+          Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "PI": {
+          var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          // see the GR case above — purchase side needs transferMaster = true
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          PurchaseHeader(doc, p);
+          Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
+          doc.Save();
+          return doc.DocNo;
+        }
       }
-      case "IV": {
-        var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
-        SalesHeader(doc, p);
-        doc.Save();
-        return doc.DocNo;
-      }
-      case "GR": {
-        var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        /* This conversion has failed since 2026-08-12 with
-             IndexOutOfRangeException: There is no row at position -1
-           inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
-           returning -1 and used as an index. The frame names its arguments but
-           not their VALUES, so they go in the log before the call: whichever
-           run fails next, the inputs are on record rather than reconstructed. */
-        Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
-        // transferMaster MUST be true on the purchase side. That flag copies the
-        // source PO's header master (supplier/currency/terms) onto the target; with
-        // false the GRN is built with no supplier, the purchase detail ctor looks
-        // that row up in the master table, IndexOf returns -1, and Save() dies with
-        // "there is no row at position -1". The sales classes tolerate false, so they
-        // are left alone — DO-011260 and DO-011262 were both created that way.
-        //
-        // This comment said "DO and IV are PROVEN with it" and cited those same two
-        // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
-        // and /do-to-iv has still never run. Run status does not belong in a comment:
-        // docs/generated/autocount-coverage.md is the one place that states it.
-        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
-        PurchaseHeader(doc, p);
-        Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
-        doc.Save();
-        return doc.DocNo;
-      }
-      case "PI": {
-        var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        // see the GR case above — purchase side needs transferMaster = true
-        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
-        PurchaseHeader(doc, p);
-        Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
-        doc.Save();
-        return doc.DocNo;
-      }
+    } catch (Exception ex) {
+      var why = DescribeSourceKeys(fromType, dtlKeys);
+      Log("  " + fromType + "->" + toType + " refused: " + ex.GetType().FullName + ": " + ex.Message.Trim());
+      Log("  source lines as the book holds them: " + why);
+      /* The SDK's own exception is the INNER one, so /last-errors and the log
+         still carry its type and stack; the message the ERP stores is the one
+         that names the lines. */
+      throw new Exception(
+        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why, ex);
     }
     throw new Exception("unsupported target " + toType);
+  }
+
+  /* WHAT THE BOOK HOLDS for a set of source line keys, as one line of text.
+     Only ever reached on a failure path, so its cost does not matter - and its
+     OWN failure must never replace the exception it exists to explain, which is
+     why the whole body is wrapped and degrades to a sentence.
+
+     The detail columns go through ExistingColumns, the same way /doc-read's do
+     and for the same reason: a column this book does not carry must cost that
+     FIELD, not the whole explanation, and "no such column" has to read
+     differently from "null". That lesson was bought once already, when a wanted
+     list built from SDK property names reported SO.Agent as missing because the
+     column is called SalesAgent.
+
+     A key that is on no row at all is printed as NOT FOUND rather than left out
+     of the list: an absence is the easiest finding to read straight past. */
+  static string DescribeSourceKeys(string fromType, long[] keys) {
+    try {
+      string dtl, hdr;
+      switch (fromType) {
+        case "SO": dtl = "SODTL"; hdr = "SO"; break;
+        case "PO": dtl = "PODTL"; hdr = "PO"; break;
+        case "DO": dtl = "DODTL"; hdr = "DO"; break;
+        case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+        default: return "unsupported source " + fromType;
+      }
+      if (keys == null || keys.Length == 0) return "(no source line keys were sent)";
+      var seen = new Dictionary<long, string>();
+      var absent = new List<string>();
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        /* DocNo and Cancelled on the header, Qty and TransferedQty on the line,
+           are the four DtlKeys() itself reads, so they are proven to exist on
+           every one of these tables by the query that runs in production today.
+           ItemCode and Transferable are the two that are only WANTED. */
+        var cols = ExistingColumns(cn, dtl,
+          new string[] { "DtlKey", "ItemCode", "Qty", "TransferedQty", "Transferable" }, absent);
+        if (cols.IndexOf("DtlKey") < 0) return dtl + " has no DtlKey column - nothing can be said about these keys";
+        var sel = new List<string>();
+        foreach (var c in cols) sel.Add("d.[" + c + "]");
+        sel.Add("h.[DocNo]");
+        sel.Add("h.[Cancelled]");
+        using (var cmd = cn.CreateCommand()) {
+          var names = new List<string>();
+          for (int i = 0; i < keys.Length; i++) {
+            var nm = "@k" + i;
+            names.Add(nm);
+            var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = keys[i];
+            cmd.Parameters.Add(pr);
+          }
+          cmd.CommandText =
+            "SELECT " + string.Join(", ", sel.ToArray()) +
+            " FROM [" + dtl + "] d JOIN [" + hdr + "] h ON h.DocKey = d.DocKey" +
+            " WHERE d.DtlKey IN (" + string.Join(", ", names.ToArray()) + ") ORDER BY d.DtlKey";
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              var row = new Dictionary<string, object>();
+              for (int i = 0; i < rd.FieldCount; i++) row[rd.GetName(i)] = rd.IsDBNull(i) ? null : rd.GetValue(i);
+              var k = System.Convert.ToInt64(row["DtlKey"]);
+              seen[k] = k + " on " + hdr + " " + Cell(row, "DocNo") + " [" + Cell(row, "ItemCode") + "]"
+                + " Qty=" + Cell(row, "Qty") + " TransferedQty=" + Cell(row, "TransferedQty")
+                + " Transferable=" + Cell(row, "Transferable") + " docCancelled=" + Cell(row, "Cancelled")
+                + " outstanding=" + Outstanding(row);
+            }
+          }
+        }
+      }
+      var parts = new List<string>();
+      foreach (var k in keys) parts.Add(seen.ContainsKey(k) ? seen[k] : (k + " NOT FOUND in " + dtl));
+      var line = string.Join("; ", parts.ToArray());
+      if (absent.Count > 0) line += " (columns this book does not have: " + string.Join(", ", absent.ToArray()) + ")";
+      return line;
+    } catch (Exception ex) {
+      return "(the book could not be read for these keys: " + ex.Message + ")";
+    }
+  }
+
+  /* One field of a row read by NAME, distinguishing the three answers that get
+     confused with each other: no such column, a null, and a value. */
+  static string Cell(Dictionary<string, object> row, string name) {
+    if (!row.ContainsKey(name)) return "(no " + name + " column)";
+    var v = row[name];
+    return (v == null || v == DBNull.Value) ? "NULL" : System.Convert.ToString(v);
+  }
+
+  /* AutoCount's own outstanding quantity, spelled the way its predicate spells
+     it. A NULL Qty is called out in words because it is the failure that reads
+     as nothing: Qty - ISNULL(TransferedQty,0) > 0 is NULL, never true, so the
+     line is invisible to every outstanding query while looking correct in every
+     list. A purchase line did exactly that on 2026-08-16. */
+  static string Outstanding(Dictionary<string, object> row) {
+    if (!row.ContainsKey("Qty")) return "(no Qty column)";
+    var qty = row["Qty"];
+    if (qty == null || qty == DBNull.Value)
+      return "NULL - a NULL Qty is never outstanding, so this line can never be transferred";
+    var done = row.ContainsKey("TransferedQty") ? row["TransferedQty"] : null;
+    var q = System.Convert.ToDecimal(qty);
+    var t = (done == null || done == DBNull.Value) ? 0m : System.Convert.ToDecimal(done);
+    return (q - t).ToString();
   }
 
   /* OVER-TRANSFER: unreachable by construction, not answered by a handler.
@@ -1581,6 +1735,25 @@ class AcSyncService {
     var h = Dict(p, "Header");
     if (h != null) {
       var dt = Date(h, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
+      /* THE DELIVERY DATE, WHICH THIS BOOK KEEPS IN SalesExemptionExpiryDate.
+         Owner 2026-08-16: "就是用我们 delivery date 放进去 sales exemption date
+         而已，一样的东西". AutoCount's sales-order HEADER has no delivery date of
+         its own — SDK line 464 lists DeliveryDate on the six DETAIL classes and
+         nowhere else — so this book uses the exemption expiry for it, and
+         Inistate (the connector the ERP replaces) writes it there.
+
+         Handled HERE and not in the string loop below: that loop reads every key
+         with Str() and assigns through reflection, and a Nullable<DateTime>
+         property given a string throws — inside Set(), which swallows it. The
+         field would have looked wired and written nothing.
+
+         ContainsKey, not HasValue, for the same reason as the line delivery
+         date: present-and-null is how the ERP says BLANK IT, and absent is how
+         it says leave the book's own alone. */
+      if (h.ContainsKey("SalesExemptionExpiryDate")) {
+        var xd = Date(h, "SalesExemptionExpiryDate");
+        Set(() => doc.SalesExemptionExpiryDate = xd);
+      }
       foreach (var key in new string[] { "DebtorName", "CreditorName", "Attention", "Agent", "Ref",
                                          "Description", "SalesLocation", "Phone1",
                                          "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
@@ -1702,13 +1875,84 @@ class AcSyncService {
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, string> set) {
+  /* EVERY UDF VALUE WENT IN AS A STRING, AND ONE OF THEM IS NOT A STRING.
+
+     Owner 2026-08-16: editing a sales order's Processing Date does not reach
+     AutoCount. Measured on production the same day (outbox rows for
+     HC-SO-2608-002, run 31943942030):
+
+       create_so  UDF = {VENUE, ToPONo, BRANDING}       <- no PDate, no BALANCE
+       edit       UDF = {..., BALANCE, PAYEMENT}        <- both new on the edit
+       edit       UDF = {PDate "2026-08-16", ...}
+
+     The book holds BALANCE and PAYEMENT as the LAST EDIT sent them and neither
+     was ever sent by the create - so the edit path does apply UDFs. It holds
+     UDF_PDate as the document's own DocDate, which no payload ever sent. So the
+     loss is PER KEY, and PDate is the only key in that payload whose column is a
+     DATE: the fidelity export reads UDF_VENUE / UDF_BRANDING through
+     LTRIM(RTRIM(...)), UDF_BALANCE through ISNULL(...,0) and UDF_PDate through
+     CONVERT(varchar(10), ..., 120), and one of the 2,500 exported values carries
+     a time (SO-010311 = "2026-07-22 01:00:00").
+
+     WHY IT WAS INVISIBLE. `Set()` catches and logs `set skipped: <message>` with
+     no key, no value and no route, and the request still answers {"ok":true}, so
+     the outbox row goes to `sent`. That is the same swallow that hid a NULL Qty
+     on every /so-to-po until the log was read by hand.
+
+     THE LADDER, and why it is a ladder rather than a cast. The SDK's `UDF`
+     member is INHERITED, and sdk-api-reference.txt was dumped with
+     BindingFlags.DeclaredOnly, so the indexer's parameter type is not recorded
+     anywhere we can check and must not be guessed at. So the STRING is still
+     attempted first and unchanged - a key that lands today lands the same way
+     today - and a typed value is only ever tried after the book has already
+     refused the string. Worst case is what happens now, plus a log line that
+     names the field.
+
+     A BLANK STILL BLANKS. Present-and-null arrives as "" and blanks the field
+     (#2218); absent is not in this dictionary at all and leaves the book's own.
+     On a date column "" is not a date either, so the empty string gets the same
+     ladder - null, then DBNull - rather than being swallowed as it is today. */
+  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, object> set) {
     var udf = Dict(p, "UDF");
     if (udf == null) return;
     foreach (var kv in udf) {
       var k = kv.Key; var v = kv.Value == null ? "" : kv.Value.ToString();
-      Set(() => set(k, v));
+      SetUdf(k, v, set);
     }
+  }
+
+  /* NOT Set(): a UDF that does not land has to say which one. */
+  static void SetUdf(string k, string v, Action<string, object> set) {
+    var shapes = new List<string>();
+    var values = new List<object>();
+    shapes.Add("String"); values.Add(v);
+    if (v.Length == 0) {
+      shapes.Add("null");   values.Add(null);
+      shapes.Add("DBNull"); values.Add(DBNull.Value);
+    } else {
+      decimal dec; DateTime dt;
+      /* Decimal is asked FIRST because it is the narrower test: "0.00" is a
+         number and not a date, while a date is never a decimal. */
+      if (decimal.TryParse(v, System.Globalization.NumberStyles.Number,
+                           System.Globalization.CultureInfo.InvariantCulture, out dec)) {
+        shapes.Add("Decimal"); values.Add(dec);
+      } else if (DateTime.TryParse(v, System.Globalization.CultureInfo.InvariantCulture,
+                                   System.Globalization.DateTimeStyles.None, out dt)) {
+        shapes.Add("DateTime"); values.Add(dt);
+      }
+    }
+    var refused = new List<string>();
+    for (var i = 0; i < values.Count; i++) {
+      try {
+        set(k, values[i]);
+        if (i > 0) Log("  UDF " + k + ": applied as " + shapes[i] + " (" + string.Join("; ", refused.ToArray()) + ")");
+        return;
+      } catch (Exception ex) {
+        refused.Add(shapes[i] + " refused: " + ex.Message);
+      }
+    }
+    Log("  UDF " + k + " = '" + v + "' NOT APPLIED, the account book keeps its own value - "
+        + string.Join(" | ", refused.ToArray()));
   }
   static Dictionary<string, object> Ok(string docNo) {
     var d = new Dictionary<string, object> { { "ok", true } };
