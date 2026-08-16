@@ -678,6 +678,13 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
       "This document was built from more than one earlier document at once, and AutoCount has no way to record that as a single document.",
     toFix: "Enter it in AutoCount by hand. Sending it again will not help.",
   },
+  "mixed-source-lines": {
+    headline: "Part of this invoice was never delivered on the document it follows",
+    explain:
+      "Some lines came across from the delivery order and some were added to the invoice on their own. AutoCount can only carry across the lines that came from the delivery order, so the invoice in the account book would be worth less than the one the customer holds.",
+    toFix:
+      "Raise the delivered lines from the delivery order, and the lines added on their own as a separate invoice. Sending it again will not help.",
+  },
   unrecognised: AC_UNRECOGNISED_COPY,
 };
 
