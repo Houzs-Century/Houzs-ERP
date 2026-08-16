@@ -47,6 +47,7 @@ const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ 
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const FleetHealth = lazy(() => import("./pages/FleetHealth").then((m) => ({ default: m.FleetHealth })));
 const LorryRecord = lazy(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazy(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
@@ -69,6 +70,7 @@ const ScmPurchaseOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseOrder
 // TEMP — vendored 2990's MRP + read/list pages (wave 2), parallel to native.
 const ScmMrpV2 = lazy(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
+const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
 const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
 const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
 const ScmFabricTrackingV2 = lazy(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
@@ -531,6 +533,17 @@ export default function App() {
             </PageGuard>
           }
         />
+        {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
+            two keys the endpoint accepts, so the nav row, this door and the
+            server all agree; the server is still the boundary. */}
+        <Route
+          path="/autocount-sync"
+          element={
+            <Guard anyPerm={["*", "scm.autocount.read", "settings.manage"]}>
+              <AutoCountSync />
+            </Guard>
+          }
+        />
         <Route
           path="/team"
           element={
@@ -611,6 +624,7 @@ export default function App() {
             product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
         {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
             money answer to the question that page's DO tab asks with a status flag. */}

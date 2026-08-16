@@ -47,6 +47,7 @@ import {
   sortSoLinesByGroupRank,
 } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
+import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -85,9 +86,10 @@ async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string
   return null;
 }
 
+/* VALID_STATUSES is NOT shared with the Purchase Order: a PCO has no DRAFT
+   state — it is raised straight to SUBMITTED. See purchase-doc-vocab.ts and
+   tests/purchaseDocVocab.test.ts. */
 const VALID_STATUSES = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
-const VALID_CURRENCIES = new Set(['MYR', 'RMB', 'USD', 'SGD']);
-const VALID_KINDS = new Set(['mfg_product', 'fabric', 'raw']);
 
 const HEADER_COLS =
   'id, pc_number, supplier_id, status, po_date, expected_at, currency, ' +

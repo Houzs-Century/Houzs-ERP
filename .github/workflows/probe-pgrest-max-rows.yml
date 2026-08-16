@@ -1,0 +1,46 @@
+# Read-only. Reads the LIMIT clause PostgREST actually generates on this
+# project's requests out of pg_stat_statements, so db-max-rows is measured
+# rather than assumed. Writes nothing.
+name: probe-pgrest-max-rows
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: probe-pgrest-max-rows
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-pgrest-max-rows.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-pgrest-max-rows.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -27,6 +27,7 @@ import {
   FolderKanban,
   ShieldCheck,
   Activity,
+  RefreshCw,
   Bot,
   Boxes,
   Package,
@@ -63,8 +64,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon,
-} from "lucide-react";
+  type LucideIcon, Landmark } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -636,6 +636,7 @@ export const NAV_TABS: NavTab[] = [
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
       { to: "/scm/accounting", label: "Accounting", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+      { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
       // Delivered-but-not-billed, aged. Sits next to Outstanding and on the
@@ -773,6 +774,18 @@ export const NAV_TABS: NavTab[] = [
     label: "System Health",
     icon: Activity,
     pageAccess: "system_health",
+  },
+  // Next to System Health because it answers the same shape of question — "is
+  // the thing that runs in the background still working" — and because the
+  // owner's is "did my sales order reach AutoCount". anyPerm mirrors the two
+  // keys GET /api/scm/autocount-outbox accepts; the server is still the
+  // boundary, this only decides whether the row is worth showing.
+  {
+    section: "system",
+    to: "/autocount-sync",
+    label: "AutoCount Sync",
+    icon: RefreshCw,
+    anyPerm: ["*", "scm.autocount.read", "settings.manage"],
   },
   {
     section: "system",

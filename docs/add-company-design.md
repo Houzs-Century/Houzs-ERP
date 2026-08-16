@@ -27,7 +27,7 @@ model, which Houzs already implements and Hookka does not.
 
 | Concern | Hookka (`hookka-main`) | Houzs today | For "Add Company" |
 |---|---|---|---|
-| Company registry | `organisations` table, CRUD-able (`migrations-postgres/0142_organisations_registry.sql`) | `public.companies` (mig 0083), **read-only API** | Houzs needs the CRUD Hookka has |
+| Company registry | `organisations` table, CRUD-able (`migrations-postgres/0142_organisations_registry.sql` [external]) | `public.companies` (mig 0083), **read-only API** | Houzs needs the CRUD Hookka has |
 | Add-company API | `POST /api/organisations` — **inserts one row, seeds nothing** (`src/api/routes/organisations.ts:241-324`) | none (rows seeded by migration/script) | build it, **and add seeding** |
 | Switcher | sidebar → `PUT /api/organisations {orgId}` → `window.location.reload()` (`src/components/layout/sidebar.tsx:419-431`) | top-bar `CompanySwitcher` → `setActiveCompanyId` → reload (`frontend/src/components/TopNavbar.tsx:84-177`) | **Houzs switcher already does this** |
 | Per-company data isolation | **none in practice** — chart-of-accounts, journals, doc sequences, roles all **GLOBAL**; the `org_id` tenant skeleton is **dormant** (every row = `'hookka'`, `src/api/lib/tenant.ts:4-8`) | **real** — `company_id NOT NULL` on ~118 tables, `scopeToCompany`, per-company GL | **Houzs already wins here** |
@@ -154,7 +154,7 @@ Everything transactional and every book:
   `journal_lines`, `payment_vouchers` — `accounts.company_id` is `NOT NULL` and
   the `/accounts`, `/journal-entries`, `/gl` routes all `scopeToCompany`. **This
   is the biggest divergence from Hookka, whose COA is global** (Hookka
-  `migrations-postgres/0206_finance_org_id.sql:26-27`: *"chart_of_accounts is
+  `migrations-postgres/0206_finance_org_id.sql [external]:26-27`: *"chart_of_accounts is
   intentionally SHARED"*). In Houzs each company has its own chart; 2990's 31
   accounts live under `company_id=2` (imported by PR #1134).
 - **Catalog / masters:** Products, SKU Master, MRP, Suppliers, Procurement
@@ -182,10 +182,16 @@ isolates) and the module map:
   a `target_company_ids` dimension, mig 0113).
 
 ### HOUZS-ONLY — pinned to the base company
-- **Service Cases / ASSR.** A Houzs-exclusive concept (2990 has 0% service
-  overlap). Its reads pin to HOUZS via `houzsCompanySql(c)` / `houzsCompanyIds(c)`
-  — *not* the caller's allowed set — so a both-company user never sees 2990 data
-  under Service Cases (`companyScope.ts:207-261`; see `routes/assr.ts`).
+- **Service Cases / ASSR.** ~~Pinned to HOUZS.~~ **NO LONGER TRUE — the pin was
+  removed on 2026-07-20, and this paragraph described the opposite for weeks.**
+  `assrCompanySql` (`backend/src/routes/assr.ts:145-147`) returns
+  `allowedCompaniesSql(c, col)` — it IS the caller's allowed set, so a
+  both-company user DOES see 2990 service cases. `houzsCompanySql` /
+  `houzsCompanyIds` have no caller left anywhere in `backend/src`,
+  `frontend/src` or the tests (`scm/lib/companyScope.ts:24-34` says so), and
+  `backend/tests/assrCompanyScope.test.ts` pins the widened behaviour. A doc
+  asserting a tenant pin that is not there is the worst shape this file can
+  take: it reads as a guarantee.
 
 **Implication for a fresh company:** it inherits the SHARED and UNIFIED modules
 for free (Delivery Planning / Service Cases / fleet / staff need **nothing** —

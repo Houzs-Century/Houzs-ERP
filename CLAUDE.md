@@ -113,16 +113,24 @@ remembering it. Per AREA, line coverage may only go **up** and the count of file
 with **no test at all** may only go **down**. Floors live in
 `coverage-baseline.json`; the gate is `scripts/coverage-ratchet.mjs`.
 
-All six areas are checked on every PR, from one merged report built out of the
-three suites (`backend-typecheck` runs the light project, the four
-`backend-tests` shards run the workers project, `frontend-checks` runs the
-frontend).
+**The two halves run in different places, and that split is deliberate.**
 
-- **`frontend/src` hard-blocks**: it is checked inline in `frontend-checks`,
+- **`frontend/src` hard-blocks, per PR.** Checked inline in `frontend-checks`,
   which the required `frontend` roll-up covers. Add a `.tsx` with no test and
-  the merge is blocked.
-- **The five backend areas** are checked in the `coverage-ratchet` job, which is
-  a visible red X but not (yet) a required context — that list is the owner's.
+  the merge is blocked. It stays on the PR path because instrumenting the
+  frontend suite costs 2 seconds (18s → 20s) and `frontend/src` is 594 files.
+- **The five backend areas are measured ON MAIN**, by
+  `.github/workflows/coverage.yml`, once per merge — not per PR. Moved there
+  2026-08-14 after measuring what it cost on the PR path: the workers suite is
+  **217s of test work bare and 746s instrumented**, so coverage was adding
+  **529 seconds to the critical path of every pull request**. A floor is a
+  statement about what is on `main`; measuring it when something lands on `main`
+  is the same statement for a fraction of the money.
+
+  **What that gives up, plainly:** a PR that lowers backend coverage is caught
+  at the merge, not before it. The fix becomes a follow-up rather than a block.
+  If that trade ever stops being worth 529s per PR, the job is one file and
+  moves back.
 - `backend/scripts` (the one-shot ops scripts, NOT `scripts/lib`) has its
   no-test floor turned off on purpose — a new ops script with no test is normal
   there. Everything else is held to both floors.
@@ -343,12 +351,26 @@ the STALE-BRANCH mechanism behind the incidents below:
    `DRIFT ... probable_renumber` and the runner exits 1, blocking the deploy
    until the tracker row is repointed by hand. So renumber freely; edit an
    applied file's body never.
-3. **After merging, confirm the backend job said `success`, not `skipped`.**
-   `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`. Required status
-   checks gate the MERGE; nothing gates the deploy that follows. On 2026-07-31
-   the backend sat un-deployed for over two hours while `main` was green, and it
-   happened again on 2026-08-13 — two `Deploy` runs, both `failure` with
-   `backend: skipped`. **Treat `skipped` on `backend` as a failed deploy.**
+3. **After merging, check the Deploy run — and read the RUN's conclusion beside
+   the job's.** `gh api repos/hello-houzs/Houzs-ERP/actions/runs/<id>/jobs`.
+   Required status checks gate the MERGE; nothing gates the deploy that follows.
+   On 2026-07-31 the backend sat un-deployed for over two hours while `main` was
+   green, and it happened again on 2026-08-13 — two `Deploy` runs, both
+   **`failure`** with `backend: skipped`.
+
+   | run conclusion | `backend` job | what it means |
+   | --- | --- | --- |
+   | `failure` | `skipped` | **the deploy FAILED.** Something upstream died and the backend never shipped. This is the incident shape above. |
+   | `success` | `skipped` | nothing backend CHANGED. `deploy.yml`'s path filter is `backend/**` + `.github/workflows/deploy.yml`; a docs-or-root-scripts PR legitimately skips it. |
+   | `success` | `success` | shipped. |
+
+   > **CORRECTED 2026-08-15.** This rule read "**Treat `skipped` on `backend` as
+   > a failed deploy**", full stop, and that is over-broad in the direction that
+   > costs you: on 2026-08-15 PR #2207 touched only `BUG-HISTORY.md`,
+   > `docs/generated/` and `scripts/check-file-size.mjs` — all outside the
+   > filter — and its run was `success` with `backend: skipped`, which the old
+   > wording would have had you call a failed production deploy. The signal is
+   > the PAIR, not the job alone.
 4. **`frontend` is `npm run typecheck` (`tsc -b`), never `npx tsc --noEmit`.**
    *Added 2026-08-14.* `frontend/tsconfig.json` is `{"files": [], "references":
    [...]}` — a solution-style config with no inputs of its own. In `frontend/`,
@@ -470,33 +492,89 @@ doing your scoping: mig 0061 enabled RLS with NO policies and the SCM client is
 the SERVICE-ROLE client, which bypasses RLS. The only boundary is the predicate
 in the route.
 
+## There IS a linter now — since 2026-08-13, and it is a RATCHET
+
+Until this date the repo had none: no `.eslintrc`, no `eslint.config.*`, no
+`lint` script in any of the seven `package.json` files — while `backend/src` +
+`frontend/src` carried **514** hand-written `eslint-disable` comments that had
+never suppressed anything, because nothing ever ran. `tsc --noEmit` and vitest
+were the only gates, and neither can see a nullish default on something that is
+never nullish.
+
+- `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
+  matrixed over the two apps. NOT a required status check yet.
+- **The FRONTEND leg enforces; the BACKEND leg runs `-- --advisory` and only
+  reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
+  ceiling, all of it debt `main` grew while the linter waited to land, and
+  twelve of them are `no-unnecessary-condition` in the money routes where
+  deleting the condition would create a real bug: the rule fires because a
+  hand-written `as {…}` cast promises non-null over a `sb: any` read, so the
+  `??` it calls redundant is the only guard left (worked example in the
+  `lint:` job's own comment in `ci.yml`). The upstream fix needs honest types,
+  and `schema.pg.ts` covers **none** of the SCM money tables — `drizzle-kit
+  pull` first. Drop the `--advisory` flag when that is done and the backend leg
+  is green, not before. **Locally it is still strict** — `npm --prefix backend
+  run lint` exits 1 and shows you the findings; only CI's backend leg is told to
+  report. And a HARD error (ESLint missing, config broken) is never advisory,
+  because a gate that did not execute must not report a pass. `--advisory` sits
+  on the script rather than `continue-on-error` on the job because the latter
+  stops the workflow failing but still publishes the check run as FAILURE —
+  measured 2026-08-14 — so the red X survives and the wallpaper stays.
+- **It runs `node_modules/eslint/bin/eslint.js` under `process.execPath`, not the
+  `.bin/eslint` shim, and that is deliberate.** The shim is a POSIX shell script
+  Windows cannot execute (ENOENT, reported as "no ESLint installed" because
+  `existsSync` finds it), and `.bin/eslint.cmd` cannot be spawned without a shell
+  since CVE-2024-27980 (EINVAL). Do not "simplify" it back to the shim: CI is
+  Linux and will not notice, and the linter becomes unrunnable on the OS this
+  repo is developed on. `BUG-HISTORY.md` 2026-08-14 has the trace.
+- **Every rule is a WARNING.** The gate is `scripts/lint-ratchet.mjs`: a
+  **per-file ceiling** in `<app>/eslint-ratchet.json` that may only **FALL**.
+  A file with no entry has a ceiling of **zero**, so a new file — or a rule that
+  is clean tree-wide — fails on its first violation.
+- **Never raise a number in `eslint-ratchet.json` to make a build pass.** Fix the
+  finding, or write `// eslint-disable-next-line <rule> -- <reason>` at the site
+  so the reason lives next to the code. `npm run lint:update` exists to write the
+  ceilings DOWN after you fix things; using it to write them up is forging the
+  evidence the gate exists to check (same rule as `check-soak-gate.mjs`).
+- **The rule list is `scripts/eslint/houzs-lint-rules.mjs`, and every rule cites
+  the `BUG-HISTORY.md` entry it exists to catch.** Do not add a rule without one.
+  That file also records what was considered and left OFF, and why. It is shared
+  by both apps deliberately — a lint layer whose own rule list is hand-copied per
+  app is the duplicated-list bug wearing a badge.
+- Linting is **type-aware** (`no-unnecessary-condition` needs it), so it lints
+  only what the tsconfigs include: `backend/src/**/*.ts` and
+  `frontend/src/**/*.{ts,tsx}`. `backend/tests/`, `backend/scripts/`,
+  `frontend/perf-lab/` and `frontend/e2e/` are out of scope.
+
 ## Read the map before exploring
 
 - **`docs/CODEBASE-MAP.md`** — what each area is FOR, which trees are dead,
   which folders are vendored, where desktop and mobile diverge, and which
   files are too big to open whole. Read this INSTEAD of exploring from
   scratch; it is the hand-written judgement layer.
-- **`docs/generated/`** — the mechanical inventory (routes, migrations,
-  largest files). It is COMPUTED from the tree, which is not the same as
-  being current: only `route-capability-matrix` is a CI gate (`audit:routes`,
-  in `ci.yml` + both deploy workflows). `route-locator.md` and
-  `codebase-map-facts.md` are regenerated ON DEMAND and nothing in CI runs
-  their `--check`; `gen-codebase-map.mjs` says so in its own output. As of
-  2026-08-13 `codebase-map-facts.md` IS drifted at HEAD — it records
-  `consignment-returns.ts` at 957 lines against an actual 1118. Run
-  `npm --prefix backend run audit:map` / `audit:route-locator` before trusting
-  a number from either.
+- **`docs/generated/`** — the mechanical inventory (routes, migrations, largest
+  files), COMPUTED from the tree. Which of them can DRIFT is not uniform, and
+  guessing wrong in either direction costs you:
 
-  largest files), regenerated from the tree. **"Cannot drift" is only true of
-  the CI-gated half, and this bullet used to claim it of all four.** CI runs
-  `audit:routes` (the capability matrix) on every PR; it does NOT run
-  `audit:route-locator` or `audit:map`, and both of those artifacts were found
-  STALE on `main` on 2026-08-14. That is deliberate, not an oversight — both
-  generators say so in their own headers ("a navigation doc going stale must
-  never block a deploy"). The practical rule: **treat `route-locator.md` and
-  `codebase-map-facts.md` as hints and re-run the generator before trusting a
-  line number**, and do not "fix" the gap by adding a CI gate without the owner,
-  because the absence is a decision.
+  | artifact | gated in CI? |
+  | --- | --- |
+  | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
+  | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
+  | `bug-index.md` | in CI, but it REPORTS drift and does not fail on it (see the job's own comment: with serial merges, gating it deadlocks every open PR on the previous author's entry) |
+  | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
+
+  > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two
+  > paragraphs that contradicted each other, that CI runs neither
+  > `audit:route-locator` nor `audit:map`. `audit:map` HAS been a `ci.yml` step
+  > since 2026-08-14 — verify with `grep -c audit:map .github/workflows/ci.yml`
+  > rather than believing this line either. The old text also carried a worked
+  > drift example (`consignment-returns.ts` "957 lines against an actual 1118")
+  > which no longer holds: the map and the file now agree. A stale worked example
+  > is worse than none — it reads as freshly measured evidence.
+  >
+  > The second paragraph was a partial paste that began mid-sentence
+  > ("largest files), regenerated from the tree."). If you are correcting a
+  > paragraph here, DELETE the one you are replacing.
 - **`docs/modules/<module>.md`** — everything needed to work in ONE module
   without reading the others. Read the guide for the module you are touching
   before touching it.
@@ -760,11 +838,15 @@ Not generic narrative.
   is the property that matters — but three of them do NOT live in
   `scripts/lib/`: `scale-pg-real-schema.mjs`, `scale-target-guard.mjs`
   and `repair-so-fee-line-integrity.mjs` sit directly in
-  `backend/scripts/`, imported by `tests/scale*.node.mjs` and
+  `backend/scripts/`, imported by `tests/scale*.test.mjs` and
   `tests/soFeeLineRepairRow.test.ts`. Adding a `#!` to any of those three
   breaks local Windows and CI will not tell you. If a runnable script
   needs to expose a function to a test, put the pure part in
   `scripts/lib/` and import it from the script.
+  *(Said `tests/scale*.node.mjs` until 2026-08-15. Those files were renamed to
+  `*.test.mjs` by #2180 — a `node:test` suite contributed nothing to the merged
+  coverage report — and this line was not updated with them, so it pointed at
+  files that do not exist. Re-check with `ls backend/tests/scale*`.)
 - **Keep schema and data in separate migrations when both are large.**
   An `ALTER TABLE` + 100-line `INSERT` block in the same file makes
   rollback awkward and the diff hard to read. Numbered migrations are

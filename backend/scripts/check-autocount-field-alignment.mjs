@@ -16,18 +16,28 @@
 // remaining instance, per field, so "are they all aligned" stops being an opinion.
 //
 // THE MAPS ARE IMPORTED, NEVER RETYPED. AGENT_MAP / LOCATION_MAP / VENUE_MAP /
-// BRANDING_MAP and `mapOrPassthrough` come from the composer itself, so this
+// BRANDING_MAP and every per-field decision come from the composer itself, so this
 // report cannot drift from what the write-back actually does — which is why it
 // runs under tsx:
 //
 //   npx tsx scripts/check-autocount-field-alignment.mjs
 //
-// WHAT MAKES A NULL FATAL. `mapOrPassthrough` returns null for a value none of
-// its maps knows. On Agent and SalesLocation that null reaches AcSyncService as
-// a present-but-null key, `Str()` turns it into "", the property is assigned
-// UNCONDITIONALLY, and "" is not a row in dbo.SalesAgent / dbo.Location — so the
-// whole document dies on a foreign key. On BRANDING and VENUE the null is
-// dropped by `udf()` and the field silently never reaches the account book.
+// WHAT MAKES A NULL FATAL. On Agent and SalesLocation a null reaches
+// AcSyncService as a present-but-null key, `Str()` turns it into "", the
+// property is assigned UNCONDITIONALLY, and "" is not a row in dbo.SalesAgent /
+// dbo.Location — so the whole document dies on a foreign key. On BRANDING and
+// VENUE the null is dropped by `udf()` and the field silently never reaches the
+// account book.
+//
+// UPDATED 2026-08-14, WITH THE FIXES. Until then this report asked one question
+// per field — "does the MAP resolve the column the composer reads" — and that
+// stopped being the right question the moment the composer grew a decision of
+// its own. It already had one for the agent (#2148's `resolveAcAgent`, which
+// passes an unmapped staff name through), and the report was still counting map
+// hits, so it reported 96 unrescuable orders that the composer would in fact
+// have written. Every section below now calls the COMPOSER'S OWN function and
+// reports what it would actually send, plus the masters that value would OPEN —
+// the two numbers an owner needs before a pass-through ships.
 //
 // Strictly read-only: SELECTs only, no DDL, no writes, no transaction. Exits 0
 // for every legitimate answer — the ANSWER is the output, and a red job reads as
@@ -43,7 +53,13 @@ import {
   VENUE_MAP,
   BRANDING_MAP,
   AC_DEBTOR_CODE,
-  mapOrPassthrough,
+  AC_PURCHASE_AGENT,
+  bookSpelling,
+  bookSpellingOrOwn,
+  resolveAcAgent,
+  soBranding,
+  soCustomerRef,
+  soInvoiceAddress,
 } from "../src/services/autocount-writeback.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +80,18 @@ if (!url) {
   console.error("DATABASE_URL not set (env var or .dev.vars). Aborting.");
   process.exit(1);
 }
+
+/* THE WRITE-BACK IS PER COMPANY, SO THE MEASUREMENT MUST BE TOO.
+ *
+ * `scm.autocount_writeback` names the companies that sync — "1" today — and
+ * enqueueSoCreate returns early for any other. Counting every row in
+ * scm.mfg_sales_orders therefore mixes in 2990's documents, which will never be
+ * written back, and every figure this script prints comes out inflated. The
+ * first version did exactly that; the owner caught it ("我们应该是把 House 的
+ * 资料送进去而已啊"). CLAUDE.md's rule is the same one: the company_id predicate
+ * is the entire tenant boundary, on reads as much as on writes.
+ */
+const COMPANY_ID = Number(process.env.COMPANY_ID ?? 1);
 
 const notice = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
 const blank = (v) => v == null || String(v).trim() === "";
@@ -94,52 +122,55 @@ async function columnsOf(table) {
   return new Set(rows.map((r) => r.column_name));
 }
 
-/**
- * One field's verdict.
- *
- * `read` is the column the composer reads; `alt` is the other column holding the
- * same fact. The headline number is rows where the composer's column is BLANK
- * and the alternative is populated — the ERP knows the answer and the write-back
- * does not, which is the agent bug exactly.
- */
-function alignment(rows, read, alt, map, { fatal }) {
-  const out = {
-    total: rows.length,
-    bothBlank: 0,
-    readBlankAltSet: 0,
-    resolved: 0,
-    nulled: 0,
-    nulledValues: new Map(),
-  };
-  for (const r of rows) {
-    const v = r[read];
-    if (blank(v)) {
-      if (alt && !blank(r[alt])) out.readBlankAltSet += 1;
-      else out.bothBlank += 1;
-      continue;
-    }
-    if (map ? mapOrPassthrough(v, map) : true) out.resolved += 1;
-    else {
-      out.nulled += 1;
-      const k = String(v).trim();
-      out.nulledValues.set(k, (out.nulledValues.get(k) ?? 0) + 1);
-    }
-  }
-  /* WHAT COUNTS AS A LOSS DEPENDS ON WHICH WAY THE FIELD FAILS.
-     On a FATAL field an empty value is not "nothing to send" — it is sent, as
-     "", and it fails a foreign key, so an order with no value anywhere is just
-     as dead as one whose value the map dropped. On a UDF, blank everywhere means
-     the ERP genuinely has nothing and nothing is lost by not sending it; only a
-     value the ERP HOLDS and the composer does not read is a loss. Counting
-     those two the same way is how a report turns an empty column into a
-     scandal, or a scandal into a footnote. */
-  out.broken = out.readBlankAltSet + out.nulled + (fatal ? out.bothBlank : 0);
-  out.fatal = fatal;
-  return out;
-}
-
 const top = (m, n = 10) =>
   [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([v, c]) => `${v} (${c})`).join(", ");
+
+/**
+ * WHAT THE COMPOSER WOULD ACTUALLY SEND for one field, on every order that can
+ * still be written — and what that value costs.
+ *
+ * `send(row)` is the composer's OWN decision, imported and never
+ * re-implemented, which is the property this whole report exists for: an
+ * assertion about the write-back computed from anything other than the
+ * write-back can be right on the day it is written and wrong forever after.
+ *
+ * Two numbers come out, and they are the pair an owner needs:
+ *   MISSING — orders where the composer still has nothing to send. On a
+ *             foreign-key field that is not "nothing to write": it is `""` and
+ *             the whole document is lost. On a UDF the key is dropped and the
+ *             value is silently never written.
+ *   OPENS   — distinct values that are NOT already a master in the account
+ *             book, so `/ensure-masters` would CREATE them. A pass-through is
+ *             only as safe as this number is small and this list is readable.
+ */
+function verdict(label, rows, send, { fatal, book, howItFails, opensWhat }) {
+  const missing = [];
+  const values = new Map();
+  for (const r of rows) {
+    const v = send(r);
+    if (!v) { missing.push(r.doc_no ?? r.po_number ?? "?"); continue; }
+    values.set(v, (values.get(v) ?? 0) + 1);
+  }
+  notice(
+    `${label}: ${missing.length} of ${rows.length} still send NOTHING` +
+      (missing.length
+        ? `. ${fatal ? `"" reaches the book and ${howItFails}` : howItFails}` +
+          ` First few: ${missing.slice(0, 6).join(", ")}`
+        : " (every one of them now carries a value)."),
+  );
+  /* WHAT THIS FIELD OPENS, where the book's own vocabulary is committed beside
+     this script. BRANDING has no such set — its option list is recorded only as
+     prose — and it prints its own line at the call site instead, because what
+     matters there is what a pass-through WOULD open, which is the evidence its
+     allow-list rests on. */
+  if (!book) return;
+  const fresh = [...values.entries()].filter(([v]) => !book.has(v.toUpperCase()));
+  const freshRows = fresh.reduce((a, [, n]) => a + n, 0);
+  notice(
+    `  OPENS ${fresh.length} new ${opensWhat} in the licensed book, on ${freshRows} order(s): ` +
+      `${fresh.map(([v, n]) => `${v} (${n})`).join(", ") || "none"}`,
+  );
+}
 
 /**
  * What the four maps do to the ACCOUNT BOOK's own vocabulary.
@@ -171,7 +202,7 @@ function bookSideCoverage() {
     for (const r of rows) {
       const v = String(r[key] ?? "").trim();
       if (!v) { empty += 1; continue; }
-      if (mapOrPassthrough(v, map)) resolved += 1;
+      if (bookSpelling(v, map)) resolved += 1;
       else dropped.set(v, (dropped.get(v) ?? 0) + 1);
     }
     const droppedRows = [...dropped.values()].reduce((a, b) => a + b, 0);
@@ -221,7 +252,7 @@ try {
   if (missing.length) notice(`  NOT PRESENT on the table (so not read): ${missing.join(", ")}`);
 
   const sel = have.map((c) => `"${c}"`).join(", ");
-  const sos = await pg.unsafe(`SELECT ${sel} FROM scm.mfg_sales_orders`);
+  const sos = await pg.unsafe(`SELECT ${sel} FROM scm.mfg_sales_orders WHERE company_id = $1`, [COMPANY_ID]);
   const staff = soCols.has("salesperson_id")
     ? await pg`SELECT id, name FROM scm.staff`
     : [];
@@ -237,116 +268,179 @@ try {
       `linked_ac_docno — those are the ones create_so can still be asked to write.`,
   );
 
-  const say = (label, a, howItFails) => {
-    notice(
-      `${label}: ${a.broken} of ${a.total} would ${a.fatal ? "FAIL" : "be LOST"} — ` +
-        `${a.readBlankAltSet} blank here but set in the other column, ` +
-        `${a.nulled} carry a value the map turns into null` +
-        (a.fatal
-          ? `, ${a.bothBlank} blank everywhere (still fatal — "" is sent either way). `
-          : ` (a further ${a.bothBlank} are blank everywhere, so there is nothing to lose). `) +
-        howItFails,
-    );
-    if (a.nulledValues.size) {
-      notice(`  values the map nulls (${a.nulledValues.size} distinct): ${top(a.nulledValues)}`);
-    }
-  };
+  /* THE LINE-LEVEL FACTS THE COMPOSER NEEDS, fetched once. The composer is
+     PURE — `enqueueSoCreate` does the reads and hands it rows — so the same
+     division is drawn here rather than re-implementing what the composer
+     decides from them. */
+  const lineBrandRows = soItemCols.has("branding")
+    ? await pg`
+        SELECT s.doc_no, min(i.branding) AS branding
+          FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
+         WHERE s.company_id = ${COMPANY_ID}
+           AND s.linked_ac_docno IS NULL AND i.branding IS NOT NULL AND i.branding <> ''
+           ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
+         GROUP BY s.doc_no`
+    : [];
+  const lineBrandByDoc = new Map(lineBrandRows.map((r) => [r.doc_no, r.branding]));
+  /* Every stock location the document's own lines resolve to. The header's
+     SalesLocation falls back to these, and they are codes /ensure-masters is
+     opening off the line anyway — which is why that fallback opens nothing
+     new. `warehouses.code` is what `warehouseLabel` prefers, and `withLocations`
+     falls back to the name, so this mirrors both. */
+  const lineLocRows = soItemCols.has("warehouse_id")
+    ? await pg`
+        SELECT s.doc_no, min(COALESCE(NULLIF(btrim(w.code), ''), w.name)) AS loc
+          FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
+          JOIN scm.warehouses w ON w.id = i.warehouse_id
+         WHERE s.company_id = ${COMPANY_ID} AND s.linked_ac_docno IS NULL
+           ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
+         GROUP BY s.doc_no`
+    : [];
+  const lineLocByDoc = new Map(lineLocRows.map((r) => [r.doc_no, r.loc]));
 
   // ── 1. SALESPERSON ────────────────────────────────────────────────────────
+  /* #2148. `agent` is a legacy free-text column no SO form has ever written;
+     the ERP's real identity is salesperson_id -> scm.staff, and `resolveAcAgent`
+     prefers the book's own spelling, then the staff name mapped, then the staff
+     name AS ITSELF for /ensure-masters to open. The raw `agent` text
+     deliberately never passes through — production rows hold bare uuids. */
   if (soCols.has("agent")) {
-    const a = alignment(unlinked, "agent", soCols.has("salesperson_id") ? "salesperson_id" : null, AGENT_MAP, { fatal: true });
-    say(
-      "AGENT (composer reads mfg_sales_orders.agent)",
-      a,
-      'Agent reaches AcSyncService as "" and so.Agent is assigned unconditionally — FK_SO_SalesAgent, whole document lost.',
-    );
-    /* WOULD THE OTHER COLUMN HAVE ANSWERED? This is the recommendation, measured
-       rather than asserted: AGENT_MAP's keys are scm.staff display names
-       ("Anthony", "Mei Ting", "Kar Jiun"), so the map was built for the column
-       the composer is not reading. */
-    if (soCols.has("salesperson_id")) {
-      let rescued = 0;
-      let stillNot = 0;
-      for (const r of unlinked) {
-        if (mapOrPassthrough(r.agent, AGENT_MAP)) continue;
-        const nm = staffName.get(String(r.salesperson_id ?? ""));
-        if (nm && mapOrPassthrough(nm, AGENT_MAP)) rescued += 1;
-        else stillNot += 1;
-      }
-      notice(
-        `  reading salesperson_id -> scm.staff.name instead would resolve ${rescued} of those ` +
-          `${rescued + stillNot}; ${stillNot} would still not resolve.`,
-      );
-    }
-    const notInBook = [...a.nulledValues.keys()].filter((v) => !bookAgents.has(v.toUpperCase()));
-    notice(
-      `  of the ${a.nulledValues.size} distinct nulled names, ${a.nulledValues.size - notInBook.length} ` +
-        `are ALREADY sales agents in the account book (2026-08-06 harvest of 79) — the map is ` +
-        `dropping values the book holds. Not in the book: ${notInBook.join(", ") || "none"}`,
+    verdict(
+      "AGENT (resolveAcAgent: agent -> AGENT_MAP, else scm.staff.name)",
+      unlinked,
+      (r) => resolveAcAgent(r.agent, staffName.get(String(r.salesperson_id ?? "")) ?? null),
+      {
+        fatal: true,
+        book: bookAgents,
+        opensWhat: "sales agent(s)",
+        howItFails:
+          "so.Agent is assigned unconditionally — FK_SO_SalesAgent, whole document lost.",
+      },
     );
   }
 
   // ── 2. SALES LOCATION ─────────────────────────────────────────────────────
+  /* `soSalesLocation`: the book's spelling, else the ERP's own value, else the
+     stock location the document's own LINES resolve to. The last step is what
+     closes the live gap — every failing order here has a BLANK sales_location,
+     not an unmapped one. */
   if (soCols.has("sales_location")) {
-    const a = alignment(unlinked, "sales_location", null, LOCATION_MAP, { fatal: true });
-    say(
-      "SALES LOCATION (composer reads mfg_sales_orders.sales_location)",
-      a,
-      'SalesLocation reaches AcSyncService as "" and is assigned unconditionally — FK_SO_SalesLocation.',
+    verdict(
+      "SALES LOCATION (soSalesLocation: sales_location, else the lines')",
+      unlinked,
+      (r) => bookSpellingOrOwn(r.sales_location, LOCATION_MAP)
+        ?? bookSpellingOrOwn(lineLocByDoc.get(r.doc_no) ?? null, LOCATION_MAP),
+      {
+        fatal: true,
+        book: bookLocations,
+        opensWhat: "stock location(s)",
+        howItFails:
+          "SalesLocation is assigned unconditionally — FK_SO_SalesLocation. The composer now REFUSES " +
+          "these by name instead of sending it, so they are a visible skipped row rather than a lost " +
+          "document — but they are still not WRITTEN.",
+      },
     );
-    const notInBook = [...a.nulledValues.keys()].filter((v) => !bookLocations.has(v.toUpperCase()));
+    /* WHY a document is still unanswerable, split by remedy, because "21 fail"
+       and "21 need the same fix" are different statements and only the second
+       one tells anybody what to do. A blank sales_location falls back to the
+       lines; if the lines cannot answer either, there are exactly two reasons
+       and they are fixed by different people. */
+    const stuck = unlinked.filter((r) =>
+      !bookSpellingOrOwn(r.sales_location, LOCATION_MAP)
+      && !bookSpellingOrOwn(lineLocByDoc.get(r.doc_no) ?? null, LOCATION_MAP));
+    const liveLineRows = await pg`
+      SELECT s.doc_no, count(i.id)::int AS n
+        FROM scm.mfg_sales_orders s
+        LEFT JOIN scm.mfg_sales_order_items i
+          ON i.doc_no = s.doc_no ${soItemCols.has("cancelled") ? pg`AND i.cancelled = false` : pg``}
+       WHERE s.company_id = ${COMPANY_ID} AND s.linked_ac_docno IS NULL
+       GROUP BY s.doc_no`;
+    const liveLines = new Map(liveLineRows.map((r) => [r.doc_no, r.n]));
+    const noLines = stuck.filter((r) => !liveLines.get(r.doc_no));
     notice(
-      `  of the ${a.nulledValues.size} distinct nulled locations, ` +
-        `${a.nulledValues.size - notInBook.length} are already locations in the account book. ` +
-        `Not in the book: ${notInBook.join(", ") || "none"}`,
+      `  of those ${stuck.length}: ${noLines.length} have NO live line at all (MissingSalesLocationError ` +
+        `— nothing to sell, so nothing to take a warehouse from), and ${stuck.length - noLines.length} ` +
+        `have lines that carry no warehouse_id (MissingLocationError, which already refused them ` +
+        `before this change). Both are named skipped rows; the remedy for the second is to set the ` +
+        `warehouse on the line or the sales location on the order.`,
     );
   }
 
   // ── 3. VENUE ──────────────────────────────────────────────────────────────
+  /* Venue is deliberately free text — "every roadshow hall is a one-off" (mig
+     0229) — and a 7-entry map was never going to cover it. What matters now is
+     the OPENS line: a pass-through appends an option to the book's own VENUE
+     dropdown, which is reversible from AutoCount's UDF maintenance screen. */
   if (soCols.has("venue")) {
-    const a = alignment(unlinked, "venue", soCols.has("venue_id") ? "venue_id" : null, VENUE_MAP, { fatal: false });
-    say(
-      "VENUE (composer reads mfg_sales_orders.venue -> UDF VENUE)",
-      a,
-      "udf() drops a null, so the VENUE UDF is simply never written and nothing reports it.",
-    );
-    const already = [...a.nulledValues.entries()].filter(([v]) => bookVenues.has(v.toUpperCase()));
-    notice(
-      `  ${already.reduce((s, [, n]) => s + n, 0)} of those ${a.nulled} carry a venue that is ALREADY ` +
-        `an option in the book's own VENUE list (${bookVenues.size} options) — a pass-through would ` +
-        `have written them with nothing to open.`,
+    verdict(
+      "VENUE (bookSpellingOrOwn -> UDF VENUE)",
+      unlinked,
+      (r) => bookSpellingOrOwn(r.venue, VENUE_MAP),
+      {
+        fatal: false,
+        book: bookVenues,
+        opensWhat: `VENUE option(s), against the book's ${bookVenues.size}`,
+        howItFails: "udf() drops a null, so the VENUE UDF is simply never written.",
+      },
     );
   }
 
   // ── 4. BRANDING ───────────────────────────────────────────────────────────
+  /* The HEADER column is NULL on every ERP-created order — no client sends it,
+     which is why the detail page derives `first_item_branding` from the LINES.
+     `soBranding` reads the header, then the first live line's own text. */
   if (soCols.has("branding")) {
-    const a = alignment(unlinked, "branding", null, BRANDING_MAP, { fatal: false });
-    say(
-      "BRANDING (composer reads mfg_sales_orders.branding -> UDF BRANDING)",
-      a,
-      "udf() drops a null, so the BRANDING UDF is never written.",
+    verdict(
+      "BRANDING (soBranding: header, else the lines -> UDF BRANDING)",
+      unlinked,
+      /* bookSpelling, not bookSpellingOrOwn: BRANDING_MAP is an allow-list,
+         because the ERP column behind it holds categories. The MAY OPEN line
+         below is what proved that and is kept so it stays proved. */
+      (r) => bookSpelling(
+        blank(r.branding) ? lineBrandByDoc.get(r.doc_no) ?? null : r.branding,
+        BRANDING_MAP,
+      ),
+      {
+        fatal: false,
+        /* No OPENS line: nothing unmapped is sent, so nothing is opened. What
+           a pass-through WOULD have opened is printed below instead, because
+           that list is the evidence the allow-list decision rests on. */
+        book: null,
+        howItFails: "udf() drops a null, so the BRANDING UDF is never written.",
+      },
     );
-    /* The HEADER column is not where an ERP-created order keeps its branding —
-       no client sends it, and the detail page derives `first_item_branding` from
-       the LINES for exactly that reason (mfg-sales-orders.ts, deriveDisplayBrandingByDoc).
-       So the same question the agent bug asked: does the ERP know it elsewhere? */
-    const lineBrand = await pg`
-      SELECT s.doc_no, min(i.branding) AS branding
-        FROM scm.mfg_sales_order_items i
-        JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
-       WHERE s.linked_ac_docno IS NULL AND i.branding IS NOT NULL AND i.branding <> ''
-       GROUP BY s.doc_no`;
-    const byDoc = new Map(lineBrand.map((r) => [r.doc_no, r.branding]));
-    let rescued = 0;
-    for (const r of unlinked) {
-      if (!blank(r.branding)) continue;
-      const b = byDoc.get(r.doc_no);
-      if (b && mapOrPassthrough(b, BRANDING_MAP)) rescued += 1;
-    }
+    const headerBlank = unlinked.filter((r) => blank(r.branding)).length;
+    const rescued = unlinked.filter(
+      (r) => blank(r.branding) && !blank(lineBrandByDoc.get(r.doc_no)),
+    ).length;
     notice(
-      `  ${rescued} of the header-blank orders DO carry a mappable branding on their LINES ` +
-        `(mfg_sales_order_items.branding, snapshotted from the catalog) — the value the detail page ` +
-        `shows as first_item_branding and the composer never looks at.`,
+      `  ${headerBlank} of ${unlinked.length} carry NO header branding at all; ${rescued} of those ` +
+        `are answered by the LINES (mfg_sales_order_items.branding, snapshotted from the catalog) — ` +
+        `the value the detail page shows as first_item_branding.`,
+    );
+    /* WHY BRANDING_MAP IS AN ALLOW-LIST AND THE OTHER THREE ARE NOT.
+       Printed every run so the decision stays reviewable and cannot rot into a
+       habit: these are the values a pass-through would OPEN as brands in the
+       licensed book. On 2026-08-14 four of the six were CATEGORIES and one was
+       a company name. If this list ever becomes all-brands, the decision is
+       worth revisiting; while it is not, the allow-list is what stops
+       `Bedframe` becoming a brand in AutoCount forever. */
+    const wouldOpen = new Map();
+    for (const r of unlinked) {
+      const raw = blank(r.branding) ? lineBrandByDoc.get(r.doc_no) ?? null : r.branding;
+      if (blank(raw) || bookSpelling(raw, BRANDING_MAP)) continue;
+      const k = String(raw).trim();
+      wouldOpen.set(k, (wouldOpen.get(k) ?? 0) + 1);
+    }
+    const wouldOpenRows = [...wouldOpen.values()].reduce((a, b) => a + b, 0);
+    notice(
+      `  NOT PASSED THROUGH — a pass-through would open ${wouldOpen.size} BRANDING option(s) in the ` +
+        `licensed book on ${wouldOpenRows} order(s), and these are them: ` +
+        `${top(wouldOpen, 12) || "none"}. BRANDING_MAP is deliberately an ALLOW-LIST for this reason ` +
+        `(see its comment); location and venue do pass through, because their columns are vocabularies ` +
+        `of the right kind and this one is not.`,
     );
   }
 
@@ -365,15 +459,25 @@ try {
   }
 
   // ── 6. CUSTOMER PO / REF / PROCESSING DATE ────────────────────────────────
-  /* Same shape as the agent: the composer reads a column PR #140 stopped
-     writing, and the value the operator typed sits in customer_so_no. */
+  /* `soCustomerRef`: po_doc_no, then customer_po, then customer_so_no. PR #140
+     dropped the Customer PO card, so the first two are written by nothing and
+     the operator's reference lands in the third — which SO_HEADER_COLS did not
+     even select. Free text, no master, so no OPENS line. */
   if (soCols.has("po_doc_no")) {
-    const a = alignment(unlinked, "po_doc_no", soCols.has("customer_so_no") ? "customer_so_no" : null, null, { fatal: false });
-    say("CUSTOMER PO (composer reads po_doc_no -> UDF ToPONo)", a, "a blank UDF is dropped, so ToPONo simply never reaches the book.");
+    verdict(
+      "CUSTOMER PO (soCustomerRef: po_doc_no, customer_po, customer_so_no -> UDF ToPONo)",
+      unlinked,
+      (r) => soCustomerRef(r),
+      { fatal: false, book: null, howItFails: "a blank UDF is dropped, so ToPONo never reaches the book." },
+    );
   }
   if (soCols.has("ref")) {
-    const a = alignment(unlinked, "ref", soCols.has("customer_so_no") ? "customer_so_no" : null, null, { fatal: false });
-    say("REF (composer reads mfg_sales_orders.ref)", a, 'on a CREATE a blank Ref is harmless; on an EDIT soEditHeader sends Ref: null unconditionally and Str() turns it into "" — it BLANKS whatever the account book holds.');
+    const n = unlinked.filter((r) => blank(r.ref)).length;
+    notice(
+      `REF (mfg_sales_orders.ref): blank on ${n} of ${unlinked.length}. On a CREATE that is harmless. ` +
+        `On an EDIT soEditHeader now OMITS the key when the column is empty, so the account book keeps ` +
+        `its own reference; it used to send Ref: null, which Str() turns into "".`,
+    );
   }
   if (soCols.has("processing_date")) {
     const n = unlinked.filter((r) => blank(r.processing_date)).length;
@@ -381,17 +485,23 @@ try {
   }
 
   // ── 6b. THE CUSTOMER'S ADDRESS ────────────────────────────────────────────
-  /* InvAddr3 / InvAddr4 are address3 / address4, which only the cutover import
-     ever wrote. An ERP-created order keeps the same facts in city / postcode /
-     customer_state, and SO_HEADER_COLS does not select those at all. */
+  /* `soInvoiceAddress` packs five ERP fields into AutoCount's four numbered
+     lines: address3 / address4 win where the cutover import wrote them, and an
+     ERP-created order falls back to postcode + city, then customer_state. */
   if (soCols.has("address3") && soCols.has("city")) {
-    const lost = unlinked.filter(
-      (r) => blank(r.address3) && blank(r.address4) && (!blank(r.city) || !blank(r.postcode) || !blank(r.customer_state)),
-    ).length;
+    const packed = unlinked.filter((r) => {
+      const a = soInvoiceAddress(r);
+      return blank(r.address3) && blank(r.address4) && (!blank(a.InvAddr3) || !blank(a.InvAddr4));
+    }).length;
+    const stillEmpty = unlinked.filter((r) => {
+      const a = soInvoiceAddress(r);
+      return blank(a.InvAddr3) && blank(a.InvAddr4);
+    }).length;
     notice(
-      `ADDRESS: ${lost} of ${unlinked.length} unlinked SO(s) have address3 AND address4 blank while ` +
-        `city / postcode / customer_state are populated — InvAddr3 and InvAddr4 go out empty and the ` +
-        `town, postcode and state never reach the AutoCount document at all.`,
+      `ADDRESS: ${packed} of ${unlinked.length} unlinked SO(s) have address3 AND address4 blank and ` +
+        `are now filled from city / postcode / customer_state — the town, postcode and state that used ` +
+        `to reach the AutoCount document as two empty lines. ${stillEmpty} still send both blank ` +
+        `(the ERP holds nothing for them either).`,
     );
   }
 
@@ -402,7 +512,8 @@ try {
       SELECT s.doc_no, count(*)::int AS n
         FROM scm.mfg_sales_order_items i
         JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no
-       WHERE i.warehouse_id IS NULL
+       WHERE s.company_id = ${COMPANY_ID}
+         AND i.warehouse_id IS NULL
          AND s.linked_ac_docno IS NULL ${cancelled}
        GROUP BY s.doc_no`;
     const byDoc = new Map(rows.map((r) => [r.doc_no, r.n]));
@@ -429,14 +540,16 @@ try {
 
   // ── 8. PURCHASE ORDERS ────────────────────────────────────────────────────
   const poHave = ["id", "po_number", "supplier_id", "linked_ac_docno", "notes"].filter((c) => poCols.has(c));
-  const pos = await pg.unsafe(`SELECT ${poHave.map((c) => `"${c}"`).join(", ")} FROM scm.purchase_orders`);
+  const pos = await pg.unsafe(`SELECT ${poHave.map((c) => `"${c}"`).join(", ")} FROM scm.purchase_orders WHERE company_id = $1`, [COMPANY_ID]);
   const poUnlinked = pos.filter((r) => blank(r.linked_ac_docno));
   notice(`${pos.length} purchase order(s); ${poUnlinked.length} carry no linked_ac_docno.`);
   notice(
-    `PO AGENT: readPoHeader sets agent: null for EVERY purchase order (scm.purchase_orders has no ` +
-      `such column), so all ${poUnlinked.length} would send Agent "" — the same shape as ` +
-      `FK_SO_SalesAgent, against FK_PO_PurchaseAgent. Unproven on the live book only because no PO ` +
-      `has been pushed yet.`,
+    `PO AGENT: scm.purchase_orders still has no agent column — readPoHeader now supplies the CONSTANT ` +
+      `"${AC_PURCHASE_AGENT}", which mastersOf opens as a PurchaseAgent, so all ${poUnlinked.length} ` +
+      `unlinked PO(s) name one. It used to send null, which reaches po.Agent as "" and fails ` +
+      `FK_PO_PurchaseAgent — the same shape as FK_SO_SalesAgent, and unproven on the live book only ` +
+      `because no PO has been pushed yet. Which purchase agent the book's reports group by is an ` +
+      `OWNER decision; the constant is declared once, in AC_PURCHASE_AGENT.`,
   );
   if (poCols.has("supplier_id")) {
     const sup = await pg`SELECT id, code FROM scm.suppliers`;
@@ -444,8 +557,9 @@ try {
     const noCred = poUnlinked.filter((r) => blank(r.supplier_id) || blank(code.get(String(r.supplier_id))));
     notice(
       `PO CREDITOR: ${noCred.length} of ${poUnlinked.length} unlinked PO(s) resolve to no ` +
-        `scm.suppliers.code — CreditorCode is applied unconditionally by CreatePo, so those would ` +
-        `fail FK_PO_Creditor.`,
+        `scm.suppliers.code. CreditorCode is applied DIRECTLY by CreatePo (not even through Set), so ` +
+        `those would fail FK_PO_Creditor — the composer now REFUSES them instead, as a skipped outbox ` +
+        `row naming the supplier, rather than losing the whole document to a 500.`,
     );
   }
   if (poItemCols.has("warehouse_id")) {
@@ -463,15 +577,22 @@ try {
 
   // ── 9. WAREHOUSE CODES THE BOOK DOES NOT HOLD ─────────────────────────────
   /* A line location is passed through RAW when LOCATION_MAP does not know it,
-     and /ensure-masters CREATES a stock location it cannot find — despite the
-     comment above EnsureMasters saying it never creates one. So an ERP warehouse
-     code the account book has never held opens a new location in a licensed
-     book, silently, on the first document that names it. */
-  const wh = await pg`SELECT code, name FROM scm.warehouses`;
+     and /ensure-masters CREATES a stock location it cannot find. So an ERP
+     warehouse code the account book has never held opens a new location in a
+     licensed book on the first document that names it.
+     THIS IS THE LINE PATH AND IT IS UNCHANGED BY THE 2026-08-14 FIXES — it has
+     behaved this way since the write-back went live, and the header's
+     SalesLocation now falls back to the SAME code the line already carries, so
+     nothing here got wider. The comment above EnsureMasters used to deny that
+     locations are created at all; that text was corrected on 2026-08-14 rather
+     than the behaviour, because the owner asked for "开everything" on
+     2026-08-11 and the module guide records it. This number is what that
+     decision costs, printed every run so it stays visible. */
+  const wh = await pg`SELECT code, name FROM scm.warehouses WHERE company_id = ${COMPANY_ID}`;
   const unknown = wh
     .map((w) => (w.code ?? w.name ?? "").trim())
     .filter(Boolean)
-    .filter((c) => !mapOrPassthrough(c, LOCATION_MAP) && !bookLocations.has(c.toUpperCase()));
+    .filter((c) => !bookSpelling(c, LOCATION_MAP) && !bookLocations.has(c.toUpperCase()));
   notice(
     `WAREHOUSE CODES: ${unknown.length} of ${wh.length} scm.warehouses codes are neither in ` +
       `LOCATION_MAP nor in the book's 2026-08-06 location list. A line carrying one is sent RAW and ` +

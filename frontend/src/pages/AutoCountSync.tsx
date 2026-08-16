@@ -1,0 +1,529 @@
+// ---------------------------------------------------------------------------
+// AutoCount Sync — what the ERP has told the account book, and what came back.
+//
+// The owner asked for this in these words: "如果它是在排队、skip、planning 还是
+// fail 等等，fail 的话是什么原因？everything 都要呈现出来，要不然我就不知道."
+// Until it existed the only reader of scm.autocount_outbox was a GitHub Action
+// whose output is a workflow log, which he cannot open.
+//
+// SO THE ORDER OF THE PAGE IS THE ORDER OF HIS QUESTION: is anything stuck (the
+// verdict), then which documents (the two filter strips and the list), then why
+// (the reason, on the row itself).
+//
+// SIMPLIFIED 2026-08-16, the same day it was rebuilt, because he read the
+// rebuild at scale: "这一个东西下面的地方太复杂了，你尽量简单化一点。一个 sales
+// order 那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？" Four changes,
+// and the reason each one is here rather than being a preference:
+//   - the page OPENS on what needs attention, not on everything. The sales order
+//     list alone is 2,726 documents; "what is stuck" is the question somebody
+//     came here with, and Everything is one chip away.
+//   - a row is ONE LINE. The headline of the reason stays on it — it is never
+//     hidden, which was his earlier complaint — and the sentence, the To fix
+//     line and the quoted machine reply go behind opening that row.
+//   - a document already in the account book has nothing to open at all. Those
+//     are the majority and they are now quiet.
+//   - the strips are pinned and the list is WINDOWED (MobileVirtualList, the
+//     component eight mobile screens and DataTable already use), so a thousand
+//     rows are a thousand rows of scrolling, not a thousand rows of DOM.
+//
+// Presentation only. The state, the reason kind and the remedy are decided by
+// the server (backend/src/scm/lib/autocount-outbox-status.ts); the words, and
+// how much of them is on screen before a click, are lib/autocountOutbox. The
+// mobile twin is mobile/MobileAutoCountSync.tsx and renders the SAME hook, the
+// SAME words and the SAME opener.
+//
+// SEND AGAIN, per row, since #2321 landed the backend action. Offered only
+// where the server's `can_requeue` says an answer other than a flat no is
+// possible, and the answer — accepted, refused, or never answered — is printed
+// on the row that was pressed. `AC_REQUEUE_MEANING`'s sentence is shown
+// verbatim: it comes from the module that produced the outcome, so a new
+// outcome can never reach the owner as a bare hyphenated key.
+// ---------------------------------------------------------------------------
+import { useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ChevronRight, RefreshCw } from "lucide-react";
+
+import { PageHeader } from "../components/Layout";
+import { Button } from "../components/Button";
+import { FilterPills } from "../components/FilterPills";
+import { ListSkeleton } from "../components/Skeleton";
+import { MobileVirtualList } from "../mobile/MobileVirtualList";
+import { cn } from "../lib/utils";
+import {
+  AC_DEFAULT_STATE,
+  AC_DOC_TYPES,
+  AC_FILTER_STATES,
+  AC_FILTER_STATE_LABEL,
+  AC_NOT_ASKED_NOTE,
+  AC_REPLY_LABEL,
+  AC_REQUEUED_NOTE,
+  AC_SEND_AGAIN_BUSY_LABEL,
+  AC_SEND_AGAIN_LABEL,
+  AC_STATE_PLAIN_MEANING,
+  acAge,
+  acDocTypePlural,
+  acDocTypeCounts,
+  acEmptyLine,
+  acHeadline,
+  acListTitle,
+  acReplySource,
+  acRowDetail,
+  acRowStandsAt,
+  acRowsOfType,
+  acStateCount,
+  acStateLabel,
+  acStateTone,
+  acWritebackLine,
+  useAcExpandedRows,
+  useAcRequeue,
+  useAutoCountOutbox,
+  type AcDocType,
+  type AcFilterState,
+  type AcOutboxRow,
+  type AcRequeueNote,
+  type AcTone,
+} from "../lib/autocountOutbox";
+
+const TONE_BANNER: Record<AcTone, string> = {
+  good: "border-synced/40 bg-synced/5 text-synced",
+  bad: "border-err/40 bg-err/5 text-err",
+  wait: "border-amber-500/40 bg-amber-500/5 text-warning-text",
+  muted: "border-border bg-surface text-ink-muted",
+};
+
+const TONE_BADGE: Record<AcTone, string> = {
+  good: "border-synced/40 bg-synced/10 text-synced",
+  bad: "border-err/40 bg-err/10 text-err",
+  wait: "border-amber-500/40 bg-amber-500/10 text-warning-text",
+  muted: "border-border bg-canvas text-ink-muted",
+};
+
+/** The rail down the left edge of a row — the state, readable at a glance. */
+const TONE_RAIL: Record<AcTone, string> = {
+  good: "border-l-synced",
+  bad: "border-l-err",
+  wait: "border-l-amber-500",
+  muted: "border-l-border",
+};
+
+const TONE_WHY: Record<AcTone, string> = {
+  good: "border-synced/25 bg-synced/5",
+  bad: "border-err/25 bg-err/5",
+  wait: "border-amber-500/25 bg-amber-500/5",
+  muted: "border-border bg-canvas",
+};
+
+const TONE_TEXT: Record<AcTone, string> = {
+  good: "text-synced",
+  bad: "text-err",
+  wait: "text-warning-text",
+  muted: "text-ink-muted",
+};
+
+function StateBadge({ state }: { state: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+        TONE_BADGE[acStateTone(state)],
+      )}
+    >
+      {acStateLabel(state)}
+    </span>
+  );
+}
+
+/**
+ * WHAT A MACHINE SAID, quoted.
+ *
+ * Separated from the plain-language reason above it on purpose. That is the
+ * page speaking to the reader; this is evidence, and it is labelled with WHO
+ * produced it — "AutoCount replied" and "AutoCount was not asked" are different
+ * facts that change what the reader should go and do, and until the rebuild the
+ * page could not tell them apart at all. Behind the opener since the rows had
+ * to get short, never flattened into one label.
+ */
+function WhatWasSaid({ row }: { row: AcOutboxRow }) {
+  const source = acReplySource(row.state, row.reason);
+  const label = AC_REPLY_LABEL[source];
+
+  return (
+    <div className="mt-2 border-t border-dashed border-border pt-2 text-[12px]">
+      <span className="font-semibold uppercase tracking-wide text-ink-muted">{label}</span>
+      {source === "erp" && <span className="ml-2 text-ink-muted">{AC_NOT_ASKED_NOTE}</span>}
+      {row.reason ? (
+        <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
+          {row.reason}
+        </p>
+      ) : (
+        <span className="ml-2 italic text-ink-muted">Nothing came back with it.</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ONE DOCUMENT, ONE LINE.
+ *
+ * A row already in the account book is that line and nothing else. A row with a
+ * problem adds a second line — the plain-language headline, which is never
+ * hidden — and that line is the button that opens the rest.
+ */
+function OutboxRowCard(
+  { row, maxAttempts, sending, note, open, onToggle, onSendAgain }: {
+    row: AcOutboxRow;
+    maxAttempts: number;
+    sending: boolean;
+    note: AcRequeueNote | undefined;
+    open: boolean;
+    onToggle: () => void;
+    onSendAgain: () => void;
+  },
+) {
+  const tone = acStateTone(row.state);
+  /* A re-sent document's old refusal is no longer true, and "To fix: change it
+     in AutoCount" on a document that has just gone back into the queue is a
+     false instruction. Off the row the moment the server accepts it, not on the
+     re-read a round trip later. */
+  const detail = acRowDetail(row, note?.clearsReason === true);
+
+  return (
+    <div
+      data-ac-row=""
+      className={cn(
+        "overflow-hidden rounded-md border border-l-[3px] bg-surface",
+        row.needs_attention ? "border-err/40" : "border-border",
+        TONE_RAIL[tone],
+      )}
+    >
+      <div className="flex items-center gap-x-2.5 px-2.5 py-1.5">
+        <StateBadge state={row.state} />
+        <span className="shrink-0 font-mono text-[13px] font-bold tracking-tight text-ink">
+          {row.doc_no}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-right text-[11.5px] text-ink-muted">
+          {acRowStandsAt(row, maxAttempts)}
+        </span>
+        {/* Offered only where the SERVER says a re-send can mean anything
+            (`can_requeue`). Everywhere else there is no button rather than a
+            button that always answers no. */}
+        {row.can_requeue && (
+          /* `!h-7 !px-2 !text-[11.5px]`, with the important prefix, because
+             Button hardcodes h-9/px-4/text-[13px] and `cn` is a plain join, not
+             a Tailwind merge — a bare `h-7` loses to `h-9` on stylesheet order
+             and the row silently stays 36 px tall. Measured in perf-lab at
+             1440x900 on 2026-08-16: the row goes 77.8 px -> 69.8 px. */
+          <Button
+            variant="secondary"
+            className="!h-7 shrink-0 !px-2 !text-[11.5px]"
+            disabled={sending}
+            onClick={onSendAgain}
+          >
+            {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
+          </Button>
+        )}
+      </div>
+
+      {/* THE REASON, ONE LINE, ALWAYS VISIBLE — and it is the opener. */}
+      {detail.line !== null && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className={cn(
+            "flex w-full items-center gap-1.5 border-t px-2.5 py-1 text-left text-[12.5px] font-semibold",
+            TONE_WHY[tone],
+            TONE_TEXT[tone],
+          )}
+        >
+          <ChevronRight
+            size={13}
+            className={cn("shrink-0 transition-transform", open && "rotate-90")}
+          />
+          <span className="min-w-0 flex-1 truncate">{detail.line}</span>
+        </button>
+      )}
+
+      {open && detail.expandable && (
+        <div className={cn("border-t px-2.5 py-2", TONE_WHY[tone])}>
+          {detail.copy && (
+            <>
+              <p className="max-w-[84ch] text-[13px] text-ink-muted">{detail.copy.explain}</p>
+              <p className="mt-1.5 max-w-[84ch] text-[13px] text-ink">
+                <span
+                  className={cn(
+                    "mr-2 text-[11px] font-bold uppercase tracking-wide",
+                    TONE_TEXT[tone],
+                  )}
+                >
+                  To fix
+                </span>
+                {detail.copy.toFix}
+              </p>
+            </>
+          )}
+          {detail.showRequeuedNote && (
+            <p className="max-w-[84ch] text-[13px] text-ink-muted">{AC_REQUEUED_NOTE}</p>
+          )}
+          {detail.showSaid && <WhatWasSaid row={row} />}
+        </div>
+      )}
+
+      {/* The answer to Send again lands HERE, on the row that was pressed —
+          accepted, refused or never answered at all. A refusal is the most
+          useful of the three and is the one a toast would lose. Never behind
+          the opener: nobody presses a button and then goes looking. */}
+      {note && (
+        <div className={cn("border-t px-2.5 py-2 text-[12.5px]", TONE_WHY[note.tone])}>
+          <span className={cn("font-semibold", TONE_TEXT[note.tone])}>{note.text}</span>
+          {note.todo && (
+            <p className="mt-1 max-w-[84ch] text-ink">
+              <span
+                className={cn(
+                  "mr-2 text-[11px] font-bold uppercase tracking-wide",
+                  TONE_TEXT[note.tone],
+                )}
+              >
+                To do
+              </span>
+              {note.todo}
+            </p>
+          )}
+          {note.quote && (
+            <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
+              {note.quote}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AutoCountSync() {
+  const [params, setParams] = useSearchParams();
+
+  /* URL IS STATE (CLAUDE.md). An unknown ?state= falls back to the default
+     rather than being passed through — the server refuses it with a 400, and a
+     hand-edited URL should not turn this page into an error message. */
+  const rawState = params.get("state") ?? AC_DEFAULT_STATE;
+  const state: AcFilterState = (AC_FILTER_STATES as readonly string[]).includes(rawState)
+    ? (rawState as AcFilterState)
+    : AC_DEFAULT_STATE;
+  const rawDocType = params.get("docType") ?? "";
+  const docType: AcDocType | "" = (AC_DOC_TYPES as readonly string[]).includes(rawDocType)
+    ? (rawDocType as AcDocType)
+    : "";
+  const docNo = params.get("docNo") ?? "";
+
+  /* The type is NOT sent to the server — see AcOutboxFilters. A server already
+     narrowed to one type cannot answer "how many of each type", which is the
+     whole reason the second strip exists. */
+  const filters = useMemo(() => ({ state, docNo }), [state, docNo]);
+  const q = useAutoCountOutbox(filters);
+  const d = q.data;
+
+  const setFilter = (key: "state" | "docType" | "docNo", value: string) => {
+    const next = new URLSearchParams(params);
+    /* The DEFAULT is the absent one, so the tidy URL is the one the page opens
+       on. Choosing Everything is a decision and stays in the URL as `all`. */
+    if (!value || (key === "state" && value === AC_DEFAULT_STATE)) next.delete(key);
+    else next.set(key, value);
+    setParams(next, { replace: true });
+  };
+
+  /* An accepted re-send changes the queue, so the page re-reads it rather than
+     patching the row it already has — the new row is a different row. */
+  const reload = q.reload;
+  const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
+  const expanded = useAcExpandedRows();
+
+  const headline = acHeadline(d);
+  const maxAttempts = d?.meta.max_attempts ?? 6;
+  const loaded = d?.rows ?? [];
+  const typeCounts = acDocTypeCounts(loaded);
+  const rows = acRowsOfType(loaded, docType);
+
+  /* The state counts are the SERVER's, exact and whole-company. The type counts
+     are of the rows actually loaded — a different kind of number, and the only
+     one available, since the endpoint does not group by type. `truncated` is
+     what tells the reader the second kind is a page and not a population. */
+  const statePills = AC_FILTER_STATES.map((s) => ({
+    value: s,
+    label: AC_FILTER_STATE_LABEL[s],
+    count: acStateCount(d ?? null, s),
+  }));
+
+  const typePills = [
+    { value: "all" as const, label: "Every type", count: typeCounts.all },
+    ...AC_DOC_TYPES.map((t) => ({ value: t, label: acDocTypePlural(t), count: typeCounts[t] })),
+  ];
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        eyebrow="System · AutoCount"
+        title="AutoCount Sync"
+        description="Every document this company has sent to AutoCount, whether it arrived, and — when it did not — what happened and what to do about it."
+        actions={
+          <Button
+            variant="secondary"
+            icon={<RefreshCw size={14} className={q.fetching ? "animate-spin" : undefined} />}
+            onClick={() => q.reload()}
+          >
+            Refresh
+          </Button>
+        }
+      />
+
+      {/* THE ANSWER FIRST. */}
+      <div className={cn("rounded-lg border p-3 text-[13px] font-semibold", TONE_BANNER[headline.tone])}>
+        {headline.text}
+      </div>
+
+      {/* A failure that reaches nobody is worse than a crash — this page exists
+          because a state went unseen, so its own load error is stated, not
+          swallowed into an empty table. */}
+      {q.error && (
+        <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
+          The queue could not be read, so nothing below is the current picture: {q.error}
+        </div>
+      )}
+
+      {!d && q.loading ? (
+        <ListSkeleton rows={4} />
+      ) : (
+        d && (
+          <>
+            {/* The switch is not a detail: it decides what an empty queue MEANS.
+                Above the pinned strips, because it is read once on arrival and
+                pinning it would cost list rows on every screen forever. */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-ink-muted">
+              <span className="font-semibold text-ink">{acWritebackLine(d)}</span>
+              <span>Sent every five minutes</span>
+              <span>
+                {d.oldest_pending
+                  ? `Oldest still waiting: ${d.oldest_pending.doc_no}, ${acAge(d.oldest_pending.created_at)}`
+                  : "Nothing waiting"}
+              </span>
+            </div>
+
+            {/* PINNED, under the page header, whose own height it reads out of
+                --page-header-offset rather than guessing at a constant (the
+                header publishes it for exactly this). A filter strip you have
+                to scroll back up to reach is a filter strip nobody re-uses, and
+                the whole point of a windowed thousand-row list is that you are
+                a long way down it.
+
+                z-[5] keeps this BELOW the page header (z-10, lg:z-20) — the
+                tie that put a page-local strip on top of frozen chrome is
+                written up in MfgSalesOrdersListV2. */}
+            <div
+              className="sticky z-[5] -mx-3 space-y-2 border-b border-border bg-bg px-3 pb-2 pt-1 sm:-mx-4 sm:px-4"
+              style={{ top: "var(--page-header-offset, 7rem)" }}
+            >
+              {/* Both strips are <FilterPills>, the same component the Sales
+                  Order list uses for ALL / DRAFT / CONFIRMED. */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="w-[74px] shrink-0 text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
+                  Status
+                </span>
+                <FilterPills options={statePills} value={state} onChange={(v) => setFilter("state", v)} />
+                <input
+                  className="ml-auto w-48 rounded-md border border-border bg-canvas px-2 py-1 text-[12px] text-ink"
+                  placeholder="Find a document number"
+                  aria-label="Find a document number"
+                  value={docNo}
+                  onChange={(e) => setFilter("docNo", e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="w-[74px] shrink-0 text-[11px] font-semibold uppercase tracking-brand text-ink-muted">
+                  Document
+                </span>
+                <FilterPills
+                  options={typePills}
+                  value={docType === "" ? "all" : docType}
+                  onChange={(v) => setFilter("docType", v === "all" ? "" : v)}
+                />
+                <span className="ml-auto text-[12px] text-ink-muted">
+                  <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
+                  <span className="mx-2 opacity-50">|</span>
+                  <span className="tabular-nums">
+                    {q.fetching
+                      ? "Loading…"
+                      : `${rows.length} of ${d.counts.total} document${d.counts.total === 1 ? "" : "s"}`}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {d.truncated && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[12px] text-warning-text">
+                Only the most recent documents are shown. The status counts above still cover
+                every one; the document-type counts cover what is on screen. Narrow the search
+                to see the rest.
+              </div>
+            )}
+
+            {rows.length === 0 ? (
+              <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
+                {acEmptyLine(d, state)}
+              </div>
+            ) : (
+              /* WINDOWED. The same component eight mobile screens and DataTable
+                 already use, rather than a second mechanism: below its own
+                 threshold it renders every row exactly as a plain map did, and
+                 above it only the visible slice is in the DOM. */
+              <MobileVirtualList
+                items={rows}
+                getKey={(r) => r.id}
+                gap={6}
+                estimateHeight={52}
+                ariaLabel={`${rows.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
+                renderItem={(r) => (
+                  <OutboxRowCard
+                    row={r}
+                    maxAttempts={maxAttempts}
+                    sending={requeue.sendingId === r.id}
+                    note={requeue.notes[r.id]}
+                    open={expanded.isOpen(r)}
+                    onToggle={() => expanded.toggle(r)}
+                    onSendAgain={() => void requeue.sendAgain(r.id)}
+                  />
+                )}
+              />
+            )}
+
+            {/* The five words on the badges, explained once. Taken from the
+                shared layer rather than from meta.state_meaning: the server's
+                sentences were written for a workflow log and talk about crons
+                and attempt caps. */}
+            <details className="rounded-lg border border-border bg-surface p-3 text-[12px]">
+              <summary className="cursor-pointer font-semibold text-ink">
+                What each of these words means
+              </summary>
+              <dl className="mt-2 space-y-1.5">
+                {Object.entries(AC_STATE_PLAIN_MEANING).map(([k, v]) => (
+                  <div key={k} className="flex flex-wrap gap-2">
+                    <dt className="shrink-0">
+                      <StateBadge state={k} />
+                    </dt>
+                    <dd className="min-w-[16rem] flex-1 text-ink-muted">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="mt-3 text-ink-muted">
+                A waiting document is sent every five minutes and gives up after {maxAttempts}{" "}
+                tries, so about half an hour of the AutoCount computer being unreachable turns a
+                waiting document into one that was not accepted.
+              </p>
+            </details>
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
+export default AutoCountSync;

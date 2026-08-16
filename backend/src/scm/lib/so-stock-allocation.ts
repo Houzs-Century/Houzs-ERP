@@ -699,11 +699,19 @@ export async function recomputeSoStockAllocation(
       /* Re-evaluate readiness using the live target status (lines that weren't
          in needs are already shipped → treat as READY). B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
-         READY — accessories pending don't block ship ("READY (PARTIAL)").
+         READY — accessories pending don't block ship. (This used to say the
+         label for that state was "READY (PARTIAL)". It is not, since
+         2026-08-16: the remark now names what is SHORT rather than claiming a
+         readiness the order does not have. The GATE is unchanged.)
          Auto-regress only when a MAIN line goes back to PENDING. */
+      /* `category` from the SAME catalog pull the needs walk uses (serviceCodes)
+         — isServiceLine's strongest signal, and the pair to the skip at the top
+         of that walk: a SERVICE line skipped there but classified as a short
+         accessory here would wedge the header exactly as before. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
+        category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
         stock_status: targetStatusById.get(l.id) ?? l.stock_status,
       }));
       const r = summariseReadiness(readinessLines);
@@ -748,7 +756,13 @@ export async function recomputeSoStockAllocation(
          and it is re-derived from scratch on every pass (this function is
          idempotent). So record the doc number, keep going, and let the caller
          re-queue. Progress is made on every other order in the batch. */
-      if (r.isMainReady && (cur === 'CONFIRMED' || cur === 'IN_PRODUCTION')) {
+      /* isShipReady, NOT bare isMainReady: the latter is vacuously true for an
+         SO carrying no stock-bearing lines at all, which is exactly how 16
+         emptied-out 2990 test SOs auto-advanced to READY_TO_SHIP on
+         2026-08-13/14. An empty document is never ship-able. See so-readiness.
+         The regress arm inherits the same gate, so those husks fall back to
+         CONFIRMED on the next sweep without a data fix. */
+      if (r.isShipReady && (cur === 'CONFIRMED' || cur === 'IN_PRODUCTION')) {
         const advanced = await advanceSoGeneration(sb, docNo, { status: 'READY_TO_SHIP' }, { status: cur });
         if (advanced.applied) {
           ordersAdvanced += 1;
@@ -756,11 +770,13 @@ export async function recomputeSoStockAllocation(
         } else {
           deferredDocNos.push(`${docNo}:${advanced.reason}`);
         }
-      } else if (!r.isMainReady && cur === 'READY_TO_SHIP') {
+      } else if (!r.isShipReady && cur === 'READY_TO_SHIP') {
         const regressed = await advanceSoGeneration(sb, docNo, { status: 'CONFIRMED' }, { status: cur });
         if (regressed.applied) {
           ordersRegressed += 1;
-          await auditAutoStatus(cur, 'CONFIRMED', 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
+          await auditAutoStatus(cur, 'CONFIRMED', r.mainCount + r.accCount === 0
+            ? 'Auto-regressed: the order has no stock-bearing lines — not ship-able'
+            : 'Auto-regressed: a main product line is no longer READY (stock re-allocated)');
         } else {
           deferredDocNos.push(`${docNo}:${regressed.reason}`);
         }

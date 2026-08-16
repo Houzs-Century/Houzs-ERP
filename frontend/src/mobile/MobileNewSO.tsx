@@ -30,15 +30,16 @@ import {
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import {
   useLocalities,
-  distinctStates,
-  citiesInState,
-  postcodesInCity,
   countryForState,
-  resolvePostcode,
-  resolveCityState,
-  allCities,
-  allPostcodes,
 } from "../vendor/scm/lib/localities-queries";
+import {
+  useAddressCascade,
+  pickState,
+  pickCity,
+  pickPostcode,
+  cityPlaceholder,
+  postcodePlaceholder,
+} from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
@@ -699,7 +700,12 @@ export function MobileNewSO({
      LATENT, not live: no `setScreen({t:"new-so"})` call site supplies
      `scanPrefill` (MobileApp.tsx declares it in the union and never passes it),
      and the live mobile scan path is createDraftFromPrefill, which sends
-     internalExpectedDd: null. Re-wire that handoff and this starts stamping
+     `processingDate: null` — this comment said `internalExpectedDd: null` until
+     2026-08-15, the pre-0286 spelling of a key this file no longer sends under
+     that name. The backend still ACCEPTS the legacy key (see
+     SO_HEADER_LEGACY_PAYLOAD_KEYS in shared/so-processing-date.ts), so the alias
+     is live; what was stale was naming it as the thing WE send.
+     Re-wire that handoff and this starts stamping
      factory dates off slip handwriting. Fixing it is a behaviour change, not a
      rename — see docs/modules/scan-to-so.md §2b. */
   const [procDate, setProcDate] = useState(scanPrefill?.slipDate ?? "");
@@ -1086,19 +1092,10 @@ export function MobileNewSO({
      the dataset is empty every list collapses to [] and the State field falls
      back to a free-text input. */
   const locRows = useMemo(() => locQ.data ?? [], [locQ.data]);
-  const stateOpts = useMemo(() => distinctStates(locRows), [locRows]);
-  const cityOpts = useMemo(() => (state ? citiesInState(locRows, state) : []), [locRows, state]);
-  const postcodeOpts = useMemo(
-    () => (state && city ? postcodesInCity(locRows, state, city) : []),
-    [locRows, state, city],
-  );
-  /* REVERSE resolve (desktop SalesOrderNew parity) — with NO state picked the
-     City / Postcode dropdowns offer the full cross-state pool so the operator can
-     pick one FIRST and let the State (→ Sales Location memo) resolve back from
-     it. With a state picked these fall through to the state-scoped lists above,
-     so the forward cascade is unchanged. */
-  const cityChoices     = useMemo(() => (state ? cityOpts : allCities(locRows)), [state, cityOpts, locRows]);
-  const postcodeChoices = useMemo(() => ((state && city) ? postcodeOpts : allPostcodes(locRows)), [state, city, postcodeOpts, locRows]);
+  /* Shared cascade (address-cascade.ts) — the same both-directions rules the
+     desktop forms run, so the two surfaces cannot drift apart again. */
+  const { states: stateOpts, cities: cityChoices, postcodes: postcodeChoices } =
+    useAddressCascade(locRows, state, city);
   const localitiesReady = stateOpts.length > 0; // real dataset present → use dropdowns
   const country = useMemo(
     () => (state ? countryForState(locRows, state) : null) ?? "Malaysia",
@@ -1195,37 +1192,20 @@ export function MobileNewSO({
     if (preferred) setCustType((prev) => prev || preferred);
   }, [isEdit, customerTypeOpts]);
 
-  /* When State changes, clear a now-invalid City / Postcode (the cascade only
-     offers cities/postcodes for the new state). Skipped while locked. */
-  const onStateChange = (next: string) => {
-    setState(next);
-    setCity("");
-    setPostcode("");
+  /* Three separate atoms, so each pick writes the whole triple back. The raw
+     setters are deliberate: routing a back-filled State through onStateChange
+     would clear the City/Postcode just picked, because that handler exists to
+     reset the cascade. The salesLocation memo follows the resolved State. */
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state);
+    setCity(next.city);
+    setPostcode(next.postcode);
   };
-  const onCityChange = (next: string) => {
-    setCity(next);
-    setPostcode("");
-    /* REVERSE — resolve State from the chosen City (raw setState, so it does NOT
-       clear the City just picked). Never clobbers an already-picked State unless
-       the city unambiguously names a different one. */
-    if (next) {
-      const st = resolveCityState(locRows, next);
-      if (st && st !== state) setState(st);
-    }
-  };
-  /* REVERSE — resolve State + City from an entered Postcode (Malaysian postcode →
-     one locality). Raw setters keep the just-entered Postcode intact (no effect
-     loop); the salesLocation memo follows the resolved State automatically. */
-  const onPostcodeChange = (next: string) => {
-    setPostcode(next);
-    if (next) {
-      const res = resolvePostcode(locRows, next);
-      if (res) {
-        if (res.state && res.state !== state) setState(res.state);
-        if (res.city && res.city !== city) setCity(res.city);
-      }
-    }
-  };
+  const onStateChange = (next: string) => applyTriple(pickState(next));
+  const onCityChange = (next: string) =>
+    applyTriple(pickCity(locRows, { state, city, postcode }, next));
+  const onPostcodeChange = (next: string) =>
+    applyTriple(pickPostcode(locRows, { state, city, postcode }, next));
 
   // ---- Totals ---------------------------------------------------------------
   const subtotal = useMemo(
@@ -2416,7 +2396,7 @@ export function MobileNewSO({
                           onChange={(e) => onCityChange(e.target.value)}
                         >
                           <option value="">
-                            {cityChoices.length === 0 ? "No cities seeded" : "Pick city"}
+                            {cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
                           </option>
                           {cityChoices.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
@@ -2429,7 +2409,7 @@ export function MobileNewSO({
                           onChange={(e) => onPostcodeChange(e.target.value)}
                         >
                           <option value="">
-                            {postcodeChoices.length === 0 ? "No postcodes seeded" : "Pick postcode"}
+                            {postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}
                           </option>
                           {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
                         </select>

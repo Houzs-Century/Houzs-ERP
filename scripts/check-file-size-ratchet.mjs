@@ -23,8 +23,7 @@ import {
   ceilingFor,
   verdict,
   lowerCeilings,
-  findRaisedCeilings,
-} from './lib/file-size-ratchet.mjs';
+  findRaisedCeilings, uncommittedSourcePaths } from './lib/file-size-ratchet.mjs';
 
 test('a new file over the cap fails; under the cap it needs no entry', () => {
   const v = verdict(
@@ -144,4 +143,46 @@ test('a touched file already over its ceiling passes if this change SHRANK it', 
   const grew = new Map([['a/big.ts', 3500]]);
   const chargedGrew = v.violations.filter((x) => touched.has(x.path) && x.lines > (grew.get(x.path) ?? -1));
   assert.equal(chargedGrew.length, 1, 'growing it further is charged from the first line');
+});
+
+/* ── uncommittedSourcePaths ────────────────────────────────────────────────
+   The gate reads the COMMITTED tree. Anything the working tree holds is
+   invisible to it, so the caller REFUSES rather than answering — see the
+   function's own header. These cases are the parse, which is the only part a
+   test can reach without a git repository. */
+
+test('a modified source file is reported', () => {
+  const z = ' M scripts/check-file-size.mjs\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.mjs']), ['scripts/check-file-size.mjs']);
+});
+
+test('STAGED counts too — the gate cannot see the index either', () => {
+  const z = 'M  a.mjs\0A  b.mjs\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.mjs']), ['a.mjs', 'b.mjs']);
+});
+
+test('a rename reports where the file LANDED, not where it was', () => {
+  // `R  old -> new`. Measuring the old path would look for a file that is gone.
+  const z = 'R  scripts/old.mjs -> scripts/new.mjs\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.mjs']), ['scripts/new.mjs']);
+});
+
+test('a non-source file is not reported — the gate does not measure it', () => {
+  const z = ' M README.md\0 M docs/CODEBASE-MAP.md\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.mjs', '.ts']), []);
+});
+
+test('a clean tree reports nothing, so the gate answers normally', () => {
+  assert.deepEqual(uncommittedSourcePaths('', ['.mjs']), []);
+  assert.deepEqual(uncommittedSourcePaths(undefined, ['.mjs']), []);
+});
+
+test('a path containing a space survives — porcelain -z does not quote it', () => {
+  const z = ' M src/my file.ts\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.ts']), ['src/my file.ts']);
+});
+
+test('the same path twice is reported once', () => {
+  const z = ' M a.ts\0 M a.ts\0';
+  assert.deepEqual(uncommittedSourcePaths(z, ['.ts']), ['a.ts']);
 });

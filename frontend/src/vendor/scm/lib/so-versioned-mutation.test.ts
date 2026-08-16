@@ -18,7 +18,16 @@ const queryClient = () => {
 };
 
 describe('standalone SO versioned mutation coordinator', () => {
-  beforeEach(() => mockedFetch.mockReset());
+  /* BRACES, not a concise arrow. `mockReset()` returns the mock, and vitest
+     calls a function returned from beforeEach as that test's TEARDOWN — so
+     `beforeEach(() => mockedFetch.mockReset())` makes vitest invoke authedFetch
+     once after every test in this file. It is harmless here only because every
+     test arms `...Once` implementations, which its own calls consume, so the
+     teardown call finds an empty mock and returns undefined. Arm a plain
+     `mockRejectedValue` and the teardown's rejection fails the test with an
+     error thrown from nowhere the test can see. Proven 2026-08-15 while writing
+     autoCountSync.test.tsx; see BUG-HISTORY. */
+  beforeEach(() => { mockedFetch.mockReset(); });
 
   test('reserves from the loaded version, sends the action under that lease, then releases', async () => {
     mockedFetch

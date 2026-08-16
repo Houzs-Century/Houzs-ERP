@@ -74,6 +74,34 @@ export const postcodesInCity = (rows: LocalityRow[], state: string, city: string
   for (const r of rows) if (r.state === state && r.city === city) s.add(r.postcode);
   return Array.from(s).sort();
 };
+
+/* Postcodes for a STATE with no city chosen yet. Without this the forms fell
+   back to the nationwide pool the moment City was blank, so picking a State
+   narrowed City but not Postcode — the top-down half of the cascade stopped one
+   step short. SupplierDetail's PostcodeSelect had already inlined this exact
+   dedup; it now calls here instead of keeping a private copy. */
+export const postcodesInState = (rows: LocalityRow[], state: string): string[] => {
+  const s = new Set<string>();
+  for (const r of rows) if (r.state === state) s.add(r.postcode);
+  return Array.from(s).sort();
+};
+
+/* Postcodes for a CITY whose state is not known — the case an AMBIGUOUS city
+   leaves behind (resolveCityState refuses to guess, so State stays blank). Still
+   narrows Postcode to the two-or-so states that share the name, instead of the
+   whole country. Case-insensitive, matching resolveCityState. */
+export const postcodesForCity = (rows: LocalityRow[], city: string): string[] => {
+  /* The `?? ''` mirrors resolveCityState byte for byte. Both normalise the SAME
+     operator input, and if they disagreed on what counts as empty then the
+     postcode list and the state resolved from that city would describe
+     different places. */
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- must match resolveCityState's normalisation exactly
+  const want = (city ?? '').trim().toLowerCase();
+  if (!want) return [];
+  const s = new Set<string>();
+  for (const r of rows) if (r.city.trim().toLowerCase() === want) s.add(r.postcode);
+  return Array.from(s).sort();
+};
 export const countryForState = (rows: LocalityRow[], state: string): string | null => {
   if (!state) return null;
   const hit = rows.find((r) => r.state === state);

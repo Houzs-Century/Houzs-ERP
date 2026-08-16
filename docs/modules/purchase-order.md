@@ -68,7 +68,22 @@ Rollout is staged (lenses/docs → DO-time live allocator → pooled caps →
 display demotion); until every stage lands, the transitional guard remains:
 rejecting an SO-revision follow-up auto-releases the PO to STOCK.
 
-
+> **The DO-time live allocator stage LANDS WITH PR-4 (this branch, owner-gated
+> — NOT on main until the flip merges).** From that merge,
+> `resolveShipCommitments` binds `committed_po_batch_no` from
+> `allocateExpectedBatches` (`backend/src/scm/lib/do-live-allocator.ts`) —
+> pooled open-PO supply minus outstanding commitments, owner tiebreaks
+> encoded (supply: earliest effective ETA nulls-last then smaller PO number;
+> demand: delivery date then smaller doc number; sofa sets picked whole; ties
+> auto-pick + operator confirms in the existing short-stock dialog). What
+> remains of the stored `so_item_id` link on the SHIP path after the flip:
+> **provenance display and evidence only** — the BIND_SHADOW divergence rows,
+> the DO detail's bound-PO Source-PO fallback (`resolveExpectedBatchBySoItem`
+> at the detail read), the legacy pre-0230 drop-ship batch re-resolution in
+> `resolveDoSofaBatchMap` (anchored history, not a new binding), and — flagged
+> as an open review item on the flip PR — the Type-A sofa no-batch guard's
+> drop-ship waiver. It decides no cap, no batch expectation, no coverage
+> precedence. See `docs/modules/delivery-order.md` §5 for the mechanism.
 
 ### Why — the owner's business case (2026-08-06, verbatim intent)
 
@@ -211,6 +226,59 @@ they are the only thing preventing a headerless orphan).
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
 UUID**; use `houzsUser.id` for the public bigint.
 
+### CAN a Sales Order be converted to a PO right now? The eligibility chain, in order
+
+> Added 2026-08-16 after the owner reported *"my new SO cannot be converted"*.
+> Read this before concluding a line is "not convertible": four independent
+> filters run, three of them SILENT, and the empty state asserts the opposite of
+> what is happening.
+
+`GET /outstanding-so-items` is the only source the desktop picker
+(`pages/scm-v2/PurchaseOrderFromSo.tsx`) and the mobile wizard
+(`mobile/MobileConvertWizard.tsx`) read. A line must survive all four:
+
+| # | Filter | Silent? | What survives |
+|---|---|---|---|
+| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
+| 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
+| 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
+
+**Filter 3 is where lines vanish for a reason nobody can see.** The picker asks
+`computeMrp` for each line's shortage and keeps only `> 0`. That is correct by
+design — a line already covered by stock or an open PO should not be re-ordered.
+But the lookup is `?? 0`, so **a line MRP never planned at all is
+indistinguishable from a line MRP planned and found fully covered.** Both read
+as shortage 0. Both disappear.
+
+And MRP does not plan most lines. `computeMrp`'s demand read is capped at the
+PostgREST server ceiling with a truncation guard that cannot fire, so on
+production company 1 it planned **1,000 of 13,918 demand lines (7.2%)** — an
+arbitrary slice, because the read orders by a uuid. Full trace and the measuring
+run in `docs/modules/mrp.md` §5. So:
+
+- roughly 93% of otherwise-eligible SO lines are absent from the picker;
+- the loss is invisible — no error, no warning, no partial-results banner;
+- `pooledOk` does NOT rescue it. That flag only flips when `computeMrp`
+  **throws**; a truncated-but-successful compute keeps `pooledOk = true`, so the
+  documented fallback (`qty - po_qty_picked > 0`) never engages.
+
+**What the operator sees when nothing is offered** — the grid's `emptyMessage`:
+
+> *"No outstanding SO lines — every line has been converted (or there are no
+> SOs)."*
+
+That sentence is a positive assertion that the work is done, and under filter 3
+it is false. (The picker gets the READ-FAILED case right: `itemsQ.isError`
+renders a different, correct sentence saying the list is incomplete. Truncation
+is not an error, so it takes the wrong branch.)
+
+**Verdict, as of 2026-08-16:** an SO *can* be converted to a PO — the mechanism
+works and is multi-select at line level — but only for a line that is
+(a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
+~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
+**none merged**.
+
 ---
 
 ## 3. Backend
@@ -300,7 +368,9 @@ UUID**; use `houzsUser.id` for the public bigint.
 
 `so_item_id` is what lets a shipment resolve its incoming PO: `dropship-batch.ts`
 finds the expected batch through it, `/po-so-coverage` treats it as the STATIC
-link, and `recomputeSoPicked` counts from it. Measured on prod 2026-07-31, **67
+link, and `recomputeSoPicked` counts from it. (**Post-PR-4** the first of those
+three is provenance/evidence only — the ship-time batch expectation comes from
+the live allocator; see the §Decision callout above.) Measured on prod 2026-07-31, **67
 of 101 live PO lines carried none** — the From-SO and convert-from-SO paths stamp
 it, but a hand-typed line never could.
 
@@ -541,7 +611,7 @@ those are what the route actually selects.
 | `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
-| `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:595`, `:725`). |
+| `scm.po_revisions` | Full header+items snapshot per revision, keyed `(po_id, revision)`. Written by `snapshotPo` / `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:861`, `:991`). |
 | `scm.mfg_sales_order_items` | Upstream. `po_qty_picked` is written by this module. |
 | `scm.grns` | Downstream. `purchase_order_id` is the lock's join column. |
 
@@ -612,6 +682,16 @@ caller-supplied array would let any PO line reference any R2 object),
 `POST /:id/convert-from-so`, and the SO-amendment path `reviseBoundPo`
 (`backend/src/scm/lib/so-revision.ts`).
 
+> **`reviseBoundPo`'s own signature is unchanged (2026-08-16).** Its file-mate
+> `applySoAmendment` gained a required `approval: SoAmendmentApproval | null`
+> and turned `c` / `concurrency` into required-with-an-explicit-empty-value, so
+> that an approved SO amendment can persist the unit price it approved instead
+> of re-pricing to the catalogue — see
+> `docs/modules/sales-order.md`, *What an approved amendment does to the LINE
+> PRICE*. Nothing on the PO side reads that flag: the bound PO's line cost is
+> still derived by `deriveMfgPoUnitCost`, never copied from the SO's selling
+> price.
+
 **Read-only on the PO side.** Photos are authored on the Sales Order (or by the
 importer); there is no PO upload or delete route to drift from the SO's
 lease/audit rules. The frontend does not render them yet — see §8.
@@ -680,7 +760,7 @@ the same 409 — and, for the first time, a unit test. See
 
 **Amendment path — yes.** The PO is revised **in place** with a bumped `revision`
 column, and the prior version is snapshotted into `scm.po_revisions`. The engine
-is `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:725`), driven by the
+is `reviseBoundPo` (`backend/src/scm/lib/so-revision.ts:991`), driven by the
 SO-amendment approve-PO gate; `GET /:id/revisions` (`:896`) feeds the Revisions
 tab. There is no "Revised" badge: the revision rides the DOC NUMBER itself —
 `poDisplayNumber()` (`vendor/scm/lib/po-status.ts:37-44`) renders

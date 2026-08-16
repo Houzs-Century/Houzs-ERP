@@ -1,7 +1,12 @@
 {
   "extends": "../tsconfig.app.json",
   "compilerOptions": {
-    "types": ["node", "vite/client", "@playwright/test"]
+    /* `google.maps` is here because the AutoCount Sync scenario imports the
+       REAL page, and the real page's PageHeader lives in Layout, which
+       import()s the route table, which reaches ScheduleRouteMap. The app's own
+       tsconfig names no `types` at all, so it picks every @types/* up
+       automatically; this one narrows the list and therefore has to say so. */
+    "types": ["node", "vite/client", "@playwright/test", "google.maps"]
   },
   "include": ["./**/*.ts", "./**/*.tsx"]
 }

@@ -75,9 +75,11 @@ describe('planShipCommitments — binding follows the fact, not the dialog', () 
     });
   });
 
-  test('ambiguous PO (resolver returned null for >1 live PO) binds nothing', () => {
-    // resolveExpectedBatchBySoItem in 'block' mode yields poNumber null on multi-PO
-    // (audit H3) — a guessed dye lot is worse than no binding.
+  test('no allocator pick (no incoming supply for the bucket) binds nothing', () => {
+    // Since PR-4 expectedBatchNo carries the live allocator's pick; null means
+    // the pooled open-PO supply has nothing for this bucket. (Pre-flip the same
+    // null came from resolveExpectedBatchBySoItem 'block' on >1 live PO —
+    // audit H3; the allocator has no ambiguity, its ties auto-pick.)
     expect(only(line({ isSofa: true, expectedBatchNo: null }))).toMatchObject({
       bind: false, reason: 'no_po',
     });

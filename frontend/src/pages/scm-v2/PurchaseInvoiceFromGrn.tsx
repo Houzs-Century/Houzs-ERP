@@ -21,9 +21,10 @@
 // nav repointed to /scm/purchase-invoices.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { writeScmHandoff } from '../../lib/scmHandoffStorage';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDateOrDash } from '@2990s/shared';
@@ -50,7 +51,22 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const [picks, setPicks] = useState<Record<string, { picked: boolean; qty: number }>>({});
 
-  const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  /* "Convert to PI" on a GRN lands here with ?grnId=<id> so the operator sees
+     the note they were just looking at, not every outstanding note in the
+     company. The parameter was being constructed by both callers and dropped
+     here until 2026-08-16. No parameter → the full picker, which is what the
+     list toolbar's "From GRN" button wants. */
+  const [searchParams] = useSearchParams();
+  const scope = useMemo(
+    () => readConvertScope('grnToPi', searchParams, []),
+    [searchParams],
+  );
+
+  const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const items = useMemo(
+    () => (scope.keys.size === 0 ? allItems : allItems.filter((it) => scope.keys.has(it.grnId))),
+    [allItems, scope.keys],
+  );
 
   // Group by GRN doc no so the UI renders one card per GRN.
   const grouped = useMemo(() => {
@@ -129,6 +145,35 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const clearAll = () => setPicks({});
 
+  /* Scoped entry pre-ticks the note's remaining lines at full quantity, so the
+     screen is a ready-to-review draft rather than a filtered list to re-tick by
+     hand. Copies GrnFromPo, the one convert that already worked. Nothing is
+     invoiced here — Continue only carries the picks to the New PI form. */
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    if (scope.keys.size === 0) return;
+    if (itemsQ.isLoading) return;
+    prefilled.current = true;
+    const mine = items.filter((it) => it.remaining > 0);
+    const first = mine[0];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
+    if (!first) return;
+    // One supplier + one currency/rate per invoice — tick only what can share
+    // the document, even if the scope spans notes that cannot.
+    const fxLock = fxKeyOf(first);
+    setPicks(() => {
+      const next: Record<string, { picked: boolean; qty: number }> = {};
+      for (const l of mine) {
+        if (l.supplierId !== first.supplierId) continue;
+        if (fxKeyOf(l) !== fxLock) continue;
+        next[l.grnItemId] = { picked: true, qty: l.remaining };
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fxKeyOf is a pure formatter over the row already in `items`
+  }, [items, itemsQ.isLoading, scope.keys]);
+
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
@@ -183,11 +228,30 @@ export const PurchaseInvoiceFromGrn = () => {
                   — the opposite of the truth, and revenue goes unbilled on it. */}
               {itemsQ.isLoading ? 'Loading…'
                 : itemsQ.isError ? "We couldn't load the outstanding lines — please refresh and try again."
-                : items.length === 0 ? 'No outstanding lines — every posted GRN has already been invoiced.'
+                : items.length === 0 ? (scope.keys.size > 0
+                    ? 'Nothing left to bill on the note you came from — it has already been fully invoiced. Other notes may still be outstanding.'
+                    : 'No outstanding lines — every posted GRN has already been invoiced.')
                 : `${items.length} line${items.length === 1 ? '' : 's'} across ${grouped.length} GRN${grouped.length === 1 ? '' : 's'}`}
             </span>
           </div>
         </div>
+        <div style={{ padding: '0 var(--space-4)' }}>
+          <UnrecognisedScopeNotice unknown={scope.unknown} />
+        </div>
+        {scope.keys.size > 0 && (
+          <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
+            Showing{' '}
+            <strong>
+              {scope.keys.size === 1
+                ? (grouped[0]?.docNo ?? 'this note')
+                : `${scope.keys.size} notes`}
+            </strong>{' '}
+            only.{' '}
+            <Link to="/scm/purchase-invoices/from-grn" style={{ color: 'var(--c-burnt)', textDecoration: 'underline' }}>
+              Show all outstanding notes
+            </Link>
+          </p>
+        )}
         <p style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-13)', padding: '0 var(--space-4) var(--space-2)' }}>
           One purchase invoice covers one supplier — tick lines from as many of that supplier&rsquo;s notes as the
           invoice bills, then Continue to review. Nothing is invoiced until you click Create on the next screen.

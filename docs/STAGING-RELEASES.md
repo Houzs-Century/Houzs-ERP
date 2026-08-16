@@ -75,9 +75,9 @@ Create **Settings → Environments → Staging** (if not present). Recommended:
 ### Renumbering a migration that already went to staging
 
 Staging deploys before `main`, and migration numbers here are assigned at merge
-time against current `main`. So the common sequence is: `0165_x.sql` is pushed
+time against current `main`. So the common sequence is: `0165_x.sql` [renumbered] is pushed
 to `staging`, applied and tracked in the staging database, and then renumbered
-to `0167_x.sql` because an unrelated PR took 0165 before this one merged.
+to `0167_x.sql` [renumbered] because an unrelated PR took 0165 before this one merged.
 Staging's `_pg_migrations` now holds a filename that will never exist again.
 
 The runner handles this automatically **only when the rename is byte-identical**

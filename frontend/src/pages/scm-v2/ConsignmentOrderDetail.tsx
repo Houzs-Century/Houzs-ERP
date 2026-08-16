@@ -31,7 +31,6 @@ import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, X, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
@@ -53,11 +52,12 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
   useLocalities,
-  distinctStates,
-  citiesInState,
-  postcodesInCity,
   countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -69,6 +69,7 @@ import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
@@ -770,6 +771,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   const [form, setForm] = useState(() => initialFormFor(header));
   const [showSuggest, setShowSuggest] = useState(false);
+  const custInputRef = useRef<HTMLInputElement>(null);
   const debouncedDebtorQ = useDebouncedValue(form.customerName, 200);
   const debtorQuery = useConsignmentDebtorSearch(debouncedDebtorQ);
   const suggestions = (debtorQuery.data?.debtors ?? []).filter(
@@ -805,15 +807,14 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     setForm((s) => ({ ...s, salesLocation: code }));
   }, [form.state, stateWarehousesQ.data, form.salesLocation]);
 
-  const states = useMemo(() => distinctStates(localityRows), [localityRows]);
-  const cities = useMemo(
-    () => (form.state ? citiesInState(localityRows, form.state) : []),
-    [localityRows, form.state],
-  );
-  const postcodes = useMemo(
-    () => (form.state && form.city ? postcodesInCity(localityRows, form.state, form.city) : []),
-    [localityRows, form.state, form.city],
-  );
+  /* Shared address cascade, BOTH directions (address-cascade.ts). One setForm
+     per pick so the value just chosen survives — the State picker's own handler
+     resets the cascade, so a back-filled State must not route through it. */
+  const { cities, postcodes } = useAddressCascade(localityRows, form.state, form.city);
+  const onCityPick = (next: string) =>
+    setForm((s) => ({ ...s, ...pickCity(localityRows, s, next) }));
+  const onPostcodePick = (next: string) =>
+    setForm((s) => ({ ...s, ...pickPostcode(localityRows, s, next) }));
   const country = useMemo<string>(() => {
     const headerCountry = (header.customer_country as string | null | undefined) ?? null;
     if (headerCountry) return headerCountry;
@@ -915,6 +916,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={custInputRef}
                 className={styles.fieldInput}
                 value={form.customerName}
                 disabled={inputsDisabled}
@@ -922,24 +924,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 onFocus={() => setShowSuggest(true)}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
               />
-              {showSuggest && suggestions.length > 0 && !inputsDisabled && (
-                <ul className={styles.suggestList}>
-                  {suggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applySuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={custInputRef}
+                open={showSuggest && !inputsDisabled}
+                suggestions={suggestions}
+                onPick={applySuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Ref</span>
@@ -1150,7 +1141,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={form.state}
-                onChange={(next) => setForm((s) => ({ ...s, state: next, city: '', postcode: '' }))}
+                onChange={(next) => setForm((s) => ({ ...s, ...pickState(next) }))}
                 disabled={inputsDisabled}
               />
             </label>
@@ -1160,9 +1151,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.city}
-                  onChange={(v) => setForm((s) => ({ ...s, city: v, postcode: '' }))}
-                  disabled={inputsDisabled || !form.state}
-                  placeholder={form.state ? 'Pick city' : '— pick state first'}
+                  onChange={onCityPick}
+                  disabled={inputsDisabled}
+                  placeholder={cityPlaceholder(form.state)}
                   options={sortByText(cities).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -1174,9 +1165,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={form.postcode}
-                  onChange={(v) => set('postcode', v)}
-                  disabled={inputsDisabled || !form.city}
-                  placeholder={form.city ? 'Pick postcode' : '— pick city first'}
+                  onChange={onPostcodePick}
+                  disabled={inputsDisabled}
+                  placeholder={postcodePlaceholder(form.state, form.city)}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

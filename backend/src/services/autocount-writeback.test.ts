@@ -18,14 +18,24 @@ import {
   parseCreatedLines,
   composeDescription2,
   ItemCodeError,
-  mapOrPassthrough,
+  MissingCreditorError,
+  MissingSalesLocationError,
+  bookSpelling,
+  bookSpellingOrOwn,
+  soBranding,
+  soCustomerRef,
+  soInvoiceAddress,
   callAcService,
   acServiceConfig,
   acUdfDate,
   AC_DEBTOR_CODE,
+  AC_PURCHASE_AGENT,
   AGENT_MAP,
+  BRANDING_MAP,
   LOCATION_MAP,
+  VENUE_MAP,
   type ErpSoHeader,
+  type ErpPoHeader,
   type ErpLine,
   type ComposeOptions,
 } from './autocount-writeback';
@@ -47,7 +57,9 @@ const header: ErpSoHeader = {
   doc_no: 'HC-SO-1', so_date: '2026-08-10', debtor_name: 'Tan Ah Kow',
   agent: 'kar jiun', sales_location: 'PETALING JAYA', branding: 'akemi',
   venue: 'KSL CITY MALL', address1: 'A1', address2: 'A2', address3: null, address4: null,
-  phone: '0123', ref: 'REF', po_doc_no: 'CUST-PO-7',
+  city: null, postcode: null, customer_state: null,
+  phone: '0123', emergency_contact_phone: null,
+  ref: 'REF', po_doc_no: 'CUST-PO-7', customer_po: null, customer_so_no: null,
 };
 
 const line = (over: Partial<ErpLine> = {}): ErpLine => ({
@@ -60,26 +72,86 @@ const line = (over: Partial<ErpLine> = {}): ErpLine => ({
    when neither source answers, have their own describe block below. */
 const SALESPERSON: string | null = null;
 
+/**
+ * `composeCreateSo` with NO outstanding balance, for every case that is not
+ * about the balance.
+ *
+ * The real parameter is required and positional, because it decides what a live
+ * account book says a customer owes. Threading a number through thirty-eight
+ * assertions that are about item codes, venues and addresses would bury it;
+ * pinning it to `null` here keeps those payloads exactly as they were (the key
+ * is omitted) and leaves the BALANCE UDF with its own describe block, where the
+ * value is passed explicitly and asserted.
+ */
+const createSo = (
+  h: ErpSoHeader,
+  ls: ErpLine[],
+  salespersonName: string | null,
+  o: ComposeOptions = {},
+) => composeCreateSo(h, ls, salespersonName, null, [], o);
+/* The helper passes NO payment references, which is the shape of every order
+   whose payments carry neither an account sheet nor an approval code. The
+   PAYEMENT round trip has its own file. */
+
 describe('master mapping', () => {
   test('normalises case and spacing before mapping (a salesperson types freely)', () => {
-    expect(mapOrPassthrough('kar jiun', AGENT_MAP)).toBe('TAN KAR JIUN');
-    expect(mapOrPassthrough('  Mei   Ting ', AGENT_MAP)).toBe('MEI TING');
+    expect(bookSpelling('kar jiun', AGENT_MAP)).toBe('TAN KAR JIUN');
+    expect(bookSpelling('  Mei   Ting ', AGENT_MAP)).toBe('MEI TING');
   });
 
   test('a value that is already the AutoCount spelling passes through', () => {
-    expect(mapOrPassthrough('TAN KAR JIUN', AGENT_MAP)).toBe('TAN KAR JIUN');
-    expect(mapOrPassthrough('KL', LOCATION_MAP)).toBe('KL');
+    expect(bookSpelling('TAN KAR JIUN', AGENT_MAP)).toBe('TAN KAR JIUN');
+    expect(bookSpelling('KL', LOCATION_MAP)).toBe('KL');
   });
 
   test('an unknown value maps to null rather than being invented', () => {
-    expect(mapOrPassthrough('SOMEONE NEW', AGENT_MAP)).toBeNull();
-    expect(mapOrPassthrough('', AGENT_MAP)).toBeNull();
-    expect(mapOrPassthrough(null, AGENT_MAP)).toBeNull();
+    expect(bookSpelling('SOMEONE NEW', AGENT_MAP)).toBeNull();
+    expect(bookSpelling('', AGENT_MAP)).toBeNull();
+    expect(bookSpelling(null, AGENT_MAP)).toBeNull();
+  });
+});
+
+/* THE ROOT CAUSE OF FOUR AUDIT FINDINGS, IN ONE FUNCTION (2026-08-14). The old
+   `mapOrPassthrough` returned null for anything its map had not been told
+   about, and null is the fatal value in all three failure modes: "" against a
+   foreign key, a dropped key on a UDF, and an overwrite on /edit. Measured
+   against the live book's own vocabularies, every target the four maps can
+   emit is ALREADY a master there — so the maps never protected against sending
+   something unknown, they only deleted what they had not heard of. */
+describe('bookSpellingOrOwn — the maps are spelling corrections, not an allow-list', () => {
+  test("the book's own spelling still wins where the map has one", () => {
+    expect(bookSpellingOrOwn('SUTERA MALL', VENUE_MAP)).toBe('SUTERA MALL SOLO');
+    expect(bookSpellingOrOwn('petaling jaya', LOCATION_MAP)).toBe('KL');
+  });
+
+  test('a value the map has never heard of is KEPT, for ensure-masters to open', () => {
+    expect(bookSpellingOrOwn('MIDVALLEY EXHIBITION CENTRE', VENUE_MAP))
+      .toBe('MIDVALLEY EXHIBITION CENTRE');
+    expect(bookSpellingOrOwn('SUNWAY', LOCATION_MAP)).toBe('SUNWAY');
+    expect(bookSpellingOrOwn('CARRESS', BRANDING_MAP)).toBe('CARRESS');
+  });
+
+  /* /ensure-masters opens a master under EXACTLY the string it is given, so two
+     spaces would open two of it. Case is preserved: the service compares
+     options with OrdinalIgnoreCase, so an existing option is matched, not
+     duplicated. */
+  test('a kept value is whitespace-collapsed, because two spaces would open two masters', () => {
+    /* Deliberately a venue the map does NOT hold: this is about whitespace, and
+       a mapped value would exercise the lookup instead. AEON BIG KEPONG used to
+       be the example and stopped being one the day it was bound to
+       AEON BIG KEPONG SOLO. */
+    expect(bookSpellingOrOwn('  AEON  BIG   PUCHONG ', VENUE_MAP)).toBe('AEON BIG PUCHONG');
+    expect(Object.keys(VENUE_MAP)).not.toContain('AEON BIG PUCHONG');
+  });
+
+  test('null still means null — but ONLY when the ERP has no value at all', () => {
+    expect(bookSpellingOrOwn(null, VENUE_MAP)).toBeNull();
+    expect(bookSpellingOrOwn('   ', VENUE_MAP)).toBeNull();
   });
 });
 
 describe('composeCreateSo', () => {
-  const payload = composeCreateSo(header, [line()], SALESPERSON, opts);
+  const payload = createSo(header, [line()], SALESPERSON, opts);
 
   test('writes the fixed debtor account with the real customer name over it', () => {
     expect(payload.DebtorCode).toBe(AC_DEBTOR_CODE);
@@ -103,7 +175,10 @@ describe('composeCreateSo', () => {
   });
 
   test('a blank UDF is dropped, not sent as an empty option', () => {
-    const p = composeCreateSo({ ...header, branding: null, venue: null, po_doc_no: null }, [line()], SALESPERSON, opts);
+    const p = createSo(
+      { ...header, branding: null, venue: null, po_doc_no: null, customer_po: null, customer_so_no: null },
+      [line()], SALESPERSON, opts,
+    );
     expect(p.UDF).toEqual({});
   });
 
@@ -111,18 +186,18 @@ describe('composeCreateSo', () => {
      Its storage is processing_date — one column (0189) under one name (0284),
      so this label has exactly one source. */
   test('the Processing date goes out as the PDate UDF', () => {
-    const p = composeCreateSo({ ...header, processing_date: '2026-09-01' }, [line()], SALESPERSON, opts);
+    const p = createSo({ ...header, processing_date: '2026-09-01' }, [line()], SALESPERSON, opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('a Processing date that arrives as a timestamp is trimmed to the date', () => {
-    const p = composeCreateSo({ ...header, processing_date: '2026-09-01T00:00:00' }, [line()], SALESPERSON, opts);
+    const p = createSo({ ...header, processing_date: '2026-09-01T00:00:00' }, [line()], SALESPERSON, opts);
     expect(p.UDF.PDate).toBe('2026-09-01');
   });
 
   test('no Processing date sends no PDate at all', () => {
-    expect(composeCreateSo(header, [line()], SALESPERSON, opts).UDF.PDate).toBeUndefined();
-    expect(composeCreateSo({ ...header, processing_date: null }, [line()], SALESPERSON, opts).UDF.PDate)
+    expect(createSo(header, [line()], SALESPERSON, opts).UDF.PDate).toBeUndefined();
+    expect(createSo({ ...header, processing_date: null }, [line()], SALESPERSON, opts).UDF.PDate)
       .toBeUndefined();
   });
 });
@@ -137,7 +212,7 @@ describe('the salesperson AutoCount is given (FK_SO_SalesAgent)', () => {
   const noAgent: ErpSoHeader = { ...header, agent: null };
 
   test('an empty agent falls back to the salesperson behind salesperson_id', () => {
-    const p = composeCreateSo(noAgent, [line()], 'Chang Shi Ting', opts);
+    const p = createSo(noAgent, [line()], 'Chang Shi Ting', opts);
     expect(p.Agent).toBe('Chang Shi Ting');
   });
 
@@ -146,9 +221,9 @@ describe('the salesperson AutoCount is given (FK_SO_SalesAgent)', () => {
      spelling so the fallback cannot open a second agent beside an existing
      one. */
   test('a salesperson the book already spells goes out in ITS spelling', () => {
-    expect(composeCreateSo(noAgent, [line()], 'shi ting', opts).Agent)
+    expect(createSo(noAgent, [line()], 'shi ting', opts).Agent)
       .toBe('Chang Shi Ting');
-    expect(composeCreateSo(noAgent, [line()], 'zack', opts).Agent).toBe('Zack');
+    expect(createSo(noAgent, [line()], 'zack', opts).Agent).toBe('Zack');
   });
 
   /* D10's rule, applied to people (owner 2026-08-13): an unmapped value is no
@@ -156,12 +231,12 @@ describe('the salesperson AutoCount is given (FK_SO_SalesAgent)', () => {
      /ensure-masters creates the agent under, so a rep hired since the map was
      built is writable instead of blocked. */
   test('a salesperson the map has never heard of is sent as themselves', () => {
-    expect(composeCreateSo(noAgent, [line()], 'Nurul Hidayah', opts).Agent)
+    expect(createSo(noAgent, [line()], 'Nurul Hidayah', opts).Agent)
       .toBe('Nurul Hidayah');
   });
 
   test('an agent the ERP does hold still wins over the salesperson link', () => {
-    expect(composeCreateSo(header, [line()], 'Nurul Hidayah', opts).Agent)
+    expect(createSo(header, [line()], 'Nurul Hidayah', opts).Agent)
       .toBe('TAN KAR JIUN');
   });
 
@@ -172,7 +247,7 @@ describe('the salesperson AutoCount is given (FK_SO_SalesAgent)', () => {
      operator can read and a re-queue can retry. */
   test('neither source REFUSES the create, naming the remedy', () => {
     let err: unknown;
-    try { composeCreateSo(noAgent, [line()], null, opts); } catch (e) { err = e; }
+    try { createSo(noAgent, [line()], null, opts); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MissingAgentError);
     expect((err as Error).message).toContain('FK_SO_SalesAgent');
     expect((err as Error).message).toContain('Assign a salesperson');
@@ -223,26 +298,73 @@ describe('acUdfDate — what may be handed to a date UDF', () => {
   });
 });
 
-describe('Description 2 — where a variant goes, because AutoCount has no variant fields', () => {
-  test('sofa variants collapse into one blob', () => {
+describe('Description 2 — AutoCount\'s Further Description, which is what the cutover PARSED', () => {
+  /* Owner 2026-08-15: the ERP's variants were pulled OUT of Further Description
+     at the cutover, so the specification has to go back IN. This block is the
+     proof that the write-back now emits the ERP's OWN rendering of that
+     specification (buildVariantSummary) rather than a second, poorer one. */
+
+  test('a sofa carries the colour, the seat and the leg — the SO line\'s own summary', () => {
+    /* Was 'Col: Beige / Fabric: Linen / Seat: 45 / Leg: 10' from a private
+       four-attribute composer. The fabric SERIES ("Linen") is deliberately gone:
+       buildVariantSummary shows the series only when the COLOUR is not yet
+       chosen (COLOUR KIV), because once it is, the colour code carries it. That
+       is the rule every SO / PO / DO line in this system already prints, and the
+       account book now reads the same string as the paperwork. */
     expect(composeDescription2(line({
+      item_group: 'sofa',
       variants: { fabricColor: 'Beige', fabricLabel: 'Linen', seatHeight: '45', legHeight: '10' },
-    }))).toBe('Col: Beige / Fabric: Linen / Seat: 45 / Leg: 10');
+    }))).toBe('Beige / SEAT 45 / LEG 10');
   });
 
-  test('an explicit description2 wins over the variants', () => {
-    expect(composeDescription2(line({ description2: 'KING 6x7', variants: { fabricColor: 'Beige' } })))
-      .toBe('KING 6x7');
+  /* THE DEFECT THIS BLOCK EXISTS FOR. A bedframe keeps its colour in
+     `fabricCode` / `colourLabel` and its build in `gap` / `divanHeight` — none
+     of which the old composer read, so an ERP-created bedframe reached the
+     account book with an EMPTY Further Description while the book's own text
+     carries COL on 6,741 lines, DIVAN on 5,778 and GAP on 2,620, its three
+     commonest labels. The same shape as the three faults in section 2 of
+     docs/autocount-writeback-golive-coe.md: the fact was in one column and the
+     write-back read another. */
+  test('a bedframe carries the colour, the divan, the leg and the GAP', () => {
+    expect(composeDescription2(line({
+      item_group: 'bedframe',
+      variants: {
+        fabricCode: 'PC151-01', colourLabel: 'Sand',
+        divanHeight: '8"', legHeight: '2"', gap: '12"', totalHeight: '22"',
+      },
+    }))).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12" / T.Heights 22"');
+  });
+
+  test('the special order rides along, because it changes the physical item', () => {
+    expect(composeDescription2(line({
+      item_group: 'bedframe',
+      variants: { fabricCode: 'BF-16', gap: '14"', specials: ['Fully Cover'] },
+    }))).toContain('Fully Cover');
+  });
+
+  /* THE ECHO PATH, and it is load-bearing rather than a nicety: both cutover
+     importers wrote the book's ORIGINAL Desc2 onto every migrated line, and D9
+     hands this function a collapsed sofa whose description2 is the build text
+     the collapse has already decided and gated. Re-deriving either from
+     variants would be lossy — see the corpus test in
+     autocount-sofa-collapse.test.ts. */
+  test('a stored description2 still wins, verbatim, over anything derived', () => {
+    expect(composeDescription2(line({
+      description2: 'KING 6x7',
+      item_group: 'bedframe',
+      variants: { fabricCode: 'PC151-01', gap: '12"', divanHeight: '8"' },
+    }))).toBe('KING 6x7');
   });
 
   test('a line with neither carries no Desc2 rather than an empty string', () => {
     expect(composeDescription2(line())).toBeNull();
+    expect(composeDescription2(line({ item_group: 'bedframe', variants: {} }))).toBeNull();
   });
 });
 
 describe('ItemCode resolution (D10) — no silent fallback to material_code', () => {
   test('a mapped code is replaced by its AutoCount ItemCode', () => {
-    expect(composeCreateSo(header, [line()], SALESPERSON, opts).Details[0].ItemCode).toBe('AC-CODE-1');
+    expect(createSo(header, [line()], SALESPERSON, opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });
 
   /* THE DEFECT THIS REPLACED, and the assertion that still guards it. The
@@ -251,7 +373,7 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
      That must never happen: if the book knows this item, we send the book's
      name for it. */
   test('a mapped code is NEVER sent as itself', () => {
-    const d = composeCreateSo(header, [line()], SALESPERSON, opts).Details[0];
+    const d = createSo(header, [line()], SALESPERSON, opts).Details[0];
     expect(d.ItemCode).toBe('AC-CODE-1');
     expect(d.ItemCode).not.toBe(line().item_code);
   });
@@ -263,12 +385,12 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
      product ranges are in no cutover row, so every order containing one was
      blocked with no way forward. */
   test('an unmapped code goes out under its own name instead of sinking the order', () => {
-    const d = composeCreateSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], SALESPERSON, opts).Details[0];
+    const d = createSo(header, [line({ item_code: 'SKU-NOT-IN-THE-BOOK' })], SALESPERSON, opts).Details[0];
     expect(d.ItemCode).toBe('SKU-NOT-IN-THE-BOOK');
   });
 
   test('a document mixing mapped and unmapped lines ships whole, each line its own answer', () => {
-    const p = composeCreateSo(header, [
+    const p = createSo(header, [
       line(),
       line({ item_code: 'SKU-NOT-IN-THE-BOOK' }),
       line({ item_code: 'SKU-2' }),
@@ -283,24 +405,258 @@ describe('ItemCode resolution (D10) — no silent fallback to material_code', ()
   test('a blank code still refuses, and the refusal names every failing line', () => {
     let msg = '';
     try {
-      composeCreateSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], SALESPERSON, opts);
+      createSo(header, [line({ item_code: '' }), line({ item_code: '   ' })], SALESPERSON, opts);
     } catch (e) { msg = (e as Error).message; }
     expect(msg).toContain('2 line(s)');
   });
 });
 
 describe('composeCreatePo', () => {
+  const po = (over: Partial<ErpPoHeader> = {}) => composeCreatePo({
+    po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
+    creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N', ...over,
+  }, [line({ unit_price_centi: 5000, location: 'KL' })], opts);
+
   test('carries the creditor and the lines', () => {
-    const p = composeCreatePo({
-      po_number: 'HC-PO-1', po_date: '2026-08-10', creditor_code: '400-H004',
-      creditor_name: 'Supplier Sdn Bhd', agent: null, ref: 'R', notes: 'N',
-    }, [line({ unit_price_centi: 5000, location: 'KL' })], opts);
+    const p = po();
     expect(p.DocNo).toBe('HC-PO-1');
     expect(p.Details[0].Location).toBe('KL');
     expect(p.CreditorCode).toBe('400-H004');
     expect(p.Description).toBe('N');
     expect(p.Details[0].UnitPrice).toBe(50);
     expect(p.Details[0].ItemCode).toBe('AC-CODE-1');
+  });
+
+  /* FK_PO_PurchaseAgent, AcSyncService.cs:552-560. `scm.purchase_orders` has no
+     agent column, so readPoHeader sent null for all 60 unpushed purchase orders
+     (measured 2026-08-14) — and `CreatePo` assigns po.Agent unconditionally
+     while `Str` turns both an absent key and a present-null into "". Omitting
+     the key would not have helped; a constant the book holds does. */
+  test('every PO names a purchase agent, because "" is FK_PO_PurchaseAgent', () => {
+    expect(po().Agent).toBe(AC_PURCHASE_AGENT);
+    expect(po({ agent: null }).Agent).toBe('OTHERS');
+    expect(po({ agent: '   ' }).Agent).toBe('OTHERS');
+  });
+
+  test('a PO that DOES carry an agent keeps it, so the constant is only the floor', () => {
+    expect(po({ agent: 'KINGSLEY' }).Agent).toBe('KINGSLEY');
+  });
+
+  /* CreditorCode is assigned DIRECTLY by CreatePo — not even wrapped in Set —
+     so a supplier with no code sends "" into FK_PO_Creditor and loses the whole
+     document. mastersOf opens a creditor only for a non-empty code, so the
+     empty case was the one nothing covered. */
+  test('a supplier with no code REFUSES the PO rather than failing FK_PO_Creditor', () => {
+    for (const blank of [null, '', '  ']) {
+      let err: unknown;
+      try { po({ creditor_code: blank }); } catch (e) { err = e; }
+      expect(err, String(blank)).toBeInstanceOf(MissingCreditorError);
+      expect((err as Error).message).toContain('FK_PO_Creditor');
+      expect((err as Error).message).toContain('HC-PO-1');
+    }
+  });
+});
+
+/* ── THE FIELD-ALIGNMENT AUDIT, 2026-08-14 ───────────────────────────────────
+   One bug class in eight places: a value the ERP holds in one column, the
+   composer reads from another, and null is the fatal value in every direction.
+   Each test below is one finding, and each number in a comment came from
+   `check-autocount-field-alignment.mjs` run against production that day. */
+
+describe('VENUE — the largest silent loss (finding 5)', () => {
+  /* 112 of 115 unpushed sales orders carry a venue VENUE_MAP turned into null,
+     and `udf()` drops a null: no error, no outbox row, no log line. Venue is
+     deliberately free text — "every roadshow hall is a one-off" (mig 0229) —
+     so a 7-entry map was never going to cover it. */
+  test('a venue the map has never heard of REACHES the book instead of vanishing', () => {
+    const p = createSo({ ...header, venue: '2990s PJ' }, [line()], SALESPERSON, opts);
+    expect(p.UDF.VENUE).toBe('2990s PJ');
+  });
+
+  test("a venue the map DOES know still goes out in the book's spelling", () => {
+    expect(createSo(header, [line()], SALESPERSON, opts).UDF.VENUE)
+      .toBe('KSL CITY MALL JOHOR SOLO');
+  });
+
+  test('no venue is still nothing to send', () => {
+    expect(createSo({ ...header, venue: null }, [line()], SALESPERSON, opts).UDF.VENUE)
+      .toBeUndefined();
+  });
+});
+
+describe('BRANDING — the header column is empty on every ERP-created order (finding 6)', () => {
+  /* No client sends `body.branding` and the SO form has never had the field, so
+     the header column is NULL on all 115 unpushed orders. The value the
+     business has is on the LINES, snapshotted from the catalog at line
+     creation, and the detail page has been showing it as first_item_branding. */
+  test('a blank header takes the brand off the lines', () => {
+    const p = createSo({ ...header, branding: null }, [
+      line({ branding: null }),
+      line({ item_code: 'SKU-2', branding: 'DUNLOPILLO' }),
+    ], SALESPERSON, opts);
+    expect(p.UDF.BRANDING).toBe('DUNLOPILLO');
+  });
+
+  test('the header still wins when it has one', () => {
+    expect(createSo(header, [line({ branding: 'ZANOTTI' })], SALESPERSON, opts).UDF.BRANDING)
+      .toBe('AKEMI');
+  });
+
+  /* CARRESS and DUNLOP are real brands in the live book's own history that the
+     map was never told about, so they were ADDED to it — the thing a spelling
+     map is for. They are not passed through; see the next test for why. */
+  test('the two brands the book holds and the map did not are now mapped', () => {
+    expect(createSo({ ...header, branding: 'CARRESS' }, [line()], SALESPERSON, opts).UDF.BRANDING)
+      .toBe('CARRESS');
+    expect(createSo({ ...header, branding: 'dunlop' }, [line()], SALESPERSON, opts).UDF.BRANDING)
+      .toBe('DUNLOP');
+  });
+
+  /* BRANDING PASSES THROUGH SINCE 2026-08-15, like the other three maps.
+     It was the one allow-list, on the strength of a field-alignment run that
+     reported a pass-through would open `2990s Sofa` (44 orders), `Accessories`
+     (8), `2990s Mattress` (8), `2990` (3) — all of them COMPANY 2's, counted
+     only because that report had no company predicate (#2201). The write-back
+     runs for company 1, where the entire pass-through is `BEDFRAME` (1 order)
+     and `SERVICE` (0).
+     Those two are categories rather than brands and the owner was told so
+     before ruling: "bedframe和service的branding也开进去autocount". His book. */
+  test('a value the map does not know is PASSED THROUGH, so /ensure-masters opens it', () => {
+    for (const own of ['BEDFRAME', 'SERVICE']) {
+      const p = createSo({ ...header, branding: own }, [line()], SALESPERSON, opts);
+      expect(p.UDF.BRANDING, own).toBe(own);
+    }
+  });
+
+  test('a mapped value is still corrected to the book spelling, not passed through', () => {
+    /* Pass-through must not become "send whatever the ERP holds": where the map
+       knows the book's own spelling, that still wins. */
+    const [erp, book] = Object.entries(BRANDING_MAP)[0];
+    expect(book).toBeTruthy();
+    const p = createSo({ ...header, branding: erp }, [line()], SALESPERSON, opts);
+    expect(p.UDF.BRANDING).toBe(book);
+  });
+
+  /* A CANCELLED line is not on the document AutoCount is being sent, so its
+     brand must not name the document either. */
+  test('a cancelled line does not decide the brand', () => {
+    const p = createSo({ ...header, branding: null }, [
+      line({ branding: 'MYLATEX', cancelled: true }),
+      line({ item_code: 'SKU-2', branding: 'ERGOTEX' }),
+    ], SALESPERSON, opts);
+    expect(p.UDF.BRANDING).toBe('ERGOTEX');
+  });
+
+  test('neither header nor lines is nothing to send, not an empty option', () => {
+    const p = createSo({ ...header, branding: null }, [line({ branding: null })], SALESPERSON, opts);
+    expect(p.UDF.BRANDING).toBeUndefined();
+  });
+
+  /* so-display-branding.ts falls back to the pseudo-brand "BEDFRAME" for a
+     bedframe-only order. That is a CATEGORY, and passing it through here would
+     open a category as an option in the account book's brand list. */
+  test('soBranding reads line text only — no catalog rule, no BEDFRAME pseudo-brand', () => {
+    expect(soBranding(null, [line({ item_group: 'BEDFRAME', branding: null })])).toBeNull();
+  });
+});
+
+describe('ToPONo — the composer read a column PR #140 stopped writing (finding 7)', () => {
+  /* No Houzs surface writes po_doc_no or customer_po since PR #140 dropped the
+     Customer PO card; the operator's reference lands in customer_so_no, which
+     SO_HEADER_COLS did not even select. */
+  test('falls through to customer_po and then to customer_so_no', () => {
+    const at = (over: Partial<ErpSoHeader>) =>
+      createSo({ ...header, po_doc_no: null, ...over }, [line()], SALESPERSON, opts).UDF.ToPONo;
+    expect(at({ customer_po: 'CP-1', customer_so_no: 'CSO-1' })).toBe('CP-1');
+    expect(at({ customer_po: null, customer_so_no: 'CSO-1' })).toBe('CSO-1');
+    expect(at({ customer_po: null, customer_so_no: null })).toBeUndefined();
+  });
+
+  test('a cutover-imported order keeps AutoCount"s own text', () => {
+    expect(soCustomerRef({ po_doc_no: 'PO-OLD', customer_po: 'CP', customer_so_no: 'CSO' }))
+      .toBe('PO-OLD');
+  });
+
+  /* `ref` goes out as the document's Ref. Sending it here too would put the
+     same string in two AutoCount fields. */
+  test('the document Ref is NOT reused as the customer reference', () => {
+    const p = createSo(
+      { ...header, po_doc_no: null, customer_po: null, customer_so_no: null, ref: 'REF' },
+      [line()], SALESPERSON, opts,
+    );
+    expect(p.Ref).toBe('REF');
+    expect(p.UDF.ToPONo).toBeUndefined();
+  });
+});
+
+describe('InvAddr3 / InvAddr4 — the town, postcode and state never arrived (finding 8)', () => {
+  /* 94 of 115 unpushed orders have address3 AND address4 blank while city /
+     postcode / customer_state are populated, and InvAddr1..4 are assigned
+     DIRECTLY (not through Set), so the two blanks were written every time — on
+     the address a delivery is printed from. */
+  test('an ERP-created order packs postcode + city, then the state', () => {
+    const p = createSo({
+      ...header, city: 'Seri Kembangan', postcode: '43300', customer_state: 'Selangor',
+    }, [line()], SALESPERSON, opts);
+    expect(p.InvAddr1).toBe('A1');
+    expect(p.InvAddr2).toBe('A2');
+    expect(p.InvAddr3).toBe('43300 Seri Kembangan');
+    expect(p.InvAddr4).toBe('Selangor');
+  });
+
+  /* Only the cutover import ever wrote address3 / address4, and that text is
+     AutoCount's own. */
+  test('a cutover-imported order keeps its own address3 / address4', () => {
+    const p = createSo({
+      ...header, address3: 'AC LINE 3', address4: 'AC LINE 4',
+      city: 'Seri Kembangan', postcode: '43300', customer_state: 'Selangor',
+    }, [line()], SALESPERSON, opts);
+    expect(p.InvAddr3).toBe('AC LINE 3');
+    expect(p.InvAddr4).toBe('AC LINE 4');
+  });
+
+  test('a half-filled address packs what there is', () => {
+    expect(soInvoiceAddress({
+      address1: null, address2: null, address3: null, address4: null,
+      city: 'Ipoh', postcode: null, customer_state: null,
+    })).toEqual({ InvAddr1: null, InvAddr2: null, InvAddr3: 'Ipoh', InvAddr4: null });
+    expect(soInvoiceAddress({
+      address1: null, address2: null, address3: null, address4: null,
+      city: null, postcode: '30000', customer_state: 'Perak',
+    })).toEqual({ InvAddr1: null, InvAddr2: null, InvAddr3: '30000', InvAddr4: 'Perak' });
+  });
+});
+
+describe('SalesLocation — FK_SO_SalesLocation, and a blank is fatal too (finding 3)', () => {
+  /* 21 of 115 unpushed orders have a BLANK sales_location (deriveSalesLocation-
+     FromState returns null for an order with no customer state) and none carries
+     a value LOCATION_MAP fails to know — so the pass-through alone would have
+     fixed nothing. The lines are the answer, and they open no master the
+     document was not already opening off the line itself. */
+  test('a blank document location falls back to the lines', () => {
+    const p = createSo({ ...header, sales_location: null }, [
+      line({ location: 'PG WAREHOUSE' }),
+    ], SALESPERSON, opts);
+    expect(p.SalesLocation).toBe('PG');
+    expect(p.Details[0].Location).toBe('PG');
+  });
+
+  test('an unmapped document location is KEPT rather than turned into ""', () => {
+    const p = createSo({ ...header, sales_location: 'SUNWAY' }, [line()], SALESPERSON, opts);
+    expect(p.SalesLocation).toBe('SUNWAY');
+  });
+
+  /* Unreachable for any document that has a line, because requireLocation has
+     already refused a line with no location. What is left is an order with no
+     live line at all, which cannot be written by any route. */
+  test('no location anywhere REFUSES, naming FK_SO_SalesLocation', () => {
+    let err: unknown;
+    try {
+      createSo({ ...header, sales_location: null }, [], SALESPERSON, opts);
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(MissingSalesLocationError);
+    expect((err as Error).message).toContain('FK_SO_SalesLocation');
+    expect((err as Error).message).toContain('HC-SO-1');
   });
 });
 
@@ -507,19 +863,19 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   const soHeader: ErpSoHeader = { ...header, sales_location: 'PETALING JAYA' };
 
   test("the line's own warehouse wins, mapped to the code AutoCount knows", () => {
-    const p = composeCreateSo(soHeader, [line({ location: 'PG WAREHOUSE' })], SALESPERSON, opts);
+    const p = createSo(soHeader, [line({ location: 'PG WAREHOUSE' })], SALESPERSON, opts);
     expect(p.Details[0].Location).toBe('PG');
   });
 
   test('a line with no warehouse inherits the document, because an order sells from somewhere', () => {
-    const p = composeCreateSo(soHeader, [line()], SALESPERSON, opts);
+    const p = createSo(soHeader, [line()], SALESPERSON, opts);
     expect(p.Details[0].Location).toBe('KL');
   });
 
   test('neither one is REFUSED, naming the line — sending "" would fail FK_SODTL_Location', () => {
     let err: unknown;
     try {
-      composeCreateSo({ ...header, sales_location: null }, [line()], SALESPERSON, opts);
+      createSo({ ...header, sales_location: null }, [line()], SALESPERSON, opts);
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(MissingLocationError);
     expect((err as Error).message).toContain('AC-CODE-1');

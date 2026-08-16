@@ -178,6 +178,28 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.hr.close",  resource: "Supply Chain", verb: "manage", label: "Close HR payout period", description: "Freeze a commission period so later rate changes cannot alter what it pays — the payroll approval step" },
   { key: "scm.hr.reopen", resource: "Supply Chain", verb: "manage", label: "Reopen HR payout period", description: "Un-freeze a closed commission period so it recomputes again — reverses an approved payout and is always recorded with a reason" },
 
+  // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
+  // what the ERP has told the licensed account book and what came back. It is a
+  // narrow key rather than a reuse of scm.access because the queue names every
+  // document the company pushed and quotes AutoCount's own refusals, and because
+  // the owner wanted to be able to hand somebody this page WITHOUT handing them
+  // settings.manage, which is the other key the route accepts (whoever may edit
+  // the sync connection may obviously read the queue it feeds, and that grant
+  // already exists — a key nobody holds is an endpoint nobody can call).
+  // Owner + IT Admin cover it via "*".
+  { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
+  /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
+     The read key above used to end "Read-only: re-sending stays in
+     requeue-autocount-skipped.yml"; it does not any more, and the two are
+     deliberately SEPARATE keys rather than one. Reading the queue is watching;
+     re-sending WRITES A DOCUMENT INTO A LIVE LICENSED ACCOUNT BOOK, where an
+     accepted sales order cannot simply be deleted. Whoever is handed the page
+     to watch must not thereby be able to push into the book — the same split
+     scm.hr.close / scm.hr.reopen is drawn on one section up. The route also
+     accepts settings.manage, which already exists and already owns the AutoCount
+     connection, so the button works for its real audience on day one. */
+  { key: "scm.autocount.requeue", resource: "Supply Chain", verb: "manage", label: "Re-send a refused AutoCount document", description: "Put one failed or skipped document back in the AutoCount queue once its cause is fixed — writes into the live account book, and is refused outright for a document AutoCount has already accepted" },
+
   // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
   // nav/page gate (grant broadly); mail_center.manage gates the alias / access /
   // scope-level admin grids. Owner + IT Admin cover both via "*". Per-thread

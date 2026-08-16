@@ -116,13 +116,35 @@ powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -DryRun   # does it 
 powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1           # compile, swap, verify
 ```
 
-It does every step in 2.1 to 3 in order, and adds the two things a written
-ritual cannot: it **refuses to swap an exe that did not compile**, and it
-**rolls back by itself** if the new exe does not answer `/health` with the
-expected book. It deletes `AcSyncService.build.cs` in a `finally`, so the
-password does not survive a failed run either. To ask only "does the source
-compile", with no credentials involved at all, use `build-local.ps1` — that runs
-on any workstation with AutoCount 2.2 installed.
+It does every step in 2.1 to 3 in order, and adds the things a written ritual
+cannot: it **refuses to swap an exe that did not compile**, it **opens the SQL
+connection before it stops anything**, and it **rolls back by itself** if the
+new exe does not answer `/health` with the expected book. It deletes
+`AcSyncService.build.cs` in a `finally`, so the password does not survive a
+failed run either. To ask only "does the source compile", with no credentials
+involved at all, use `build-local.ps1` — that runs on any workstation with
+AutoCount 2.2 installed.
+
+> **REWRITTEN 2026-08-16, after this script caused a production outage.** Both
+> claims above used to be false in the way that matters, and both cost something
+> the same evening. See `docs/acsync-deploy-rollback-coe.md`.
+>
+> - **The rollback had never worked.** It killed the new process and copied over
+>   `AcSyncService.exe` on the next line; Windows still held the image open, the
+>   copy threw `being used by another process`, `$ErrorActionPreference='Stop'`
+>   ended the script, and the host was left running **neither** exe. Write-back
+>   was dead for about ten minutes. It now waits for the process to exit, waits
+>   for the file handle to be released, verifies the restored copy by hash,
+>   starts it, and polls `/health` until it answers.
+> - **The connection was tested too late.** `setup.json` named a server on a
+>   subnet the host is not on, and the only thing that noticed was
+>   `/ensure-masters` — which runs *after* the stop and the swap. The script now
+>   opens a real `SqlConnection` with the same server, credentials and book in
+>   section 3, before anything is stopped or even compiled, and refuses there.
+> - **Every exit now ends with a listening check.** If nothing answers `/health`
+>   and this run is why, the script prints a full-width red banner with the
+>   recovery commands and exits **2**. Exit **1** means it refused or rolled back
+>   and the service *is* running; exit **0** means deployed and verified.
 
 The rest of this section is the manual equivalent.
 
@@ -195,6 +217,44 @@ It contains the DB password.
 
 ## 3. Deploy
 
+> **What is RUNNING on the host right now — 2026-08-15.** `deploy-on-host.ps1
+> -Server ".\A2006"`, exit 0. The source it built is `main`'s
+> `AcSyncService.cs` at SHA256 `b51e60a9…c933da` (57,382 bytes), fetched onto
+> the host from the public raw URL — the two copies already on the machine were
+> stale (`C:\Temp` 08-11, `C:\Temp\acbuild` 08-12) and would have rebuilt code
+> four merged PRs behind. It compiled to **51,712 bytes** and reported:
+>
+> ```
+> OK   health: {"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}
+> OK   database reachable: /ensure-masters answered 200 - the connection line works
+> OK   listening on port 8900, as expected
+> ```
+>
+> So `/ensure-masters` and `/further-description` — both of which the previous
+> exe answered `404 unknown route` — are live. Rollback is
+> `C:\Temp\AcSyncService.prev.exe`, and §5 is the procedure.
+>
+> Two things worth knowing before the next deploy:
+>
+> - **`setup.json` names `AED_DEMO`, not `AED_HOUZS`.** The script says so and
+>   proceeds with the `-Book` value; that NOTE line is expected, not a warning
+>   to chase. The book comes from `-Book` (default `AED_HOUZS`), the server from
+>   `-Server`, and only the credentials come from the file.
+> - **`-Server ".\A2006"` is not optional here.** Without it the value is taken
+>   from `setup.json` and the build fails every real request with "Error
+>   Locating Server/Instance Specified" while `/health` still passes — the exact
+>   trap §4 was written against. `.\A2006` is what the host's own LINQPad
+>   connection uses.
+>
+> **Getting a command onto that host is harder than it looks.** It is driven
+> through UltraViewer, which does NOT pass Ctrl key combinations — so `Ctrl+V`
+> pastes nothing, in the console and in LINQPad alike. In LINQPad use the
+> **Edit menu's** Select All / Paste; in `conhost` use right-click, and note
+> that a left-click first puts the console into QuickEdit selection, which
+> FREEZES it and makes the next right-click copy instead of paste. Running the
+> deploy from LINQPad's C# mode via `Process.Start` with the output redirected
+> is more reliable than the console, and it captures the whole transcript.
+
 1. Stop the running `AcSyncService.exe`.
 2. Keep the previous `.exe` as `AcSyncService.prev.exe` — this is the rollback.
 3. Copy the new `.exe` into place and start it.
@@ -204,7 +264,25 @@ It contains the DB password.
 curl -X POST http://localhost:8900/health -H "X-API-KEY: %ACKEY%"
 ```
 
-Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService"}`.
+Expect `{"ok":true,"book":"AED_HOUZS","service":"AcSyncService","builtAt":"…Z","mvid":"…"}`.
+
+**`builtAt` is the whole point of this step.** It is the exe's own file
+timestamp, and it is how you tell whether the swap actually happened — compare
+it against the last change to the service's source:
+
+```
+git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+```
+
+`builtAt` **earlier than that date means the host is running an old binary**, no
+matter what anybody remembers about deploying it. Before 2026-08-15 `/health`
+returned no build identity at all, so this question had no answer from the
+service, from the repository, or from any document that could be trusted to be
+current — the same blind spot that let a two-week-old staging build pass a
+nightly check for a fortnight (`docs/SECURITY-DX-ROADMAP.md`).
+
+`mvid` is unique per compilation. Use it when two timestamps both look
+plausible, or to confirm two hosts are running the same bytes.
 
 ---
 
@@ -271,13 +349,18 @@ return 0 or less.
 
 ### 4.6a The three cells 4.1-4.5 never touch
 
-4.1 to 4.5 exercise create-SO and edit. **`/create-po`, `/so-to-do` and
-`/po-to-gr` have never run end to end** — `qa-convert.ps1` is those three, in
-order, over the public tunnel from any machine:
+4.1 to 4.5 exercise create-SO and edit. `qa-convert.ps1` is `/create-po`,
+`/so-to-do` and `/po-to-gr`, in order, over the public tunnel from any machine:
 
 ```
 powershell -ExecutionPolicy Bypass -File qa-convert.ps1 -KeyFile <path> -IReallyMeanIt
 ```
+
+**Which of those three have actually run is NOT recorded here.** This sentence
+used to say all three had never run end to end, and by the time anyone read it
+`/so-to-do` had consumed a real DO number. Run status lives in exactly one
+place now — `docs/generated/autocount-coverage.md` — and nothing else may state
+it.
 
 It proves the convert actually LINKED the documents without needing a database:
 step 6 cancels the parent SO **while its DO still exists and requires that to
@@ -297,6 +380,26 @@ nothing.
 ## 5. Rollback
 
 Stop the service, restore `AcSyncService.prev.exe`, start it.
+
+> **Order matters, and getting it wrong is what caused the 2026-08-16 outage.**
+> `Stop-Process` returns before the process is gone, and Windows holds the image
+> file open until it is. Copying over `AcSyncService.exe` on the next line fails
+> with *"being used by another process"* and leaves **nothing** running. By hand:
+>
+> ```bat
+> powershell -Command "Get-Process AcSyncService -EA SilentlyContinue | Stop-Process -Force"
+> :: wait until this prints nothing at all
+> powershell -Command "Get-Process AcSyncService -EA SilentlyContinue"
+> copy /Y C:\Temp\AcSyncService.prev.exe C:\Temp\AcSyncService.exe
+> start "" C:\Temp\AcSyncService.exe
+> curl -X POST http://localhost:8900/health -H "X-API-KEY: %ACKEY%"
+> ```
+>
+> The last line is not optional. A rollback you did not confirm is a rollback you
+> did not do — that is the whole finding of
+> `docs/acsync-deploy-rollback-coe.md`. `deploy-on-host.ps1` now does all five
+> steps itself, in that order, and will not exit quietly if the final curl would
+> have failed.
 
 Rolling back re-opens the duplicate-append defect, so it should be paired with
 turning the ERP write-back toggle off:

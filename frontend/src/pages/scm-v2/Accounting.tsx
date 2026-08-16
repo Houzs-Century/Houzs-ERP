@@ -1,30 +1,43 @@
 // ----------------------------------------------------------------------------
-// Accounting page — PR #36.
+// Accounting page — the ledger's face (accounting module, phase 1).
 //
 // Tab strip:
-//   1. Journal Entries — list w/ filter, drill into lines
-//   2. General Ledger — flat GL stream, filter by account / date
-//   3. Balances — trial-balance-style view (Σ Dr, Σ Cr, balance)
-//   4. AR Aging — outstanding SI bucketed (CURRENT / 1-30 / 31-60 / 61-90 / 90+)
-//   5. AP Aging — outstanding PI bucketed
-//
-// Commander 2026-05-25 "OK A": don't fork Odoo (AGPL), reference ERPNext
-// (MIT), build a simple journal-entries + GL + AR/AP aging.
+//   1. Chart of Accounts — the account tree: add / rename / deactivate
+//   2. Journal Entries — list w/ filter, drill into lines, NEW manual journal,
+//      post a draft, reverse a posted manual journal
+//   3. General Ledger — flat GL stream, filter by account / date
+//   4. Trial Balance — Σ Dr / Σ Cr per account + the report's own self-check:
+//      the difference tile is 0.00 or the ledger is broken (brief §3.7)
+//   5. AR Aging / 6. AP Aging — outstanding SI / PI bucketed
+//   7. Self-check — reconciliation layer 1: control account vs documents,
+//      drift named to the document (brief §3.5)
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { BookOpen, FileText, Receipt, TrendingDown, TrendingUp } from 'lucide-react';
+import { BookOpen, FileText, ListTree, Receipt, ShieldCheck, TrendingDown, TrendingUp } from 'lucide-react';
 import {
   useJournalEntries,
+  useJournalEntryDetail,
+  useCreateJournalEntry,
+  usePostJournalEntry,
   useGlEntries,
   useAccountBalances,
   useArAging,
   useApAging,
   useAccounts,
+  type Account,
   type ArAgingRow,
   type ApAgingRow,
   type JournalEntry,
+  type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
+import {
+  useCreateAccount,
+  useUpdateAccount,
+  useReverseJournalEntry,
+  useControlCheck,
+  type ControlCheckRow,
+} from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { fmtCenti } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -38,7 +51,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
 const fmt = (sen: number | null | undefined) => fmtCenti(sen);
 
-type Tab = 'je' | 'gl' | 'balances' | 'ar' | 'ap';
+type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
 
 export const Accounting = () => {
   const [tab, setTab] = useState<Tab>('je');
@@ -48,18 +61,22 @@ export const Accounting = () => {
       <PageHeader eyebrow="Finance" title="Accounting" />
 
       <div className={styles.statusChips} style={{ gap: 'var(--space-2)' }}>
+        <TabBtn label="Chart of Accounts" icon={<ListTree {...ICON} />} active={tab === 'coa'} onClick={() => setTab('coa')} />
         <TabBtn label="Journal Entries" icon={<BookOpen {...ICON} />} active={tab === 'je'}    onClick={() => setTab('je')} />
         <TabBtn label="General Ledger"  icon={<FileText {...ICON} />} active={tab === 'gl'}    onClick={() => setTab('gl')} />
-        <TabBtn label="Balances"        icon={<Receipt {...ICON} />}  active={tab === 'balances'} onClick={() => setTab('balances')} />
+        <TabBtn label="Trial Balance"   icon={<Receipt {...ICON} />}  active={tab === 'tb'} onClick={() => setTab('tb')} />
         <TabBtn label="AR Aging"        icon={<TrendingUp {...ICON} />} active={tab === 'ar'}  onClick={() => setTab('ar')} />
         <TabBtn label="AP Aging"        icon={<TrendingDown {...ICON} />} active={tab === 'ap'} onClick={() => setTab('ap')} />
+        <TabBtn label="Self-check"      icon={<ShieldCheck {...ICON} />} active={tab === 'check'} onClick={() => setTab('check')} />
       </div>
 
-      {tab === 'je'       && <JeTab />}
-      {tab === 'gl'       && <GlTab />}
-      {tab === 'balances' && <BalancesTab />}
-      {tab === 'ar'       && <ArAgingTab />}
-      {tab === 'ap'       && <ApAgingTab />}
+      {tab === 'coa'   && <CoaTab />}
+      {tab === 'je'    && <JeTab />}
+      {tab === 'gl'    && <GlTab />}
+      {tab === 'tb'    && <TrialBalanceTab />}
+      {tab === 'ar'    && <ArAgingTab />}
+      {tab === 'ap'    && <ApAgingTab />}
+      {tab === 'check' && <SelfCheckTab />}
     </div>
   );
 };
@@ -83,25 +100,194 @@ const TabBtn = ({
   </button>
 );
 
+/* Small shared form styling for the phase-1 cards. */
+const cardStyle: React.CSSProperties = {
+  padding: 'var(--space-4)',
+  background: 'var(--c-cream)',
+  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
+  borderRadius: 'var(--radius-md)',
+};
+const fieldStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
+  borderRadius: 'var(--radius-sm, 6px)',
+  fontSize: 'var(--fs-13)',
+  background: 'white',
+};
+const btnStyle = (primary?: boolean): React.CSSProperties => ({
+  padding: '6px 14px',
+  border: '1px solid var(--c-ink)',
+  borderRadius: 'var(--radius-md)',
+  background: primary ? 'var(--c-ink)' : 'transparent',
+  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
+  fontSize: 'var(--fs-13)',
+  fontWeight: 600,
+  cursor: 'pointer',
+});
+
+/* ── Chart of Accounts ───────────────────────────────────────────────── */
+const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
+
+const CoaTab = () => {
+  const q = useAccounts();
+  const createM = useCreateAccount();
+  const updateM = useUpdateAccount();
+  const [showInactive, setShowInactive] = useState(false);
+  const [editing, setEditing] = useState<Account | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  const all = useMemo(() => q.data?.accounts ?? [], [q.data]);
+  const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
+  const rows = useMemo(() => {
+    const rank = (t: string) => {
+      const i = ACCOUNT_TYPE_ORDER.indexOf(t);
+      return i === -1 ? ACCOUNT_TYPE_ORDER.length : i;
+    };
+    return all
+      .filter((a) => showInactive || a.is_active)
+      .sort((a, b) => rank(a.account_type) - rank(b.account_type) || byText(a.account_code, b.account_code));
+  }, [all, showInactive]);
+
+  return (
+    <div className="space-y-3">
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+        <button type="button" style={btnStyle(true)} onClick={() => { setAdding(true); setEditing(null); }}>
+          Add account
+        </button>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
+          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+          Show deactivated (legacy codes)
+        </label>
+      </div>
+
+      {(adding || editing) && (
+        <AccountForm
+          key={editing?.account_code ?? 'new'}
+          existing={editing}
+          accounts={all}
+          busy={createM.isPending || updateM.isPending}
+          onCancel={() => { setAdding(false); setEditing(null); }}
+          onSubmit={(v) => {
+            const done = () => { setAdding(false); setEditing(null); };
+            if (editing) {
+              updateM.mutate(
+                { code: editing.account_code, accountName: v.name, parentCode: v.parent || null, isActive: v.active },
+                { onSuccess: done },
+              );
+            } else {
+              createM.mutate(
+                { accountCode: v.code, accountName: v.name, accountType: v.type, parentCode: v.parent || null },
+                { onSuccess: done },
+              );
+            }
+          }}
+        />
+      )}
+
+      <DataTable<Account>
+        tableId="accounting-coa"
+        layoutFamily="accounting-coa"
+        exportName="chart-of-accounts"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No accounts."
+        getRowKey={(r) => r.account_code}
+        groupBy={{ key: 'type' }}
+        onRowClick={(r) => { setEditing(r); setAdding(false); }}
+        columns={[
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code, render: (r) => <span className={styles.codeChip}>{r.account_code}</span> },
+          {
+            key: 'name', label: 'Name',
+            getValue: (r) => r.account_name,
+            // Children indent under their parent so the hierarchy reads as a tree.
+            render: (r) => <span style={{ paddingLeft: r.parent_code ? 18 : 0 }}>{r.account_name}</span>,
+          },
+          { key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '', render: (r) => r.parent_code ?? '—' },
+          {
+            key: 'kind', label: 'Posting', width: '110px',
+            getValue: (r) => (parents.has(r.account_code) ? 'HEADER' : 'POSTABLE'),
+            render: (r) => parents.has(r.account_code)
+              ? <span className={`${styles.statusPill} ${styles.statusInactive}`}>HEADER</span>
+              : <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #666)' }}>postable</span>,
+          },
+          {
+            key: 'status', label: 'Status', width: '110px',
+            getValue: (r) => (r.is_active ? 'ACTIVE' : 'INACTIVE'),
+            render: (r) => (
+              <span className={`${styles.statusPill} ${r.is_active ? styles.statusActive : styles.statusInactive}`}>
+                {r.is_active ? 'ACTIVE' : 'INACTIVE'}
+              </span>
+            ),
+          },
+        ] satisfies Column<Account>[]}
+      />
+    </div>
+  );
+};
+
+const AccountForm = ({
+  existing, accounts, busy, onSubmit, onCancel,
+}: {
+  existing: Account | null;
+  accounts: Account[];
+  busy: boolean;
+  onSubmit: (v: { code: string; name: string; type: string; parent: string; active: boolean }) => void;
+  onCancel: () => void;
+}) => {
+  const [code, setCode] = useState(existing?.account_code ?? '');
+  const [name, setName] = useState(existing?.account_name ?? '');
+  const [type, setType] = useState(existing?.account_type ?? 'EXPENSE');
+  const [parent, setParent] = useState(existing?.parent_code ?? '');
+  const [active, setActive] = useState(existing?.is_active ?? true);
+
+  const parentOptions = accounts.filter((a) => a.is_active && a.account_type === type && a.account_code !== existing?.account_code);
+
+  return (
+    <div style={cardStyle} className="space-y-3">
+      <div style={{ fontWeight: 700 }}>{existing ? `Edit ${existing.account_code}` : 'New account'}</div>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <input style={{ ...fieldStyle, width: 130 }} placeholder="Code (e.g. 950-0000)" value={code}
+          disabled={Boolean(existing)} onChange={(e) => setCode(e.target.value)} />
+        <input style={{ ...fieldStyle, width: 260 }} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <select style={fieldStyle} value={type} disabled={Boolean(existing)} onChange={(e) => { setType(e.target.value as Account['account_type']); setParent(''); }}>
+          {ACCOUNT_TYPE_ORDER.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select style={fieldStyle} value={parent} onChange={(e) => setParent(e.target.value)}>
+          <option value="">No parent</option>
+          {parentOptions.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>)}
+        </select>
+        {existing && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+            Active
+          </label>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+        <button type="button" style={btnStyle(true)} disabled={busy || !name.trim() || (!existing && !code.trim())}
+          onClick={() => onSubmit({ code: code.trim(), name: name.trim(), type, parent, active })}>
+          {busy ? 'Saving…' : existing ? 'Save changes' : 'Create account'}
+        </button>
+        <button type="button" style={btnStyle()} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+};
+
 /* ── Journal Entries ─────────────────────────────────────────────────── */
 
 /* JE status label — REVERSED wins over POSTED, then DRAFT. */
 const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
-/* Shared DataTable (batch 2 of the SO-sample unification, owner 2026-07-28:
-   ALL Accounting tabs converge on DataTable — this tab was the last DataGrid
-   holdout). The source-type scope select stays a page-level control above the
-   table, same rule as GL's account scope: the DataTable toolbar owns
-   search/export/columns. */
 const JeTab = () => {
   const [sourceType, setSourceType] = useState<string>('');
   const q = useJournalEntries(sourceType ? { sourceType } : undefined);
   const rows = useMemo(() => q.data?.journalEntries ?? [], [q.data]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
-  // Loaded-only search over the visible entries (the old DataGrid's
-  // "Filter visible entries…" box) — DataTable renders the box + scope hint,
-  // the page does the filtering (DeliveryReturnsListV2 convention).
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -115,18 +301,30 @@ const JeTab = () => {
 
   return (
     <div className="space-y-3">
-      <select
-        value={sourceType}
-        onChange={(e) => setSourceType(e.target.value)}
-        className={styles.searchInput}
-        style={{ maxWidth: 200 }}>
-        <option value="">All sources</option>
-        <option value="SI">SI — Sales Invoice</option>
-        <option value="PI">PI — Purchase Invoice</option>
-        <option value="SI_PAYMENT">SI Payment</option>
-        <option value="PI_PAYMENT">PI Payment</option>
-        <option value="MANUAL">Manual</option>
-      </select>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={btnStyle(true)} onClick={() => { setCreating((v) => !v); setSelectedId(null); }}>
+          {creating ? 'Close journal form' : 'New manual journal'}
+        </button>
+        <select
+          value={sourceType}
+          onChange={(e) => setSourceType(e.target.value)}
+          className={styles.searchInput}
+          style={{ maxWidth: 220 }}>
+          <option value="">All sources</option>
+          <option value="SI">SI — Sales Invoice</option>
+          <option value="SI_REVERSAL">SI Reversal</option>
+          <option value="PI">PI — Purchase Invoice</option>
+          <option value="PI_REVERSAL">PI Reversal</option>
+          <option value="PV">PV — Payment Voucher</option>
+          <option value="PV_REVERSAL">PV Reversal</option>
+          <option value="MANUAL">Manual</option>
+          <option value="MANUAL_REVERSAL">Manual Reversal</option>
+        </select>
+      </div>
+
+      {creating && <NewJournalForm onDone={() => setCreating(false)} />}
+      {selectedId && <JeDetailCard id={selectedId} onClose={() => setSelectedId(null)} />}
+
       <DataTable<JournalEntry>
         tableId="accounting-je"
         layoutFamily="accounting-je"
@@ -135,6 +333,7 @@ const JeTab = () => {
         loading={q.isLoading}
         emptyLabel="No entries."
         getRowKey={(r) => r.id}
+        onRowClick={(r) => { setSelectedId(r.id); setCreating(false); }}
         /* Search is loaded-only (the JE query caps at 500 — searchScope
            contract): DataTable renders the box + scope hint, the page owns
            the actual filtering, per the DeliveryReturnsListV2 convention. */
@@ -162,6 +361,173 @@ const JeTab = () => {
           },
         ] satisfies Column<JournalEntry>[]}
       />
+    </div>
+  );
+};
+
+/* RM string → integer sen; null when the input is not money. */
+const rmToSen = (raw: string): number | null => {
+  const t = raw.trim();
+  if (!t) return 0;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100);
+};
+
+type DraftLine = { accountCode: string; debit: string; credit: string; notes: string };
+const EMPTY_LINE: DraftLine = { accountCode: '', debit: '', credit: '', notes: '' };
+
+const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
+  const accounts = useAccounts();
+  const createM = useCreateJournalEntry();
+  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [narration, setNarration] = useState('');
+  const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
+
+  const all = accounts.data?.accounts ?? [];
+  const parents = useMemo(() => new Set(all.map((a) => a.parent_code).filter(Boolean) as string[]), [all]);
+  // Postable = active and not a header — the same rule the engine enforces,
+  // applied here so the picker cannot offer an account the post will refuse.
+  const postable = all.filter((a) => a.is_active && !parents.has(a.account_code));
+
+  const totals = useMemo(() => {
+    let dr = 0; let cr = 0; let bad = false;
+    for (const l of lines) {
+      const d = rmToSen(l.debit); const c = rmToSen(l.credit);
+      if (d == null || c == null) { bad = true; continue; }
+      dr += d; cr += c;
+      if (d > 0 && c > 0) bad = true;
+    }
+    return { dr, cr, bad };
+  }, [lines]);
+
+  const canSave = !totals.bad && totals.dr === totals.cr && totals.dr > 0
+    && lines.every((l) => l.accountCode || (!l.debit && !l.credit));
+
+  const setLine = (i: number, patch: Partial<DraftLine>) =>
+    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  const submit = () => {
+    const body = {
+      entryDate,
+      narration: narration.trim() || null,
+      lines: lines
+        .filter((l) => l.accountCode)
+        .map((l): JeLineIn => ({
+          accountCode: l.accountCode,
+          debitSen: rmToSen(l.debit) ?? 0,
+          creditSen: rmToSen(l.credit) ?? 0,
+          notes: l.notes.trim() || null,
+        })),
+    };
+    createM.mutate(body, { onSuccess: onDone });
+  };
+
+  return (
+    <div style={cardStyle} className="space-y-3">
+      <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <input type="date" style={fieldStyle} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+        <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
+          value={narration} onChange={(e) => setNarration(e.target.value)} />
+      </div>
+
+      {lines.map((l, i) => (
+        <div key={i} style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select style={{ ...fieldStyle, minWidth: 260 }} value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })}>
+            <option value="">Select account…</option>
+            {[...postable].sort((a, b) => byText(a.account_code, b.account_code)).map((a) => (
+              <option key={a.account_code} value={a.account_code}>{a.account_code} — {a.account_name}</option>
+            ))}
+          </select>
+          <input style={{ ...fieldStyle, width: 120 }} placeholder="Debit RM" inputMode="decimal"
+            value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} />
+          <input style={{ ...fieldStyle, width: 120 }} placeholder="Credit RM" inputMode="decimal"
+            value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} />
+          <input style={{ ...fieldStyle, flex: 1, minWidth: 160 }} placeholder="Line note"
+            value={l.notes} onChange={(e) => setLine(i, { notes: e.target.value })} />
+          {lines.length > 2 && (
+            <button type="button" style={btnStyle()} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>Remove</button>
+          )}
+        </div>
+      ))}
+
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={btnStyle()} onClick={() => setLines((ls) => [...ls, { ...EMPTY_LINE }])}>Add line</button>
+        <span style={{ fontSize: 'var(--fs-13)' }}>
+          Dr {fmt(totals.dr)} · Cr {fmt(totals.cr)} ·{' '}
+          {totals.dr === totals.cr && totals.dr > 0 && !totals.bad
+            ? <b style={{ color: 'var(--c-secondary-a, #2F5D4F)' }}>balanced</b>
+            : <b style={{ color: 'var(--c-festive-b, #B8331F)' }}>{totals.bad ? 'invalid amounts' : 'not balanced'}</b>}
+        </span>
+        <button type="button" style={btnStyle(true)} disabled={!canSave || createM.isPending} onClick={submit}>
+          {createM.isPending ? 'Saving…' : 'Save draft'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const JeDetailCard = ({ id, onClose }: { id: string; onClose: () => void }) => {
+  const q = useJournalEntryDetail(id);
+  const postM = usePostJournalEntry();
+  const reverseM = useReverseJournalEntry();
+  const je = q.data?.journalEntry;
+  const lines = q.data?.lines ?? [];
+
+  return (
+    <div style={cardStyle} className="space-y-3">
+      {!je ? (
+        <div style={{ fontSize: 'var(--fs-13)' }}>{q.isLoading ? 'Loading…' : 'Entry not found.'}</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className={styles.codeChip}>{je.je_no}</span>
+            <span>{fmtDateOrDash(je.entry_date)}</span>
+            <span>{je.source_type}{je.source_doc_no ? ` · ${je.source_doc_no}` : ''}</span>
+            <span className={`${styles.statusPill} ${je.posted ? styles.statusActive : styles.statusInactive}`}>{jeStatus(je)}</span>
+            <span style={{ flex: 1 }} />
+            {je.source_type === 'MANUAL' && !je.posted && !je.reversed && (
+              <button type="button" style={btnStyle(true)} disabled={postM.isPending}
+                onClick={() => postM.mutate(id)}>
+                {postM.isPending ? 'Posting…' : 'Post'}
+              </button>
+            )}
+            {je.source_type === 'MANUAL' && je.posted && !je.reversed && (
+              <button type="button" style={btnStyle()} disabled={reverseM.isPending}
+                onClick={() => reverseM.mutate(id)}>
+                {reverseM.isPending ? 'Reversing…' : 'Reverse'}
+              </button>
+            )}
+            <button type="button" style={btnStyle()} onClick={onClose}>Close</button>
+          </div>
+          {je.narration && <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #555)' }}>{je.narration}</div>}
+          <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
+                <th style={{ padding: '4px 8px' }}>#</th>
+                <th style={{ padding: '4px 8px' }}>Account</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Debit</th>
+                <th style={{ padding: '4px 8px', textAlign: 'right' }}>Credit</th>
+                <th style={{ padding: '4px 8px' }}>Party</th>
+                <th style={{ padding: '4px 8px' }}>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
+                  <td style={{ padding: '4px 8px' }}>{l.line_no}</td>
+                  <td style={{ padding: '4px 8px' }}>{l.account_code}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.debit_sen > 0 ? fmt(l.debit_sen) : '—'}</td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>{l.credit_sen > 0 ? fmt(l.credit_sen) : '—'}</td>
+                  <td style={{ padding: '4px 8px' }}>{l.party_name ?? l.party_code ?? '—'}</td>
+                  <td style={{ padding: '4px 8px' }}>{l.notes ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 };
@@ -214,10 +580,9 @@ const GlTab = () => {
   );
 };
 
-/* ── Balances ────────────────────────────────────────────────────────── */
-const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
+/* ── Trial Balance ───────────────────────────────────────────────────── */
 
-const BalancesTab = () => {
+const TrialBalanceTab = () => {
   const q = useAccountBalances();
   // Pre-sort into the canonical statement order — DataTable's groupBy buckets
   // in first-seen row order, so this IS the group order until the user sorts.
@@ -232,35 +597,133 @@ const BalancesTab = () => {
     );
   }, [q.data]);
 
+  /* The report's own self-check (brief §3.7: every report is born carrying
+     one): Σ debits must equal Σ credits over the whole ledger. Anything but
+     0.00 is a BUG in the books, not an opinion about them. */
+  const totals = useMemo(() => {
+    let dr = 0; let cr = 0;
+    for (const r of rows) { dr += r.total_debit_sen; cr += r.total_credit_sen; }
+    return { dr, cr, diff: dr - cr };
+  }, [rows]);
+
   type BalanceRow = (typeof rows)[number];
   return (
-    <DataTable<BalanceRow>
-      tableId="accounting-balances"
-      layoutFamily="accounting-balances"
-      exportName="account-balances"
-      rows={q.isLoading ? null : rows}
-      loading={q.isLoading}
-      emptyLabel="No balances yet."
-      getRowKey={(r) => r.account_code}
-      groupBy={{ key: 'type' }}
-      columns={[
-        // Grouping key — the collapsible header row shows the type, so the
-        // column itself starts hidden (still revealable from Columns).
-        { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
-        { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
-        { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
-        { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
-        {
-          key: 'balance', label: 'Balance', align: 'right', width: '150px',
-          getValue: (r) => r.balance_sen / 100,
-          render: (r) => (
-            <span style={{ fontWeight: 700, color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)' }}>
-              {fmt(r.balance_sen)}
-            </span>
-          ),
-        },
-      ] satisfies Column<BalanceRow>[]}
-    />
+    <div className="space-y-3">
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
+        <SummaryTile label="Σ Debit" value={fmt(totals.dr)} />
+        <SummaryTile label="Σ Credit" value={fmt(totals.cr)} />
+        <div style={{
+          padding: 'var(--space-3) var(--space-4)',
+          background: totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
+          border: `1px solid ${totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
+          borderRadius: 'var(--radius-md)',
+        }}>
+          <div className={styles.subtitle} style={{ marginBottom: 2 }}>Difference (must be 0.00)</div>
+          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
+            {fmt(totals.diff)}{totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}
+          </div>
+        </div>
+      </section>
+
+      <DataTable<BalanceRow>
+        tableId="accounting-balances"
+        layoutFamily="accounting-balances"
+        exportName="trial-balance"
+        rows={q.isLoading ? null : rows}
+        loading={q.isLoading}
+        emptyLabel="No balances yet."
+        getRowKey={(r) => r.account_code}
+        groupBy={{ key: 'type' }}
+        columns={[
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
+          { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
+          { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
+          {
+            key: 'balance', label: 'Balance', align: 'right', width: '150px',
+            getValue: (r) => r.balance_sen / 100,
+            render: (r) => (
+              <span style={{ fontWeight: 700, color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)' }}>
+                {fmt(r.balance_sen)}
+              </span>
+            ),
+          },
+        ] satisfies Column<BalanceRow>[]}
+      />
+    </div>
+  );
+};
+
+/* ── Self-check (control accounts vs documents) ──────────────────────── */
+
+const SelfCheckTab = () => {
+  const q = useControlCheck();
+  const checks = q.data?.checks ?? [];
+
+  return (
+    <div className="space-y-3">
+      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Running checks…</div>}
+      {checks.map((check) => <ControlCheckCard key={check.role} check={check} />)}
+    </div>
+  );
+};
+
+const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
+  if ('error' in check) {
+    return (
+      <div style={{ ...cardStyle, borderColor: 'var(--c-festive-b, #B8331F)' }}>
+        <b>{check.role} · {check.accountCode}</b> — check could not run: {check.error}
+      </div>
+    );
+  }
+  const ok = check.ok;
+  return (
+    <div style={{ ...cardStyle, borderColor: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }} className="space-y-2">
+      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>{check.role === 'AR' ? 'Accounts Receivable control' : 'Accounts Payable control'}</b>
+        <span className={styles.codeChip}>{check.accountCode}</span>
+        <span>GL balance {fmt(check.glBalanceSen)}</span>
+        <span style={{
+          padding: '2px 10px', borderRadius: 999, fontWeight: 700, fontSize: 'var(--fs-12)',
+          background: ok ? 'rgba(47, 93, 79, 0.12)' : 'rgba(184, 51, 31, 0.12)',
+          color: ok ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)',
+        }}>
+          {ok ? 'CLEAN' : `${check.driftDocs.length + check.foreignLines.length} FINDING${check.driftDocs.length + check.foreignLines.length === 1 ? '' : 'S'}`}
+        </span>
+      </div>
+
+      {check.driftDocs.length > 0 && (
+        <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
+              <th style={{ padding: '4px 8px' }}>Document</th>
+              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Document total</th>
+              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Journal total</th>
+              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Difference</th>
+              <th style={{ padding: '4px 8px' }}>What is wrong</th>
+            </tr>
+          </thead>
+          <tbody>
+            {check.driftDocs.map((d) => (
+              <tr key={d.docNo} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
+                <td style={{ padding: '4px 8px' }}><span className={styles.codeChip}>{d.docNo}</span></td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.docTotalSen)}</td>
+                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.jeTotalSen)}</td>
+                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700 }}>{fmt(d.diffSen)}</td>
+                <td style={{ padding: '4px 8px' }}>{d.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {check.foreignLines.length > 0 && (
+        <div style={{ fontSize: 'var(--fs-13)' }}>
+          Lines on this control account from sources that do not belong here:{' '}
+          {check.foreignLines.map((f) => `${f.jeNo} (${f.sourceType})`).join(', ')}
+        </div>
+      )}
+    </div>
   );
 };
 

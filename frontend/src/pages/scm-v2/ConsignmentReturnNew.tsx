@@ -32,9 +32,11 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useConsignmentNoteDetail } from '../../vendor/scm/lib/consignment-note-queries';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
+import { useLocalities } from '../../vendor/scm/lib/localities-queries';
 import {
-  useLocalities, distinctStates, citiesInState, postcodesInCity,
-} from '../../vendor/scm/lib/localities-queries';
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -215,9 +217,15 @@ export const ConsignmentReturnNew = () => {
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  const states = useMemo(() => distinctStates(locRows), [locRows]);
-  const cities = useMemo(() => (state ? citiesInState(locRows, state) : []), [locRows, state]);
-  const postcodes = useMemo(() => ((state && city) ? postcodesInCity(locRows, state, city) : []), [locRows, state, city]);
+  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
+     so each pick writes all three back — the raw setters keep the value just
+     chosen, which routing through the State picker's handler would clear. */
+  const { cities, postcodes } = useAddressCascade(locRows, state, city);
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state); setCity(next.city); setPostcode(next.postcode);
+  };
+  const onCityPick = (next: string) => applyTriple(pickCity(locRows, { state, city, postcode }, next));
+  const onPostcodePick = (next: string) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next));
 
   const updateLine = (rid: string, patch: Partial<SoLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
@@ -455,7 +463,7 @@ export const ConsignmentReturnNew = () => {
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={state}
-                onChange={(next) => { setState(next); setCity(''); setPostcode(''); }}
+                onChange={(next) => applyTriple(pickState(next))}
               />
             </label>
             <label className={styles.field}>
@@ -464,9 +472,8 @@ export const ConsignmentReturnNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(v) => { setCity(v); setPostcode(''); }}
-                  disabled={!state}
-                  placeholder={state ? 'Pick city' : '— pick state first'}
+                  onChange={onCityPick}
+                  placeholder={cityPlaceholder(state)}
                   options={sortByText(cities).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -478,9 +485,8 @@ export const ConsignmentReturnNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={setPostcode}
-                  disabled={!state || !city}
-                  placeholder={(state && city) ? 'Pick postcode' : '— pick city first'}
+                  onChange={onPostcodePick}
+                  placeholder={postcodePlaceholder(state, city)}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

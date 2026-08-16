@@ -26,21 +26,45 @@
 import { chunkIn } from './paginate-all';
 import { scopeToCompany } from './companyScope';
 import type { CompanyScopeCtx } from './companyScope';
+import { normCategory } from './so-readiness';
 
 const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
 
-/* Same normalisation as the list handler's normCategory. */
-const normCategory = (raw: string | null | undefined): string => {
-  const g = (raw ?? '').trim().toUpperCase();
-  if (g.includes('BEDFRAME')) return 'BEDFRAME';
-  if (g.includes('SOFA')) return 'SOFA';
-  if (g.includes('MATTRESS')) return 'MATTRESS';
-  if (g.includes('ACCESSOR')) return 'ACCESSORY';
-  if (g.includes('SERVICE')) return 'SERVICE';
-  return 'OTHERS';
-};
-
 const isBlank = (v: string | null | undefined) => v == null || String(v).trim() === '';
+
+/**
+ * The SO list Branding column, as a pure rule.
+ *
+ * WHY IT IS HERE AND NOT COPIED. Three surfaces render this same column and
+ * must agree: the SO list, Delivery Planning, and the Consignment Orders page.
+ * Delivery Planning carried its own copy under a comment reading "Keep in
+ * lock-step with the SO list" — an instruction to a human, which is what a
+ * shared function is for. (The frontend ConsignmentOrders.tsx copy is
+ * behaviourally identical today, verified 2026-08-15; it takes a row rather
+ * than two values, so it is left alone until the shared frontend mirror moves
+ * with it.)
+ *
+ * MATTRESS is the only branch that reads the second argument: it shows the
+ * mattress its OWN brand, except the house brand (stored as "2990" or
+ * "2990's"), which displays as "2990 Mattress". Blank brand also reads as the
+ * house brand — a mattress with no recorded brand is ours.
+ */
+export function deriveBranding(
+  firstItemCategory: string | null,
+  firstItemBranding: string | null,
+): string {
+  const cat = firstItemCategory;
+  if (!cat) return '';                       // no items -> em dash in the column
+  if (cat === 'SOFA')     return '2990 Sofa';
+  if (cat === 'BEDFRAME') return 'Bedframe';
+  if (cat === 'MATTRESS') {
+    const b = (firstItemBranding ?? '').trim();
+    if (!b || /^2990('?s)?$/i.test(b)) return '2990 Mattress';
+    return b;
+  }
+  return '';                                 // accessory / others / service -> none
+}
+
 
 type LineRow = {
   doc_no: string;

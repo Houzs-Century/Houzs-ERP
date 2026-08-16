@@ -106,18 +106,44 @@ The category tokens name **what IS ready**, not what is pending. `BEDFRAME`
 means "the bedframe is ready, something else is not" — it does not mean "the
 bedframe is outstanding". Reading it the intuitive way inverts every row.
 
-| Value | Meaning | ERP source |
+> **THE ERP SIDE OF THIS TABLE CHANGED ON 2026-08-16 (PR #2295).** The
+> vocabulary below is what AutoCount's `Remark2` HOLDS — every count in this
+> document was measured against it and stays true of the stored data. It is no
+> longer what the ERP EMITS. Read the two columns as *historical value* →
+> *what the ERP would write for that state today*.
+>
+> The owner's ruling: a remark must name what is **missing**, never claim a
+> readiness the order does not have. So the tokens flipped from naming what IS
+> ready to naming what is SHORT, and `READY (PARTIAL)` was deleted outright —
+> on an accessory-only order it was vacuously true and read as shippable while
+> the order's own ship gate said no.
+>
+> **Reconciling across the change:** an AutoCount row written before 2026-08-16
+> can carry `READY (PARTIAL)`, `ACC`, `BEDFRAME/ACC` and the rest; the ERP will
+> never produce those strings again. A mismatch on such a row is a vocabulary
+> generation gap, not a stock disagreement — check the SO's write date before
+> counting it as drift.
+
+| Historical `Remark2` | What it meant | What the ERP writes today |
 |---|---|---|
-| *(blank)* | nothing ready yet | `stockRemark = ''` |
-| `READY` | every line ready, main and accessories | `isFullyReady` |
-| `READY (PARTIAL)` | every MAIN line ready, some accessory still pending — still shippable | `isMainReady` |
-| `BEDFRAME` / `SOFA` / `MATTRESS` | that category fully ready, another MAIN category not | `/`-joined ready list |
-| `ACC` | accessories ready, MAIN not | `/`-joined ready list |
-| `BEDFRAME/ACC`, `MATTRESS/ACC`, … | both named groups ready | `/`-joined ready list |
+| *(blank)* | nothing ready yet | `''` — unchanged (`liveCount === 0` only) |
+| `READY` | every line ready, main and accessories | `READY` — unchanged (`isFullyReady`) |
+| `READY (PARTIAL)` | every MAIN line ready, some accessory still pending | **gone.** Now `SHORT: ACCESSORY` |
+| `BEDFRAME` / `SOFA` / `MATTRESS` | that category fully ready, another MAIN category not | `SHORT: <the categories that are NOT ready>` |
+| `ACC` | accessories ready, MAIN not | `SHORT: <MAIN categories short>` |
+| `BEDFRAME/ACC`, `MATTRESS/ACC`, … | both named groups ready | `SHORT: <what is short>` |
+
+Note the inversion: the old tokens named what **IS** ready, the new ones name
+what is **MISSING**. A row that used to read `BEDFRAME` (bedframe done,
+mattress not) now reads `SHORT: MATTRESS`. Anything mapping one to the other
+mechanically must invert, not translate.
 
 MAIN categories are `SOFA`, `BEDFRAME`, `MATTRESS`. Accessories never block a
-shipment. SERVICE lines (delivery fee, disposal, lift charge) are skipped
-entirely on the ERP side and must be skipped on the AutoCount side too.
+shipment — that GATE is unchanged; only the label moved. SERVICE lines
+(delivery fee, disposal, lift charge) are skipped entirely on the ERP side and
+must be skipped on the AutoCount side too. Since 2026-08-16 service lines are
+COUNTED rather than dropped, so a service-only SO is ready on sight instead of
+being indistinguishable from an SO with no lines at all.
 
 ### 2.2 The vocabulary is clean where it matters
 

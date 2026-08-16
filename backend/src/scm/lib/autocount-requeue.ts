@@ -52,9 +52,18 @@
 // Those rows are still REPORTED, with why they are not re-queueable, because a
 // tool that silently ignores two thirds of the backlog teaches the operator the
 // backlog is smaller than it is.
+//
+// TWO CALLERS, ONE LADDER. requeueSkipped is the workflow's batch sweep;
+// requeueOutboxRow is the AutoCount Sync page's per-row button. Both go through
+// requeueOneRow, which is the single implementation of "may this document be
+// sent again". The button adds three answers a by-id call can produce and a
+// backlog sweep cannot — already-sent, row-pending, row-not-found — and the
+// first of those is the only guard between a button press and a duplicate
+// document in a live licensed account book.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { enqueuePoCreate, enqueueSoCreate } from './autocount-outbox';
+import { REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -66,12 +75,13 @@ export type RequeueDocType = keyof typeof CREATE_OP;
 /**
  * What a re-queued row's ORIGINAL skip is rewritten to start with.
  *
- * Also matched, as a literal, by check-autocount-outbox-health.mjs — that script
- * runs under plain node against postgres.js and cannot import this module. Keep
- * the two in step; the health report is the only place an operator sees the
- * distinction between a backlog and a settled row.
+ * Re-exported, not declared: it is now read by three things — this writer, the
+ * health script (through its plain-node mirror) and the ERP's own outbox page —
+ * so the definition lives in the one module all three can reach, with a
+ * canonical test refereeing the mirror. Kept exported from here because callers
+ * and tests already import it by this path.
  */
-export const REQUEUE_NOTE_PREFIX = '[re-queued';
+export { REQUEUE_NOTE_PREFIX };
 
 export type RequeueOutcome =
   /** DRY RUN: the composer accepted it. APPLY would queue it. */
@@ -93,7 +103,78 @@ export type RequeueOutcome =
   /** scm.autocount_writeback is off for this company, so nothing can queue. */
   | 'switch-off'
   /** The enqueue declined for a reason it did not write down. */
-  | 'declined';
+  | 'declined'
+  /**
+   * THIS row is `sent`: AutoCount accepted the document and it is in the
+   * account book. The hardest refusal in this file — see requeueOutboxRow.
+   */
+  | 'already-sent'
+  /** THIS row is `pending`: the drain is already going to send it. */
+  | 'row-pending'
+  /** No outbox row with that id in the caller's company. */
+  | 'row-not-found'
+  /** The queue itself could not be read, so no verdict was reached. */
+  | 'read-failed';
+
+/**
+ * Every outcome in ONE plain-English sentence, for a reader who did not write
+ * the queue.
+ *
+ * THE PAGE CARRIES NO CODE JARGON — the owner's standing instruction for the
+ * AutoCount Sync screen. So the sentence a person reads is defined here, beside
+ * the code that produces the outcome, and the UI does nothing but look it up.
+ * A dictionary in the frontend would be a second set of words for the same
+ * event, and the first time an outcome was added it would render as a bare
+ * hyphenated key on the screen the owner reads.
+ *
+ * `docs/autocount-sync-reasons.md` documents these codes and must use the same
+ * keys; a test in autocount-requeue.test.ts pins the two together.
+ */
+export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
+  requeued:
+    'Sent back to the queue. It goes to AutoCount on the next five-minute sweep.',
+  'would-requeue':
+    'This document is ready to go. Nothing was written, because this was a rehearsal.',
+  'still-refused':
+    'The ERP still will not send it. The reason shown is the one blocking it NOW, which may not be the one you just fixed.',
+  'not-recoverable':
+    'This one cannot be sent again from here. The reason shown says what to do instead.',
+  'already-in-autocount':
+    'This document is already in AutoCount. Sending it again would put a second copy in the account book.',
+  'already-queued':
+    'There is already a live attempt for this document. Nothing to add.',
+  'already-requeued':
+    'This was already sent back to the queue once. It is a record of what happened, not something still waiting.',
+  'already-sent':
+    'AutoCount already accepted this one. Sending it again would put a SECOND copy of the document in the account book, and an accepted document cannot simply be deleted there.',
+  'row-pending':
+    'This is already waiting in the queue. The next five-minute sweep will send it.',
+  'row-not-found':
+    'That line is not in this company\'s queue. Refresh the page and try again.',
+  'document-gone':
+    'The document behind this line no longer exists in the ERP, so there is nothing to send.',
+  'switch-off':
+    'Sending to AutoCount is switched OFF, so nothing can be queued. Turn it on first, then try again.',
+  declined:
+    'The ERP did not send it and did not say why. Try once more; if it happens again someone needs to look.',
+  'read-failed':
+    'The queue could not be read just now, so nothing was tried. Try again in a moment.',
+};
+
+/**
+ * The outcomes that mean the document is NOW ON ITS WAY.
+ *
+ * A list rather than `outcome === 'requeued'` at each reader, because
+ * `would-requeue` is the dry run's success and is emphatically NOT one of
+ * these: reading it as accepted would tell an operator a document had been
+ * queued when nothing was written.
+ */
+export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = ['requeued'];
+
+/** Did this outcome put the document on its way? */
+export function acRequeueAccepted(outcome: RequeueOutcome): boolean {
+  return AC_REQUEUE_ACCEPTED.includes(outcome);
+}
 
 export interface RequeueResult {
   rowId: string;
@@ -107,6 +188,14 @@ export interface RequeueResult {
   detail: string;
   /** What the ORIGINAL skip said, so the report shows the cause being fixed. */
   originalReason: string;
+  /**
+   * The `pending` row this re-queue created, when it created one.
+   *
+   * Non-optional so every path through the ladder has to state it. The button
+   * reports it back so an operator can find the live attempt on the same page,
+   * and `annotate` writes it into the old row's note for the same reason.
+   */
+  newRowId: string | null;
 }
 
 export interface RequeueOptions {
@@ -118,11 +207,31 @@ export interface RequeueOptions {
   apply?: boolean;
   /** Cap on rows examined, so a pathological backlog cannot run forever. */
   limit?: number;
+  /**
+   * ALSO re-send documents that FAILED, not only ones the ERP refused.
+   *
+   * Off by design, and the default must stay off. A `skipped` row never left
+   * the ERP, so re-composing it is free. A `failed` row WAS sent and AutoCount
+   * refused it — and "refused" is not the same as "changed nothing". The C#
+   * create has no guard against a duplicate ERP document number, so if a
+   * document landed and only the reply was lost, re-sending writes a SECOND one
+   * into a licensed account book, where a sales order cannot simply be deleted.
+   *
+   * Turn it on only when the failure is known to have changed nothing on the
+   * AutoCount side. A foreign key is the clear case: it rejects before the
+   * insert, so nothing was written — that is what `FK_SO_SalesAgent` did to
+   * HC-SO-2608-001 and -002 on 2026-08-13, six attempts each, and the whole
+   * reason this option exists. An ambiguous 500 carrying AutoCount's own words
+   * is NOT that case; look in the book first.
+   */
+  includeFailed?: boolean;
 }
 
 interface SkippedRow {
   id: string;
   company_id: number;
+  /** 'skipped', or 'failed' when includeFailed asked for those too. */
+  status?: string;
   op: string;
   doc_type: string;
   doc_no: string;
@@ -230,6 +339,28 @@ async function readCreateTarget(
 }
 
 /** Any outbox row for the same create that is NOT a skip. */
+/**
+ * A create row for this document that is NOT the one we are re-sending, and is
+ * not another dead one. Only `pending` and `sent` can make a re-send wrong:
+ * pending means the drain is already going to do it, sent means it is in the
+ * book. Another `failed` row is just more history.
+ */
+async function liveCreateRowOtherThan(
+  sb: Sb,
+  row: SkippedRow,
+): Promise<{ status: string } | null> {
+  const { data, error } = await sb.from('autocount_outbox')
+    .select('id, status')
+    .eq('company_id', row.company_id)
+    .eq('op', row.op)
+    .eq('doc_no', row.doc_no)
+    .in('status', ['pending', 'sent'])
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { status: String((data as { status?: unknown }).status ?? '') };
+}
+
 async function existingCreateRow(
   sb: Sb,
   row: SkippedRow,
@@ -247,6 +378,132 @@ async function existingCreateRow(
 }
 
 /**
+ * THE REFUSAL LADDER, for ONE row. Every re-send in this system climbs it.
+ *
+ * Extracted from requeueSkipped's loop when the ERP grew a per-row "Send again"
+ * button. It was a copy-or-share decision and the copy was never really
+ * available: two ladders are two answers to "may this document be sent again",
+ * and the day they disagree the looser one writes a SECOND copy of a document
+ * into a licensed account book, where a sales order cannot simply be deleted.
+ * So the batch tool and the button take exactly these rungs, in this order.
+ *
+ * `resendingThisRow` is REQUIRED rather than defaulted, because it decides
+ * something: it says the row in hand IS the attempt being re-sent, so the
+ * "is there already a live row for this document" probe must not veto on the
+ * row it was asked to re-send. Defaulting it either way silently makes one of
+ * the two callers wrong (CLAUDE.md, BUG CLASS optional-param-noop).
+ */
+async function requeueOneRow(
+  sb: Sb,
+  raw: SkippedRow,
+  opts: { apply: boolean; resendingThisRow: boolean },
+): Promise<RequeueResult> {
+  const companyId = Number(raw.company_id);
+  const base = {
+    rowId: String(raw.id),
+    companyId,
+    op: String(raw.op),
+    docType: String(raw.doc_type),
+    docNo: String(raw.doc_no),
+    docId: raw.doc_id == null ? null : String(raw.doc_id),
+    originalReason: raw.last_error ?? '',
+    newRowId: null as string | null,
+  };
+  const say = (outcome: RequeueOutcome, detail: string): RequeueResult => ({ ...base, outcome, detail });
+
+  if (raw.op !== 'create_so' && raw.op !== 'create_po') {
+    return say('not-recoverable', reasonFor(raw.op));
+  }
+  if ((raw.last_error ?? '').startsWith(REQUEUE_NOTE_PREFIX)) {
+    return say('already-requeued', 'an earlier run of this tool already re-queued this skip; the row is '
+      + 'history now, not backlog.');
+  }
+  /* The switch is checked HERE as well as inside the enqueue, because inside
+     it is indistinguishable from every other silent false. An operator whose
+     write-back is off would otherwise read "declined" and go looking for a
+     composer problem that does not exist. */
+  if (!(await isWritebackEnabled(sb, companyId))) {
+    return say('switch-off', `scm.autocount_writeback is off for company ${companyId}, so an enqueue `
+      + 'would return early and write nothing. Turn it on (AutoCount write-back (on/off) workflow) '
+      + 'and run this again.');
+  }
+
+  const target = await readCreateTarget(sb, raw);
+  if (!target.ok) {
+    return say('document-gone', 'the ERP document this row is about could not be read. Nothing to re-queue.');
+  }
+  /* enqueueSoCreate guards this itself and would return false; the check is
+     here so the REPORT can tell an operator which of the several silent
+     falses they are looking at. The guard is not defeated — it still runs. */
+  if (target.linked) {
+    return say('already-in-autocount', `it already carries linked_ac_docno ${target.linked}. Creating it `
+      + 'again would duplicate the document in the live account book.');
+  }
+  /* The probe asks "is there already a live create row for this document".
+     When we were asked to re-send the FAILED row itself, the row it finds is
+     that very row, so vetoing on it would make the option a no-op. Skip the
+     probe for the row we are re-sending; a PENDING or SENT row still vetoes,
+     which is the case that actually matters. */
+  const existing = opts.resendingThisRow
+    ? await liveCreateRowOtherThan(sb, raw)
+    : await existingCreateRow(sb, raw);
+  if (existing) {
+    return say('already-queued', `a ${existing.status} ${raw.op} row for this document already exists. `
+      + (existing.status === 'failed'
+        ? 'A failed create was sent and refused by AutoCount — a different problem from a refusal '
+          + 'that never left the ERP, and not this tool\'s call to re-send.'
+        : 'Nothing to add.'));
+  }
+
+  const probe = captureWrites(sb);
+  const enqueue = (client: Sb) => (raw.op === 'create_so'
+    ? enqueueSoCreate(client, { companyId, docNo: raw.doc_no })
+    : enqueuePoCreate(client, { companyId, poId: target.poId ?? String(raw.doc_id ?? '') }));
+  await enqueue(probe.sb);
+  const attempted = outboxInsert(probe.writes);
+  if (!attempted) {
+    return say('declined', 'the enqueue returned without composing anything and without writing a note. '
+      + 'Nothing was queued and nothing is wrong with the document that this can name.');
+  }
+  if ((attempted.status ?? 'pending') === 'skipped') {
+    return say('still-refused', String(attempted.last_error ?? 'refused, no reason recorded'));
+  }
+  if (!opts.apply) {
+    return say('would-requeue', 'the composer accepts it now. APPLY would queue a '
+      + `${raw.op} row and annotate this skip.`);
+  }
+
+  const queued = await enqueue(sb);
+  if (!queued) {
+    /* The probe accepted it and the real run did not, which is two things and
+       both are safe: another run queued it first and lost the race to 0277's
+       pending-dedupe index (23505, nothing written twice), or the document
+       changed in the seconds between the two reads and the enqueue refused it
+       — in which case noteReadFailure has just written a fresh skipped row
+       carrying the new reason. Naming one cause as if it were certain is what
+       would send an operator the wrong way. */
+    return say('declined', 'the probe accepted this document and the real enqueue declined it. Either '
+      + 'another run queued it first (the pending-dedupe index refuses the second), or the document '
+      + 'changed in between and the composer refused it — re-run this to see which.');
+  }
+  /* THE ATTEMPT COUNTER RESETS BY CONSTRUCTION, and this is the whole reason a
+     re-queue is an INSERT and not an UPDATE of the dead row. A `failed` row has
+     attempts = MAX_ATTEMPTS (6) and the drain selects `.lt('attempts',
+     MAX_ATTEMPTS)`, so re-opening that row would produce a `pending` row no
+     sweep will ever pick up — queued, visibly waiting, and dead. The row the
+     enqueue writes is a NEW one and sets no `attempts` at all, so 0277's
+     `attempts integer NOT NULL DEFAULT 0` gives it zero. Nothing here resets a
+     counter; nothing needs to. */
+  const newRowId = await findQueuedRowId(sb, raw);
+  await annotate(sb, raw, newRowId);
+  return {
+    ...say('requeued', `queued as a fresh ${raw.op}${newRowId ? ` (outbox ${newRowId})` : ''}. `
+      + 'The 5-minute cron sends it.'),
+    newRowId,
+  };
+}
+
+/**
  * Re-attempt the skipped CREATES whose refusal may have been fixed.
  *
  * Read-only unless `apply` is true. Never throws for a document-level problem —
@@ -255,9 +512,10 @@ async function existingCreateRow(
  */
 export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise<RequeueResult[]> {
   const apply = opts.apply === true;
+  const includeFailed = opts.includeFailed === true;
   let q = sb.from('autocount_outbox')
-    .select('id, company_id, op, doc_type, doc_no, doc_id, last_error')
-    .eq('status', 'skipped')
+    .select('id, company_id, op, doc_type, doc_no, doc_id, status, last_error')
+    .in('status', includeFailed ? ['skipped', 'failed'] : ['skipped'])
     .order('created_at', { ascending: true })
     .limit(opts.limit ?? 200);
   if (opts.docNo) q = q.eq('doc_no', opts.docNo);
@@ -267,104 +525,141 @@ export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise
 
   const results: RequeueResult[] = [];
   for (const raw of (data ?? []) as SkippedRow[]) {
-    const companyId = Number(raw.company_id);
-    const base = {
-      rowId: String(raw.id),
-      companyId,
-      op: String(raw.op),
-      docType: String(raw.doc_type),
-      docNo: String(raw.doc_no),
-      docId: raw.doc_id == null ? null : String(raw.doc_id),
-      originalReason: raw.last_error ?? '',
-    };
-    const say = (outcome: RequeueOutcome, detail: string) => {
-      results.push({ ...base, outcome, detail });
-    };
-
-    if (raw.op !== 'create_so' && raw.op !== 'create_po') {
-      say('not-recoverable', reasonFor(raw.op));
-      continue;
-    }
-    if ((raw.last_error ?? '').startsWith(REQUEUE_NOTE_PREFIX)) {
-      say('already-requeued', 'an earlier run of this tool already re-queued this skip; the row is '
-        + 'history now, not backlog.');
-      continue;
-    }
-    /* The switch is checked HERE as well as inside the enqueue, because inside
-       it is indistinguishable from every other silent false. An operator whose
-       write-back is off would otherwise read "declined" and go looking for a
-       composer problem that does not exist. */
-    if (!(await isWritebackEnabled(sb, companyId))) {
-      say('switch-off', `scm.autocount_writeback is off for company ${companyId}, so an enqueue `
-        + 'would return early and write nothing. Turn it on (AutoCount write-back (on/off) workflow) '
-        + 'and run this again.');
-      continue;
-    }
-
-    const target = await readCreateTarget(sb, raw);
-    if (!target.ok) {
-      say('document-gone', 'the ERP document this row is about could not be read. Nothing to re-queue.');
-      continue;
-    }
-    /* enqueueSoCreate guards this itself and would return false; the check is
-       here so the REPORT can tell an operator which of the several silent
-       falses they are looking at. The guard is not defeated — it still runs. */
-    if (target.linked) {
-      say('already-in-autocount', `it already carries linked_ac_docno ${target.linked}. Creating it `
-        + 'again would duplicate the document in the live account book.');
-      continue;
-    }
-    const existing = await existingCreateRow(sb, raw);
-    if (existing) {
-      say('already-queued', `a ${existing.status} ${raw.op} row for this document already exists. `
-        + (existing.status === 'failed'
-          ? 'A failed create was sent and refused by AutoCount — a different problem from a refusal '
-            + 'that never left the ERP, and not this tool\'s call to re-send.'
-          : 'Nothing to add.'));
-      continue;
-    }
-
-    const probe = captureWrites(sb);
-    const enqueue = (client: Sb) => (raw.op === 'create_so'
-      ? enqueueSoCreate(client, { companyId, docNo: raw.doc_no })
-      : enqueuePoCreate(client, { companyId, poId: target.poId ?? String(raw.doc_id ?? '') }));
-    await enqueue(probe.sb);
-    const attempted = outboxInsert(probe.writes);
-    if (!attempted) {
-      say('declined', 'the enqueue returned without composing anything and without writing a note. '
-        + 'Nothing was queued and nothing is wrong with the document that this can name.');
-      continue;
-    }
-    if ((attempted.status ?? 'pending') === 'skipped') {
-      say('still-refused', String(attempted.last_error ?? 'refused, no reason recorded'));
-      continue;
-    }
-    if (!apply) {
-      say('would-requeue', 'the composer accepts it now. APPLY would queue a '
-        + `${raw.op} row and annotate this skip.`);
-      continue;
-    }
-
-    const queued = await enqueue(sb);
-    if (!queued) {
-      /* The probe accepted it and the real run did not, which is two things and
-         both are safe: another run queued it first and lost the race to 0277's
-         pending-dedupe index (23505, nothing written twice), or the document
-         changed in the seconds between the two reads and the enqueue refused it
-         — in which case noteReadFailure has just written a fresh skipped row
-         carrying the new reason. Naming one cause as if it were certain is what
-         would send an operator the wrong way. */
-      say('declined', 'the probe accepted this document and the real enqueue declined it. Either '
-        + 'another run queued it first (the pending-dedupe index refuses the second), or the document '
-        + 'changed in between and the composer refused it — re-run this to see which.');
-      continue;
-    }
-    const newRowId = await findQueuedRowId(sb, raw);
-    await annotate(sb, raw, newRowId);
-    say('requeued', `queued as a fresh ${raw.op}${newRowId ? ` (outbox ${newRowId})` : ''}. `
-      + 'The 5-minute cron sends it.');
+    results.push(await requeueOneRow(sb, raw, {
+      apply,
+      resendingThisRow: includeFailed && raw.status === 'failed',
+    }));
   }
   return results;
+}
+
+/** The columns the ladder reads. Named once so the two entry points cannot
+ *  select different ones and hand requeueOneRow a row missing a field. */
+const REQUEUE_ROW_COLS = 'id, company_id, op, doc_type, doc_no, doc_id, status, last_error';
+
+export interface RequeueRowOptions {
+  /** The `scm.autocount_outbox` row to send again. */
+  rowId: string;
+  /**
+   * The caller's ACTIVE company, and the entire tenant boundary.
+   *
+   * REQUIRED, with no default and no `?? `. The SCM supabase client is the
+   * SERVICE ROLE and bypasses RLS, so the `.eq('company_id', …)` below is the
+   * only thing standing between a row id and another company's account book —
+   * and a re-queue there is a document pushed into books the caller cannot even
+   * see. An optional company would mean "every company" for any caller that
+   * forgot it, which is the shape this repo has pooled two companies' data over
+   * twice (CLAUDE.md, scm/lib/companyScope.ts).
+   */
+  companyId: number;
+}
+
+/**
+ * SEND ONE OUTBOX ROW AGAIN — the action behind the page's per-row button.
+ *
+ * Everything the batch tool refuses, this refuses, by climbing the same ladder.
+ * What it adds is the three answers only a by-id call can produce, and the
+ * first of them is the reason this function reads the row itself instead of
+ * being handed one:
+ *
+ *   already-sent    THE ONE THAT MATTERS. `sent` means AutoCount accepted the
+ *                   document and it is IN THE ACCOUNT BOOK. The C# create has
+ *                   no guard against a duplicate ERP document number, so a
+ *                   second send writes a SECOND document into a live licensed
+ *                   book — and an accepted sales order cannot simply be
+ *                   deleted there. Refused outright, before anything is read
+ *                   or composed.
+ *   row-pending     REFUSED, and deliberately, though nothing would be
+ *                   corrupted by allowing it. A pending row is already going to
+ *                   be sent by the next five-minute sweep, so "send again"
+ *                   would either be a no-op (0277's pending-dedupe index
+ *                   refuses the second insert) or, if the dedupe key differed,
+ *                   would put a second create for the same document in the
+ *                   queue — which is the duplicate above with a five-minute
+ *                   delay. Nothing is gained and one outcome is catastrophic,
+ *                   so the answer is no with a sentence saying it is already
+ *                   on its way.
+ *   row-not-found   No such row IN THIS COMPANY. Says the same thing whether
+ *                   the id is unknown or belongs to the other company's books:
+ *                   confirming that somebody else's id exists is itself a leak
+ *                   (companyScope.ts's NOT_THIS_COMPANY says the same).
+ *
+ * ALWAYS APPLIES. There is no dry run on this path — a button that rehearses is
+ * a button that lies about what it did. The dry run belongs to the workflow,
+ * where an operator is choosing to examine a backlog.
+ *
+ * NEVER THROWS. A read failure is `read-failed`, an outcome like any other,
+ * because the caller is a route that must answer a person and a raw exception
+ * string is not an answer anyone can act on.
+ */
+export async function requeueOutboxRow(sb: Sb, opts: RequeueRowOptions): Promise<RequeueResult> {
+  const missing = (outcome: RequeueOutcome, detail: string): RequeueResult => ({
+    rowId: opts.rowId,
+    companyId: opts.companyId,
+    op: '',
+    docType: '',
+    docNo: '',
+    docId: null,
+    outcome,
+    detail,
+    originalReason: '',
+    newRowId: null,
+  });
+
+  let raw: SkippedRow;
+  try {
+    const { data, error } = await sb.from('autocount_outbox')
+      .select(REQUEUE_ROW_COLS)
+      /* Both predicates, on the SAME statement. Reading by id and checking the
+         company afterwards would be the scoped-read-then-open-write shape
+         CLAUDE.md names, one step earlier. */
+      .eq('id', opts.rowId)
+      .eq('company_id', opts.companyId)
+      /* maybeSingle, not single: the company predicate can legitimately match
+         zero rows, and `single()` reports that honest 404 as a 500. */
+      .maybeSingle();
+    if (error) {
+      return missing('read-failed', `the outbox row could not be read: ${error.message}`);
+    }
+    if (!data) {
+      return missing('row-not-found', 'no outbox row with that id in this company.');
+    }
+    raw = data as unknown as SkippedRow;
+  } catch (e) {
+    return missing('read-failed', e instanceof Error ? e.message : String(e));
+  }
+
+  const status = String(raw.status ?? '');
+  const base = {
+    rowId: String(raw.id),
+    companyId: Number(raw.company_id),
+    op: String(raw.op),
+    docType: String(raw.doc_type),
+    docNo: String(raw.doc_no),
+    docId: raw.doc_id == null ? null : String(raw.doc_id),
+    originalReason: raw.last_error ?? '',
+    newRowId: null as string | null,
+  };
+  if (status === 'sent') {
+    return {
+      ...base,
+      outcome: 'already-sent',
+      detail: 'AutoCount accepted this document and recorded it in the account book. Sending it '
+        + 'again would create a SECOND copy: the AutoCount create has no duplicate guard on the '
+        + 'ERP document number, and an accepted document cannot simply be deleted there.',
+    };
+  }
+  if (status === 'pending') {
+    return {
+      ...base,
+      outcome: 'row-pending',
+      detail: 'this row is already queued and the next 5-minute sweep will send it. Re-sending it '
+        + 'could only add a second create for the same document.',
+    };
+  }
+  /* skipped or failed. `failed` means this row IS the attempt being re-sent, so
+     the live-row probe must not veto on itself. */
+  return requeueOneRow(sb, raw, { apply: true, resendingThisRow: status === 'failed' });
 }
 
 /** The pending row the re-queue just created, for the audit note. */

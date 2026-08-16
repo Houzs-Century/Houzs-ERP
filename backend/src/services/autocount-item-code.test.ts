@@ -22,6 +22,7 @@ import {
 import { AC_ITEM_MAP_TSV } from './autocount-item-map';
 import { AC_SOFA_CORPUS } from './autocount-sofa-corpus';
 import {
+  MissingCreditorError,
   SofaCollapseError,
   composeCreatePo,
   composeCreateSo,
@@ -267,6 +268,11 @@ describe('an unknown code is OPENED under its own name, not refused', () => {
       { doc_no: 'SO-9999', customer_name: 'X' } as never,
       [good, line({ item_code: 'NOPE' })],
       'KINGSLEY',
+      /* No outstanding balance — this file is about the ITEM CODE resolver, and
+         the BALANCE UDF is asserted in autocount-writeback.test.ts. */
+      null,
+      /* No payment references either, for the same reason. */
+      [],
     );
     expect(p.Details.map((d) => d.ItemCode)).toEqual(['Miscellaneous', 'NOPE']);
   });
@@ -313,13 +319,21 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
     );
     expect(po.Details[0].ItemCode).toBe('AC-FROM-B');
 
-    // with no creditor there is nothing to choose with, so it takes our own code
-    const blind = composeCreatePo(
+    /* With no creditor there is nothing to choose with, so the line takes our
+       own code. Asserted through composeDetails rather than composeCreatePo,
+       because a purchase order with no creditor code is now REFUSED before it
+       gets this far — CreatePo assigns CreditorCode directly and "" is
+       FK_PO_Creditor (audit 2026-08-14, finding 4). The resolution rule under
+       test is the same one either way. */
+    const { details } = composeDetails([line({ item_code: 'SHARED-CODE' })], {
+      itemIndex: index, supplierCode: null,
+    });
+    expect(details[0].ItemCode).toBe('SHARED-CODE');
+    expect(() => composeCreatePo(
       { po_number: 'PO-1', creditor_code: null, creditor_name: null } as never,
       [line({ item_code: 'SHARED-CODE' })],
       { itemIndex: index },
-    );
-    expect(blind.Details[0].ItemCode).toBe('SHARED-CODE');
+    )).toThrow(MissingCreditorError);
   });
 });
 
@@ -345,7 +359,7 @@ describe('a sofa CREATE sends one line per compartment', () => {
     const so = composeCreateSo({ doc_no: 'SO-1', customer_name: 'X' } as never, [
       line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000 }),
       line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0 }),
-    ], 'KINGSLEY');
+    ], 'KINGSLEY', null, []);
     expect(so.Details).toHaveLength(2);
     expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
     /* Both carry the same Desc2 and the price sits on the first, which is how

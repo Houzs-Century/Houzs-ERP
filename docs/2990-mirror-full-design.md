@@ -1,6 +1,14 @@
 # 2990 → Houzs full mirror — design
 
-**Status:** design only, pending owner sign-off. No production code exists for anything below.
+**Status: PHASES 1-3 ARE SHIPPED AND MOUNTED. This banner said "design only,
+no production code exists" long after they were live** — read the tree, not this
+line. Five receivers are mounted at `backend/src/index.ts:256,260,265,271,272`
+(`so-mirror`, `amendment-mirror`, `customer-mirror`, `staff-mirror`,
+`warehouse-mirror`); §3.2's command channel is `scm/lib/amendment-command.ts`,
+drained on cron at `index.ts:517`; §4's table shipped as mig
+`0127_scm_sync_command.sql`. Risk **R3** further down, still described as "a
+latent bug in production today", is what `customer-mirror.ts` was built to
+close.
 **Date:** 2026-07-16
 **Scope (owner-decided):** 全部一次性解決 — mirror the whole system, in one go, actionable
 ("houzs 的可以啊 可是要开2990的公司啊" — 2990 data tags to the 2990 company; you switch
@@ -80,7 +88,7 @@ These were not in the brief. Each is verified, and each is load-bearing.
 **F1 — Houzs's amendment schema has already diverged from 2990's.** Migration
 `0119_scm_so_amendment_header_changes.sql` (dated **today**, 2026-07-16) added
 `header_changes jsonb` + `old_header_snapshot jsonb` to `scm.so_amendments` for an owner
-ruling ("應該是全部可以 request 啊 然後看有沒有 approval"). 2990's `0210_so_amendments.sql`
+ruling ("應該是全部可以 request 啊 然後看有沒有 approval"). 2990's `0210_so_amendments.sql` [external]
 has **neither column**. A Houzs-originated amendment carrying a header change is
 **unrepresentable in 2990**. This kills any naive row-level bidirectional sync of this table.
 
@@ -435,7 +443,7 @@ pinned super_admin staff row** shared by every caller when the sync row is missi
 
 **Does it survive the round trip? No — and it must not be attempted.** That uuid is a
 Houzs-manufactured id. It does **not** exist in 2990's `public.staff`. 2990's
-`so_amendments_so_approved_by_staff_id_fk` (verified in `0210_so_amendments.sql`) would reject
+`so_amendments_so_approved_by_staff_id_fk` (verified in `0210_so_amendments.sql` [external]) would reject
 it outright. Any design that writes the Houzs approver's staff uuid into 2990 **fails on the
 foreign key** — this is not a stylistic concern, it is a hard constraint.
 
@@ -500,7 +508,7 @@ auto-applies `migrations-pg/` to PROD on every deploy; a failed file blocks all 
 
 ### Houzs — two new migrations, both purely additive
 
-**`0120_scm_sync_command.sql`** — the command queue (the return channel's durable state).
+**`0120_scm_sync_command.sql` [external]** — the command queue (the return channel's durable state).
 
 ```sql
 CREATE TABLE IF NOT EXISTS scm.sync_command (
@@ -527,7 +535,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_command_entity ON scm.sync_command (entity, 
 
 `gen_random_uuid()` is already the default on the four 0080 tables, so pgcrypto is present.
 
-**`0121_scm_sync_config.sql`** — the DB-row kill switch (D8), mirroring 2990's `sync_config`.
+**`0121_scm_sync_config.sql` [external]** — the DB-row kill switch (D8), mirroring 2990's `sync_config`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS scm.sync_config (k text PRIMARY KEY, v text NOT NULL);
@@ -753,12 +761,12 @@ Ordered by how much they change the design.
 |---|---|
 | Mirror is SO-only, 3 triggers, `entity='sales_order'` | `docs/2990-live-sync/01_outbox_2990.sql`, `02_worker_2990.sql:32`, `backend/src/scm/routes/so-mirror.ts` |
 | Import = 33 tables, INSERT-only, no id remap, `staff` forceInactive + no `company_id`, no `user_id` handling | `backend/scripts/migrate-2990-into-houzs.mjs` (ORDER line 12, insert line 41, `NO_CID` line 21) |
-| **F1** Houzs `so_amendments` has `header_changes`; 2990 does not | `backend/src/db/migrations-pg/0119_scm_so_amendment_header_changes.sql` vs `2990s/packages/db/migrations/0210_so_amendments.sql` |
-| **F2** `applySoAmendment` mutates SO header + items, bumps `revision`; mirror delete-and-reinserts items | `backend/src/scm/lib/so-revision.ts:157-428`; `so-mirror.ts:161-169` |
+| **F1** Houzs `so_amendments` has `header_changes`; 2990 does not | `backend/src/db/migrations-pg/0119_scm_so_amendment_header_changes.sql` vs `2990s/packages/db/migrations/0210_so_amendments.sql` [external] |
+| **F2** `applySoAmendment` mutates SO header + items, bumps `revision`; mirror delete-and-reinserts items | `backend/src/scm/lib/so-revision.ts` -> `applySoAmendment()`; `backend/src/scm/routes/so-mirror.ts` -> the `soMirror` router |
 | **F3** `companyDocPrefix` → `2990-`; minter `.like()` + max+1 over the mirrored set | `backend/src/scm/lib/companyScope.ts:191-199`; `backend/src/scm/routes/mfg-sales-orders.ts:747-760` |
 | **F4** mutations not company-scoped | `backend/src/scm/routes/so-amendments.ts:222-233` (approve-so loads `.eq('id', id)`, no `scopeToCompany`) |
 | `staff.user_id` scope mapping | `backend/src/scm/lib/salesScope.ts:49-79` |
-| Amendment actor columns FK → `scm.staff(id)`; 2990's FK → `public.staff(id)` | `0080_scm_so_amendment_workflow.sql`; `2990s/.../0210_so_amendments.sql` |
+| Amendment actor columns FK → `scm.staff(id)`; 2990's FK → `public.staff(id)` | `0080_scm_so_amendment_workflow.sql`; `2990s/.../0210_so_amendments.sql` [external] |
 | `company_id` already on all four amendment tables | `0080_scm_so_amendment_workflow.sql:112-119` |
 | 2990's 5 amendment gates + `canTransition` guard | `2990s/apps/api/src/routes/so-amendments.ts:134,205,272,370,425` |
 | CI auto-applies `migrations-pg` to PROD every deploy | `.github/workflows/deploy.yml:59` |

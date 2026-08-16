@@ -127,6 +127,7 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
+  "/autocount-outbox",
   "/currencies",
   "/hr",
   "/localities",
