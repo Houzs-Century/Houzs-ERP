@@ -179,11 +179,15 @@ type SoRow = {
      is READY (column shows "READY" pill). */
   ready_categories?: string[];
   is_fully_ready?: boolean;
-  /* Commander 2026-05-30 — B2C "Remark 2" semantics from the operator's
-     existing ERP. "READY" / "READY (PARTIAL)" / "BEDFRAME" / "MATTRESS/ACC" …
-     stock_remark is the rendered label; is_main_ready is true once every MAIN
-     (sofa/bedframe/mattress) line is in stock — accessories pending don't
-     block ship. Derived in the SO list GET via summariseReadiness. */
+  /* stock_remark names what is MISSING (owner 2026-08-16): "" for an SO with no
+     lines, "READY" when everything that must be allocated is, else
+     "SHORT: <categories>". It never reads READY while something is short — the
+     old vocabulary ("READY (PARTIAL)" / "BEDFRAME" / "MATTRESS/ACC") stated what
+     was READY and so labelled an accessory-only order READY (PARTIAL) while it
+     could not ship. is_main_ready is true once every MAIN (sofa/bedframe/
+     mattress) line is in stock — and VACUOUSLY true when the SO has no main
+     line, so never label off it. Derived in the SO list GET via
+     summariseReadiness. */
   stock_remark?: string;
   is_main_ready?: boolean;
   /* Branding auto-derive (Commander 2026-05-28): distinct normalized product
@@ -1285,28 +1289,29 @@ const buildAllColumns = (
     filterType: 'number', numberValue: (r) => r.local_total_centi,
   },
   {
-    /* Commander 2026-05-30 — Stock Status column rebuilt around the operator's
-       "Remark 2" semantics: MAIN-ready ships, accessories don't gate.
-         · "READY"            — green pill, every line in stock
-         · "READY (PARTIAL)"  — amber pill, MAIN done + ACC outstanding
-         · "BEDFRAME" / "MATTRESS/ACC" / … — neutral chip, what's still missing
-         · ""                 — no items / empty */
+    /* Stock Status column. The label names what is MISSING (owner 2026-08-16):
+         · "READY"              — green pill, nothing left to allocate
+         · "SHORT: ACCESSORY"   — amber WARNING pill, and it says which category
+         · ""                   — no items / empty
+       There is no "READY (PARTIAL)" any more: the string it used to appear on
+       was an accessory-only order that could NOT ship, so the amber slot now
+       belongs to the SHORT labels — same hue, honest word. */
     key: 'stock_status', label: 'Stock Status', width: 220, sortable: true, groupable: false,
     accessor: (r) => {
       const remark = (r.stock_remark ?? '').trim();
       if (!remark) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
-      const isFull    = remark === 'READY';
-      const isPartial = remark === 'READY (PARTIAL)';
-      const bg = isFull    ? 'var(--c-mint, #d4edda)'
-              : isPartial ? 'rgba(232, 107, 58, 0.15)'
+      const isFull  = remark === 'READY';
+      const isShort = remark.startsWith('SHORT:');
+      const bg = isFull  ? 'var(--c-mint, #d4edda)'
+              : isShort ? 'rgba(232, 107, 58, 0.15)'
               : 'var(--c-cream)';
-      /* PARTIAL keeps the amber WARNING pair - that hue is the app's
+      /* SHORT keeps the amber WARNING pair - that hue is the app's
          intentional warning slot, not a 2990 brand remnant (the interactive
          burnt-orange accents elsewhere were swept to primary). */
-      const fg = isFull    ? 'var(--c-green, #1a7a3a)'
-              : isPartial ? '#b0592f'
+      const fg = isFull  ? 'var(--c-green, #1a7a3a)'
+              : isShort ? '#b0592f'
               : 'var(--c-ink)';
-      const weight = (isFull || isPartial) ? 700 : 600;
+      const weight = (isFull || isShort) ? 700 : 600;
       return (
         <span style={{
           fontFamily: 'var(--font-sans)',
@@ -1317,7 +1322,7 @@ const buildAllColumns = (
           padding: '2px 10px',
           borderRadius: 'var(--radius-pill, 999px)',
           letterSpacing: 0.5,
-          border: (isFull || isPartial) ? 'none' : '1px solid var(--line)',
+          border: (isFull || isShort) ? 'none' : '1px solid var(--line)',
         }}>
           {remark}
         </span>
@@ -1327,12 +1332,11 @@ const buildAllColumns = (
     /* searchValue is lowercased for the search box — export the real remark. */
     exportValue: (r) => (r.stock_remark ?? '').trim(),
     sortFn: (a, b) => {
-      /* Sort: full READY first, then READY (PARTIAL), then pending (any
-         categories shown), then blank. Within "pending" group, longer remark
-         (more categories missing) sorts after shorter. */
+      /* Sort: READY first, then the SHORT labels, then blank. Within SHORT, a
+         longer remark (more categories missing) sorts after a shorter one, so
+         "one thing away" floats above "waiting on everything". */
       const score = (s: string) => {
         if (s === 'READY')             return 3000;
-        if (s === 'READY (PARTIAL)')   return 2000;
         if (!s)                        return 0;
         return 1000 - s.length;        // shorter remark = closer to ready
       };

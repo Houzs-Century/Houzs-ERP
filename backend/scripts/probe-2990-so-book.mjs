@@ -156,7 +156,7 @@ async function forCompany(CO) {
 
   // ── 1. header status census ────────────────────────────────────────────────
   const census = await sql`
-    SELECT coalesce(s.status,'(null)') AS status, count(*)::int AS n
+    SELECT coalesce(s.status::text,'(null)') AS status, count(*)::int AS n
       FROM scm.mfg_sales_orders s
      WHERE s.company_id = ${CO}::bigint
      GROUP BY 1 ORDER BY 2 DESC`;
@@ -172,19 +172,19 @@ async function forCompany(CO) {
   // ── per-(doc, category) rollup over live orders ────────────────────────────
   const rollup = await sql.unsafe(`
     SELECT s.doc_no,
-           s.status,
+           s.status::text AS status,
            (s.proceeded_at IS NOT NULL) AS proceeded,
            (s.processing_date IS NOT NULL) AS has_processing_date,
            ${CAT_SQL} AS cat,
            count(i.id)::int AS total,
-           (count(i.id) FILTER (WHERE i.stock_status = 'READY'))::int AS ready,
-           (count(i.id) FILTER (WHERE i.stock_status = 'PARTIAL'))::int AS partial,
+           (count(i.id) FILTER (WHERE i.stock_status::text = 'READY'))::int AS ready,
+           (count(i.id) FILTER (WHERE i.stock_status::text = 'PARTIAL'))::int AS partial,
            (count(i.id) FILTER (WHERE i.stock_status IS NULL))::int AS nullst
       FROM scm.mfg_sales_orders s
       LEFT JOIN scm.mfg_sales_order_items i
              ON i.doc_no = s.doc_no AND i.company_id = s.company_id AND i.cancelled = false
      WHERE s.company_id = ${CO}::bigint
-       AND s.status NOT IN (${TERMINAL.map((t) => `'${t}'`).join(',')})
+       AND s.status::text NOT IN (${TERMINAL.map((t) => `'${t}'`).join(',')})
      GROUP BY 1,2,3,4,5
      ORDER BY 1`);
 
@@ -235,6 +235,20 @@ async function forCompany(CO) {
   for (const [, d] of caseAany) byStatus.set(d.status, (byStatus.get(d.status) ?? 0) + 1);
   note(`      same shape across ALL live statuses: ${caseAany.length} — ${[...byStatus].map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`);
 
+  /* [3b] The vacuous-main population. so-readiness.ts:106 makes isMainReady
+     VACUOUSLY true for an order with no MAIN line, so its stockRemark takes the
+     'READY (PARTIAL)' branch (line 132) — the label that means "ship it, only
+     accessories outstanding". The SHIP GATE does not: isShipReady falls back to
+     isFullyReady (line 123), which is false. So the cell says ship-able while
+     the gate refuses. Count the orders sitting in that disagreement. */
+  const vacuous = live.filter(([, d]) => d.sum.mainCount === 0 && d.sum.stockRemark === 'READY (PARTIAL)');
+  note(`\n[3b] orders with NO main line whose remark reads 'READY (PARTIAL)' but isShipReady=false`);
+  note(`      (so-readiness.ts:132 takes the isMainReady branch; :123 does not — they disagree)`);
+  note(`      ${vacuous.length} / ${live.length} live orders;  by status: ${[...vacuous.reduce((m, [, d]) => m.set(d.status, (m.get(d.status) ?? 0) + 1), new Map())].map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`);
+  note(`      sanity: any of them with isShipReady=true? ${vacuous.filter(([, d]) => d.sum.isShipReady).length} (must be 0)`);
+  for (const [doc, d] of vacuous.slice(0, 20)) note(`        ${padR(doc, 22)} acc ${d.sum.accReady}/${d.sum.accCount}  proceeded=${d.proceeded}  processing_date=${d.hasPd}`);
+  if (vacuous.length > 20) note(`        … +${vacuous.length - 20} more`);
+
   // ── 4. columns that could drive a header STOCK STATUS ──────────────────────
   note(`\n[4] columns on the SO header / lines whose name mentions stock|status|ready|remark`);
   await columnCensus('scm.mfg_sales_orders', CO);
@@ -277,8 +291,34 @@ async function forCompany(CO) {
   note(`\n[6] allocation gate (so-stock-allocation.ts:147 — proceeded_at NULL forces every line PENDING)`);
   note(`      live orders with proceeded_at NULL: ${gated.length} / ${live.length}`);
   note(`      ${[...gatedByStatus].map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`);
-  const pdMismatch = live.filter(([, d]) => d.hasPd !== d.proceeded);
-  note(`      live orders where processing_date IS NOT NULL disagrees with proceeded_at IS NOT NULL: ${pdMismatch.length}`);
+  /* WHICH WAY the disagreement runs is the whole point. shared/so-processing-
+     date.ts:37 says processing_date IS the storage and proceeded_at is "the same
+     fact in the wrong shape ... stop-writing / stop-reading before it can be
+     dropped" — but the allocation gate above still reads proceeded_at. An order
+     that HAS a processing date and a NULL proceeded_at is therefore gated on a
+     retired column: the operator sees a Processing Date, and the allocator
+     refuses to allocate. */
+  const pdNoProceed = live.filter(([, d]) => d.hasPd && !d.proceeded);
+  const proceedNoPd = live.filter(([, d]) => !d.hasPd && d.proceeded);
+  note(`      live orders where processing_date IS NOT NULL disagrees with proceeded_at IS NOT NULL: ${pdNoProceed.length + proceedNoPd.length}`);
+  note(`        processing_date SET  + proceeded_at NULL (gated on a retired column): ${pdNoProceed.length}`);
+  note(`        processing_date NULL + proceeded_at SET  (allocates with no date):    ${proceedNoPd.length}`);
+  {
+    const st = new Map(); const rm = new Map();
+    let pending = 0, lines = 0;
+    for (const [, d] of pdNoProceed) {
+      st.set(d.status, (st.get(d.status) ?? 0) + 1);
+      rm.set(d.sum.stockRemark, (rm.get(d.sum.stockRemark) ?? 0) + 1);
+      lines += d.sum.mainCount + d.sum.accCount;
+      pending += (d.sum.mainCount - d.sum.mainReady) + (d.sum.accCount - d.sum.accReady);
+    }
+    note(`        the processing_date-SET / proceeded_at-NULL group:`);
+    note(`          by status: ${[...st].map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`);
+    note(`          by derived remark: ${[...rm].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${JSON.stringify(k)}=${v}`).join('  ') || '(none)'}`);
+    note(`          considered lines: ${lines}, of them NOT READY: ${pending}`);
+    for (const [doc] of pdNoProceed.slice(0, 20)) note(`          ${doc}`);
+    if (pdNoProceed.length > 20) note(`          … +${pdNoProceed.length - 20} more`);
+  }
 
   return byDoc;
 }
@@ -305,7 +345,7 @@ async function dumpOrder(CO, byDoc) {
     note(`      DERIVED stock_remark = ${JSON.stringify(d?.sum?.stockRemark ?? '(not in live set)')}`);
     if (d?.sum) note(`      main ${d.sum.mainReady}/${d.sum.mainCount}   acc ${d.sum.accReady}/${d.sum.accCount}   isShipReady=${d.sum.isShipReady}`);
     const lines = await sql.unsafe(`
-      SELECT i.item_code, i.item_group, i.qty, i.cancelled, i.stock_status, i.stock_qty_ready,
+      SELECT i.item_code, i.item_group, i.qty, i.cancelled, i.stock_status::text AS stock_status, i.stock_qty_ready,
              ${CAT_SQL} AS cat, (i.warehouse_id IS NULL) AS no_wh
         FROM scm.mfg_sales_order_items i
        WHERE i.company_id = ${CO}::bigint AND i.doc_no = '${h.doc_no.replace(/'/g, "''")}'
