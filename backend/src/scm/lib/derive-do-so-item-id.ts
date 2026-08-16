@@ -41,6 +41,42 @@ export const DO_LINE_AMBIGUOUS_SO_LINE = 'do_line_ambiguous_so_line';
 
 type Item = Record<string, unknown>;
 
+export type ClaimedResult =
+  | { ok: true; ids: Array<string | null> }
+  | { ok: false; error: string; message: string };
+
+/**
+ * The so_item_ids the lines already ON this delivery order have claimed.
+ *
+ * Lives here rather than inline in the route because the ERROR branch is the
+ * whole point and it is the branch an inline `data ?? []` throws away. This
+ * list is what stops a second line on the SAME delivery order being paired to
+ * an SO line the DO is already shipping; if the read fails and we call that
+ * "nothing claimed", the exclusion silently empties and the guard that this
+ * feeds becomes a no-op — the exact defect shape derive-do-so-item-id exists to
+ * close, reintroduced one level up. So a failed read is refused, not defaulted.
+ */
+export async function claimedSoItemIdsOnDo(
+  sb: any,
+  deliveryOrderId: string,
+): Promise<ClaimedResult> {
+  const { data, error } = await sb
+    .from('delivery_order_items')
+    .select('so_item_id')
+    .eq('delivery_order_id', deliveryOrderId);
+  if (error) {
+    return {
+      ok: false,
+      error: 'do_lines_unreadable',
+      message: `Could not read this delivery's existing lines to link the new one — try again (${error.message}).`,
+    };
+  }
+  return {
+    ok: true,
+    ids: ((data ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id),
+  };
+}
+
 export type DeriveResult =
   | { ok: true; items: Item[]; derived: number }
   | { ok: false; error: string; message: string };

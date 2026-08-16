@@ -26,7 +26,8 @@ import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
-import { fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
+import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
+import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS } from '../lib/do-audit-fields';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
@@ -119,55 +120,6 @@ deliveryOrdersMfg.use('*', supabaseAuth);
    SO. So a PATCH carrying both kinds of field produces two rows on two
    documents, which is what a reader of either timeline needs to see. */
 
-/* The auditable DO header fields, camel (API) -> snake (column). Deliberately
-   the same list the PATCH's own map uses. */
-const DO_AUDIT_FIELDS: Array<[string, string]> = [
-  ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
-  ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
-  ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'],
-  ['address1', 'address1'], ['address2', 'address2'],
-  ['city', 'city'], ['state', 'state'], ['postcode', 'postcode'], ['phone', 'phone'],
-  ['note', 'note'], ['notes', 'notes'],
-  ['doDate', 'do_date'], ['currency', 'currency'],
-  ['customerState', 'customer_state'], ['customerCountry', 'customer_country'],
-  ['customerSoNo', 'customer_so_no'],
-  ['customerDeliveryDate', 'customer_delivery_date'],
-  ['expectedDeliveryAt', 'expected_delivery_at'],
-  ['timeRange', 'time_range'], ['timeConfirmed', 'time_confirmed'],
-  ['arrivalAt', 'arrival_at'], ['departureAt', 'departure_at'],
-  ['shipoutDate', 'shipout_date'], ['customerDeliveredDate', 'customer_delivered_date'],
-  ['etaArrivingPort', 'eta_arriving_port'], ['deliverySubstatus', 'delivery_substatus'],
-  ['arrivesEmWarehouseDate', 'arrives_em_warehouse_date'],
-  ['email', 'email'], ['customerType', 'customer_type'],
-  ['salespersonId', 'salesperson_id'], ['buildingType', 'building_type'],
-  ['driverId', 'driver_id'], ['driverName', 'driver_name'], ['vehicle', 'vehicle'],
-  ['emergencyContactName', 'emergency_contact_name'],
-  ['emergencyContactPhone', 'emergency_contact_phone'],
-  ['emergencyContactRelationship', 'emergency_contact_relationship'],
-];
-
-const DO_AUDIT_SELECT =
-  `id, do_number, status, company_id, ${DO_AUDIT_FIELDS.map(([, snake]) => snake).join(', ')}`;
-
-/* The auditable LINE fields. The camel names are deliberate: unitCostCenti,
-   lineCostCenti and lineMarginCenti are the exact keys AUDIT_FINANCE_FIELDS
-   (lib/finance-keys) strips from field_changes, so recording a line's cost here
-   is gated on read by the same rule that gates it on the detail payload.
-   Spelling one of them differently would leak cost to every reader. */
-const DO_LINE_AUDIT_FIELDS: Array<[string, string]> = [
-  ['qty', 'qty'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
-  ['itemCode', 'item_code'],
-  ['itemGroup', 'item_group'],
-  ['description', 'description'],
-  ['uom', 'uom'],
-  ['notes', 'notes'],
-  ['rackId', 'rack_id'],
-  ['lineDeliveryDate', 'line_delivery_date'],
-];
 
 /* CREATE was added after the header/crew/line pass, and it is recorded LATE for
    a reason. Both create paths write the DO header first and DELETE it again —
@@ -4720,10 +4672,9 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
      candidate again. Two delivery orders against one SO line is ordinary
      partial delivery; two lines on ONE delivery order is not. */
   {
-    const { data: linkedHere } = await sb
-      .from('delivery_order_items').select('so_item_id').eq('delivery_order_id', id);
-    const claimed = ((linkedHere ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id);
-    const linked = await fillMissingSoItemIds(sb, h.so_doc_no, [it], claimed);
+    const claimed = await claimedSoItemIdsOnDo(sb, id);
+    if (!claimed.ok) return c.json({ error: claimed.error, message: claimed.message }, 500);
+    const linked = await fillMissingSoItemIds(sb, h.so_doc_no, [it], claimed.ids);
     if (!linked.ok) return c.json({ error: linked.error, message: linked.message }, 400);
     it = linked.items[0] as typeof it;
   }
