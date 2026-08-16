@@ -1633,10 +1633,10 @@ mfgSalesOrders.get('/', async (c) => {
     const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data ?? [], siRowsRes.data ?? []);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
-       "Stock Remark" the operator's existing ERP shows: READY when everything
-       that must be allocated is in, else SHORT: <the categories still missing>
-       (owner 2026-08-16 — the label must name what is missing, never read READY
-       while something is short). `category` rides along from the catalog map
+       "Stock Remark" the operator's existing ERP shows: READY, PARTIAL
+       (every MAIN line in, an accessory not), or the "/"-joined list of
+       groups that ARE in — blank when none is, because it names what IS
+       ready (owner 2026-08-16). `category` rides along from the catalog map
        already built above (productCategory, zero extra reads): it is
        isServiceLine's strongest signal, so a delivery/dispose SKU whose line
        item_group was saved as 'others' is still recognised as a SERVICE line

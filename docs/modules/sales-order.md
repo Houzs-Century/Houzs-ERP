@@ -225,20 +225,36 @@ list's rollup still counts it short.
 
 All three come out of `summariseReadiness` (`scm/lib/so-readiness.ts`).
 
-**`stock_remark` names what is MISSING** (owner ruling, 2026-08-16). It used to
-name what was READY, and BOTH vocabularies are in production data.
+**`stock_remark` names what IS READY** (owner ruling, confirmed against real
+orders 2026-08-16). It is the warehouse's "Remark 2" vocabulary, reproduced
+from AutoCount — staff read the column to know what they can PULL now.
 
 | Value | Means |
 |---|---|
-| `''` | the SO has NO live lines at all — nothing to say, and nothing to ship |
+| `''` | nothing is ready yet. Covers an SO with NO live lines, an SO whose only main line is short, **and an accessory-only SO whose accessory is short** |
 | `'READY'` | everything that must be allocated IS. Covers an accessory-only SO with all accessories in, and a service-only SO |
-| `'SHORT: ACCESSORY'`, `'SHORT: BEDFRAME, ACCESSORY'` | the named categories are not all allocated. MAIN categories sorted first, the single collapsed `ACCESSORY` entry last |
+| `'PARTIAL'` | every MAIN line is in, an accessory is still pending. Ship-able — accessories never block delivery |
+| `'BEDFRAME'`, `'SOFA'`, `'MATTRESS'` | that category is fully in, another MAIN category is not |
+| `'ACC'` | every accessory is in, MAIN is not |
+| `'BEDFRAME/ACC'`, `'MATTRESS/ACC'`, … | several groups in. `/`-joined, fixed order BEDFRAME, SOFA, MATTRESS, then ACC |
 
-The string never contains `READY` while anything is short — that is the point of
-the rewrite, and `soReadinessRemark.test.ts` pins it. **RETIRED: `READY
-(PARTIAL)`**, plus the older `ACC` / `BEDFRAME` / `BEDFRAME/ACC` family. They
-still appear in historical rows and in the AutoCount `Remark2` corpus
-(`docs/stock-reconciliation.md`); nothing in this codebase emits them any more.
+Two rules the vocabulary must keep, and `soReadinessRemark.test.ts` pins both:
+
+1. **`PARTIAL` requires a MAIN line.** It asserts "the main products are in".
+   The label branch is `mainCount > 0 && isMainReady`, never bare `isMainReady`
+   — that flag is VACUOUSLY TRUE at `mainCount === 0`, which is exactly how an
+   accessory-only SO with one short accessory came to print `READY (PARTIAL)`
+   next to a false ship gate. The owner called it 骗人.
+2. **The string never contains `READY` while anything is short.** That is why
+   the label is the bare word `PARTIAL` and **`READY (PARTIAL)` is RETIRED.**
+
+**One historical window.** Between the morning of 2026-08-16 (PR #2295) and the
+restore later the same day, the remark named what was MISSING — `SHORT:
+MATTRESS`, `SHORT: BEDFRAME, ACCESSORY`. Nothing emits those strings now, but a
+stored remark or an AutoCount export from that window can still carry one;
+invert it rather than reading it as this vocabulary. AutoCount's own corpus
+spells the partial state `READY (PARTIAL)`; see `docs/stock-reconciliation.md`
+§2.1 for the fold.
 
 **`is_main_ready` vs `is_ship_ready` — use the second one.**
 
