@@ -1087,8 +1087,14 @@ export function DeliveryPlanningBoard({
          the row; the raw balance is a finance figure, and it is 0 on every ASSR /
          DP / project row by construction. */
       key: 'balance_centi', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
+      /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
+         the muted grey that means "nothing owed" (owner 2026-08-16). */
       accessor: (o) => (
-        <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700, color: liveBalance(o) > 0 ? '#0c3f39' : '#767b6e' }}>
+        <span style={{
+          fontFamily: 'var(--font-mark)',
+          fontWeight: 700,
+          color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#0c3f39' : '#767b6e',
+        }}>
           {fmtCenti(liveBalance(o))}
         </span>
       ),

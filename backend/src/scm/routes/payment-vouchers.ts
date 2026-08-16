@@ -47,7 +47,9 @@
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { mintMonthlyDocNo, insertWithDocNoRetry, nextJeNo, jePrefixForCompany } from '../lib/doc-no';
+import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { postJournal, reverseJournal } from '../../acc/engine';
+import { pvLines } from '../../acc/rules';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -607,51 +609,27 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const jeNo = await nextJeNo(sb, new Date(pv.voucher_date), jePrefixForCompany(companyId));
-  const { data: je, error: jeErr } = await sb.from('journal_entries').insert({
-    ...(companyId != null ? { company_id: companyId } : {}),
-    je_no:            jeNo,
-    entry_date:       pv.voucher_date,
-    source_type:      'PV',
-    source_doc_no:    pv.pv_number,
-    narration:        `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    total_debit_sen:  totalSen,
-    total_credit_sen: totalSen,
-  }).select('*').single();
-  if (jeErr) return c.json({ error: 'je_insert_failed', reason: jeErr.message }, 500);
-
-  // Dr each expense/charge line; Cr the header's bank/cash/AP account for the
-  // total (the funds that left). party stamps the payee onto the credit leg.
-  const companyLine = companyId != null ? { company_id: companyId } : {};
-  const lineRows: Array<Record<string, unknown>> = debitLegs.map((l, i) => ({
-    ...companyLine,
-    journal_entry_id: je.id,
-    line_no:          i + 1,
-    account_code:     l.debit_account_code,
-    debit_sen:        l.myrSen,
-    credit_sen:       0,
-    party_type:       null,
-    party_code:       null,
-    party_name:       null,
-    notes:            `${l.description ?? 'Payment'} — ${pv.pv_number}`,
-  }));
-  lineRows.push({
-    ...companyLine,
-    journal_entry_id: je.id,
-    line_no:          debitLegs.length + 1,
-    account_code:     pv.credit_account_code,
-    debit_sen:        0,
-    credit_sen:       totalSen,
-    party_type:       supplier.code ? 'SUPPLIER' : null,
-    party_code:       supplier.code ?? null,
-    party_name:       supplier.name ?? pv.payee_name,
-    notes:            `Payment to ${pv.payee_name} — ${pv.pv_number}`,
+  /* Through the ONE gate (acc/engine). rules.pvLines builds the entry — Dr
+     each expense/charge line, Cr the header's bank/cash/AP account, payee
+     stamped on the credit leg — and the engine owns numbering, validation and
+     the write sequence. The scoped already-posted check above stays as the
+     handler's own guard (it also heals the PV status flag); the engine's
+     internal guard is the second net, and the acc_je_one_active_source index
+     is the third. */
+  const r = await postJournal(sb, {
+    companyId,
+    entryDate: pv.voucher_date,
+    sourceType: 'PV',
+    sourceDocNo: pv.pv_number,
+    narration: `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
+    lines: pvLines(pv, debitLegs, supplier),
   });
-  const { error: lErr } = await sb.from('journal_entry_lines').insert(lineRows);
-  if (lErr) { await sb.from('journal_entries').delete().eq('id', je.id); return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500); }
-
-  const { error: postErr } = await sb.from('journal_entries').update({ posted: true }).eq('id', je.id);
-  if (postErr) return c.json({ error: 'post_failed', reason: postErr.message }, 500);
+  if (!r.ok) {
+    if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);
+    if (r.status === 'lines_insert_failed') return c.json({ error: 'lines_insert_failed', reason: r.reason }, 500);
+    return c.json({ error: 'post_failed', reason: r.reason ?? r.status }, 500);
+  }
+  const je = { id: r.jeId, je_no: r.jeNo };
 
   await sb.from('payment_vouchers').update({
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -1055,89 +1033,16 @@ async function reversePvAccounting(
   sb: any,
   pvNumber: string,
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
-  /* A failed read used to return { ok:true, 'nothing_to_reverse' }: the PV is
-     cancelled, the caller logs nothing, and the payment stays posted to the GL —
-     money recorded as paid out on a voucher that was voided. */
-  const { data: origRows, error: origErr } = await sb.from('journal_entries')
-    .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, company_id')
-    .eq('source_type', 'PV').eq('source_doc_no', pvNumber);
-  if (origErr) return { ok: false, status: 'reversal_read_failed', reason: `origRows: ${origErr.message}` };
-  const orig = ((origRows ?? []) as Array<{ id: string; je_no: string; entry_date: string; reversed: boolean; total_debit_sen: number; total_credit_sen: number; company_id: number | null }>)
-    .find((r) => !r.reversed);
-  if (!orig) return { ok: true, status: 'nothing_to_reverse' };
-
-  /* Idempotency guard — a blip defeats it and contras the voucher twice. */
-  const { data: revExisting, error: revExistErr } = await sb.from('journal_entries')
-    .select('id, je_no').eq('source_type', 'PV_REVERSAL').eq('reversed_by_je', orig.id).limit(1);
-  if (revExistErr) return { ok: false, status: 'reversal_read_failed', reason: `revExisting: ${revExistErr.message}` };
-  if (revExisting && revExisting.length > 0) {
-    await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revExisting[0].id }).eq('id', orig.id);
-    return { ok: true, status: 'already_reversed' };
-  }
-
-  const totalSen = Number(orig.total_debit_sen ?? orig.total_credit_sen ?? 0);
-  if (totalSen <= 0) {
-    await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
-    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id };
-  }
-
-  /* Worst of the three copies here, because a PV JE's legs are DYNAMIC (the
-     voucher's own debit accounts + chosen credit account), so unlike the SI/PI
-     mirrors there is no canonical 2-line fallback to guess with — `swapped` folds
-     to [] and the block below simply skips the insert. The reversing JE is then
-     written with total_debit_sen/total_credit_sen set to the full amount, marked
-     posted, and the original flagged reversed: an unbalanced JE header carrying a
-     total against ZERO lines, standing in the ledger as the record of a reversal
-     that reversed nothing. Pre-write — abort is free. */
-  const { data: origLines, error: origLinesErr } = await sb.from('journal_entry_lines')
-    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes')
-    .eq('journal_entry_id', orig.id).order('line_no');
-  if (origLinesErr) return { ok: false, status: 'reversal_read_failed', reason: `origLines: ${origLinesErr.message}` };
-  const oLines = (origLines ?? []) as Array<{
-    account_code: string; debit_sen: number; credit_sen: number;
-    party_type: string | null; party_code: string | null; party_name: string | null; notes: string | null;
-  }>;
-
-  const companyId = orig.company_id ?? null;
-  const companyLine = companyId != null ? { company_id: companyId } : {};
-  const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), jePrefixForCompany(companyId));
-  const { data: revJe, error: revErr } = await sb.from('journal_entries').insert({
-    ...companyLine,
-    je_no:            revJeNo,
-    // Workers run in UTC: the raw date slice is YESTERDAY before 08:00 MYT, so a
-    // PV cancelled early morning dated its reversal into the previous day —
-    // possibly a closed period. The SI/PI reversals already use todayMyt().
-    entry_date:       todayMyt(),
-    source_type:      'PV_REVERSAL',
-    source_doc_no:    pvNumber,
-    narration:        `Reversal of ${orig.je_no} — Payment voucher ${pvNumber} cancelled`,
-    total_debit_sen:  totalSen,
-    total_credit_sen: totalSen,
-    reversed_by_je:   orig.id,
-  }).select('*').single();
-  if (revErr) return { ok: false, status: 'reversal_insert_failed', reason: revErr.message };
-
-  const swapped = oLines.length > 0
-    ? oLines.map((l, i) => ({
-        ...companyLine,
-        journal_entry_id: revJe.id,
-        line_no:          i + 1,
-        account_code:     l.account_code,
-        debit_sen:        Number(l.credit_sen ?? 0),
-        credit_sen:       Number(l.debit_sen ?? 0),
-        party_type:       l.party_type ?? null,
-        party_code:       l.party_code ?? null,
-        party_name:       l.party_name ?? null,
-        notes:            `Reversal — ${l.notes ?? ''}`.trim(),
-      }))
-    : [];
-  if (swapped.length > 0) {
-    const { error: lErr } = await sb.from('journal_entry_lines').insert(swapped);
-    if (lErr) { await sb.from('journal_entries').delete().eq('id', revJe.id); return { ok: false, status: 'reversal_lines_failed', reason: lErr.message }; }
-  }
-
-  await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
-  await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
-
-  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id };
+  /* Through the ONE gate (acc/engine). A PV entry's legs are DYNAMIC (the
+     voucher's own debit accounts + chosen credit account), so there is NO
+     canonical fallback: an original with no lines now aborts loudly instead
+     of posting a reversal header with zero lines — which is exactly the
+     defect the previous copy documented against itself. */
+  return reverseJournal(sb, {
+    sourceType: 'PV',
+    sourceDocNo: pvNumber,
+    narration: (orig) => `Reversal of ${orig.je_no} — Payment voucher ${pvNumber} cancelled`,
+    // Workers run in UTC: the raw date slice is YESTERDAY before 08:00 MYT —
+    // the engine defaults the contra to todayMyt(), same as SI/PI.
+  });
 }

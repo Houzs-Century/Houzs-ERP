@@ -37,6 +37,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
@@ -354,8 +355,8 @@ function GoodsReceivedDetailV2ReadOnly() {
   };
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!grn);
-  const goConvertToPi = () => id && navigate(`/scm/purchase-invoices/from-grn?grn=${id}`);
-  const goConvertToPr = () => id && navigate(`/scm/purchase-returns/new?fromGrn=${id}`);
+  const goConvertToPi = () => id && navigate(convertToLink('grnToPi', id));
+  const goConvertToPr = () => id && navigate(convertToLink('grnToPr', id));
   const doPost = () => {
     if (!grn) return;
     if (window.confirm(`Post GRN ${grn.grn_number}? Inventory will be received into the warehouse.`)) {

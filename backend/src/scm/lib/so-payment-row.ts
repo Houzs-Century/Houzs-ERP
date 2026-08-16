@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 import { enqueueEdit } from './autocount-outbox';
 import { recordSoAudit, type FieldChange } from './so-audit';
+import { postSoPayment } from '../../acc/payments';
 
 /* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
    Derived from the payment's own method fields whenever the operator didn't
@@ -180,6 +181,16 @@ export async function recordSoPaymentRow(
        for this row lives in the ADD_PAYMENT audit entry above. */
     createdBy: null,
   });
+
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): book the
+     payment through the one posting gate. Best-effort like the enqueue above —
+     a booking failure never fails the operator's save; the accounting
+     backfill endpoint is the self-heal. */
+  const booked = await postSoPayment(sb, data as never);
+  if (!booked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment not booked:', (data as { id?: string }).id, booked.status, booked.reason);
+  }
 
   return { payment: data as Record<string, unknown>, errorMessage: null };
 }

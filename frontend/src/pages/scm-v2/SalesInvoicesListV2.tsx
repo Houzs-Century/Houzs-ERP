@@ -212,13 +212,21 @@ const outstandingOf = (r: SiRow): number =>
 
 // ─── Split-menu dropdown ────────────────────────────────────────────────────
 
+/* No "New from Sales Order" entry, and that is deliberate. A Sales Invoice in
+   this system is built from DELIVERY ORDERS — the only converter the backend
+   exposes is POST /sales-invoices/from-dos, fed by
+   GET /sales-invoices/invoiceable-do-lines. The menu carried a "New from Sales
+   Order" item until 2026-08-16 that navigated to /scm/sales-invoices/from-so:
+   no such route is registered in App.tsx, so it fell through to
+   /scm/sales-invoices/:id with id="from-so" and asked the API for an invoice
+   whose id is the literal string "from-so". Removed rather than pointed
+   somewhere, because there is nothing to point it at — SO → SI is not a
+   conversion this ERP has, in either direction. */
 function SplitDropdown({
   onFromDo,
-  onFromSo,
   onImport,
 }: {
   onFromDo: () => void;
-  onFromSo: () => void;
   onImport: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -253,16 +261,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onFromSo();
-              }}
-            >
-              New from Sales Order
             </button>
             <button
               type="button"
@@ -945,7 +943,6 @@ export function SalesInvoicesListV2() {
 
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
-  const goFromSo = () => navigate("/scm/sales-invoices/from-so");
   const goImport = () => navigate("/scm/sales-invoices?import=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goOutstanding = () => navigate("/scm/outstanding");
@@ -1639,7 +1636,6 @@ export function SalesInvoicesListV2() {
                     </Button>
                     <SplitDropdown
                       onFromDo={goFromDo}
-                      onFromSo={goFromSo}
                       onImport={goImport}
                     />
                   </div>

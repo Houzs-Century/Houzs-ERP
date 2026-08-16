@@ -91,6 +91,7 @@ const AREAS = [
   ["Projects + PMS + fair report", /project|\bpms\b|fair.?report|checklist|roadshow|venue/i],
   ["Service cases (ASSR)", /assr|service case|survey|sla/i],
   ["Sofa, fabric, variants", /sofa|fabric|colour|variant|compartment|tier/i],
+  ["Accounting + GL", /journal|ledger|\bgl\b|chart of accounts|account.code|trial balance|debit|credit|posting engine|payment voucher|reversal/i],
   ["Auth, permissions, sessions", /permission|\brole\b|session|auth|login|token|impersonat|scope/i],
   ["Deploy, CI, migrations", /deploy|\bci\b|workflow|migration number|pg-migrate|wrangler|staging/i],
   ["Database + schema", /postgres|supabase|hyperdrive|jsonb|d1-compat|schema|index|constraint|deadlock/i],

@@ -75,6 +75,7 @@ import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocation
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -523,7 +524,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
-    id && navigate(`/scm/grns/from-po?poId=${id}`);
+    id && navigate(convertToLink('poToGrn', id));
 
   /* Email this PO to its supplier — a HUMAN action (the agent only drafts). The
      PDF is rendered here in the browser (the backend has no PDF engine) and posted

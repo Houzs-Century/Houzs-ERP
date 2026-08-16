@@ -10,11 +10,21 @@
 // account book — the precise divergence the write-back exists to prevent — and
 // a divergence nobody can see is indistinguishable from one that does not exist.
 //
-// READ-ONLY, AND THAT IS A DECISION, NOT AN OMISSION. There is no re-queue here.
-// Re-sending is requeue-autocount-skipped.yml, which carries a deliberate
-// `includeFailed` opt-in with a warning attached (#2189), because a `failed` row
-// WAS sent and the C# create has no duplicate guard. Putting that behind a
-// button is a separate decision the owner has not made.
+// IT WAS READ-ONLY UNTIL 2026-08-16, and the paragraph here said so: "Putting
+// that behind a button is a separate decision the owner has not made." He has
+// made it. `POST /:id/requeue` is that button's backend, and every safety
+// property the workflow bought is kept rather than re-argued — it climbs the
+// SAME ladder (requeueOneRow in lib/autocount-requeue.ts) the batch sweep does,
+// so there is one answer in this system to "may this document be sent again"
+// and not two.
+//
+// What the button adds over the workflow is a refusal the workflow never needed:
+// a `sent` row is refused OUTRIGHT. The C# create has no duplicate guard on the
+// ERP document number, so re-sending a document the account book has already
+// accepted writes a SECOND one into a live licensed book, where a sales order
+// cannot simply be deleted. The workflow could not reach that case (it selects
+// `skipped`, and `failed` only behind an explicit opt-in); a button pointed at a
+// row id can, so it is the first thing the handler checks.
 //
 // THE TAXONOMY IS NOT DEFINED HERE. It is lib/autocount-outbox-status.ts, which
 // is also what the health script reads (through its plain-node mirror), so the
@@ -34,7 +44,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { scopeToCompany } from '../lib/companyScope';
+import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { readWritebackScope, WRITEBACK_KEY } from '../lib/autocount-writeback-flag';
 import {
@@ -44,8 +54,14 @@ import {
   REQUEUE_NOTE_PREFIX,
   acNeedsAttention,
   acOutboxState,
+  acRowIsRequeueable,
   classifyAcSkip,
 } from '../lib/autocount-outbox-status';
+import {
+  AC_REQUEUE_MEANING,
+  acRequeueAccepted,
+  requeueOutboxRow,
+} from '../lib/autocount-requeue';
 
 export const autocountOutbox = new Hono<{ Bindings: Env; Variables: Variables }>();
 autocountOutbox.use('*', supabaseAuth);
@@ -66,6 +82,20 @@ autocountOutbox.use('*', supabaseAuth);
  * for them on day one with no grant migration.
  */
 const READ_KEYS = ['scm.autocount.read', 'settings.manage'] as const;
+
+/**
+ * The keys that may SEND A DOCUMENT AGAIN — strictly narrower than READ_KEYS,
+ * because this one writes into a live licensed account book.
+ *
+ * `scm.autocount.read` is deliberately NOT here. It is catalogued as the key you
+ * hand somebody so they can WATCH the queue without also getting the connection
+ * settings, and a viewer who can push documents into the book is not a viewer.
+ * The second key is the same argument the read gate makes for accepting
+ * `settings.manage`, one step up: whoever may change the AutoCount connection
+ * may certainly re-send one document through it, and that grant exists today —
+ * a key nobody holds is a button nobody can press. Owner and IT Admin hold `*`.
+ */
+const REQUEUE_KEYS = ['scm.autocount.requeue', 'settings.manage'] as const;
 
 /** Columns to show. `payload` is a whole document snapshot and is NEVER
  *  selected: it is the audit record, not list content, and a page that pulled
@@ -162,6 +192,14 @@ function present(raw: Row) {
     reason_kind: kind,
     remedy,
     needs_attention: acNeedsAttention(status, lastError),
+    /* Whether to OFFER the per-row button, decided here rather than in the
+       page. The frontend layer behind this screen holds no policy on purpose
+       (frontend/src/lib/autocountOutbox.ts's own header), and a button whose
+       visibility rule lived there would be a second opinion about the same row
+       — the drift that made the health check tell an operator to backfill
+       DtlKeys for an item-map problem (#2094). This is a HINT and not the gate:
+       POST /:id/requeue re-reads the row and can still refuse. */
+    can_requeue: acRowIsRequeueable(String(raw.op ?? ''), status, lastError),
     ac_doc_no: (raw.ac_doc_no as string | null) ?? null,
     created_at: (raw.created_at as string | null) ?? null,
     updated_at: (raw.updated_at as string | null) ?? null,
@@ -392,5 +430,86 @@ export const listAutocountOutboxHandler = async (
 };
 
 autocountOutbox.get('/', listAutocountOutboxHandler);
+
+/**
+ * POST /autocount-outbox/:id/requeue — send ONE refused document again.
+ *
+ * The owner's requirement for this page is that no code jargon appears on it,
+ * so the answer is a STRUCTURED OUTCOME and never an exception string:
+ *
+ *   accepted   did the document go back into the queue
+ *   code       a stable, machine-readable outcome key. The UI branches on this
+ *              and nothing else. The full catalogue, with what a human should
+ *              DO about each, is docs/autocount-sync-reasons.md.
+ *   message    the same outcome as one sentence a person can read, taken from
+ *              AC_REQUEUE_MEANING so the words live beside the code that
+ *              produces them rather than in a frontend dictionary that a new
+ *              outcome would silently miss.
+ *   reason     the ERP's or AutoCount's OWN words, when there are any. Only
+ *              `still-refused` carries them — it is the current blocker, which
+ *              is the whole signal after somebody has gone and fixed the last
+ *              one — and the page already renders reasons verbatim.
+ *
+ * A REFUSAL IS A 200. `already-sent`, `switch-off` and the rest are legitimate
+ * answers to a legitimate request, not client errors, and an HTTP error would
+ * reach the page through the generic failure path that prints a status code.
+ * Only the four things that are genuinely wrong with the CALL — no permission,
+ * no company, no id, an unreadable queue — carry a non-200.
+ */
+export const requeueAutocountOutboxHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
+  if (!REQUEUE_KEYS.some((k) => hasHouzsPerm(c, k))) {
+    return c.json(
+      {
+        error: 'forbidden',
+        message:
+          'Sending a document again writes into the live AutoCount account book, '
+          + `so it is limited to ${REQUEUE_KEYS.join(' or ')}.`,
+      },
+      403,
+    );
+  }
+  /* The STRICT company resolver, not activeCompanyId. This is a write, and the
+     lenient helper degrades to "no predicate" when the company is unresolved —
+     which on a write means "act on every company's rows". Refusing is the only
+     safe answer (scm/lib/companyScope.ts states the rule in full). */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  const rowId = (c.req.param('id') ?? '').trim();
+  if (!rowId) return c.json({ error: 'invalid_row_id' }, 400);
+
+  const sb = c.get('supabase');
+  const result = await requeueOutboxRow(sb, { rowId, companyId: co.companyId });
+
+  /* The lib's `detail` is written for an operator reading a workflow log and
+     names columns and index behaviour. It does not go to the page — it goes
+     here, where it is the only record of WHY once the response has been
+     rendered as one sentence. */
+  if (!acRequeueAccepted(result.outcome)) {
+    // eslint-disable-next-line no-console
+    console.warn('[autocount-outbox] re-queue refused', result.outcome, result.docNo, result.detail);
+  }
+
+  const body = {
+    accepted: acRequeueAccepted(result.outcome),
+    code: result.outcome,
+    message: AC_REQUEUE_MEANING[result.outcome],
+    row_id: result.rowId,
+    doc_type: result.docType,
+    doc_no: result.docNo,
+    op: result.op,
+    /* The live attempt this created, so the page can point at it rather than
+       asking the reader to go and find a new row in a list of two hundred. */
+    new_row_id: result.newRowId,
+    reason: result.outcome === 'still-refused' ? result.detail : null,
+  };
+  if (result.outcome === 'row-not-found') return c.json(body, 404);
+  if (result.outcome === 'read-failed') return c.json(body, 500);
+  return c.json(body, 200);
+};
+
+autocountOutbox.post('/:id/requeue', requeueAutocountOutboxHandler);
 
 export default autocountOutbox;

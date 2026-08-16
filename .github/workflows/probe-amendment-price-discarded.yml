@@ -1,0 +1,49 @@
+name: probe-amendment-price-discarded
+
+# Did an APPROVED Sales Order amendment's unit price actually land on the order?
+#
+# so-revision.ts derived `amendTrust = soIsMigrated ? 'including-zero' : false`,
+# so on a NATIVE order the honest-pricing recompute overwrote the approved unit
+# price with mfg_products.sell_price_sen. Proven locally by
+# src/scm/lib/so-revision.amendmentPrice.test.ts (6 of 12 fail against
+# origin/main). This counts how often the path was actually TAKEN in production
+# and what money moved with it.
+#
+# Read-only: SELECTs only, no DDL, no writes, no transaction.
+# See backend/scripts/probe-amendment-price-discarded.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-amendment-price-discarded
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Compare approved amendment prices against what landed
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-amendment-price-discarded.mjs | tee amendment-price.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-amendment-price-discarded
+          path: backend/amendment-price.txt
+          retention-days: 14

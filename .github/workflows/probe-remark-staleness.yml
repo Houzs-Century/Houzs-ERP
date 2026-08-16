@@ -1,0 +1,56 @@
+name: probe-remark-staleness
+
+# Refutation probe: is the "BEDFRAME" cell on the 2990 order a STALE stored
+# projection, and is that condition specific to 2990 or general? Splits the
+# bare-category cells into stale vs genuinely-short, which the first probe
+# counted but never split. Read-only.
+#
+# See backend/scripts/probe-remark-staleness.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id for the named order (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "2"
+        type: string
+      debtor:
+        description: "debtor_name ILIKE match"
+        required: false
+        default: "James Pak"
+        type: string
+
+concurrency:
+  group: probe-remark-staleness
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Split the bare-category cells into stale vs short
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          DEBTOR: ${{ inputs.debtor }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-remark-staleness.mjs | tee remark-staleness.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-remark-staleness
+          path: backend/remark-staleness.txt
+          retention-days: 14

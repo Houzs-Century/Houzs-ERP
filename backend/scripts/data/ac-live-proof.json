@@ -1,0 +1,45 @@
+{
+  "_README": [
+    "THE ONLY HAND-MAINTAINED HALF of the AutoCount coverage table, and the only",
+    "thing here that source cannot answer: which operations have actually been",
+    "run against the licensed AED_HOUZS book, and under which document number.",
+    "",
+    "An entry is admissible ONLY with a document number or a query that can be",
+    "re-run. 'Someone said it worked' is not an entry -- four hand-written",
+    "coverage tables disagreed with each other before this file existed, and the",
+    "disagreement was found by reading them, not by anything failing.",
+    "",
+    "Everything else in docs/generated/autocount-coverage.md is DERIVED from",
+    "source on every run: which operations exist, which the service implements,",
+    "and which routes actually enqueue them. Do not hand-write those anywhere.",
+    "",
+    "Add an entry the day the document number exists. Never add one in advance."
+  ],
+  "proof": {
+    "create_so": {
+      "documents": ["HC-SO-2608-001", "HC-SO-2608-002"],
+      "date": "2026-08-14",
+      "evidence": "scm.autocount_outbox holds two rows with status='sent' for these; re-runnable with .github/workflows/autocount-outbox-health.yml",
+      "note": "The only operation ever to reach the book through the QUEUE."
+    },
+    "so_to_do": {
+      "documents": ["DO-011260"],
+      "date": "2026-08-12",
+      "evidence": "qa-convert.ps1 driven directly on the AutoCount host, NOT through the outbox; the DO was cancelled afterwards",
+      "note": "A real DO running number was consumed. Because it did not go through the queue, scm.autocount_outbox has no record of it -- which is exactly how a reader looking only at the queue concludes this never happened."
+    },
+    "cancel": {
+      "documents": ["DO-011260"],
+      "date": "2026-08-12",
+      "evidence": "the same host session cancelled the SO and the DO it had just created",
+      "note": null
+    }
+  },
+  "notDemonstrated": {
+    "create_po": "FK_PO_PurchaseAgent blocked it on 2026-08-12. The cause is fixed in source (readPoHeader sends the constant AC_PURCHASE_AGENT, autocount-outbox.ts) but no purchase order has been sent since.",
+    "po_to_gr": "Waits on create_po: a conversion transfers a document the book must already hold.",
+    "do_to_iv": "Never attempted. AcSyncService.cs carries a comment claiming DO and IV are both proven and cites two DO numbers for it -- the IV half of that sentence has no evidence behind it.",
+    "gr_to_pi": "Never attempted.",
+    "edit": "Exercised against the live book as the four refusal guards (a passing guard writes nothing, which is what makes it safe there). No edit has been demonstrated to CHANGE a document in the book."
+  }
+}

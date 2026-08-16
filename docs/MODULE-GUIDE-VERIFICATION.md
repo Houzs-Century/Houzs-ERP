@@ -67,6 +67,7 @@ hard to check.
 
 | guide | status | verified by / PR | what was found |
 |---|---|---|---|
+| `accounting.md` | not verified | — | — |
 | `address-cascade.md` | not verified | — | — |
 | `announcements.md` | not verified | — | — |
 | `autocount-writeback.md` | not verified | — | — |
@@ -75,6 +76,7 @@ hard to check.
 | `delivery-rate-card.md` | not verified | — | — |
 | `delivery-return.md` | not verified | — | — |
 | `delivery-tms.md` | not verified | — | — |
+| `document-conversion.md` | verified (whole guide, at birth) | Claude, #2325 | NEW guide, 2026-08-16 — written from source, so every claim in it was read out of the tree rather than inherited. The conversion grid (13 pairs), the ten picker pages and their multi-select behaviour, the source-side "Convert to" entries and the mobile wizard's four pairs were each read at their file. FOUR DEFECTS found and recorded in §4, all reported not fixed: (a) 8 of the 10 picker pages contain ZERO `useSearchParams`/`useLocation`/`useParams`, so `Convert to PI` / `Convert to SI` / `Deliver` navigate with a scope param that is silently discarded and open the global picker — counted per file, only `PurchaseOrderFromSo` (3) and `GrnFromPo` (17) read params; (b) GRN→PR navigates `?fromGrn=` while `PurchaseReturnNew` reads `grnId`; (c) `/scm/sales-invoices/from-so` is navigated to and is not a registered route; (d) "New from quotation" routes to the sofa configurator, and no QT→SO conversion exists anywhere. The owner's Consignment Note claim was CONFIRMED with one correction: the line picker is CN-screen-only, but a whole-order `Create Consignment Note` does exist on the Consignment Order side and its `?fromConsignmentOrder=` IS read. UNKNOWN: whether the absent Quotation→SO step is deliberate — nothing in source says. |
 | `document-traceability.md` | not verified | — | — |
 | `fleet-maintenance.md` | not verified | — | — |
 | `global-search.md` | not verified | — | — |
@@ -89,7 +91,7 @@ hard to check.
 | `purchase-return.md` | not verified | — | — |
 | `quote.md` | not verified | — | — |
 | `sales-invoice.md` | not verified | — | — |
-| `sales-order.md` | partial (8 of ~24 sections) | Claude, #2231 + #2233 | 7 correct in full; 2 findings. #2231 FINDING: guide claimed the AutoCount create-enqueue invariant held at "exactly two places, both gated" and cited a test that fails on a THIRD — there were three, and the test counted inside ONE imported file. Third site safe by a different mechanism (`enqueueSoCreate` catches MissingLocationError -> `skipped` outbox row). Guide + test corrected, guard now walks the tree. SECOND FINDING: `so-confirm-gate.ts:118-120` pointed at the wrong block (comment is at 141) — and the reference stayed WITHIN the file, so no mechanical check could catch it; replaced with a symbol + the command that finds it. CORRECT IN FULL: discard locks (fails closed), cancel + PWP vouchers (4 outcomes, no void/restore collision), downstream lock (9 sites, all mutation/cancel), warehouse resolution, Processing-Date save gates (8 codes + 422 shape; Houzs 30% / 2990 50% / unknown falls to the LOOSER 30%; completeness reads 4 fields and NOT email), the 3 by-SKU variant exemptions (regexes, dropped axes, and "compartment = after the first hyphen"), date pairing + processing<=delivery. NOT READ: pricing, address block, list handler, amendments, line photos, caching. |
+| `sales-order.md` | partial (13 of ~24 sections) | Claude, #2231 #2233 #2246 #2250 | 11 correct in full; 4 findings. NEW: the SO-amendment section — (a) a SOURCE COMMENT in `so-amendment-header.ts` said the Processing Date signs with Purchasing; `soHeaderFieldKind` returns `DELIVERY` for every key and `amendment-routing.ts` maps that to Logistics. The routing table and BOTH guides agreed with the code; only the comment did not, and a comment is where a reader looks first for who signs. (b) The guide named 5 amendable header keys; there are 13 — the whole delivery-address block plus `replacementDisposal` joined in the two-lane rework and the prose did not follow, so a reader would have concluded ship-to could not be amended. Fixed by REMOVING the hand-written list and pointing at `AMENDABLE_HEADER_KEYS` + `so-field-policy.test.ts`, which already pins it (proven red: delete one key, 1 of 12 fails). CORRECT: the 5 line atoms, all three surfaces sharing one diff, the routing table. NOT READ: address block, list handler, line photos, caching, the Processing-Date column registry. |
 | `scan-to-so.md` | not verified | — | — |
 | `service-case.md` | not verified | — | — |
 | `stock-take.md` | not verified | — | — |

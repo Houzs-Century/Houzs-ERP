@@ -1,0 +1,63 @@
+# Read-only. Measures how much of the MRP plan is standing on the EMPTY-VARIANT
+# ('') purchase-order fallback in routes/mrp.ts:831-836 / :988-994 — how many
+# specific-variant demand buckets are covered by a PO that names no variant, and
+# what the page's shortage would be without it.
+#
+# SELECT only — no DDL, no writes, no transaction.
+name: probe-mrp-legacy-variant-fallback
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "restrict to one company id (blank = every company with SOs)"
+        required: false
+        default: ""
+        type: string
+      verbose:
+        description: "print every drawing bucket, not only the ones whose shortage changes"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-mrp-legacy-variant-fallback
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/probe-mrp-legacy-variant-fallback.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          VERBOSE: ${{ inputs.verbose }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/probe-mrp-legacy-variant-fallback.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          VERBOSE: ${{ inputs.verbose }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

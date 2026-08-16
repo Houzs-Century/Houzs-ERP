@@ -82,6 +82,7 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
+import { paginateAll, chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
@@ -117,15 +118,30 @@ const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
    MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
 
-/* Row ceiling on the demand and PO-supply reads (audit D3, 2026-08-01). The
-   `.limit(5000)` used to land on EVERY row in an unspecified order with no
-   error when crossed — the plan silently computed over a slice. Both reads now
-   (a) push the status filters into SQL so the cap only ever counts rows that
-   can matter, (b) carry a deterministic ORDER BY so a slice is at least
-   stable, and (c) FAIL LOUDLY when the row count reaches the cap: a truncated
-   plan is a wrong plan, and wrong-but-plausible is the worst failure mode a
-   planning page can have. The audit measured ~100 PO rows / well under the cap
-   on the demand side, so the throw is pure forward-safety today.
+/* EVERY MULTI-ROW READ ON THIS PAGE IS PAGED (2026-08-16). It used to carry a
+   `.limit(5000)` plus a `rows.length >= 5000` throw named `mrp_load_truncated`,
+   and BOTH halves of that were wrong in the same way — they assumed the number
+   the code asked for is the number PostgREST returns.
+
+   It is not. PostgREST caps a response at `max-rows` (1000 on this project) and
+   `.limit(5000)` does not lift it: the server hands back ≤1000 rows and drops
+   the rest with NO error and no signal in the payload. So the ceiling was 1000,
+   not 5000, and the guard that was supposed to catch truncation compared
+   1000 >= 5000 — it could never fire, and never did. Measured against prod on
+   2026-08-16: the demand read matches 13,920 rows, so the plan was computed over
+   the first ~1000 by `id` ASC (a uuid order, i.e. arbitrary) and ~93% of open
+   demand was invisible. The owner's symptom was the direct consequence — a
+   brand-new sales order ranked 10,687th and simply did not appear in MRP, so it
+   could not be converted to a PO.
+
+   The remedy is lib/paginate-all.ts (`paginateAll` / `chunkIn`), which is this
+   codebase's established answer to the same trap — it pages with `.range()`
+   until a short page arrives. The cap and the guard are both GONE rather than
+   re-tuned: a bigger `.limit()` would have been the same bug with a bigger
+   wrong number, and a guard that cannot detect the thing it is named after is
+   worse than no guard, because it reads as protection. paginateAll's own
+   MAX_PAGES (50 pages = 50k rows) is the surviving runaway stop, and it is a
+   real one — it counts pages actually fetched.
 
    PostgREST filter notes, because the syntax is the trap: the status columns
    live on the EMBEDDED (aliased, !inner-joined) parent, so the filter path is
@@ -134,8 +150,9 @@ const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
    is dropped by `not.in` (NULL never passes a NOT IN) — for demand that is
    exactly so-stock-allocation.ts's own SQL behaviour, so the two engines now
    agree on that edge too; the JS-side SO_DONE/PO_DEAD filters below remain the
-   authoritative gate for everything the SQL cannot express. */
-const MRP_LOAD_CAP = 5000;
+   authoritative gate for everything the SQL cannot express. Pushing the status
+   filter into SQL still matters: it keeps the paged read from walking every
+   closed order in history. */
 const sqlNotInList = (statuses: Iterable<string>): string =>
   `(${[...statuses].map((s) => `"${s}"`).join(',')})`;
 const SO_DONE_SQL = sqlNotInList(SO_DONE);
@@ -460,10 +477,11 @@ export async function computeMrp(
     );
 
   // ── 1. Demand — outstanding SO lines ──────────────────────────────────
-  // Status filter pushed into SQL (see MRP_LOAD_CAP) so done SOs never spend
-  // the row budget; ORDER BY id so the read is deterministic; length == cap
-  // throws rather than planning on a silent slice.
-  const { data: demandRaw, error: demandErr } = await scoped(sb
+  // Status filter pushed into SQL (see the paging note above) so done SOs never
+  // spend read budget; ORDER BY id so the page boundaries are stable across
+  // requests (paginateAll's `.range()` windows are only coherent under a total
+  // order); PAGED so the plan sees every open line, not the first 1000.
+  const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
@@ -472,11 +490,8 @@ export async function computeMrp(
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
     .order('id')
-    .limit(MRP_LOAD_CAP);
+    .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
-  if (((demandRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
-    throw new Error(`mrp_load_truncated: demand read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
-  }
 
   /* Undated lines (no line delivery date AND no SO delivery date) are not
      ready to order, so the MRP page hides them by default — but they are STILL
@@ -502,8 +517,34 @@ export async function computeMrp(
   // delivered-net-of-returns per line and drop any line with nothing left to
   // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
   // convert flow uses), so MRP can never disagree with the SO's remaining.
+  //
+  /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
+     above changed this call's scale by more than an order of magnitude: MRP used
+     to hand over the ~700 doc numbers riding on a 1000-row demand slice, and now
+     hands over every open sales order — ~2,800 docs / ~13,900 lines in prod on
+     2026-08-16. soDeliverableRemaining puts its argument straight into
+     `.in('doc_no', …)` and then puts the resulting line ids into
+     `.in('so_item_id', …)`; those are uuids, so the un-batched form is a ~500KB
+     request line. That is a 414, not a query — the page would have gone from
+     wrong to broken.
+
+     Batching HERE rather than inside soDeliverableRemaining is deliberate. Every
+     other caller (the DO picker, the convert flow) passes a handful of docs and
+     is unaffected, so the scale problem belongs to MRP, not to the shared
+     function — and a chunk size of 200 docs reproduces almost exactly the ~1000
+     lines per call that this code path has been running against in production all
+     along, rather than inventing an untested shape for every consumer.
+
+     Safe to split because the function is already per-document internally: it
+     groups by doc_no and walks each SO's own build order ("the walk MUST run per
+     doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
+     partial maps is a union of disjoint key sets. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
-  const deliverable = await soDeliverableRemaining(sb, demandDocNos);
+  const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
+  for (let i = 0; i < demandDocNos.length; i += 200) {
+    const part = await soDeliverableRemaining(sb, demandDocNos.slice(i, i + 200));
+    for (const [soItemId, d] of part) deliverable.set(soItemId, d);
+  }
   const deliveredNetOf = (soItemId: string): number => {
     const d = deliverable.get(soItemId);
     if (!d) return 0;
@@ -535,24 +576,36 @@ export async function computeMrp(
   // bug for Bedframe / Mattress / Accessories (sofa kept working because its
   // module SKUs are few and stay within the cap). Fetch BY the codes actually
   // in demand (bounded .in, chunked) so the map can never be clipped.
+  //
+  // chunkIn replaces a hand-rolled 300-at-a-time loop: it batches the IN-list
+  // the same way AND pages each batch, which the hand-rolled loop did not. That
+  // second half now matters — the demand read is paged, so `demandCodes` is no
+  // longer bounded by a 1000-row demand slice.
   const prodByCode = new Map<string, ProductRow>();
   const demandCodes = [...new Set(demand.map((d) => d.item_code).filter((c): c is string => !!c))];
-  for (let i = 0; i < demandCodes.length; i += 300) {
-    const chunk = demandCodes.slice(i, i + 300);
-    if (chunk.length === 0) continue;
-    const { data: prods } = await scoped(sb
-      .from('mfg_products')
-      .select('code, name, category')
-      .in('code', chunk));
-    for (const p of (prods ?? []) as ProductRow[]) prodByCode.set(p.code, p);
-  }
+  const { data: prods, error: prodErr } = await chunkIn<ProductRow>(demandCodes, (batch, from, to) => scoped(sb
+    .from('mfg_products')
+    .select('code, name, category')
+    .in('code', batch))
+    // ORDER BY id, not code: `.range()` windows are only coherent under a TOTAL
+    // order, and `code` is unique per COMPANY — with companyId null (the
+    // no-scoping case) the same code appears once per company, so a tie at a
+    // page boundary could drop or repeat a row. id is unique unconditionally.
+    .order('id')
+    .range(from, to));
+  if (prodErr) throw new Error(`mrp_load_failed: ${prodErr.message}`);
+  for (const p of prods) prodByCode.set(p.code, p);
 
   // The category dropdown lists every catalog category (a handful of enum
-  // values), independent of current demand — derive it from a lightweight
-  // category-only fetch (the few distinct values all surface within the cap).
+  // values), independent of current demand. The DISTINCT values are few, but
+  // the read that finds them walks the whole catalogue (2,293 rows in prod on
+  // 2026-08-16), so it must be paged — unpaged it saw the first 1000 products
+  // and a category owned only by later rows would be missing from the tab list.
   const categorySet = new Set<string>();
-  const { data: catRows } = await scoped(sb.from('mfg_products').select('category'));
-  for (const c of (catRows ?? []) as Array<{ category: string | null }>) {
+  const { data: catRows, error: catErr } = await paginateAll<{ category: string | null }>((from, to) =>
+    scoped(sb.from('mfg_products').select('category')).order('id').range(from, to));
+  if (catErr) throw new Error(`mrp_load_failed: ${catErr.message}`);
+  for (const c of catRows ?? []) {
     if (c.category) categorySet.add(c.category);
   }
 
@@ -602,11 +655,21 @@ export async function computeMrp(
   // Commander 2026-05-31 — warehouse is part of the bucket identity (no cross-WH
   // pooling). whFilter scopes the query to one warehouse; otherwise every
   // warehouse's balance lands in its own bucket.
-  let balQ = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
-  if (whFilter) balQ = balQ.eq('warehouse_id', whFilter);
-  const { data: balances } = await balQ;
+  // PAGED: 1,065 balance rows in prod on 2026-08-16 — unpaged, the last ~65
+  // buckets read as zero stock and MRP invented a shortage for each of them.
+  const { data: balances, error: balErr } = await paginateAll<BalanceRow>((from, to) => {
+    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
+    if (whFilter) q = q.eq('warehouse_id', whFilter);
+    // inventory_balances is a VIEW (migration 0084) grouped by
+    // (warehouse_id, product_code, variant_key, company_id) and has no id, so
+    // that four-column tuple IS its unique key — order by all four or the
+    // paging is not total. company_id matters precisely when it is NOT filtered
+    // (companyId null), which is the case that would otherwise tie.
+    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
+  });
+  if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
-  for (const b of (balances ?? []) as BalanceRow[]) {
+  for (const b of balances ?? []) {
     const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? '');
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + (b.qty ?? 0));
   }
@@ -614,11 +677,15 @@ export async function computeMrp(
   // ── 4. Outstanding PO supply — open PO lines with ETA, keyed by (warehouse, code, variant) ──
   // Each PO line's ship-to warehouse = line warehouse_id, falling back to the PO
   // header's purchase_location_id. No SO↔PO linkage — supply is a pure pool.
-  // Dead-PO filter pushed into SQL + deterministic ORDER BY + loud truncation
-  // guard (see MRP_LOAD_CAP). The read error is THROWN now, too: it used to be
-  // silently discarded, and a failed supply read produced a plan with ZERO PO
-  // supply — phantom shortage everywhere, rendered as if it were true.
-  const { data: poRaw, error: poErr } = await scoped(sb
+  // Dead-PO filter pushed into SQL, deterministic ORDER BY, and PAGED (see the
+  // paging note at the top). This read matched 873 rows in prod on 2026-08-16 —
+  // under the 1000 ceiling TODAY, which is precisely why it must be paged now:
+  // it is one busy month from silently dropping supply, and the failure mode is
+  // invisible (phantom shortage on whichever buckets fall off the end).
+  // The read error is THROWN: it used to be silently discarded, and a failed
+  // supply read produced a plan with ZERO PO supply — phantom shortage
+  // everywhere, rendered as if it were true.
+  const { data: poRaw, error: poErr } = await paginateAll<PoLineRow>((from, to) => scoped(sb
     .from('purchase_order_items')
     .select(`
       material_code, item_group, variants, qty, received_qty, delivery_date,
@@ -628,11 +695,8 @@ export async function computeMrp(
     `)
     .not('po.status', 'in', PO_DEAD_SQL))
     .order('id')
-    .limit(MRP_LOAD_CAP);
+    .range(from, to));
   if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
-  if (((poRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
-    throw new Error(`mrp_load_truncated: PO supply read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
-  }
   // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
   // can display it read-only (a raised PO's supplier is fixed). Name resolved
   // from the suppliers map below.
@@ -718,13 +782,12 @@ export async function computeMrp(
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
   if (poSupplierIds.size > 0) {
-    const { data: poSups } = await scoped(sb
-      .from('suppliers')
-      .select('id, name')
-      .in('id', [...poSupplierIds]));
-    for (const s of (poSups ?? []) as Array<{ id: string; name: string }>) {
-      supplierNameById.set(s.id, s.name);
-    }
+    const { data: poSups, error: supErr } = await chunkIn<{ id: string; name: string }>(
+      [...poSupplierIds],
+      (batch, from, to) => scoped(sb.from('suppliers').select('id, name').in('id', batch)).order('id').range(from, to),
+    );
+    if (supErr) throw new Error(`mrp_load_failed: ${supErr.message}`);
+    for (const s of poSups) supplierNameById.set(s.id, s.name);
   }
   for (const arr of poByKey.values()) arr.sort((a, b) => byDateAsc(a.eta, b.eta));
 
@@ -734,14 +797,29 @@ export async function computeMrp(
   const codes = [...new Set(demand.map((d) => d.item_code))];
   const mainByCode = new Map<string, { code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
+  /* CHUNKED + PAGED. Two separate ceilings were being crossed here: the IN-list
+     was the FULL demand code list in one URL (unbounded now that demand is
+     paged), and the result was 2,660 rows in prod on 2026-08-16 against a
+     1000-row response cap — so ~⅔ of the bindings never arrived and the SKUs
+     they belonged to showed no supplier at all, which is the difference between
+     a row you can convert to a PO and a row you cannot.
+     ORDER: is_main_supplier DESC stays FIRST because `mainByCode` takes the
+     first binding it sees per code as the main one. material_code + supplier_id
+     follow only to make the order total, which is what makes `.range()` pages
+     coherent; they cannot displace a main binding from the front of its code. */
   if (codes.length > 0) {
-    const { data: binds } = await scoped(sb
+    type BindRow = { material_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
+    const { data: binds, error: bindErr } = await chunkIn<BindRow>(codes, (batch, from, to) => scoped(sb
       .from('supplier_material_bindings')
       .select('material_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)')
       .eq('material_kind', 'mfg_product')
-      .in('material_code', codes))
-      .order('is_main_supplier', { ascending: false });
-    for (const b of (binds ?? []) as Array<{ material_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
+      .in('material_code', batch))
+      .order('is_main_supplier', { ascending: false })
+      .order('material_code')
+      .order('id')
+      .range(from, to));
+    if (bindErr) throw new Error(`mrp_load_failed: ${bindErr.message}`);
+    for (const b of binds) {
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (!s) continue; // orphaned binding (supplier deleted) — skip
       const arr = suppliersByCode.get(b.material_code) ?? [];
@@ -815,26 +893,49 @@ export async function computeMrp(
     });
 
     let stockLeft = stockByKey.get(k) ?? 0;
-    // Clone PO supply so the greedy walk can mutate qtyLeft without touching the
-    // shared map. Fold in the same-warehouse EMPTY-variant PO pool (legacy POs
-    // created before SO→PO carried variants → key ''), so a PO raised for a
-    // bedframe still shows as supply against the variant row.
-    //
-    // Audit R4 (legacy-variant double-count) — the legacy '' pool is a FALLBACK,
-    // NOT an addition. It is folded in ONLY when this real-variant bucket has no
-    // PO supply of its own; it must never be added ON TOP of the variant's own
-    // PO. Adding both let a single physical legacy PO line count its quantity
-    // twice — once against the real-variant row (as extra supply) and again as
-    // the '' bucket's own supply / against every other variant row of the SKU —
-    // inflating PO Outstanding and over-covering demand (understating shortage).
-    // Prefer the real variant; '' answers only when the real one is silent.
-    const legacyKey = composite(whId, code, '');
+    /* Clone PO supply so the greedy walk can mutate qtyLeft without touching the
+       shared map. SUPPLY IS THIS BUCKET'S OWN PO LINES AND NOTHING ELSE.
+
+       There used to be a fallback here (and a twin in section 8) that folded the
+       same-warehouse EMPTY-variant ('') PO pool into a specific-variant bucket
+       whenever that bucket had no PO of its own:
+
+           const legacyKey = composite(whId, code, '');
+           const useLegacy = bucket.vkey !== '' && legacyKey !== k && ownPo.length === 0;
+
+       It is gone (owner, 2026-08-16). He was asked twice and ruled the same way
+       both times — 「variant 不一样的话 应该不能拿来给那个SO 用不是吗?」 and
+       「我们要求不是全部variant 全部spec都相同才是一样的东西?」 A purchase order
+       whose variants differ is not the goods this sales-order line asked for, so
+       it cannot cover it. Same-thing means EVERY variant and spec matches, which
+       is exactly what the bucket key already encodes.
+
+       The fallback also made this engine self-inconsistent, which is the part
+       that shows up as a wrong number rather than a wrong policy. Stock has
+       never had a fallback (`stockByKey.get(k)` on the line above — the exact
+       key, no '' lookup), so demand, stock and supply now finally agree on what
+       counts as the same thing. While it stood, a bedframe SO line for a
+       specific fabric/gap/divan/leg read as covered by a PO for an unspecified
+       bedframe, and the shortage that should have driven a purchase was hidden.
+
+       ONE THING THIS DELIBERATELY DOES NOT DO: re-derive `item_group` from the
+       product master to rescue a line whose group is NULL. `variantKeyOf` maps a
+       null/unknown group through `ATTRS_BY_GROUP[group] ?? []`, so such a line
+       emits no attributes and keys to '' even when it carries a real fabric —
+       and that is true on BOTH sides here, demand and PO alike. Deriving the
+       group would fix two of the three sides and break the third: stock's key is
+       not computed here at all, it is the STORED inventory_balances.variant_key,
+       written at movement time from whatever group that movement carried. MRP
+       cannot re-derive that without re-writing history, so a derivation would
+       move demand and supply off the stock they are supposed to match, and make
+       this page disagree with every other consumer of computeVariantKey (GRN,
+       DO, POS, the frontend). Null-group lines therefore keep bucketing exactly
+       as they did before this change — mis-grouped, but mis-grouped IDENTICALLY
+       on all three sides, which is the only property that keeps the arithmetic
+       honest. Fixing the null groups themselves is a data repair, not a planning
+       change. */
     const ownPo = poByKey.get(k) ?? [];
-    const useLegacy = bucket.vkey !== '' && legacyKey !== k && ownPo.length === 0;
-    const poQueue: PoSupply[] = [
-      ...ownPo,
-      ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : []),
-    ].map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    const poQueue: PoSupply[] = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
 
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
@@ -899,8 +1000,10 @@ export async function computeMrp(
     if (lines.length === 0) continue;
 
     const stock = stockByKey.get(k) ?? 0;
-    const poOutstanding = (poOutstandingByKey.get(k) ?? 0)
-      + (useLegacy ? (poOutstandingByKey.get(legacyKey) ?? 0) : 0);
+    // Mirrors the queue above: the '' bucket's outstanding qty used to be added
+    // on when the fallback fired, which is what put units on the PO Outstanding
+    // column that this row's variant was never going to receive.
+    const poOutstanding = poOutstandingByKey.get(k) ?? 0;
     const shortage = lines.reduce((acc, l) => acc + l.shortageQty, 0);
     const main = mainByCode.get(code);
     const wh = whId ? whById.get(whId) : null;
@@ -966,7 +1069,9 @@ export async function computeMrp(
 
   const sofaSets: SofaSet[] = [];
   for (const [k, bucket] of sofaByKey.entries()) {
-    const { whId, code, vkey, rows } = bucket;
+    // `code` and `vkey` were only ever read to build the '' legacy key; the
+    // bucket still carries them, this loop no longer needs them.
+    const { whId, rows } = bucket;
     const wh = whId ? whById.get(whId) : null;
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
@@ -977,21 +1082,17 @@ export async function computeMrp(
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
     let stockLeft = stockByKey.get(k) ?? 0;
-    /* Audit D2 (2026-08-01) — the sofa path never folded in the same-warehouse
-       EMPTY-variant legacy PO pool, so an open legacy-'' sofa PO was invisible
-       here and the set read as a phantom shortage (over-ordering the same
-       goods twice). Mirror of section 7's R4-guarded fallback, EXACTLY: the
-       legacy pool answers ONLY when this variant bucket has no PO supply of
-       its own — never on top of it (that is the R4 double-count). The audit
-       measured 0 live (warehouse,item) groups drawing one legacy pool from
-       more than one bucket, so this is forward-safety, not a live repair. */
-    const legacyKey = composite(whId, code, '');
+    /* Sofa draws its OWN bucket's PO supply only — the twin of section 7, and
+       removed for the same reason on the same ruling (owner 2026-08-16). The
+       fallback that stood here was added by audit D2 (2026-08-01) specifically
+       to mirror section 7's; mirroring it in the other direction is what keeps
+       the two paths from drifting. Sofa's key is fabricCode + seatHeight +
+       legHeight (ATTRS_BY_GROUP), so a '' sofa PO is one with no fabric, no
+       seat and no leg recorded — precisely the thing the owner says cannot
+       stand in for a colour-matched set. See section 7 for the full reasoning,
+       including why item_group is NOT re-derived from the product master. */
     const ownPo = poByKey.get(k) ?? [];
-    const useLegacy = vkey !== '' && legacyKey !== k && ownPo.length === 0;
-    const poQueue: PoSupply[] = [
-      ...ownPo,
-      ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : []),
-    ].map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    const poQueue: PoSupply[] = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
 
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;

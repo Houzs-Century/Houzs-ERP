@@ -53,7 +53,7 @@ const siJes = (sb: ReturnType<typeof fakeSb>) =>
   sb.tables.journal_entries.filter((j) => j.source_type === 'SI');
 
 describe('postSiRevenue — booking the revenue once', () => {
-  it('posts ONE balanced Dr 1100 / Cr 4000 entry for the invoice total', async () => {
+  it('posts ONE balanced Dr Trade Debtor / Cr Sales Revenue entry for the invoice total', async () => {
     const sb = world();
     const out = await postSiRevenue(sb, INV);
     expect(out).toMatchObject({ ok: true, status: 'posted', totalSen: 388800 });
@@ -64,8 +64,8 @@ describe('postSiRevenue — booking the revenue once', () => {
 
     const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
     expect(lines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
-      ['1100', 388800, 0],
-      ['4000', 0, 388800],
+      ['300-0000', 388800, 0],
+      ['500-0000', 0, 388800],
     ]);
   });
 
@@ -134,8 +134,8 @@ describe('reverseSiRevenue — voiding it once', () => {
     // Debit and credit swapped against the SAME accounts — a faithful contra.
     const revLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === reversals[0]!.id);
     expect(revLines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
-      ['1100', 0, 388800],
-      ['4000', 388800, 0],
+      ['300-0000', 0, 388800],
+      ['500-0000', 388800, 0],
     ]);
   });
 
