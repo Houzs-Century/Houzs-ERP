@@ -28,6 +28,7 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { backfillSoPayments } from '../../acc/payments';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -848,4 +849,38 @@ accounting.get('/control-check', async (c) => {
 
   const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
   return c.json({ checks });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 2A — acquirer master + customer-payment backfill
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* GET /acquirers — the §2.13 master: the acquirer the screen names and the
+   accounts the ledger books are ONE row. Phase 2B's reconciliation reads the
+   决定4 config columns and refuses to auto-confirm an acquirer left NULL. */
+accounting.get('/acquirers', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await sb.from('acc_acquirers').select('*')
+    .eq('company_id', co.companyId).order('code');
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ acquirers: data ?? [] });
+});
+
+/* POST /backfill/customer-payments — walk SO payment rows that never reached
+   the ledger and post them through the gate. Batched (default 200, max 500)
+   and idempotent: the engine guard + the acc_je_one_active_source index make
+   re-runs converge instead of double-posting. NOT company-scoped on purpose -
+   each payment resolves its own SO's company, and the historical debt spans
+   both books. Call repeatedly until `remaining` is 0. */
+accounting.post('/backfill/customer-payments', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
+  let body: any = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  const limit = Math.max(1, Math.min(500, Number(body.limit ?? 200) || 200));
+  const sb = c.get('supabase');
+  const r = await backfillSoPayments(sb, limit);
+  if (!r.ok) return c.json({ error: 'backfill_failed', reason: r.reason }, 500);
+  return c.json(r);
 });

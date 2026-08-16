@@ -56,6 +56,8 @@ export function fakeSb(
        .limit(1)`, so a fake that returned insertion order would hand out a
        number that already exists and a test called "does not collide" would
        pass while production duplicated a JE. */
+    let rangeFrom: number | null = null;
+    let rangeTo: number | null = null;
     const rows = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       for (const { col, asc } of [...sorts].reverse()) {
@@ -69,7 +71,14 @@ export function fakeSb(
           return asc ? cmp : -cmp;
         });
       }
-      return limitN == null ? rs : rs.slice(0, limitN);
+      /* PostgREST `.range(from, to)` is an INCLUSIVE offset window applied
+         after sorting — paginateAll (lib/paginate-all.ts) is built on it, so a
+         fake without it forces every paged read into bespoke pagination the
+         production code does not use. Faithful semantics: slice AFTER sort,
+         inclusive of `to`, composable with `.limit()` the way PostgREST
+         composes them (limit caps the window). */
+      const windowed = rangeFrom != null ? rs.slice(rangeFrom, (rangeTo ?? rs.length - 1) + 1) : rs;
+      return limitN == null ? windowed : windowed.slice(0, limitN);
     };
     /* The insert-time half of a UNIQUE index. Postgres answers 23505 and the
        row is NOT written; enqueueAcOp reads that as "the same intent is already
@@ -182,6 +191,7 @@ export function fakeSb(
         return builder;
       },
       limit(n: number) { limitN = n; return builder; },
+      range(from: number, to: number) { rangeFrom = from; rangeTo = to; return builder; },
       maybeSingle: async () => {
         const settled = settle();
         if (settled.error) return { data: null, error: settled.error };

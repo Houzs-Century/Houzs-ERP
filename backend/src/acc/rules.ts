@@ -12,6 +12,19 @@
 //  Purchase invoice posted   | Dr INVENTORY      / Cr AP               | PI          | PI_REVERSAL
 //  Payment voucher posted    | Dr expense lines  / Cr bank/AP (header) | PV          | PV_REVERSAL
 //  Manual journal (JV)       | operator-entered lines                  | MANUAL      | MANUAL_REVERSAL
+//  SO payment collected      | Dr CASH/BANK/transit / Cr AR            | SOPAY       | SOPAY_REVERSAL
+//  SI payment collected      | Dr CASH/BANK/transit / Cr AR            | SIPAY       | SIPAY_REVERSAL
+//
+//  Customer-payment debit side, by the sales panel's own method model:
+//    cash                 -> CASH role (335-0000)
+//    transfer             -> BANK_DEFAULT role (the transfer lands in the bank)
+//    merchant/installment -> the acquirer's transit account (scm.acc_acquirers),
+//                            falling back to the TRANSIT_EDC role when the
+//                            acquirer is unmapped - loudly, never silently
+//  Credit side is always AR: invoices post the receivable in full, receipts
+//  relieve it, and the AR control = invoices minus receipts stays one rule.
+//  (Deposits collected before any invoice sit as a debtor credit balance -
+//  the CUSTOMER_DEPOSITS refinement is reserved, deliberately not wired.)
 //
 // Account codes are resolved through ROLES (scm.acc_account_roles, per
 // company), never hardcoded at a call site. The historical literals stay as
@@ -19,16 +32,23 @@
 // books — it books exactly what the system booked before roles existed.
 // ----------------------------------------------------------------------------
 
-export type AccountRole = 'AR' | 'SALES' | 'INVENTORY' | 'AP';
+export type AccountRole =
+  | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
+  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS';
 
 /* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
    owner decision 2026-08-16). Every company carries these codes, so a company
    whose roles rows are missing or unreadable still books onto real accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '300-0000',        // Trade Debtor
-  SALES: '500-0000',     // Sales Revenue
-  INVENTORY: '310-0000', // Inventory
-  AP: '400-0000',        // Trade Creditor
+  AR: '300-0000',                // Trade Debtor
+  SALES: '500-0000',             // Sales Revenue
+  INVENTORY: '310-0000',         // Inventory
+  AP: '400-0000',                // Trade Creditor
+  CASH: '335-0000',              // Cash on Hand
+  BANK_DEFAULT: '330-0000',      // Bank — Maybank Current
+  TRANSIT_EDC: '320-0000',       // Card Machine Clearing (EDC)
+  TRANSIT_ONLINE: '325-0000',    // Online Payment Clearing (FPX/e-wallet)
+  CUSTOMER_DEPOSITS: '410-0000', // Customer Deposits (reserved: advance-receipt refinement)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
@@ -42,6 +62,8 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   PI: 'PI_REVERSAL',
   PV: 'PV_REVERSAL',
   MANUAL: 'MANUAL_REVERSAL',
+  SOPAY: 'SOPAY_REVERSAL',
+  SIPAY: 'SIPAY_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -172,4 +194,46 @@ export function pvLines(
     notes: `Payment to ${pv.payee_name} — ${pv.pv_number}`,
   });
   return lines;
+}
+
+/**
+ * Customer payment collected (SO or SI panel): Dr the account the money landed
+ * in, Cr AR. The debit account follows the sales panel's own 3-method model —
+ * see the rules table above.
+ */
+export function customerPaymentLines(
+  roles: RoleCodes,
+  p: {
+    method: string;
+    docNo: string;
+    transitAccountCode?: string | null; // resolved acquirer transit, when mapped
+    customerCode?: string | null;
+    customerName?: string | null;
+  },
+  amountSen: number,
+): RuleLine[] {
+  const debitAccount =
+    p.method === 'cash' ? roles.CASH
+    : p.method === 'transfer' ? roles.BANK_DEFAULT
+    : (p.transitAccountCode || roles.TRANSIT_EDC);
+  return [
+    {
+      accountCode: debitAccount,
+      debitSen: amountSen,
+      creditSen: 0,
+      partyType: null,
+      partyCode: null,
+      partyName: null,
+      notes: `Payment received (${p.method}) — ${p.docNo}`,
+    },
+    {
+      accountCode: roles.AR,
+      debitSen: 0,
+      creditSen: amountSen,
+      partyType: 'CUSTOMER',
+      partyCode: p.customerCode ?? null,
+      partyName: p.customerName ?? null,
+      notes: `Settles ${p.docNo}`,
+    },
+  ];
 }
