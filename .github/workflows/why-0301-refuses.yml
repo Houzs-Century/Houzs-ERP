@@ -1,0 +1,36 @@
+name: Why does 0301 refuse its own rewrite (read-only)
+
+# 2026-08-16. Migration 0301 fails its own post-condition on every deploy, and
+# because pg-migrate stops at the first failure NOTHING has shipped to
+# production since 11:12:53Z. The question this answers is narrow and it is the
+# only one that matters: is the view rewrite genuinely not applying, or is it
+# applying and the post-condition unsatisfiable?
+#
+# Relaxing a guard to make a red check go green is forging the evidence the
+# guard exists to check. This exists so that decision is made on an observation.
+#
+# SELECT only — no DDL, no writes, no transaction, and the rewrite is NOT
+# attempted, not even in a rolled-back transaction. The verdict is the output,
+# so it exits 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: why-0301-refuses
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diagnose (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+        run: node scripts/why-0301-refuses.mjs
