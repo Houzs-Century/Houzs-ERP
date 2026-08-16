@@ -1808,13 +1808,58 @@ SO-specific wiring:
 
 ### What an approved amendment does to the LINE PRICE
 
-Approving an amendment re-runs the honest-pricing recompute on every changed
-line (`so-revision.ts` -> `recomputeOneLine`), and that recompute is
-**authoritative by default**: it rewrites `unit_price_centi` to
-`mfg_products.sell_price_sen` (+ fabric-tier delta + extras). That is deliberate
-for a NATIVE order — the catalogue is the truth for an order this ERP priced —
-and it applies even to a QTY-ONLY amendment, because the recompute is per-line,
-not per-changed-field.
+**Owner ruling, 2026-08-16:** *"Any amount can be edited, unless it is locked. If
+it has proceeded and a day has passed so it locked, then it goes through Sales
+Amendment."* So the amendment is the sanctioned road for money on a locked SO,
+and since that date it CARRIES the money. It did not before, and the paragraph
+that used to sit here described the old behaviour as deliberate:
+
+> Approving an amendment re-runs the honest-pricing recompute on every changed
+> line … **authoritative by default**: it rewrites `unit_price_centi` to
+> `mfg_products.sell_price_sen`… That is deliberate for a NATIVE order.
+
+That was true of the code and wrong about the product. An operator typed RM 50,
+an approver holding `scm.amendment.approve_*` signed RM 50, and the catalogue
+price landed — on every SKU with one. A QTY-ONLY amendment did it too, because
+the recompute is per-line, not per-changed-field, and the editor sends
+`newUnitPriceSen` on every SPEC/QTY line.
+
+**Today.** Approving still re-runs the honest-pricing recompute on every changed
+line (`backend/src/scm/lib/so-revision.ts` -> `recomputeOneLine`), but the trust
+it passes is derived from the APPROVAL, not from the payload:
+
+| what the apply is given | native order | migrated order |
+| --- | --- | --- |
+| `approval` (the approve-so gate's receipt) | the requested price persists (`trustOperatorSelling: true`) | stored / requested price persists (`'including-zero'`) |
+| `null` (any other caller) | catalogue, exactly as before | stored price kept |
+
+`SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
+default, constructed only inside `approveSoCommandHandler` after
+`hasHouzsPerm(c, approveKey)` and the transition check. With `approval === null`
+the requested `new_unit_price_sen` is not read at all. That is the whole safety
+argument: `new_unit_price_sen` is written straight from the browser and validated
+nowhere (mig 0080 — bare nullable `integer`; the submit gate admits
+`scm.amendment.create` OR any Sales-org user OR a lane approver), so what makes a
+requested price payable is the signature, never the payload.
+
+The ceiling is deliberate — an approved amendment grants exactly the authority
+the operator would have had on the same order **before** it locked, since the
+direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)`
+— and not one unit more.
+
+**Two consequences worth knowing.**
+
+- An approved price of exactly **RM 0** on a catalogued SKU still fills from the
+  catalogue. `true` reads 0 as "not provided", which is the same rule the
+  unlocked edit path uses; `'including-zero'` is reserved for a MIGRATED line,
+  where 0 is a real AutoCount figure. An ADD line never gets `'including-zero'`
+  on any order type — it is being authored now, so it has no AutoCount history.
+- **`discount_centi` still has no amendment channel.** `scm.so_amendment_lines`
+  has no discount column (mig 0080 + 0281: `new_item_code`, `new_variants`,
+  `new_qty`, `new_unit_price_sen`, `new_remark`, `old_snapshot`), so a discount
+  cannot be requested, approved or applied. The apply carries the line's existing
+  discount forward untouched and an ADD line always lands at discount 0. Reducing
+  an amount on a locked SO is therefore a **unit-price** change, never a discount.
 
 **A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
 (migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
