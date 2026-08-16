@@ -175,8 +175,9 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     /* THE NEEDLE WAS WRONG AND MATCHED NOTHING, corrected 2026-08-16. It read
        'AutoCount has no shape', which is a phrase from recordConvertSkipped's
        own DOC COMMENT — no code path has ever written it into last_error. The
-       five places that record a merged conversion (delivery-orders-mfg.ts,
-       grns.ts twice, sales-invoices.ts, purchase-invoices.ts) all write
+       places that record a merged conversion (delivery-orders-mfg.ts,
+       grns.ts twice, sales-invoices.ts, purchase-invoices.ts, and
+       lib/si-autocount-source.ts since 2026-08-17) all write
        "AutoCount transfers from ONE source document", so every merged
        conversion in the queue has been classified `unrecognised` since the
        feature shipped. A needle taken from the comment beside the writer

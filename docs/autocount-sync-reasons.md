@@ -266,9 +266,10 @@ needs it, it has to be raised there by hand, against a source document.
 1. **The ERP still refuses merged conversions the AutoCount service now
    accepts.** As of 2026-08-16 `AcSyncService` groups transfer keys by source
    document and invokes the transfer once per group, so a DO from several SOs is
-   native on that side. The five ERP call sites that record a merged conversion
+   native on that side. The SIX ERP call sites that record a merged conversion
    (`delivery-orders-mfg.ts`, `grns.ts` ×2, `sales-invoices.ts`,
-   `purchase-invoices.ts`) still write a `skipped` row. Whether the ERP should
+   `purchase-invoices.ts`, and `scm/lib/si-autocount-source.ts` since
+   2026-08-17) still write a `skipped` row. Whether the ERP should
    follow is an owner decision, not a cleanup — until it is made, §2's
    `no-autocount-shape` row is accurate.
 2. **`masters-not-opened` never classifies.** The route only runs
