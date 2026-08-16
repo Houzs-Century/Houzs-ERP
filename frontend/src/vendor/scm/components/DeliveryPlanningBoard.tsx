@@ -27,6 +27,7 @@ import { DataGrid, type DataGridColumn } from './DataGrid';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { Button } from '../../../components/Button';
+import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
 import {
   useDeliveryPlanningLines,
@@ -932,14 +933,19 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.amend_reason ?? '',
     },
     {
-      key: 'stock_remark', label: 'Stock', width: 150, groupable: true,
+      key: 'stock_remark', label: 'Stock', width: 170, groupable: true,
       /* ASSR + DP rows carry no stock/DO data → non-applicable. */
+      /* The shared pill (components/StockRemarkPill.tsx), 2026-08-17. This cell
+         used to carry its own third pair of hard-coded hexes keyed off
+         stock_status while the SO list used grey text and ConsignmentOrders
+         used the designed pill — one value, three looks. `|| o.stock_status`
+         stays: readinessRowFields emits a remark for every stock-bearing row,
+         and the fallback covers a row that predates it. */
       accessor: (o) => (isAssr(o) || isDp(o) ? <NotApplicable /> : (
-        <span style={{ fontSize: 'var(--fs-12)', color: o.stock_status === 'PENDING' ? '#767b6e' : '#2f5d4f' }}>
-          {o.stock_remark || o.stock_status}
-        </span>
+        <StockRemarkPill remark={o.stock_remark || o.stock_status} />
       )),
       searchValue: (o) => (isAssr(o) || isDp(o) ? '' : `${o.stock_remark} ${o.stock_status}`.trim()),
+      sortFn: (a, b) => stockRemarkSortFn(a.stock_remark || a.stock_status, b.stock_remark || b.stock_status),
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
     },
     {

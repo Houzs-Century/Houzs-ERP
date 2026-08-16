@@ -38,6 +38,10 @@ export function soStockPillMobile(l: {
   item_group?: string | null;
   stock_status?: string | null;
   stock_state?: string | null;
+  /** The server's verdict over stock_status + stock_state — see the desktop
+   *  twin. Desktop and mobile must move together (CLAUDE.md); this is that
+   *  half. */
+  stock_status_effective?: string | null;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
 }): { label: string; fg: string; bg: string; bd: string } | null {
@@ -45,9 +49,12 @@ export function soStockPillMobile(l: {
     return { label: "READY", fg: "#16695f", bg: "#e1efed", bd: "#b9d8d2" };
   const shipped = (l.delivered_qty ?? 0) > 0 && (l.remaining_qty ?? null) === 0;
   if (shipped) return { label: "DELIVERED", fg: "#5c6357", bg: "#f4f6f3", bd: "#d9ded4" };
-  if (l.stock_state === "stock" || (l.stock_status ?? "").toUpperCase() === "READY")
+  const effective = (l.stock_status_effective ?? "").toUpperCase()
+    || (l.stock_state === "stock" || (l.stock_status ?? "").toUpperCase() === "READY" ? "READY"
+      : (l.stock_status ?? "").toUpperCase() === "PARTIAL" ? "PARTIAL" : "PENDING");
+  if (effective === "READY")
     return { label: "READY", fg: "#16695f", bg: "#e1efed", bd: "#b9d8d2" };
-  if ((l.stock_status ?? "").toUpperCase() === "PARTIAL")
+  if (effective === "PARTIAL")
     return { label: "PARTIAL", fg: "#8a6116", bg: "rgba(212,151,40,0.12)", bd: "rgba(212,151,40,0.45)" };
   return { label: "PENDING", fg: "#5c6357", bg: "#f4f6f3", bd: "#d9ded4" };
 }
