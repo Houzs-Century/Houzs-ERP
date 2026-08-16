@@ -883,11 +883,34 @@ class AcSyncService {
        wiki.autocountsoft.com/wiki/Programmer:Sales_Invoice
        wiki.autocountsoft.com/wiki/Programmer:Delivery_Order
 
-     LEFT AS A CONTRADICTION RATHER THAN BRIDGED. DO-011260 was written on
-     2026-08-12 through the OLD order and it worked, so "the target has no
-     debtor" cannot on its own be the whole of what has failed since. Something
-     else changed between that document and HC-DO-2608-001; this reorder makes
-     the call match the vendor's, it does not claim to be the proven cause. */
+     THE CAUSE IS PROVEN, on the live host, 2026-08-17 00:42-00:56. The previous
+     version of this comment said it was not, and left DO-011260 standing as an
+     unresolved contradiction. Both are now settled. Verbatim from
+     C:\Temp\ac-sync-service.log across three compile-and-deploy iterations:
+
+       00:42:42  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+       00:42:42  FullTransfer refused: AppException: Debtor Code is empty.
+                 - falling back to AddPartialTransferDetail
+       00:50:13  target debtor before transfer = []
+       00:55:30  target debtor before transfer = [300-C002]
+       00:55:30  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+       00:55:30  FullTransfer OK
+
+     and then, by direct SQL against the book:
+
+       DO  HC-DO-2608-001  300-C002  F
+       DO  HC-DO-2608-002  300-C002  F
+       IV  HC-SI-2608-001  300-C002  F
+
+     THE TARGET HAD NO DebtorCode WHEN THE TRANSFER RAN. cmd.AddNew() creates it
+     empty and SalesHeader() never set it at all - which is why the 00:50 line
+     matters: moving SalesHeader BEFORE the transfer was not enough, and only the
+     explicit assignment filled it. AddPartialTransferDetail reports this as the
+     contentless "Invalid transfer item."; FullTransfer names it.
+
+     DO-011260 is not a counter-example. It was created by qa-convert.ps1, whose
+     payload carries a debtor; nothing about "the old order worked once" survives
+     that. */
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
@@ -932,7 +955,25 @@ class AcSyncService {
     x.DocDate = Date(p, "DocDate");
     x.S = s;
     x.SourceDocNos = plan.Full ? plan.FromDocNos : new List<string>(keysByDoc.Keys).ToArray();
-    ReadSourceAccount(x);
+
+    /* THE ACCOUNT, AND WHERE IT COMES FROM. The ERP FIRST, because it is master
+       and a value it states is not something to second-guess; the SOURCE
+       document in the book second, because the conversion payload does not
+       carry one today and every row already sitting in scm.autocount_outbox was
+       composed without it. Written out per side rather than through a ternary
+       so the payload contract test can see all four key names.
+
+       Trimmed, because "   " is not an account and AutoCount's own complaint is
+       "Debtor Code is empty." */
+    if (x.PurchaseSide) {
+      x.AccountCode = Str(p, "CreditorCode").Trim();
+      x.AccountName = Str(p, "CreditorName");
+    } else {
+      x.AccountCode = Str(p, "DebtorCode").Trim();
+      x.AccountName = Str(p, "DebtorName");
+    }
+    if (x.AccountCode.Length > 0) x.AccountFrom = "the payload";
+    else ReadSourceAccount(x);
 
     /* THE FAILURE HAS TO NAME THE LINES. AutoCount answers a source line it
        will not take with
@@ -951,12 +992,19 @@ class AcSyncService {
        need it. */
     try {
       switch (toType) {
+        /* SALES SIDE: SalesHeader BEFORE the transfer, then RunTransfer, then
+           Save. That is the shape PROVEN on the host at 00:55:30 — the one that
+           put HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 into the book —
+           and it is copied rather than improved on. SalesHeader also writes
+           DocNo, and the three documents carry the ERP's own numbers, so
+           numbering survives the move; it is not left to a second call
+           afterwards, because two calls would write the UDFs twice. */
         case "DO": {
           var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
           x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false); };
-          RunTransfer(doc, x);
           SalesHeader(doc, p);
+          RunTransfer(doc, x);
           doc.Save();
           return doc.DocNo;
         }
@@ -964,8 +1012,8 @@ class AcSyncService {
           var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
           x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false); };
-          RunTransfer(doc, x);
           SalesHeader(doc, p);
+          RunTransfer(doc, x);
           doc.Save();
           return doc.DocNo;
         }
@@ -985,10 +1033,20 @@ class AcSyncService {
           // "there is no row at position -1". The sales classes tolerate false, so they
           // are left alone — DO-011260 and DO-011262 were both created that way.
           //
-          // ReadSourceAccount now also sets the creditor EXPLICITLY before the transfer,
-          // which is the vendor's order; the flag stays true because that is what has
-          // been running, and dropping it would be a second unverifiable change inside
-          // one call. Run status does not belong in a comment:
+          // SetMaster now assigns CreditorCode EXPLICITLY before the transfer, which is
+          // the carry-across of the PROVEN sales-side cause. The flag stays true because
+          // that is what has been running, and dropping it would be a second
+          // unverifiable change inside one call.
+          //
+          // NOT SYMMETRICAL WITH THE SALES ARMS, DELIBERATELY. PurchaseHeader stays
+          // AFTER the transfer. On the sales side moving the header before it is proven
+          // (00:55:30 on the host); here it is not, and it is not a free move: with
+          // transferMaster:true the transfer copies the SOURCE PO's master - supplier,
+          // currency, DisplayTerm - over the target, so a PurchaseHeader that ran first
+          // would be partly overwritten by it, and today's ordering is what lets the
+          // ERP's DocNo and DisplayTerm win. /po-to-gr has never once succeeded, so
+          // there is no run to compare against either way. Changing this needs the host.
+          // Run status does not belong in a comment:
           // docs/generated/autocount-coverage.md is the one place that states it.
           x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
           RunTransfer(doc, x);
@@ -1117,6 +1175,10 @@ class AcSyncService {
     public bool PurchaseSide;
     public DateTime? DocDate;
     public string AccountCode, AccountName;
+    /* "the payload" or "SO HC-SO-2608-002". Logged, because which of the two
+       answered is the whole of what the ERP-side follow-up changes, and a
+       lookup that quietly stops being needed is a lookup nobody removes. */
+    public string AccountFrom;
     public AutoCount.Authentication.UserSession S;
     /* AddPartialTransferDetail, bound to the arm's own document. The documented
        call for "these lines, whatever is outstanding", and the fallback for
@@ -1126,11 +1188,17 @@ class AcSyncService {
       new Dictionary<long, Dictionary<string, object>>();
   }
 
-  /* WHOSE DOCUMENT THIS IS, off the SOURCE header in the book.
-     The conversion payload carries no debtor and no creditor - it never has -
-     so the account cannot come from the ERP without a contract change. The
-     source document's own header is the next authority, and it is the same row
-     transferMaster copies from inside the SDK.
+  /* WHOSE DOCUMENT THIS IS, off the SOURCE header in the book — the FALLBACK,
+     reached only when the payload named no account.
+
+     IT HAS TO EXIST, and this is the reason. The account is what the transfer
+     fails without (PROVEN on the host, see Convert_'s header), and the ERP does
+     not send one today: every row already sitting in scm.autocount_outbox was
+     composed by an enqueueConvert that had no such field. Requiring the ERP to
+     send it first would leave those rows unfixable and put a deploy of two
+     systems on the critical path of one outage. The source document's own header
+     is the right authority anyway — it is the same row transferMaster copies
+     from inside the SDK.
 
      Two sources with two different accounts is a FINDING, not something to pick
      from: it is logged and nothing is set, because a document written to the
@@ -1178,7 +1246,8 @@ class AcSyncService {
           return;
         }
         foreach (var kv in seen) { x.AccountCode = kv.Key; x.AccountName = kv.Value; }
-        Log("  source account: " + codeCol + "=" + x.AccountCode + " read off " + string.Join(" + ", x.SourceDocNos));
+        x.AccountFrom = x.FromType + " " + string.Join(" + ", x.SourceDocNos);
+        Log("  source account: " + codeCol + "=" + x.AccountCode + " read off " + x.AccountFrom);
       }
     } catch (Exception ex) {
       /* A diagnostic read must never cost the conversion: with no account the
@@ -1203,7 +1272,18 @@ class AcSyncService {
        it is the documented call for "these lines, at whatever is outstanding",
        and the only one whose arguments the ERP actually sends. */
     if (!x.Plan.Full && x.Plan.QtyByKey.Count == 0) {
-      Log("  transfer: AddPartialTransferDetail per source document - the ERP named lines and no quantity");
+      /* SAY WHICH CALL IS NOT BEING MADE, AND WHY. FullTransfer is the one
+         PROVEN against this book (host, 2026-08-17 00:55:30); this path does not
+         use it because it would move EVERY outstanding line on the source and
+         the ERP has named a subset. That is the right call for a real partial
+         and the wrong one for a whole document the ERP merely enumerated — and
+         today enqueueConvert cannot tell the two apart, because
+         readConvertSourceKeys returns the key list whenever every source line
+         HAS a key, partial or not. So if the line below fails, this is where to
+         look: the fix is the ERP saying "whole", not this service inferring it
+         from a row count. */
+      Log("  transfer: AddPartialTransferDetail per source document - the ERP named " + x.DtlKeys.Length +
+          " line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used");
       x.Primitive();
       return;
     }
@@ -1234,17 +1314,48 @@ class AcSyncService {
         Log("  master: DocDate=" + x.DocDate.Value.ToString("yyyy-MM-dd") + " set BEFORE the transfer");
       } catch (Exception ex) { Log("  master: DocDate NOT applied: " + ex.Message); }
     }
-    if (string.IsNullOrEmpty(x.AccountCode)) { Log("  master: no account to set - the transfer decides it"); return; }
     var codeProp = x.PurchaseSide ? "CreditorCode" : "DebtorCode";
     var nameProp = x.PurchaseSide ? "CreditorName" : "DebtorName";
-    try {
-      doc.GetType().GetProperty(codeProp, Reach).SetValue(doc, x.AccountCode, null);
-      Log("  master: " + codeProp + "=" + x.AccountCode + " set BEFORE the transfer");
-    } catch (Exception ex) { Log("  master: " + codeProp + " NOT applied: " + ex.Message); }
-    if (!string.IsNullOrEmpty(x.AccountName)) {
-      try { doc.GetType().GetProperty(nameProp, Reach).SetValue(doc, x.AccountName, null); }
-      catch (Exception ex) { Log("  master: " + nameProp + " NOT applied: " + ex.Message); }
+    var word = x.PurchaseSide ? "creditor" : "debtor";
+
+    if (!string.IsNullOrEmpty(x.AccountCode)) {
+      try {
+        doc.GetType().GetProperty(codeProp, Reach).SetValue(doc, x.AccountCode, null);
+      } catch (Exception ex) { Log("  master: " + codeProp + " NOT applied: " + ex.Message); }
+      if (!string.IsNullOrEmpty(x.AccountName)) {
+        try { doc.GetType().GetProperty(nameProp, Reach).SetValue(doc, x.AccountName, null); }
+        catch (Exception ex) { Log("  master: " + nameProp + " NOT applied: " + ex.Message); }
+      }
     }
+
+    /* READ IT BACK OFF THE DOCUMENT, and print it in the host's own words.
+       Not "what we assigned" — what the document HOLDS. The 00:50:13 line on the
+       host is the entire reason this exists: SalesHeader had been moved before
+       the transfer, that looked like the fix, and the read-back said
+
+         target debtor before transfer = []
+
+       so the assignment was never happening at all. An "applied" log written
+       from the value we passed in would have agreed with the wrong answer.
+       Keep this string byte-for-byte: it is what the operator greps. */
+    var held = "(unreadable)";
+    try {
+      var pi = doc.GetType().GetProperty(codeProp, Reach);
+      var v = pi == null ? null : pi.GetValue(doc, null);
+      held = v == null ? "" : v.ToString();
+    } catch (Exception ex) { held = "(unreadable: " + ex.Message + ")"; }
+    Log("  target " + word + " before transfer = [" + held + "]"
+        + (string.IsNullOrEmpty(x.AccountFrom) ? "" : " (from " + x.AccountFrom + ")"));
+
+    if (string.IsNullOrEmpty(held))
+      /* PROVEN to be fatal on the sales side: FullTransfer answers
+         "AppException: Debtor Code is empty." and AddPartialTransferDetail
+         answers the contentless "Invalid transfer item." Not thrown here,
+         because the transfer's own refusal is the more informative one and
+         because the purchase side has never been observed either way. */
+      Log("  WARNING: the target has NO " + codeProp + " and the transfer is about to run anyway."
+          + " On the sales side this is the PROVEN cause of 'Invalid transfer item.' (host, 2026-08-17)."
+          + " Neither the payload nor " + x.FromType + " " + string.Join(" + ", x.SourceDocNos) + " named one.");
   }
 
   /* Public instance members INCLUDING inherited ones. Named, and used

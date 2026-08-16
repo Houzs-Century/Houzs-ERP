@@ -801,10 +801,8 @@ guards against.
 Four things `Convert_` never did, added 2026-08-17 and all of them writing to
 `C:\Temp\ac-sync-service.log` (readable through `/last-errors`):
 
-- **The master fields go on FIRST**, matching the vendor's own examples. The
-  debtor / creditor is read off the SOURCE header in the book — the conversion
-  payload has never carried one — and two sources with two different accounts is
-  logged and set to none rather than picked from.
+- **The master fields go on FIRST**, matching the vendor's own examples — and
+  this turned out to be the whole of the outage. See §7c3.
 - **`LogTransferApi`** prints every `FullTransfer` / `PartialTransfer` /
   `AddPartialTransferDetail` overload the host's assemblies expose, with
   parameter names, once per document class per service start. A dump nobody can
@@ -858,6 +856,77 @@ from off the host: this file compiles nowhere but the office machine, so a
 predicate even slightly stricter than AutoCount's own would turn working
 transfers into refusals with nobody able to see it first. The calls and their
 arguments are unchanged; only the text a failure carries is better.
+
+### 7c3. The target needs an ACCOUNT before the transfer — PROVEN (D15)
+
+**This is the cause of the week the delivery orders spent outside the account
+book**, and it was measured on the host on 2026-08-17, not argued from source.
+Three compile-and-deploy iterations, verbatim from
+`C:\Temp\ac-sync-service.log`:
+
+```
+00:42:42  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+00:42:42  FullTransfer refused: AppException: Debtor Code is empty.
+          - falling back to AddPartialTransferDetail
+00:50:13  target debtor before transfer = []          <- SalesHeader moved earlier: NOT enough
+00:55:30  target debtor before transfer = [300-C002]  <- doc.DebtorCode set explicitly
+00:55:30  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+00:55:30  FullTransfer OK
+```
+
+and then, by direct SQL against the book:
+
+```
+DO  HC-DO-2608-001  300-C002  F
+DO  HC-DO-2608-002  300-C002  F
+IV  HC-SI-2608-001  300-C002  F
+```
+
+`cmd.AddNew()` creates the target with **no `DebtorCode`**, and neither
+`SalesHeader` nor `PurchaseHeader` has ever set one — so every conversion ran its
+transfer against an account-less document. `AddPartialTransferDetail` reports
+that as the contentless `Invalid transfer item.`; `FullTransfer` names it.
+`DO-011260`, long treated as a counter-example because it succeeded under the old
+ordering, is not one: it came from `qa-convert.ps1`, whose payload carries a
+debtor.
+
+**Three things follow, and the third is the one that bites.**
+
+1. **The account is set before the transfer, payload first, book second.** The
+   service reads `DebtorCode` / `DebtorName` (sales) and `CreditorCode` /
+   `CreditorName` (purchase) from the payload; if none is there it reads the
+   SOURCE document's own header out of the book. The fallback is not optional
+   politeness — every row already queued in `scm.autocount_outbox` was composed
+   without an account, and without it none of them drains.
+2. **`SetMaster` READS THE VALUE BACK off the document and logs
+   `target debtor before transfer = [...]`.** That exact string, because it is
+   what the operator greps. The `00:50:13` line above is why it reads back rather
+   than logging what it assigned: moving `SalesHeader` earlier *looked* like the
+   fix and the document was still empty.
+3. **The sales and purchase arms are NOT symmetrical, on purpose.** On the sales
+   side `SalesHeader` now runs BEFORE the transfer — that is the shape proven at
+   `00:55:30`. On the purchase side `PurchaseHeader` still runs AFTER it: with
+   `transferMaster: true` the transfer copies the source PO's master (supplier,
+   currency, `DisplayTerm`) over the target, so a header applied first would be
+   partly overwritten, and `/po-to-gr` has never once succeeded, so there is no
+   run to compare against. Only the explicit `CreditorCode` assignment is carried
+   across. **Unverified on the purchase side** — it needs the host.
+
+**Still open:** the ERP does not send the account, which is divergence **D15**.
+Closing it is a payload change in `enqueueConvert`. When it lands, strike D15 —
+but keep the book fallback, because it is the only thing that drains a row
+composed before the change.
+
+**And a second thing this exposed.** `FullTransfer` is the call PROVEN against
+this book, and today's production payloads never reach it: `readConvertSourceKeys`
+returns `{ keys }` whenever every source line *has* a `linked_ac_dtlkey`,
+**whether or not the conversion is partial**, so `PlanTransfer` always sees named
+lines and always chooses `AddPartialTransferDetail`. That call is the right one
+for a real partial and the wrong one for a whole document the ERP merely
+enumerated, and the service cannot tell the two apart from a row count without
+becoming the thing that decides. The fix is the ERP saying which it is — see
+§7c1's table — not an inference here. `RunTransfer` logs the choice and the
+reason on every conversion so a failure on that path is not another mystery.
 
 ## 7d. The four documents AutoCount cannot create at all
 

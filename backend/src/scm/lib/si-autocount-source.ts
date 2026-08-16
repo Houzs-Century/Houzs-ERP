@@ -115,10 +115,19 @@ export async function recordSiAutoCountSource(
 
   const doIds = new Set<string>();
   if (linkedIds.length > 0) {
-    const { data: srcData } = await scopeToCompanyId(
+    const { data: srcData, error: srcErr } = await scopeToCompanyId(
       sb.from('delivery_order_items').select('id, delivery_order_id').in('id', linkedIds),
       companyId,
     );
+    /* supabase-js does not throw, so an unbound error here would be
+       indistinguishable from "these lines came from nowhere" — and the next
+       branch would then record the invoice as parentless on the strength of a
+       database blip. The whole point of this module is not to assert an
+       unchecked fact. */
+    if (srcErr) {
+      await skip(`compose failed, nothing sent: could not resolve the Delivery Order behind this invoice's lines (${srcErr.message})`);
+      return 'unreadable';
+    }
     for (const r of (srcData ?? []) as Array<{ delivery_order_id: string | null }>) {
       if (r.delivery_order_id) doIds.add(r.delivery_order_id);
     }
@@ -129,10 +138,14 @@ export async function recordSiAutoCountSource(
        true: an invoice that declares a delivery order but took no line from it
        still has nothing to transfer, and saying "no source Delivery Order"
        about it would be the same unchecked claim in a smaller font. */
-    const { data: hdr } = await scopeToCompanyId(
+    const { data: hdr, error: hdrErr } = await scopeToCompanyId(
       sb.from('sales_invoices').select('id, delivery_order_id').eq('id', opts.invoiceId),
       companyId,
     ).maybeSingle();
+    if (hdrErr) {
+      await skip(`compose failed, nothing sent: could not read this invoice's own header to say what it declares (${hdrErr.message})`);
+      return 'unreadable';
+    }
     const headerDoId = (hdr as { delivery_order_id: string | null } | null)?.delivery_order_id ?? null;
     await recordParentlessCreate(sb, {
       companyId,
@@ -148,12 +161,17 @@ export async function recordSiAutoCountSource(
   }
 
   if (doIds.size > 1) {
-    const { data: numData } = await scopeToCompanyId(
+    const { data: numData, error: numErr } = await scopeToCompanyId(
       sb.from('delivery_orders').select('id, do_number').in('id', [...doIds]),
       companyId,
     );
-    const numbers = ((numData ?? []) as Array<{ do_number: string | null }>)
-      .map((r) => r.do_number ?? '?').sort();
+    /* This read only NAMES the sources; the refusal is already decided by their
+       COUNT, so a failure degrades the message rather than the verdict — and it
+       says which it is instead of printing a row of question marks. */
+    const numbers = numErr
+      ? ['their numbers could not be read']
+      : ((numData ?? []) as Array<{ do_number: string | null }>)
+        .map((r) => r.do_number ?? '(no number)').sort();
     /* Same sentence /from-dos writes, deliberately: 'AutoCount transfers from
        ONE source document' is the NEEDLE that classifies a merged conversion
        (AC_SKIP_KINDS 'no-autocount-shape'), and a reworded twin would land on
