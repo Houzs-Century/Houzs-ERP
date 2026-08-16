@@ -1483,8 +1483,8 @@ the recompute is per-line, not per-changed-field, and the editor sends
 `newUnitPriceSen` on every SPEC/QTY line.
 
 **Today.** Approving still re-runs the honest-pricing recompute on every changed
-line (`so-revision.ts` -> `recomputeOneLine`), but the trust it passes is derived
-from the APPROVAL, not from the payload:
+line (`backend/src/scm/lib/so-revision.ts` -> `recomputeOneLine`), but the trust
+it passes is derived from the APPROVAL, not from the payload:
 
 | what the apply is given | native order | migrated order |
 | --- | --- | --- |

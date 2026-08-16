@@ -1,6 +1,6 @@
 ## An APPROVED amendment could not carry the price it approved [high]
 
-<!-- area: Sales Order + amendments -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** Owner, 2026-08-16: *"Any amount can be edited, unless it is locked.
 If it has proceeded and a day has passed so it locked, then it goes through Sales
