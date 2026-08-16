@@ -23,10 +23,16 @@
       "note": "The only operation ever to reach the book through the QUEUE."
     },
     "so_to_do": {
-      "documents": ["DO-011260"],
-      "date": "2026-08-12",
-      "evidence": "qa-convert.ps1 driven directly on the AutoCount host, NOT through the outbox; the DO was cancelled afterwards",
-      "note": "A real DO running number was consumed. Because it did not go through the queue, scm.autocount_outbox has no record of it -- which is exactly how a reader looking only at the queue concludes this never happened."
+      "documents": ["DO-011260", "HC-DO-2608-001", "HC-DO-2608-002"],
+      "date": "2026-08-17",
+      "evidence": "SELECT DocNo, DebtorCode, Cancelled FROM DO WHERE DocNo IN ('HC-DO-2608-001','HC-DO-2608-002') returns both against 300-C002, Cancelled='F'; the service log for 00:55:30 carries 'FullTransfer OK' for each",
+      "note": "DO-011260 (2026-08-12) came from qa-convert.ps1 driven directly on the host, NOT through the outbox, and was cancelled afterwards -- a real DO running number was consumed and scm.autocount_outbox has no record of it. The two HC- documents are the ERP's own numbers and landed on 2026-08-17 once the target was given a DebtorCode before the transfer; note that they were driven from a hand-patched host build, so the outbox is not the record for these either."
+    },
+    "do_to_iv": {
+      "documents": ["HC-SI-2608-001"],
+      "date": "2026-08-17",
+      "evidence": "SELECT DocNo, DebtorCode, Cancelled FROM IV WHERE DocNo = 'HC-SI-2608-001' returns 300-C002, Cancelled='F'",
+      "note": "First invoice this service has ever put in the book. It had been blocked behind the two delivery orders above; the same DebtorCode fix released all three."
     },
     "cancel": {
       "documents": ["DO-011260"],
@@ -38,7 +44,6 @@
   "notDemonstrated": {
     "create_po": "FK_PO_PurchaseAgent blocked it on 2026-08-12. The cause is fixed in source (readPoHeader sends the constant AC_PURCHASE_AGENT, autocount-outbox.ts) but no purchase order has been sent since.",
     "po_to_gr": "Waits on create_po: a conversion transfers a document the book must already hold.",
-    "do_to_iv": "Never attempted. AcSyncService.cs carries a comment claiming DO and IV are both proven and cites two DO numbers for it -- the IV half of that sentence has no evidence behind it.",
     "gr_to_pi": "Never attempted.",
     "edit": "Exercised against the live book as the four refusal guards (a passing guard writes nothing, which is what makes it safe there). No edit has been demonstrated to CHANGE a document in the book."
   }
