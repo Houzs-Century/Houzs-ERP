@@ -103,6 +103,21 @@ export type MrpResponse = {
   warehouses: MrpWarehouse[];
   skus: MrpSku[];
   sofaSets: SofaSet[];
+  /* Demand with no delivery date, counted whether or not it was RENDERED —
+     `hidden` is the server saying which it did. The page must show this: a
+     filter the operator cannot see turned a real shortage into an invisible one
+     (owner, 2026-08-16). Optional on the type only so a response from a backend
+     that predates the field still parses. */
+  undated?: {
+    /** General (non-sofa) path — respects the category + warehouse filters. */
+    lines: number;
+    shortageUnits: number;
+    /** Sofa path — SOFA-by-construction and NOT category-filtered, so read it
+        on the sofa view only or it overstates every other tab. */
+    sofaSets: number;
+    sofaShortageUnits: number;
+    hidden: boolean;
+  };
   totals: {
     skuCount: number;
     shortageSkuCount: number;

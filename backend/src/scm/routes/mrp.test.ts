@@ -22,7 +22,7 @@
 // through a minimal fake PostgREST client — same shape as so-converted-po.test.ts,
 // extended with the operators this engine chains (eq / in / order / limit / range).
 import { describe, expect, test } from 'vitest';
-import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
+import { computeMrp, mrpStockAssignment, stockAssignmentKey, parseIncludeUndated, InvalidQueryFlag } from './mrp';
 import { NO_BUFFERS } from '../lib/lead-time';
 import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventory-movements';
 
@@ -518,6 +518,163 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
     const res = await computeMrp(sb as any, { ...opts, includeUndated: false });
     expect(res.skus).toHaveLength(0);
     expect(res.totals.skuCount).toBe(0);
+  });
+});
+
+/* ── The hidden half is REPORTED, and hiding still changes nothing (2026-08-16)
+      ───────────────────────────────────────────────────────────────────────────
+   Owner: "明明这个东西没有 ready,可是我的 MRP 却 show 不出来." On production the
+   default view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa
+   sets — half the book, removed in silence. `result.undated` is the count that
+   ends the silence, and these tests hold it to two properties:
+
+     1. it counts EXACTLY the rows the flag removes, with their REAL allocation
+        shortage — so it can never become a second, disagreeing demand walk
+        (which is the audit-D6 divergence in miniature);
+     2. adding it moved no allocation figure — what is DISPLAYED must not change
+        what is PLANNED.
+
+   Property 1 is what bites: count after the `continue`, or only on the hiding
+   branch, and the arithmetic below stops adding up. */
+
+/** The allocation figures a row carries — everything the plan DECIDES, and
+    nothing it merely displays (qtyNeeded / shortage / totals are per-view
+    aggregates and legitimately differ between the two flag values). */
+const allocOf = (res: Awaited<ReturnType<typeof computeMrp>>) => {
+  const out = new Map<string, Record<string, unknown>>();
+  for (const s of res.skus) {
+    for (const l of s.lines) {
+      out.set(l.soItemId, {
+        source: l.source, poNumber: l.poNumber, poEta: l.poEta,
+        shortageQty: l.shortageQty, stockQty: l.stockQty, qty: l.qty,
+      });
+    }
+  }
+  for (const s of res.sofaSets) {
+    out.set(s.soItemId, {
+      poNumber: s.poNumber, poEta: s.poEta, shortageQty: s.shortageQty,
+      stockQty: s.stockQty, orderedQty: s.orderedQty, qty: s.qty,
+    });
+  }
+  return out;
+};
+
+describe('computeMrp — undated demand is COUNTED even when it is hidden', () => {
+  // Two dated + two undated lines against a PO for 6. Dated take 5 and 1;
+  // the undated pair (allocated LAST) get nothing → 3 and 4 short.
+  const d1 = { ...demandRed(5), id: 'si-d1', doc_no: 'SO-D1' };
+  const d2 = {
+    ...demandRed(1), id: 'si-d2', doc_no: 'SO-D2',
+    line_delivery_date: '2026-12-02',
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: null, customer_state: null },
+  };
+  const undatedSo = (id: string, docNo: string, qty: number): Row => ({
+    ...demandRed(qty), id, doc_no: docNo, line_delivery_date: null,
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+  });
+  const tables = () => ({
+    ...BASE_TABLES,
+    mfg_sales_order_items: [d1, d2, undatedSo('si-u1', 'SO-U1', 3), undatedSo('si-u2', 'SO-U2', 4)],
+    purchase_order_items: [poLine('PO-RED', 6, { fabricCode: 'RED' }, '2026-11-01')],
+  });
+
+  test('the tally equals exactly the rows the flag removed, and carries their real shortage', async () => {
+    const shown = await computeMrp(fakeSb(tables()), { ...opts, includeUndated: true });
+    const hidden = await computeMrp(fakeSb(tables()), { ...opts, includeUndated: false });
+
+    const shownIds = [...allocOf(shown).keys()];
+    const hiddenIds = new Set(allocOf(hidden).keys());
+    const removed = shownIds.filter((id) => !hiddenIds.has(id));
+    expect(removed.sort()).toEqual(['si-u1', 'si-u2']);
+
+    // (1) the count IS the size of the removed set — not "some undated rows".
+    expect(hidden.undated.lines).toBe(removed.length);
+    // (2) and it is the same number when nothing is removed: an observation of
+    //     the demand, not a by-product of the hiding branch.
+    expect(shown.undated.lines).toBe(removed.length);
+
+    // (3) the shortage reported for the hidden set is the shortage the ONE
+    //     allocation actually gave those rows — read back off the shown run.
+    const shownAlloc = allocOf(shown);
+    const realShort = removed.reduce((acc, id) => acc + (shownAlloc.get(id)!.shortageQty as number), 0);
+    expect(realShort).toBe(7);                       // 3 + 4, the PO's 6 all went to the dated pair
+    expect(hidden.undated.shortageUnits).toBe(realShort);
+    expect(shown.undated.shortageUnits).toBe(realShort);
+
+    // (4) the response says WHICH it did, so a caller whose flag was not
+    //     honoured can tell from the answer alone.
+    expect(hidden.undated.hidden).toBe(true);
+    expect(shown.undated.hidden).toBe(false);
+
+    // The visible aggregate still reflects the visible rows only — the count is
+    // the extra fact, it does not smuggle hidden demand into the totals.
+    expect(hidden.totals.shortageUnits).toBe(0);
+    expect(shown.totals.shortageUnits).toBe(7);
+  });
+
+  test('DISPLAY does not change PLANNING: every dated row allocates identically under both flags', async () => {
+    const shown = allocOf(await computeMrp(fakeSb(tables()), { ...opts, includeUndated: true }));
+    const hidden = allocOf(await computeMrp(fakeSb(tables()), { ...opts, includeUndated: false }));
+
+    for (const [id, row] of hidden) expect([id, row]).toEqual([id, shown.get(id)]);
+    expect([...hidden.keys()].sort()).toEqual(['si-d1', 'si-d2']);
+    // Bucket-level SUPPLY is a property of the pool, never of the view.
+    const bucketOf = (r: Awaited<ReturnType<typeof computeMrp>>) =>
+      r.skus.map((s) => ({ stock: s.stock, poOutstanding: s.poOutstanding }));
+    expect(bucketOf(await computeMrp(fakeSb(tables()), { ...opts, includeUndated: false })))
+      .toEqual(bucketOf(await computeMrp(fakeSb(tables()), { ...opts, includeUndated: true })));
+  });
+
+  test('sofa is tallied SEPARATELY — section 8 ignores catFilter, so a blended count would overstate every other tab', async () => {
+    const tbl = {
+      ...BASE_TABLES,
+      mfg_sales_order_items: [
+        undatedSo('si-u1', 'SO-U1', 3),                    // BEDFRAME, undated
+        sofaDemand('si-s1', 'SO-S1', 2, null),             // SOFA, undated
+        sofaDemand('si-s2', 'SO-S2', 2, '2026-12-01'),     // SOFA, dated
+      ],
+      purchase_order_items: [],
+    };
+    const res = await computeMrp(fakeSb(tbl), { ...opts, includeUndated: false });
+
+    // Split, never summed: the Bedframe tab must read 1, not 2.
+    expect(res.undated.lines).toBe(1);
+    expect(res.undated.shortageUnits).toBe(3);
+    expect(res.undated.sofaSets).toBe(1);
+    expect(res.undated.sofaShortageUnits).toBe(2);
+    // And the hidden sofa set really is absent from the rendered sets.
+    expect(res.sofaSets.map((s) => s.soItemId)).toEqual(['si-s2']);
+  });
+});
+
+describe('parseIncludeUndated — a truthy-looking value must never be silently false', () => {
+  test('?includeUndated=1 is TRUE — the production report that started this', () => {
+    // Before 2026-08-16 the parser was `=== 'true'`, so this returned the
+    // default plan (82 SO-item ids, 8 short sofa sets) with nothing saying the
+    // request had been ignored.
+    expect(parseIncludeUndated('1')).toBe(true);
+  });
+
+  test('every accepted spelling, either case, with whitespace', () => {
+    for (const v of ['true', '1', 'yes', 'on', 'TRUE', ' True ', 'YES', 'On']) {
+      expect([v, parseIncludeUndated(v)]).toEqual([v, true]);
+    }
+    for (const v of ['false', '0', 'no', 'off', 'FALSE', ' Off ']) {
+      expect([v, parseIncludeUndated(v)]).toEqual([v, false]);
+    }
+  });
+
+  test('omitted is the documented default (false)', () => {
+    expect(parseIncludeUndated(undefined)).toBe(false);
+  });
+
+  test('anything else THROWS rather than collapsing onto false', () => {
+    for (const v of ['maybe', 'y', 't', '2', '', 'true;drop', 'null']) {
+      expect(() => parseIncludeUndated(v)).toThrow(InvalidQueryFlag);
+    }
+    // The refusal has to name the parameter and the accepted spellings, or the
+    // caller is told "no" without being told what "yes" looks like.
+    expect(() => parseIncludeUndated('y')).toThrow(/includeUndated.*true.*1.*yes.*on/s);
   });
 });
 
