@@ -74,7 +74,7 @@ async function main() {
 
     /* Every LIVE claim on the same code, in the sweep's priority order. */
     const claims = await sql`
-      SELECT i.id::text AS id, i.doc_no, o.company_id, o.status,
+      SELECT i.id::text AS id, i.doc_no, o.company_id, o.status::text AS status,
              i.qty, i.stock_status, i.warehouse_id::text AS warehouse_id,
              o.customer_delivery_date::text AS cdd,
              o.created_at::text AS created_at,
@@ -82,12 +82,12 @@ async function main() {
              COALESCE((SELECT SUM(d.qty) FROM scm.delivery_order_items d
                         JOIN scm.delivery_orders dh ON dh.id = d.delivery_order_id
                        WHERE d.so_item_id = i.id
-                         AND COALESCE(dh.status,'') <> ALL (ARRAY['CANCELLED','DRAFT'])), 0) AS delivered
+                         AND COALESCE(dh.status::text,'') <> ALL (ARRAY['CANCELLED','DRAFT'])), 0) AS delivered
         FROM scm.mfg_sales_order_items i
         JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no
        WHERE i.item_code = ${l.item_code}::text
          AND i.cancelled = false
-         AND o.status <> ALL (${TERMINAL}::text[])
+         AND o.status::text <> ALL (${TERMINAL}::text[])
        ORDER BY o.customer_delivery_date ASC NULLS LAST, o.created_at ASC`;
     note(`  LIVE competing claims on ${l.item_code} (sweep priority order): ${claims.length}`);
     let rank = 0, cumNeedSameBucket = 0;

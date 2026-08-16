@@ -36,18 +36,50 @@
 -- exact. Note the ERP's own screens read the signed figure after this ships:
 -- reverting the view without reverting soBalanceCenti puts the SO list and the
 -- SO detail page back into disagreement on over-collected orders.
+-- WHY THE CHECKS BELOW TEST FOR THE FLOOR'S ABSENCE RATHER THAN MATCHING THE
+-- REPLACEMENT. First written, this migration wrote `unclamped` into the view
+-- and then demanded that exact literal back from pg_get_viewdef. It failed on
+-- every deploy from 2026-08-16 11:16Z, and pg-migrate stops at the first
+-- failure, so nothing reached production for the rest of that afternoon.
+--
+-- CREATE OR REPLACE VIEW does not store the text it is handed: Postgres parses
+-- it to a tree, and pg_get_viewdef DEPARSES that tree afresh. In pretty mode it
+-- emits only the parentheses precedence requires, so the outer pair in
+-- `(a - b) AS x` is dropped and the literal can never match. Measured on this
+-- exact view, both spellings read from the live catalogue at the same moment
+-- (why-0301-refuses.mjs, run against prod 2026-08-16):
+--
+--   pretty=false  GREATEST((so.local_total_centi - COALESCE(p.paid_total, (0)::bigint)), (0)::bigint) AS balance_centi_live
+--   pretty=true   GREATEST(so.local_total_centi - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_centi_live
+--
+-- Same expression, same server, same instant: the redundant parentheses are
+-- gone in the mode this migration reads. So the post-condition asserts what the
+-- migration is actually FOR — that the GREATEST floor is no longer in the
+-- deployed definition — plus that the column survived. That is not a weaker
+-- guard than the original; the original could not pass at all.
 DO $$
 DECLARE
   cur  text;
+  post text;
   next text;
   clamped   constant text :=
     'GREATEST(so.local_total_centi - COALESCE(p.paid_total, 0::bigint), 0::bigint) AS balance_centi_live';
   unclamped constant text :=
     '(so.local_total_centi - COALESCE(p.paid_total, 0::bigint)) AS balance_centi_live';
+  /* How the deparser is expected to render `unclamped` once it has been through
+     the parser. Used only to recognise an already-applied view, never asserted
+     on: the point of the section above is that we do not get to dictate the
+     spelling that comes back. */
+  signed_bare constant text :=
+    'so.local_total_centi - COALESCE(p.paid_total, 0::bigint) AS balance_centi_live';
 BEGIN
   cur := pg_get_viewdef('scm.mfg_sales_orders_with_payment_totals'::regclass, true);
 
-  IF position(unclamped IN cur) > 0 THEN
+  /* Both spellings, for the same reason the post-condition takes neither on
+     trust. Testing only for `unclamped` here made a re-run fall through to the
+     "refusing to guess" branch below and abort a migration that had already
+     done its job. */
+  IF position(unclamped IN cur) > 0 OR position(signed_bare IN cur) > 0 THEN
     RAISE NOTICE '0301: balance_centi_live is already signed; nothing to do.';
     RETURN;
   END IF;
@@ -65,9 +97,19 @@ BEGIN
   EXECUTE 'CREATE OR REPLACE VIEW scm.mfg_sales_orders_with_payment_totals AS ' || next;
 
   /* Post-condition on the REPLACED view, read back from the catalogue — the
-     EXECUTE succeeding only proves the SQL parsed. */
-  IF position(unclamped IN pg_get_viewdef('scm.mfg_sales_orders_with_payment_totals'::regclass, true)) = 0 THEN
-    RAISE EXCEPTION '0301: rewrite reported success but balance_centi_live is still floored.';
+     EXECUTE succeeding only proves the SQL parsed. Two assertions, because
+     "the floor is gone" alone would also be satisfied by a view that had lost
+     the column altogether. */
+  post := pg_get_viewdef('scm.mfg_sales_orders_with_payment_totals'::regclass, true);
+
+  IF position(clamped IN post) > 0 THEN
+    RAISE EXCEPTION '0301: rewrite reported success but the GREATEST floor is still '
+      'in the deployed definition.';
+  END IF;
+
+  IF position('balance_centi_live' IN post) = 0 THEN
+    RAISE EXCEPTION '0301: the rewrite dropped balance_centi_live from the view. '
+      'Deployed definition:%  %', chr(10), post;
   END IF;
   RAISE NOTICE '0301: balance_centi_live is now signed (negative = over-collected).';
 END $$;
