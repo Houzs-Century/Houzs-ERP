@@ -58,7 +58,7 @@ FAIL on the pre-fix code — six of its eight tests, the first with
 `autocountWritebackCells.test.ts` so the record cannot become unconditional
 again.
 
-**Ref.** PR #TBD, fix/invoice-from-do-enqueue, 2026-08-17.
+**Ref.** PR #2337, fix/invoice-from-do-enqueue, 2026-08-17.
 ## The SO Stock Status vocabulary was inverted, and the accessory-only lie was fixed on the wrong half [high]
 
 <!-- area: Sales orders + pricing -->
