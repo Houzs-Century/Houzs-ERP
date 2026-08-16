@@ -375,24 +375,48 @@ async function dumpPoShape(outbox) {
   }
 }
 
+/**
+ * Run one section, and make a section that DID NOT RUN impossible to read as a
+ * clean one.
+ *
+ * CLAUDE.md: "a verdict computed over nothing must never read as a pass". A
+ * bare try/catch that carried on would turn a broken section into silence, and
+ * silence here looks exactly like "nothing to report" — the same confusion this
+ * whole script exists to end. So the failure is printed as a workflow ERROR
+ * annotation, which is loud in the Actions UI, while the sections that DID run
+ * still deliver their answer and the job still exits 0.
+ */
+async function section(name, fn, fallback) {
+  try {
+    return await fn();
+  } catch (e) {
+    console.log(`::error::SECTION ${name} COULD NOT RUN — ${e?.message ?? e}. `
+      + 'Everything else below is still true; this part of the answer is MISSING, not empty.');
+    console.error(e);
+    return fallback;
+  }
+}
+
 async function main() {
   notice(`company ${COMPANY_ID}, ${LIMIT} documents per table — READ ONLY, SELECTs only`);
-  const switchedAt = await dumpSwitch();
-  const outbox = await dumpOutbox();
-  dumpChains(outbox);
+  const switchedAt = await section('A (the write-back switch)', dumpSwitch, null);
+  const outbox = await section('B (the outbox census)', dumpOutbox, []);
+  await section('C (the chain counts)', () => dumpChains(outbox), null);
 
   const naked = [];
   for (const spec of DOCS) {
-    const cols = await columnsOf(spec.table);
-    if (!cols.size) { notice(`  scm.${spec.table} does not exist — skipped`); continue; }
-    if (!cols.has('company_id')) {
-      notice(`  scm.${spec.table} has NO company_id column — cannot scope, skipped rather than reported wrong`);
-      continue;
-    }
-    naked.push(...await dumpDocuments(spec, outbox, cols));
+    await section(`D${spec.docType} (${spec.label})`, async () => {
+      const cols = await columnsOf(spec.table);
+      if (!cols.size) { notice(`  scm.${spec.table} does not exist — skipped`); return; }
+      if (!cols.has('company_id')) {
+        notice(`  scm.${spec.table} has NO company_id column — cannot scope, skipped rather than reported wrong`);
+        return;
+      }
+      naked.push(...await dumpDocuments(spec, outbox, cols));
+    }, null);
   }
-  dumpNaked(naked, switchedAt);
-  await dumpPoShape(outbox);
+  await section('E (the no-row list)', () => dumpNaked(naked, switchedAt), null);
+  await section('F (the SO-to-PO shape)', () => dumpPoShape(outbox), null);
 
   console.log('');
   notice('G — HOW TO READ THIS, AND WHERE THE GATES ARE');
