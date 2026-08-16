@@ -911,10 +911,22 @@ debtor.
    run to compare against. Only the explicit `CreditorCode` assignment is carried
    across. **Unverified on the purchase side** — it needs the host.
 
-**Still open:** the ERP does not send the account, which is divergence **D15**.
-Closing it is a payload change in `enqueueConvert`. When it lands, strike D15 —
-but keep the book fallback, because it is the only thing that drains a row
-composed before the change.
+**Half closed 2026-08-17 (D15).** `enqueueConvert` now sends `DebtorCode` on the
+two SALES conversions — `so_to_do` and `do_to_iv` — from `AC_DEBTOR_CODE`, the
+one account every ERP sales document goes to in this book, and the contract test
+asserts it on the wire.
+
+The PURCHASE half is still open, for two reasons that are both about cost rather
+than principle: `scm.grns` and `scm.purchase_invoices` carry no supplier column,
+so a `CreditorCode` here means a `grn -> purchase_order -> supplier` join; and
+`po_to_gr` has never once succeeded anyway, failing earlier on
+`IndexOutOfRangeException: There is no row at position -1`. Both purchase
+conversions therefore rely on the service reading the creditor off the source
+document in the book.
+
+**Keep the book fallback whatever happens to D15.** It is the only thing that
+drains an outbox row composed before any of this, and a lookup that quietly
+stops being exercised is a lookup someone deletes.
 
 **And a second thing this exposed.** `FullTransfer` is the call PROVEN against
 this book, and today's production payloads never reach it: `readConvertSourceKeys`
