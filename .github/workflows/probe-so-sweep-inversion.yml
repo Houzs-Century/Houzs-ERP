@@ -1,0 +1,47 @@
+# Read-only. Asks production whether the stock-allocation sweep's three
+# id-chunked reads can be inverted into embedded reads WITHOUT changing the rows
+# they return, and whether the foreign keys those embeds resolve through exist.
+# Writes nothing: every statement is a SELECT. Exits non-zero if any set differs.
+name: probe-so-sweep-inversion
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: probe-so-sweep-inversion
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-sweep-inversion.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-sweep-inversion.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
