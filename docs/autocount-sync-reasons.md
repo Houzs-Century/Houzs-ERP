@@ -164,6 +164,39 @@ via `GET /health`'s `builtAt` and `mvid`, and only then Send again.
 > unrecoverable. §6 is the rule that separates the two kinds, and both delivery
 > orders are re-sendable under it.
 
+> **THE DIAGNOSIS ABOVE IS REFUTED FOR THESE TWO ROWS. Measured 2026-08-16,
+> after the rebuild, and this paragraph is the finding — not a new theory.**
+>
+> Both delivery orders were re-queued and the 5-minute cron sent them to the new
+> build. It answered `Invalid transfer item.` again, and the new build's own
+> diagnostic says why the "two sales orders in one array" explanation cannot be
+> the cause **here**:
+>
+> ```
+> DO HC-DO-2608-001 (attempt 2) last error: Invalid transfer item. || source SO
+> lines as the book holds them: 906306 on SO HC-SO-2608-003 [AK-ULTIMATE MATT (K)]
+> Qty=1 TransferedQty=0 Transferable=T docCancelled=F outstanding=1; 906307 on SO
+> HC-SO-2608-003 [HOK-1013 (K)] Qty=1 TransferedQty=0 Transferable=T
+> docCancelled=F outstanding=1
+>
+> DO HC-DO-2608-002 (attempt 2) last error: Invalid transfer item. || source SO
+> lines as the book holds them: 905348 on SO HC-SO-2608-002 …; 905349 on SO
+> HC-SO-2608-002 …
+> ```
+>
+> Each key array is **single-source** — both keys of `-001` on `HC-SO-2608-003`,
+> both keys of `-002` on `HC-SO-2608-002` — and every line is `Transferable=T`
+> with a full outstanding quantity. So `KeysBySourceDoc` had nothing to group,
+> and the grouping fix, whatever else it is worth, did not cure these two.
+>
+> **The real cause is UNKNOWN**, and it is deliberately not guessed at here. What
+> IS known: the request reaches the host, AutoCount itself throws, and the four
+> line keys it is thrown over are all present, all outstanding and all on the
+> document the ERP names. Investigating it needs the AutoCount side, not the ERP
+> side. The rows retry to `MAX_ATTEMPTS` and land back in `failed` carrying this
+> much better message, and under §6 they stay re-queueable for whenever the cause
+> IS found — which is the property this change was for.
+
 ### A delivery-order-to-invoice raised with no source delivery order
 
 `reason_kind`: `no-source-document`. Catalogue row: §2.
@@ -210,7 +243,10 @@ needs it, it has to be raised there by hand, against a source document.
    service that no longer exists" is not answerable from `scm.autocount_outbox`.
    §6 explains why that is not the gate and why it would still be worth
    recording; the proposal is two columns stamped by the drain.
-5. **Nothing asks the account book whether a `failed` document landed.** The one
+5. **`Invalid transfer item.` on `HC-DO-2608-001` / `-002` is unexplained.** The
+   recorded cause (line keys spanning two source documents) is refuted for both
+   — see the measurement in §4. Open on the AutoCount side.
+6. **Nothing asks the account book whether a `failed` document landed.** The one
    residual risk on any re-send is a document that was accepted and whose reply
    was lost. A read-only probe on the ERP's own `DocNo` — which every create and
    every conversion now sends — would settle it before the queue writes, and
@@ -293,7 +329,7 @@ writes a second one. That is the identical residual risk the create path already
 carries and documents — see the blockquote at the end of §3 — and it is why the
 message is the diagnosis. A refusal naming a shape AutoCount would not accept
 wrote nothing; an ambiguous transport failure might have. **When it is
-ambiguous, look in the book first.** Open item 5 is what would retire this
+ambiguous, look in the book first.** Open item 6 is what would retire this
 paragraph.
 
 `sent` is refused outright and has no exception of any kind. That refusal now
