@@ -1636,9 +1636,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_centi_live ?? r.balance_centi ?? 0,
+      getValue: (r) => r.balance_centi_live ?? r.balance_centi, // `?? 0` was dead: balance_centi is `number`, never nullish
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
-        <span className={cn("font-money text-[13px]", (r.balance_centi_live ?? r.balance_centi ?? 0) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_centi_live ?? r.balance_centi ?? 0)}</span>
+        <span className={cn("font-money text-[13px]", (r.balance_centi_live ?? r.balance_centi) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_centi_live ?? r.balance_centi)}</span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
