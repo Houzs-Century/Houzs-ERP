@@ -189,6 +189,38 @@ reversing twice). **CANCELLED is FINAL**: any other transition out of it is 409
 `dr_cancelled_final` — the drain already ran, so un-cancelling would leave the
 books saying "returned" with an empty shelf. Raise a new return instead.
 
+### The status set, and who writes it (2026-08-16)
+
+DB type is the `scm.delivery_return_status` ENUM; column default is `PENDING`.
+
+| Value | Set by |
+|---|---|
+| `RECEIVED` | **the create insert** — stock IN is written at create, so a DR is never "pending" in practice. Also settable through the status PATCH |
+| `PENDING` | the DB default **only**. No code path writes it |
+| `INSPECTED` / `REFUNDED` | `PATCH /:id/status` (stamps `inspected_at` / `refunded_at`) |
+| `CREDIT_NOTED` / `REJECTED` | valid enum members, settable through the same PATCH with no timestamp and no special handling |
+| `CANCELLED` | the status PATCH, atomic branch. FINAL — see above |
+
+> **TWO GAPS, reported 2026-08-16, NOT fixed.** Both are the shape this repo has
+> already paid for once on the Sales Invoice.
+>
+> 1. **No status whitelist.** `patchDeliveryReturnStatusHandler` builds
+>    `{ updated_at, status: body.status }` and writes it verbatim — no canonical
+>    map, no legal-transition table, case-sensitive. A lowercase `'cancelled'`
+>    slips past the `body.status === 'CANCELLED'` reversal gate and is stopped
+>    only by the Postgres enum. This is precisely the bug that was fixed for SI
+>    (`canonicalSiStatus`, which runs before any branch) and for the DO
+>    (uppercase-normalise + `DO_STATUSES` check) and never here. The same hole is
+>    open on `consignment-notes.ts` and `consignment-returns.ts`.
+> 2. **No line-level status lock.** `POST /:id/items`, `PATCH /:id/items/:itemId`
+>    and `DELETE` have no equivalent of `purchase-returns.ts`'s `prLineLock` or
+>    `consignment-returns.ts`'s `returnLineLock`, so a CANCELLED or REFUNDED
+>    return's lines are still editable. Both siblings have one.
+>
+> Note also that this module's cancel-final refusal puts its sentence in
+> `reason`, while the DO / CN / PC siblings use `message` — a surface reading the
+> body raw will show a blank for one of them.
+
 ---
 
 ## 8. Traps, collected
