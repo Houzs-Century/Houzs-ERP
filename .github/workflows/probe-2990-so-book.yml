@@ -1,0 +1,69 @@
+# Read-only. Measures the 2990 sales-order book (company 2) with company 1 as a
+# control: header status census, how many CONFIRMED orders are fully READY,
+# how many are "every MAIN ready + an accessory pending", what column could
+# drive the list's STOCK STATUS cell, and the derived stock-remark distribution.
+# Writes NOTHING. Prints no customer identity (public repo, public logs).
+name: probe-2990-so-book
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company ids, comma separated (2 = 2990, 1 = HOUZS)"
+        required: false
+        default: "2,1"
+        type: string
+      doc:
+        description: "optional: one doc_no to dump line by line"
+        required: false
+        default: ""
+        type: string
+      amount:
+        description: "optional: find the order by local_total_centi (RM x 100)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-2990-so-book
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-2990-so-book.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          AMOUNT: ${{ inputs.amount }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-2990-so-book.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOC: ${{ inputs.doc }}
+          AMOUNT: ${{ inputs.amount }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
