@@ -1,0 +1,52 @@
+name: probe-my-localities-canonical-clash
+
+# Can canonicalising a state name change the country a sales document derives?
+#
+# PR #2242 merges deriveCountryFromState's two copies (SO canonicalises before
+# the scm.my_localities lookup; CO used the raw string). That is only
+# behaviour-preserving if no locality row makes the two lookups disagree — e.g.
+# `state = 'JOHOR', country = 'Singapore'`, where the CO answers Singapore and
+# the SO answers Malaysia.
+#
+# backend/tests/salesDocDerive.test.ts already asserts this over the SEEDED data.
+# It cannot see operator-created rows: routes/localities.ts exposes POST / PATCH
+# / DELETE on that table with `state` and `country` as free-form strings. This
+# reads the LIVE table, which is the only thing that settles it.
+#
+# Read-only. See backend/scripts/probe-my-localities-canonical-clash.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: probe-my-localities-canonical-clash
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Look for a state whose canonical spelling changes its country
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-my-localities-canonical-clash.mjs | tee localities-clash.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-my-localities-canonical-clash
+          path: backend/localities-clash.txt
+          retention-days: 14
