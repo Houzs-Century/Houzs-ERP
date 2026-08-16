@@ -88,6 +88,8 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 
 **Phase 2B part 1 (2026-08-16): Daily Bank.** GET /accounting/daily-bank?date= answers the owner one question - today, where is the money and how much can actually move - live from the ledger (2.3: no caches): opening/in/out/closing per money account (scm.accounts.acc_money flag, migration 0299), settlement-in-transit balances per acquirer (visible, never counted movable), pending-approval placeholder until phase 3. Page /scm/daily-bank (Finance menu): date navigation + Get Image (canvas-drawn PNG to clipboard for WhatsApp, download fallback). Board arithmetic pinned in acc/daily-bank.test.ts. 946-0000 Cash Over/Short + OVER_SHORT role seeded for the coming daily cashup.
 
+**Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
+
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
 `POST /payment-vouchers/:id/post` and reverses on cancel. All three files own

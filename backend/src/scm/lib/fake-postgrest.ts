@@ -169,6 +169,18 @@ export function fakeSb(
       neq(col: string, val: unknown) { filters.push((r) => String(r[col]) !== String(val)); return builder; },
       in(col: string, vals: unknown[]) { filters.push((r) => vals.map(String).includes(String(r[col]))); return builder; },
       lt(col: string, val: unknown) { filters.push((r) => Number(r[col] ?? 0) < Number(val)); return builder; },
+      /* gte/lte compare as PostgREST does for the column's type: numbers
+         numerically, everything else lexically — which is exactly how ISO
+         date/timestamp strings order, the use these appear in (accounting's
+         entry_date and paid_at windows). */
+      gte(col: string, val: unknown) {
+        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col] ?? '') >= String(val)));
+        return builder;
+      },
+      lte(col: string, val: unknown) {
+        filters.push((r) => (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col] ?? '') <= String(val)));
+        return builder;
+      },
       /* PostgREST `like` with SQL wildcards. Only `%` is used in this codebase
          (`JE-2607-%`), and the anchoring matters: an unanchored match would let
          one company's JE sequence see the other's ("2990-JE-2607-1" matching

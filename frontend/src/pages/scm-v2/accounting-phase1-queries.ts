@@ -80,3 +80,39 @@ export const useDailyBank = (date: string) => useQuery({
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+export type DailyCloseRow = { bucket: string; systemSen: number; countedSen: number | null; diffSen: number | null; status: 'DRAFT' | 'CONFIRMED'; notes: string | null };
+
+export const useDailyClose = (date: string) => useQuery({
+  queryKey: ['daily-close', date],
+  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[] }>(`/accounting/daily-close?date=${date}`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+export const useSaveDailyClose = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { date: string; buckets: Array<{ bucket: string; countedSen: number | null; notes?: string | null }> }) =>
+      authedFetch<{ ok: boolean }>(`/accounting/daily-close`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: (_, v) => { void qc.invalidateQueries({ queryKey: ['daily-close', v.date] }); },
+    onError: writeFailedAs('Daily close not saved'),
+  });
+};
+
+export const useConfirmDailyClose = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { date: string }) =>
+      authedFetch<{ ok: boolean; confirmed: number; cashPosting: { status: string; jeNo?: string } | null }>(
+        `/accounting/daily-close/confirm`, { method: 'POST', body: JSON.stringify(body) },
+      ),
+    onSuccess: (_, v) => {
+      void qc.invalidateQueries({ queryKey: ['daily-close', v.date] });
+      void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+    },
+    onError: writeFailedAs('Daily close not confirmed'),
+  });
+};
