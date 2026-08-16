@@ -1840,6 +1840,15 @@ reply at once. At thirteen rows that reads well; the sales order list alone is
 | mobile 375 px, not accepted (collapsed) | 387.1 px | **88.5 px** |
 | mobile cards in the DOM | 400 | **20** |
 
+> **The lab's rows CHANGED on 2026-08-16** (`frontend/perf-lab/main.tsx`), so a
+> re-measure is comparable per row TYPE and not row-for-row against the table
+> above. `i % 5` now yields five kinds instead of three: in AutoCount, held back
+> (`missing-location`), **not accepted carrying `AcSyncService`'s `\|\|` dump**,
+> **held back parentless carrying the SDK sentence the queue still holds**, and
+> **superseded**, the last with `HC-DO-2608-001` / `-002` repeating. It carries
+> the real strings because a lab measuring a row nobody has measures nothing —
+> `?rows=15` reproduces the screen the owner read the four defects off.
+
 The lab scenario is the harness: it renders the REAL page with the queue stubbed
 at `fetch`, so everything above the network — the cache, the headers, the error
 path — is the real code and a height measured there is a height the app
