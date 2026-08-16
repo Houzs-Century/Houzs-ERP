@@ -317,6 +317,31 @@ async function queueAcSoEdit(
   });
 }
 
+/* -- SO line coverage (the Stock column) ------------------------------------
+   The MRP allocation is GLOBAL by design: a line's coverage depends on what
+   every higher-priority line already claimed, so asking it for ONE order would
+   answer a different question, not the same one faster. It therefore cannot be
+   narrowed — but it also does not DEPEND on the per-line reads that follow it in
+   both handlers below, so it is returned as a promise and awaited ALONGSIDE
+   them instead of in front of them. Same reads, same result, one wait instead
+   of two. `mrp` is handed on to soLineReadySourcePos, which genuinely needs it
+   and so genuinely stays behind it.
+
+   `sb` is `unknown` rather than the file's usual `any`: nothing here does more
+   than hand it straight to computeMrp, so there is no reason to turn the
+   checker off for it. */
+type SoCoverage = { coverage: Map<string, { source: string; po: string | null; eta: string | null }>; mrp: MrpResult | null };
+async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+  /* Best-effort, exactly as before: a failed allocation drops every line to
+     Pending and the page still loads. */
+  try {
+    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    return { coverage: mrpLineCoverage(mrp), mrp };
+  } catch {
+    return { coverage: new Map(), mrp: null };
+  }
+}
+
 /* The same, for a route whose body runs inside runScmPgCommand: queue only
    when the transaction actually committed (a non-2xx rolls it back). */
 async function queueAcSoEditAfter(c: any, docNo: string, res: Response): Promise<Response> {
@@ -2822,16 +2847,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      link), so genuinely-ordered lines showed "—". Running the MRP allocation
      here keeps the Stock column and the MRP page in lock-step. Best-effort: if
      the allocation fails the page still loads, lines just fall back to Pending. */
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2840,13 +2856,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        keep showing the incoming/source PO even after the line is delivered
        (MRP coverage drops off once the demand is satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
-       resolves the PO(s) it WILL draw from — sofa via its stored
-       allocated_batch_no, non-sofa by projecting the SAME FIFO order the
-       engine consumes at DO time over the bucket's open lots, earlier claims
-       first. Read-time derivation, no writes. */
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
+     resolves the PO(s) it WILL draw from — sofa via its stored
+     allocated_batch_no, non-sofa by projecting the SAME FIFO order the
+     engine consumes at DO time over the bucket's open lots, earlier claims
+     first. Read-time derivation, no writes. */
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -2981,21 +2999,14 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];

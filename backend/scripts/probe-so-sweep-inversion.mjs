@@ -241,27 +241,32 @@ async function main() {
   const boundLines = await count('bedframe + sofa lines (the purchase_order_items id list)',
     `SELECT count(*)::int AS n FROM (${BOUND}) t`);
 
-  const before = {
-    'delivery_order_items (chunkIn every live line id)': chunksFor(liveLines),
-    'delivery_orders (chunkIn DO ids)': chunksFor(activeDos),
-    'purchase_order_items (chunkIn bedframe/sofa line ids)': chunksFor(boundLines),
-    'mfg_sales_order_items allocated_batch_no (chunkIn sofa line ids)': chunksFor(sofaLines),
-  };
-  const after = {
-    'delivery_order_items (paginateAll over the embedded read)': pagesFor(doParentLines),
-    'delivery_orders (chunkIn DO ids)': chunksFor(activeDos),
-    'purchase_order_items (paginateAll over the embedded read)': pagesFor(poParentLinesReceived),
-    'mfg_sales_order_items allocated_batch_no (folded into step 2)': 0,
-  };
-  const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+  /* ONE row per read, carrying BOTH numbers. The first version of this kept two
+     objects keyed by their labels and looped over one of them, so every row
+     whose label had changed printed `undefined` for the after-figure while the
+     totals underneath were right — a table that disagrees with its own sum. */
+  const rows = [
+    ['delivery_order_items', chunksFor(liveLines), pagesFor(doParentLines),
+      'chunkIn every live line id -> paginateAll over the embedded read'],
+    ['delivery_orders', chunksFor(activeDos), chunksFor(activeDos),
+      'chunkIn DO ids, unchanged'],
+    ['purchase_order_items', chunksFor(boundLines), pagesFor(poParentLinesReceived),
+      'chunkIn bedframe/sofa line ids -> paginateAll over the embedded read'],
+    ['mfg_sales_order_items allocated_batch_no', chunksFor(sofaLines), 0,
+      'chunkIn sofa line ids -> folded into the step-2 select'],
+  ];
+  const sum = (i) => rows.reduce((a, r) => a + r[i], 0);
   note('');
-  for (const k of Object.keys(before)) {
-    note(`  ${String(before[k]).padStart(4)} -> ${String(after[k]).padStart(3)}   ${k}`);
+  for (const [name, was, now, how] of rows) {
+    note(`  ${String(was).padStart(4)} -> ${String(now).padStart(3)}   ${name}  (${how})`);
   }
-  note(`  ${String(sum(before)).padStart(4)} -> ${String(sum(after)).padStart(3)}   TOTAL for these four reads`);
-  note(`  the other 27 round trips of the 123 (lock, orders, lines, products,`);
-  note('  balances, lots) are unchanged, so one sweep goes'
-    + ` ${123} -> ${123 - sum(before) + sum(after)} serial round trips.`);
+  note(`  ${String(sum(1)).padStart(4)} -> ${String(sum(2)).padStart(3)}   TOTAL for these four reads`);
+  /* 123 is probe-so-save-cost's measured total for the whole sweep on
+     2026-08-16 (run 31937764356). It is quoted, not re-derived, so if that
+     probe's total moves this line goes stale — run BOTH, they answer different
+     halves of the same question. */
+  note('  the rest of the sweep (lock, orders, lines, products, balances, lots) is');
+  note(`  unchanged, so one sweep goes 123 -> ${123 - sum(1) + sum(2)} serial round trips.`);
   note(`  Unchanged: ${poParentLines} live lines carry a PO link, ${poParentLinesReceived} of them received.`);
 
   note('');
