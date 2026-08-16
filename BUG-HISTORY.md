@@ -48,6 +48,190 @@ prefix and says why at the site.
 **Ref.** 2026-08-16, follow-up to #2323. Harness:
 `frontend/perf-lab` `?scenario=autocount-sync&rows=400` (`&surface=mobile`).
 
+## An APPROVED amendment could not carry the price it approved [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-16: *"Any amount can be edited, unless it is locked.
+If it has proceeded and a day has passed so it locked, then it goes through Sales
+Amendment."* The amendment is the sanctioned road for money on a locked Sales
+Order — and it did not carry money. An operator typed RM 50, an approver holding
+`scm.amendment.approve_*` signed RM 50, and the CATALOGUE price landed on the
+order instead.
+
+**Root cause (traced, not guessed).** `so-revision.ts` derived
+`amendTrust = soIsMigrated ? 'including-zero' : false` and threaded it into the
+honest-pricing recompute. With `false`, `mfg-pricing-recompute.ts`'s trust
+overwrite (`if (trustOperatorSelling && (manualUnitSelling > 0 || …))`) never
+executed, so `unitToPersistSen` kept the authoritative catalogue figure assigned
+a few lines earlier. The ADD path passed no trust argument at all, so a
+brand-new line lost its price on migrated orders too. Blast radius, measured by
+the tests below rather than argued: only a SOFA build, a SKU absent from the
+catalogue, and a SKU whose `sell_price_sen` is 0 survived — and a QTY-ONLY
+amendment re-priced as well, because the recompute is per-line and the editor
+sends `newUnitPriceSen` on every SPEC/QTY line.
+
+**Proven, not read.** `src/scm/lib/so-revision.amendmentPrice.test.ts` drives the
+REAL engine through a fake PostgREST client: **6 of its 12 tests fail against
+origin/main** and all 12 pass with the fix (stash the two source files and
+re-run — the six are the price-carrying ones).
+
+**Fix.** The trust is now derived from the APPROVAL, not from the payload.
+`applySoAmendment` takes a **required** `approval: SoAmendmentApproval | null`
+constructed only by `approveSoCommandHandler`, after `hasHouzsPerm(c,
+approveKey)` and the transition check. With `approval` present a native line
+persists the requested price (plain `true` — an ADD line never gets
+`'including-zero'`, it is authored now); with `null` the requested
+`new_unit_price_sen` is not read at all and the catalogue behaviour is
+unchanged. That is the safety property: `new_unit_price_sen` is client-authored
+and validated nowhere, so what makes it payable is the signature. The ceiling is
+the authority the operator already had on the same order before it locked
+(`trustOperatorSelling = !(isPosTabletCaller)` on the direct write path).
+
+**NOT fixed, deliberately.** `discount_centi` has no amendment channel —
+`scm.so_amendment_lines` has no discount column (mig 0080 + 0281) — so a
+discount still cannot be requested, approved or applied; it is carried forward
+untouched and an ADD line lands at 0. Reducing an amount on a locked SO is a
+unit-price change. Migration 0281 lists the other fields with no channel
+(`lineDeliveryDate`, `description`, `uom`, `itemGroup`, `cost`); those are
+unchanged too. Two further findings from the same trace, reported not fixed:
+approve-so has **no requester != approver check**, and the amendment SUBMIT route
+is the one SO write surface where `isPosTabletCaller` is never consulted.
+
+**Ref.** fix/amendment-carries-approved-price, 2026-08-16.
+## MRP planned over the first 1000 sales-order lines of 13,920, so a new SO was invisible [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Owner 2026-08-16: a brand-new sales order did not appear on the MRP
+page at all and therefore could not be converted to a purchase order. Nothing
+errored — the page rendered a complete-looking plan.
+
+**Root cause (traced).** routes/mrp.ts read demand with `.limit(MRP_LOAD_CAP)`
+where `MRP_LOAD_CAP = 5000`. PostgREST caps a response at `max-rows` (1000 here)
+and `.limit()` does not lift it: the server returns ≤1000 rows and drops the rest
+with no error and no signal. Prod matched **13,920** demand rows, so the plan ran
+on the first ~1000 by `id` ASC — a uuid order, i.e. arbitrary. The owner's line
+ranked **10,687th** (`probe-mrp-read-caps`, run 31937195713). Three more reads had
+the same shape: `inventory_balances` (1,065 rows — missing balances become phantom
+shortage), `mfg_products` (2,293), `supplier_material_bindings` (2,660 — a SKU
+whose binding fell past the cap showed no supplier, so staff could not raise its
+PO). `supplier_material_bindings` also passed the whole demand code list as one
+unbounded `.in()`.
+
+**AND THE GUARD COULD NEVER FIRE.** The read was followed by
+`if (rows.length >= MRP_LOAD_CAP) throw 'mrp_load_truncated'` — 1000 >= 5000 is
+false, so the check named after truncation could not detect truncation, and
+`probe-mrp-guard-fires` (run 31938808637) confirmed every read AFTER the throw had
+executed, i.e. it had never fired in two months of statistics. Two unit tests
+certified it, and they passed because the FAKE honoured `.limit(5000)` literally
+while the server does not. A gate that cannot fail is worse than none: it reads as
+protection.
+
+**Fix.** Every multi-row read on the page goes through lib/paginate-all
+(`paginateAll` / `chunkIn`), each under a TOTAL order so `.range()` windows are
+coherent (`inventory_balances` is a view with no id, so it orders by its full
+group-by tuple). The cap and the guard are deleted rather than re-tuned — a bigger
+`.limit()` is the same bug with a bigger wrong number. The test fake now enforces
+the real 1000-row ceiling, so a fixture larger than the cap can only be read by
+code that pages.
+
+**The downstream call paging forced open.** `soDeliverableRemaining` puts its
+argument straight into `.in('doc_no', …)` and the resulting line ids into
+`.in('so_item_id', …)`. Paging demand takes it from ~700 docs to ~2,800 docs /
+~13,900 uuids — a ~500KB request line, i.e. a 414 rather than a query, which would
+have taken MRP from wrong to broken. MRP now calls it in batches of 200 docs and
+merges the (disjoint, so_item_id-keyed) result maps. Batched at the CALLER on
+purpose: every other caller passes a handful of docs, so the scale problem is
+MRP's, and 200 docs reproduces the ~1000-line-per-call shape this path has always
+run against instead of imposing an untested one on the DO picker and convert flow.
+
+**Ref.** fix/mrp-paging-and-strict-variants, 2026-08-16.
+
+## An empty-variant PO counted as supply for a specific-variant sales-order line [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** A bedframe SO line for a specific fabric/gap/divan/leg read as
+covered by a purchase order for an unspecified bedframe, so the shortage that
+should have driven a purchase was hidden and PO Outstanding showed units that
+row was never going to receive.
+
+**Root cause (traced).** routes/mrp.ts buckets demand and supply by
+`composite(warehouse, code, variantKeyOf(group, variants))`, but section 7 (and
+its section 8 sofa twin, added by audit D2) folded the same-warehouse
+EMPTY-variant `''` PO pool into a specific-variant bucket whenever that bucket
+had no PO of its own:
+
+```js
+const legacyKey = composite(whId, code, '');
+const useLegacy = bucket.vkey !== '' && legacyKey !== k && ownPo.length === 0;
+```
+
+Stock never had such a fallback (`stockByKey.get(k)`, exact key), so the engine
+disagreed with itself about what counts as the same thing.
+
+**Fix.** Both fallbacks removed — supply matches demand on the full bucket key,
+the way stock already did. Owner ruled it twice, verbatim: 「variant 不一样的话
+应该不能拿来给那个SO 用不是吗?」 and 「我们要求不是全部variant 全部spec都相同才是一样的
+东西?」 Mattress is unaffected (`ATTRS_BY_GROUP.mattress` is `[]`, so its key is
+`''` either way and it was never eligible). A NULL `item_group` still keys to
+`''` even when the line carries a real fabric, because `ATTRS_BY_GROUP[group] ?? []`
+yields no attributes — that is deliberately left alone rather than re-derived from
+the product master: stock's key is the STORED `inventory_balances.variant_key`,
+which MRP cannot re-derive, so deriving on the other two sides would move demand
+and supply off the stock they must match. Null-group lines stay mis-grouped
+IDENTICALLY on all three sides, which is what keeps the arithmetic consistent.
+
+**Not measured, stated plainly.** The read-only probe written for exactly this
+(`backend/scripts/probe-mrp-legacy-variant-fallback.mjs`) could not be run against
+prod: `workflow_dispatch` requires the workflow file on the DEFAULT branch, and
+PR #2274 which adds `.github/workflows/probe-mrp-legacy-variant-fallback.yml` is
+still open. So the number of rows that flip covered → shortage is UNKNOWN. Merge
+#2274 and run it before believing any figure about this change.
+
+**Ref.** fix/mrp-paging-and-strict-variants, 2026-08-16.
+
+## An ERP session minted at the POS door was still held to the POS's rules [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** A salesperson signed in at the POS PIN door, tapped the tablet's
+"open in Houzs" button, landed on the ERP Sales Order screen, and could not
+change a delivery-fee line from 250 to 125:
+
+    422 so_total_below_original
+    "Changes cannot reduce the bill below the original sales order total."
+
+Owner, on being shown it: 「为什么我们要跟着 POS 的规矩?进了这个 ERP 就跟这个
+ERP 的规矩。在我们 ERP 里编辑,金额就必须能改。」
+
+**Root cause (traced).** `POST /api/pos/exchange-web-session` — the SSO handoff
+that mints the token behind `erp.houzscentury.com/#sso=<token>` — carried the
+caller's `origin='pos'` onto the session it minted (added 2026-08-14, "an
+exchange must never widen the session it is exchanged from"). `origin` rides the
+session row for the full 7-day life of the token, and every refusal in the SO
+pricing envelope hangs off exactly one expression, `isPosTabletCaller(c)` =
+`c.get('sessionOrigin') === SESSION_ORIGIN_POS`. So the ERP web app was being
+judged by the POS's rules on every screen the salesperson reached: five
+`so_total_below_original` money floors, four `pricing_drift` 400s, and
+`trustOperatorSelling` withheld on all three recompute paths.
+
+**Fix.** The exchange mints an ORIGIN-LESS session. It is an ERP session and it
+follows the ERP's rules. `/pin-login` is still the only writer of
+`SESSION_ORIGIN_POS`, so the tablet's own token is unchanged and the real POS
+surface keeps every restriction it has today. This is a deliberate POLICY
+reversal of the 2026-08-14 tightening, not a correction of it: that change was
+right that a tablet could shed the marker in one request, and the owner has ruled
+that shedding it at the ERP door is exactly what should happen. What is gone: a
+tampered POS can now escape the price envelope by exchanging for a web token, so
+the envelope binds the POS APP and not the device or the person. What remains is
+the per-line audit trail (actorId / actorName on every SO line mutation). The
+narrower long-term hinge, if the owner ever wants one, is the existing
+`scm.so.price_override` permission key granted via Team > Positions.
+
+**Ref.** this PR, 2026-08-16. `backend/src/routes/pos.ts`,
+`backend/tests/posExchangeSessionOrigin.test.ts`.
 ## Delivery Planning still grouped orders under "READY (PARTIAL)" [high]
 
 <!-- area: Delivery, DO, returns -->

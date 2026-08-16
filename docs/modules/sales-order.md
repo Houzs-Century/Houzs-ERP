@@ -22,6 +22,334 @@ structure applies to PO / DO / SI / GRN (they are near-identical clones).
 
 ---
 
+## 0. STATUS — every status a Sales Order carries, and what moves it
+
+> Added 2026-08-16, from a source read of `main` @ `dda30c19e`, after the owner
+> asked: *"I have all kinds of statuses now — available, PO raised, by convert
+> and so on. When does each one change, and to what?"*
+
+### 0.0 The confusion is real, and it is structural: ONE order carries FIVE statuses
+
+This is the first thing to say, because every downstream question depends on it.
+A Sales Order does not have "a status". It has five, they live in different
+places, they are computed by different engines, and **they routinely disagree
+about the same order on the same screen** — which is not a bug report, it is the
+design as it stands.
+
+| # | Name | Where it lives | Who computes it | What the operator sees it as |
+|---|---|---|---|---|
+| 1 | `mfg_sales_orders.status` | STORED, header column | manual PATCH + three auto writers | the header status, and the list's status **filter** |
+| 2 | `mfg_sales_order_items.stock_status` | STORED, per line | `recomputeSoStockAllocation` only | the per-line READY / PENDING / PARTIAL pill |
+| 3 | `stock_state` | COMPUTED per request, per line | `computeMrp` (live) | the same-looking line pill, and the "Incoming PO" cell |
+| 4 | `stock_remark` | COMPUTED per request, per SO | `summariseReadiness` over #2 | the list's Stock Remark cell |
+| 5 | `lifecycle_state` + `delivery_state` | COMPUTED per request, per SO | `computeSoLifecycle` (latest-event-wins) | **the status PILL** — which overrides #1 |
+
+Two of these five pairs are the ones that actually bite:
+
+- **#2 and #3 are different fields with confusingly similar names, and they can
+  disagree on the same line.** `stock_status` is a STORED projection that is only
+  correct if the last allocation sweep succeeded; `stock_state` is recomputed
+  live from MRP on every request. The list rolls up #2; the drill-down renders
+  #3. That is why the list and the drill-down showed different answers for one
+  order. See §0.3 and §0.4.
+- **#5 OVERRIDES #1 in the UI.** The pill is not the status column. See §0.6.
+
+### 0.1 SO HEADER status — the ten values
+
+Vocabulary and guard: `backend/src/scm/lib/so-lifecycle-guards.ts`
+(`SO_STATUSES`, `SO_STATUS_RANK`, `SO_LEGAL_REGRESSIONS`,
+`soStatusTransitionError`).
+
+Ranked spine: `DRAFT(0) → CONFIRMED(1) → IN_PRODUCTION(2) → READY_TO_SHIP(3) →
+SHIPPED(4) → DELIVERED(5) → INVOICED(6) → CLOSED(7)`. `CANCELLED` and `ON_HOLD`
+are side states and are deliberately UNRANKED.
+
+**There are TWO write paths to this column, and only one passes the guard.**
+The guard's own header says so: the AUTO state machine writes the column
+DIRECTLY and never calls `soStatusTransitionError`. So every row below names
+both.
+
+**The automatic half is smaller than the guard's comment suggests — exactly TWO
+modules, writing exactly THREE values between them:**
+
+| Module | Writes | When |
+|---|---|---|
+| `scm/lib/so-stock-allocation.ts` | `READY_TO_SHIP` (advance), `CONFIRMED` (regress) | stock allocation makes the SO ship-ready, or stops doing so |
+| `scm/lib/so-delivery-sync.ts` | `DELIVERED` (advance), `READY_TO_SHIP` (release) | every live line becomes fully covered, or stops being (a DO is cancelled, a line shrinks) |
+
+Both go through `advanceSoGeneration`, which stands down while a human holds the
+SO's edit lease. `routes/delivery-returns.ts` is named alongside them in the
+guard's comment and it IS a trigger, but it writes no status itself — it calls
+`syncSoDeliveredFromDo`, one module down. Verified by grep: `delivery-returns.ts`
+does not reference `mfg_sales_orders` at all.
+
+**Nothing in this tree automatically writes `SHIPPED`, `INVOICED` or `CLOSED` on
+a Sales Order.** All three are manual-only. That is worth holding next to §0.6:
+the pill an operator reads says "Invoiced" off `lifecycle_state`, while the
+column behind it has not moved and will not move on its own.
+
+`so-delivery-sync`'s release target is `READY_TO_SHIP`, not `SHIPPED` — the enum
+has no `PARTIALLY_DELIVERED`, and only an SO whose stored status is *exactly*
+`DELIVERED` is released. INVOICED / CLOSED / ON_HOLD / CANCELLED are left to
+manual control: an invoiced order is not un-delivered by a DO edit, finance
+unwinds the SI first.
+
+| Value | In the owner's words | Set MANUALLY by | Set AUTOMATICALLY by | What it blocks |
+|---|---|---|---|---|
+| `DRAFT` | not written yet | `PATCH /:docNo/status`; POS/scan create | — | Blocks conversion: the From-SO PO picker filters DRAFT SOs out entirely. Also the ONLY status that permits `DELETE /:docNo`. |
+| `CONFIRMED` | the order is real | `PATCH /:docNo/status` (the list's "Confirm" button) | **regress** from `READY_TO_SHIP` by `recomputeSoStockAllocation` when the order stops being ship-ready | — |
+| `IN_PRODUCTION` | proceeded | `PATCH /:docNo/status` — this is the transition that stamps `proceeded_at` ONCE | — | — |
+| `READY_TO_SHIP` | stock is in, call the customer | `PATCH /:docNo/status` | **advance** by `recomputeSoStockAllocation` when `isShipReady` and current is `CONFIRMED` or `IN_PRODUCTION` | — |
+| `SHIPPED` | goods left | `PATCH /:docNo/status` | **nothing** | — |
+| `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
+| `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
+| `CLOSED` | done | `PATCH /:docNo/status` | **nothing** | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
+| `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
+| `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
+
+**The transition rule, exactly.** `soStatusTransitionError` rejects only two
+things: an unknown target (`invalid_status`, 400) and a backward jump that is not
+on the legal list (`illegal_status_transition`, 409). Everything forward, every
+idempotent no-op, every ON_HOLD pause/resume (bar `ON_HOLD → DRAFT`) and every
+listed regression passes. A blank or unrecognised `from` is allowed through
+deliberately — a legacy row must never be over-blocked.
+
+`SO_LEGAL_REGRESSIONS` — the backward edges the system performs on its own:
+`IN_PRODUCTION → CONFIRMED`; `READY_TO_SHIP → {CONFIRMED, IN_PRODUCTION}`;
+`SHIPPED → {CONFIRMED, IN_PRODUCTION, READY_TO_SHIP}`;
+`DELIVERED → {CONFIRMED, IN_PRODUCTION, READY_TO_SHIP, SHIPPED}`. The first two
+groups are stock regress; the last is delivery-return re-open.
+
+**Other refusals on the manual path**, in the order they fire, all before the
+transition table: self-scoped-sales ownership (404), un-cancel guards (409),
+version CAS mismatch (409 + `428` when the client sent no version at all), an
+active edit lease held by another human (409), and — for `CANCELLED` only — the
+downstream lock (§0.7). `DRAFT → CONFIRMED` additionally runs the confirm gate
+(salesperson + venue + every line a real catalog SKU with its required variant
+axes) and returns an aggregated `422 validation_failed`.
+
+### 0.2 What the automatic advance/regress actually keys on
+
+`recomputeSoStockAllocation` (`scm/lib/so-stock-allocation.ts`) is the only
+writer of the READY_TO_SHIP ↔ CONFIRMED pair, and its gate is **`isShipReady`,
+never bare `isMainReady`** — see §0.5 for why that distinction exists.
+
+Two things gate it that are easy to miss:
+
+- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
+  `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
+  consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
+  *"有 processing date 才来分配"*. So an order with stock physically available
+  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
+  is the single most common "why is my order not READY".
+- **A human editing the order defers the header, not the lines.** If the SO's
+  edit lease is held, the line-level flip commits and the header transition is
+  recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
+
+### 0.3 LINE `stock_status` — the STORED per-line value
+
+Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
+`READY`, `PENDING`, `PARTIAL`.
+
+| Value | Meaning | Written by |
+|---|---|---|
+| `PENDING` | nothing allocated (`stock_qty_ready = 0`) | `recomputeSoStockAllocation`; also the literal stamped at SO/line CREATE and by `so-revision.ts` on a new revision |
+| `PARTIAL` | some of the line's qty allocated, not all | `recomputeSoStockAllocation` only |
+| `READY` | fully allocated | `recomputeSoStockAllocation`; `so-delivery-sync.ts` forces READY on delivered lines; SERVICE and a few create paths stamp READY from birth |
+
+`summariseReadiness` treats `PARTIAL` as **not ready** — `isReady` is strictly
+`stock_status === 'READY'`.
+
+> **Do not confuse this column with the delivery-planning board's field of the
+> same name.** `scm/lib/so-readiness-row.ts` emits a per-ROW `stock_status` that
+> is `'READY' | 'PENDING'` — TWO values, derived from `isFullyReady`. Same name,
+> different object, different vocabulary. That module exists precisely because
+> the board had grown a second vocabulary inline (#2320).
+
+**CONFIRMED: the stored value goes stale, and the 5-minute cron does not fix
+it.** Three separate mechanisms, all in `scm/lib/stock-allocation-job.ts` and its
+callers:
+
+1. **Only FOUR call sites are durable.** `scheduleStockAllocationAfterCommand`
+   writes a queue row inside the caller's PG transaction (the three TBC line
+   commands + amendment approve-so). The file's own SCOPE header states the
+   rest: *"THIRTY-FOUR allocation triggers … still call
+   `recomputeSoStockAllocation` best-effort"* — GRN post/cancel, DO ship/cancel,
+   returns, stock takes, transfers, adjustments, consignment, and eight paths in
+   `mfg-sales-orders.ts` itself.
+2. **A best-effort trigger writes NO queue row**, so the `*/5` cron's
+   `drainStockAllocationRecompute` finds nothing pending and returns
+   `{processed:false, completed:true}`. The cron is a backstop for the durable
+   four ONLY. It is not a general repair loop.
+3. **The single-flight lock returns early and the caller discards it.**
+   `recomputeSoStockAllocation` claims a durable lease row; if another recompute
+   holds it, it returns `{ ok: true, reason: 'another_recompute_in_progress' }`
+   and does nothing. `grns.ts` posts a GRN with a bare
+   `await recomputeSoStockAllocation(sb)` and never reads the result. Two GRNs
+   posted close together therefore leave the second one's lines stale
+   **deterministically**, not just on a crash.
+
+**What DOES eventually fix a stale line:** the next *successful* recompute
+triggered by any of the ~38 call sites anywhere in the system — the sweep is
+GLOBAL, so an unrelated SO save, GRN or DO re-derives every line. There is no
+scheduled repair and no retry on the path that produced the stale value. That
+matches the reported symptom exactly: goods received and unclaimed while the line
+still reads PENDING.
+
+### 0.4 LINE `stock_state` — the LIVE value, and why it disagrees with `stock_status`
+
+Computed per request in `mfg-sales-orders.ts`, in BOTH `GET /:docNo` and
+`GET /:docNo/items`, from the same `computeMrp` run that produces `coverage_po`.
+Values: `'stock' | 'po' | 'shortage' | null`.
+
+| Line kind | Rule |
+|---|---|
+| SERVICE (`isServiceLine`) | always `'stock'` — a service carries no inventory, so it is inherently available |
+| SOFA | `stock_status === 'READY' ? 'stock' : (MRP says po ? 'po' : 'shortage')` — sofa coverage is decided by the batch-aware allocator, because MRP does not know about dye lots |
+| everything else | `cov?.source ?? null` — **whatever MRP says**, with no reference to the stored column at all |
+
+**So for a non-sofa, non-service line, `stock_state` and `stock_status` are
+produced by two engines that never consult each other.** They disagree whenever
+the stored projection is stale (§0.3) or whenever MRP's pooled view differs from
+the allocator's per-line FIFO+warehouse view. The list rolls up the STORED value
+(`summariseReadiness` over `stock_status`); the detail and the drill-down render
+the LIVE one. Both are "the stock status" to the operator.
+
+`frontend/src/components/SoSourceChips.tsx`'s `soLineStockPill` renders a pill
+off BOTH: fully-shipped → `DELIVERED`; `stock_state === 'stock'` **or**
+`stock_status === 'READY'` → `READY`; `stock_status === 'PARTIAL'` → `PARTIAL`;
+else `PENDING`. The `or` is why a line can read READY on the drill while the
+list's rollup still counts it short.
+
+### 0.5 `stock_remark`, `is_main_ready`, `is_ship_ready`
+
+All three come out of `summariseReadiness` (`scm/lib/so-readiness.ts`).
+
+**`stock_remark` names what is MISSING** (owner ruling, 2026-08-16). It used to
+name what was READY, and BOTH vocabularies are in production data.
+
+| Value | Means |
+|---|---|
+| `''` | the SO has NO live lines at all — nothing to say, and nothing to ship |
+| `'READY'` | everything that must be allocated IS. Covers an accessory-only SO with all accessories in, and a service-only SO |
+| `'SHORT: ACCESSORY'`, `'SHORT: BEDFRAME, ACCESSORY'` | the named categories are not all allocated. MAIN categories sorted first, the single collapsed `ACCESSORY` entry last |
+
+The string never contains `READY` while anything is short — that is the point of
+the rewrite, and `soReadinessRemark.test.ts` pins it. **RETIRED: `READY
+(PARTIAL)`**, plus the older `ACC` / `BEDFRAME` / `BEDFRAME/ACC` family. They
+still appear in historical rows and in the AutoCount `Remark2` corpus
+(`docs/stock-reconciliation.md`); nothing in this codebase emits them any more.
+
+**`is_main_ready` vs `is_ship_ready` — use the second one.**
+
+- `is_main_ready` = every MAIN line (SOFA / BEDFRAME / MATTRESS) is READY. It is
+  **VACUOUSLY TRUE when the SO has no main line at all**, which is the right
+  reading for an accessory-only order and a trap everywhere else. It is kept on
+  the payload only because published consumers read it.
+- `is_ship_ready` = THE gate. `mainCount > 0 ? isMainReady : isFullyReady`, and
+  `isFullyReady` requires at least one live line. A line-less SO is therefore
+  never ship-able — which is the guard added after 16 emptied-out POS test SOs
+  auto-advanced to READY_TO_SHIP on 2026-08-13/14.
+
+Accessories do NOT block ship when the order has a main line. Service-only orders
+are ready on sight (owner ruling, 2026-08-16).
+
+### 0.6 The status PILL is not the status COLUMN
+
+`frontend/src/vendor/scm/lib/so-status.ts` → `soStatusDisplay(status,
+deliveryState, lifecycleState)`. This drives the SO list and detail pill.
+
+1. If `status` is `CANCELLED` / `CLOSED` / `ON_HOLD` → show the stored status.
+2. Otherwise **`lifecycle_state` wins**: `returned` → "Delivery Return",
+   `invoiced` → "Invoiced", `delivered` → "Delivered" (or "Partially Delivered"
+   when `delivery_state === 'partial'`).
+3. Otherwise `delivery_state` wins: `partial` → "Partially Delivered", `full` →
+   "Delivered".
+4. Only if none of the above applies is the stored `status` shown.
+
+`lifecycle_state` is computed by `computeSoLifecycle`
+(`scm/routes/delivery-orders-mfg.ts`) on a **latest-business-date-wins** walk of
+every non-cancelled DO, SI and Delivery Return, tie-broken by `created_at` then
+by a corrective priority (return > invoice > delivery). Values: `none |
+delivered | invoiced | returned`.
+
+**Consequence, and it is the likeliest source of "my statuses do not make
+sense":** an order whose stored `status` is still `CONFIRMED` displays
+**"Delivered"** the moment a DO exists against it. Filtering the list by status
+filters the STORED column; reading the pill reads the DERIVED one. The two
+legitimately disagree, and nothing on screen says which is which.
+
+`delivery_state` on the SO detail is `totalDelivered <= 0 ? 'none' :
+totalRemaining > 0 ? 'partial' : 'full'`. **This is a different field from the
+Delivery Planning board's `delivery_state`** (`derivePlanningState` in
+`scm/routes/delivery-planning.ts`) — a third same-named field. See
+`docs/modules/delivery-order.md`.
+
+### 0.7 What LOCKS a Sales Order, and what the operator sees
+
+Four distinct locks. Only one of them keys off the status column.
+
+| Lock | Keys off | Blocks | The message |
+|---|---|---|---|
+| **Downstream (HARD)** — `scm/lib/downstream-lock.ts` | the EXISTENCE of a live (non-CANCELLED) DO or SI, **not** any status | header/line MUTATION and CANCEL. Raising the NEXT document is deliberately still allowed | `SO has a Delivery Order / Sales Invoice — delete or cancel it first to edit` (409) |
+| **Processing-date (SOFT)** — `soProcessingLocked` | `processing_date` strictly BEFORE today in MYT (UTC+8), and status not DRAFT/CANCELLED | direct edit — routes the change through the amendment flow | `Processing date has passed — this Sales Order is locked. (Locked orders are what we PO to the supplier.)` (409) |
+| **PO-raised (SOFT)** — `scm/lib/so-po-lock.ts` | a live (non-CANCELLED, **DRAFT counts**) PO claims any of the SO's lines | direct edit — routes to amendment | `A Purchase Order has already been raised for this order — submit an amendment so purchasing can re-send it to the supplier.` (409) |
+| **Cancel-final** | `status === 'CANCELLED'` | any move off CANCELLED | `A cancelled Sales Order cannot be reactivated…` / `cancel_is_final` when AutoCount also holds it (409) |
+
+> **The PO-raised lock is 2990 ONLY.** `soPoLocked` returns false immediately
+> unless `isMirroredDocNo(docNo)`. Houzs orders are never PO-locked — they keep
+> the date-only rule. Measured before shipping: 304 live SOs carried a live PO
+> while remaining directly editable, and 302 of them were Houzs orders that
+> simply never had a Processing Date. Locking those in one deploy would have
+> flipped a two-year backlog to amendment-only, so the owner scoped it. Do not
+> read the lock's existence as covering Houzs.
+
+Both soft locks fail CLOSED on a read error, and so does the downstream lock — an
+unreadable count refuses with `downstream_check_failed` rather than being spent
+as a zero.
+
+A discard (`DELETE /:docNo`) needs MORE than `status === 'DRAFT'`: `soDiscardBlocked`
+also refuses when any live downstream document exists, and when the order carries
+any payment (`so_has_payments`, 409) — a real draft can carry a POS deposit.
+
+### 0.8 The "Incoming PO" column hosts FOUR different chips, and only one has an ETA
+
+Renderer: `frontend/src/components/SoSourceChips.tsx` — one component for the
+list drill-down, the detail and the `?edit=1` editor. Precedence order, and all
+four can coexist on a partially-shipped line:
+
+| # | Chip | Source field | Dress | Carries an ETA? |
+|---|---|---|---|---|
+| 1 | the PO the DELIVERED goods physically came from | `shipped_source_pos` | SOLID border | **No** — it is history, it has already arrived |
+| 2 | `STOCK ADJ` | `shipped_source_adj` / a `kind:'adjustment'` ready chip | its own chip | **No** — a PO-less adjustment lot has no PO and no ETA |
+| 3 | the PO a READY (allocated, un-shipped) line WILL draw from | `ready_source_pos` | DASHED — a live FIFO projection, recomputed every view | **No** — the goods are already in the warehouse |
+| 4 | the genuinely INCOMING PO | `coverage_po` + `coverage_eta`, shown only when `stock_state === 'po'` | DASHED, monospace | **Yes** — `· ETA <date>` |
+
+So a chip with no date is not a missing date. It is chip 1, 2 or 3 — goods that
+have already arrived (or already shipped), for which an ETA would be meaningless.
+Only chip 4 is "on the way", and only chip 4 is gated on `stock_state === 'po'`,
+which means **only chip 4 depends on MRP being correct** (see §0.4 and
+`docs/modules/mrp.md`). Chips 1 and 3 are suppressed for a PO already shown by a
+higher-precedence chip, so one PO never appears twice.
+
+The LIST's "PO No." cell is a different cell with a different rule
+(`SoListPoCell`): SOLID = a goods source, MUTED = a raised PO. See the
+"LIST PO No. column" notes further down this file.
+
+### 0.9 Where the neighbouring status systems are documented
+
+One home each — do not restate them here.
+
+| Subject | Guide |
+|---|---|
+| PO / DO / GRN / SI / PI / returns / consignment status sets, who sets each, what each blocks | `docs/modules/purchase-order.md`, `delivery-order.md`, `grn.md`, `sales-invoice.md` |
+| The board's `delivery_state` and the arrangement stage — and the THREE different fields named `delivery_state` | `docs/modules/delivery-order.md` §4 |
+| Whether this SO can be converted to a PO at all, and what silently drops a line | `docs/modules/purchase-order.md` |
+| Which document→document conversions exist, in which direction, with multi-select | `docs/modules/document-conversion.md` |
+| Why `stock_state` / `coverage_po` / the ETA chip can be wrong today | `docs/modules/mrp.md` §5 |
+
+---
+
 ## 1. Frontend
 
 ### Screens
@@ -1129,6 +1457,20 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   server recomputes the authoritative catalog price and **drift-rejects (400)** a
   deviating client price — the anti-tamper non-negotiable. (Empty until the 2990
   POS repoints here.)
+- **The SSO session is NOT a POS session** (Owner ruling 2026-08-16). `POST
+  /api/pos/exchange-web-session` — the token behind
+  `erp.houzscentury.com/#sso=<token>`, i.e. the "open this in Houzs" button on
+  the tablet — mints an **origin-less** session. Between 2026-08-14 and this
+  ruling it carried `origin='pos'` forward, and the salesperson who came through
+  that door could not change a delivery-fee line from 250 to 125 in the ERP: 422
+  `so_total_below_original`. Owner: 「为什么我们要跟着 POS 的规矩?进了这个
+  ERP 就跟这个 ERP 的规矩。在我们 ERP 里编辑,金额就必须能改。」 So the gate
+  below binds **the POS app** — requests made with the token the PIN door issued
+  — and not the tablet, the device or the person. Anyone who can pass the PIN
+  gate can obtain an ERP session and price freely; that is the accepted cost of
+  the ruling, and the per-line audit trail (actorId / actorName on every SO line
+  mutation) is what remains. `scm.so.price_override` is the permission key that
+  could carry this as policy instead, if the owner later wants a narrower hinge.
 - **Every other session** (desktop web ERP, mobile, invite, TOTP): **not POS →
   never drift-rejected.** Owner ruling 2026-07: a salesperson may hand-type the
   price. `recomputeFromSnapshot(..., trustOperatorSelling=true)` — passed on the
@@ -1466,13 +1808,58 @@ SO-specific wiring:
 
 ### What an approved amendment does to the LINE PRICE
 
-Approving an amendment re-runs the honest-pricing recompute on every changed
-line (`so-revision.ts` -> `recomputeOneLine`), and that recompute is
-**authoritative by default**: it rewrites `unit_price_centi` to
-`mfg_products.sell_price_sen` (+ fabric-tier delta + extras). That is deliberate
-for a NATIVE order — the catalogue is the truth for an order this ERP priced —
-and it applies even to a QTY-ONLY amendment, because the recompute is per-line,
-not per-changed-field.
+**Owner ruling, 2026-08-16:** *"Any amount can be edited, unless it is locked. If
+it has proceeded and a day has passed so it locked, then it goes through Sales
+Amendment."* So the amendment is the sanctioned road for money on a locked SO,
+and since that date it CARRIES the money. It did not before, and the paragraph
+that used to sit here described the old behaviour as deliberate:
+
+> Approving an amendment re-runs the honest-pricing recompute on every changed
+> line … **authoritative by default**: it rewrites `unit_price_centi` to
+> `mfg_products.sell_price_sen`… That is deliberate for a NATIVE order.
+
+That was true of the code and wrong about the product. An operator typed RM 50,
+an approver holding `scm.amendment.approve_*` signed RM 50, and the catalogue
+price landed — on every SKU with one. A QTY-ONLY amendment did it too, because
+the recompute is per-line, not per-changed-field, and the editor sends
+`newUnitPriceSen` on every SPEC/QTY line.
+
+**Today.** Approving still re-runs the honest-pricing recompute on every changed
+line (`backend/src/scm/lib/so-revision.ts` -> `recomputeOneLine`), but the trust
+it passes is derived from the APPROVAL, not from the payload:
+
+| what the apply is given | native order | migrated order |
+| --- | --- | --- |
+| `approval` (the approve-so gate's receipt) | the requested price persists (`trustOperatorSelling: true`) | stored / requested price persists (`'including-zero'`) |
+| `null` (any other caller) | catalogue, exactly as before | stored price kept |
+
+`SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
+default, constructed only inside `approveSoCommandHandler` after
+`hasHouzsPerm(c, approveKey)` and the transition check. With `approval === null`
+the requested `new_unit_price_sen` is not read at all. That is the whole safety
+argument: `new_unit_price_sen` is written straight from the browser and validated
+nowhere (mig 0080 — bare nullable `integer`; the submit gate admits
+`scm.amendment.create` OR any Sales-org user OR a lane approver), so what makes a
+requested price payable is the signature, never the payload.
+
+The ceiling is deliberate — an approved amendment grants exactly the authority
+the operator would have had on the same order **before** it locked, since the
+direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)`
+— and not one unit more.
+
+**Two consequences worth knowing.**
+
+- An approved price of exactly **RM 0** on a catalogued SKU still fills from the
+  catalogue. `true` reads 0 as "not provided", which is the same rule the
+  unlocked edit path uses; `'including-zero'` is reserved for a MIGRATED line,
+  where 0 is a real AutoCount figure. An ADD line never gets `'including-zero'`
+  on any order type — it is being authored now, so it has no AutoCount history.
+- **`discount_centi` still has no amendment channel.** `scm.so_amendment_lines`
+  has no discount column (mig 0080 + 0281: `new_item_code`, `new_variants`,
+  `new_qty`, `new_unit_price_sen`, `new_remark`, `old_snapshot`), so a discount
+  cannot be requested, approved or applied. The apply carries the line's existing
+  discount forward untouched and an ADD line always lands at discount 0. Reducing
+  an amount on a locked SO is therefore a **unit-price** change, never a discount.
 
 **A MIGRATED order is exempt.** When the SO header carries `linked_ac_docno`
 (migration 0271 — the marker that actually exists; `migrated_no_stock` lives only
