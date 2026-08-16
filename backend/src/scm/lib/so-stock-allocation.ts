@@ -43,6 +43,7 @@ import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-se
 import { paginateAll, chunkIn } from './paginate-all';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
+import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
 
 export type AllocationResult = {
@@ -51,6 +52,19 @@ export type AllocationResult = {
   ordersAdvanced: number;
   ordersRegressed: number;
   reason?: string;
+  /* TRUE when this call did NOT finish the projection and left a durable retry
+     row behind for the five-minute cron. FALSE when it did not finish and could
+     not even record that — the one state a human has to hear about, which is
+     why it is logged at error level rather than only returned. `undefined` on
+     the happy path.
+
+     This field exists because `ok` answers a DIFFERENT question (CLAUDE.md,
+     "the check that answers a different question"): a lock-skip returned
+     `{ ok: true, reason: 'another_recompute_in_progress' }` and thirty-odd
+     best-effort callers wrote `await recomputeSoStockAllocation(sb)` and
+     discarded it, so "true" meant "nothing happened and nobody will retry".
+     See the SKIP LEAVES A TRACE note at the enqueue below. */
+  queuedForRetry?: boolean;
   /* Doc numbers whose HEADER status could not be advanced/regressed this pass
      because a human editor holds the SO's edit lease (or the header moved under
      us). See the skip-and-continue note at the header-transition block: these
@@ -72,7 +86,64 @@ export type AllocationResult = {
 const ALLOCATION_LOCK_ROW = 'GLOBAL';
 const ALLOCATION_LOCK_MS = 15 * 60_000;
 
+/* SKIP LEAVES A TRACE (owner-visible defect, 2026-08-17).
+   ─────────────────────────────────────────────────────────────────────────────
+   The sweep below has three ways to come back having done nothing, and until
+   this wrapper existed all three were INVISIBLE to the ~34 best-effort triggers
+   that call it (GRN post, DO ship, returns, stock takes, transfers,
+   adjustments, consignment, and eight paths in mfg-sales-orders):
+
+     · it lost the single-flight race     -> { ok: TRUE, reason:
+                                               'another_recompute_in_progress' }
+     · it threw                           -> { ok: false, reason: <message> }
+     · a human held an SO's edit lease    -> { ok: true, deferredDocNos: [...] }
+
+   Every one of those call sites is written `await recomputeSoStockAllocation(sb)`
+   with the result discarded, so the request returned success and the projection
+   stayed stale until some UNRELATED later mutation happened to sweep it. The
+   first case is the one that bites hardest and it is not a crash-window race:
+   two GRNs posted close together deterministically leave the second one's lines
+   stale, and goods arriving is exactly the moment the operator is looking.
+
+   The five-minute cron could not help, because a best-effort trigger writes NO
+   queue row — the cron finds nothing pending and returns `completed: true`. It
+   was a backstop for the four durable call sites, never a repair loop.
+
+   So: whenever the sweep did not finish, write the durable retry row HERE, once,
+   for every present and future caller. That turns the existing cron into the
+   repair loop the system was documented as having. What it does NOT fix is a
+   Worker that dies BEFORE reaching this function — that still needs each route
+   moved onto `runScmPgCommand` so the enqueue can join the source write's
+   transaction (see the SCOPE header in stock-allocation-job.ts). Nothing here
+   should be read as making allocation durable in general. */
 export async function recomputeSoStockAllocation(
+  sb: any,
+  scopeToDocNo?: string,
+): Promise<AllocationResult> {
+  const result = await runSoStockAllocation(sb, scopeToDocNo);
+  const finished = result.ok
+    && result.reason !== 'another_recompute_in_progress'
+    && !(result.deferredDocNos && result.deferredDocNos.length > 0);
+  if (finished) return result;
+  try {
+    await enqueueStockAllocationRecompute(
+      sb,
+      `retry:${result.reason ?? (result.deferredDocNos ? 'headers_leased' : 'incomplete')}`,
+    );
+    return { ...result, queuedForRetry: true };
+  } catch (error) {
+    /* The projection is stale AND nothing will retry it. That is the state this
+       whole wrapper exists to prevent, so it can never be silent — and it is
+       still not thrown, because rolling back a posted GRN over a diagnostic row
+       would be worse than the stale line. */
+    // eslint-disable-next-line no-console
+    console.error('[so-allocation] recompute did not finish and the retry row could not be written:', error);
+    return { ...result, queuedForRetry: false };
+  }
+}
+
+async function runSoStockAllocation(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST client type, unchanged from the exported wrapper this body was split out of; schema.pg.ts covers none of these SCM tables (see ci.yml's lint job comment)
   sb: any,
   scopeToDocNo?: string,
 ): Promise<AllocationResult> {

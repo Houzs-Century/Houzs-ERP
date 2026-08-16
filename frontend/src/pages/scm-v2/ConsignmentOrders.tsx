@@ -43,6 +43,9 @@ import {
   useConsignmentOrderDetail,
 } from '../../vendor/scm/lib/consignment-order-queries';
 import { SearchProgress } from '../../components/SearchProgress';
+import {
+  StockRemarkPill, stockRemarkSortFn, stockRemarkSearchValue, stockRemarkExportValue,
+} from '../../components/StockRemarkPill';
 import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
@@ -1297,51 +1300,15 @@ const buildAllColumns = (
        was an accessory-only order that could NOT ship, so the amber slot now
        belongs to the SHORT labels — same hue, honest word. */
     key: 'stock_status', label: 'Stock Status', width: 220, sortable: true, groupable: false,
-    accessor: (r) => {
-      const remark = (r.stock_remark ?? '').trim();
-      if (!remark) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
-      const isFull  = remark === 'READY';
-      const isShort = remark.startsWith('SHORT:');
-      const bg = isFull  ? 'var(--c-mint, #d4edda)'
-              : isShort ? 'rgba(232, 107, 58, 0.15)'
-              : 'var(--c-cream)';
-      /* SHORT keeps the amber WARNING pair - that hue is the app's
-         intentional warning slot, not a 2990 brand remnant (the interactive
-         burnt-orange accents elsewhere were swept to primary). */
-      const fg = isFull  ? 'var(--c-green, #1a7a3a)'
-              : isShort ? '#b0592f'
-              : 'var(--c-ink)';
-      const weight = (isFull || isShort) ? 700 : 600;
-      return (
-        <span style={{
-          fontFamily: 'var(--font-sans)',
-          fontSize: 'var(--fs-11)',
-          fontWeight: weight,
-          background: bg,
-          color: fg,
-          padding: '2px 10px',
-          borderRadius: 'var(--radius-pill, 999px)',
-          letterSpacing: 0.5,
-          border: (isFull || isShort) ? 'none' : '1px solid var(--line)',
-        }}>
-          {remark}
-        </span>
-      );
-    },
-    searchValue: (r) => (r.stock_remark ?? '').toLowerCase(),
-    /* searchValue is lowercased for the search box — export the real remark. */
-    exportValue: (r) => (r.stock_remark ?? '').trim(),
-    sortFn: (a, b) => {
-      /* Sort: READY first, then the SHORT labels, then blank. Within SHORT, a
-         longer remark (more categories missing) sorts after a shorter one, so
-         "one thing away" floats above "waiting on everything". */
-      const score = (s: string) => {
-        if (s === 'READY')             return 3000;
-        if (!s)                        return 0;
-        return 1000 - s.length;        // shorter remark = closer to ready
-      };
-      return score(b.stock_remark ?? '') - score(a.stock_remark ?? '');
-    },
+    /* The pill, the sort, the search and the export all come from
+       components/StockRemarkPill.tsx now. This column was the DESIGN OF RECORD
+       — it is unchanged on screen; what moved is that the SO list and the
+       delivery-planning board render the same thing instead of two paler
+       imitations of it (2026-08-17). */
+    accessor: (r) => <StockRemarkPill remark={r.stock_remark} />,
+    searchValue: (r) => stockRemarkSearchValue(r.stock_remark),
+    exportValue: (r) => stockRemarkExportValue(r.stock_remark),
+    sortFn: (a, b) => stockRemarkSortFn(a.stock_remark, b.stock_remark),
   },
   /* HOUZS category subtotals — Mattress/Sofa burnt, Bedframe green, Acc neutral.
      '—' when zero so commander's eye skims to filled cells. */

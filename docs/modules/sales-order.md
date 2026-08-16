@@ -166,9 +166,8 @@ Column: `scm.mfg_sales_order_items.stock_status`. **Three values**, not two:
 > different object, different vocabulary. That module exists precisely because
 > the board had grown a second vocabulary inline (#2320).
 
-**CONFIRMED: the stored value goes stale, and the 5-minute cron does not fix
-it.** Three separate mechanisms, all in `scm/lib/stock-allocation-job.ts` and its
-callers:
+**The stored value goes stale. Three mechanisms, and PR #TBD (2026-08-17) closed
+the third-and-a-half of them — read which.**
 
 1. **Only FOUR call sites are durable.** `scheduleStockAllocationAfterCommand`
    writes a queue row inside the caller's PG transaction (the three TBC line
@@ -176,25 +175,37 @@ callers:
    rest: *"THIRTY-FOUR allocation triggers … still call
    `recomputeSoStockAllocation` best-effort"* — GRN post/cancel, DO ship/cancel,
    returns, stock takes, transfers, adjustments, consignment, and eight paths in
-   `mfg-sales-orders.ts` itself.
-2. **A best-effort trigger writes NO queue row**, so the `*/5` cron's
-   `drainStockAllocationRecompute` finds nothing pending and returns
-   `{processed:false, completed:true}`. The cron is a backstop for the durable
-   four ONLY. It is not a general repair loop.
-3. **The single-flight lock returns early and the caller discards it.**
-   `recomputeSoStockAllocation` claims a durable lease row; if another recompute
-   holds it, it returns `{ ok: true, reason: 'another_recompute_in_progress' }`
-   and does nothing. `grns.ts` posts a GRN with a bare
+   `mfg-sales-orders.ts` itself. **STILL TRUE.**
+2. **A best-effort trigger wrote NO queue row**, so the five-minute cron's
+   `drainStockAllocationRecompute` found nothing pending and returned
+   `{processed:false, completed:true}`. **FIXED 2026-08-17.**
+   `recomputeSoStockAllocation` now enqueues its OWN retry row whenever a sweep
+   it entered did not finish, so the cron is a real repair loop for all ~38
+   triggers, not a backstop for the durable four.
+3. **The single-flight lock returned early and the caller discarded it.**
+   The recompute claims a durable lease row; if another recompute holds it, it
+   returns `{ ok: true, reason: 'another_recompute_in_progress' }` and does
+   nothing. `grns.ts` posts a GRN with a bare
    `await recomputeSoStockAllocation(sb)` and never reads the result. Two GRNs
-   posted close together therefore leave the second one's lines stale
-   **deterministically**, not just on a crash.
+   posted close together therefore left the second one's lines stale
+   **deterministically**, not just on a crash. **The return shape is unchanged**
+   (the drain keys off it) — what changed is that the skip now leaves a queue row
+   and sets `queuedForRetry: true`, so "nobody will retry" is no longer one of
+   the things `ok: true` can mean.
 
-**What DOES eventually fix a stale line:** the next *successful* recompute
-triggered by any of the ~38 call sites anywhere in the system — the sweep is
-GLOBAL, so an unrelated SO save, GRN or DO re-derives every line. There is no
-scheduled repair and no retry on the path that produced the stale value. That
-matches the reported symptom exactly: goods received and unclaimed while the line
-still reads PENDING.
+**What is NOT fixed, and needs the same work it always did:** a Worker that dies
+BEFORE reaching the recompute still leaves no row and no retry. Only a queue
+write inside the source write's own transaction covers that, which means moving
+each route onto `runScmPgCommand` — the follow-up the SCOPE header describes,
+highest count first (`grns` 6, `mfg-sales-orders` 7). **Allocation is still not
+durable in general.**
+
+**What ALSO fixes a stale line, as before:** the next *successful* recompute
+triggered by any of the ~38 call sites — the sweep is GLOBAL, so an unrelated SO
+save, GRN or DO re-derives every line.
+
+**And the board no longer waits for any of that.** Since 2026-08-17 the SO list's
+Stock Status column does not read this stored column alone — see §0.4.
 
 ### 0.4 LINE `stock_state` — the LIVE value, and why it disagrees with `stock_status`
 
@@ -211,15 +222,49 @@ Values: `'stock' | 'po' | 'shortage' | null`.
 **So for a non-sofa, non-service line, `stock_state` and `stock_status` are
 produced by two engines that never consult each other.** They disagree whenever
 the stored projection is stale (§0.3) or whenever MRP's pooled view differs from
-the allocator's per-line FIFO+warehouse view. The list rolls up the STORED value
-(`summariseReadiness` over `stock_status`); the detail and the drill-down render
-the LIVE one. Both are "the stock status" to the operator.
+the allocator's per-line FIFO+warehouse view.
 
-`frontend/src/components/SoSourceChips.tsx`'s `soLineStockPill` renders a pill
-off BOTH: fully-shipped → `DELIVERED`; `stock_state === 'stock'` **or**
-`stock_status === 'READY'` → `READY`; `stock_status === 'PARTIAL'` → `PARTIAL`;
-else `PENDING`. The `or` is why a line can read READY on the drill while the
-list's rollup still counts it short.
+**Until 2026-08-17 the two surfaces disagreed IN FRONT OF THE OPERATOR.** The
+list rolled up the STORED value; the drill-down pill rendered the LIVE one. The
+owner met the result on `2990-SO-2608-002`: the board printed `SHORT: MATTRESS`
+and the line he opened to check said the mattress was in stock. He reported it as
+two bugs — "why does it show READY when the item is pending" and "why is my Stock
+Status not following the rule I set". It is one: two engines, one screen.
+
+### `stock_status_effective` — the verdict BOTH surfaces answer from
+
+`scm/lib/so-line-effective-stock.ts`. `effectiveLineStockStatus(storedStatus,
+liveState)`, a UNION:
+
+| stored | live | effective | why |
+|---|---|---|---|
+| `PENDING` | `stock` | **READY** | the stale-projection case — the goods are physically there |
+| `READY` | `shortage` / `po` | **READY** | the allocator knows BOUND MODE and dye-lot batches; MRP structurally cannot see either |
+| `PENDING` | `po` / `shortage` | `PENDING` | an incoming PO is not stock |
+| `PARTIAL` | anything but `stock` | `PARTIAL` | |
+| anything | `null` | the stored value | MRP had no verdict, or `computeMrp` threw — fail-soft to the pre-2026-08-17 behaviour exactly |
+
+Neither engine may VETO the other; a line is short only when both say so. `null`
+is a REQUIRED argument, not an omitted one — a new caller has to type it and
+thereby say the stored value is standing alone.
+
+Where it is used:
+
+- `GET /mfg-sales-orders` rolls it up into `stock_remark` / `is_main_ready` /
+  `planning_state`. It costs no extra query: that handler ALREADY awaits one
+  `computeMrp` (`mrpForListProm`, for the source-PO union) and `mrpLineCoverage`
+  is a pure flatten of that result.
+- `GET /:docNo` and `GET /:docNo/items` stamp it on every line as
+  `stock_status_effective`. `stock_state` and `stock_status` both stay on the
+  payload — they are the two INPUTS, and the source chips and MRP page still read
+  them individually.
+
+`frontend/src/components/SoSourceChips.tsx`'s `soLineStockPill` (and its mobile
+twin `mobile/source-chips.tsx`) now PREFER `stock_status_effective`, falling back
+to the client-side `stock_state === 'stock' || stock_status === 'READY'`
+expression only for a payload that predates the field. The fallback is
+byte-identical to the old rule; the point is that the authority moved to the
+server, where the list reads it too.
 
 ### 0.5 `stock_remark`, `is_main_ready`, `is_ship_ready`
 
@@ -253,6 +298,25 @@ still appear in historical rows and in the AutoCount `Remark2` corpus
 
 Accessories do NOT block ship when the order has a main line. Service-only orders
 are ready on sight (owner ruling, 2026-08-16).
+
+**The VOCABULARY is unchanged and the INPUT moved (2026-08-17).** `summariseReadiness`
+still decides the words exactly as above; on the SO list it is now fed the
+effective per-line status of §0.4 instead of the raw stored column, so
+`stock_remark`, `is_main_ready` and `planning_state` on a list row all describe
+what the drill-down shows. The ship GATE inside `recomputeSoStockAllocation` is
+NOT affected — that sweep still summarises its own freshly-computed line targets,
+which is the only input it can write against.
+
+**Where `stock_remark` is RENDERED — one component, three surfaces.**
+`frontend/src/components/StockRemarkPill.tsx` owns the pill, the sort rank, the
+search value and the export value. `MfgSalesOrdersListV2.tsx`,
+`ConsignmentOrders.tsx` and `vendor/scm/components/DeliveryPlanningBoard.tsx` all
+call it. Before 2026-08-17 those three drew the same string three ways — a
+designed mint/amber pill, grey `text-ink-secondary` body text, and a third pair of
+hard-coded hexes — which is why a real SHORT warning read as an incidental note on
+the SO list. READY is mint, SHORT is the app's amber WARNING slot, blank is an em
+dash; the sort is READY → SHORT (fewest categories first) → blank, so the orders
+closest to shipping lead the warnings.
 
 ### 0.6 The status PILL is not the status COLUMN
 

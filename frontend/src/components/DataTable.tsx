@@ -78,6 +78,16 @@ export interface Column<T> {
   /** Provide a raw value for CSV export and client-side sorting. Columns
    *  without this are skipped during export and can't be sorted. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
+  /** Order this column by something OTHER than its displayed value, when the
+   *  alphabetical reading of that value is the wrong priority. The Stock Status
+   *  column is the case this was added for: `SHORT: ACCESSORY` sorts above
+   *  `SHORT: BEDFRAME` alphabetically, ranking a cushion over a missing bed.
+   *
+   *  `getValue` still owns CSV export and the column funnel, so the exported
+   *  column and the filter checklist keep showing the real words. Omitting this
+   *  sorts by `getValue`, exactly as every column did before it existed —
+   *  absence is the unchanged direction, not a new default. */
+  sortValue?: (row: T) => string | number | boolean | null | undefined;
   /** For cells that hold SEVERAL values (a service case can be both Bedframe
    *  and Mattress). The funnel then lists each value on its own line, counts
    *  it against every row that carries it, and a row matches when ANY of its
@@ -1929,7 +1939,9 @@ function DataTableInner<T>({
     // across the full dataset — leave it alone. A `disableSort` column is
     // NOT server-sortable, so sort the loaded page in memory instead.
     if (serverSort && !col.disableSort) return filteredRows;
-    const getter = col.getValue;
+    // sortValue wins where a column's display order is not its priority order;
+    // getValue is the default and stays the export/funnel accessor either way.
+    const getter = col.sortValue ?? col.getValue;
     const mul = sort.dir === "asc" ? 1 : -1;
     // Stable-ish copy — Array.prototype.sort is stable in modern engines.
     const copy = filteredRows.slice();

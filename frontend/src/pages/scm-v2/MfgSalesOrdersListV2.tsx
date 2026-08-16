@@ -40,6 +40,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
@@ -1669,13 +1670,22 @@ export function MfgSalesOrdersListV2() {
       key: "stock_status",
       group: "Logistics",
       label: "Stock Status",
-      width: "150px",
+      width: "170px",
       defaultHidden: true,
+      // Not in the backend sort whitelist, so this sorts the loaded page
+      // client-side (see the DataTable `disableSort` doc) — which is what
+      // `sortValue` below orders.
       disableSort: true,
       getValue: (r) => r.stock_remark ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.stock_remark || "—"}</span>
-      ),
+      /* SHORT first, closest-to-ready first within it. `getValue` stays the raw
+         remark so the CSV export and the column funnel keep showing the real
+         words; only the ORDER is semantic (owner 2026-08-17 — a warning you
+         cannot sort to the top is a warning you find by scrolling). */
+      sortValue: (r) => stockRemarkSortScore(r.stock_remark),
+      /* The same pill ConsignmentOrders has always drawn. It used to be grey
+         body text here, which is why a genuine SHORT warning read as an
+         incidental note on the one screen the owner has open. */
+      render: (r) => <StockRemarkPill remark={r.stock_remark} />,
     },
     {
       key: "processing_date",

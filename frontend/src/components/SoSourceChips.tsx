@@ -36,6 +36,12 @@ export type SoLineSourceFields = {
   item_group?: string | null;
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
+  /** The SERVER's verdict over both columns above (scm/lib/so-line-effective-stock.ts),
+   *  since 2026-08-17. The SO list's Stock Status column rolls up this same
+   *  function, so the pill and the board column can no longer hold two
+   *  opinions — which is what printed `SHORT: MATTRESS` over a mattress that
+   *  was in the warehouse on 2990-SO-2608-002. */
+  stock_status_effective?: "READY" | "PARTIAL" | "PENDING" | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   shipped_source_pos?: string[];
@@ -54,10 +60,19 @@ export function soLineStockPill(l: SoLineSourceFields): { label: string; cls: st
     return { label: "READY", cls: "bg-synced-bg text-synced" };
   const shipped = (l.delivered_qty ?? 0) > 0 && (l.remaining_qty ?? null) === 0;
   if (shipped) return { label: "DELIVERED", cls: "bg-surface-dim text-ink-muted" };
-  if (l.stock_state === "stock" || l.stock_status === "READY")
-    return { label: "READY", cls: "bg-synced-bg text-synced" };
-  if (l.stock_status === "PARTIAL")
-    return { label: "PARTIAL", cls: "bg-warning-bg text-warning-text" };
+  /* PREFER THE SERVER'S VERDICT. The `||` below is the rule this client used to
+     own outright, and the SO list rolled up a DIFFERENT one — so the same order
+     read READY here and SHORT on the board. Since 2026-08-17 both handlers stamp
+     `stock_status_effective` from ONE backend function and the list rolls up the
+     same call, so the two surfaces are the same answer rather than two
+     implementations that agree on a good day. The fallback stays for a payload
+     that predates the field (a cached detail response, the consignment line
+     shape) and is byte-identical to the old behaviour. */
+  const effective = l.stock_status_effective
+    ?? (l.stock_state === "stock" || l.stock_status === "READY" ? "READY"
+      : l.stock_status === "PARTIAL" ? "PARTIAL" : "PENDING");
+  if (effective === "READY") return { label: "READY", cls: "bg-synced-bg text-synced" };
+  if (effective === "PARTIAL") return { label: "PARTIAL", cls: "bg-warning-bg text-warning-text" };
   return { label: "PENDING", cls: "bg-surface-dim text-ink-muted" };
 }
 
