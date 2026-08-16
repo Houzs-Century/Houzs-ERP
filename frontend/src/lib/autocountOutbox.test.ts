@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { apiPost } = vi.hoisted(() => ({ apiPost: vi.fn() }));
+vi.mock("../api/client", () => ({ api: { get: vi.fn(), post: apiPost } }));
+
 import {
   acAge,
   acHeadline,
@@ -6,8 +10,13 @@ import {
   acStateLabel,
   acStateTone,
   buildAcOutboxQs,
+  requeueAcOutboxRow,
   type AcOutboxResponse,
 } from "./autocountOutbox";
+
+/* Braces, not a concise arrow — a returned mock becomes vitest's teardown and
+   fires api.post after every test. Same trap as the two page suites. */
+beforeEach(() => { apiPost.mockReset(); });
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   writeback: { value: "1", on: true, scope: "1" },
@@ -107,5 +116,53 @@ describe("acAge", () => {
   it("does not invent an age it does not have", () => {
     expect(acAge(null, now)).toBe("—");
     expect(acAge("not a date", now)).toBe("—");
+  });
+});
+
+describe("requeueAcOutboxRow", () => {
+  it("POSTs the row id and no body — the company is the header, never a parameter", async () => {
+    /* Passing a company would be inventing a second, weaker boundary beside the
+       route's own predicate. Same argument as useAutoCountOutbox above. */
+    const answer = {
+      accepted: true,
+      code: "requeued",
+      message: "Sent back to the queue.",
+      row_id: "ob-1",
+      doc_type: "SO",
+      doc_no: "HC-SO-2608-001",
+      op: "create_so",
+      new_row_id: "ob-9",
+      reason: null,
+    };
+    apiPost.mockResolvedValueOnce(answer);
+    await expect(requeueAcOutboxRow("ob-1")).resolves.toEqual(answer);
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/ob-1/requeue");
+  });
+
+  it("escapes the id rather than pasting it into the path", async () => {
+    apiPost.mockResolvedValueOnce({});
+    await requeueAcOutboxRow("ob 1/../2");
+    expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/ob%201%2F..%2F2/requeue");
+  });
+
+  it("RESOLVES on a refusal — it is the server answering, not the call failing", async () => {
+    /* The distinction a caller must render: a refusal has a code and a sentence
+       to show, a throw has neither. A component that only handled the throw
+       would leave the owner pressing a button that does nothing visible, which
+       is the silent-mutation shape check-silent-mutations.mjs exists to catch. */
+    apiPost.mockResolvedValueOnce({
+      accepted: false,
+      code: "already-sent",
+      message: "AutoCount already accepted this one.",
+      row_id: "ob-2",
+      doc_type: "SO",
+      doc_no: "HC-SO-2608-003",
+      op: "create_so",
+      new_row_id: null,
+      reason: null,
+    });
+    const r = await requeueAcOutboxRow("ob-2");
+    expect(r.accepted).toBe(false);
+    expect(r.code).toBe("already-sent");
   });
 });

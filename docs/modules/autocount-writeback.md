@@ -1703,8 +1703,10 @@ below, whose output is an Actions log.
 | Desktop | `frontend/src/pages/AutoCountSync.tsx`, route `/autocount-sync`, Sidebar section **System**, next to System Health |
 | Mobile | `frontend/src/mobile/MobileAutoCountSync.tsx`, menu group **System** |
 | Shared logic | `frontend/src/lib/autocountOutbox.ts` — the hook, the filter shape and the words, so the two surfaces differ only in presentation |
-| Endpoint | `GET /api/scm/autocount-outbox` — `backend/src/scm/routes/autocount-outbox.ts` |
-| Permission | `scm.autocount.read` **or** `settings.manage` (Owner / IT Admin pass on `*`) |
+| Endpoint (read) | `GET /api/scm/autocount-outbox` — `backend/src/scm/routes/autocount-outbox.ts` |
+| Endpoint (re-send) | `POST /api/scm/autocount-outbox/:id/requeue` — same file |
+| Permission (read) | `scm.autocount.read` **or** `settings.manage` (Owner / IT Admin pass on `*`) |
+| Permission (re-send) | `scm.autocount.requeue` **or** `settings.manage`. **Not** `scm.autocount.read` — see below |
 
 **Mounted with NO `scmAreaGuard`** (`backend/src/scm/index.ts`, and therefore
 listed in `SCM_UNGUARDED_PREFIXES` in `backend/src/scm/lib/scm-areas.ts` — the
@@ -1727,10 +1729,48 @@ workflow annotation must, and a page does not.
 whole tenant boundary here and an unscoped AutoCount report has already cost this
 project most of a day (#2201).
 
-**READ-ONLY, deliberately.** There is no re-queue button. Re-sending is the
-workflow below and it carries an `includeFailed` opt-in with a warning attached
-(#2189), because a `failed` row WAS sent and the C# create has no duplicate
-guard. Putting that behind a button is a decision the owner has not made.
+**IT WAS READ-ONLY UNTIL 2026-08-16.** This paragraph read: *"There is no
+re-queue button … Putting that behind a button is a decision the owner has not
+made."* He has made it, and `POST /:id/requeue` is the backend half.
+
+**The button climbs the SAME ladder as the workflow**, `requeueOneRow` in
+`backend/src/scm/lib/autocount-requeue.ts`, extracted out of `requeueSkipped`'s
+loop for the purpose. Two ladders would be two answers to "may this document be
+sent again", and the looser one writes a second copy of a document into a
+licensed account book. What the by-id path adds is three answers a backlog sweep
+cannot produce:
+
+| code | why |
+|---|---|
+| `already-sent` | AutoCount ACCEPTED this document. Refused before anything is read or composed — the C# create has no duplicate guard on the ERP document number, and an accepted sales order cannot simply be deleted there. This is the refusal the workflow never needed: it selects `skipped`, and `failed` only behind `includeFailed`. |
+| `row-pending` | the drain is already going to send it, so a second press could only add a duplicate five minutes later |
+| `row-not-found` | no such row **in this company**. Answered identically for an unknown id and for the other company's id |
+
+**No `includeFailed` opt-in here, and that is not a loosening.** The flag exists
+because the workflow sweeps a whole backlog blind; a person pressing a button on
+one row has already read that row's reason. What the flag never protected
+against — a `sent` row — is refused outright, which the flag could not do.
+
+**`can_requeue` on every list row** says whether the button belongs there at all
+(`acRowIsRequeueable`): a `create_so` / `create_po` row whose state is `failed`
+or `skipped` and which carries no re-queue marker. It is a HINT computed by the
+server so the page holds no policy; the POST re-checks everything.
+
+**The answer is a structured outcome, never an exception string** — `accepted`,
+a stable `code`, and a plain-English `message` from `AC_REQUEUE_MEANING`, which
+lives beside the code that produces it so a new outcome cannot render on the
+owner's page as a bare hyphenated key. Every code, with its trigger, whether a
+re-send can ever fix it and what a person should DO, is
+`docs/autocount-sync-reasons.md`; `backend/tests/autocountSyncReasonsCatalogue.test.ts`
+fails if the two ever disagree.
+
+**A refusal is HTTP 200.** `already-sent` and the rest are legitimate answers, not
+client errors. Only the four things wrong with the CALL carry a non-200: 403 (no
+permission), 409 (company unresolved), 404 (`row-not-found`), 500
+(`read-failed`).
+
+The workflow below is unchanged and remains the way to work a whole backlog, and
+the only way to get a DRY RUN.
 
 **Filters are in the URL** (`?state=`, `?docType=`, `?docNo=`) on desktop;
 the mobile shell has no router, so they are component state there.
@@ -1738,8 +1778,9 @@ the mobile shell has no router, so they are component state there.
 ### One taxonomy, three readers
 
 The classification of a `skipped` row lives in
-`backend/src/scm/lib/autocount-outbox-status.ts` — the states, the eight skip
-kinds with their remedies, `REQUEUE_NOTE_PREFIX`, and `MAX_ATTEMPTS`. The route
+`backend/src/scm/lib/autocount-outbox-status.ts` — the states, the skip kinds
+with their remedies (`AC_SKIP_KINDS`; read the array rather than a count typed
+here, it has grown twice), `REQUEUE_NOTE_PREFIX`, and `MAX_ATTEMPTS`. The route
 reads it, `backend/src/scm/lib/autocount-requeue.ts` re-exports the prefix from
 it, and the health script reads its plain-node mirror
 `backend/scripts/lib/autocount-skip-kinds.mjs`, because that script runs under
@@ -1799,6 +1840,20 @@ switch**, and the script says which — it reads
 > `backend/src/scm/lib/autocount-outbox-status.ts`. Each kind now also carries a
 > stable `kind` key, which is what the page filters on, so a reworded message
 > changes what the operator reads and not what a URL means.
+>
+> **UPDATED 2026-08-16 — and the "eight entries" above is now wrong too, which
+> is the point.** Enumerating every reason a row can be `skipped` or `failed`
+> for `docs/autocount-sync-reasons.md` found that the table did not cover the
+> writers: `MissingAgentError`, `MissingSalesLocationError` and
+> `MissingCreditorError` had no needle at all (the first of those is what the
+> live book answered on go-live day, `FK_SO_SalesAgent`), the merged-conversion
+> needle `AutoCount has no shape` was copied from a doc COMMENT and matched
+> nothing any writer produces, and four more reasons — the DtlKey-subset
+> refusal, cancel-before-send, edit-before-counterpart and the mislinked GRN —
+> were never in it. All eight now are. **Do not type the new count here.** The
+> open item recorded in `docs/autocount-sync-reasons.md` §5 is that these
+> needles are strings typed twice, with nothing checking them against the code
+> that writes them, which is precisely how the wrong one survived.
 
 The cron also logs `[cron ac-writeback]` per sweep, and at ERROR level whenever
 a row reaches `failed` — a failed row means a document
@@ -1828,6 +1883,14 @@ Every refusal above names a remedy — set the stock location, add the binding
 that disambiguates the item code, backfill the line keys. Applying the remedy
 used to change nothing, because a `skipped` row is terminal and no route path
 re-attempts a create (§7). This is the "ask again".
+
+**TWO WAYS IN, ONE LADDER.** Since 2026-08-16 the page's per-row button
+(`POST /api/scm/autocount-outbox/:id/requeue`, §8) is the other caller. Both go
+through `requeueOneRow`, so every safety property described in this section
+holds identically for the button; the differences are only that the button
+always applies, works one row at a time, and can be pointed at a `sent` or
+`pending` row, which it refuses. Everything below is about the workflow, which
+remains the only way to sweep a backlog or to get a DRY RUN.
 
 | input | |
 |---|---|
@@ -1917,7 +1980,8 @@ never be mistaken for a cancel divergence.
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_centi` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
-| `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
+| `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted. **And the by-id path**: a `sent` row is refused with nothing written, refused BEFORE the document is read (so a deleted order cannot change the answer) and refused with the switch off too; another company's row answers `row-not-found` while the same row in the caller's own company goes through; a `failed` row's replacement starts at zero attempts while the dead row keeps its six |
+| `tests/autocountSyncReasonsCatalogue.test.ts` | `docs/autocount-sync-reasons.md` against the code, both directions — every re-queue outcome and every skip kind has a row, and the file describes no outcome the code can no longer return. Also that the `Invalid transfer item.` entry sends the reader to rebuild the AutoCount service rather than to press the button again |
 | `src/scm/shared/so-outstanding.test.ts` | **§7q.** The outstanding-balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment is 0 rather than negative |
 | `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened. Plus §7o's composer half: `bookSpelling` vs `bookSpellingOrOwn`, the address packing, the customer-reference chain, branding off the lines with no `BEDFRAME` pseudo-brand, the sales-location fallback, and the two new refusals (`MissingSalesLocationError`, `MissingCreditorError`) |

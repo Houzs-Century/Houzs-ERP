@@ -129,6 +129,32 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy:
       'a line carries no stock location — set the warehouse on the line, or the sales location on the document',
   },
+  /* THREE REFUSAL CLASSES THIS TABLE DID NOT KNOW, ADDED 2026-08-16.
+     noteReadFailure has written all three since the write-back went live, and
+     none of them had a needle here — so every one of them reached the page as
+     `unrecognised` with a NULL remedy, on rows whose remedy is one field on one
+     form. MissingAgentError is not hypothetical: it is what AED_HOUZS answered
+     to HC-SO-2608-001 and -002 on 2026-08-13 (FK_SO_SalesAgent), the first day
+     documents were pushed. The classifier that could not name it is the one
+     that produced this table's own cautionary tale (#2094). */
+  {
+    kind: 'missing-agent',
+    needle: 'refused, nothing sent (MissingAgentError)',
+    remedy:
+      'the sales order names no salesperson AutoCount knows — assign a salesperson on the order, then send it again',
+  },
+  {
+    kind: 'missing-sales-location',
+    needle: 'refused, nothing sent (MissingSalesLocationError)',
+    remedy:
+      'the sales order itself carries no stock location and has no live line to take one from — set the sales location, or add a line with a warehouse',
+  },
+  {
+    kind: 'missing-creditor',
+    needle: 'refused, nothing sent (MissingCreditorError)',
+    remedy:
+      "the purchase order's supplier has no AutoCount creditor code — fill in scm.suppliers.code for that supplier, then send it again",
+  },
   {
     kind: 'compose-failed',
     needle: 'compose failed, nothing sent',
@@ -146,9 +172,43 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy: 'raised with no parent — cannot exist in AutoCount at all',
   },
   {
+    /* THE NEEDLE WAS WRONG AND MATCHED NOTHING, corrected 2026-08-16. It read
+       'AutoCount has no shape', which is a phrase from recordConvertSkipped's
+       own DOC COMMENT — no code path has ever written it into last_error. The
+       five places that record a merged conversion (delivery-orders-mfg.ts,
+       grns.ts twice, sales-invoices.ts, purchase-invoices.ts) all write
+       "AutoCount transfers from ONE source document", so every merged
+       conversion in the queue has been classified `unrecognised` since the
+       feature shipped. A needle taken from the comment beside the writer
+       instead of from the writer is the same mistake in a different key as
+       matching a shared prefix. */
     kind: 'no-autocount-shape',
-    needle: 'AutoCount has no shape',
-    remedy: 'merged conversion (N sources -> 1 document) — must be worked by hand',
+    needle: 'AutoCount transfers from ONE source document',
+    remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
+  },
+  {
+    kind: 'dtlkey-subset',
+    needle: 'carry no AutoCount DtlKey',
+    remedy:
+      'a PART of the parent was transferred and the ERP cannot name which lines — backfill linked_ac_dtlkey on the SOURCE document, then raise this document again',
+  },
+  {
+    kind: 'cancelled-before-send',
+    needle: 'cancelled in the ERP before it was written to AutoCount',
+    remedy:
+      'nothing to do — the document was cancelled while its create was still queued, so neither ever reached the account book',
+  },
+  {
+    kind: 'edit-before-counterpart',
+    needle: 'edited before its AutoCount counterpart existed',
+    remedy:
+      'the conversion that creates this document is still queued and will transfer the source lines, not this edit — save the document again once it has drained',
+  },
+  {
+    kind: 'grn-mislinked',
+    needle: 'not of this goods receipt',
+    remedy:
+      "the goods receipt's AutoCount number is its purchase order's, a cutover convention — the real receipt numbers are on the PO (linked_ac_grn_docnos), and nothing can be sent for this GRN until one is chosen",
   },
 ] as const;
 
@@ -222,6 +282,46 @@ export function acNeedsAttention(
   status: string,
   lastError: string | null | undefined,
 ): boolean {
+  const state = acOutboxState(status, lastError);
+  return state === 'failed' || state === 'skipped';
+}
+
+/**
+ * The two operations that HAVE an AutoCount create, and are therefore the only
+ * ones a re-send can express. Named here because both the button-visibility
+ * hint below and the re-queue ladder itself are statements about this set.
+ */
+export const AC_REQUEUEABLE_OPS = ['create_so', 'create_po'] as const;
+
+/**
+ * Is a per-row "Send again" button worth OFFERING on this row?
+ *
+ * A HINT, NOT THE GATE. The gate is requeueOutboxRow (lib/autocount-requeue.ts),
+ * which re-reads the row and the document and can refuse for six more reasons
+ * this pure function cannot see — the document already carries a
+ * linked_ac_docno, the write-back switch is off, the composer refuses it again.
+ * Nothing here is trusted by the write path; this exists only so the page does
+ * not put a button on a row whose answer is knowably "no" before it is pressed.
+ *
+ * The four structural noes, and each is permanent for that row:
+ *
+ *   status pending / sent   there is nothing to re-ask. A pending row is
+ *                           already going out and a sent row is in the book.
+ *   already re-queued       the marker means somebody asked again; its document
+ *                           is queued or sent under a NEWER row.
+ *   not a create            an edit is re-queued by saving the document, and a
+ *                           conversion has no create to re-attempt at all.
+ *
+ * Deliberately NOT mirrored into scripts/lib/autocount-skip-kinds.mjs: the
+ * health check reports the queue and never re-queues, so a copy there would be
+ * a second home for a rule with no second reader.
+ */
+export function acRowIsRequeueable(
+  op: string,
+  status: string,
+  lastError: string | null | undefined,
+): boolean {
+  if (!(AC_REQUEUEABLE_OPS as readonly string[]).includes(op)) return false;
   const state = acOutboxState(status, lastError);
   return state === 'failed' || state === 'skipped';
 }
