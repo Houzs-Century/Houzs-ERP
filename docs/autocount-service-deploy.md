@@ -116,13 +116,35 @@ powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1 -DryRun   # does it 
 powershell -ExecutionPolicy Bypass -File deploy-on-host.ps1           # compile, swap, verify
 ```
 
-It does every step in 2.1 to 3 in order, and adds the two things a written
-ritual cannot: it **refuses to swap an exe that did not compile**, and it
-**rolls back by itself** if the new exe does not answer `/health` with the
-expected book. It deletes `AcSyncService.build.cs` in a `finally`, so the
-password does not survive a failed run either. To ask only "does the source
-compile", with no credentials involved at all, use `build-local.ps1` — that runs
-on any workstation with AutoCount 2.2 installed.
+It does every step in 2.1 to 3 in order, and adds the things a written ritual
+cannot: it **refuses to swap an exe that did not compile**, it **opens the SQL
+connection before it stops anything**, and it **rolls back by itself** if the
+new exe does not answer `/health` with the expected book. It deletes
+`AcSyncService.build.cs` in a `finally`, so the password does not survive a
+failed run either. To ask only "does the source compile", with no credentials
+involved at all, use `build-local.ps1` — that runs on any workstation with
+AutoCount 2.2 installed.
+
+> **REWRITTEN 2026-08-16, after this script caused a production outage.** Both
+> claims above used to be false in the way that matters, and both cost something
+> the same evening. See `docs/acsync-deploy-rollback-coe.md`.
+>
+> - **The rollback had never worked.** It killed the new process and copied over
+>   `AcSyncService.exe` on the next line; Windows still held the image open, the
+>   copy threw `being used by another process`, `$ErrorActionPreference='Stop'`
+>   ended the script, and the host was left running **neither** exe. Write-back
+>   was dead for about ten minutes. It now waits for the process to exit, waits
+>   for the file handle to be released, verifies the restored copy by hash,
+>   starts it, and polls `/health` until it answers.
+> - **The connection was tested too late.** `setup.json` named a server on a
+>   subnet the host is not on, and the only thing that noticed was
+>   `/ensure-masters` — which runs *after* the stop and the swap. The script now
+>   opens a real `SqlConnection` with the same server, credentials and book in
+>   section 3, before anything is stopped or even compiled, and refuses there.
+> - **Every exit now ends with a listening check.** If nothing answers `/health`
+>   and this run is why, the script prints a full-width red banner with the
+>   recovery commands and exits **2**. Exit **1** means it refused or rolled back
+>   and the service *is* running; exit **0** means deployed and verified.
 
 The rest of this section is the manual equivalent.
 
@@ -358,6 +380,26 @@ nothing.
 ## 5. Rollback
 
 Stop the service, restore `AcSyncService.prev.exe`, start it.
+
+> **Order matters, and getting it wrong is what caused the 2026-08-16 outage.**
+> `Stop-Process` returns before the process is gone, and Windows holds the image
+> file open until it is. Copying over `AcSyncService.exe` on the next line fails
+> with *"being used by another process"* and leaves **nothing** running. By hand:
+>
+> ```bat
+> powershell -Command "Get-Process AcSyncService -EA SilentlyContinue | Stop-Process -Force"
+> :: wait until this prints nothing at all
+> powershell -Command "Get-Process AcSyncService -EA SilentlyContinue"
+> copy /Y C:\Temp\AcSyncService.prev.exe C:\Temp\AcSyncService.exe
+> start "" C:\Temp\AcSyncService.exe
+> curl -X POST http://localhost:8900/health -H "X-API-KEY: %ACKEY%"
+> ```
+>
+> The last line is not optional. A rollback you did not confirm is a rollback you
+> did not do — that is the whole finding of
+> `docs/acsync-deploy-rollback-coe.md`. `deploy-on-host.ps1` now does all five
+> steps itself, in that order, and will not exit quietly if the final curl would
+> have failed.
 
 Rolling back re-opens the duplicate-append defect, so it should be paired with
 turning the ERP write-back toggle off:

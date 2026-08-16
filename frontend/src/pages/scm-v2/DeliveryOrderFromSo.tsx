@@ -24,9 +24,10 @@
 // Routing: /scm/delivery-orders/from-so → /scm/delivery-orders/new.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { writeScmHandoff } from '../../lib/scmHandoffStorage';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -69,12 +70,29 @@ export const DeliveryOrderFromSo = () => {
   const navigate = useNavigate();
   const linesQ = useDeliverableSoLines();
 
+  /* "Deliver" on a Sales Order row lands here with ?soDocNo=<doc no> so the
+     operator sees the order they were just looking at, not every open SO in the
+     company. The parameter was being constructed by the caller and dropped here
+     until 2026-08-16. The key is the DOC NUMBER, not an id — deliverable-so-lines
+     returns docNo and no order id, and the parameter is named for what it
+     carries. No parameter → the full picker (the list toolbar's "From Sales
+     Order" button). */
+  const [searchParams] = useSearchParams();
+  const scope = useMemo(
+    () => readConvertScope('soToDo', searchParams, []),
+    [searchParams],
+  );
+
   // Map<soItemId, { picked, qty }>. Defaults: picked = false; when ticked,
   // qty defaults to the line's remaining.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
-  const rows = useMemo<DeliverableSoLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const allRows = useMemo<DeliverableSoLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const rows = useMemo<DeliverableSoLine[]>(
+    () => (scope.keys.size === 0 ? allRows : allRows.filter((r) => scope.keys.has(r.docNo))),
+    [allRows, scope.keys],
+  );
 
   const rowById = useMemo(() => {
     const m = new Map<string, DeliverableSoLine>();
@@ -137,6 +155,35 @@ export const DeliveryOrderFromSo = () => {
   // A row is LOCKED when a different customer is already picked.
   const isRowLocked = (r: DeliverableSoLine): boolean =>
     Boolean(lockedCustomer && keyOf(r) !== lockedCustomer && !picks[r.soItemId]?.picked);
+
+  /* Scoped entry pre-ticks the order's remaining lines at full quantity, so the
+     screen is a ready-to-review draft rather than a filtered list to re-tick by
+     hand. Copies GrnFromPo, the one convert that already worked. Nothing ships
+     and no stock moves here — Continue only carries the picks to the New DO
+     form. */
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    if (scope.keys.size === 0) return;
+    if (linesQ.isLoading) return;
+    prefilled.current = true;
+    const mine = rows.filter((r) => r.remaining > 0);
+    const first = mine[0];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
+    if (!first) return;
+    // Honour the one-customer-per-DO lock: tick only the first line's customer,
+    // even if the scope somehow spans two.
+    const lockTo = keyOf(first);
+    setPicks(() => {
+      const next: Record<string, Pick> = {};
+      for (const l of mine) {
+        if (keyOf(l) !== lockTo) continue;
+        next[l.soItemId] = { picked: true, qty: l.remaining };
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyOf derives from docCustKey, listed
+  }, [rows, linesQ.isLoading, scope.keys, docCustKey]);
 
   const togglePick = (r: DeliverableSoLine) => {
     if (isRowLocked(r)) return; // can't tick a different customer
@@ -386,6 +433,19 @@ export const DeliveryOrderFromSo = () => {
         quantity is shown. Continue carries the picked lines into a new Delivery Order form for you to
         review — nothing ships and no stock is deducted until you click Create on that screen.
       </p>
+      <UnrecognisedScopeNotice unknown={scope.unknown} />
+      {scope.keys.size > 0 && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Showing the deliverable lines of{' '}
+          <strong>
+            {scope.keys.size === 1 ? [...scope.keys][0] : `${scope.keys.size} Sales Orders`}
+          </strong>{' '}
+          only.{' '}
+          <Link to="/scm/delivery-orders/from-so" style={{ color: 'var(--c-burnt)', textDecoration: 'underline' }}>
+            Show all Sales Orders
+          </Link>
+        </p>
+      )}
       {lockedCustomerName && (
         <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
           One customer per Delivery Order — locked to <strong>{lockedCustomerName}</strong>. Other
@@ -419,7 +479,9 @@ export const DeliveryOrderFromSo = () => {
            work that is still outstanding. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No deliverable Sales Order lines — every line has been fully delivered (or there are no Sales Orders)."}
+          : scope.keys.size > 0
+            ? "Nothing left to deliver on the Sales Order you came from — every line of it has been fully delivered. Other orders may still have lines; use Show all above."
+            : "No deliverable Sales Order lines — every line has been fully delivered (or there are no Sales Orders)."}
       />
 
       {dialog && (

@@ -42,11 +42,11 @@ across (§4).
 | # | Source → Destination | CF | CT | Multi | Where CT lives | Gap size |
 |---|---|:--:|:--:|---|---|---|
 | 1 | **SO → PO** | yes | partial | **lines across many SOs** | PO detail in `?edit=1` only ("From Sales Order"); MRP page "Proceed PO (N)". **Nothing on the SO list or SO detail.** | **M** |
-| 2 | **SO → DO** | yes | partial | **lines across many SOs** (picker); **true bulk** on the planning board | SO list row drawer "Deliver" (one SO, and the scope is dropped — §4); Delivery Planning "Convert to DO" / "Convert {n} to DO" | **S** |
-| 3 | **DO → SI** | yes | yes | **lines across many DOs** | DO detail + DO list drawer "Convert to SI" (one DO, scope dropped) | **S** |
+| 2 | **SO → DO** | yes | partial | **lines across many SOs** (picker); **true bulk** on the planning board | SO list row drawer "Deliver" (one SO, **now scoped** — §4a); Delivery Planning "Convert to DO" / "Convert {n} to DO" | **S** |
+| 3 | **DO → SI** | yes | yes | **lines across many DOs** | DO detail + DO list drawer "Convert to SI" (one DO, **now scoped** — §4a) | **none** |
 | 4 | **PO → GRN** | yes | **yes, fully** | **many PO lines; bulk from the PO list** | PO detail, PO list drawer, and PO list **bulk bar** — the only fully-working CT in the system | **none** |
-| 5 | **GRN → PI** | yes | yes | lines, **ONE GRN** (PI carries a single `grn_id` FK) | GRN detail + GRN list "Convert to PI" (scope dropped) | **S** |
-| 6 | **GRN → PR** | **no** | yes | — | GRN detail + list "Convert to PR" — **and the param name does not match, so it always opens blank** (§4) | **S** |
+| 5 | **GRN → PI** | yes | yes | lines, **ONE GRN** (PI carries a single `grn_id` FK) | GRN detail + GRN list "Convert to PI" (**now scoped** — §4a) | **none** |
+| 6 | **GRN → PR** | **no** | yes | — | GRN detail + list "Convert to PR" — the param mismatch that opened it blank is **fixed** (§4a); there is still no `/from-grn` picker page | **S** |
 | 7 | **DO → Delivery Return** | yes | **no** | lines across many DOs | — | **S** |
 | 8 | **Consignment Order → Consignment Note** | yes | yes (whole-order only) | lines across many COs | CO list row menu + CO detail "Create Consignment Note" — prefills the WHOLE order, no line picking | **S** |
 | 9 | **CN → Consignment Return** | yes | yes | lines across many CNs | CN detail "Create Consignment Return" | **none** |
@@ -57,9 +57,10 @@ across (§4).
 
 ### What the grid says, plainly
 
-- **Only ONE pair (PO → GRN) has a complete, working "Convert to".** Everything
-  else is either missing it, or has a button that navigates to an unscoped
-  picker.
+- **FOUR pairs now have a complete, working "Convert to"**: PO → GRN, DO → SI,
+  GRN → PI and SO → DO. It was ONE when this guide was written; the other three
+  were repaired the same day (§4a). Everything else is *missing* the button
+  rather than having a broken one.
 - **Three pairs have no "Convert to" at all**: DO → Delivery Return, PC Order →
   PC Receive, PC Receive → PC Return.
 - **One pair has no "Convert from"**: GRN → PR (there is no
@@ -149,8 +150,104 @@ through to the detail route with `id="from-so"`.
 `/scm/sales-orders/new/guided`, which is the sofa configurator and references no
 quotation anywhere.
 
-> These four are REPORTED, not fixed — this guide is a map, and the task that
-> produced it was explicitly documentation-only.
+> **Three of these four are now FIXED** — see §4a, which also records what the
+> repair enumerated and what it deliberately left. The FOURTH (the "New from
+> quotation" mislabel) is still open: it is a copy decision, not a broken link.
+>
+> Two corrections to the table above, from re-deriving it on 2026-08-16: the
+> hook counts differ if you count `params.get(...)` as well (`GrnFromPo` reads
+> 17 by that measure, 2 by this one), and the binary fact is what matters —
+> eight read ZERO. And **only THREE of those eight were receiving a parameter**;
+> the other five have no "Convert to" button pointing at them, so they had
+> nothing to drop. "Reads no parameter" and "is broken" are not the same claim.
+
+---
+
+## 4a. The link contract — how a "Convert to" says where it came from
+
+*Added 2026-08-16 with the repair of the first three defects in §4.*
+
+Every call site used to spell the scope parameter itself, which is why neither a
+DROPPED parameter nor a MISSPELT one could fail anywhere: not at compile time,
+not in a test, and not on screen. **`frontend/src/lib/convertScope.tsx` now
+names each conversion's parameter ONCE**, keyed by pair, and both sides import
+it:
+
+| side | what it calls |
+|---|---|
+| the source button | `convertToLink(pair, keys)` → the URL |
+| the destination picker | `readConvertScope(pair, searchParams, alsoKnown)` → `{ keys, unknown }` |
+| the destination picker | `<UnrecognisedScopeNotice unknown={scope.unknown} />` |
+
+| pair key | source-side button | destination | parameter |
+|---|---|---|---|
+| `poToGrn` | PO detail, PO list row, PO list **bulk bar** | `GrnFromPo` | `poId` |
+| `grnToPi` | GRN detail, GRN list row | `PurchaseInvoiceFromGrn` | `grnId` |
+| `grnToPr` | GRN detail, GRN list row | `PurchaseReturnNew` | `grnId` |
+| `poToPr` | PO detail "Raise Return" | `PurchaseReturnNew` | `poId` |
+| `doToSi` | DO detail, DO list row | `SalesInvoiceFromDo` | `doId` |
+| `soToDo` | SO list row "Deliver" | `DeliveryOrderFromSo` | `soDocNo` |
+
+The rules, taken from `GrnFromPo` — the one convert that already worked:
+
+- **The parameter is named for what it CARRIES.** `soDocNo`, not `soId`: that
+  picker's rows come from `/delivery-orders-mfg/deliverable-so-lines`, which
+  returns `docNo` and no order id. A parameter called `…Id` holding a document
+  number is the same drift wearing a different hat.
+- **One or many.** The value is a comma-separated list, so single convert and
+  the PO list's bulk "Convert to GRN" use the same parameter and a picker that
+  reads it gets multi-source for free.
+- **No parameter means the FULL picker** — a legitimate entry point (the list
+  toolbars' "From PO" / "From Delivery Order"), not a broken link.
+- **A scoped picker filters AND pre-ticks** the source's remaining lines at full
+  quantity, and offers a "Show all …" escape. Nothing is created: Continue only
+  carries the picks to the New-document form.
+- **A scoped picker's EMPTY state says the SCOPED thing is empty.** "Nothing
+  left to invoice on the Delivery Order you came from" and "no invoiceable lines
+  exist anywhere" are opposite facts, and the operator acts on the second one by
+  walking away from work that is still outstanding.
+- **An unrecognised parameter is SHOWN, never dropped.** That silence is exactly
+  what let `?fromGrn=` live: the screen looked like an ordinary blank form.
+- **`alsoKnown` is REQUIRED, never optional**, per CLAUDE.md's rule about a
+  parameter that decides something — it decides whether a name counts as
+  unrecognised, and an optional one gets forgotten into "off" one screen at a
+  time. Pass `[]` when the screen takes nothing else.
+
+### `appendTo…` is the opposite direction, deliberately outside the table
+
+`/scm/grns/from-po?appendToGrn=<id>` and `/scm/purchase-orders/from-so?poId=<id>`
+name an existing **destination** document to append the picked lines INTO.
+Mixing that with a source scope in one table is how the next reader gets it
+backwards, so those stay hand-written and are declared via `alsoKnown`.
+
+### What enforces it
+
+- `frontend/src/lib/convertScope.test.tsx` — the contract, **plus a tree scan
+  that fails on any site hand-writing a query onto a convert path.** A
+  convention people must remember is what failed here, so the check is the
+  memory.
+- `frontend/src/pages/scm-v2/convert-scope-pickers.test.tsx` — mounts each
+  repaired picker under a real router at the real URL its real caller builds and
+  asserts the operator sees the document they came from, not the one beside it.
+
+### What the repair deliberately left
+
+- **The five pickers that read no scope and receive none**
+  (`DeliveryReturnFromDo`, `ConsignmentNoteFromOrder`,
+  `ConsignmentReturnFromNote`, `PurchaseConsignmentReceiveFromOrder`,
+  `PurchaseConsignmentReturnFromReceive`) — no button points at them, so there
+  is nothing to scope to. Adding the button is the §8 decision, not a repair;
+  when one is added it costs one `convertToLink` and one `readConvertScope`.
+- **The "New from quotation" mislabel** (§4, defect four) — a copy decision.
+- Everything in §8 — those are builds the owner has not chosen.
+
+### There is no Sales Order → Sales Invoice conversion
+
+§4's third defect is fixed by **removing** the button, not by repointing it. The
+only SI converter the backend exposes is `POST /sales-invoices/from-dos`, fed by
+`GET /sales-invoices/invoiceable-do-lines`; a Sales Invoice is built from
+DELIVERY ORDERS. SO → SI does not exist in this system in either direction, so
+there was nothing for `/scm/sales-invoices/from-so` to point at.
 
 ---
 
