@@ -103,6 +103,51 @@ under both flag values. `false` merely omits undated rows/sets from the
 output. Do NOT reintroduce the flag into the demand filter: that is exactly
 the two-demand-sets divergence the audit caught.
 
+### What the flag HIDES is reported (2026-08-16)
+
+Display-only was never the problem; **silent** display-only was. Measured
+against production on 2026-08-16 for company 2 (2990), the default view returned
+**82 of 163** live SO-item ids and **8 of 68** short sofa sets, and the page said
+nothing about the missing half — so a real shortage rendered as no shortage.
+Owner: *"明明这个东西没有 ready,可是我的 MRP 却 show 不出来."*
+
+`MrpResult` therefore carries `undated`, counted ALWAYS — on exactly the rows the
+flag removes, before the `continue` that removes them:
+
+| field | meaning |
+|---|---|
+| `lines` | undated rows in the general path — **honours `catFilter` + `whFilter`** |
+| `shortageUnits` | units of `lines` the allocation could not cover |
+| `sofaSets` | undated sofa SETS — **section 8 ignores `catFilter`**, so read this on the sofa view only |
+| `sofaShortageUnits` | units of `sofaSets` the allocation could not cover |
+| `hidden` | `!includeUndated` — the response states what it DID |
+
+The two paths are counted separately on purpose: blending them would overstate
+every non-sofa tab by the whole sofa book. `Mrp.tsx` picks by tab and renders a
+count with a one-click **Show them** wired to the existing toggle; it reads
+`hidden` from the SERVER, not from its own checkbox, so a request the server did
+not honour still reads as hidden.
+
+**The DEFAULT is unchanged** — an undated line is not orderable yet and this page
+is the ordering worklist (Commander 2026-05-29). Flipping it is the owner's call
+and is one line in the route.
+
+**A count is not a filter.** Nothing in `undated` feeds the allocation, and
+`mrp.test.ts` pins that: the tally must equal the set of rows the flag removed,
+with the shortage the ONE allocation actually gave them. That assertion is also
+what catches a re-introduced demand filter — under the pre-D6 shape the removed
+rows never reach the allocator, so the tally stops matching.
+
+### `?includeUndated` parsing — `parseIncludeUndated`, exported and tested
+
+`=== 'true'` was the entire parser until 2026-08-16, so **`?includeUndated=1`
+returned the default plan with no error and no warning** (verified against
+production). Accepted now, either case, trimmed: `true / 1 / yes / on` and
+`false / 0 / no / off`; absent = `false`; **anything else throws
+`InvalidQueryFlag` and the route answers 400.** It is never quietly false — that
+is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
+`req.query(x) === 'true'` sites in `scm/routes` still carry it.
+
 ## 2. Demand
 
 - Source: `mfg_sales_order_items` (non-cancelled) joined `!inner` to its SO
@@ -252,7 +297,8 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/src/scm/lib/ship-commitment.ts` | Commitment deduction/add-back contract (`applyCommittedSupply`) |
 | `backend/src/scm/routes/po-so-coverage.ts` | PO->SO precedence (delivered lock > stored link > MRP floating) |
 | `backend/scripts/audit-mrp-pairing.mjs` | Read-only production detector — a REPLICA of sections 1-8; update it in the same PR as any allocation-rule change. Section (H) (2026-08-02) additionally enforces the owner's purchasing rule: cancelled/DRAFT POs fully out of the formula, and no over-ordering beyond demand for MATTRESS/BEDFRAME/SOFA (only ACCESSORY may be bought for stock) — reported per PO document with reason codes (STOCK-SLICE / SO-DONE / BUCKET-SPLIT / NO-DEMAND) plus received-but-unowned dead stock per bucket |
-| `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment |
+| `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment, the `undated` tally + `parseIncludeUndated` spellings (2026-08-16) |
+| `backend/scripts/probe-undated-demand.mjs` | Read-only production probe: how much live demand is undated, BOTH companies, with the refutation tests for why. Dispatch via `.github/workflows/probe-undated-demand.yml` |
 
 ## 8. Traps
 

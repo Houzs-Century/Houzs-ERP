@@ -444,6 +444,12 @@ export const Mrp = () => {
   const apiCategory = VIEW_CATEGORY[view];
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
+  /* How much undated demand this tab is not rendering. The sofa view reads the
+     sofa tally (section 8 is SOFA-only and ignores the category filter); every
+     other view reads the general one, which IS category-filtered. Reading the
+     wrong one would report the whole sofa book on the Mattress tab. */
+  const undatedHidden = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
+  const undatedHiddenShort = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
   const createPos = useCreatePosFromSoItems();
 
   /* One key per convert RUN — the intent this page DOES have, and the reason
@@ -906,6 +912,36 @@ export const Mrp = () => {
           </button>
         ))}
       </div>
+
+      {/* Undated demand that this view is NOT showing. Owner, 2026-08-16:
+          "明明这个东西没有 ready,可是我的 MRP 却 show 不出来" — half of 2990's live
+          demand was absent by default and the page said nothing, so a real
+          shortage read as no shortage at all.
+
+          The DEFAULT is deliberately unchanged (undated demand is not orderable
+          yet, Commander 2026-05-29 — this page is the ordering worklist). What
+          was wrong was the SILENCE, so the hidden set is now a stated fact with
+          the toggle one click away. `hidden` comes from the server, not from
+          showUndated, so a request the server did not honour still reads true.
+
+          Sofa counts sets and is not category-filtered; every other tab counts
+          general lines — see MrpResponse['undated']. */}
+      {undatedHidden > 0 && data?.undated?.hidden && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning-text/25 bg-warning-bg px-4 py-2.5 text-[12.5px] leading-relaxed text-warning-text">
+          <Clock {...ICON} className="shrink-0" />
+          <span>
+            <strong className="font-semibold">{undatedHidden}</strong>{' '}
+            {view === 'sofa' ? (undatedHidden === 1 ? 'sofa set' : 'sofa sets') : (undatedHidden === 1 ? 'order line' : 'order lines')}
+            {' '}with no delivery date {undatedHidden === 1 ? 'is' : 'are'} hidden from this view
+            {undatedHiddenShort > 0 && (
+              <> — <strong className="font-semibold">{undatedHiddenShort}</strong> {undatedHiddenShort === 1 ? 'unit is' : 'units are'} short</>
+            )}.
+          </span>
+          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(true)}>
+            Show them
+          </button>
+        </div>
+      )}
 
       {/* Summary pills removed (Commander 2026-06-15 — "那个不需要,删掉"); the
           active date-window chip stays since it reflects the live filter. */}
