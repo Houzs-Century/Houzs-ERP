@@ -47,12 +47,15 @@ AutoCount records lineage on the **TARGET document's DETAIL rows**:
 | `FromDocDtlKey` | the same four | the source LINE — **NULL throughout this book** |
 | `FullTransferFromDocList` | `DODTL` | the full list where one target row draws on several sources |
 
-**Measured on the live book, 2026-08-16/17:** 47,531 `DODTL` rows carry
-`FromDocType='SO'` with a `FromDocNo`, and `FromDocDtlKey` is NULL on **all** of
-them. `docs/autocount-migration-record.md` records the same emptiness on the
-other three detail tables (`PIDTL` 0 of 20,777, `IVDTL` 0 of 43,522). So
-AutoCount's own LINE-level lineage is unusable as a join key; only the
-DOCUMENT-level pair (`FromDocType`, `FromDocNo`) is real.
+**Reported from a live-book measurement taken 2026-08-16 by the session that
+raised this question — NOT re-measured by this survey:** 47,531 `DODTL` rows
+carry `FromDocType='SO'` with a `FromDocNo`, and `FromDocDtlKey` is NULL on
+**all** of them. What this survey DID verify, in the tree:
+`docs/autocount-migration-record.md` records the same emptiness on the other
+three detail tables (`PIDTL` 0 of 20,777, `IVDTL` 0 of 43,522), and
+`backend/src/scm/lib/migrated-chain.ts` is built around it. So AutoCount's own
+LINE-level lineage is unusable as a join key; only the DOCUMENT-level pair
+(`FromDocType`, `FromDocNo`) is real.
 
 Two consequences the ERP already lives with:
 
