@@ -49,6 +49,129 @@ already have.
 from sources priced at zero, which `#2259` made the route carry deliberately.
 
 **Ref.** 2026-08-16, PR #2300.
+## An address typed in AFTER the create reached AutoCount on one side only [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner, comparing our documents against the ones Inistate writes
+— Inistate being the connector the ERP replaces: *"address 和 delivery address
+也是你去查看一下 Inistate 开单都会把什么东西输入进去 AutoCount。"* Read off the
+live book on 2026-08-16:
+
+| | InvAddr1 | InvAddr3 | DeliverAddr1 | DeliverAddr3 |
+|---|---|---|---|---|
+| `HC-SO-2608-002` — address typed in by an EDIT | `dsdsd` | `05200 Alor Setar` | **(empty)** | **(empty)** |
+| `HC-SO-2608-003` — address present at CREATE | `gjhghj` | `01560 Kangar` | `gjhghj` | `01560 Kangar` |
+| `SO-013264/5/6` — Inistate's own | filled | filled | identical to Inv | identical to Inv |
+
+**Root cause.** `CreateSo` falls back per line —
+`so.DeliverAddr1 = Or(Str(p,"DeliverAddr1"), Str(p,"InvAddr1"))` — so a document
+created WITH an address gets both copies from the one the ERP sends. `/edit`'s
+header loop is `ContainsKey`-gated and `soEditHeader` only ever emitted
+`InvAddr1..4`, so an address added or changed after the create updated the
+invoice copy and left the delivery copy at whatever the create had put there —
+empty, for an order created without one.
+
+This is the same shape as the delivery-date and the clearing defects before it:
+**the CREATE path fills a field and the EDIT path does not.** Three instances
+now, all in the same function, all found by comparing the book against the ERP
+rather than by reading either alone.
+
+**Fix.** `deliverAddressOf` mirrors `soInvoiceAddress`'s four values onto the
+`DeliverAddr*` keys, built FROM it rather than re-derived so the two copies
+cannot drift — a second implementation of the five-columns-into-four packing is
+exactly how they would. Omit-when-absent still holds on both copies, and
+`clearedAcKeys` now nulls both when an address column is cleared: clearing one
+half would leave the book showing a street on the delivery side that the order
+no longer has.
+
+The mirroring is not a guess about what AutoCount wants — it is what Inistate,
+the system being replaced, already writes.
+
+Also tidied: the extraction that created this file left `export` orphaned above
+the doc comment (`export /**`), which compiles and reads as though the comment
+belongs to the export rather than the function.
+
+The first of the three new cases was observed RED with the mirror removed.
+
+**Ref.** 2026-08-16, PR #2280.
+## Refusing an over-payment pushed the money onto the customer's line items [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-16: 「我的 payment 是不能超收的…如果我多收 250，
+它不是应该 show balance negative 250 代表我超收吗？但它现在是直接把我的 item
+upgrade 上去，加多了 250 块」. A receipt larger than the outstanding total was
+refused, and the order's line value grew by the excess instead.
+
+**Root cause (traced).** NOT an automatic write — no code path adds a payment's
+excess to a line, and production agrees: price rises whose delta equals a
+payment amount on the same order = 0 across the whole book
+(probe-so-overpay.mjs, run 31938039273 section 5). The guard itself was the
+cause. POST/PATCH /:docNo/payments refused Σ(ledger) + this payment >
+total_revenue_centi, so an operator holding cash the customer had already paid
+had exactly one way to bank it: re-price the ORDER until the total covered it.
+On HC-SO-2608-002 that is the audit trail — UPDATE_LINE at 08:26:22 put RM 250
+of "Right Drawer" special on a JAGER-(K) line (unitPriceCenti 0 -> 25000), and
+the RM 2,250 payment landed 76 seconds later at 08:27:38, accepted because the
+total was now exactly 425000. The order silently grew a drawer nobody sold, and
+an item is what gets manufactured and delivered.
+
+**Fix.** Over-collection is allowed: the guard is deleted from both payment
+routes with the two lookups it needed. so-outstanding.ts gains soBalanceCenti
+(signed) beside soOutstandingCenti (still clamped, because it feeds AutoCount's
+UDF_BALANCE and a licensed ledger is not where a credit belongs); migration 0301
+un-floors the view's balance_centi_live so the list agrees with the detail page.
+Negative renders red on every SO balance surface, and the print flips BALANCE
+DUE to CREDIT BALANCE. Both signed rules refuse to go negative on a ZERO total —
+that is every AutoCount import, 2,687 of prod's 2,824 live orders, so a bare
+total - paid would have reddened 2,121 legacy orders for RM 9.26m nobody
+over-collected.
+
+**Ref.** fix/allow-overcollection-negative-balance, 2026-08-16.
+## The stock remark said READY (PARTIAL) on an order that could not ship [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, on a real accessory-only sales order with one accessory
+line short: the Stock Status column read `READY (PARTIAL)` while the same
+order was not ship-able — 骗人. Separately, a service-only SO (delivery fee
+only, nothing to allocate) could never become ready at all: it showed a blank
+remark and sat in CONFIRMED forever.
+
+**Root cause (traced).** Both defects were one line each in
+`backend/src/scm/lib/so-readiness.ts`.
+
+`isMainReady = mainCount > 0 ? mainReady === mainCount : true` is VACUOUSLY
+true when the SO has no MAIN (sofa/bedframe/mattress) line — the right reading
+for an accessory-only order, and the wrong one for a label. The remark branched
+on it (`else if (isMainReady) stockRemark = 'READY (PARTIAL)'`) three lines
+below the ship gate that branched on `isShipReady`, so the two answered the
+same question differently in the same function.
+
+`if (isServiceLine(...)) continue` dropped every service line before it could
+be counted, so a service-only SO ended with `mainCount + accCount === 0` and
+was byte-identical to an SO with no lines at all — the husk case #2186 had
+deliberately made un-shippable.
+
+Compounding both: `isServiceLine` documents `category` (mfg_products.category)
+as its strongest signal, but the `ReadinessLine` type had no field for it, so
+no caller could pass it and a delivery fee saved with `item_group: 'others'`
+counted as a short accessory.
+
+**Fix.** The remark now names what is MISSING — `''` for a line-less SO,
+`'READY'`, or `'SHORT: BEDFRAME, ACCESSORY'` — and never contains the substring
+READY while anything is short. It no longer reads `isMainReady` at all. Service
+lines are COUNTED (`svcCount`) rather than dropped, which is what makes
+"had lines, all of them service" distinguishable from "no lines"; `isFullyReady`
+requires at least one live line (service included) plus every stock-bearing line
+allocated, so service-only is ready and the husk still is not. `isShipReady`'s
+formula is untouched: every SO carrying a main line gates exactly as before.
+`ReadinessLine.category` was added and is resolved at all five construction
+sites through the new `lib/so-readiness-category.ts`, which also replaced three
+hand-rolled copies of the same chunked catalog read.
+
+**Ref.** PR #2295, fix/so-readiness-says-what-is-missing, 2026-08-16.
 
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 

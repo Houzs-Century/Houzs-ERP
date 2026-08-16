@@ -687,8 +687,8 @@ function DetailDrawer({
                 {paidCenti > 0 ? (
                   <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
                 ) : null}
-                {outstandingCenti > 0 ? (
-                  <TotalRow k="Outstanding" v={fmtRm(outstandingCenti)} tone="error" />
+                {outstandingCenti !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
+                  <TotalRow k={outstandingCenti < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingCenti)} tone="error" />
                 ) : null}
               </div>
             </div>
@@ -1636,9 +1636,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_centi_live ?? r.balance_centi ?? 0,
-      render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.balance_centi_live ?? r.balance_centi ?? 0)}</span>
+      getValue: (r) => r.balance_centi_live ?? r.balance_centi, // `?? 0` was dead: balance_centi is `number`, never nullish
+      render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
+        <span className={cn("font-money text-[13px]", (r.balance_centi_live ?? r.balance_centi) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_centi_live ?? r.balance_centi)}</span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
