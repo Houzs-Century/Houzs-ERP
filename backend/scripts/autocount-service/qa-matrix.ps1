@@ -287,7 +287,20 @@ if ($r2.status -ne 200 -or -not $r2.json.ok) {
   Record "5b-multi second SO" "PASS" ("DocNo=" + $r2.json.docNo + " DtlKeys=" + ($so2Keys -join ','))
   <# No FromDocNo at all: the keys span two documents, so there is no single
      parent to name. That is exactly what the route now allows. #>
-  $rm = Call '/so-to-do' @{ DtlKeys = @($soKeys[0], $so2Keys[0]); DebtorCode = $Debtor; DebtorName = "ERP QA"; SalesLocation = $Location }
+  <# A THIRD sales order, so the merge test stops cannibalising the single-source
+     one. The first run of this block took line 1 of the main SO, and step 5b
+     then failed with our own guard - "no transferable lines" - which reads like
+     a regression and was only test ordering. The merge now owns its own pair. #>
+  $SO3 = "$SO-C"
+  $r3 = Call '/create-so' @{
+    DocNo = $SO3; DocDate = (Get-Date).ToString('yyyy-MM-dd')
+    DebtorCode = $Debtor; DebtorName = "ERP QA MATRIX C"; Agent = $Agent; SalesLocation = $Location
+    Description = "ERP QA MATRIX THIRD SO - CANCEL ME"
+    Details = @( @{ ItemCode = $ItemCode; Qty = 6; UnitPrice = 40; Location = $Location; Desc2 = "SO-C LINE" } )
+  }
+  if ($r3.status -ne 200 -or -not $r3.json.ok) { Record "5b-multi third SO" "FAIL" ("status=" + $r3.status + " " + $r3.raw); $SO3 = $null }
+  $so3Keys = @($r3.json.lines | ForEach-Object { $_.DtlKey })
+  $rm = Call '/so-to-do' @{ DtlKeys = @($so3Keys[0], $so2Keys[0]); DebtorCode = $Debtor; DebtorName = "ERP QA"; SalesLocation = $Location }
   if ($rm.status -ne 200 -or -not $rm.json.ok) {
     Record "5b-multi TWO SOs -> ONE DO" "FAIL" ("status=" + $rm.status + " BODY: " + $rm.raw)
   } else {
@@ -364,7 +377,7 @@ if ($SkipTeardown) {
      The first version of this list cancelled the PO last and left a LIVE sales
      order in the book, which then had to be cancelled by hand. Child before
      parent means every child, and the PO is one of them. #>
-  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('DO',$multiDo), @('PO',$poNo), @('SO',$SO), @('SO',$SO2))) {
+  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('DO',$multiDo), @('PO',$poNo), @('SO',$SO), @('SO',$SO2), @('SO',$SO3))) {
     if (-not $pair[1]) { continue }
     $r = Call '/cancel' @{ DocType = $pair[0]; DocNo = $pair[1] }
     if ($r.status -eq 200 -and $r.json.ok) { Record ("7 cancel " + $pair[0] + " " + $pair[1]) "PASS" "cancelled, not deleted" }

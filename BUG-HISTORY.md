@@ -1,3 +1,84 @@
+## Several source documents into ONE target — native, and one line was blocking it [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Owner 2026-08-16:** a delivery order from several sales orders, an invoice from
+several DOs, a goods-received note from several POs, a purchase invoice from
+several GRNs — AutoCount does all four, and the write-back could do none of them.
+
+**PROVEN on the live book:**
+
+```
+5b-multi TWO SOs -> ONE DO
+  DO-011310 has 2 lines from 2 parents:
+  ZZQA-SO-20260816-095955 + ZZQA-SO-20260816-095955-B
+```
+
+Two sales orders, one delivery order, and each line's `FromDocNo` points back at
+its OWN parent.
+
+**Two things were in the way, and the second only appeared once the first was
+removed.**
+
+1. **`FromDocNo` was demanded unconditionally.** `DtlKeys()` already returned an
+   explicit `DtlKeys[]` verbatim without checking it against `FromDocNo`, so the
+   keys could always have spanned documents — the route simply refused to accept
+   a payload that did not name one parent. `FromDocNo` is the FALLBACK, used to
+   find the outstanding lines when the ERP does not name them, and it is now
+   optional when they are named.
+
+2. **A MIXED key array is refused by AutoCount.** Handing
+   `AddPartialTransferDetail` lines from two documents in one array answers:
+
+   ```
+   AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+   ```
+
+   The array must be lines of ONE source document. The merge is still native —
+   the TARGET accepts the call repeatedly — so the keys are grouped by the
+   document they actually belong to and the transfer is invoked once per group.
+
+**The grouping is read from the book, not taken on trust,** and the count is
+asserted: a key that exists on no document of that type refuses the whole
+request rather than quietly transferring a smaller set than the caller asked for.
+
+**A test-ordering trap this produced, worth keeping.** The merge test first used
+a line of the MAIN sales order, so the single-source `/so-to-do` that ran after
+it failed with our own guard — `no transferable lines on SO ...` — which reads
+exactly like a regression in the thing that had just been proven working. It was
+the test eating its own fixture. The merge now owns its own sales orders. When a
+step that passed a minute ago starts failing, suspect the fixture before the
+code.
+
+**Ref:** this PR, 2026-08-16.
+
+## A purchase order takes the ERP's amount, including ZERO [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Owner 2026-08-16:** *"就是 ERP 的，我填写多少就多少，我填写 0 就 0"*.
+
+Two separate things stood between that and the book.
+
+**1. Nothing sent an amount at all.** `UnitPrice` appears **nowhere** in
+`backend/src/scm/lib/autocount-outbox.ts`, so a purchase order raised from a
+sales order carried the SALES price the transfer brought across. The service
+side now applies what it is given; the composer still has to send it.
+
+**2. AutoCount refuses zero-value documents by default.** Every document class
+carries `EnableZeroNetTotalChecking` and the service never touched it. That
+check is meant for a human typing into the entry screen; here the number came
+from the ERP deliberately, and a zero-value purchase order is a real thing —
+free replacement, warranty supply, a line to be priced later. Turned off through
+`Set()`, so a class that does not expose it costs the flag and never the
+document.
+
+**PROVEN:** `/so-to-po` sent `UnitPrice: 0`, and the book reads back
+`UnitPrice=0` — not the sales price the transfer would otherwise have left. A
+zero that survives is the strongest available evidence that the ERP governs.
+
+**Ref:** this PR, 2026-08-16.
+
 ## SO-to-PO now carries the quantity and the cost — a two-phase write, PROVEN on the live book [high]
 
 <!-- area: AutoCount sync + write-back -->
