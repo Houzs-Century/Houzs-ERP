@@ -216,6 +216,38 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
 export const AC_SKIP_UNRECOGNISED = 'unrecognised';
 
 /**
+ * The reason written for a document AutoCount has no way to hold: a Delivery
+ * Order, Goods Received, Invoice or Purchase Invoice raised with no parent.
+ * Called by recordParentlessCreate (autocount-outbox.ts).
+ *
+ * HERE, beside the needle that classifies it, for a reason bought on
+ * 2026-08-16. This sentence used to end "(AddPartialTransferDetail is the SDK's
+ * only primitive)" and the owner read that identifier off the live AutoCount
+ * Sync page — the same string he had had removed from the page's own copy a few
+ * hours earlier. It came back through the SERVER, because the reason lived in
+ * the writer and nothing checked what the reason said. Sitting next to
+ * `no-source-document`'s needle, the pair is checkable and it is checked:
+ * backend/tests/autocountSyncReasonsCatalogue.test.ts asserts both that the
+ * sentence still contains the needle and that it names no SDK method, class or
+ * column.
+ *
+ * A REASON IS READ BY THE OWNER. The SDK explanation is not lost — it is in
+ * recordParentlessCreate's doc comment and in docs/autocount-sync-reasons.md §4,
+ * where engineers read it. Not mirrored into scripts/lib/autocount-skip-kinds.mjs
+ * on purpose: the health check READS reasons and never writes one, so a copy
+ * there would be a second home with no second reader (same argument as
+ * acRowIsRequeueable below).
+ *
+ * @param missing what the ERP document is missing, in the operator's words.
+ */
+export function acParentlessCreateReason(missing: string): string {
+  return `created with ${missing}, so there is no source document to transfer from. `
+    + 'AutoCount builds a delivery order, a goods received or an invoice only by carrying '
+    + 'an earlier document into it, so this document cannot be created in the account book '
+    + 'at all and will stay ERP-only.';
+}
+
+/**
  * Is this skip's reason the annotation the re-queue tool leaves behind?
  *
  * Deliberately a prefix test and not a `includes`: the annotation is prepended
