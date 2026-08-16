@@ -231,3 +231,46 @@ describe("MobileAutoCountSync — Send again", () => {
     expect(await screen.findByText(/Nothing was sent/)).toBeTruthy();
   });
 });
+
+describe("MobileAutoCountSync — an accepted re-send stops giving orders about the old refusal", () => {
+  /* "To fix: go and change it in AutoCount" on a document that has just been
+     sent back to the queue is a FALSE instruction, and it would sit there for a
+     whole round trip waiting on the re-read. It comes off immediately. */
+  it("takes the old reason off the row the moment the document is on its way", async () => {
+    apiPost.mockResolvedValue({
+      accepted: true, code: "requeued",
+      message: "Sent back to the queue. It goes to AutoCount on the next five-minute sweep.",
+      row_id: "f", doc_type: "SO", doc_no: "SO-F", op: "create_so",
+      new_row_id: "ob-9", reason: null,
+    });
+    await mount(busy);
+    const card = (await screen.findByText("SO-F")).closest(".card")!;
+    expect(within(card as HTMLElement).getByText("To fix")).toBeTruthy();
+
+    await userEvent.click(within(card as HTMLElement).getByRole("button", { name: "Send again" }));
+
+    expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
+    const after = screen.getByText("SO-F").closest(".card")!;
+    expect(within(after as HTMLElement).queryByText("To fix")).toBeNull();
+    expect(within(after as HTMLElement).queryByText("AutoCount replied")).toBeNull();
+    /* Replaced by what to do NOW, keyed by the outcome code. */
+    expect(within(after as HTMLElement).getByText("To do")).toBeTruthy();
+    expect(within(after as HTMLElement).getByText(/next five-minute send/)).toBeTruthy();
+  });
+
+  it("keeps the old reason when the re-send was refused — nothing changed", async () => {
+    apiPost.mockResolvedValue({
+      accepted: false, code: "already-sent",
+      message: "AutoCount already accepted this one.",
+      row_id: "f", doc_type: "SO", doc_no: "SO-F", op: "create_so",
+      new_row_id: null, reason: null,
+    });
+    await mount(busy);
+    const card = (await screen.findByText("SO-F")).closest(".card")!;
+    await userEvent.click(within(card as HTMLElement).getByRole("button", { name: "Send again" }));
+    expect(await screen.findByText(/AutoCount already accepted this one/)).toBeTruthy();
+    const after = screen.getByText("SO-F").closest(".card")!;
+    expect(within(after as HTMLElement).getByText("To fix")).toBeTruthy();
+    expect(within(after as HTMLElement).getByText(/do not look for a way round it/i)).toBeTruthy();
+  });
+});

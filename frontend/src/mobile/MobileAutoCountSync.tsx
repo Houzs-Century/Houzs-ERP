@@ -157,8 +157,10 @@ function OutboxCard(
 ) {
   const tone = acStateTone(row.state);
   const c = TONE_COLOR[tone];
-  const why = acReasonCopy(row.state, row.reason_kind);
-  const showSaid = why !== null || (row.reason !== null && row.state !== "sent");
+  /* Cleared the moment the re-send is accepted — see the desktop twin. */
+  const why = note?.clearsReason ? null : acReasonCopy(row.state, row.reason_kind);
+  const showSaid = !note?.clearsReason
+    && (why !== null || (row.reason !== null && row.state !== "sent"));
 
   return (
     <div
@@ -242,6 +244,14 @@ function OutboxCard(
             }}
           >
             {note.text}
+            {note.todo && (
+              <div style={{ marginTop: 5, fontWeight: 400, color: "var(--ink2)" }}>
+                <b style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: TONE_COLOR[note.tone].fg, marginRight: 6 }}>
+                  To do
+                </b>
+                {note.todo}
+              </div>
+            )}
             {note.quote && (
               <div style={{ marginTop: 4, fontWeight: 400, fontFamily: "ui-monospace, monospace", color: "var(--ink2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                 {note.quote}

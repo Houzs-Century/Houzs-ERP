@@ -12,6 +12,7 @@ import {
   AC_FILTER_STATE_LABEL,
   AC_REASON_COPY,
   AC_REPLY_LABEL,
+  AC_REQUEUE_TODO,
   AC_STATE_PLAIN_MEANING,
   AC_UNRECOGNISED_COPY,
   acAge,
@@ -22,6 +23,7 @@ import {
   acOpLabel,
   acReasonCopy,
   acReplySource,
+  acRequeueTodo,
   acRowKind,
   acRowStatusLine,
   acRowsOfType,
@@ -272,6 +274,38 @@ describe("the refusal, in three parts", () => {
   it("says nothing about a waiting or an arrived document", () => {
     expect(acReasonCopy("pending", null)).toBeNull();
     expect(acReasonCopy("sent", null)).toBeNull();
+  });
+});
+
+describe("what to do about each Send again answer", () => {
+  /* Every outcome docs/autocount-sync-reasons.md §1 catalogues, which is the
+     RequeueOutcome union in backend/src/scm/lib/autocount-requeue.ts. The codes
+     are the join between the server's "what happened" sentence and this side's
+     "what to do next" — a code with neither would reach the owner as a bare
+     hyphenated key, which is what the shared header warns against. */
+  const OUTCOMES = [
+    "would-requeue", "requeued", "still-refused", "not-recoverable",
+    "already-in-autocount", "already-queued", "already-requeued", "already-sent",
+    "row-pending", "row-not-found", "document-gone", "switch-off", "declined",
+    "read-failed",
+  ];
+
+  it("has a follow-up line for every outcome the server can answer with", () => {
+    for (const code of OUTCOMES) expect(acRequeueTodo(code), code).toBeTruthy();
+  });
+
+  it("says NOTHING rather than a bare key for an outcome nobody has written yet", () => {
+    expect(acRequeueTodo("an-outcome-added-next-month")).toBeNull();
+  });
+
+  it("does not tell anybody to work round a document AutoCount already accepted", () => {
+    expect(AC_REQUEUE_TODO["already-sent"]).toMatch(/do not look for a way round it/i);
+  });
+
+  it("carries no coding words of its own", () => {
+    for (const [code, text] of Object.entries(AC_REQUEUE_TODO)) {
+      expect(text, code).not.toMatch(/autocount_writeback|linked_ac|\bcron\b|§/);
+    }
   });
 });
 

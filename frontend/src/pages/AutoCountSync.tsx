@@ -191,8 +191,13 @@ function OutboxRowCard(
   },
 ) {
   const tone = acStateTone(row.state);
-  const why = acReasonCopy(row.state, row.reason_kind);
-  const showSaid = why !== null || (row.reason !== null && row.state !== "sent");
+  /* A re-sent document's old refusal is no longer true, and "To fix: change it
+     in AutoCount" on a document that has just gone back into the queue is a
+     false instruction. Off the row the moment the server accepts it, not on the
+     re-read a round trip later. */
+  const why = note?.clearsReason ? null : acReasonCopy(row.state, row.reason_kind);
+  const showSaid = !note?.clearsReason
+    && (why !== null || (row.reason !== null && row.state !== "sent"));
 
   return (
     <li
@@ -250,6 +255,14 @@ function OutboxRowCard(
       {note && (
         <div className={cn("border-t px-3 py-2.5 text-[13px] sm:px-4", TONE_WHY[note.tone])}>
           <span className={cn("font-semibold", TONE_TEXT[note.tone])}>{note.text}</span>
+          {note.todo && (
+            <p className="mt-1 max-w-[84ch] text-ink">
+              <span className={cn("mr-2 text-[11px] font-bold uppercase tracking-wide", TONE_TEXT[note.tone])}>
+                To do
+              </span>
+              {note.todo}
+            </p>
+          )}
           {note.quote && (
             <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
               {note.quote}

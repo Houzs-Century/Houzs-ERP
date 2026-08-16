@@ -1776,17 +1776,22 @@ directions it can go, and that is the part worth guarding:
 
 | what came back | what the row shows |
 |---|---|
-| `accepted: true` | the server's sentence, in green, and the page re-reads the queue — an accepted re-send makes a NEW row, so patching the one on screen would be a lie |
-| `accepted: false` | the server's `message`, in amber, plus `reason` verbatim underneath when the composer refused it again. **This is the branch that gets forgotten**, and forgetting it is "the button does nothing" wearing a success path — most refusals ("AutoCount already accepted this one") are the whole reason somebody pressed |
-| the call threw | *"Nothing was sent — the request did not get through: …"*, in red. A refusal and a throw are different facts |
+| `accepted: true` | the server's sentence, in green, and the page re-reads the queue — an accepted re-send makes a NEW row, so patching the one on screen would be a lie. **The old refusal comes OFF the row at the same moment**, before the re-read lands: *"To fix: go and change it in AutoCount"* on a document that has just been sent back to the queue is a false instruction, and a round trip is long enough to act on it |
+| `accepted: false` | the server's `message`, in amber, plus `reason` verbatim underneath when the composer refused it again, and the old refusal stays — nothing changed. **This is the branch that gets forgotten**, and forgetting it is "the button does nothing" wearing a success path: most refusals ("AutoCount already accepted this one") are the whole reason somebody pressed |
+| the call threw | *"Nothing was sent — the request did not get through: …"*, in red, old refusal kept. A refusal and a throw are different facts |
 
 Not a toast: a toast about `HC-SO-2608-004` is gone by the time the reader has
 found `HC-SO-2608-004`.
 
-`AC_REQUEUE_MEANING`'s sentences are shown VERBATIM and are the one exception to
-the no-coding-words row above — they are already plain English, they come from
-the module that produced the outcome, and a second dictionary on the page is how
-the two come to disagree about what `already-sent` means.
+**Two vocabularies, both keyed by the outcome code, and neither is a copy of the
+other.** `AC_REQUEUE_MEANING` (server) says WHAT HAPPENED and is printed
+verbatim — it is already plain English, it lives beside the code that produced
+the outcome, and a second dictionary on the page is how the two come to disagree
+about what `already-sent` means. `AC_REQUEUE_TODO` (`frontend/src/lib/autocountOutbox.ts`)
+is the OTHER column of `docs/autocount-sync-reasons.md` §1 — WHAT TO DO NEXT —
+which the API does not carry at all, and it renders as a **To do** line under
+the sentence. A code with no entry shows nothing rather than a bare hyphenated
+key, so a new outcome still reads correctly the day it ships.
 
 **`docType` is no longer sent to the server**, though the endpoint still accepts
 it. The type strip has to carry a count for every type, and a response already

@@ -237,13 +237,74 @@ export async function requeueAcOutboxRow(rowId: string): Promise<AcRequeueResult
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
 
+/**
+ * What to DO about each answer, keyed by the outcome code verbatim.
+ *
+ * TWO INSTRUCTIONS MET, NOT ONE OVERRIDDEN — worth spelling out, because they
+ * read like they conflict. `requeueAcOutboxRow`'s own header (#2321) says the
+ * server's `message` is "never rewritten here", and it is not: the sentence
+ * above this line on the row is `AC_REQUEUE_MEANING`'s, verbatim. What is here
+ * is the OTHER column of docs/autocount-sync-reasons.md §1 — "what the person
+ * should do" — which the API does not carry at all. `message` says what
+ * happened; this says what to do next, and the codes are the join between them.
+ *
+ * A code with no entry shows NOTHING rather than a bare hyphenated key. That is
+ * the failure the same header warns about, and it is why this map is additive:
+ * a new outcome still renders its server sentence in full, it simply has no
+ * follow-up line until somebody writes one.
+ */
+export const AC_REQUEUE_TODO: Record<string, string> = {
+  requeued: "Nothing more to do. It goes out with the next five-minute send.",
+  "already-sent":
+    "Nothing, and do not look for a way round it. A second copy in the account book is worse than this row.",
+  "already-in-autocount":
+    "Nothing. The account book already has this document under its own number.",
+  "row-pending":
+    "Wait. If it is still here in half an hour, the AutoCount computer is not answering.",
+  "already-queued":
+    "Nothing here. There is a live attempt for this document already — work that one.",
+  "already-requeued":
+    "Find the newer row for this document. This one is only the record of what happened.",
+  "still-refused":
+    "Read the reason below. It is what is blocking the document NOW, which may not be what you just put right.",
+  "not-recoverable":
+    "Send again cannot help this one. The reason on the row says what to do instead.",
+  "switch-off":
+    "Sending to AutoCount has to be switched back on first, which is not something this screen can do.",
+  "document-gone":
+    "Nothing to send. If this document ought to still exist, that is the thing worth looking into.",
+  declined:
+    "Press it once more. If the same thing happens again, it needs somebody to look at the code.",
+  "row-not-found": "Refresh the page — this row is not in this company's list.",
+  "read-failed": "Nothing was tried. Give it a moment and press again.",
+  /* The batch workflow's DRY-RUN success. The button never returns it, and if
+     it ever did, reading it as "queued" would tell somebody a document had been
+     sent when nothing was written. */
+  "would-requeue": "Nothing was written — this was a rehearsal, not a send.",
+};
+
+export const acRequeueTodo = (code: string): string | null => AC_REQUEUE_TODO[code] ?? null;
+
 /** What is shown on the row after Send again has been pressed. */
 export interface AcRequeueNote {
   tone: AcTone;
   /** The SERVER's sentence, verbatim, or — on a throw — what went wrong. */
   text: string;
+  /** What to do next, from AC_REQUEUE_TODO. Null for a code with no entry. */
+  todo: string | null;
   /** The ERP's own words, when it refused the document a second time. */
   quote: string | null;
+  /**
+   * The document is on its way again, so the OLD refusal on this row is no
+   * longer true and comes off it.
+   *
+   * Immediately, not on the reload: the re-read is a round trip, and leaving
+   * "To fix: go and change it in AutoCount" sitting on a document that has just
+   * been re-sent is a false instruction for as long as it is on screen. The
+   * server agrees a moment later — the old row becomes `requeued`, which
+   * acReasonCopy already answers null for — so this only closes the window.
+   */
+  clearsReason: boolean;
 }
 
 /**
@@ -283,7 +344,9 @@ export function useAcRequeue(onAccepted: () => void) {
                news, not a fault. A thrown call IS a fault. */
             tone: r.accepted ? "good" : "wait",
             text: r.message,
+            todo: acRequeueTodo(r.code),
             quote: r.reason,
+            clearsReason: r.accepted,
           },
         }));
         if (r.accepted) onAccepted();
@@ -293,7 +356,12 @@ export function useAcRequeue(onAccepted: () => void) {
           [rowId]: {
             tone: "bad",
             text: `Nothing was sent — the request did not get through: ${e instanceof Error ? e.message : String(e)}`,
+            /* No dictionary entry: there is no code, because the server never
+               answered. The sentence above already says the only thing true. */
+            todo: null,
             quote: null,
+            /* The old refusal still stands — nothing was sent. */
+            clearsReason: false,
           },
         }));
       } finally {
