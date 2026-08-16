@@ -148,7 +148,7 @@ const ReconcileTab = () => {
         {upload.isError && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
             <AlertTriangle {...ICON} />
-            <span>{(upload.error as { message?: string })?.message ?? 'The statement could not be read.'}</span>
+            <span>{(upload.error as { message?: string } | null)?.message ?? 'The statement could not be read.'}</span>
           </div>
         )}
       </section>
@@ -362,7 +362,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
 
       {confirm.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-          {(confirm.error as { message?: string })?.message ?? 'The line was not confirmed.'}
+          {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
       )}
     </div>
@@ -450,7 +450,7 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
     statementFormat: acquirer.statement_format ?? '',
     hasUniqueRef: acquirer.has_unique_ref == null ? '' : String(acquirer.has_unique_ref),
     feeMethod: acquirer.fee_method ?? '',
-    dateToleranceDays: String(acquirer.date_tolerance_days ?? 3),
+    dateToleranceDays: String(acquirer.date_tolerance_days),
     bankAccountCode: acquirer.bank_account_code ?? '',
     columnMap: JSON.stringify(acquirer.column_map ?? { date: '', ref: '', gross: '', fee: '', net: '' }, null, 0),
   });
@@ -459,8 +459,8 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
   const submit = () => {
     let columnMap: Record<string, string> | null = null;
     try {
-      const parsed = JSON.parse(form.columnMap || '{}') as Record<string, string>;
-      columnMap = Object.fromEntries(Object.entries(parsed).filter(([, v]) => String(v ?? '').trim() !== ''));
+      const parsed = JSON.parse(form.columnMap || '{}') as Record<string, unknown>;
+      columnMap = Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v ?? '').trim()]).filter(([, v]) => v !== ''));
     } catch {
       setMapError('The column names must be valid JSON, e.g. {"date":"Txn Date","gross":"Amount"}');
       return;
