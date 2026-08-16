@@ -1,16 +1,21 @@
-## The Sales Order board said SHORT: MATTRESS about a mattress that was in the warehouse [high]
+## The SO board and the drill-down answered stock from two different engines, and the stale one won [high]
 
 <!-- area: Sales orders + pricing -->
 
 **Symptom.** Owner 2026-08-16, reported as two bugs: *"why does 2608-002 and 003
 show READY in status when the item is pending and there is no incoming PO"* and
-*"why is my Stock Status not following the rule I set? It now writes things like
-SHORT: SOFA or SHORT: MATTRESS"*. Live on production, `GET
-/api/scm/mfg-sales-orders/:docNo`: `2990-SO-2608-002`'s mattress line carried
-STORED `stock_status = PENDING` and LIVE `stock_state = "stock"` — the goods were
-in the warehouse — while the header rolled up to `SHORT: MATTRESS`.
+*"why is my Stock Status not following the rule I set?"*. Live on production,
+`GET /api/scm/mfg-sales-orders/:docNo`: `2990-SO-2608-002`'s mattress line
+carried STORED `stock_status = PENDING` and LIVE `stock_state = "stock"` — the
+goods were in the warehouse — while the header rolled up to short.
 `2990-SO-2608-003`'s bedframe was genuinely short with a covering PO and an ETA,
-and its `SHORT: BEDFRAME` was correct.
+and its label was correct.
+
+> The strings he quoted (`SHORT: MATTRESS`) belong to the one-day #2295 window;
+> #2334 restored the what-IS-ready vocabulary hours later, so the same order now
+> shows a BLANK cell. The WORDING was never this defect — #2334 fixed that. What
+> is left, and what this entry is about, is that the label was being fed a stale
+> input, and that the board and the drill-down read different inputs entirely.
 
 **Root cause (traced, one bug wearing two faces).** The label rule
 (`so-readiness.ts`, the owner's own ruling the same day) was fine and is
@@ -20,7 +25,8 @@ untouched. Its INPUT was stale, and the two surfaces read different inputs:
    `stock_status`; the drill-down pill rendered the LIVE `stock_state` from
    `computeMrp`. `soLineStockPill` says READY when EITHER says so, so the same
    order read READY on the drill and short on the board — which is exactly the
-   "status says ready while the item is pending" half of the report.
+   "status says ready while the item is pending" half of the report. This half
+   is INDEPENDENT of the label vocabulary and survived #2334 untouched.
 2. *`ok: true` for work that did not happen.* `recomputeSoStockAllocation` is
    the only writer of the stored column. It claims a single-flight lease, and on
    losing that race returned `{ ok: true, reason:
@@ -35,9 +41,10 @@ untouched. Its INPUT was stale, and the two surfaces read different inputs:
    mint/amber pill on `ConsignmentOrders.tsx`, as grey `text-ink-secondary` body
    text on `MfgSalesOrdersListV2.tsx` (the column the owner actually has on
    screen), and with a third pair of hard-coded hexes on
-   `DeliveryPlanningBoard.tsx`. That is why he described it as "the system wrote
-   the words short mattress" rather than as a warning appearing. Same class as
-   the `READY (PARTIAL)` leak logged the day before.
+   `DeliveryPlanningBoard.tsx`. That is why he described it as the system
+   "writing words" rather than as a warning appearing. Same class as the
+   `READY (PARTIAL)` leak, and #2334 had already had to hand-carry a vocabulary
+   change into ConsignmentOrders' private copy while the other two kept theirs.
 
 **Fix.** `scm/lib/so-line-effective-stock.ts` — ONE union verdict over (stored,
 live), which is the rule the drill-down pill already rendered. The list rolls it
@@ -50,10 +57,12 @@ value stands" — so a failed MRP fails soft to the old behaviour exactly.
 entered did not finish (lock skip, throw, or headers left under an edit lease),
 which turns the existing cron into a real repair loop for all ~38 triggers;
 `queuedForRetry: false` is logged at error level when even that row cannot be
-written. `components/StockRemarkPill.tsx` is now the one renderer, carrying the
-colours, the sort rank and the export value; `DataTable` gained an optional
-`sortValue` so the SO list can order by "how much is missing" while its CSV and
-column funnel keep the real words.
+written. `components/StockRemarkPill.tsx` is now the one renderer for all three
+surfaces, carrying #2334's colours (including its deliberate negative branch:
+anything not exactly `READY` is amber, so a new token cannot read as fine), its
+sort direction and the export value; `DataTable` gained an optional `sortValue`
+so the SO list can order by how much of the order is IN while its CSV and column
+funnel keep the real words. The label vocabulary is NOT touched by this PR.
 
 **NOT fixed, and stated so in the module guide:** a Worker that dies BEFORE
 reaching the recompute still leaves no row and no retry. Only a queue write
@@ -65,10 +74,11 @@ Allocation is still not durable in general.
 reported orders reproduced, and source assertions that the list and both detail
 handlers go through it), `backend/tests/stockAllocationSkipLeavesTrace.test.ts`
 (a lock skip leaves a durable row and says so; a finishing sweep leaves none),
-`frontend/src/components/StockRemarkPill.test.tsx` (SHORT paints as a warning,
-the sort ranks a missing bed above a missing cushion). Each was proved to bite by
-reverting the source: 1 of 12 / 4 of 12 / 3 of 4 / 2 of 9 failed respectively,
-all green on restore.
+`frontend/src/components/StockRemarkPill.test.tsx` (a not-ready remark paints as
+a warning, an unknown token cannot render as fine, the sort leads with the
+fullest orders). The backend suite asserts NO label strings — only that the two
+feeds disagree and that the ship gate flips — so a third vocabulary ruling cannot
+break it. Each was proved to bite by reverting the source.
 
 **Measurement.** `backend/scripts/probe-so-stock-status-stale.mjs` +
 `.github/workflows/probe-so-stock-status-stale.yml` count the live lines showing
@@ -77,6 +87,70 @@ DISPATCHED — per CLAUDE.md a `workflow_dispatch` workflow is not shipped until
 has run once and reported success.
 
 **Ref.** PR #TBD, fix/so-stock-status-one-source, 2026-08-17.
+## The SO Stock Status vocabulary was inverted, and the accessory-only lie was fixed on the wrong half [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Two owner instructions on 2026-08-16, both real, ten hours apart.
+Morning, on an accessory-only SO with one short accessory line: the Stock
+Status cell read `READY (PARTIAL)` while nothing on the order was ready and its
+own ship gate said no — 「只有配件,有一行没齐 → READY (PARTIAL) ← 骗人 /
+明说还缺什么」. Evening, confirmed against worked examples: the vocabulary he
+set is the READY side — `READY`, `PARTIAL`, `BEDFRAME`, `MATTRESS/ACC` — and
+the blank cell is what "nothing is ready" looks like.
+
+**Root cause (traced).** PR #2295 read the morning instruction as "invert the
+vocabulary" and flipped every token to name what was MISSING (`SHORT:
+MATTRESS`). The lie was never in the DIRECTION of the vocabulary. It was one
+`else if`:
+
+```
+} else if (isMainReady) { stockRemark = 'READY (PARTIAL)'; }
+```
+
+`isMainReady = mainCount > 0 ? mainReady === mainCount : true` is **VACUOUSLY
+TRUE when the SO has no MAIN line** — the right convention for an
+accessory-only order and the wrong one for a label. `PARTIAL` asserts "the main
+products are in"; an order with no main line has none, so the branch fired on
+an order where nothing was ready, three lines below an `isShipReady` of false.
+The same rollup's ship gate had ALREADY been written as `mainCount > 0 ?
+isMainReady : isFullyReady` for exactly this reason — the guard existed on the
+gate and was missing on the label, in the same function.
+
+**Fix.** The vocabulary is the READY side again, and the branch carries the
+guard the gate always had: `mainCount > 0 && isMainReady`, so an accessory-only
+order with a short accessory falls through to the (empty) ready list and the
+cell says nothing. The label is the bare word `PARTIAL`, never `READY
+(PARTIAL)` — which keeps #2295's real invariant, that the string never contains
+`READY` while anything is short. Kept from #2295 and untouched: service lines
+COUNTED (`svcCount`) rather than dropped, `isShipReady` as THE gate,
+`is_ship_ready` on the delivery-planning payload, `ReadinessLine.category`
+threaded at all five construction sites, and `lib/so-readiness-row.ts` as the
+single expression of the four board fields — which is why the vocabulary could
+move twice in a day with no board re-growing a copy of it.
+
+`summariseReadiness` now returns `readyCategories` beside `pendingCategories`,
+so the label is a join of a list the caller can also read rather than a string
+only the producer understands, and `MAIN_CATEGORY_ORDER` is the single source
+of both the emission order and `MAIN_CATEGORIES`.
+
+Two consumers moved with it: `ConsignmentOrders.tsx` matched
+`startsWith('SHORT:')` for its amber pill and scored `1000 - s.length` in its
+sort (shorter = closer to ready, correct for a what-is-missing label, backwards
+for a what-is-ready one) — the pill now branches on `remark !== 'READY'` so a
+new token cannot fall through to the neutral slot, and the sort scores
+`READY > PARTIAL > longer ready list > blank`.
+`backend/scripts/check-stock-vs-autocount.mjs` carried a fourth copy of the
+rollup that #2295 never updated, **including the missing `mainCount > 0`
+guard**; it is corrected, and its `canon` now folds AutoCount's stored
+`READY (PARTIAL)` into `PARTIAL` the same way it already folded `ACC/BEDFRAME`
+into `BEDFRAME/ACC`.
+
+**Ref.** this PR, 2026-08-16. Reverses the vocabulary half of PR #2295 and
+keeps its correctness half. `docs/stock-reconciliation.md` §2.1 now describes
+ONE vocabulary and records that `SHORT:`-form remarks were briefly written
+between the morning of 2026-08-16 and this change, so a stored remark or an
+AutoCount export from that window may still carry one.
 ## A Delivery Order line could still be created with no link to the SO line it ships [high]
 
 <!-- area: Delivery, DO, returns -->

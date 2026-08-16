@@ -226,10 +226,17 @@ the allocator's per-line FIFO+warehouse view.
 
 **Until 2026-08-17 the two surfaces disagreed IN FRONT OF THE OPERATOR.** The
 list rolled up the STORED value; the drill-down pill rendered the LIVE one. The
-owner met the result on `2990-SO-2608-002`: the board printed `SHORT: MATTRESS`
-and the line he opened to check said the mattress was in stock. He reported it as
-two bugs — "why does it show READY when the item is pending" and "why is my Stock
-Status not following the rule I set". It is one: two engines, one screen.
+owner met the result on `2990-SO-2608-002`: the board said the mattress was short
+and the line he opened to check said it was in stock. He reported it as two bugs
+— "why does it show READY when the item is pending" and "why is my Stock Status
+not following the rule I set". It is one: two engines, one screen.
+
+> The words he quoted were `SHORT: MATTRESS`, which only existed inside the
+> one-day #2295 window (§0.5). #2334 restored the what-IS-ready vocabulary, so
+> the SAME order now shows a BLANK cell instead — still wrong, still for the
+> same reason, and no longer quotable by its label. The staleness and the split
+> between the two surfaces are what this section fixes; the wording was never
+> the defect.
 
 ### `stock_status_effective` — the verdict BOTH surfaces answer from
 
@@ -270,20 +277,36 @@ server, where the list reads it too.
 
 All three come out of `summariseReadiness` (`scm/lib/so-readiness.ts`).
 
-**`stock_remark` names what is MISSING** (owner ruling, 2026-08-16). It used to
-name what was READY, and BOTH vocabularies are in production data.
+**`stock_remark` names what IS READY** (owner ruling, confirmed against real
+orders 2026-08-16). It is the warehouse's "Remark 2" vocabulary, reproduced
+from AutoCount — staff read the column to know what they can PULL now.
 
 | Value | Means |
 |---|---|
-| `''` | the SO has NO live lines at all — nothing to say, and nothing to ship |
+| `''` | nothing is ready yet. Covers an SO with NO live lines, an SO whose only main line is short, **and an accessory-only SO whose accessory is short** |
 | `'READY'` | everything that must be allocated IS. Covers an accessory-only SO with all accessories in, and a service-only SO |
-| `'SHORT: ACCESSORY'`, `'SHORT: BEDFRAME, ACCESSORY'` | the named categories are not all allocated. MAIN categories sorted first, the single collapsed `ACCESSORY` entry last |
+| `'PARTIAL'` | every MAIN line is in, an accessory is still pending. Ship-able — accessories never block delivery |
+| `'BEDFRAME'`, `'SOFA'`, `'MATTRESS'` | that category is fully in, another MAIN category is not |
+| `'ACC'` | every accessory is in, MAIN is not |
+| `'BEDFRAME/ACC'`, `'MATTRESS/ACC'`, … | several groups in. `/`-joined, fixed order BEDFRAME, SOFA, MATTRESS, then ACC |
 
-The string never contains `READY` while anything is short — that is the point of
-the rewrite, and `soReadinessRemark.test.ts` pins it. **RETIRED: `READY
-(PARTIAL)`**, plus the older `ACC` / `BEDFRAME` / `BEDFRAME/ACC` family. They
-still appear in historical rows and in the AutoCount `Remark2` corpus
-(`docs/stock-reconciliation.md`); nothing in this codebase emits them any more.
+Two rules the vocabulary must keep, and `soReadinessRemark.test.ts` pins both:
+
+1. **`PARTIAL` requires a MAIN line.** It asserts "the main products are in".
+   The label branch is `mainCount > 0 && isMainReady`, never bare `isMainReady`
+   — that flag is VACUOUSLY TRUE at `mainCount === 0`, which is exactly how an
+   accessory-only SO with one short accessory came to print `READY (PARTIAL)`
+   next to a false ship gate. The owner called it 骗人.
+2. **The string never contains `READY` while anything is short.** That is why
+   the label is the bare word `PARTIAL` and **`READY (PARTIAL)` is RETIRED.**
+
+**One historical window.** Between the morning of 2026-08-16 (PR #2295) and the
+restore later the same day, the remark named what was MISSING — `SHORT:
+MATTRESS`, `SHORT: BEDFRAME, ACCESSORY`. Nothing emits those strings now, but a
+stored remark or an AutoCount export from that window can still carry one;
+invert it rather than reading it as this vocabulary. AutoCount's own corpus
+spells the partial state `READY (PARTIAL)`; see `docs/stock-reconciliation.md`
+§2.1 for the fold.
 
 **`is_main_ready` vs `is_ship_ready` — use the second one.**
 
@@ -311,12 +334,19 @@ which is the only input it can write against.
 `frontend/src/components/StockRemarkPill.tsx` owns the pill, the sort rank, the
 search value and the export value. `MfgSalesOrdersListV2.tsx`,
 `ConsignmentOrders.tsx` and `vendor/scm/components/DeliveryPlanningBoard.tsx` all
-call it. Before 2026-08-17 those three drew the same string three ways — a
+call it. Before 2026-08-17 those three drew the same string three ways — the
 designed mint/amber pill, grey `text-ink-secondary` body text, and a third pair of
-hard-coded hexes — which is why a real SHORT warning read as an incidental note on
-the SO list. READY is mint, SHORT is the app's amber WARNING slot, blank is an em
-dash; the sort is READY → SHORT (fewest categories first) → blank, so the orders
-closest to shipping lead the warnings.
+hard-coded hexes keyed off a different field — which is why a genuinely short
+order read as an incidental grey note on the one screen the owner has open.
+
+`READY` is mint; **everything else that is not blank takes the amber WARNING
+pair**, and that negative branch is deliberate (#2334) — a vocabulary that grows
+a new token must not be able to fall through into a neutral slot and read as
+fine. Blank is an em dash. The sort is `READY` → `PARTIAL` → longer ready list →
+blank, i.e. by how much of the order is IN, which is the inverse of the ordering a
+what-is-MISSING label needs; #2334 had to hand-carry that inversion into
+ConsignmentOrders' private copy, and this module is why the next one lands in one
+place.
 
 ### 0.6 The status PILL is not the status COLUMN
 

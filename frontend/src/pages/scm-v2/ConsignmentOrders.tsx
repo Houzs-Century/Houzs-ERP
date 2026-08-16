@@ -182,14 +182,16 @@ type SoRow = {
      is READY (column shows "READY" pill). */
   ready_categories?: string[];
   is_fully_ready?: boolean;
-  /* stock_remark names what is MISSING (owner 2026-08-16): "" for an SO with no
-     lines, "READY" when everything that must be allocated is, else
-     "SHORT: <categories>". It never reads READY while something is short — the
-     old vocabulary ("READY (PARTIAL)" / "BEDFRAME" / "MATTRESS/ACC") stated what
-     was READY and so labelled an accessory-only order READY (PARTIAL) while it
-     could not ship. is_main_ready is true once every MAIN (sofa/bedframe/
-     mattress) line is in stock — and VACUOUSLY true when the SO has no main
-     line, so never label off it. Derived in the SO list GET via
+  /* stock_remark names what IS ready (owner 2026-08-16, the warehouse's
+     "Remark 2" vocabulary): "" when nothing is ready yet, "READY" when
+     everything that must be allocated is, "PARTIAL" when every MAIN line is in
+     and an accessory is not, else the "/"-joined list of groups that ARE in
+     ("BEDFRAME", "MATTRESS/ACC"). It never reads READY while something is short
+     — "PARTIAL" carries no "READY " prefix, which is what makes an
+     accessory-only order with a short accessory read BLANK rather than claim a
+     readiness it does not have. is_main_ready is true once every MAIN
+     (sofa/bedframe/mattress) line is in stock — and VACUOUSLY true when the SO
+     has no main line, so never label off it. Derived in the SO list GET via
      summariseReadiness. */
   stock_remark?: string;
   is_main_ready?: boolean;
@@ -1292,19 +1294,23 @@ const buildAllColumns = (
     filterType: 'number', numberValue: (r) => r.local_total_centi,
   },
   {
-    /* Stock Status column. The label names what is MISSING (owner 2026-08-16):
-         · "READY"              — green pill, nothing left to allocate
-         · "SHORT: ACCESSORY"   — amber WARNING pill, and it says which category
-         · ""                   — no items / empty
-       There is no "READY (PARTIAL)" any more: the string it used to appear on
-       was an accessory-only order that could NOT ship, so the amber slot now
-       belongs to the SHORT labels — same hue, honest word. */
+    /* Stock Status column. The label names what IS ready (owner 2026-08-16):
+         · "READY"                 — green pill, nothing left to allocate
+         · "PARTIAL" / "BEDFRAME"  — amber WARNING pill: some of it is in
+           / "MATTRESS/ACC"          and the rest is not
+         · ""                      — nothing ready yet, or no items
+       There is no "READY (PARTIAL)" any more. The state it named — every MAIN
+       line in, an accessory short — is now the bare word "PARTIAL", and the
+       accessory-only order it used to be printed on (nothing in, cannot ship)
+       renders as blank. The branch is `remark !== 'READY'` rather than a match
+       on the label text, so a new token inherits the amber slot instead of
+       silently falling through to the neutral one. */
     key: 'stock_status', label: 'Stock Status', width: 220, sortable: true, groupable: false,
-    /* The pill, the sort, the search and the export all come from
-       components/StockRemarkPill.tsx now. This column was the DESIGN OF RECORD
-       — it is unchanged on screen; what moved is that the SO list and the
-       delivery-planning board render the same thing instead of two paler
-       imitations of it (2026-08-17). */
+    /* The pill, the sort, the search and the export come from
+       components/StockRemarkPill.tsx (2026-08-17). This column is the DESIGN OF
+       RECORD and is unchanged on screen — including #2334's vocabulary and its
+       negative branch; what moved is that the SO list and the delivery-planning
+       board now render THIS instead of two paler imitations of it. */
     accessor: (r) => <StockRemarkPill remark={r.stock_remark} />,
     searchValue: (r) => stockRemarkSearchValue(r.stock_remark),
     exportValue: (r) => stockRemarkExportValue(r.stock_remark),
