@@ -195,7 +195,10 @@ accounting.post('/journal-entries', async (c) => {
     if (r.status === 'lines_insert_failed') return c.json({ error: 'lines_insert_failed', reason: r.reason }, 500);
     return c.json({ error: 'insert_failed', reason: r.reason }, 500);
   }
-  const { data: je } = await sb.from('journal_entries').select('*').eq('id', r.jeId).single();
+  const { data: je, error: jeReadErr } = await sb.from('journal_entries').select('*').eq('id', r.jeId).maybeSingle();
+  // The draft IS created at this point — a failed read-back degrades the
+  // response body, never the outcome.
+  if (jeReadErr) return c.json({ journalEntry: { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
   return c.json({ journalEntry: je ?? { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
 });
 
@@ -628,15 +631,17 @@ accounting.post('/accounts', async (c) => {
 
   const sb = c.get('supabase');
   if (parent) {
-    const { data: p } = await sb.from('accounts').select('account_code, account_type')
+    const { data: p, error: pErr } = await sb.from('accounts').select('account_code, account_type')
       .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+    if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
     if (!p) return c.json({ error: 'parent_not_found', message: `Parent ${parent} does not exist in this company's chart` }, 400);
     if ((p as { account_type?: string }).account_type !== type) {
       return c.json({ error: 'parent_type_mismatch', message: 'A child must carry the same type as its parent' }, 400);
     }
   }
-  const { data: dup } = await sb.from('accounts').select('account_code')
+  const { data: dup, error: dupErr } = await sb.from('accounts').select('account_code')
     .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (dupErr) return c.json({ error: 'load_failed', reason: dupErr.message }, 500);
   if (dup) return c.json({ error: 'code_exists' }, 409);
 
   const { data: created, error } = await sb.from('accounts')
@@ -659,8 +664,9 @@ accounting.patch('/accounts/:code', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const sb = c.get('supabase');
-  const { data: existing } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active, account_type')
+  const { data: existing, error: exErr } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active, account_type')
     .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
   if (!existing) return c.json(NOT_THIS_COMPANY, 404);
 
   const patch: Record<string, unknown> = {};
@@ -673,8 +679,9 @@ accounting.patch('/accounts/:code', async (c) => {
     const parent = body.parentCode ? String(body.parentCode).trim() : null;
     if (parent === code) return c.json({ error: 'parent_self' }, 400);
     if (parent) {
-      const { data: p } = await sb.from('accounts').select('account_code, account_type')
+      const { data: p, error: pErr } = await sb.from('accounts').select('account_code, account_type')
         .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+      if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
       if (!p) return c.json({ error: 'parent_not_found' }, 400);
       if ((p as { account_type?: string }).account_type !== (existing as { account_type?: string }).account_type) {
         return c.json({ error: 'parent_type_mismatch' }, 400);
@@ -688,11 +695,13 @@ accounting.patch('/accounts/:code', async (c) => {
       /* Deactivating a PARENT would orphan its children's grouping, and
          deactivating a ROLE account would stop the posting rules dead —
          refuse both, and say why. */
-      const { data: kids } = await sb.from('accounts').select('account_code')
+      const { data: kids, error: kidsErr } = await sb.from('accounts').select('account_code')
         .eq('company_id', co.companyId).eq('parent_code', code).eq('is_active', true).limit(1);
+      if (kidsErr) return c.json({ error: 'load_failed', reason: kidsErr.message }, 500);
       if (kids && kids.length > 0) return c.json({ error: 'has_active_children' }, 409);
-      const { data: role } = await sb.from('acc_account_roles').select('role')
+      const { data: role, error: roleErr } = await sb.from('acc_account_roles').select('role')
         .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+      if (roleErr) return c.json({ error: 'load_failed', reason: roleErr.message }, 500);
       if (role) return c.json({ error: 'role_account', message: `This account is the ${(role as { role?: string }).role} role account - repoint the role first` }, 409);
     }
     patch.is_active = active;
@@ -717,10 +726,11 @@ accounting.post('/journal-entries/:id/reverse', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
-  const { data: je } = await scopeToCompanyId(
+  const { data: je, error: jeLoadErr } = await scopeToCompanyId(
     sb.from('journal_entries').select('id, je_no, source_type, posted, reversed').eq('id', id),
     co.companyId,
   ).maybeSingle();
+  if (jeLoadErr) return c.json({ error: 'load_failed', reason: jeLoadErr.message }, 500);
   if (!je) return c.json(NOT_THIS_COMPANY, 404);
   const row = je as { je_no: string; source_type: string; posted?: boolean; reversed?: boolean };
   if (row.source_type !== 'MANUAL') {

@@ -217,7 +217,10 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
         .eq('source_type', sourceType)
         .eq('source_doc_no', sourceDocNo ?? '');
       if (companyId != null) q2 = q2.eq('company_id', companyId);
-      const { data: winner } = await q2.limit(1);
+      const { data: winner, error: winnerErr } = await q2.limit(1);
+      if (winnerErr) {
+        return { ok: false, status: 'je_insert_failed', reason: `${jeErr.message}; winner lookup failed: ${winnerErr.message}` };
+      }
       const w = (winner ?? [])[0] as { id: string; je_no: string } | undefined;
       if (w) return { ok: true, status: 'already_posted', jeNo: w.je_no, jeId: w.id, totalSen: dr };
       return { ok: false, status: 'je_insert_failed', reason: jeErr.message };
