@@ -57,6 +57,13 @@ export interface AcOutboxRow {
   reason_kind: string | null;
   remedy: string | null;
   needs_attention: boolean;
+  /**
+   * Whether to OFFER this row a "Send again" button. Decided by the SERVER
+   * (backend scm/lib/autocount-outbox-status.ts) for the same reason nothing
+   * else here is decided locally, and it is a HINT: the POST re-reads the row
+   * and can still refuse, with a code and a sentence.
+   */
+  can_requeue: boolean;
   ac_doc_no: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -118,6 +125,47 @@ export function useAutoCountOutbox(filters: AcOutboxFilters, enabled = true) {
     () => api.get<AcOutboxResponse>(`/api/scm/autocount-outbox${qs}`),
     [qs],
     { staleTime: 30_000, keepPreviousData: true, enabled },
+  );
+}
+
+/**
+ * What POST /autocount-outbox/:id/requeue answers.
+ *
+ * `code` is the stable key to branch on; `message` is the sentence to show. The
+ * sentence comes from the SERVER (AC_REQUEUE_MEANING in
+ * backend/src/scm/lib/autocount-requeue.ts) and is never rewritten here — a
+ * dictionary on this side would be a second set of words for the same event,
+ * and the first outcome added would render on the owner's page as a bare
+ * hyphenated key. The catalogue of codes is docs/autocount-sync-reasons.md.
+ */
+export interface AcRequeueResult {
+  /** True only when the document is now queued and will be sent. */
+  accepted: boolean;
+  code: string;
+  message: string;
+  row_id: string;
+  doc_type: string;
+  doc_no: string;
+  op: string;
+  /** The live attempt this created, when it created one. */
+  new_row_id: string | null;
+  /** The ERP's own words, present only when the composer refused it again. */
+  reason: string | null;
+}
+
+/**
+ * Send one refused document again.
+ *
+ * THROWS on 403 / 409 / 500 like every other api.post, and RESOLVES with
+ * `accepted: false` on a refusal — those are two different things and the
+ * caller must show both. A refusal is the server answering the question ("that
+ * one is already in AutoCount"); a throw is the call never being answered. A
+ * component that renders only the resolved branch is the silent-mutation shape
+ * frontend/scripts/check-silent-mutations.mjs exists to catch.
+ */
+export async function requeueAcOutboxRow(rowId: string): Promise<AcRequeueResult> {
+  return api.post<AcRequeueResult>(
+    `/api/scm/autocount-outbox/${encodeURIComponent(rowId)}/requeue`,
   );
 }
 
