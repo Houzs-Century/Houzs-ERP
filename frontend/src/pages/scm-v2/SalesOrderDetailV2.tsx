@@ -1539,7 +1539,7 @@ function SalesOrderDetailV2ReadOnly() {
 
       {/* History drawer — the shared audit panel, same entries the Recent
           activity card summarises above. */}
-      {historyOpen && salesOrder && (
+      {historyOpen && (
         <AuditHistoryPanel
           recordLabel={salesOrder.doc_no}
           entityName="Sales order"
