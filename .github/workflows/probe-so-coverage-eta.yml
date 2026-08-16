@@ -1,0 +1,53 @@
+# Read-only. Prints the eight dates behind every PO line that could cover a
+# named sales order, plus the effective ETA the Incoming PO chip renders from
+# them, so a chip with no date can be explained from the rows. Writes nothing.
+name: probe-so-coverage-eta
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: 'SO doc no(s), comma separated, e.g. SO2607-005'
+        required: true
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-coverage-eta
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-coverage-eta.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-coverage-eta.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
