@@ -58,7 +58,7 @@ jobs:
         # pipefail, or `tee` swallows a crash and a truncated answer reads as success
         run: |
           set -o pipefail
-          node scripts/probe-so-stock-remark.mjs | tee stock-remark.txt
+          node scripts/probe-remark-staleness.mjs | tee stock-remark.txt
       - uses: actions/upload-artifact@v4
         with:
           name: probe-so-stock-remark
