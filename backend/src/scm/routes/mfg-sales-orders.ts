@@ -216,6 +216,7 @@ import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
@@ -1674,15 +1675,10 @@ mfgSalesOrders.get('/', async (c) => {
       const linesByDoc = new Map<string, ReadinessLine[]>();
       for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>) {
         const arr = linesByDoc.get(it.doc_no) ?? [];
-        arr.push({
-          item_group: it.item_group,
-          item_code: it.item_code,
-          category: it.item_code ? (productCategory.get(it.item_code) ?? null) : null,
-          stock_status: it.stock_status,
-          cancelled: it.cancelled,
-        });
+        arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: it.cancelled });
         linesByDoc.set(it.doc_no, arr);
       }
+      attachLineCategories(linesByDoc.values(), productCategory);
       for (const [docNo, ls] of linesByDoc) {
         readinessByDoc.set(docNo, summariseReadiness(ls));
       }
@@ -11630,36 +11626,17 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
     .from('mfg_sales_order_items')
     .select('item_group, item_code, stock_status, cancelled')
     .eq('doc_no', docNo);
-  const rawLines = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
+  const liveRows: ReadinessLine[] = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>)
+    .filter((l) => !l.cancelled);
   /* One bounded catalog read for THIS SO's codes (a single order — tens of rows
-     at most), so isServiceLine gets its strongest signal here too. */
-  const lineCategory = new Map<string, string>();
-  {
-    const codes = [...new Set(rawLines.map((l) => l.item_code).filter((x): x is string => !!x))];
-    if (codes.length > 0) {
-      const { data: prodRows, error: prodErr } = await scopeToCompany(
-        sb.from('mfg_products').select('code, category').in('code', codes),
-        c,
-      );
-      /* Refuse, do NOT fall back to `?? []`. This read decides whether a line is
-         a SERVICE — i.e. whether it can hold the SO out of READY_TO_SHIP — so a
-         discarded failure would read as "no service lines here" and let a
-         five-second blip change the answer. The line flip above is already
-         committed and the allocation sweep re-derives the header idempotently,
-         so refusing costs the caller a retry, not the edit. */
-      if (prodErr) return c.json({ error: 'load_failed', reason: prodErr.message }, 500);
-      for (const p of prodRows as Array<{ code: string; category: string | null }>) {
-        if (p.category) lineCategory.set(p.code, p.category);
-      }
-    }
-  }
-  const liveRows: ReadinessLine[] = rawLines.map((l) => ({
-    item_group: l.item_group,
-    item_code: l.item_code,
-    category: l.item_code ? (lineCategory.get(l.item_code) ?? null) : null,
-    stock_status: l.stock_status,
-    cancelled: l.cancelled,
-  }));
+     at most), through the same helper the list and the board use, so
+     isServiceLine gets its strongest signal here too.
+     Refuse on failure, do NOT fall through: this decides whether a line is a
+     SERVICE, i.e. whether it can hold the SO out of READY_TO_SHIP. The line flip
+     above is already committed and the allocation sweep re-derives the header
+     idempotently, so refusing costs the caller a retry, not the edit. */
+  const { error: catErr } = await resolveLineCategories(sb, [liveRows], (q) => scopeToCompany(q, c));
+  if (catErr) return c.json({ error: 'load_failed', reason: catErr.message }, 500);
   const readiness = summariseReadiness(liveRows);
   const allReady = readiness.isShipReady;
 
