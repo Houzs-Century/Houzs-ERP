@@ -22,7 +22,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { AC_REQUEUE_MEANING } from '../src/scm/lib/autocount-requeue';
-import { AC_SKIP_KINDS, AC_SKIP_UNRECOGNISED } from '../src/scm/lib/autocount-outbox-status';
+import {
+  AC_SKIP_KINDS,
+  AC_SKIP_UNRECOGNISED,
+  acParentlessCreateReason,
+  classifyAcSkip,
+} from '../src/scm/lib/autocount-outbox-status';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CATALOGUE = path.join(repoRoot, 'docs/autocount-sync-reasons.md');
@@ -66,6 +71,35 @@ describe('the reason catalogue documents every code the system can produce', () 
        above. */
     expect(doc).toContain('Invalid transfer item.');
     expect(doc).toContain('no-source-document');
+  });
+
+  /* A REASON IS READ BY THE OWNER, NOT ONLY BY A CLASSIFIER.
+     2026-08-16: the parentless-create reason was an English sentence ending
+     "(AddPartialTransferDetail is the SDK's only primitive)", and he read that
+     identifier off the live page — hours after having the same string taken out
+     of the page's own copy. Every check in this file was green throughout,
+     because they all pin CODES and the defect was in a SENTENCE. */
+  it('the parentless reason names no SDK method, class or column', () => {
+    const reason = acParentlessCreateReason('no source delivery order');
+    for (const machinery of [
+      /AddPartialTransferDetail/,
+      /\bSDK\b/,
+      /linked_ac_\w+/,
+      /scm\.\w+/,
+      /[A-Za-z]+Error\b/,
+    ]) {
+      expect(reason, `${reason} carries ${String(machinery)}`).not.toMatch(machinery);
+    }
+  });
+
+  /* THE OTHER HALF OF THE SAME SENTENCE, and the reason the function lives
+     beside the needle. Reword it without the needle and the row stops being
+     `no-source-document`: it becomes `unrecognised`, its plain-language copy
+     disappears from the page, and the raw note is all the owner gets — which is
+     the failure this whole change is about, arriving from the other side. */
+  it('and still carries the needle that classifies it', () => {
+    expect(classifyAcSkip(acParentlessCreateReason('no source purchase order')).kind)
+      .toBe('no-source-document');
   });
 
   it('does NOT tell anyone to simply retry the transfer-item failure', () => {
