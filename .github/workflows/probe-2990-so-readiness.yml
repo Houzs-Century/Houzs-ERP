@@ -33,6 +33,11 @@ on:
         required: false
         default: ""
         type: string
+      docno:
+        description: "one doc_no to drill for live supply (e.g. 2990-SO-2608-004)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: probe-2990-so-readiness
@@ -52,6 +57,7 @@ jobs:
           DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
           COMPANY: ${{ inputs.company }}
           DEBTOR: ${{ inputs.debtor }}
+          DOCNO: ${{ inputs.docno }}
         # pipefail, or `tee` swallows a crash and a truncated answer reads as success
         run: |
           set -o pipefail
