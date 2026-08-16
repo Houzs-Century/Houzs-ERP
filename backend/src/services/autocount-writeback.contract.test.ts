@@ -51,6 +51,10 @@ import {
   dispatchOne,
   type AcOutboxRow,
 } from '../scm/lib/autocount-outbox';
+/* The account every ERP sales document goes to in this book. Imported rather
+   than typed as '300-C002' so the assertion follows the constant if it ever
+   moves — a hand-copied literal is how a test ends up proving yesterday. */
+import { AC_DEBTOR_CODE } from './autocount-writeback';
 import { resetWritebackFlagCache } from '../scm/lib/autocount-writeback-flag';
 
 /* ?raw hands back the WORKING TREE bytes, which on Windows are CRLF. Normalise,
@@ -634,8 +638,8 @@ export const DIVERGENCES: Divergence[] = [
   {
     id: 'D15', flow: 'the four conversions', field: 'DebtorCode / CreditorCode',
     service: 'MUST have an account on the target before the transfer runs, and this is PROVEN, not inferred: on the live host at 2026-08-17 00:55 the same conversion went from `AppException: Debtor Code is empty.` to `FullTransfer OK` on that assignment alone, and HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 entered the book. cmd.AddNew() creates the target empty and neither SalesHeader nor PurchaseHeader sets one. The service now reads all four keys, payload first.',
-    erp: 'sends none of them. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } — the account is not in the payload at all, so the service falls back to reading the SOURCE document header out of the account book. That fallback is what makes already-queued outbox rows drain, and it is a lookup the service should not have to do: the ERP knows the customer. Closing this is a payload change in enqueueConvert, tracked as the follow-up PR.',
-    severity: 'high',
+    erp: 'HALF CLOSED 2026-08-17. enqueueConvert now sends DebtorCode on the two SALES conversions (so_to_do, do_to_iv), asserted by "the SALES conversions put the debtor on the wire" below. The PURCHASE half is still open: grns and purchase_invoices carry no supplier column, so a CreditorCode would mean a grn -> purchase_order -> supplier join, and po_to_gr has never once succeeded anyway (IndexOutOfRangeException: There is no row at position -1). Those two rely on the service reading the creditor off the source document in the book. Keep that fallback whatever happens to this entry: it is the only thing that drains an outbox row composed before any of this.',
+    severity: 'medium',
   },
 ];
 
@@ -908,6 +912,49 @@ describe('the four conversions', () => {
     expect(body).toEqual({ FromDocNo: 'AC-PARENT-1', DocDate: null, Ref: null });
     expect(headerKeys(CS_CONVERT)).toContain('SupplierInvoiceNo');
     expect(Object.keys(body)).not.toContain('SupplierInvoiceNo');
+  });
+
+  /* THE ACCOUNT ON THE WIRE. Not a whole-body assertion — the four above are
+     that, and all four are skipped and stale — but a live check of the one key
+     whose absence cost a week of delivery orders.
+
+     PROVEN on the AutoCount host 2026-08-17 00:55: a conversion whose target
+     has no DebtorCode when the transfer runs is refused, and the two SDK calls
+     report it differently (`AppException: Debtor Code is empty.` from
+     FullTransfer, the contentless `Invalid transfer item.` from
+     AddPartialTransferDetail). The service reads the payload first and falls
+     back to the source document in the book; this asserts the payload half. */
+  test('the SALES conversions put the debtor on the wire, and the purchase ones do not', async () => {
+    for (const [op, docType, from, to, docNo] of [
+      ['so_to_do', 'DO',
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'SO-2608-011' },
+        { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' }, 'DO-2608-009'],
+      ['do_to_iv', 'IV',
+        { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' },
+        { table: 'sales_invoices', keyCol: 'id', key: 'si-uuid-1' }, 'SI-2608-002'],
+    ] as Array<[any, any, any, any, string]>) {
+      const body = await convert(op, docType, from, to, docNo);
+      expect(body.DebtorCode, `${op} must name the customer`).toBe(AC_DEBTOR_CODE);
+    }
+
+    /* The purchase side is NOT symmetrical and the asymmetry is deliberate:
+       `grns` and `purchase_invoices` carry no supplier column, so a creditor
+       here would mean a new join, and `po_to_gr` has never once succeeded for
+       an unrelated reason. Those two stay on the service's book fallback, which
+       is why D15 is still on the register. Asserted so that changing it is a
+       decision someone makes on purpose. */
+    for (const [op, docType, from, to, docNo] of [
+      ['po_to_gr', 'GR',
+        { table: 'purchase_orders', keyCol: 'id', key: 'po-uuid-1' },
+        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' }, 'GRN-2608-003'],
+      ['gr_to_pi', 'PI',
+        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
+        { table: 'purchase_invoices', keyCol: 'id', key: 'pi-uuid-1' }, 'PI-2608-002'],
+    ] as Array<[any, any, any, any, string]>) {
+      const body = await convert(op, docType, from, to, docNo);
+      expect(Object.keys(body), `${op} has no creditor to send yet`).not.toContain('CreditorCode');
+      expect(Object.keys(body), `${op} must not send a DEBTOR either`).not.toContain('DebtorCode');
+    }
   });
 
   test('a conversion whose parent has no AutoCount number waits, and posts nothing', async () => {
