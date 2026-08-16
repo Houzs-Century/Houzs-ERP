@@ -121,7 +121,9 @@ export type PlanningOrder = {
      "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
      this field and produced a header that contradicted every row under it. */
   stock_status: string;
-  /* The LABEL: '' | 'READY' | 'SHORT: <categories>'. Names what is MISSING. */
+  /* The LABEL: '' | 'READY' | 'PARTIAL' | a '/'-joined list of the groups that
+     ARE in ('BEDFRAME', 'MATTRESS/ACC'). Names what IS ready — blank means
+     nothing is, including an accessory-only order whose accessory is short. */
   stock_remark: string;
   /* VACUOUSLY true when the SO has no main line — do not gate shipping on it. */
   is_main_ready: boolean;

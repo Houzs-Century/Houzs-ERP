@@ -88,12 +88,13 @@ sales-order *header*. Established by inspection, not by guessing:
 | `Remark3` | 1,312 | "URGENT BILL", "READY AT SUPP", "display set" | mixed notes |
 | `Remark4` | 10,137 | CONFIRM 6,865 · Done Driver Information 1,686 · Done Scheduling 766 | delivery workflow, not stock |
 
-The ERP already knew this. `backend/src/scm/lib/so-readiness.ts:11-13` says so
-in its own header comment:
+The ERP already knew this. `backend/src/scm/lib/so-readiness.ts` says so in its
+own header comment (no line number: the header is rewritten whenever the
+vocabulary is argued about, and it has been twice):
 
-> Remark output — shows WHAT IS READY (the operator's existing "Remark 2"
-> convention; the warehouse staff scan this column to know what they can pull
-> NOW without asking the salesperson)
+> Remark output — names WHAT IS READY. It is the warehouse's "Remark 2"
+> vocabulary, reproduced from AutoCount … and staff scan the column to know
+> what they can PULL now without asking the salesperson.
 
 So the two systems do not use different vocabularies that need a translation
 table. The ERP was **built to reproduce AutoCount's Remark2**, and the mapping
@@ -102,48 +103,51 @@ meaningful rather than a modelling artefact.
 
 ### 2.1 The vocabulary, and the trap inside it
 
-The category tokens name **what IS ready**, not what is pending. `BEDFRAME`
-means "the bedframe is ready, something else is not" — it does not mean "the
-bedframe is outstanding". Reading it the intuitive way inverts every row.
+The tokens name **what IS ready**, not what is pending — on BOTH sides. There
+is one vocabulary, and this is it. `BEDFRAME` means "the bedframe is ready,
+something else is not"; it does not mean "the bedframe is outstanding".
+Reading it the intuitive way inverts every row.
 
-> **THE ERP SIDE OF THIS TABLE CHANGED ON 2026-08-16 (PR #2295).** The
-> vocabulary below is what AutoCount's `Remark2` HOLDS — every count in this
-> document was measured against it and stays true of the stored data. It is no
-> longer what the ERP EMITS. Read the two columns as *historical value* →
-> *what the ERP would write for that state today*.
->
-> The owner's ruling: a remark must name what is **missing**, never claim a
-> readiness the order does not have. So the tokens flipped from naming what IS
-> ready to naming what is SHORT, and `READY (PARTIAL)` was deleted outright —
-> on an accessory-only order it was vacuously true and read as shippable while
-> the order's own ship gate said no.
->
-> **Reconciling across the change:** an AutoCount row written before 2026-08-16
-> can carry `READY (PARTIAL)`, `ACC`, `BEDFRAME/ACC` and the rest; the ERP will
-> never produce those strings again. A mismatch on such a row is a vocabulary
-> generation gap, not a stock disagreement — check the SO's write date before
-> counting it as drift.
-
-| Historical `Remark2` | What it meant | What the ERP writes today |
+| `Remark2` / `stock_remark` | What it means | ERP condition |
 |---|---|---|
-| *(blank)* | nothing ready yet | `''` — unchanged (`liveCount === 0` only) |
-| `READY` | every line ready, main and accessories | `READY` — unchanged (`isFullyReady`) |
-| `READY (PARTIAL)` | every MAIN line ready, some accessory still pending | **gone.** Now `SHORT: ACCESSORY` |
-| `BEDFRAME` / `SOFA` / `MATTRESS` | that category fully ready, another MAIN category not | `SHORT: <the categories that are NOT ready>` |
-| `ACC` | accessories ready, MAIN not | `SHORT: <MAIN categories short>` |
-| `BEDFRAME/ACC`, `MATTRESS/ACC`, … | both named groups ready | `SHORT: <what is short>` |
-
-Note the inversion: the old tokens named what **IS** ready, the new ones name
-what is **MISSING**. A row that used to read `BEDFRAME` (bedframe done,
-mattress not) now reads `SHORT: MATTRESS`. Anything mapping one to the other
-mechanically must invert, not translate.
+| *(blank)* | nothing is ready yet — including an SO with no live lines at all, and an accessory-only order whose accessory is still short | the ready list is empty |
+| `READY` | every live line is in: MAIN, accessories and service | `isFullyReady` |
+| `PARTIAL` | every MAIN line is in, an accessory is still pending. Still ship-able | `mainCount > 0 && isMainReady` |
+| `BEDFRAME` / `SOFA` / `MATTRESS` | that category is fully in, another MAIN category is not | that category's `total === ready` |
+| `ACC` | accessories are all in, MAIN is not | `accCount > 0 && accReady === accCount` |
+| `BEDFRAME/ACC`, `MATTRESS/ACC`, … | both named groups are in | `/`-joined, fixed order BEDFRAME, SOFA, MATTRESS, ACC |
 
 MAIN categories are `SOFA`, `BEDFRAME`, `MATTRESS`. Accessories never block a
-shipment — that GATE is unchanged; only the label moved. SERVICE lines
-(delivery fee, disposal, lift charge) are skipped entirely on the ERP side and
-must be skipped on the AutoCount side too. Since 2026-08-16 service lines are
-COUNTED rather than dropped, so a service-only SO is ready on sight instead of
-being indistinguishable from an SO with no lines at all.
+shipment. SERVICE lines (delivery fee, disposal, lift charge) carry no stock,
+so they appear in neither list on the ERP side and must be skipped on the
+AutoCount side too — but they are **counted**, so a service-only SO is ready on
+sight rather than indistinguishable from an SO with no lines at all.
+
+**The one spelling difference between the two systems.** AutoCount's stored
+corpus writes the partial state as `READY (PARTIAL)` (395 SOs, 16 of them
+outstanding); the ERP emits the bare word `PARTIAL`. Same meaning, and
+`check-stock-vs-autocount.mjs`'s `canon` folds the two together the same way it
+folds `ACC/BEDFRAME` into `BEDFRAME/ACC` (§2.4). Do not count it as drift.
+
+> **THE TRAP THIS TABLE USED TO DESCRIBE — and a window in the stored data.**
+> On the morning of 2026-08-16, PR #2295 fixed a real lie: an accessory-only SO
+> with a short accessory printed `READY (PARTIAL)` while its own ship gate said
+> it could not leave, because the label branched on `isMainReady`, which is
+> **vacuously true when the SO has no MAIN line**. The owner: 「只有配件,有一行
+> 没齐 → READY (PARTIAL) ← 骗人」.
+>
+> That PR fixed it by inverting the whole vocabulary to name what was MISSING
+> (`SHORT: MATTRESS`, `SHORT: BEDFRAME, ACCESSORY`). The owner confirmed the
+> same evening that the vocabulary he set is the READY side, and it was put
+> back — keeping the actual fix, which is that **`PARTIAL` requires a MAIN
+> line**. An order with no main line has no main products to be ready, so the
+> cell says nothing.
+>
+> **So a `SHORT:`-form remark can still be seen**, in a stored `stock_remark`
+> or an AutoCount export taken between the morning of 2026-08-16 and the
+> restore later that day. Nothing emits those strings now. If you meet one,
+> invert it — `SHORT: MATTRESS` was written for the state this table calls
+> `BEDFRAME` — rather than treating it as a stock disagreement.
 
 ### 2.2 The vocabulary is clean where it matters
 
