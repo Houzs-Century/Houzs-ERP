@@ -571,6 +571,17 @@ deliveryPlanning.get('/', async (c) => {
   }
   const resolveLineCat = (code: string | null, group: string): string =>
     (code ? productCategory.get(code) : undefined) ?? normCategory(group);
+  /* Back-fill the catalog category onto the readiness lines gathered in step 3
+     (they were built before this map existed, and they keep item_code, so this
+     is a pure in-memory pass — no extra read). summariseReadiness uses it as
+     isServiceLine's strongest signal, so a delivery/dispose SKU whose line
+     item_group was saved as 'others' is classified as SERVICE rather than as a
+     short accessory that holds the SO out of PENDING_SCHEDULE. */
+  for (const arr of linesByDoc.values()) {
+    for (const l of arr) {
+      if (l.item_code) l.category = productCategory.get(l.item_code) ?? null;
+    }
+  }
   const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
   /* First MAIN line per doc (catalog-resolved), re-iterating the already
      (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
@@ -966,10 +977,10 @@ deliveryPlanning.get('/', async (c) => {
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
-      // stock — stock_remark is the correctly-gated label (never "READY (PARTIAL)"
-      // for an acc-only / service-only SO); stock_status mirrors it. Static types
-      // widened to `| null` so ASSR rows (no stock) share this row shape; the SO
-      // runtime VALUES are unchanged.
+      // stock — stock_remark names what is MISSING ("" / "READY" / "SHORT: …")
+      // and never reads READY while a line is short; stock_status stays the
+      // coarse ship-gate mirror. Static types widened to `| null` so ASSR rows
+      // (no stock) share this row shape.
       stock_status: (readiness.isFullyReady ? 'READY' : readyToShip ? 'READY (PARTIAL)' : 'PENDING') as string | null,
       stock_remark: readiness.stockRemark as string | null,
       is_main_ready: readiness.isMainReady as boolean | null,

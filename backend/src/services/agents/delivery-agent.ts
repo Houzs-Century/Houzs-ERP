@@ -229,6 +229,30 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
       .eq('cancelled', false)
       .range(from, to),
   );
+  /* Catalog category by item_code — isServiceLine's strongest signal, which the
+     board also feeds it (see delivery-planning step 3). Bounded .in chunks over
+     the codes actually in view, never the whole table. Agent and board must
+     classify the same line the same way or their "ready to deliver" pools
+     diverge, which is the one thing this module promises they cannot do. */
+  const productCategory = new Map<string, string>();
+  {
+    const codes = [...new Set((itemRowsRaw ?? []).map((it) => it.item_code).filter((x): x is string => !!x))];
+    for (let i = 0; i < codes.length; i += 300) {
+      const chunk = codes.slice(i, i + 300);
+      if (chunk.length === 0) continue;
+      const { data: prodRows, error: prodErr } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
+        sb.from('mfg_products').select('code, category').in('code', chunk).range(from, to),
+      );
+      /* Loud, like the pool load above. A discarded failure here reads as "none
+         of these codes is a SERVICE", which silently turns delivery fees back
+         into short accessories and shrinks the ready pool — a wrong answer that
+         looks exactly like a correct one. */
+      if (prodErr) throw new Error(`delivery-agent product category load failed: ${prodErr.message}`);
+      for (const p of (prodRows ?? [])) {
+        if (p.category) productCategory.set(p.code, p.category);
+      }
+    }
+  }
   const linesByDoc = new Map<string, ReadinessLine[]>();
   for (const it of (itemRowsRaw ?? [])) {
     if (!it.doc_no) continue;
@@ -236,6 +260,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
     arr.push({
       item_group: it.item_group,
       item_code: it.item_code,
+      category: it.item_code ? (productCategory.get(it.item_code) ?? null) : null,
       stock_status: (it.stock_status ?? 'PENDING') as ReadinessLine['stock_status'],
       cancelled: it.cancelled,
     });
