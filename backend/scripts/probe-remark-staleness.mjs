@@ -164,7 +164,7 @@ async function main() {
              stock_status, stock_qty_ready, cancelled,
              warehouse_id::text AS warehouse_id, allocated_batch_no,
              variants::text AS variants,
-             created_at::text AS created_at, updated_at::text AS updated_at
+             created_at::text AS created_at
         FROM scm.mfg_sales_order_items
        WHERE company_id = ${CO}::bigint AND doc_no = ${target.doc_no}
        ORDER BY line_no NULLS LAST, created_at`;
@@ -173,7 +173,27 @@ async function main() {
       const vk = computeVariantKey(l.item_group, l.variants ? JSON.parse(l.variants) : null);
       note(`    #${String(l.line_no ?? '?').padStart(2)} ${String(l.item_code).padEnd(24)} group=${String(l.item_group ?? '-').padEnd(10)} qty=${l.qty} stored=${String(l.stock_status).padEnd(8)} ready=${l.stock_qty_ready ?? '-'} batch=${l.allocated_batch_no ?? '-'}`);
       note(`        wh=${(l.warehouse_id ?? 'NULL').slice(0, 8)}  variant_key=${JSON.stringify(vk)}  bucket=${(l.warehouse_id ?? WH_NONE)}::${l.item_code}::${vk}`);
-      note(`        line created_at=${l.created_at}  updated_at=${l.updated_at}   <-- vs the GRN timestamps below`);
+      note(`        line created_at=${l.created_at}   (mfg_sales_order_items has NO updated_at column)`);
+    }
+    /* No per-line updated_at exists, so the audit log is the only record of
+       WHEN a stock_status last moved. If it holds nothing for these lines,
+       staleness cannot be dated from the database at all. */
+    try {
+      const au = await sql`
+        SELECT id::text AS id, action, field, old_value, new_value,
+               actor_email, created_at::text AS created_at
+          FROM scm.mfg_so_audit_log
+         WHERE doc_no = ${target.doc_no}
+         ORDER BY created_at DESC
+         LIMIT 40`;
+      note(`\n    --- mfg_so_audit_log rows for ${target.doc_no}: ${au.length} ---`);
+      for (const a of au) note(`      ${a.created_at}  ${a.action ?? '-'} ${a.field ?? '-'}  ${JSON.stringify(a.old_value)} -> ${JSON.stringify(a.new_value)}  by ${a.actor_email ?? '-'}`);
+    } catch (e) {
+      note(`    (audit log unavailable: ${e.message})`);
+      const cols = await sql`
+        SELECT column_name FROM information_schema.columns
+         WHERE table_schema='scm' AND table_name='mfg_so_audit_log' ORDER BY ordinal_position`;
+      note(`    mfg_so_audit_log columns: ${cols.map((c) => c.column_name).join(', ')}`);
     }
     /* Every stock movement for this order's codes, so the line updated_at can
        be read against the moment the goods actually landed. */
