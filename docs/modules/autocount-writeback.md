@@ -75,10 +75,19 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/ensure-masters` | **none** | opens the items and salespeople a document names, BEFORE it is sent. It is called INLINE by the drain (`autocount-outbox.ts:1767-1780`), never queued — 0277's `op` CHECK admits only the eight ops above |
 
 There is deliberately **no create route for DO / GRN / Invoice / Purchase
-Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
-primitive for those four is `AddPartialTransferDetail(fromDocType, dtlKeys)` —
-you build one by transferring a SOURCE document's lines — so a parentless one
-cannot be expressed at all. The ERP CAN create all four parentless (a manual
+Invoice**, and there cannot sensibly be one: in the 2.2 SDK you build one of
+those four by transferring a SOURCE document's lines, so a parentless one cannot
+be expressed at all.
+
+> **CORRECTED 2026-08-17.** This paragraph, §7 and §7d each said the SDK's *only*
+> construction primitive is `AddPartialTransferDetail`. That was read off a
+> reflection dump taken with `BindingFlags.DeclaredOnly`, which skips inherited
+> members — and the rest of the transfer API is inherited from `SalesDocument` /
+> `PurchaseDocument`. `FullTransfer` (three overloads) and `PartialTransfer`
+> (four) exist. The conclusion above survives the correction — all of them
+> transfer FROM something, so a parentless document is still inexpressible — but
+> the reason given for it was wrong. See **BUG CLASS
+> instrument-blind-spot-as-a-finding** at the top of `BUG-HISTORY.md`. The ERP CAN create all four parentless (a manual
 GRN with no PO is an explicit owner decision), and each such document is
 recorded as a `skipped` outbox row by `recordParentlessCreate` so the
 divergence is written down rather than silently dropped.
@@ -310,10 +319,11 @@ phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
 
 ## 7. What the ERP can express and AutoCount cannot
 
-The SDK's only transfer primitive is
-`AddPartialTransferDetail(fromDocType, fromDocKeys)` — **ONE source document**.
-The ERP can merge several SOs into one DO, batch several POs into one GRN, and
-so on. Those have no AutoCount shape.
+`AddPartialTransferDetail(fromDocType, fromDocKeys)` takes **ONE source
+document** — a mixed key array answers `InvalidTransferItemException` (measured
+on the live book, 2026-08-16). Merging is done by calling it once per source, or
+natively by `FullTransfer(String[] docNos, …)` when the whole of each source
+moves. Some ERP shapes still have no AutoCount shape at all.
 
 They are written to the outbox with `status = 'skipped'` and the reason in
 `last_error` (`recordConvertSkipped`). Inventing N AutoCount documents would
@@ -741,14 +751,76 @@ The source link per type: `delivery_order_items.so_item_id`,
 `purchase_invoice_items.grn_item_id`. A cancelled parent SO line is not counted
 as one the conversion left behind — nobody will ever transfer it.
 
-**Still open, and NOT fixed by this: partial QUANTITY on a line.**
-`AddPartialTransferDetail(fromDocType, dtlKeys, bool)` takes line keys, not
-quantities, so a DO shipping 2 of a 5-unit line still produces an AutoCount DO of
-5 on that line. Naming the right lines does not fix the wrong number on them. The
-shape of a fix exists — the conversion captures the new document's own `DtlKey`s
-via `lineWriteback`, so a follow-up `/edit` could set each quantity — but it needs
-a DEFERRED compose (the keys do not exist until the convert has drained), which
-`enqueueEdit` cannot express today.
+### 7c1. FULL or PARTIAL — the ERP decides, in ONE place
+
+Owner, 2026-08-16: 「你要确保它是可以 partially transfer 跟 fully transfer 的。
+跟着我们的 ERP 就对了」. Both shapes have to work and the ERP is the authority on
+which one a document is. `PlanTransfer` in `AcSyncService.cs` is the whole of that
+decision, and it reads only what the payload SAYS — never what the numbers happen
+to add up to on the day:
+
+| the payload carries | shape | the SDK call |
+|---|---|---|
+| no `DtlKeys` | **FULL** — the whole source document, every line, full quantity | `FullTransfer(String[], TransferFrom, FullTransferOption)`. It takes an ARRAY of document numbers, so several sources into one target is native and needs no per-document grouping. A new optional `FromDocNos` names them; absent, it is `[FromDocNo]` |
+| `DtlKeys` | **PARTIAL BY LINE** — the ERP named the lines it took | `AddPartialTransferDetail(fromDocType, keys, bool)` once per source document. Not a workaround: it is the documented call for "these lines, at whatever is outstanding", and the only one whose arguments the ERP actually sends |
+| `Details[].Qty` | **PARTIAL BY QUANTITY** — 3 of a 5-unit line | `PartialTransfer(TransferFrom, …, Decimal, …)`, once per line |
+
+A named set is **never promoted to a full transfer** because it happens to equal
+everything outstanding. That equality holds until the next document, and the
+promotion would be the service deciding — the same principle that puts the
+SO -> PO transfer/create decision in `scm/shared/po-transfer-shape.ts` rather
+than in the C#.
+
+**Still open, and NOT fixed by this: the ERP cannot SAY a partial quantity.**
+`enqueueConvert` composes `{ DocNo, DocDate?, Ref?, DtlKeys? }`, and
+`readConvertSourceKeys` resolves line IDENTITY only — its own comment says so.
+Every documented `PartialTransfer` overload takes a `Decimal`, so none of them can
+be filled from what the service is told, and a DO shipping 2 of a 5-unit line
+still produces an AutoCount DO of 5 on that line. Naming the right lines does not
+fix the wrong number on them.
+
+The C# half is done: `PlanTransfer` reads `Details:[{ DtlKey, Qty }]` the moment
+it appears, and `RunTransfer` **refuses** a quantity plan it cannot express rather
+than falling back to the primitive — the fallback ships the whole outstanding
+quantity, and a live account book holding 5 where the ERP said 3 is worse than a
+visible refusal. `FixPartialTransferTransferedQty.FixPartialTransfer` exists in
+`AutoCount.Invoicing.dll` because that bookkeeping goes out of sync easily; the
+service does not call it and must not create the mess it repairs.
+
+The ERP half is a payload change plus a decision about which quantity is
+authoritative, which is why it is registered as divergence **D14** in
+`src/services/autocount-writeback.contract.test.ts` rather than guessed at. The
+earlier idea — capture the target's own `DtlKey`s via `lineWriteback` and set each
+quantity with a follow-up `/edit` — is worse than it looks: it needs a DEFERRED
+compose (the keys do not exist until the convert has drained), and editing a
+transferred line's quantity is exactly what `CheckTransferDetailQtyNotMatch`
+guards against.
+
+### 7c2. What the transfer now REPORTS
+
+Four things `Convert_` never did, added 2026-08-17 and all of them writing to
+`C:\Temp\ac-sync-service.log` (readable through `/last-errors`):
+
+- **The master fields go on FIRST**, matching the vendor's own examples. The
+  debtor / creditor is read off the SOURCE header in the book — the conversion
+  payload has never carried one — and two sources with two different accounts is
+  logged and set to none rather than picked from.
+- **`LogTransferApi`** prints every `FullTransfer` / `PartialTransfer` /
+  `AddPartialTransferDetail` overload the host's assemblies expose, with
+  parameter names, once per document class per service start. A dump nobody can
+  re-take is how the header of that file spent a week asserting the transfer API
+  does not exist.
+- **`IsTransferFromSupported`** as a pre-flight, and
+  `TransferHelper.CheckAndGetValidPartialTransferItem` — the vendor's own
+  validator — called BEFORE the target document exists, so its refusal arrives
+  with the keys still in hand. `/so-to-po` gets the SO-specific twin,
+  `CheckAndGetValidSOTransferItem`.
+- **`OnSalesDocumentTransferConflict`, `ConfirmOverTransferedQtyEvent` and
+  `ShowEditTransferDetailFormEvent` are subscribed** and their arguments read
+  back by reflection. **Log only** — nothing answers a confirmation, because
+  answering "yes" to an over-transfer prompt would silently accept shipping more
+  than was ordered. A delegate that RETURNS a value is not subscribed at all; its
+  signature is logged instead.
 
 ### What naming the lines COSTS, and what a refusal now tells you
 
@@ -790,9 +862,11 @@ arguments are unchanged; only the text a failure carries is better.
 ## 7d. The four documents AutoCount cannot create at all
 
 A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never
-exist in the account book: `AddPartialTransferDetail` is the SDK's only
-construction primitive for these four, so there is no create route to add and
-none could be added. `recordParentlessCreate` writes a visible `skipped` row for
+exist in the account book: every construction primitive the SDK offers for these
+four — `AddPartialTransferDetail`, `FullTransfer`, `PartialTransfer` — transfers
+FROM a source document, so there is no create route to add and none could be
+added. (This paragraph said `AddPartialTransferDetail` was the only one; see the
+correction under §1.) `recordParentlessCreate` writes a visible `skipped` row for
 every one going forward.
 
 **Measured on production, 2026-08-11** (`backend/scripts/check-parentless-downstream.mjs`,
@@ -1780,7 +1854,33 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. |
-| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. |
+| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. *(NOT SUFFICIENT — the row below is the correction.)* |
+
+#### Corrected the same day — the machinery was arriving from the SERVER
+
+The row above says "no coding words" and it was true of every string this
+codebase writes for the screen. The owner then read two on the live page anyway,
+because neither is one of those strings:
+
+| what he read | where it came from |
+|---|---|
+| `AddPartialTransferDetail is the SDK's only primitive`, in prose, on a held-back invoice | `recordParentlessCreate`'s own `last_error`. The identifier had been taken out of the page's copy hours earlier and came back through the server. |
+| `Invalid transfer item. \|\| source SO lines as the book holds them: 905348 … Qty=1.00000000 TransferedQty=0.00000000 Transferable=T docCancelled=F …` | `AcSyncService.cs`'s transfer arm, added the same day. Genuinely valuable — it is what refuted the standing diagnosis for HC-DO-2608-001 and -002 — and not to a warehouse clerk. |
+
+So the rule is structural now rather than a promise about wording, and it is
+`acWhatWasSaid` in the shared layer. **`docs/autocount-sync-reasons.md` §0 is the
+contract**; the short version:
+
+| | |
+|---|---|
+| **Nothing the server wrote is the page's own voice** | It appears only under the label saying who wrote it. The split into "sentence" and "evidence" is on `AcSyncService`'s own ` \|\| ` separator — a mark the writer put there, not a pattern guessed at — and the branch is on WHO spoke, never on what the note says. |
+| **A second, collapsed, labelled disclosure** | `AC_TECHNICAL_LABEL`, rendered by `TechnicalNote` on both surfaces (`data-ac-technical`). Holds the per-line dump, and holds the ERP's whole internal note where the page already says the same thing in plain words. `unrecognised` is the exception both ways: there the page has NO words, so the quote stays in view and the row still arrives open. |
+| **The headline did not move** | Still on the row, unclicked, on every problem row. He rejected a design with the reason behind a click and moving machinery must not re-take it. |
+| **The distinction did not move** | **AutoCount replied** / **AutoCount was not asked** is still on every quote. |
+| **A reason is read by the owner** | `acParentlessCreateReason` moved into `autocount-outbox-status.ts`, beside the `no-source-document` needle it must keep containing, and `backend/tests/autocountSyncReasonsCatalogue.test.ts` pins both halves. Rewording the writer does not clean the queue — `scm.autocount_outbox` is append-only and `last_error` is never rewritten, so the render rule is what fixes rows already in the table. |
+| **A refusal that names no field says so** | `AC_FAILED_COPY.toFix` no longer reads "Put right whatever AutoCount named". `Invalid transfer item.` names nothing, and those lines were measured correct against the live book the same day (`autocount-sync-reasons.md` §4). It now covers both cases and, for the second, says who to tell. |
+| **History is folded** | `acSplitSuperseded(rows, state)` takes `requeued` rows out of the list into *"N superseded rows, kept as a record"*, closed on arrival (`useAcSupersededGroup`), on both surfaces — except under the **Sent again** filter, where they ARE the list. His screen was fifteen rows with six of them history and two documents appearing twice. |
+| **A load failure is the page's sentence** | `AC_LOAD_FAILED_LINE`, with the transport's words quoted under it rather than spliced into it. Same for the `Send again` throw path, whose text used to end `: ${e.message}`. |
 
 #### Simplified the same day — the row is ONE LINE
 
@@ -1794,7 +1894,7 @@ reply at once. At thirteen rows that reads well; the sales order list alone is
 | | |
 |---|---|
 | **The page opens on Needs attention** | `AC_DEFAULT_STATE` in the shared layer, honoured by the desktop URL default and the mobile `useState`. Everything is one chip away and, when chosen, travels as `?state=all`. An unknown `?state=` falls back to the default, not to everything. |
-| **One line of reason, and it is the opener** | `acRowDetail(row, reasonCleared)` splits a row into `line` (always on screen) and the rest. `line` is the `AC_REASON_COPY` headline, or `AC_REQUEUED_LINE` for a re-sent refusal, or the `AC_REPLY_LABEL` for a row with a note but no copy. `copy.explain`, `copy.toFix`, `AC_REQUEUED_NOTE` and the quoted reply sit behind it. |
+| **One line of reason, and it is the opener** | `acRowDetail(row, reasonCleared)` splits a row into `line` (always on screen) and the rest. `line` is the `AC_REASON_COPY` headline, or `AC_REQUEUED_LINE` for a re-sent refusal, or the `AC_REPLY_LABEL` for a row with a note but no copy. `copy.explain`, `copy.toFix`, `AC_REQUEUED_NOTE` and the quoted reply sit behind it. *(Since the correction above, the quote is an `AcSaid` on `detail.said` rather than a `showSaid` boolean — each surface used to rebuild the answer from the row itself, which is how the two come to disagree about one row.)* |
 | **A document in the account book has nothing to open** | `acRowDetail` returns `expandable: false` for `state === 'sent'`, even when the row carries a note. Those are the majority of a long list and they are now silent. |
 | **One line of detail, not five fragments** | `acRowStandsAt(row, maxAttempts)` is the kind, then where it stands, then the timestamp — ordered so truncation loses the timestamp first. It replaced four separate spans per row on desktop and three on mobile. |
 | **Which rows are open** | `useAcExpandedRows()`, in the shared layer rather than inside the row, because the list is windowed and an unmounted row would forget. `acOpensItself(row)` keeps ONE row open on arrival: `reason_kind === 'unrecognised'`, where the quoted note is the entire answer. |
@@ -1814,6 +1914,15 @@ reply at once. At thirteen rows that reads well; the sales order list alone is
 | mobile 375 px, held back (collapsed) | 335.5 px | **83.8 px** |
 | mobile 375 px, not accepted (collapsed) | 387.1 px | **88.5 px** |
 | mobile cards in the DOM | 400 | **20** |
+
+> **The lab's rows CHANGED on 2026-08-16** (`frontend/perf-lab/main.tsx`), so a
+> re-measure is comparable per row TYPE and not row-for-row against the table
+> above. `i % 5` now yields five kinds instead of three: in AutoCount, held back
+> (`missing-location`), **not accepted carrying `AcSyncService`'s `\|\|` dump**,
+> **held back parentless carrying the SDK sentence the queue still holds**, and
+> **superseded**, the last with `HC-DO-2608-001` / `-002` repeating. It carries
+> the real strings because a lab measuring a row nobody has measures nothing —
+> `?rows=15` reproduces the screen the owner read the four defects off.
 
 The lab scenario is the harness: it renders the REAL page with the queue stubbed
 at `fetch`, so everything above the network — the cache, the headers, the error

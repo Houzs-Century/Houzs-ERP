@@ -19,6 +19,48 @@ code and not in this file.
 
 ---
 
+## 0. Where a string is allowed to appear on the page
+
+**Added 2026-08-16, after the owner read two of them on the live screen.** Until
+then this file pinned the CODES and said nothing about the SENTENCES, and both
+defects lived in a sentence: every check was green while the screen was wrong.
+
+A row's note — `last_error`, surfaced as `reason` — has three possible homes, and
+which one it lands in is decided by `acWhatWasSaid`
+(`frontend/src/lib/autocountOutbox.ts`), on **who wrote the note**, never on what
+it says. Pattern-matching the text on the page side would be the third opinion
+§2's classifier exists to prevent.
+
+| where | what goes there | who decides the words |
+| --- | --- | --- |
+| **The headline, on the row, never behind a click** | one plain-language line: `AC_REASON_COPY[reason_kind].headline`, or `AC_FAILED_COPY.headline`, or `AC_REQUEUED_LINE` | the page |
+| **Behind opening the row** | the sentence, the **To fix** line, and — under the label saying WHO spoke — the machine's own sentence | the page, except the quote |
+| **Behind a second, collapsed, labelled disclosure** | everything a reader cannot act on: the account book's per-line dump (whatever follows `AcSyncService`'s own ` \|\| ` separator), and the ERP's whole internal note where the page already says the same thing in plain words | nobody — it is verbatim |
+
+**Nothing the server wrote is ever the page's own voice.** Two rules follow, and
+both were bought:
+
+1. **A reason is read by the owner.** `acParentlessCreateReason`
+   (`autocount-outbox-status.ts`) used to end *"(AddPartialTransferDetail is the
+   SDK's only primitive)"* and that identifier reached the screen through the
+   server hours after being removed from the page's copy. The sentence now lives
+   beside its own needle and `backend/tests/autocountSyncReasonsCatalogue.test.ts`
+   asserts both halves: no SDK method, class or column, and the needle still
+   present. The SDK explanation stays in §4 below, where engineers read it.
+2. **Rewording a writer does not clean a queue.** `scm.autocount_outbox` is
+   append-only and `last_error` is never rewritten — the re-queue marker is
+   *prepended* (`isRequeuedNote`). Every row written before a wording change keeps
+   the old words for good, which is why the fix has to be in how the page RENDERS
+   a note and not only in what the writer produces.
+
+**A superseded row is a record, not a task.** `requeued` rows are folded out of
+the list under *"N superseded rows, kept as a record"* on both surfaces
+(`acSplitSuperseded`) — except under the **Sent again** filter, where the reader
+asked for them and they are the list. The status counts on the chips are
+untouched: they are the server's, exact and whole-company.
+
+---
+
 ## 1. What "Send again" answers — the re-queue outcome codes
 
 `POST /api/scm/autocount-outbox/:id/requeue` always answers with
