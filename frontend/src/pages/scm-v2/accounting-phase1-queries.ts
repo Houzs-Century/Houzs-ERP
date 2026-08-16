@@ -58,3 +58,25 @@ export const useControlCheck = () => useQuery({
   retry: retryUnlessClientError,
   retryDelay: 800,
 });
+
+export type DailyBankMovement = { jeNo: string; sourceType: string; sourceDocNo: string | null; note: string; amountSen: number };
+export type DailyBankBlock = {
+  accountCode: string; accountName: string;
+  openingSen: number; inSen: number; outSen: number; closingSen: number;
+  receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
+};
+export type DailyBankBoard = {
+  date: string;
+  blocks: DailyBankBlock[];
+  transit: Array<{ acquirerCode: string; accountCode: string; accountName: string; balanceSen: number }>;
+  totalClosingSen: number; totalTransitSen: number; pendingApprovalSen: number; availableSen: number;
+  note: string;
+};
+
+export const useDailyBank = (date: string) => useQuery({
+  queryKey: ['daily-bank', date],
+  queryFn: () => authedFetch<DailyBankBoard>(`/accounting/daily-bank?date=${date}`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
