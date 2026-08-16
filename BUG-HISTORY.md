@@ -131,7 +131,20 @@ which is how that class survives); `reasonFor` answered every non-`edit` op with
 the conversion sentence, so a `cancel` refusal was told about parentless delivery
 orders.
 
-**Ref.** PR #2327, 2026-08-16. Rule in full, including why the host's `mvid` is
+**Measured after the fix, and it is a separate finding.** Both delivery orders
+re-queued, the cron sent them to the rebuilt host, and it answered `Invalid
+transfer item.` again — with the new build's own diagnostic attached, which
+REFUTES the recorded cause for these two rows: `906306`/`906307` are both on
+`HC-SO-2608-003` and `905348`/`905349` are both on `HC-SO-2608-002`, all
+`Transferable=T` with full outstanding quantity. Each key array is single-source,
+so the "two sales orders in one array" explanation cannot apply and
+`KeysBySourceDoc` had nothing to group. The real cause is UNKNOWN and is not
+guessed at; it is on the AutoCount side. This does not change the fix above —
+the rows now retry, land back in `failed` carrying a far better message, and
+stay re-queueable for whenever the cause is found, which is the property that was
+missing. `docs/autocount-sync-reasons.md` §4 carries the measurement.
+
+**Ref.** PR #2330, 2026-08-16. Rule in full, including why the host's `mvid` is
 NOT the gate: `docs/autocount-sync-reasons.md` §6.
 
 ## "Convert to" navigated with a source document and the picker threw it away [high]
