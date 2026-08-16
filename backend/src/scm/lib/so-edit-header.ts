@@ -132,6 +132,10 @@ export function soEditHeader(
        own documents (SO-013264/5/6) carry DeliverAddr1-4 identical to
        InvAddr1-4. */
     ...deliverAddressOf(h),
+    /* The delivery date, in the field this book keeps it in. Omit-when-absent
+       like the rest; a cleared one travels through clearedAcKeys, which lists it
+       as a date with no foreign key behind it. */
+    SalesExemptionExpiryDate: acUdfDate(h.customer_delivery_date as string | null | undefined),
   });
   const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
   if (agent) out.Agent = agent;

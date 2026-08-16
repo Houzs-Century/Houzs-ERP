@@ -114,9 +114,17 @@ async function main() {
       }
 
       /* ---- GATE 1: soHasDownstream (hard lock, blocks add AND amendment) ---- */
+      /* NOT `doc_no` — these two tables name their own document differently, and
+         reaching for the wrong column killed this probe on prod TWICE before it
+         ever reached the audit-trail section below, which is the section the
+         run existed to read. Columns taken from the routes that read the
+         tables: delivery-orders-mfg.ts:249 (`do_number`) and
+         sales-invoices.ts:144 (`invoice_number`). Aliased so the printer
+         downstream keeps one shape, and wrapped in section() so a third
+         surprise degrades this ONE gate to UNKNOWN instead of the whole run. */
       const [dos, sis] = await Promise.all([
-        sql`SELECT doc_no, status FROM scm.delivery_orders WHERE so_doc_no = ${h.doc_no}`,
-        sql`SELECT doc_no, status FROM scm.sales_invoices  WHERE so_doc_no = ${h.doc_no}`,
+        section('delivery_orders', () => sql`SELECT do_number      AS doc_no, status FROM scm.delivery_orders WHERE so_doc_no = ${h.doc_no}`).then((r) => r ?? []),
+        section('sales_invoices',  () => sql`SELECT invoice_number AS doc_no, status FROM scm.sales_invoices  WHERE so_doc_no = ${h.doc_no}`).then((r) => r ?? []),
       ]);
       const liveDo = dos.filter((r) => String(r.status).toUpperCase() !== 'CANCELLED');
       const liveSi = sis.filter((r) => String(r.status).toUpperCase() !== 'CANCELLED');

@@ -510,6 +510,14 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     'This order is being saved on another screen. Your changes are still here. Wait a moment, then try Save again.',
   so_edit_lease_invalid:
     'This save session is no longer valid. Your changes are still here. Refresh the order before saving again.',
+  /* The bill-can-only-go-up floor (backend mfg-sales-orders.ts, five refusal
+     sites on the line PATCH / sofa-exchange paths). It had NO entry here, so an
+     operator who hit it got the generic 422 fallback and no idea which lever
+     had been pulled — the same "the button does nothing" shape as the 35 silent
+     write paths. Names the ACTION, not the rule's internals: what they must do
+     is put the value back, or raise it with someone who can approve less. */
+  so_total_below_original:
+    "This change would bring the order's total below what the customer already agreed to. Put the amount back, or have a manager approve the lower price first.",
   payment_version_conflict:
     'Someone else changed this payment first. Your input is still here. Refresh the payments before trying again.',
   payment_version_required:

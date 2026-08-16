@@ -699,7 +699,10 @@ export async function recomputeSoStockAllocation(
       /* Re-evaluate readiness using the live target status (lines that weren't
          in needs are already shipped → treat as READY). B2C semantics: an SO
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
-         READY — accessories pending don't block ship ("READY (PARTIAL)").
+         READY — accessories pending don't block ship. (This used to say the
+         label for that state was "READY (PARTIAL)". It is not, since
+         2026-08-16: the remark now names what is SHORT rather than claiming a
+         readiness the order does not have. The GATE is unchanged.)
          Auto-regress only when a MAIN line goes back to PENDING. */
       /* `category` from the SAME catalog pull the needs walk uses (serviceCodes)
          — isServiceLine's strongest signal, and the pair to the skip at the top
