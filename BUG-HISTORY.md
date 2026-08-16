@@ -1,6 +1,6 @@
 ## A desktop invoice raised FROM a delivery order was recorded as having no delivery order [high]
 
-<!-- area: Sales Invoice, AutoCount write-back -->
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** `HC-SI-2608-001` sits `skipped` in `scm.autocount_outbox` reading
 "created with no source Delivery Order", and a skipped TRANSFER row is not
