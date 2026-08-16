@@ -25,7 +25,7 @@
    from a broken port, per CLAUDE.md ("a checker that cannot match reports a
    clean run").
 
-   COMPANY=2 [DEBTOR="james"] node scripts/probe-2990-so-readiness.mjs
+   COMPANY=2 [DEBTOR="james"] [DOCNO="2990-SO-..."] node scripts/probe-2990-so-readiness.mjs
    Read-only: SELECT only, no DDL, no writes, no transaction. */
 import postgres from 'postgres';
 
@@ -33,6 +33,7 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 2);
 const DEBTOR = (process.env.DEBTOR || '').trim();
+const DOCNO = (process.env.DOCNO || '').trim();
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -296,6 +297,57 @@ async function main() {
   for (const [k, n] of [...dist].sort((a, b) => b[1] - a[1])) {
     const [st, cat] = k.split(' :: ');
     note(`  ${pad(st, 12)} ${pad(cat, 20)} ${n}`);
+  }
+
+  /* ── 8. why the DRILL can read READY on a stored-PENDING line ─────────────
+     The drill's pill is `stock_state === 'stock' || stock_status === 'READY'`
+     (frontend/src/components/SoSourceChips.tsx:57). For a non-sofa line
+     stock_state is `cov?.source` — the LIVE MRP verdict
+     (routes/mfg-sales-orders.ts:2861-2865) — so 'stock' (on-hand exists in the
+     line's bucket) renders READY even though the stored flag says PENDING,
+     while 'po' renders PENDING plus an incoming-PO chip. MRP's inputs are
+     on-hand `inventory_balances` and open `purchase_order_items`; print both,
+     per stored-not-READY line of DOCNO, so which of the two it is stops being a
+     guess. This does NOT re-run computeMrp — it prints the raw supply MRP reads. */
+  if (DOCNO) {
+    note(`\n${'='.repeat(78)}\n=== 8. live supply behind ${DOCNO}'s stored-not-READY lines ===`);
+    const dl = await sql`
+      SELECT id::text AS id, line_no, item_code, item_group, qty, stock_status,
+             stock_qty_ready, cancelled, warehouse_id::text AS warehouse_id,
+             variants::text AS variants
+        FROM scm.mfg_sales_order_items
+       WHERE company_id = ${CO}::bigint AND doc_no = ${DOCNO}
+       ORDER BY line_no NULLS LAST, created_at`;
+    note(`lines on ${DOCNO}: ${dl.length}`);
+    for (const l of dl) {
+      if (l.cancelled || l.stock_status === 'READY' || isServiceLine(l)) continue;
+      note(`\n  line #${l.line_no ?? '?'} ${l.item_code}  group=${l.item_group}  qty=${l.qty}  stored=${l.stock_status}  qty_ready=${l.stock_qty_ready ?? '-'}  wh=${(l.warehouse_id ?? 'NULL').slice(0, 8)}`);
+      note(`    variants=${l.variants}`);
+      const bal = await sql`
+        SELECT b.warehouse_id::text AS warehouse_id, w.name AS warehouse,
+               coalesce(b.variant_key,'') AS variant_key, b.qty
+          FROM scm.inventory_balances b
+          LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
+         WHERE b.company_id = ${CO}::bigint AND b.product_code = ${l.item_code} AND b.qty <> 0
+         ORDER BY w.name, b.variant_key`;
+      note(`    on-hand rows: ${bal.length}${bal.length === 0 ? '  -> no stock anywhere, so MRP cannot answer "stock"' : ''}`);
+      for (const b of bal) {
+        note(`      ${pad(b.warehouse ?? '?', 26)} qty=${String(b.qty).padStart(4)} key=${JSON.stringify(b.variant_key)}${b.warehouse_id === l.warehouse_id ? '  <-- SAME WAREHOUSE AS THE LINE' : ''}`);
+      }
+      const po = await sql`
+        SELECT p.po_number, p.status::text AS status, i.qty,
+               coalesce(i.received_qty,0) AS received_qty,
+               i.warehouse_id::text AS warehouse_id, i.so_item_id::text AS so_item_id
+          FROM scm.purchase_order_items i
+          JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
+         WHERE i.company_id = ${CO}::bigint AND i.material_code = ${l.item_code}
+           AND upper(p.status::text) NOT IN ('CANCELLED','CLOSED','DRAFT')
+         ORDER BY p.po_number`;
+      note(`    open PO lines: ${po.length}`);
+      for (const r of po) {
+        note(`      ${pad(r.po_number, 18)} ${pad(r.status, 12)} qty=${r.qty} received=${r.received_qty} wh=${(r.warehouse_id ?? '').slice(0, 8)} so_item=${r.so_item_id ? r.so_item_id.slice(0, 8) : '(unbound)'}`);
+      }
+    }
   }
 
   await sql.end({ timeout: 5 });

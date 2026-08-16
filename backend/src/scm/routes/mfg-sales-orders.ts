@@ -81,7 +81,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -215,7 +215,8 @@ import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
-import { summariseReadiness } from '../lib/so-readiness';
+import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
@@ -1672,16 +1673,22 @@ mfgSalesOrders.get('/', async (c) => {
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
        "Stock Remark" the operator's existing ERP shows: READY when everything
-       in, READY (PARTIAL) when MAIN done + ACC outstanding, else list the
-       categories still pending. */
+       that must be allocated is in, else SHORT: <the categories still missing>
+       (owner 2026-08-16 — the label must name what is missing, never read READY
+       while something is short). `category` rides along from the catalog map
+       already built above (productCategory, zero extra reads): it is
+       isServiceLine's strongest signal, so a delivery/dispose SKU whose line
+       item_group was saved as 'others' is still recognised as a SERVICE line
+       and cannot masquerade as a short accessory. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     {
-      const linesByDoc = new Map<string, Array<{ item_group: string | null; item_code: string | null; stock_status: string; cancelled: boolean }>>();
+      const linesByDoc = new Map<string, ReadinessLine[]>();
       for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>) {
         const arr = linesByDoc.get(it.doc_no) ?? [];
         arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: it.cancelled });
         linesByDoc.set(it.doc_no, arr);
       }
+      attachLineCategories(linesByDoc.values(), productCategory);
       for (const [docNo, ls] of linesByDoc) {
         readinessByDoc.set(docNo, summariseReadiness(ls));
       }
@@ -2714,7 +2721,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: soOutstandingCenti(paidInputs),
+    /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
+       detail page, the mobile detail and the SO print. The write-back keeps the
+       CLAMPED `soOutstandingCenti`: a screen can say "you hold RM 250 of his
+       money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
+    balance_centi: soBalanceCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -10891,24 +10902,25 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }
   }
 
-  /* Spec D6 — server-side overpayment guard. The SO total is authoritative;
-     Σ(ledger) + this payment may never exceed it. Honest error: the client
-     shows the remaining balance. */
-  const { data: soTotalRow, error: totalErr } = await sb
-    .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-  if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-  const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-  const { data: paidRows, error: paidErr } = await sb
-    .from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo);
-  if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-  const paidCenti = (paidRows ?? []).reduce((s, r) => s + Number((r as { amount_centi: number }).amount_centi ?? 0), 0);
-  if (totalCenti > 0 && paidCenti + p.amountCenti > totalCenti) {
-    return c.json({
-      error: 'over_payment',
-      reason: `Payment exceeds the order total. Balance: ${((totalCenti - paidCenti) / 100).toFixed(2)}`,
-      balanceCenti: Math.max(0, totalCenti - paidCenti),
-    }, 400);
-  }
+  /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
+     refuse Σ(ledger) + this payment > total_revenue_centi. It is deleted, not
+     relaxed, and the two reads it needed went with it.
+
+     WHAT THE GUARD ACTUALLY COST. It never stopped an over-collection; it
+     redirected one. Refused at the till, the operator's only way to bank cash
+     already in hand was to go back and re-price the ORDER until the total
+     covered it — which is what happened to HC-SO-2608-002 on 2026-08-16:
+     UPDATE_LINE at 08:26:22 put RM 250 of "Right Drawer" special onto a
+     JAGER-(K) line (unitPriceCenti 0 → 25000), and the RM 2,250 payment landed
+     76 seconds later at 08:27:38, accepted because the total was now exactly
+     425000. The receipt balanced and the customer's order silently grew a
+     drawer he never bought. Refusing money the business is holding does not
+     make the books truer, it makes the ITEMS lie — and an item is what gets
+     manufactured and delivered.
+
+     So the excess is simply recorded, and the balance goes negative (red on
+     the screen: soBalanceCenti). Nothing here touches lines, prices or the
+     order total — a payment is a payment. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
      optional on EVERY SO path, so this route is no longer the loose end of a
@@ -11169,28 +11181,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     }
   }
 
-  /* Overpayment guard (mirror POST) — Σ(other rows) + this row's new amount may
-     not exceed the SO total. Excludes THIS payment from the prior sum. */
-  if (p.amountCenti !== undefined) {
-    const { data: soTotalRow, error: totalErr } = await sb
-      .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-    if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-    const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-    const { data: paidRows, error: paidErr } = await sb
-      .from('mfg_sales_order_payments').select('id, amount_centi').eq('so_doc_no', docNo);
-    if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-    const othersCenti = (paidRows ?? []).reduce(
-      (s, r) => s + (String((r as { id: string }).id) === String(id) ? 0 : Number((r as { amount_centi: number }).amount_centi ?? 0)),
-      0,
-    );
-    if (totalCenti > 0 && othersCenti + nextAmount > totalCenti) {
-      return c.json({
-        error: 'over_payment',
-        reason: `Payment exceeds the order total. Balance: ${((totalCenti - othersCenti) / 100).toFixed(2)}`,
-        balanceCenti: Math.max(0, totalCenti - othersCenti),
-      }, 400);
-    }
-  }
+  /* Over-collection is allowed here too (owner 2026-08-16) — the POST's mirror
+     guard is gone, and a correction that lands above the total must not be
+     refused when the original could not be either. Amending RM 2,000 up to
+     RM 2,250 on a RM 2,000 order is exactly the correction the guard used to
+     push into a line re-price. See the POST for the full note. */
 
   const { data: updated, error: updErr } = await sb
     .from('mfg_sales_order_payments')
@@ -11618,12 +11613,28 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  // are OK. isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  //
+  // item_code + the catalog category ride the read (2026-08-16). Without them
+  // this path could not see a SERVICE line at all: it passed item_group alone,
+  // so a delivery-fee SKU saved with item_group 'others' counted as a short
+  // accessory and held the whole order back — while the list endpoint and the
+  // allocation sweep, which do pass the code, disagreed with it on the same SO.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
-    .select('item_group, stock_status, cancelled')
+    .select('item_group, item_code, stock_status, cancelled')
     .eq('doc_no', docNo);
-  const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
+  const liveRows: ReadinessLine[] = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>)
+    .filter((l) => !l.cancelled);
+  /* One bounded catalog read for THIS SO's codes (a single order — tens of rows
+     at most), through the same helper the list and the board use, so
+     isServiceLine gets its strongest signal here too.
+     Refuse on failure, do NOT fall through: this decides whether a line is a
+     SERVICE, i.e. whether it can hold the SO out of READY_TO_SHIP. The line flip
+     above is already committed and the allocation sweep re-derives the header
+     idempotently, so refusing costs the caller a retry, not the edit. */
+  const { error: catErr } = await resolveLineCategories(sb, [liveRows], (q) => scopeToCompany(q, c));
+  if (catErr) return c.json({ error: 'load_failed', reason: catErr.message }, 500);
   const readiness = summariseReadiness(liveRows);
   const allReady = readiness.isShipReady;
 

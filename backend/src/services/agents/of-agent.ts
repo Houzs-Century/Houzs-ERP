@@ -37,6 +37,8 @@ interface SoRow {
 }
 interface ItemRow {
   doc_no: string; item_group: string; item_code: string;
+  /** mfg_products.category, resolved by the scalar subquery below. */
+  category?: string | null;
   stock_status: string; cancelled?: boolean | null;
 }
 
@@ -65,9 +67,16 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   const sos = soRes.results ?? [];
 
   // All items for pipeline SOs in one join — no per-order query, no dynamic IN.
+  // The catalog category rides as a SCALAR SUBQUERY, not a join: mfg_products is
+  // per-company and `code` collides across companies, so joining it would fan a
+  // line out into two rows and double-count the readiness tally. LIMIT 1 cannot
+  // fan out, and the only consumer is isServiceLine's "is this SERVICE?" test —
+  // a code that is SERVICE in one company is SERVICE in the other.
   const itemRes = await db
     .prepare(
-      `SELECT i.doc_no, i.item_group, i.item_code, i.stock_status, i.cancelled
+      `SELECT i.doc_no, i.item_group, i.item_code, i.stock_status, i.cancelled,
+              (SELECT p.category FROM scm.mfg_products p
+                WHERE p.code = i.item_code LIMIT 1) AS category
          FROM scm.mfg_sales_order_items i
          JOIN scm.mfg_sales_orders o ON o.doc_no = i.doc_no
         WHERE o.status IN ${PIPELINE}`,
@@ -76,7 +85,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
   const itemsByDoc = new Map<string, ReadinessLine[]>();
   for (const it of itemRes.results ?? []) {
     const arr = itemsByDoc.get(it.doc_no) ?? [];
-    arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: !!it.cancelled });
+    arr.push({ item_group: it.item_group, item_code: it.item_code, category: it.category ?? null, stock_status: it.stock_status, cancelled: !!it.cancelled });
     itemsByDoc.set(it.doc_no, arr);
   }
 
