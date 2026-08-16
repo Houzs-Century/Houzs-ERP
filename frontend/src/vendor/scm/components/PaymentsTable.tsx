@@ -815,7 +815,17 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   const paidCenti = isSaved
     ? persistedPayments.reduce((sum, p) => sum + (p.amount_centi || 0), 0)
     : drafts.reduce((sum, d) => sum + (d.amountCenti || 0), 0);
-  const balanceCenti = Math.max(0, grandTotal - paidCenti);
+  /* SIGNED (owner 2026-08-16) — over-collection is allowed, and a negative
+     balance is the whole point: it is what tells the operator he is holding
+     RM 250 of the customer's money. The old Math.max(0, …) floor is what made
+     an over-payment look like a settled order, so the only way to make the
+     screen agree with the cash was to go back and re-price a LINE.
+
+     Floored still when there is no total to measure against — a zero grand
+     total is an unsaved / not-yet-recomputed order, not a fully-credited one.
+     Same rule as soBalanceCenti on the server. */
+  const balanceCenti = grandTotal > 0 ? grandTotal - paidCenti : 0;
+  const overCollected = balanceCenti < 0;
 
   const staffNameById = (id: string | null): string | null => {
     if (!id) return null;
@@ -1512,9 +1522,22 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
             <span className={paymentsStyles.summaryLabel}>
               Balance <DollarSign size={12} strokeWidth={1.75} />
             </span>
-            <span className={balanceCenti > 0 ? paymentsStyles.balanceOutstanding : paymentsStyles.balanceClear}>
+            {/* Three states, not two. `paidCenti >= grandTotal` used to print
+                "· PAID" — which, once the balance can go negative, would have
+                labelled an over-collection as settled and hidden the very
+                thing the owner asked to see. */}
+            <span
+              className={
+                balanceCenti > 0 ? paymentsStyles.balanceOutstanding
+                  : overCollected ? paymentsStyles.balanceCredit
+                    : paymentsStyles.balanceClear
+              }
+            >
               {fmtRm(balanceCenti, currency)}
-              {grandTotal > 0 && paidCenti >= grandTotal && (
+              {overCollected && (
+                <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· OVER-COLLECTED</span>
+              )}
+              {!overCollected && grandTotal > 0 && paidCenti >= grandTotal && (
                 <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· PAID</span>
               )}
             </span>

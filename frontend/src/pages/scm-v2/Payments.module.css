@@ -337,6 +337,18 @@
   font-weight: 700;
 }
 
+/* Over-collected: paid MORE than the order is worth, so the balance is
+   negative (owner 2026-08-16: 「需要可以超收 negative 边红色」). Its own class
+   rather than reusing .balanceOutstanding — the two are opposite errors that
+   happen to share a colour today, and the next person to re-tone "money owed"
+   must not silently re-tone "money over-collected" with it. Same red token as
+   every other negative figure in the app (Accounting.tsx, DailyBank.tsx). */
+.balanceCredit {
+  composes: summaryValue;
+  color: var(--c-festive-b, #B8331F);
+  font-weight: 700;
+}
+
 /* Slip-upload button icon spinner — while a receipt is being OCR-scanned the
    SlipUploadField swaps its upload icon for a spinning loader of the SAME size,
    so nothing in the narrow Slip column shifts. No extra element, no label. */
