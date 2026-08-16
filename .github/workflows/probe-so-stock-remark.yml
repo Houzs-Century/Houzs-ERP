@@ -1,0 +1,66 @@
+name: probe-so-stock-remark
+
+# What the SO list's "Stock Status" column actually reads, and how many orders
+# currently show a bare-category value ("BEDFRAME") on it.
+#
+# The column binds to `stock_remark` (MfgSalesOrdersListV2.tsx:1678), which is
+# NOT stored — routes/mfg-sales-orders.ts:1651-1662 computes it per request from
+# the per-line stock_status via lib/so-readiness.ts. The remark lists what IS
+# READY, not what is pending; the FE comment at ConsignmentOrders.tsx:1291 says
+# the opposite. This probe settles it against production.
+#
+# Read-only. See backend/scripts/probe-so-stock-remark.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id for the named order (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "2"
+        type: string
+      debtor:
+        description: "debtor_name ILIKE match for the named order"
+        required: false
+        default: "James Pak"
+        type: string
+      total_centi:
+        description: "optional local_total_centi filter (RM 3,220.00 = 322000)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-stock-remark
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Read the stock remark inputs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          DEBTOR: ${{ inputs.debtor }}
+          TOTAL_CENTI: ${{ inputs.total_centi }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-so-stock-remark.mjs | tee stock-remark.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-so-stock-remark
+          path: backend/stock-remark.txt
+          retention-days: 14
