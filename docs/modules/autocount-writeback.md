@@ -1776,10 +1776,53 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 | | |
 |---|---|
 | **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Sent again) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
-| **The reason, in three parts, inline** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). Never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. |
+| **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. |
-| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. The ERP's own note stays behind a collapsed disclosure, and opens by itself when `reason_kind` is `unrecognised`, because that is the one case where it IS the answer. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. |
+| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. |
+
+#### Simplified the same day — the row is ONE LINE
+
+The rebuild above was approved from a mockup and then read against a real
+backlog. Owner, 2026-08-16: *"这一个东西下面的地方太复杂了，你尽量简单化一点。一个
+sales order 那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？"* Every problem
+row was printing a headline, a sentence, a **To fix** line and a quoted machine
+reply at once. At thirteen rows that reads well; the sales order list alone is
+2,726 documents.
+
+| | |
+|---|---|
+| **The page opens on Needs attention** | `AC_DEFAULT_STATE` in the shared layer, honoured by the desktop URL default and the mobile `useState`. Everything is one chip away and, when chosen, travels as `?state=all`. An unknown `?state=` falls back to the default, not to everything. |
+| **One line of reason, and it is the opener** | `acRowDetail(row, reasonCleared)` splits a row into `line` (always on screen) and the rest. `line` is the `AC_REASON_COPY` headline, or `AC_REQUEUED_LINE` for a re-sent refusal, or the `AC_REPLY_LABEL` for a row with a note but no copy. `copy.explain`, `copy.toFix`, `AC_REQUEUED_NOTE` and the quoted reply sit behind it. |
+| **A document in the account book has nothing to open** | `acRowDetail` returns `expandable: false` for `state === 'sent'`, even when the row carries a note. Those are the majority of a long list and they are now silent. |
+| **One line of detail, not five fragments** | `acRowStandsAt(row, maxAttempts)` is the kind, then where it stands, then the timestamp — ordered so truncation loses the timestamp first. It replaced four separate spans per row on desktop and three on mobile. |
+| **Which rows are open** | `useAcExpandedRows()`, in the shared layer rather than inside the row, because the list is windowed and an unmounted row would forget. `acOpensItself(row)` keeps ONE row open on arrival: `reason_kind === 'unrecognised'`, where the quoted note is the entire answer. |
+| **The strips stay put** | Desktop: a `sticky` block parked at `var(--page-header-offset)` — the value `PageHeader` publishes — at `z-[5]`, deliberately below the header's `z-10`/`lg:z-20`. Mobile: they were already inside `.hdr`, which `mobile.css` pins. |
+| **The list is windowed** | `<MobileVirtualList>` on BOTH surfaces — the component `DataTable` and eight mobile screens already use, not a second mechanism. Below its own 40-row threshold it renders every row exactly as a plain `.map` did. |
+
+**Measured in `frontend/perf-lab` (`?scenario=autocount-sync&rows=400`,
+`&surface=mobile` for the phone), 2026-08-16, 400 rows:**
+
+| | before | after |
+|---|---|---|
+| desktop, in AutoCount | 79.8 px | **36.5 px** |
+| desktop, held back (collapsed) | 233.0 px | **64.3 px** |
+| desktop, not accepted (collapsed) | 311.3 px | **69.8 px** |
+| desktop rows in the DOM | 400 | **25** |
+| mobile 375 px, in AutoCount | 102.0 px | **53.5 px** |
+| mobile 375 px, held back (collapsed) | 335.5 px | **83.8 px** |
+| mobile 375 px, not accepted (collapsed) | 387.1 px | **88.5 px** |
+| mobile cards in the DOM | 400 | **20** |
+
+The lab scenario is the harness: it renders the REAL page with the queue stubbed
+at `fetch`, so everything above the network — the cache, the headers, the error
+path — is the real code and a height measured there is a height the app
+produces. Re-measure with
+`document.querySelectorAll("[data-ac-row]")[i].getBoundingClientRect().height`.
+
+**A phone cannot hold the state, the number and where it stands on one visual
+line at 375 px**, so a quiet card there is two short lines rather than the
+desktop's one. What is the same on both: nothing to open, and no reason block.
 
 **THE ANSWER TO Send again LANDS ON THE ROW THAT WAS PRESSED**, in all three
 directions it can go, and that is the part worth guarding:

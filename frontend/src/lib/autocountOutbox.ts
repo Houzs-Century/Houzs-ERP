@@ -21,6 +21,13 @@
 // turns it into words an owner reads. That is the same job AC_STATE_LABEL has
 // always done; it is not a second opinion about which key a row has.
 //
+// ONE LINE PER ROW (owner, 2026-08-16, after reading the rebuilt page): *"这一个
+// 东西下面的地方太复杂了，你尽量简单化一点。一个 sales order 那么宽，那如果我有一
+// 千个 sales order 的时候，我不是完蛋？"* `acRowDetail` is where that lands — the
+// headline stays on the row, everything else goes behind opening it, and a
+// document already in the account book has nothing to open. `AC_DEFAULT_STATE`
+// is the other half: the page opens on what is stuck, not on everything.
+//
 // NO CODING WORDS ON THIS SCREEN (owner, 2026-08-16). The page used to print
 // `scm.autocount_writeback = "1"`, the raw operation names, the raw state names
 // and the ERP's own refusal text, which carries class names and SDK method
@@ -32,6 +39,7 @@ import { useCallback, useState } from "react";
 
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
+import { fmtDateTime } from "../vendor/shared/format";
 
 /** The states the page can filter to. `attention` is the owner's question. */
 export const AC_FILTER_STATES = [
@@ -44,6 +52,17 @@ export const AC_FILTER_STATES = [
   "requeued",
 ] as const;
 export type AcFilterState = (typeof AC_FILTER_STATES)[number];
+
+/**
+ * WHERE THE PAGE LANDS when nobody has chosen a filter.
+ *
+ * `attention`, not `all` — owner, 2026-08-16: *"一个 sales order 那么宽，那如果我
+ * 有一千个 sales order 的时候，我不是完蛋？"* Somebody opening this screen is
+ * asking what is STUCK. Answering that with every document the company has ever
+ * pushed buries the answer under thousands of rows that are already fine, and
+ * the sales order list alone is 2,726 documents. Everything is one chip away.
+ */
+export const AC_DEFAULT_STATE: AcFilterState = "attention";
 
 /**
  * The six document types, in the order the owner asked for them on the strip.
@@ -105,7 +124,7 @@ export interface AcOutboxFilters {
   docNo: string;
 }
 
-export const AC_DEFAULT_FILTERS: AcOutboxFilters = { state: "all", docNo: "" };
+export const AC_DEFAULT_FILTERS: AcOutboxFilters = { state: AC_DEFAULT_STATE, docNo: "" };
 
 /** One row, exactly as the route presents it. */
 export interface AcOutboxRow {
@@ -690,6 +709,98 @@ export const AC_REPLY_LABEL: Record<AcReplySource, string> = {
 /** The sentence that goes where a quote would, when there is no quote. */
 export const AC_NOT_ASKED_NOTE = "The ERP stopped this before it was ever sent.";
 
+// ── how much of a row is on screen before anybody clicks ────────────────────
+
+/** The one line a re-sent refusal gets. The rest of it is behind the opener. */
+export const AC_REQUEUED_LINE = "Already sent again — this row is history";
+
+export const AC_REQUEUED_NOTE =
+  "This row is the record of the first refusal, not something to act on — the document is queued or in AutoCount under a newer row.";
+
+/**
+ * WHAT A ROW SAYS, split into the part that is always on screen and the part
+ * behind the opener.
+ *
+ * The owner accepted the rebuilt page and then read it at scale: *"这一个东西下面
+ * 的地方太复杂了 ... 如果我有一千个 sales order 的时候，我不是完蛋？"* Every
+ * problem row was printing a headline, a sentence, a **To fix** line and a
+ * quoted machine reply, all at once. At thirteen rows that reads well; at a
+ * thousand it is unreadable, and the thousand is the real number.
+ *
+ * So ONE line stays: `line`, the plain-language headline. It is never hidden —
+ * that was the owner's earlier complaint about a reason behind a "Why not"
+ * click, and this does not undo it. `copy.explain`, `copy.toFix` and the quoted
+ * reply move behind opening the row.
+ *
+ * A row with nothing to say — anything already in the account book — gets
+ * `line: null` and `expandable: false`, which is what keeps the majority of a
+ * long list quiet.
+ */
+export interface AcRowDetail {
+  /** Always on screen. Null on a row with nothing to explain. */
+  line: string | null;
+  /** Behind the opener: the sentence and the To fix line. */
+  copy: AcReasonCopy | null;
+  /** Behind the opener: who was asked, and their words verbatim. */
+  showSaid: boolean;
+  /** Behind the opener: why a re-sent refusal is not something to act on. */
+  showRequeuedNote: boolean;
+  /** Whether the row has an opener at all. */
+  expandable: boolean;
+}
+
+/**
+ * @param reasonCleared the document has just been accepted back into the queue,
+ *   so its old refusal is no longer true and comes off the row immediately —
+ *   see AcRequeueNote.clearsReason. Required, not optional: forgetting it
+ *   leaves a false instruction on screen for a whole round trip.
+ */
+export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDetail {
+  const copy = reasonCleared ? null : acReasonCopy(row.state, row.reason_kind);
+  const showSaid = !reasonCleared
+    && (copy !== null || (row.reason !== null && row.state !== "sent"));
+  const showRequeuedNote = !reasonCleared && row.state === "requeued";
+  const expandable = copy !== null || showSaid || showRequeuedNote;
+  const line = copy !== null
+    ? copy.headline
+    : showRequeuedNote
+      ? AC_REQUEUED_LINE
+      /* No plain-language copy exists for this one — a pending row carrying its
+         last attempt's note is the case — so the line says WHO spoke and the
+         words themselves stay behind the opener. */
+      : showSaid
+        ? AC_REPLY_LABEL[acReplySource(row.state, row.reason)]
+        : null;
+  return { line, copy, showSaid, showRequeuedNote, expandable };
+}
+
+/**
+ * The one row that arrives OPEN.
+ *
+ * A refusal nobody has plain words for yet is a code path that grew a new
+ * refusal, and the quoted note is the entire answer — there is no headline to
+ * read instead of it. #2323 made that note open itself for the same reason;
+ * putting the whole reason behind an opener must not quietly take it back.
+ */
+export const acOpensItself = (row: AcOutboxRow): boolean => row.reason_kind === "unrecognised";
+
+/**
+ * Which rows are open.
+ *
+ * Lifted OUT of the row, for two reasons. The list is windowed now, so a row
+ * that scrolls out of view is UNMOUNTED and state kept inside it would forget
+ * itself on the way back. And a row that opens differently on the two surfaces
+ * is exactly the split this shared layer exists to stop.
+ */
+export function useAcExpandedRows() {
+  const [choice, setChoice] = useState<Record<string, boolean>>({});
+  const isOpen = (row: AcOutboxRow): boolean => choice[row.id] ?? acOpensItself(row);
+  const toggle = useCallback((row: AcOutboxRow) => {
+    setChoice((prev) => ({ ...prev, [row.id]: !(prev[row.id] ?? acOpensItself(row)) }));
+  }, []);
+  return { isOpen, toggle };
+}
+
 // ── the type strip ──────────────────────────────────────────────────────────
 
 /**
@@ -761,10 +872,46 @@ export function acRowStatusLine(row: AcOutboxRow, maxAttempts: number): string {
   }
 }
 
+/**
+ * The one line of detail beside a document number: what it is, where it stands,
+ * and when.
+ *
+ * ONE sentence, not five fragments. The rebuilt row printed the kind, the
+ * queued-at, where it stands, how long it has waited and when it arrived, each
+ * as its own piece of the row, and five fragments is how a row becomes four
+ * lines. A thousand of those is the screen the owner called unusable.
+ *
+ * Ordered so that clipping loses the least: the type of document first, then
+ * where it stands, then the timestamp — the part a reader can do without.
+ */
+export function acRowStandsAt(row: AcOutboxRow, maxAttempts: number): string {
+  const parts = [acRowKind(row.doc_type, row.op), acRowStatusLine(row, maxAttempts)];
+  if (row.state === "pending") parts.push(`waiting ${acAge(row.created_at)}`);
+  parts.push(
+    row.state === "sent" && row.sent_at
+      ? `arrived ${fmtDateTime(row.sent_at)}`
+      : `queued ${fmtDateTime(row.created_at ?? "")}`,
+  );
+  return parts.filter((p) => p !== "").join(" · ");
+}
+
 /** The heading over the list — which status, and which type, are in force. */
 export function acListTitle(state: AcFilterState, docType: AcDocType | ""): string {
   const s = state === "all" ? "All documents" : AC_FILTER_STATE_LABEL[state];
   return docType ? `${s} · ${acDocTypePlural(docType)}` : s;
+}
+
+/** What an empty list MEANS — three different facts, never one sentence. */
+export function acEmptyLine(d: AcOutboxResponse, state: AcFilterState): string {
+  if (d.counts.total === 0) {
+    return "Nothing has ever been queued for AutoCount in this company.";
+  }
+  /* The page now OPENS on this filter, so its empty case is the common one and
+     "try another status" would read as a dead end on a healthy day. */
+  if (state === "attention" && d.counts.attention === 0) {
+    return "Nothing needs your attention. Every document is either in AutoCount or on its way.";
+  }
+  return "Nothing here. Try another status or another document type.";
 }
 
 // ── the sentences at the top ────────────────────────────────────────────────
