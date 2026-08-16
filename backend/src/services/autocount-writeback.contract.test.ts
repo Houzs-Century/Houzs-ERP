@@ -180,9 +180,27 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
 
        DocDate is read here as well as in SalesHeader/PurchaseHeader because the
        vendor's examples set the document date on the target BEFORE the transfer
-       and this service set it after. */
+       and this service set it after.
+
+       THE FOUR ACCOUNT KEYS JOINED ON 2026-08-17 AND THEY ARE THE FIX, not a
+       tidy-up. PROVEN on the live host: a conversion whose target has no
+       DebtorCode when the transfer runs is refused —
+       `AppException: Debtor Code is empty.` from FullTransfer, and the
+       contentless `Invalid transfer item.` from AddPartialTransferDetail. That
+       is what kept HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 out of the
+       account book for a week. `cmd.AddNew()` creates the target empty and
+       neither SalesHeader nor PurchaseHeader has ever set an account.
+
+       The service reads them PAYLOAD-FIRST and falls back to the SOURCE
+       document's own header in the book. Both halves are load-bearing: the
+       payload half is what divergence D15 is about, and the book half is what
+       makes the outbox rows queued BEFORE that payload change drain at all.
+       Written out per side in the C# rather than through a ternary precisely so
+       this assertion can see all four names. */
     expect(headerKeys(CS_CONVERT)).toEqual(
-      ['Details', 'DocDate', 'DtlKeys', 'FromDocNo', 'FromDocNos', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
+      ['CreditorCode', 'CreditorName', 'DebtorCode', 'DebtorName',
+       'Details', 'DocDate', 'DtlKeys', 'FromDocNo', 'FromDocNos',
+       'SupplierDONo', 'SupplierInvoiceNo'].sort(),
     );
     /* The per-line pair, and it is a PAIR: a Qty with no DtlKey is refused, and
        so is a named key with no Qty while its siblings carry one. A line that
@@ -613,6 +631,12 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'never sends it. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } and readConvertSourceKeys resolves LINE IDENTITY only — its own doc comment says "NOT COVERED, and deliberately so: partial QUANTITY on a line". So partial SHIPMENT (a subset of lines) reaches AutoCount correctly and partial QUANTITY does not, and the two look identical from the ERP side.',
     severity: 'high',
   },
+  {
+    id: 'D15', flow: 'the four conversions', field: 'DebtorCode / CreditorCode',
+    service: 'MUST have an account on the target before the transfer runs, and this is PROVEN, not inferred: on the live host at 2026-08-17 00:55 the same conversion went from `AppException: Debtor Code is empty.` to `FullTransfer OK` on that assignment alone, and HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 entered the book. cmd.AddNew() creates the target empty and neither SalesHeader nor PurchaseHeader sets one. The service now reads all four keys, payload first.',
+    erp: 'sends none of them. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } — the account is not in the payload at all, so the service falls back to reading the SOURCE document header out of the account book. That fallback is what makes already-queued outbox rows drain, and it is a lookup the service should not have to do: the ERP knows the customer. Closing this is a payload change in enqueueConvert, tracked as the follow-up PR.',
+    severity: 'high',
+  },
 ];
 
 // ── layer 2: the wire body, whole, for all eight routes ─────────────────────
@@ -1020,7 +1044,8 @@ describe('the divergence register', () => {
   test('the count is pinned — a new divergence has to be written down to land', () => {
     /* If this fails you have either found an eleventh or fixed one of the ten.
        Both are good news; update the list and the module guide's prose together
-       — 7b for D9/D10, 7c1 for D14, 7d2 for D8, 7q for the extract's own fields.
+       — 7b for D9/D10, 7c1 for D14, 7c3 for D15, 7d2 for D8, 7q for the
+       extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
        and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
@@ -1033,8 +1058,17 @@ describe('the divergence register', () => {
        decision lives in one place (PlanTransfer) and a quantity it cannot
        express is refused, not approximated. The ERP half is a payload change
        and a decision about where the shipped quantity comes from, which is not
-       a test author's to make. */
-    expect(DIVERGENCES).toHaveLength(11);
+       a test author's to make.
+
+       D15 was ADDED on 2026-08-17, the morning after D14 and for a harder
+       reason: it is the PROVEN cause of a week-long production outage, measured
+       on the host rather than argued from source. It is a divergence and not
+       just a bug because the service now works around it — reading the account
+       out of the account book — and that workaround must not become invisible.
+       When enqueueConvert starts sending the account, strike D15 and say so in
+       §7c3; do not quietly delete the fallback with it, because it is the only
+       thing that drains a row queued before the change. */
+    expect(DIVERGENCES).toHaveLength(12);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.
