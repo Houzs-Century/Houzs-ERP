@@ -37,6 +37,7 @@ import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcReti
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { reverseSoPayment } from '../../acc/payments';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
@@ -11325,6 +11326,15 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   if (!deleted) {
     const { data: latest } = await sb.from('mfg_sales_order_payments').select('version').eq('id', id).maybeSingle();
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
+  }
+
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry. A row that never booked no-ops; a failure
+     is logged, never blocks the delete the operator already made. */
+  const unbooked = await reverseSoPayment(sb, id, docNo);
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment reversal failed:', id, unbooked.status, unbooked.reason);
   }
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a

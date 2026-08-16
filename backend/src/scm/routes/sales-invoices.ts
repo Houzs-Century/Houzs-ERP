@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -2188,6 +2189,9 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
   }).select(PAYMENT_COLS).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): book this
+     invoice's unbooked payments through the one posting gate. Best-effort. */
+  await postUnpostedSiPayments(sb, id);
   try { await reconcileSiOverpay(sb, id); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] overpay reconcile failed (post):', e); }
 
@@ -2264,6 +2268,13 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry; a never-booked row no-ops. */
+  const unbooked = await reverseSiPayment(sb, paymentId, (inv as { invoice_number?: string | null } | null)?.invoice_number ?? null);
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SI payment reversal failed:', paymentId, unbooked.status, unbooked.reason);
+  }
   try { await reconcileSiOverpay(sb, id); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] overpay reconcile failed (delete):', e); }
 
@@ -2638,6 +2649,9 @@ salesInvoices.patch('/:id/payment', async (c) => {
   });
   if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
   await recomputePaid(sb, id);
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): the
+     quick-pay insert returns no row, so the hook books by convergence. */
+  await postUnpostedSiPayments(sb, id);
   /* Edge #A — an overpayment via this legacy quick-pay must book the excess as a
      customer-credit, same as the POST /payments + DELETE paths. Without this the
      overpaid amount was silently lost (no OVERPAY credit row). */

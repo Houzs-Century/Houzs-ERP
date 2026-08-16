@@ -252,3 +252,44 @@ export async function backfillSoPayments(
     remaining: Math.max(0, candidates.length - batch.length) + failed.length,
   };
 }
+
+/** Void the ledger entry for a DELETED SI payment row. Idempotent. */
+export async function reverseSiPayment(
+  sb: any,
+  paymentId: string,
+  invoiceNo: string | null,
+): Promise<{ ok: boolean; status: string; reason?: string }> {
+  return reverseJournal(sb, {
+    sourceType: 'SIPAY',
+    sourceDocNo: paymentId,
+    narration: (orig) => `Reversal of ${orig.je_no} — payment on ${invoiceNo ?? 'invoice'} deleted`,
+  });
+}
+
+/** Book every not-yet-booked payment of ONE invoice. The quick-pay route's
+    insert does not return the new row, so its hook (and the normal route's)
+    posts by convergence instead: the engine's idempotency makes already-booked
+    rows no-op, so this is also a per-invoice self-heal. */
+export async function postUnpostedSiPayments(
+  sb: any,
+  salesInvoiceId: string,
+): Promise<{ ok: boolean; posted: number; failed: number; reason?: string }> {
+  const { data, error } = await sb
+    .from('sales_invoice_payments')
+    .select('id, sales_invoice_id, paid_at, method, merchant_provider, amount_centi, company_id')
+    .eq('sales_invoice_id', salesInvoiceId);
+  if (error) return { ok: false, posted: 0, failed: 0, reason: error.message };
+  let posted = 0;
+  let failed = 0;
+  for (const row of (data ?? []) as SiPaymentRow[]) {
+    const r = await postSiPayment(sb, row);
+    if (r.ok) {
+      if (r.status === 'posted') posted += 1;
+    } else {
+      failed += 1;
+      /* eslint-disable-next-line no-console */
+      console.error('[acc/payments] SI payment not booked:', row.id, r.status, r.reason);
+    }
+  }
+  return { ok: true, posted, failed };
+}
