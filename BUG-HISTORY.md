@@ -1,3 +1,77 @@
+## MRP planned over 7% of the demand, behind a guard that could not fire [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** A sales order the owner had just created was missing from the MRP
+page, so it could not be converted to a purchase order. Not consistently — some
+new orders showed, most did not, and nothing errored.
+
+**Root cause (traced).** `computeMrp`'s demand read ended
+`.order('id').limit(MRP_LOAD_CAP)` with `MRP_LOAD_CAP = 5000`, followed by
+`if (rows.length >= MRP_LOAD_CAP) throw new Error('mrp_load_truncated: …')`.
+
+PostgREST answers with at most `db-max-rows` rows per response and a `.limit()`
+ABOVE that ceiling does not lift it — it is an upper bound, not a request. So the
+read came back at the ceiling, `length >= 5000` was permanently false, and the
+throw that existed to prevent exactly this was unreachable. Measured on prod
+company 1 on 2026-08-16: **13,918 demand lines matched the filters and the plan
+saw 1,000 of them — 7.2%**. `.order('id')` is a `uuid` PK, so the surviving slice
+is not the oldest or the newest but an arbitrary 7% spanning the whole date range
+(`2023-12-26 .. 2026-08-10` out of `2023-08-20 .. 2026-08-13`): any given new SO
+line had roughly a 7% chance of being planned.
+
+Probe #2277 settled it by control flow rather than by row counts — `json_agg`
+makes every PostgREST read return exactly one row to `pg_stat_statements`, so the
+count is invisible there, but the reads that sit AFTER the throw had executed
+thousands of times, which only happens if the throw never fires.
+
+Three sibling reads in the same function had the same disease with no cap at
+all: `inventory_balances` (1,066 rows — MRP could not see 66 rows of stock it
+owns), the catalogue category read (2,293), and `supplier_material_bindings`.
+`purchase_order_items` (873) fits one page today and was correct by luck.
+
+**Fix.** Every read in `computeMrp` goes through `paginateAll` / `chunkIn`
+behind a local `readAll` that throws on error and on `truncated`. `MRP_LOAD_CAP`
+is deleted; the only bound a guard may be compared against is
+`PAGINATE_CEILING`, which the walk can actually reach.
+
+`paginateAll` itself carried the same class of assumption one level down: it
+stopped on the first response SHORTER than its 1000-row page, which silently
+assumes the page size is at or under the server's cap. Configure the cap lower
+and every paged read in the codebase would stop after one response having
+"successfully" read a slice. That assumption is not verifiable from here — the
+cap is PostgREST's own config, not a Postgres GUC (`pg_roles.rolconfig` carries
+no `max-rows` on this database) and the REST credentials are not in CI — so it is
+gone: the walk now advances by the rows it ACTUALLY received and stops only on an
+EMPTY response. Correct for any cap, at one extra empty request per read.
+`truncated` is new and additive; every existing caller destructures
+`{data, error}` and is unchanged.
+
+Un-truncating demand grew `soDeliverableRemaining`'s `.in('doc_no', …)` from 829
+documents to 2,725, which is a 414 at the edge rather than a slow query, so that
+call is made in batches of 400 (under a length prod already serves), run
+concurrently. `enrichLinesWithFabricSupplierCode`'s fabric lookup is chunked for
+the same reason.
+
+**Cost, stated rather than discovered later.** Paging is `ceil(rows/1000)`
+requests: demand 14, balances 2, categories 3, all others 1. `computeMrp` goes
+from ~13 requests to ~35. `mfg-sales-orders.ts` awaits it INLINE on the SO detail
+page — for ONE document, over the whole company's demand. That call site is now
+the dominant cost of that page and is the next thing to fix; it is not made
+correct by this PR, only slower, and it is already wrapped in a best-effort
+`try/catch` that degrades to "no coverage shown".
+
+**Test.** `mrp.test.ts`'s fake PostgREST now caps every response at 1,000 rows,
+the way the real edge does. Against the pre-fix engine, three assertions fail:
+a 1,200-line demand set plans 1,000 lines, PO outstanding reads 1,000 of 1,200,
+and a stock row sitting on page two is invisible (0 instead of 40). All pass
+after. The two tests this replaces (`mrp_load_truncated guard (audit D3)`) passed
+only because that fake had no ceiling — they certified a guard that could not
+fire in production. `paginate-all.test.ts` is new: 9 cases, including a server
+capping BELOW the page size, which the old walk truncated silently.
+
+**Ref.** fix/mrp-page-every-read, probes #2279 / #2290, 2026-08-16.
+
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
 <!-- area: Accounting + GL -->

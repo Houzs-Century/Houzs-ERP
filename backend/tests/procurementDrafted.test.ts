@@ -18,10 +18,18 @@ import {
 
 type Row = { so_item_id: string | null; qty: number | null };
 
-/** A client whose every query resolves to one page of `rows` (or an error).
- *  Only the four builder methods the loader touches are real. */
+/** A client serving `rows` through a REAL `.range(from, to)` window (or an
+ *  error). Only the four builder methods the loader touches are real.
+ *
+ *  The window used to be ignored — `.range` returned the whole of `rows` for
+ *  every call — which made a paginateAll walk see the same page forever. It
+ *  happened to terminate only because the walk stopped on a short page, and it
+ *  could never have failed on a paging bug, which is the one thing a fake behind
+ *  paginateAll is for (2026-08-16). */
 function sbOf(rows: Row[], error: { message: string } | null = null): SbLike {
-  const page = () => Promise.resolve(error ? { data: null, error } : { data: rows, error: null });
+  const page = (from: number, to: number) => Promise.resolve(
+    error ? { data: null, error } : { data: rows.slice(from, to + 1), error: null },
+  );
   const builder: Record<string, unknown> = {};
   for (const m of ["eq", "in", "gte", "order"]) builder[m] = () => builder;
   builder.range = page;

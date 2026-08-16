@@ -49,6 +49,7 @@ type Row = Record<string, any>;
    handler. */
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
+  private window: [number, number] | null = null;
   private op: 'select' | 'update' | 'delete' | 'insert' = 'select';
   private patch: Row = {};
   private inserted: Row[] = [];
@@ -56,7 +57,12 @@ class FakeQuery {
   select() { return this; }
   order() { return this; }
   limit() { return this; }
-  range() { return this; }
+  /* A REAL window. It used to chain and ignore its arguments, which made every
+     page of a paginateAll walk return the same rows — harmless while the walk
+     stopped on a short page, an endless one once it stops on an empty page
+     instead (2026-08-16). Ignoring it was never right: a fake that answers the
+     same rows for every window cannot fail on a paging bug. */
+  range(from: number, to: number) { this.window = [from, to]; return this; }
   ilike() { return this; }
   update(p: Row) { this.op = 'update'; this.patch = p; return this; }
   delete() { this.op = 'delete'; return this; }
@@ -84,7 +90,8 @@ class FakeQuery {
     const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
     if (this.op === 'update') for (const r of hit) Object.assign(r, this.patch);
     if (this.op === 'delete') for (const r of hit) this.rows.splice(this.rows.indexOf(r), 1);
-    return hit;
+    // The window applies to reads only — an update/delete acts on every match.
+    return this.window && this.op === 'select' ? hit.slice(this.window[0], this.window[1] + 1) : hit;
   }
   maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
   single() {

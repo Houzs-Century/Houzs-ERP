@@ -82,6 +82,7 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
+import { paginateAll, chunkIn, PAGINATE_CEILING } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
@@ -117,25 +118,29 @@ const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
    MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
 
-/* Row ceiling on the demand and PO-supply reads (audit D3, 2026-08-01). The
-   `.limit(5000)` used to land on EVERY row in an unspecified order with no
-   error when crossed — the plan silently computed over a slice. Both reads now
-   (a) push the status filters into SQL so the cap only ever counts rows that
-   can matter, (b) carry a deterministic ORDER BY so a slice is at least
-   stable, and (c) FAIL LOUDLY when the row count reaches the cap: a truncated
-   plan is a wrong plan, and wrong-but-plausible is the worst failure mode a
-   planning page can have. The audit measured ~100 PO rows / well under the cap
-   on the demand side, so the throw is pure forward-safety today.
+/* EVERY full-set read in computeMrp is paged (2026-08-16). It used to ask for
+   `.limit(5000)` and throw if it got 5000 rows back; PostgREST answers with at
+   most one page whatever `.limit()` says, so the condition was unreachable and
+   the plan ran on the first page of demand. The cap constant is gone with it —
+   the only bound a guard may be compared against is PAGINATE_CEILING, which is
+   the one paginateAll can actually reach. See BUG-HISTORY 2026-08-16.
 
-   PostgREST filter notes, because the syntax is the trap: the status columns
-   live on the EMBEDDED (aliased, !inner-joined) parent, so the filter path is
-   the alias ('so.status' / 'po.status') and the not-in list uses the quoted
-   form so-delivery-sync.ts already proved in production. A NULL-status header
-   is dropped by `not.in` (NULL never passes a NOT IN) — for demand that is
-   exactly so-stock-allocation.ts's own SQL behaviour, so the two engines now
+   The SQL status filters below stay: they keep done SOs and dead POs out of the
+   pages entirely, which is now a cost saving rather than a way to fit under a
+   cap. PostgREST filter notes, because the syntax is the trap: the status
+   columns live on the EMBEDDED (aliased, !inner-joined) parent, so the filter
+   path is the alias ('so.status' / 'po.status') and the not-in list uses the
+   quoted form so-delivery-sync.ts already proved in production. A NULL-status
+   header is dropped by `not.in` (NULL never passes a NOT IN) — for demand that
+   is exactly so-stock-allocation.ts's own SQL behaviour, so the two engines
    agree on that edge too; the JS-side SO_DONE/PO_DEAD filters below remain the
    authoritative gate for everything the SQL cannot express. */
-const MRP_LOAD_CAP = 5000;
+/* Documents per soDeliverableRemaining call. Sized off what production already
+   serves rather than off a guess at the edge's URL limit: today's truncated
+   demand set is 829 distinct documents and that IN list works, so 400 keeps
+   every list in this path — and every `.in()` the function builds internally
+   from it — comfortably under a length prod is already answering. */
+const SO_DOC_BATCH = 400;
 const sqlNotInList = (statuses: Iterable<string>): string =>
   `(${[...statuses].map((s) => `"${s}"`).join(',')})`;
 const SO_DONE_SQL = sqlNotInList(SO_DONE);
@@ -433,8 +438,12 @@ export async function computeMrp(
   // zeroed EVERY lead time -> order-by date = production date = delivery date
   // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
   // schedule.
+  // Paged like every other read here. loadLeadTimeBase takes the awaited
+  // {data,error}, and paginateAll's result is that shape — so no signature
+  // change, and its other three callers are untouched.
   const leadBase = await loadLeadTimeBase(
-    scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
+    paginateAll((from, to) => scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT))
+      .order('category').order('warehouse_id').range(from, to)),
   );
   /* supplierCode is the SKU's MAIN supplier — an approximation, and a stated
      one: the convert may end up on a different supplier via a per-pick or
@@ -459,11 +468,23 @@ export async function computeMrp(
       }).total,
     );
 
+  /* Every read below goes through readAll: paged to the end, errors thrown, and
+     the ONLY cap check that can ever be true — paginateAll's own ceiling —
+     applied uniformly. A read that skips it is a silent slice. */
+  const readAll = async <T>(
+    what: string,
+    run: () => Promise<{ data: T[] | null; error: { message: string } | null; truncated: boolean }>,
+  ): Promise<T[]> => {
+    const { data, error, truncated } = await run();
+    if (error) throw new Error(`mrp_load_failed: ${what}: ${error.message}`);
+    if (truncated) throw new Error(`mrp_load_truncated: ${what} reached ${PAGINATE_CEILING} rows (paginateAll's ceiling) — the plan would silently ignore every row past it.`);
+    return data ?? [];
+  };
+
   // ── 1. Demand — outstanding SO lines ──────────────────────────────────
-  // Status filter pushed into SQL (see MRP_LOAD_CAP) so done SOs never spend
-  // the row budget; ORDER BY id so the read is deterministic; length == cap
-  // throws rather than planning on a silent slice.
-  const { data: demandRaw, error: demandErr } = await scoped(sb
+  // ORDER BY id makes the page windows disjoint; the status filter keeps done
+  // SOs out of the pages at all.
+  const demandRaw = await readAll<DemandRow>('demand', () => paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
@@ -472,11 +493,7 @@ export async function computeMrp(
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
     .order('id')
-    .limit(MRP_LOAD_CAP);
-  if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
-  if (((demandRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
-    throw new Error(`mrp_load_truncated: demand read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
-  }
+    .range(from, to)));
 
   /* Undated lines (no line delivery date AND no SO delivery date) are not
      ready to order, so the MRP page hides them by default — but they are STILL
@@ -490,7 +507,7 @@ export async function computeMrp(
      take supply from a dated line and every dated line's coverage is IDENTICAL
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
-  const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
+  const demandActive = (demandRaw as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
   const isDatedLine = (r: DemandRow): boolean =>
@@ -502,8 +519,22 @@ export async function computeMrp(
   // delivered-net-of-returns per line and drop any line with nothing left to
   // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
   // convert flow uses), so MRP can never disagree with the SO's remaining.
+  /* IN DOC BATCHES. soDeliverableRemaining takes `.in('doc_no', …)`, and the
+     full demand set is thousands of documents — one IN list that long is tens
+     of KB of URL, which is a 414 at the REST edge rather than a slow query, and
+     that function's own inner `.in()` reads are un-paged, so a long list would
+     clip them silently too. It is per-document throughout (grouping, line
+     sequence, header debtor), so batched calls are row-for-row identical to one
+     call. Concurrent because the SO detail page awaits this inline. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
-  const deliverable = await soDeliverableRemaining(sb, demandDocNos);
+  const docBatches: string[][] = [];
+  for (let i = 0; i < demandDocNos.length; i += SO_DOC_BATCH) {
+    docBatches.push(demandDocNos.slice(i, i + SO_DOC_BATCH));
+  }
+  const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
+  for (const part of await Promise.all(docBatches.map((b) => soDeliverableRemaining(sb, b)))) {
+    for (const [k, v] of part) deliverable.set(k, v);
+  }
   const deliveredNetOf = (soItemId: string): number => {
     const d = deliverable.get(soItemId);
     if (!d) return 0;
@@ -537,32 +568,33 @@ export async function computeMrp(
   // in demand (bounded .in, chunked) so the map can never be clipped.
   const prodByCode = new Map<string, ProductRow>();
   const demandCodes = [...new Set(demand.map((d) => d.item_code).filter((c): c is string => !!c))];
-  for (let i = 0; i < demandCodes.length; i += 300) {
-    const chunk = demandCodes.slice(i, i + 300);
-    if (chunk.length === 0) continue;
-    const { data: prods } = await scoped(sb
-      .from('mfg_products')
-      .select('code, name, category')
-      .in('code', chunk));
-    for (const p of (prods ?? []) as ProductRow[]) prodByCode.set(p.code, p);
-  }
+  const prods = await readAll<ProductRow>('product master', () => chunkIn<ProductRow>(demandCodes, (batch, from, to) => scoped(sb
+    .from('mfg_products')
+    .select('code, name, category')
+    .in('code', batch))
+    .order('code')
+    .range(from, to)));
+  for (const p of prods) prodByCode.set(p.code, p);
 
   // The category dropdown lists every catalog category (a handful of enum
-  // values), independent of current demand — derive it from a lightweight
-  // category-only fetch (the few distinct values all surface within the cap).
+  // values), independent of current demand — a category-only fetch of the whole
+  // catalog, paged because the catalog is past one page.
   const categorySet = new Set<string>();
-  const { data: catRows } = await scoped(sb.from('mfg_products').select('category'));
-  for (const c of (catRows ?? []) as Array<{ category: string | null }>) {
+  const catRows = await readAll<{ category: string | null }>('product categories', () => paginateAll<{ category: string | null }>((from, to) =>
+    scoped(sb.from('mfg_products').select('code, category')).order('code').range(from, to)));
+  for (const c of catRows) {
     if (c.category) categorySet.add(c.category);
   }
 
-  const { data: warehouses } = await scoped(sb
-    .from('warehouses')
-    .select('id, code, name')
-    .eq('is_active', true))
-    .order('code');
+  const warehouses = await readAll<{ id: string; code: string; name: string }>('warehouses', () =>
+    paginateAll<{ id: string; code: string; name: string }>((from, to) => scoped(sb
+      .from('warehouses')
+      .select('id, code, name')
+      .eq('is_active', true))
+      .order('code')
+      .range(from, to)));
   const whById = new Map<string, { code: string; name: string }>();
-  for (const w of (warehouses ?? []) as Array<{ id: string; code: string; name: string }>) {
+  for (const w of warehouses) {
     whById.set(w.id, { code: w.code, name: w.name });
   }
 
@@ -586,10 +618,11 @@ export async function computeMrp(
      already loaded above; only the small state-mapping table is new, and it is
      read ONCE for the whole computation, not per line. */
   const soWarehouseMasters: SoWarehouseMasters = {
-    warehouses: (warehouses ?? []) as Array<{ id: string; code: string; name: string }>,
-    stateMappings: ((await scoped(
-      sb.from('state_warehouse_mappings').select('state, warehouse_id'),
-    )).data ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
+    warehouses,
+    stateMappings: await readAll<{ state: string | null; warehouse_id: string | null }>('state mappings', () =>
+      paginateAll<{ state: string | null; warehouse_id: string | null }>((from, to) => scoped(
+        sb.from('state_warehouse_mappings').select('state, warehouse_id'),
+      ).order('state').range(from, to))),
   };
   /* Stamped onto the row in place — the same enrichment idiom as
      enrichLinesWithFabricSupplierCode above — so every downstream bucket key,
@@ -602,11 +635,15 @@ export async function computeMrp(
   // Commander 2026-05-31 — warehouse is part of the bucket identity (no cross-WH
   // pooling). whFilter scopes the query to one warehouse; otherwise every
   // warehouse's balance lands in its own bucket.
-  let balQ = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
-  if (whFilter) balQ = balQ.eq('warehouse_id', whFilter);
-  const { data: balances } = await balQ;
+  /* inventory_balances is a VIEW with no id — the page windows are made disjoint
+     by ordering on its full grouping key. */
+  const balances = await readAll<BalanceRow>('inventory balances', () => paginateAll<BalanceRow>((from, to) => {
+    let balQ = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
+    if (whFilter) balQ = balQ.eq('warehouse_id', whFilter);
+    return balQ.order('product_code').order('warehouse_id').order('variant_key').range(from, to);
+  }));
   const stockByKey = new Map<string, number>();
-  for (const b of (balances ?? []) as BalanceRow[]) {
+  for (const b of balances) {
     const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? '');
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + (b.qty ?? 0));
   }
@@ -614,11 +651,11 @@ export async function computeMrp(
   // ── 4. Outstanding PO supply — open PO lines with ETA, keyed by (warehouse, code, variant) ──
   // Each PO line's ship-to warehouse = line warehouse_id, falling back to the PO
   // header's purchase_location_id. No SO↔PO linkage — supply is a pure pool.
-  // Dead-PO filter pushed into SQL + deterministic ORDER BY + loud truncation
-  // guard (see MRP_LOAD_CAP). The read error is THROWN now, too: it used to be
-  // silently discarded, and a failed supply read produced a plan with ZERO PO
-  // supply — phantom shortage everywhere, rendered as if it were true.
-  const { data: poRaw, error: poErr } = await scoped(sb
+  // Dead-PO filter pushed into SQL, deterministic ORDER BY, paged. The read
+  // error is THROWN, too: it used to be silently discarded, and a failed supply
+  // read produced a plan with ZERO PO supply — phantom shortage everywhere,
+  // rendered as if it were true.
+  const poRaw = await readAll<PoLineRow>('PO supply', () => paginateAll<PoLineRow>((from, to) => scoped(sb
     .from('purchase_order_items')
     .select(`
       material_code, item_group, variants, qty, received_qty, delivery_date,
@@ -628,11 +665,7 @@ export async function computeMrp(
     `)
     .not('po.status', 'in', PO_DEAD_SQL))
     .order('id')
-    .limit(MRP_LOAD_CAP);
-  if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
-  if (((poRaw ?? []) as unknown[]).length >= MRP_LOAD_CAP) {
-    throw new Error(`mrp_load_truncated: PO supply read returned ${MRP_LOAD_CAP} rows (the cap) — the plan would silently ignore every row past it. Raise the cap or page the read.`);
-  }
+    .range(from, to)));
   // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
   // can display it read-only (a raised PO's supplier is fixed). Name resolved
   // from the suppliers map below.
@@ -644,7 +677,7 @@ export async function computeMrp(
      set before anything is bucketed — a commitment is owed to a (bucket, PO)
      pair, and two PO lines can share one. */
   const poDrafts: PoSupplyEntry[] = [];
-  for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
+  for (const r of poRaw) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
        line's own effective date (MAX over its delivery_date + revisions), else
@@ -718,13 +751,14 @@ export async function computeMrp(
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
   if (poSupplierIds.size > 0) {
-    const { data: poSups } = await scoped(sb
-      .from('suppliers')
-      .select('id, name')
-      .in('id', [...poSupplierIds]));
-    for (const s of (poSups ?? []) as Array<{ id: string; name: string }>) {
-      supplierNameById.set(s.id, s.name);
-    }
+    const poSups = await readAll<{ id: string; name: string }>('PO suppliers', () =>
+      chunkIn<{ id: string; name: string }>([...poSupplierIds], (batch, from, to) => scoped(sb
+        .from('suppliers')
+        .select('id, name')
+        .in('id', batch))
+        .order('id')
+        .range(from, to)));
+    for (const s of poSups) supplierNameById.set(s.id, s.name);
   }
   for (const arr of poByKey.values()) arr.sort((a, b) => byDateAsc(a.eta, b.eta));
 
@@ -735,13 +769,22 @@ export async function computeMrp(
   const mainByCode = new Map<string, { code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
   if (codes.length > 0) {
-    const { data: binds } = await scoped(sb
+    /* is_main_supplier DESC stays FIRST so "first row seen for a code wins as
+       main" still selects the main binding; material_code + supplier_id are
+       added only to make the ordering total, which is what makes the page
+       windows disjoint. Chunks are cut on material_code, so a code's rows never
+       straddle two chunks and the first-wins rule holds per chunk too. */
+    type BindRow = { material_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
+    const binds = await readAll<BindRow>('supplier bindings', () => chunkIn<BindRow>(codes, (batch, from, to) => scoped(sb
       .from('supplier_material_bindings')
       .select('material_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)')
       .eq('material_kind', 'mfg_product')
-      .in('material_code', codes))
-      .order('is_main_supplier', { ascending: false });
-    for (const b of (binds ?? []) as Array<{ material_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
+      .in('material_code', batch))
+      .order('is_main_supplier', { ascending: false })
+      .order('material_code')
+      .order('supplier_id')
+      .range(from, to)));
+    for (const b of binds) {
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (!s) continue; // orphaned binding (supplier deleted) — skip
       const arr = suppliersByCode.get(b.material_code) ?? [];

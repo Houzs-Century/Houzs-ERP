@@ -21,6 +21,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { chunkIn } from './paginate-all';
 
 /* The variant keys that can carry the internal fabric code, in the SAME
    precedence order computeVariantKey / buildVariantSummary read them:
@@ -41,6 +42,9 @@ const FABRIC_CODE_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'
 type LineWithVariants = Record<string, unknown>;
 
 const trimStr = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+
+/** One scm.fabric_trackings row, as both lookups below read it. */
+type FabricRow = { fabric_code?: string | null; supplier_code?: string | null };
 
 /* The line's internal fabric code, read through the alias chain above. */
 const fabricCodeOf = (v: Record<string, unknown>): string => {
@@ -76,12 +80,24 @@ export async function enrichLinesWithFabricSupplierCode(
 
   const map = new Map<string, string>();
   try {
-    // ONE batched read, company-scoped (no-op pre-activation / single-company).
-    const { data } = await scopeToCompany(
-      sb.from('fabric_trackings').select('fabric_code, supplier_code').in('fabric_code', [...codes]),
-      c,
+    /* Chunked + paged, company-scoped (no-op pre-activation / single-company).
+       It used to be ONE unpaged read: PostgREST answers with at most one page
+       whatever is asked, so a caller with more fabric codes than fit a page got
+       a silent slice and the lines past it lost their supplier-code suffix. MRP
+       became such a caller on 2026-08-16 when its demand read stopped being
+       truncated — 121 distinct codes today, but the bound is the live catalogue,
+       not a constant. */
+    const { data } = await chunkIn<FabricRow>(
+      [...codes],
+      (batch, from, to) => scopeToCompany(
+        sb.from('fabric_trackings').select('fabric_code, supplier_code').in('fabric_code', batch),
+        c,
+      ).order('fabric_code').range(from, to).then((r) => ({
+        data: (r.data ?? []) as FabricRow[],
+        error: r.error,
+      })),
     );
-    for (const r of (data ?? []) as Array<{ fabric_code?: string | null; supplier_code?: string | null }>) {
+    for (const r of data) {
       const code = trimStr(r.fabric_code);
       const sup = trimStr(r.supplier_code);
       // On HOUZS fabrics supplier_code is often blank -> skip, so the line falls

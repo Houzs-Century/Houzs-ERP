@@ -106,7 +106,9 @@ the two-demand-sets divergence the audit caught.
 ## 2. Demand
 
 - Source: `mfg_sales_order_items` (non-cancelled) joined `!inner` to its SO
-  header. Status filter is pushed into SQL AND re-applied in JS via `SO_DONE`.
+  header, read in FULL via `paginateAll` (§5b — it was one page until
+  2026-08-16). Status filter is pushed into SQL AND re-applied in JS via
+  `SO_DONE`.
 - `SO_DONE` is **`SO_TERMINAL_STATES`** from
   `backend/src/scm/shared/so-terminal-states.ts` — read it there rather than
   from this line, which was one of **fourteen** hand-typed copies across ten
@@ -165,16 +167,44 @@ the two-demand-sets divergence the audit caught.
 
 | Error | Meaning |
 |-------|---------|
-| `mrp_load_failed: …` | Demand or PO-supply read errored. The PO read used to swallow this and plan with zero supply (phantom shortage rendered as truth) — it throws since 2026-08-01. |
-| `mrp_load_truncated: …` | A read returned `MRP_LOAD_CAP` (5000) rows — the cap is full and the plan would silently ignore rows past it. Raise the cap or page the read; do NOT catch-and-continue. |
+| `mrp_load_failed: <what>: …` | That read errored. The PO read used to swallow this and plan with zero supply (phantom shortage rendered as truth) — it throws since 2026-08-01, and since 2026-08-16 every read names itself in the message. |
+| `mrp_load_truncated: <what> reached 50000 rows …` | `paginateAll` stopped at `PAGINATE_CEILING` without reaching the end of the data. Genuinely unreachable today (the largest read is 13,918 rows) — but reachable, which is the entire difference from what stood here before. Do NOT catch-and-continue. |
 | lead-time load throws | `loadLeadTimeBase` — a swallowed error would zero every lead time (order-by = delivery date). |
 
 Advisory consumers (SO drill-down, po-so-coverage, reservations) catch and
 degrade to "no coverage shown"; the MRP page and the agents fail loudly.
-Both reads carry deterministic `ORDER BY id` and push their status not-in
-lists into SQL (quoted-list form, filter path = the embed alias — the idiom
-so-delivery-sync.ts proved). A NULL-status header is dropped by `not.in`,
-matching so-stock-allocation's own SQL.
+Every read carries a deterministic total `ORDER BY`, and the demand/PO reads
+push their status not-in lists into SQL (quoted-list form, filter path = the
+embed alias — the idiom so-delivery-sync.ts proved). A NULL-status header is
+dropped by `not.in`, matching so-stock-allocation's own SQL.
+
+### 5b. Every read is paged — and why the old guard was worse than none
+
+Until 2026-08-16 the demand and PO reads ended `.limit(MRP_LOAD_CAP)` with
+`MRP_LOAD_CAP = 5000` and threw when the row count **reached** 5000. PostgREST
+answers with at most `db-max-rows` rows per response and a `.limit()` above that
+does not lift it, so the count could never reach 5000, the guard was dead code
+that read as protection, and the plan was computed over ONE PAGE of demand —
+1,000 of 13,918 live lines, 7.2%, chosen by `uuid` order, which is neither the
+newest nor the oldest but an arbitrary slice. See BUG-HISTORY 2026-08-16.
+
+Every read in `computeMrp` now goes through `paginateAll` / `chunkIn`
+(`lib/paginate-all.ts`) behind a local `readAll` helper that throws on error and
+on `truncated`. **The rule for anyone adding a read here: page it.** A bare
+`await sb.from(...)` in this function is a silent slice, not a query.
+
+Two constraints paging does not solve, both live here:
+
+- **IN-list length.** Un-truncating demand grew `soDeliverableRemaining`'s
+  `.in('doc_no', …)` from 829 documents to 2,725. An over-long IN list is a 414
+  at the edge, not a slow query, so that call is made in `SO_DOC_BATCH` (400)
+  batches, concurrently. Batching is safe because the function is per-document
+  throughout; it also bounds the un-paged `.in()` reads inside it.
+- **Cost.** Paging is `ceil(rows / 1000)` requests. Measured on prod company 1:
+  demand 14, `inventory_balances` 2, catalogue categories 3, everything else 1.
+  `computeMrp` is ~13 requests today and ~35 after, and
+  `mfg-sales-orders.ts` awaits it INLINE on the SO detail page for one document.
+  That call site is the next thing to fix — see BUG-HISTORY.
 
 ## 6. The stock side — reservations assigned/free (audit D8)
 

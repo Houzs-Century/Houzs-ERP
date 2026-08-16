@@ -20,26 +20,39 @@ import { distributeAssignedToLots, isMakeToOrderCategory } from '../lib/inventor
 
 type Row = Record<string, unknown>;
 
+/* THE EDGE'S PAGE CEILING. PostgREST hands back at most `db-max-rows` rows per
+   response and says nothing about the rest — no error, no flag, just a shorter
+   array. It is the single most important thing this fake has to reproduce: a
+   fake without it lets a read that production truncates look complete, which is
+   exactly how the old `.limit(5000)`-plus-`length >= 5000` guard passed its own
+   tests for two weeks while planning over 7% of the demand in prod. Applied
+   LAST, after filters, ordering, range and limit, because that is where the
+   server applies it. */
+const MAX_ROWS = 1000;
+
 // A fake PostgREST query: chainable filters, awaitable, paginable via range().
 function fakeSb(tables: Record<string, Row[]>) {
   class Q {
     rows: Row[];
     private window: [number, number] | null = null;
+    private limitN: number | null = null;
     constructor(rows: Row[]) { this.rows = [...rows]; }
     select() { return this; }
     eq(col: string, val: unknown) { this.rows = this.rows.filter((r) => r[col] === val); return this; }
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => (vals as unknown[]).includes(r[col])); return this; }
-    // No-op: the engine pushes status not-in filters into SQL as an under-the-cap
-    // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
+    // No-op: the engine pushes status not-in filters into SQL so done SOs never
+    // reach a page; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
     not() { return this; }
-    // Real slice, so the mrp_load_truncated guard (rows === cap) is testable.
-    limit(n: number) { this.rows = this.rows.slice(0, n); return this; }
+    /* An UPPER BOUND, never a lift: PostgREST takes min(limit, db-max-rows), so
+       asking for more than the ceiling gets you the ceiling. */
+    limit(n: number) { this.limitN = n; return this; }
     order() { return this; }
     range(from: number, to: number) { this.window = [from, to]; return this; }
     private result() {
-      const rows = this.window ? this.rows.slice(this.window[0], this.window[1] + 1) : this.rows;
-      return { data: rows, error: null as null };
+      let rows = this.window ? this.rows.slice(this.window[0], this.window[1] + 1) : this.rows;
+      if (this.limitN != null) rows = rows.slice(0, this.limitN);
+      return { data: rows.slice(0, MAX_ROWS), error: null as null };
     }
     then<T>(onF: (v: { data: Row[]; error: null }) => T, onR?: (e: unknown) => T) {
       return Promise.resolve(this.result()).then(onF, onR);
@@ -400,22 +413,63 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   });
 });
 
-describe('computeMrp — mrp_load_truncated guard (audit D3)', () => {
-  test('a demand read that fills the row cap throws instead of planning on a slice', async () => {
-    const flood: Row[] = Array.from({ length: 5001 }, (_, i) => ({
-      ...demandRed(1), id: `si-${i}`, doc_no: `SO-${i}`,
-    }));
-    const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: flood });
-    await expect(computeMrp(sb as any, opts)).rejects.toThrow(/mrp_load_truncated/);
+/* Replaces the old "mrp_load_truncated guard (audit D3)" pair. Those two floods
+   were 5001 rows and asserted a throw, and they passed — against a fake with no
+   page ceiling, where `.limit(5000)` really did return 5000 rows. Production's
+   edge returns at most MAX_ROWS, so `length >= 5000` was never true there and
+   the guard those tests certified could not fire. With the ceiling in the fake
+   they fail as they always should have, which is why they are gone: the
+   behaviour worth asserting is not "the cap throws", it is "there is no cap". */
+describe('computeMrp — every read is paged past the edge ceiling (2026-08-16)', () => {
+  /* 1200 > MAX_ROWS by design: one page plus a remainder. Before the fix the
+     demand read got page one and the other 200 lines were dropped with no error
+     — 1000 units of shortage instead of 1200, and 200 sales orders that could
+     not be converted to a PO because MRP did not know they existed. */
+  const demandFlood = (n: number): Row[] => Array.from({ length: n }, (_, i) => ({
+    ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${String(i).padStart(5, '0')}`,
+  }));
+
+  test('a 1200-line demand set is planned in full, not just the first page', async () => {
+    const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: demandFlood(1200) });
+    const res = await computeMrp(sb as any, opts);
+    // One bucket (same code + warehouse + variant), every line in it.
+    expect(res.skus).toHaveLength(1);
+    expect(res.skus[0].lines).toHaveLength(1200);
+    expect(res.totals.shortageUnits).toBe(1200);
   });
 
-  test('a PO-supply read that fills the row cap throws too', async () => {
-    const flood: Row[] = Array.from({ length: 5001 }, () => poLine('PO-N', 1, { fabricCode: 'RED' }, '2026-11-01'));
+  test('PO supply past the first page still covers demand', async () => {
+    /* ONE demand line for 1200 units against 1200 single-unit PO lines, so the
+       demand side is never the thing under test. Truncated, the supply read
+       stops at 1000 and the page reports 200 units of phantom shortage on goods
+       already on order — the reading that makes a buyer order them twice. */
     const sb = fakeSb({
       ...BASE_TABLES,
-      mfg_sales_order_items: [demandRed(1)],
-      purchase_order_items: flood,
+      mfg_sales_order_items: [demandRed(1200)],
+      purchase_order_items: Array.from({ length: 1200 }, (_, i) =>
+        poLine(`PO-${String(i).padStart(5, '0')}`, 1, { fabricCode: 'RED' }, '2026-11-01')),
     });
-    await expect(computeMrp(sb as any, opts)).rejects.toThrow(/mrp_load_truncated/);
+    const res = await computeMrp(sb as any, opts);
+    expect(res.skus[0].poOutstanding).toBe(1200);
+    expect(res.totals.shortageUnits).toBe(0);
+  });
+
+  test('stock past the first page is not invisible', async () => {
+    /* The ONLY balance row that backs this demand sits at index 1100 — on page
+       two. Truncated, MRP sees zero stock and orders 1200 units of goods the
+       company already owns; paged, it sees the 40 and orders 1160. Position is
+       the whole test: a matching row on page one would pass either way. */
+    const balances: Row[] = Array.from({ length: 1200 }, (_, i) => ({
+      product_code: 'BF-100', warehouse_id: 'W1', variant_key: `filler-${i}`, qty: 0,
+    }));
+    balances[1100] = { product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 40 };
+    const sb = fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: demandFlood(1200),
+      inventory_balances: balances,
+    });
+    const res = await computeMrp(sb as any, opts);
+    expect(res.skus[0].stock).toBe(40);
+    expect(res.totals.shortageUnits).toBe(1160);
   });
 });
