@@ -42,6 +42,8 @@
 // module existed.
 // ----------------------------------------------------------------------------
 
+import type { ReadinessLine } from './so-readiness';
+
 /** What computeMrp says about a line, via mrpLineCoverage(). `null` = no
  *  verdict (line absent from the allocation, or MRP itself failed). */
 export type LiveStockState = 'stock' | 'po' | 'shortage' | null;
@@ -72,22 +74,33 @@ export function effectiveLineStockStatus(
   return 'PENDING';
 }
 
-/**
- * The same verdict for a whole page of lines, keyed by line id.
+/** One page of SO lines, grouped per document and already carrying the
+ *  effective status, ready for `summariseReadiness`.
  *
- * `coverage` is `mrpLineCoverage(...)`'s output, or `null` when the caller has
- * no MRP result at all (computeMrp is best-effort in every handler that runs
- * it). `null` is not "no coverage for this line" — it is "no MRP ran" — and
- * both collapse to the same fail-soft answer: the stored value stands.
- */
-export function effectiveStockByLine(
-  lines: Array<{ id: string; stock_status?: string | null }>,
+ *  `coverage` is `mrpLineCoverage(...)`'s output, or `null` when the caller has
+ *  no MRP result at all (computeMrp is best-effort in every handler that runs
+ *  it). `null` is not "no coverage for this line" — it is "no MRP ran" — and
+ *  both collapse to the same fail-soft answer: the stored value stands. */
+export function readinessLinesByDoc(
+  rows: Array<{
+    id: string; doc_no: string; item_group: string | null;
+    item_code: string | null; stock_status?: string | null; cancelled?: boolean | null;
+  }>,
   coverage: Map<string, { source: string }> | null,
-): Map<string, EffectiveStockStatus> {
-  const out = new Map<string, EffectiveStockStatus>();
-  for (const l of lines) {
-    const live = (coverage?.get(l.id)?.source ?? null) as LiveStockState;
-    out.set(l.id, effectiveLineStockStatus(l.stock_status ?? null, live));
+): Map<string, ReadinessLine[]> {
+  const out = new Map<string, ReadinessLine[]>();
+  for (const r of rows) {
+    const arr = out.get(r.doc_no) ?? [];
+    arr.push({
+      item_group: r.item_group,
+      item_code: r.item_code,
+      cancelled: r.cancelled ?? false,
+      stock_status: effectiveLineStockStatus(
+        r.stock_status ?? null,
+        (coverage?.get(r.id)?.source ?? null) as LiveStockState,
+      ),
+    });
+    out.set(r.doc_no, arr);
   }
   return out;
 }

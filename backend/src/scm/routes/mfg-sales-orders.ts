@@ -220,7 +220,7 @@ import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
-import { effectiveLineStockStatus, effectiveStockByLine, type LiveStockState } from '../lib/so-line-effective-stock';
+import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1642,30 +1642,14 @@ mfgSalesOrders.get('/', async (c) => {
        isServiceLine's strongest signal, so a delivery/dispose SKU whose line
        item_group was saved as 'others' is still recognised as a SERVICE line
        and cannot masquerade as a short accessory. */
-    /* Rolled up from the SAME verdict the drill-down pill shows, not from the
-       stored column alone (owner 2026-08-17; see so-line-effective-stock.ts and
-       sales-order.md §0.4 for why, and for what it costs — nothing: this
-       handler already awaits one computeMrp for the source-PO union below, and
-       mrpLineCoverage is a pure flatten of that result). */
+    /* Fed the SAME verdict the drill-down pill shows, not the stored column
+       alone, so board and drill cannot disagree (so-line-effective-stock.ts,
+       §0.4). No query: the union below already awaits this MRP run. */
     const mrpForList = await mrpForListProm;
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    {
-      const effective = effectiveStockByLine(
-        (itemRows ?? []) as Array<{ id: string; stock_status?: string | null }>,
-        mrpForList ? mrpLineCoverage(mrpForList) : null,
-      );
-      const linesByDoc = new Map<string, ReadinessLine[]>();
-      for (const it of (itemRows ?? []) as Array<{ id: string; doc_no: string; item_group: string; item_code: string | null; cancelled: boolean }>) {
-        const arr = linesByDoc.get(it.doc_no) ?? [];
-        arr.push({
-          item_group: it.item_group, item_code: it.item_code, cancelled: it.cancelled,
-          stock_status: effective.get(it.id) ?? 'PENDING',
-        });
-        linesByDoc.set(it.doc_no, arr);
-      }
-      attachLineCategories(linesByDoc.values(), productCategory);
-      for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
-    }
+    const linesByDoc = readinessLinesByDoc(itemRows ?? [], mrpForList ? mrpLineCoverage(mrpForList) : null);
+    attachLineCategories(linesByDoc.values(), productCategory);
+    for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
     /* "Has undelivered qty" per SO (Wei Siang 2026-05-30) — drives the Issue
        Delivery Order menu gate. Recomputed LIVE (remaining = qty − delivered +
@@ -2873,9 +2857,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
          allocation outcome (stock / po / shortage). coverage_po + eta are only
          set when an outstanding PO covers the line, so the UI shows PO·ETA. */
       stock_state: stockState,
-      /* The verdict the line PILL renders, decided here so the pill and the SO
-         list column cannot hold two opinions (sales-order.md §0.4). stock_state
-         and stock_status stay on the payload — they are the two INPUTS. */
+      // What the PILL renders, decided here so it and the board agree (§0.4).
       stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,
@@ -3012,9 +2994,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       delivered_qty: rem?.delivered ?? deliveredQty,
       remaining_qty: rem?.remaining ?? Number(it.qty ?? 0),
       stock_state: stockState,
-      /* The verdict the line PILL renders, decided here so the pill and the SO
-         list column cannot hold two opinions (sales-order.md §0.4). stock_state
-         and stock_status stay on the payload — they are the two INPUTS. */
+      // What the PILL renders, decided here so it and the board agree (§0.4).
       stock_status_effective: effectiveLineStockStatus((it as { stock_status?: string | null }).stock_status ?? null, stockState as LiveStockState),
       coverage_po: covered ? cov?.po ?? null : null,
       coverage_eta: covered ? cov?.eta ?? null : null,

@@ -1672,20 +1672,10 @@ export function MfgSalesOrdersListV2() {
       label: "Stock Status",
       width: "170px",
       defaultHidden: true,
-      // Not in the backend sort whitelist, so this sorts the loaded page
-      // client-side (see the DataTable `disableSort` doc) — which is what
-      // `sortValue` below orders.
-      disableSort: true,
-      getValue: (r) => r.stock_remark ?? "",
-      /* SHORT first, closest-to-ready first within it. `getValue` stays the raw
-         remark so the CSV export and the column funnel keep showing the real
-         words; only the ORDER is semantic (owner 2026-08-17 — a warning you
-         cannot sort to the top is a warning you find by scrolling). */
-      sortValue: (r) => stockRemarkSortScore(r.stock_remark),
-      /* The same pill ConsignmentOrders has always drawn. It used to be grey
-         body text here, which is why a genuine SHORT warning read as an
-         incidental note on the one screen the owner has open. */
-      render: (r) => <StockRemarkPill remark={r.stock_remark} />,
+      disableSort: true,                       // client-side; sortValue orders it
+      getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
+      render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
     {
       key: "processing_date",
