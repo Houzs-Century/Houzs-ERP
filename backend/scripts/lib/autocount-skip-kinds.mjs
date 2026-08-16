@@ -117,6 +117,12 @@ export const AC_SKIP_KINDS = [
     remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
   },
   {
+    kind: 'mixed-source-lines',
+    needle: 'came from no source document',
+    remedy:
+      'part of this document was not delivered on the source — raise the delivered lines from the Delivery Order and the rest as a separate invoice',
+  },
+  {
     kind: 'dtlkey-subset',
     needle: 'carry no AutoCount DtlKey',
     remedy:

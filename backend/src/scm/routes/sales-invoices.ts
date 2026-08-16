@@ -59,7 +59,8 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordConvertSkipped, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
@@ -961,7 +962,8 @@ salesInvoices.get('/:id', async (c) => {
 });
 
 // ── Create ──────────────────────────────────────────────────────────────
-salesInvoices.post('/', async (c) => {
+// Exported for the tests: supabaseAuth cannot run in the vitest harness.
+export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const debtorName = (body.debtorName ?? body.customerName) as string | undefined;
@@ -1146,20 +1148,17 @@ salesInvoices.post('/', async (c) => {
      Written before the DRAFT early-return so both statuses record exactly one. */
   await recordSiCreate(sb, c.get('houzsUser'), activeCompanyId(c), h.id, items.length);
 
-  /* ERP -> AutoCount: NOTHING, ON PURPOSE, AND SAID SO. A standalone invoice
-     with no delivery order behind it has nothing for AutoCount to transfer
-     from, and there is no /create-iv route on AcSyncService to reach for.
-     Recorded rather than dropped, because this invoice will never appear in the
-     account book and the owner's outstanding rule ("not converted to DO and NOT
-     TO IV") reads exactly this document class. Placed BEFORE the DRAFT early
-     return so a draft and a posted invoice each record exactly one row, in step
-     with recordSiCreate directly above. */
-  await recordParentlessCreate(sb, {
+  /* ERP -> AutoCount DO->Invoice, or a written-down reason why not. This used
+     to be an unconditional recordParentlessCreate claiming "no source Delivery
+     Order" — a fact it never checked, while this very handler accepts
+     `deliveryOrderId` and a per-line `doItemId` and the desktop from-DO flow
+     sends both. lib/si-autocount-source decides it from what was WRITTEN.
+     Placed BEFORE the DRAFT early return so a draft and a posted invoice each
+     record exactly one row, in step with recordSiCreate directly above. */
+  await recordSiAutoCountSource(sb, {
     companyId: activeCompanyId(c),
-    docType: 'IV',
-    docNo: h.invoice_number,
-    docId: h.id,
-    missing: 'no source Delivery Order',
+    invoiceId: h.id,
+    invoiceNumber: h.invoice_number,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
@@ -1211,7 +1210,8 @@ salesInvoices.post('/', async (c) => {
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
   return c.json(withPriceWarnings({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied }, priceWarnings), 201);
-});
+};
+salesInvoices.post('/', createSalesInvoiceHandler);
 
 /* ── Convert picked DO LINES (partial qty) → ONE Sales Invoice ───────────── */
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.

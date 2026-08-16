@@ -187,6 +187,18 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
   },
   {
+    /* ADDED 2026-08-17 with the fix to POST /sales-invoices. The ERP lets an
+       invoice carry a standalone line beside its delivered ones; AutoCount
+       builds the invoice by transferring the delivery order's lines, so the
+       standalone half would simply not be there — an invoice in the book worth
+       less than the one the customer holds. Its own class because its remedy is
+       its own: split the document, which is nothing like backfilling a key. */
+    kind: 'mixed-source-lines',
+    needle: 'came from no source document',
+    remedy:
+      'part of this document was not delivered on the source — raise the delivered lines from the Delivery Order and the rest as a separate invoice',
+  },
+  {
     kind: 'dtlkey-subset',
     needle: 'carry no AutoCount DtlKey',
     remedy:
