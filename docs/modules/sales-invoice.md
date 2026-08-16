@@ -184,6 +184,17 @@ posting.
   is the ISSUED gate in front of it (see §6).
 - **Payments** (`:1777`). Refuses CANCELLED and DRAFT (`:1782-1786`), then
   `recomputePaid` (`:1730`) re-sums the ledger and re-derives the status ladder.
+- **What AutoCount is told about a create.** Both create paths write exactly one
+  `scm.autocount_outbox` row, before the DRAFT early return, so a draft and a
+  posted invoice record the same one. `POST /from-dos` decides inline from its
+  picks; `POST /` delegates to `scm/lib/si-autocount-source.ts`, which resolves
+  the source from the PERSISTED links (`sales_invoice_items.do_item_id`, then
+  `sales_invoices.delivery_order_id`). One source DO with every line linked
+  queues `do_to_iv`; several record the merged-conversion skip; a linked line
+  beside a standalone line is refused as `mixed-source-lines`; only a genuine
+  no-source invoice is recorded parentless. Until 2026-08-17 `POST /` recorded
+  parentless UNCONDITIONALLY, so every desktop from-DO invoice was filed as
+  ERP-only — see BUG-HISTORY and `docs/modules/autocount-writeback.md` §7d.
 
 ### `recomputePaid` (`:1730-1775`) — read this before touching payments
 
@@ -406,7 +417,7 @@ a warning, not a block.
 | Server pagination opt-in | `useSalesInvoicesPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:326`) |
 | Detail fields | `pages/scm-v2/SalesInvoiceDetailV2.tsx` | `mobile/MobileModuleDetail.tsx` config `:275` |
 | Confirm / Cancel / Reopen | `SalesInvoiceDetailV2.tsx:1130-1150` | `mobile/MobileModuleDetail.tsx:498-511`, gated by `useMayOperateDoc` (`:454`) → `canOperateSalesInvoices` (`frontend/src/auth/salesAccess.ts:210`) — the SAME helper the desktop uses |
-| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "si"`) |
+| DO→SI conversion | `pages/scm-v2/SalesInvoiceFromDo.tsx` → `SalesInvoiceNew.tsx` → **`POST /`** (an editable form: prices, dates, address, payment drafts) | `mobile/MobileConvertWizard.tsx` (`target: "si"`) → **`POST /from-dos`** (a straight transfer, no edit step) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/sales-invoice-queries.ts` (including the three ledger keys) | `mobile/sharedInvalidate.ts:70` |
 
 `canOperateSalesInvoices` matters here for the same reason as on the DO: Sales

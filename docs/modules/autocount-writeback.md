@@ -233,7 +233,8 @@ Each hook sits at the point the document becomes permanent — after the
 | SI edit | `sales-invoices.ts` | `queueAcSiEdit` from the header PATCH, line add/edit/delete, and `POST /:id/items/from-do/:doId` (the partial transfer) |
 | PI edit | `purchase-invoices.ts` | `queueAcPiEdit` from the header PATCH and line add/edit/delete |
 | PO create (from SOs) | `mfg-purchase-orders.ts` | `convertSosToPosCore`, per bucket, when the inserted status is not DRAFT — this is what `POST /from-sos` and the MRP agent both ride |
-| DO / GRN / SI / PI created parentless | the four routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these |
+| DO / GRN / PI created parentless | those three routers' `POST /` | `recordParentlessCreate` — a `skipped` row, because AutoCount has no create for these |
+| SI created on `POST /sales-invoices` | `scm/lib/si-autocount-source.ts` | The one of the four that RESOLVES the source before it says anything. `POST /` accepts `deliveryOrderId` and a per-line `doItemId`, so the unconditional `recordParentlessCreate` that used to sit there claimed a fact it never checked and filed every desktop from-DO invoice as ERP-only (`HC-SI-2608-001`; BUG-HISTORY 2026-08-17). Now: one source DO with every line linked -> `enqueueConvert` `do_to_iv`; several -> the merged-conversion skip; a linked line beside a standalone one -> `mixed-source-lines`; genuinely no source -> `recordParentlessCreate`, unchanged |
 | line REMOVED, any of the six | the six `DELETE /.../items/:itemId` handlers | `retiredLineOf(...)` BEFORE the row is destroyed, handed to the edit as `retire` — see 7a |
 
 **An amendment is an EDIT, never a delete-and-recreate.** `applySoAmendment` and
