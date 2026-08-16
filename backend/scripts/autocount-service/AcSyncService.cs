@@ -822,15 +822,47 @@ class AcSyncService {
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
-    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
+    /* MANY SOURCE DOCUMENTS INTO ONE TARGET is native, and this is the only
+       thing that stood in its way. AddPartialTransferDetail takes an ARRAY of
+       line keys and never asks which document they came from, and DtlKeys()
+       already returns an explicit DtlKeys[] verbatim without checking it
+       against FromDocNo. So a payload naming lines from several sales orders
+       already reaches the SDK correctly - the route just refused to accept one,
+       because FromDocNo was demanded unconditionally.
+
+       FromDocNo is the FALLBACK lookup key: it is how the outstanding lines are
+       found when the ERP does not name them. When the ERP names them, it has
+       nothing left to say, so it is optional. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs - AutoCount does all four. */
+    var explicitKeys = new List<object>(List(p, "DtlKeys")).Count > 0;
+    if (string.IsNullOrEmpty(fromDocNo) && !explicitKeys)
+      throw new Exception("FromDocNo required when DtlKeys is not given - it is how the outstanding lines are found");
     var dtlKeys = DtlKeys(p, fromType, fromDocNo);
-    if (dtlKeys.Length == 0) throw new Exception("no transferable lines on " + fromType + " " + fromDocNo);
+    if (dtlKeys.Length == 0)
+      throw new Exception("no transferable lines on " + fromType + " " + Or(fromDocNo, "(the given DtlKeys)"));
+
+    /* ONE CALL PER SOURCE DOCUMENT. AddPartialTransferDetail takes an array of
+       line keys, but they must all belong to the SAME source document: handed a
+       mixed array AutoCount answers
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       measured on the live book 2026-08-16 with two sales orders in one array.
+
+       Merging several sources into one target is still native - the target
+       accepts the call repeatedly. So the keys are grouped by the document they
+       actually belong to, read from the book rather than taken on trust, and
+       the transfer is invoked once per group. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs. */
+    var keysByDoc = KeysBySourceDoc(fromType, dtlKeys);
 
     switch (toType) {
       case "DO": {
         var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
         SalesHeader(doc, p);
         doc.Save();
         return doc.DocNo;
@@ -838,7 +870,7 @@ class AcSyncService {
       case "IV": {
         var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
         SalesHeader(doc, p);
         doc.Save();
         return doc.DocNo;
@@ -846,6 +878,13 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
+        /* This conversion has failed since 2026-08-12 with
+             IndexOutOfRangeException: There is no row at position -1
+           inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
+           returning -1 and used as an index. The frame names its arguments but
+           not their VALUES, so they go in the log before the call: whichever
+           run fails next, the inputs are on record rather than reconstructed. */
+        Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
         // transferMaster MUST be true on the purchase side. That flag copies the
         // source PO's header master (supplier/currency/terms) onto the target; with
         // false the GRN is built with no supplier, the purchase detail ctor looks
@@ -857,7 +896,7 @@ class AcSyncService {
         // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
         // and /do-to-iv has still never run. Run status does not belong in a comment:
         // docs/generated/autocount-coverage.md is the one place that states it.
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
@@ -867,7 +906,7 @@ class AcSyncService {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
         // see the GR case above — purchase side needs transferMaster = true
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
         doc.Save();
@@ -1039,7 +1078,22 @@ class AcSyncService {
     return docNo;
   }
 
+  /* THE ERP'S AMOUNT IS THE AMOUNT, INCLUDING ZERO. Owner 2026-08-16: "我填写
+     多少就多少，我填写 0 就 0". AutoCount disagrees by default - every document
+     class carries EnableZeroNetTotalChecking, and with it on a document whose
+     net total is zero is refused on Save. That check exists for humans typing
+     into the entry screen; here the number came from the ERP deliberately, and
+     a zero-value purchase order is a real thing (free replacement, warranty
+     supply, a line priced later).
+
+     Turned off through Set(): a class that does not expose it must cost the
+     flag, never the document. */
+  static void AllowZeroValue(dynamic doc) {
+    Set(() => doc.EnableZeroNetTotalChecking = false);
+  }
+
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -1053,6 +1107,17 @@ class AcSyncService {
   }
 
   static void PurchaseHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
+    /* The purchase-side twin of SalesLocation, and it has never been sent.
+       FK_SO_SalesLocation proved the sales header needs its location; nothing
+       had tested whether the purchase header does. /create-po saves without it,
+       so it is not a hard foreign key - but the GRN's partial-transfer
+       constructor dies on "there is no row at position -1", which is a master
+       lookup returning -1 and being used as an index, and an empty
+       PurchaseLocation is a candidate for that lookup. Sent when the ERP has
+       one; a blank would be its own foreign key error. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -1076,6 +1141,51 @@ class AcSyncService {
     var outp = new List<long>();
     foreach (var k in List(p, key)) if (k != null) outp.Add(System.Convert.ToInt64(k));
     return outp.ToArray();
+  }
+
+  /* Which source document each line key belongs to. Read from the book: a
+     caller naming keys from two documents is legitimate, but AutoCount needs
+     them handed over one document at a time, and only the book knows which is
+     which. */
+  static Dictionary<string, List<long>> KeysBySourceDoc(string fromType, long[] keys) {
+    string dtl, hdr;
+    switch (fromType) {
+      case "SO": dtl = "SODTL"; hdr = "SO"; break;
+      case "PO": dtl = "PODTL"; hdr = "PO"; break;
+      case "DO": dtl = "DODTL"; hdr = "DO"; break;
+      case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+      default: throw new Exception("unsupported source " + fromType);
+    }
+    var outp = new Dictionary<string, List<long>>();
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      using (var cmd = cn.CreateCommand()) {
+        var names = new List<string>();
+        for (int i = 0; i < keys.Length; i++) {
+          var nm = "@k" + i;
+          names.Add(nm);
+          var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = keys[i];
+          cmd.Parameters.Add(pr);
+        }
+        cmd.CommandText =
+          "SELECT h.DocNo, d.DtlKey FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+          "WHERE d.DtlKey IN (" + string.Join(", ", names.ToArray()) + ") ORDER BY d.DtlKey";
+        using (var rd = cmd.ExecuteReader()) {
+          while (rd.Read()) {
+            var no = rd.GetString(0);
+            if (!outp.ContainsKey(no)) outp[no] = new List<long>();
+            outp[no].Add(rd.GetInt64(1));
+          }
+        }
+      }
+    }
+    var found = 0;
+    foreach (var kv in outp) found += kv.Value.Count;
+    if (found != keys.Length)
+      throw new Exception("of " + keys.Length + " line key(s) given, only " + found + " exist on a " + fromType +
+        " - refusing to transfer a set the book does not recognise");
+    return outp;
   }
 
   static long[] DtlKeys(Dictionary<string, object> p, string fromType, string fromDocNo) {

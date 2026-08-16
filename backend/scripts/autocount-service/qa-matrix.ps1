@@ -241,7 +241,8 @@ function CheckLink($name, $docType, $docNo, $expectType, $expectNo) {
    a payload saying `Lines` is accepted and silently ignored, so the purchase
    order would carry the SALES price and nothing would say so. #>
 $r = Call '/so-to-po' @{ FromDocNo = $SO; DocNo = $PO; DtlKeys = @($soKeys[0]); CreditorCode = $Creditor; CreditorName = "ERP QA"
-                         Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 5; Qty = 4; Location = $Location } ) }
+                         PurchaseLocation = $Location
+                         Details = @( @{ DtlKey = $soKeys[0]; UnitPrice = 0; Qty = 4; Location = $Location } ) }
 if ($r.status -ne 200 -or -not $r.json.ok) { Record "5a so-to-po" "FAIL" ("status=" + $r.status + " " + $r.raw); $poNo = $null }
 else {
   $poNo = $r.json.docNo; Record "5a so-to-po" "PASS" ("PO=" + $poNo)
@@ -252,11 +253,67 @@ else {
      line is zero-qty, born already-transferred, or marked untransferable. Last
      run the PO was cancelled before anyone thought to look. #>
   $pd = ReadDoc 'PO' $poNo
+  <# THE ERP'S AMOUNT IS THE AMOUNT, INCLUDING ZERO. Owner 2026-08-16. The
+     transfer brings the SALES price across, so a UnitPrice of 0 that survives
+     proves two things at once: the ERP governs, and AutoCount's zero-total
+     check is not silently substituting something else. #>
+  $l0 = @($pd.json.lines)[0]
+  if ([double]$l0.UnitPrice -eq 0) { Record "5a PO amount follows the ERP (sent 0)" "PASS" ("book holds UnitPrice=" + $l0.UnitPrice) }
+  else { Record "5a PO amount follows the ERP (sent 0)" "FAIL" ("book holds UnitPrice=" + $l0.UnitPrice + " - the sales price won") }
   foreach ($pl in @($pd.json.lines)) {
     Note ("PO line " + $pl.DtlKey + ": Qty=" + $pl.Qty + " TransferedQty=" + $pl.TransferedQty +
           " Transferable=" + $pl.Transferable + " FromDocType='" + $pl.FromDocType + "'" +
           " FromDocNo='" + $pl.FromDocNo + "' FromDocDtlKey=" + $pl.FromDocDtlKey +
           " FullTransferFromDocList='" + $pl.FullTransferFromDocList + "'")
+  }
+}
+
+# 5b-multi  TWO sales orders into ONE delivery order
+<# Owner 2026-08-16: AutoCount can merge several source documents into one
+   target. AddPartialTransferDetail takes an ARRAY of line keys and never asks
+   which document they came from, so this sends keys from BOTH sales orders and
+   checks the resulting DO carries each line back to its OWN parent. #>
+$SO2 = "$SO-B"
+$r2 = Call '/create-so' @{
+  DocNo = $SO2; DocDate = (Get-Date).ToString('yyyy-MM-dd')
+  DebtorCode = $Debtor; DebtorName = "ERP QA MATRIX B"; Agent = $Agent; SalesLocation = $Location
+  Description = "ERP QA MATRIX SECOND SO - CANCEL ME"
+  Details = @( @{ ItemCode = $ItemCode; Qty = 5; UnitPrice = 30; Location = $Location; Desc2 = "SO-B LINE" } )
+}
+if ($r2.status -ne 200 -or -not $r2.json.ok) {
+  Record "5b-multi second SO" "FAIL" ("status=" + $r2.status + " " + $r2.raw); $SO2 = $null
+} else {
+  $so2Keys = @($r2.json.lines | ForEach-Object { $_.DtlKey })
+  Record "5b-multi second SO" "PASS" ("DocNo=" + $r2.json.docNo + " DtlKeys=" + ($so2Keys -join ','))
+  <# No FromDocNo at all: the keys span two documents, so there is no single
+     parent to name. That is exactly what the route now allows. #>
+  <# A THIRD sales order, so the merge test stops cannibalising the single-source
+     one. The first run of this block took line 1 of the main SO, and step 5b
+     then failed with our own guard - "no transferable lines" - which reads like
+     a regression and was only test ordering. The merge now owns its own pair. #>
+  $SO3 = "$SO-C"
+  $r3 = Call '/create-so' @{
+    DocNo = $SO3; DocDate = (Get-Date).ToString('yyyy-MM-dd')
+    DebtorCode = $Debtor; DebtorName = "ERP QA MATRIX C"; Agent = $Agent; SalesLocation = $Location
+    Description = "ERP QA MATRIX THIRD SO - CANCEL ME"
+    Details = @( @{ ItemCode = $ItemCode; Qty = 6; UnitPrice = 40; Location = $Location; Desc2 = "SO-C LINE" } )
+  }
+  if ($r3.status -ne 200 -or -not $r3.json.ok) { Record "5b-multi third SO" "FAIL" ("status=" + $r3.status + " " + $r3.raw); $SO3 = $null }
+  $so3Keys = @($r3.json.lines | ForEach-Object { $_.DtlKey })
+  $rm = Call '/so-to-do' @{ DtlKeys = @($so3Keys[0], $so2Keys[0]); DebtorCode = $Debtor; DebtorName = "ERP QA"; SalesLocation = $Location }
+  if ($rm.status -ne 200 -or -not $rm.json.ok) {
+    Record "5b-multi TWO SOs -> ONE DO" "FAIL" ("status=" + $rm.status + " BODY: " + $rm.raw)
+  } else {
+    $mdo = $rm.json.docNo
+    $md = ReadDoc 'DO' $mdo
+    $ls = @($md.json.lines)
+    $parents = @($ls | ForEach-Object { "$($_.FromDocNo)" } | Sort-Object -Unique)
+    if ($ls.Count -eq 2 -and $parents.Count -eq 2) {
+      Record "5b-multi TWO SOs -> ONE DO" "PASS" ($mdo + " has " + $ls.Count + " lines from " + $parents.Count + " parents: " + ($parents -join ' + '))
+    } else {
+      Record "5b-multi TWO SOs -> ONE DO" "FAIL" ($mdo + " has " + $ls.Count + " line(s) from parents: " + ($parents -join ' + '))
+    }
+    $multiDo = $mdo
   }
 }
 
@@ -320,7 +377,7 @@ if ($SkipTeardown) {
      The first version of this list cancelled the PO last and left a LIVE sales
      order in the book, which then had to be cancelled by hand. Child before
      parent means every child, and the PO is one of them. #>
-  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('PO',$poNo), @('SO',$SO))) {
+  foreach ($pair in @(@('PI',$piNo), @('GR',$grNo), @('IV',$ivNo), @('DO',$doNo), @('DO',$multiDo), @('PO',$poNo), @('SO',$SO), @('SO',$SO2), @('SO',$SO3))) {
     if (-not $pair[1]) { continue }
     $r = Call '/cancel' @{ DocType = $pair[0]; DocNo = $pair[1] }
     if ($r.status -eq 200 -and $r.json.ok) { Record ("7 cancel " + $pair[0] + " " + $pair[1]) "PASS" "cancelled, not deleted" }
