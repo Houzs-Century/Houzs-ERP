@@ -12,12 +12,15 @@ import {
   AC_FAILED_COPY,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
+  AC_ONLY_SUPERSEDED_LINE,
   AC_REASON_COPY,
   AC_REPLY_LABEL,
   AC_REQUEUED_LINE,
   AC_REQUEUED_NOTE,
   AC_REQUEUE_TODO,
   AC_STATE_PLAIN_MEANING,
+  AC_SUPERSEDED_NOTE,
+  AC_TECHNICAL_LABEL,
   AC_UNRECOGNISED_COPY,
   acAge,
   acDocTypeCounts,
@@ -35,9 +38,13 @@ import {
   acRowStandsAt,
   acRowStatusLine,
   acRowsOfType,
+  acSplitMachineText,
+  acSplitSuperseded,
   acStateCount,
   acStateLabel,
   acStateTone,
+  acSupersededHeading,
+  acWhatWasSaid,
   acWritebackLine,
   buildAcOutboxQs,
   requeueAcOutboxRow,
@@ -538,7 +545,7 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
   it("gives a document already in the account book nothing to open", () => {
     const d = acRowDetail(row({ state: "sent", ac_doc_no: "SO-9", reason: null }), false);
     expect(d).toEqual({
-      line: null, copy: null, showSaid: false, showRequeuedNote: false, expandable: false,
+      line: null, copy: null, said: null, showRequeuedNote: false, expandable: false,
     });
   });
 
@@ -556,7 +563,7 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     expect(d.line).toBe(AC_REASON_COPY["missing-location"]!.headline);
     /* The sentence and the To fix line are reachable, not printed. */
     expect(d.copy).toBe(AC_REASON_COPY["missing-location"]);
-    expect(d.showSaid).toBe(true);
+    expect(d.said?.label).toBe(AC_REPLY_LABEL.erp);
     expect(d.expandable).toBe(true);
   });
 
@@ -600,5 +607,270 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     expect(acOpensItself(row({ reason_kind: "unrecognised" }))).toBe(true);
     expect(acOpensItself(row({ reason_kind: "missing-location" }))).toBe(false);
     expect(acOpensItself(row({ reason_kind: null }))).toBe(false);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   NOTHING THE SERVER WROTE IS THE PAGE'S OWN VOICE.
+
+   Owner, 2026-08-16, reading the LIVE page: a held-back invoice was printing
+   "AutoCount builds a DO / GRN / Invoice only by transferring a source
+   document's lines (AddPartialTransferDetail is the SDK's only primitive)…",
+   and a not-accepted delivery order was printing AutoCount's eleven-word
+   refusal followed by four lines of the account book's own numbers.
+
+   Both arrived from the SERVER, which is why the earlier rule — "no coding
+   words in the strings this file writes" — was green while the screen was not.
+   The rule below is about the MECHANISM instead, so it holds for a refusal
+   class nobody has written yet.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("what the server wrote never reaches the page as prose", () => {
+  /* VERBATIM PRODUCTION STRINGS, each with the writer that produces it. They
+     are literals rather than imports on purpose: this is the frontend suite and
+     it cannot import backend modules, and a paraphrase would test the
+     paraphrase. Re-derive with, from the repo root:
+
+       grep -n "last_error:\|reason:$\|reason:" backend/src/scm/lib/autocount-outbox.ts
+
+     and AcSyncService.cs for the `||` half. */
+  const LIVE_NOTES: Array<{ what: string; row: AcOutboxRow }> = [
+    {
+      /* recordParentlessCreate, backend/src/scm/lib/autocount-outbox.ts — AS THE
+         QUEUE STILL HOLDS IT. The writer stopped producing this sentence in the
+         same change as this test, and that alone fixes nothing the owner is
+         looking at: scm.autocount_outbox is append-only and `last_error` is
+         never rewritten (the re-queue marker is PREPENDED, isRequeuedNote), so
+         every row already written keeps these exact words for good. */
+      what: "the parentless invoice, as production wrote it",
+      row: row({
+        id: "hist", doc_no: "HC-IV-2608-004", doc_type: "IV", op: "do_to_iv",
+        status: "skipped", state: "skipped", needs_attention: true,
+        reason_kind: "no-source-document",
+        reason:
+          "created with no source delivery order, so there is no source document to transfer from. "
+          + "AutoCount builds a DO / GRN / Invoice only by transferring a source document's lines "
+          + "(AddPartialTransferDetail is the SDK's only primitive), so this document cannot be "
+          + "created in the account book at all and will stay ERP-only.",
+      }),
+    },
+    {
+      /* noteReadFailure writes `refused, nothing sent (${e.name}): …` for eight
+         error classes. The class name is the CLASSIFIER's needle and has to stay
+         in the column; it must not be on the screen. */
+      what: "a refusal class name in the ERP's own note",
+      row: row({
+        id: "kl", doc_no: "HC-SO-2608-009", status: "skipped", state: "skipped",
+        needs_attention: true, reason_kind: "keyless-line",
+        reason: "refused, nothing sent (KeylessLineError): line 3 carries no linked_ac_dtlkey",
+      }),
+    },
+    {
+      /* AcSyncService.cs's transfer arm, added 2026-08-16, reaching the ERP
+         through `Gave up after N attempts. Last error: …`. This is the wall. */
+      what: "AutoCount's refusal plus the account book, line by line",
+      row: row({
+        id: "dump", doc_no: "HC-DO-2608-002", doc_type: "DO", op: "so_to_do",
+        status: "failed", state: "failed", attempts: 6, needs_attention: true,
+        can_requeue: true,
+        reason:
+          "Gave up after 6 attempts. Last error: Invalid transfer item. || source SO lines as the "
+          + "book holds them: 905348 on SO HC-SO-2608-002 [AK-ULTIMATE MATT (K)] Qty=1.00000000 "
+          + "TransferedQty=0.00000000 Transferable=T docCancelled=F outstanding=1.00000000; "
+          + "905349 on SO HC-SO-2608-002 [HOK-1013 (K)] Qty=1.00000000 TransferedQty=0.00000000 "
+          + "Transferable=T docCancelled=F outstanding=1.00000000",
+      }),
+    },
+  ];
+
+  /** Everything a reader sees WITHOUT opening the technical disclosure. */
+  const plainSideOf = (r: AcOutboxRow): string => {
+    const d = acRowDetail(r, false);
+    return [d.line, d.copy?.explain, d.copy?.toFix, d.said?.label, d.said?.said]
+      .filter((s) => s != null).join(" \n ");
+  };
+
+  const MACHINERY = [
+    /AddPartialTransferDetail/,
+    /\bSDK\b/,
+    /linked_ac_dtlkey/i,
+    /[A-Za-z]+Error\)/,
+    /TransferedQty|docCancelled|Transferable=|Qty=/,
+  ];
+
+  it("keeps every one of these off the plain-language side of the row", () => {
+    for (const { what, row: r } of LIVE_NOTES) {
+      const plain = plainSideOf(r);
+      for (const bad of MACHINERY) expect(plain, `${what}: ${plain}`).not.toMatch(bad);
+    }
+  });
+
+  /* THE OTHER HALF, AND IT MATTERS AS MUCH. Hiding the evidence would be a
+     different bug: the per-line dump is what refuted the standing diagnosis for
+     these two delivery orders (docs/autocount-sync-reasons.md §4). It moves; it
+     does not go. */
+  it("keeps every one of them REACHABLE, behind the technical disclosure", () => {
+    for (const { what, row: r } of LIVE_NOTES) {
+      const said = acRowDetail(r, false).said;
+      expect(said?.technical, what).toBeTruthy();
+      /* Whatever was taken off the plain side is in there, whole. */
+      expect(`${said?.said ?? ""}${said?.technical ?? ""}`, what).toContain(
+        r.reason!.slice(-40),
+      );
+    }
+  });
+
+  it("still says WHO spoke on each of them — the distinction is not the machinery", () => {
+    expect(acRowDetail(LIVE_NOTES[0]!.row, false).said?.label).toBe("AutoCount was not asked");
+    expect(acRowDetail(LIVE_NOTES[2]!.row, false).said?.label).toBe("AutoCount replied");
+  });
+
+  /* THE HEADLINE IS NOT MACHINERY AND DOES NOT MOVE. He rejected a design where
+     the reason sat behind a click; this change moves only what is under it. */
+  it("leaves the plain-language headline on the row, unclicked, for all of them", () => {
+    for (const { what, row: r } of LIVE_NOTES) {
+      expect(acRowDetail(r, false).line, what).toBeTruthy();
+    }
+    expect(acRowDetail(LIVE_NOTES[0]!.row, false).line)
+      .toBe(AC_REASON_COPY["no-source-document"]!.headline);
+    expect(acRowDetail(LIVE_NOTES[2]!.row, false).line).toBe(AC_FAILED_COPY.headline);
+  });
+});
+
+describe("acSplitMachineText — the separator the AutoCount service itself writes", () => {
+  it("keeps the sentence and hands the evidence over", () => {
+    const s = acSplitMachineText("Invalid transfer item. || source SO lines: 905348 Qty=1");
+    expect(s.said).toBe("Invalid transfer item.");
+    expect(s.detail).toBe("source SO lines: 905348 Qty=1");
+  });
+
+  it("leaves a message that carries no evidence exactly as it is", () => {
+    expect(acSplitMachineText("Invalid Debtor Code."))
+      .toEqual({ said: "Invalid Debtor Code.", detail: null });
+  });
+
+  /* Only the FIRST separator splits. The dump itself is semicolon-separated and
+     a second `||` inside it belongs to the evidence, not to a third section. */
+  it("splits once, at the first mark", () => {
+    expect(acSplitMachineText("a || b || c").detail).toBe("b || c");
+  });
+});
+
+describe("acWhatWasSaid — who spoke, and how much of it is on screen", () => {
+  const erp = row({
+    state: "skipped", reason_kind: "missing-location",
+    reason: "refused, nothing sent (MissingLocationError): line 2",
+  });
+
+  it("folds the ERP's own note away entirely once this file has plain words for it", () => {
+    const said = acWhatWasSaid(erp, true);
+    expect(said.said).toBeNull();
+    expect(said.technical).toBe(erp.reason);
+    expect(said.notAsked).toBe(true);
+    expect(said.label).toBe("AutoCount was not asked");
+  });
+
+  /* A refusal nobody has copy for yet: the quote IS the answer, and taking it
+     off the screen would leave the row saying only that nobody has words. */
+  it("shows the ERP's note when this file has NO words for the row", () => {
+    expect(acWhatWasSaid(erp, false).said).toBe(erp.reason);
+  });
+
+  it("never folds AutoCount's own sentence away, plain words or not", () => {
+    const failed = row({
+      state: "failed",
+      reason: "Invalid transfer item. || source SO lines as the book holds them: 905348 Qty=1",
+    });
+    for (const hasWords of [true, false]) {
+      const said = acWhatWasSaid(failed, hasWords);
+      expect(said.said).toBe("Invalid transfer item.");
+      expect(said.technical).toBe("source SO lines as the book holds them: 905348 Qty=1");
+    }
+  });
+
+  it("says nothing came back, rather than inventing a speaker", () => {
+    const said = acWhatWasSaid(row({ state: "failed", reason: null }), false);
+    expect(said.silent).toBe(true);
+    expect(said.said).toBeNull();
+    expect(said.label).toBe("AutoCount said nothing");
+  });
+
+  it("names who the collapsed block is for, so nobody opens it expecting an answer", () => {
+    expect(AC_TECHNICAL_LABEL).toMatch(/AutoCount link/);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   AN ORDER TO FIX SOMETHING THAT IS NOT BROKEN.
+
+   Owner, 2026-08-16, on a delivery order whose entire refusal was `Invalid
+   transfer item.` — eleven words naming no field, no line and no document, over
+   lines that had been measured against the live book that same day and were
+   correct on every count the book keeps.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("the To fix line for a refusal AutoCount did not explain", () => {
+  it("no longer orders anybody to go and put right whatever AutoCount named", () => {
+    expect(AC_FAILED_COPY.toFix).not.toMatch(/Put right whatever AutoCount named/);
+  });
+
+  it("says plainly that the refusal may name nothing to act on", () => {
+    expect(AC_FAILED_COPY.toFix).toMatch(/name nothing you can act on/i);
+    expect(AC_FAILED_COPY.toFix).toMatch(/nothing on this document for you to change/i);
+  });
+
+  it("says WHO to tell, since the reader cannot fix it himself", () => {
+    expect(AC_FAILED_COPY.toFix).toMatch(/whoever looks after the AutoCount link/i);
+    expect(AC_FAILED_COPY.toFix).toMatch(/document number/i);
+  });
+
+  /* The other half stays: plenty of AutoCount refusals DO name a master, and
+     "we cannot help you" would be as wrong in that direction. */
+  it("still tells somebody what to do when AutoCount did name something", () => {
+    expect(AC_FAILED_COPY.toFix).toMatch(/salesperson|warehouse|customer/);
+    expect(AC_FAILED_COPY.toFix).toMatch(/save the document here again/i);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   HALF THE LIST WAS HISTORY. Fifteen rows on the live page, SIX of them
+   "already sent again, this row is history", with two delivery orders appearing
+   twice. A superseded row is a record, not a task.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("superseded rows are a record, not the list", () => {
+  const live = row({ id: "a", doc_no: "HC-DO-2608-001", state: "failed", needs_attention: true });
+  const old1 = row({ id: "b", doc_no: "HC-DO-2608-001", state: "requeued" });
+  const old2 = row({ id: "c", doc_no: "HC-DO-2608-002", state: "requeued" });
+  const mixed = [old1, live, old2];
+
+  it("takes them out of the list every filter except their own", () => {
+    for (const s of ["all", "attention", "pending", "sent", "failed", "skipped"] as const) {
+      const split = acSplitSuperseded(mixed, s);
+      expect(split.live.map((r) => r.id), s).toEqual(["a"]);
+      expect(split.superseded.map((r) => r.id), s).toEqual(["b", "c"]);
+    }
+  });
+
+  /* The Sent again chip exists to show exactly these. Folding them there would
+     answer the chip with an empty page. */
+  it("leaves them as the list when the reader asked for them by name", () => {
+    const split = acSplitSuperseded(mixed, "requeued");
+    expect(split.live).toEqual(mixed);
+    expect(split.superseded).toEqual([]);
+  });
+
+  it("loses nothing — every row is on exactly one side", () => {
+    const split = acSplitSuperseded(mixed, "all");
+    expect(split.live.length + split.superseded.length).toBe(mixed.length);
+  });
+
+  it("counts them in words, both forms written out", () => {
+    expect(acSupersededHeading(1)).toBe("1 superseded row, kept as a record");
+    expect(acSupersededHeading(6)).toBe("6 superseded rows, kept as a record");
+    /* Not `row` + "s" — the same shortcut that produced "GOODS RECEIVEDS". */
+    expect(acSupersededHeading(1)).not.toContain("rows");
+  });
+
+  it("says why they are kept rather than implying they were missed", () => {
+    expect(AC_SUPERSEDED_NOTE).toMatch(/nothing here to do/i);
+    expect(AC_ONLY_SUPERSEDED_LINE).toMatch(/Nothing live here/i);
   });
 });
