@@ -687,15 +687,8 @@ function DetailDrawer({
                 {paidCenti > 0 ? (
                   <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
                 ) : null}
-                {/* `> 0` would have hidden the row on exactly the orders that
-                    need it — an over-collection is not "nothing outstanding".
-                    Non-zero either way, and the label says which. */}
-                {outstandingCenti !== 0 ? (
-                  <TotalRow
-                    k={outstandingCenti < 0 ? "Over-collected" : "Outstanding"}
-                    v={fmtRm(outstandingCenti)}
-                    tone="error"
-                  />
+                {outstandingCenti !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
+                  <TotalRow k={outstandingCenti < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingCenti)} tone="error" />
                 ) : null}
               </div>
             </div>
@@ -1644,17 +1637,9 @@ export function MfgSalesOrdersListV2() {
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.balance_centi_live ?? r.balance_centi ?? 0,
-      /* Negative = over-collected, and it is RED (owner 2026-08-16). Matches
-         the app's negative-money convention (StockTakesListV2, StockAdjustments):
-         text-err below zero, muted at zero, ordinary ink when money is owed. */
-      render: (r) => {
-        const bal = r.balance_centi_live ?? r.balance_centi ?? 0;
-        return (
-          <span className={cn("font-money text-[13px]", bal < 0 ? "text-err" : "text-ink")}>
-            {fmtRm(bal)}
-          </span>
-        );
-      },
+      render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
+        <span className={cn("font-money text-[13px]", (r.balance_centi_live ?? r.balance_centi ?? 0) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_centi_live ?? r.balance_centi ?? 0)}</span>
+      ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
     //    the SO list payload (HEADER + server-computed) but were untyped, so no
