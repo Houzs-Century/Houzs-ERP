@@ -1,0 +1,63 @@
+name: probe-2990-so-readiness
+
+# What the SO list's "Stock Status" column and the SO header status actually
+# are for one company, computed from the STORED per-line stock_status.
+#
+# Answers two things the owner asked from two screenshots of the 2990 SO list:
+#   (a) every MAIN line READY, one ACCESSORY line PENDING — what does the header
+#       status become? (the code's rule is summariseReadiness.isShipReady,
+#       backend/src/scm/lib/so-readiness.ts:123)
+#   (b) an order whose expanded lines all read READY but whose Stock Status
+#       column says "BEDFRAME" — the column is stock_remark, derived only from
+#       the STORED flag, while the drill's pill ORs in the live MRP verdict.
+#
+# Read-only. SELECT only, no DDL, no writes, no transaction.
+# See backend/scripts/probe-2990-so-readiness.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "2"
+        type: string
+      debtor:
+        description: "debtor_name substring to drill (e.g. james)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-2990-so-readiness
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Readiness shapes vs header status
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          DEBTOR: ${{ inputs.debtor }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-2990-so-readiness.mjs | tee so-readiness.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-2990-so-readiness
+          path: backend/so-readiness.txt
+          retention-days: 14
