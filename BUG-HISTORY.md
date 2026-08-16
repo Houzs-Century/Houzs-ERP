@@ -1,6 +1,6 @@
 ## AutoCount Sync printed a four-part reason on every row, and every row [medium]
 
-<!-- area: AutoCount write-back -->
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** Same day the screen was rebuilt (#2323), the owner read it against
 a real backlog: *「这一个东西下面的地方太复杂了，你尽量简单化一点。一个 sales order
