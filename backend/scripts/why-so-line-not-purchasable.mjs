@@ -120,6 +120,37 @@ async function main() {
     notice(`  line ${k.line_no} ${k.item_code}: linked_ac_dtlkey=${k.linked_ac_dtlkey ?? '(NULL — cannot be transferred)'}`);
   }
 
+  /* D — WHAT WE ACTUALLY SENT. The queue saying `sent` only means AutoCount
+     accepted the call; it says nothing about what was IN it. Three fields on
+     HC-SO-2608-002 disagree with the ERP after an edit that the queue reports as
+     sent, and the payload is the only place that separates "we sent the wrong
+     thing" from "we sent the right thing and the service dropped it". */
+  console.log('');
+  notice('D — the outbox rows for this document, newest first, with what each carried');
+  const rows = await sql`
+    SELECT id, op, status::text AS status, attempts, created_at, sent_at, last_error, payload
+    FROM scm.autocount_outbox
+    WHERE doc_no = ${DOC_NO} AND company_id = ${COMPANY_ID}
+    ORDER BY created_at DESC LIMIT 8`;
+  notice(`  ${rows.length} row(s)`);
+  for (const r of rows) {
+    notice(`  --- ${r.op} ${r.status} attempts=${r.attempts} created=${r.created_at?.toISOString?.() ?? r.created_at} sent=${r.sent_at?.toISOString?.() ?? '(never)'}`);
+    if (r.last_error) notice(`      error: ${String(r.last_error).slice(0, 220)}`);
+    const body = r.payload?.body ?? null;
+    if (!body) { notice('      body: (none)'); continue; }
+    /* The HEADER is where PDate / BALANCE / PAYEMENT live on an edit; a create
+       carries them at the top level. Print whichever shape this row has. */
+    const h = body.Header ?? body;
+    const udf = h.UDF ?? null;
+    notice(`      UDF: ${udf ? JSON.stringify(udf) : '(no UDF key — nothing sent, the book keeps its own)'}`);
+    const keys = Object.keys(h).filter((k) => k !== 'UDF' && k !== 'Details' && k !== 'Lines');
+    notice(`      header keys: ${keys.join(', ') || '(none)'}`);
+    const lines = body.Lines ?? body.Details ?? [];
+    for (const l of lines.slice(0, 4)) {
+      notice(`      line: ${JSON.stringify(l).slice(0, 200)}`);
+    }
+  }
+
   console.log('');
   notice('READ THE RESULT LIKE THIS:');
   notice('  a line DROPPED in (A) -> the demand query never saw it; fix the named gate');
