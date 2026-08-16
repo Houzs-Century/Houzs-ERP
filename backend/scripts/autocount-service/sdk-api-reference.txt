@@ -4,9 +4,32 @@ host (37 DLLs), not from documentation. Keep this next to AcSyncService.cs:
 the SDK has no published reference, so this file IS the reference, and the next
 person to touch the service should check a signature here before guessing.
 
-Note the dump was taken with BindingFlags.DeclaredOnly, so inherited members
-(notably InvoicingCommonCommand.CancelDocument and the document Save()) do not
-repeat under each subclass.
+*** READ THIS BEFORE CONCLUDING SOMETHING IS ABSENT ***
+The dump was taken with BindingFlags.DeclaredOnly, so INHERITED MEMBERS ARE NOT
+IN THIS FILE AT ALL. That was written here as a convenience note ("they do not
+repeat under each subclass") and read as one, and it is not: DeclaredOnly means
+a member declared on a BASE class appears nowhere, not once instead of six
+times. InvoicingCommonCommand.CancelDocument and the document Save() are the
+harmless examples. The costly one:
+
+  The whole transfer API is inherited, and therefore MISSING BELOW.
+  SalesDocument / PurchaseDocument declare FullTransfer (3 overloads),
+  PartialTransfer (4), InternalFullTransfer, InternalPartialTransfer and
+  AddPartialTransferRow; InvoicingDocument declares IsFullTransfered(),
+  IsInTransfer(), IsPartialTransfer(), IsNotTransferedDetail(Int64),
+  GetValidTransferDetailRows(Int64) and ShowEditTransferDetailFormEvent;
+  IsTransferFromSupported is on the document classes.
+
+  Only AddPartialTransferDetail is declared on the subclasses, so this file
+  shows it and nothing else — and AcSyncService.cs's header spent a week
+  asserting, as measured fact, that it is the SDK's ONLY transfer primitive.
+  Re-reflected with BindingFlags.FlattenHierarchy on 2026-08-17. See
+  BUG CLASS instrument-blind-spot-as-a-finding at the top of BUG-HISTORY.md.
+
+AcSyncService.LogTransferApi now re-takes the transfer half of this dump, with
+FlattenHierarchy and with parameter NAMES, on every service start, into
+C:\Temp\ac-sync-service.log. Prefer that log to this file for anything transfer
+related: it cannot go stale, and this file can.
 
 AutoCount.Invoicing.InvoicingCommonCommand
     DataTable GetDocumentInfoTable(Int64[] docKeys)

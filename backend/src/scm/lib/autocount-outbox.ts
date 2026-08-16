@@ -97,6 +97,9 @@ import { soEditHeader } from './so-edit-header';
 import {
   AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs, readPoEnqueueShape,
 } from './autocount-read';
+/* The reason a parentless create records, kept beside the needle that
+   classifies it and pinned by a test — see acParentlessCreateReason. */
+import { acParentlessCreateReason } from './autocount-outbox-status';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -1155,11 +1158,14 @@ export async function recordParentlessCreate(
     docType: opts.docType,
     docNo: opts.docNo,
     docId: opts.docId ?? null,
-    reason:
-      `created with ${opts.missing}, so there is no source document to transfer from. `
-      + 'AutoCount builds a DO / GRN / Invoice only by transferring a source document\'s lines '
-      + '(AddPartialTransferDetail is the SDK\'s only primitive), so this document cannot be '
-      + 'created in the account book at all and will stay ERP-only.',
+    /* THE SENTENCE LIVES IN autocount-outbox-status.ts, beside the needle that
+       classifies it. It used to be written out here and it carried
+       "(AddPartialTransferDetail is the SDK's only primitive)" — which the owner
+       read off the live AutoCount Sync page on 2026-08-16, hours after having
+       that exact identifier removed from the page's own copy. It came back
+       through the SERVER. A reason is read by the owner, so what it says is now
+       pinned by a test the way the codes already were. */
+    reason: acParentlessCreateReason(opts.missing),
     createdBy: opts.createdBy ?? null,
   });
 }

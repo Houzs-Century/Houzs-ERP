@@ -162,10 +162,33 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        several POs, a purchase invoice from several GRNs. The route used to
        demand FromDocNo unconditionally, which is what made that impossible;
        FromDocNo is now the FALLBACK, needed only when the ERP does not name the
-       lines itself. */
+       lines itself.
+
+       THREE KEYS JOINED ON 2026-08-17, and each is one half of the owner's
+       「partially transfer 跟 fully transfer 都要可以」. `PlanTransfer` is the ONE
+       place that decides the shape and it decides it from the payload alone:
+
+         DtlKeys absent   -> FULL, over FromDocNos ?? [FromDocNo]. `FromDocNos`
+                             is new and is the multi-source WHOLE-document case:
+                             the documented FullTransfer takes an ARRAY of
+                             document numbers, so it needs no grouping.
+         DtlKeys present  -> PARTIAL BY LINE, at each line's outstanding qty.
+         Details[].Qty    -> PARTIAL BY QUANTITY. NOTHING SENDS THIS YET; see
+                             divergence D14. The service reads it so the ERP can
+                             say "3 of 5" without another C# deploy, and refuses
+                             rather than shipping 5 when it cannot express it.
+
+       DocDate is read here as well as in SalesHeader/PurchaseHeader because the
+       vendor's examples set the document date on the target BEFORE the transfer
+       and this service set it after. */
     expect(headerKeys(CS_CONVERT)).toEqual(
-      ['DtlKeys', 'FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
+      ['Details', 'DocDate', 'DtlKeys', 'FromDocNo', 'FromDocNos', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
     );
+    /* The per-line pair, and it is a PAIR: a Qty with no DtlKey is refused, and
+       so is a named key with no Qty while its siblings carry one. A line that
+       fell through with no number would silently move its whole outstanding
+       quantity, which is the exact defect the quantity exists to prevent. */
+    expect(detailKeys(CS_CONVERT)).toEqual(['DtlKey', 'Qty']);
     /* DtlKeys is optional and read in its own helper: given none, the service
        asks the BOOK which lines are still outstanding (AcSyncService.cs:300-329),
        which is the only authority on that. */
@@ -584,6 +607,12 @@ export const DIVERGENCES: Divergence[] = [
      a failed read into an empty line list — it throws, logs, and writes a
      'skipped' outbox row instead of composing. Proven by 'a line read that
      fails composes NOTHING' below, which takes the column away again. */
+  {
+    id: 'D14', flow: 'the four conversions', field: 'Details[].DtlKey + Details[].Qty',
+    service: 'reads a per-line quantity as of 2026-08-17 (PlanTransfer), which is what turns a conversion into a PARTIAL BY QUANTITY transfer. Given none it transfers each named line at its OUTSTANDING quantity, so a DO shipping 3 of a 5-unit sales-order line still writes 5 into the account book. Given a Qty it uses the documented PartialTransfer, and if that call cannot be bound it REFUSES rather than falling back to the primitive, which would ship the 5.',
+    erp: 'never sends it. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } and readConvertSourceKeys resolves LINE IDENTITY only — its own doc comment says "NOT COVERED, and deliberately so: partial QUANTITY on a line". So partial SHIPMENT (a subset of lines) reaches AutoCount correctly and partial QUANTITY does not, and the two look identical from the ERP side.',
+    severity: 'high',
+  },
 ];
 
 // ── layer 2: the wire body, whole, for all eight routes ─────────────────────
@@ -991,12 +1020,21 @@ describe('the divergence register', () => {
   test('the count is pinned — a new divergence has to be written down to land', () => {
     /* If this fails you have either found an eleventh or fixed one of the ten.
        Both are good news; update the list and the module guide's prose together
-       — 7b for D9/D10, 7d2 for D8, 7q for the extract's own fields.
+       — 7b for D9/D10, 7c1 for D14, 7d2 for D8, 7q for the extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
        and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
-       not decisions; the ten that remain each need one. */
-    expect(DIVERGENCES).toHaveLength(10);
+       not decisions; the ones that remain each need one.
+
+       D14 was ADDED on 2026-08-17. It is not new behaviour — the service has
+       always transferred a line at its outstanding quantity — it is a gap that
+       had never been written down anywhere a check could see it, and the owner
+       asked for both transfer shapes the day before. The C# half is done: the
+       decision lives in one place (PlanTransfer) and a quantity it cannot
+       express is refused, not approximated. The ERP half is a payload change
+       and a decision about where the shipped quantity comes from, which is not
+       a test author's to make. */
+    expect(DIVERGENCES).toHaveLength(11);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.

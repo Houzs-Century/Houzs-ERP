@@ -4,33 +4,39 @@ import {
   AC_DOC_TYPES,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
+  AC_LOAD_FAILED_LINE,
   AC_NOT_ASKED_NOTE,
-  AC_REPLY_LABEL,
+  AC_ONLY_SUPERSEDED_LINE,
   AC_REQUEUED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
+  AC_SUPERSEDED_NOTE,
+  AC_TECHNICAL_LABEL,
   acAge,
   acDocTypePlural,
   acDocTypeCounts,
   acEmptyLine,
   acHeadline,
   acListTitle,
-  acReplySource,
   acRowDetail,
   acRowStandsAt,
   acRowsOfType,
+  acSplitSuperseded,
   acStateCount,
   acStateLabel,
   acStateTone,
+  acSupersededHeading,
   acWritebackLine,
   useAcExpandedRows,
   useAcRequeue,
+  useAcSupersededGroup,
   useAutoCountOutbox,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
   type AcRequeueNote,
+  type AcSaid,
   type AcTone,
 } from "../lib/autocountOutbox";
 import { MobileVirtualList } from "./MobileVirtualList";
@@ -114,30 +120,60 @@ function CountChip(
 }
 
 /**
+ * The machinery, one level in from the reason — collapsed, and labelled with
+ * who it is for. The desktop twin's TechnicalNote, in this file's idiom.
+ *
+ * It matters more here than there. The account-book dump the AutoCount service
+ * started appending on 2026-08-16 is four lines of `Qty=1.00000000
+ * TransferedQty=0.00000000` at 375 px, which is most of a phone screen spent on
+ * something the person holding it cannot act on.
+ */
+function TechnicalNote({ text }: { text: string }) {
+  return (
+    <details
+      data-ac-technical=""
+      style={{ marginTop: 6, border: "1px dashed var(--line)", borderRadius: 7, padding: "5px 8px", background: "var(--bg)" }}
+    >
+      <summary style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--mut)" }}>
+        {AC_TECHNICAL_LABEL}
+      </summary>
+      <div style={{ marginTop: 4, fontSize: 10.5, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace", color: "var(--mut)" }}>
+        {text}
+      </div>
+    </details>
+  );
+}
+
+/**
  * What a machine said, quoted, and WHO said it.
  *
  * "AutoCount replied" and "AutoCount was not asked" are different facts and
  * they change what the reader does about the document. Behind the opener since
  * the cards had to get short — never flattened into one label, which would lose
  * the distinction rather than tidy it.
+ *
+ * Renders the shared layer's AcSaid, exactly as the desktop does. What counts
+ * as a sentence and what counts as machinery is decided once, for the product,
+ * not twice, per surface.
  */
-function WhatWasSaid({ row }: { row: AcOutboxRow }) {
-  const source = acReplySource(row.state, row.reason);
+function WhatWasSaid({ said }: { said: AcSaid }) {
   return (
     <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px dashed var(--line)" }}>
       <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--mut)" }}>
-        {AC_REPLY_LABEL[source]}
+        {said.label}
       </span>
-      {source === "erp" && (
+      {said.notAsked && (
         <span style={{ marginLeft: 6, fontSize: 11, color: "var(--mut)" }}>{AC_NOT_ASKED_NOTE}</span>
       )}
-      {row.reason
-        ? (
-          <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace", color: "var(--ink2)" }}>
-            {row.reason}
-          </div>
-        )
-        : <span style={{ marginLeft: 6, fontSize: 11, fontStyle: "italic", color: "var(--mut)" }}>Nothing came back with it.</span>}
+      {said.silent && (
+        <span style={{ marginLeft: 6, fontSize: 11, fontStyle: "italic", color: "var(--mut)" }}>Nothing came back with it.</span>
+      )}
+      {said.said !== null && (
+        <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, monospace", color: "var(--ink2)" }}>
+          {said.said}
+        </div>
+      )}
+      {said.technical !== null && <TechnicalNote text={said.technical} />}
     </div>
   );
 }
@@ -251,7 +287,7 @@ function OutboxCard(
               {AC_REQUEUED_NOTE}
             </p>
           )}
-          {detail.showSaid && <WhatWasSaid row={row} />}
+          {detail.said && <WhatWasSaid said={detail.said} />}
         </div>
       )}
 
@@ -279,6 +315,7 @@ function OutboxCard(
               {note.quote}
             </div>
           )}
+          {note.quoteTechnical && <TechnicalNote text={note.quoteTechnical} />}
         </div>
       )}
     </div>
@@ -295,11 +332,15 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const reload = q.reload;
   const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
   const expanded = useAcExpandedRows();
+  const history = useAcSupersededGroup();
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
   const loaded = d?.rows ?? [];
   const typeCounts = acDocTypeCounts(loaded);
   const rows = acRowsOfType(loaded, docType);
+  /* History folds away here too — a phone has less room to spend on rows whose
+     documents already went through, not more. Same helper, same default. */
+  const split = acSplitSuperseded(rows, state);
 
   return (
     <div className="hz-m" style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
@@ -363,8 +404,14 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
             because something went unseen must state its own load error. */}
         {q.error && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "var(--red-bg)", border: "1px solid #e6cccc", borderRadius: 12, padding: "11px 13px", marginBottom: 11 }}>
+            {/* The page's own sentence, then the machine's words QUOTED under
+                it — never spliced into it. Same rule as every other reply on
+                this screen. */}
             <span style={{ fontSize: 12, color: "var(--red)", fontWeight: 600 }}>
-              The queue could not be read: {q.error}
+              {AC_LOAD_FAILED_LINE}
+              <span style={{ display: "block", marginTop: 3, fontWeight: 400, fontSize: 10.5, fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {q.error}
+              </span>
             </span>
             <button
               onClick={() => q.reload()}
@@ -419,13 +466,17 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               <div style={{ textAlign: "center", padding: "34px 12px", fontSize: 12, color: "var(--mut)" }}>
                 {acEmptyLine(d, state)}
               </div>
+            ) : split.live.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "34px 12px", fontSize: 12, color: "var(--mut)" }}>
+                {AC_ONLY_SUPERSEDED_LINE}
+              </div>
             ) : (
               <MobileVirtualList
-                items={rows}
+                items={split.live}
                 getKey={(r) => r.id}
                 gap={8}
                 estimateHeight={62}
-                ariaLabel={`${rows.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
+                ariaLabel={`${split.live.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
                 renderItem={(r) => (
                   <OutboxCard
                     row={r}
@@ -438,6 +489,60 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                   />
                 )}
               />
+            )}
+
+            {/* THE RECORD, FOLDED — under the live cards, never among them, and
+                not built at all until it is opened. */}
+            {split.superseded.length > 0 && (
+              <div style={{ marginTop: 11, border: "1px dashed var(--line)", borderRadius: 11, background: "var(--card)" }}>
+                <button
+                  type="button"
+                  aria-expanded={history.open}
+                  onClick={history.toggle}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left",
+                    fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: "var(--mut)",
+                    background: "transparent", border: "none", padding: "9px 11px", cursor: "pointer",
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className="chev"
+                    style={{
+                      flex: "none", lineHeight: 1, display: "inline-block",
+                      transform: history.open ? "rotate(90deg)" : undefined,
+                    }}
+                  >
+                    ›
+                  </span>
+                  {acSupersededHeading(split.superseded.length)}
+                </button>
+                {history.open && (
+                  <div style={{ borderTop: "1px solid var(--line)", padding: "9px 11px" }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 11, lineHeight: 1.5, color: "var(--mut)" }}>
+                      {AC_SUPERSEDED_NOTE}
+                    </p>
+                    <MobileVirtualList
+                      items={split.superseded}
+                      getKey={(r) => r.id}
+                      gap={8}
+                      estimateHeight={62}
+                      ariaLabel={`${split.superseded.length} superseded rows, kept as a record.`}
+                      renderItem={(r) => (
+                        <OutboxCard
+                          row={r}
+                          maxAttempts={maxAttempts}
+                          sending={requeue.sendingId === r.id}
+                          note={requeue.notes[r.id]}
+                          open={expanded.isOpen(r)}
+                          onToggle={() => expanded.toggle(r)}
+                          onSendAgain={() => void requeue.sendAgain(r.id)}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
+              </div>
             )}
 
             <details style={{ marginTop: 14, background: "var(--card)", border: "1px solid var(--line-card)", borderRadius: 11, padding: "10px 12px" }}>
