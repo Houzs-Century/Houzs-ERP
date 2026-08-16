@@ -154,11 +154,17 @@ async function main() {
 
   if (target) {
     note(`\n${'='.repeat(78)}\n2. The named order's lines, and the CROSS-COMPANY contention for its codes`);
+    /* line updated_at is THE decisive field. If a mattress line was written
+       AFTER the 2026-08-15 mattress GRN and is still PENDING, the allocator
+       ran and deliberately left it PENDING — that is NOT staleness and the
+       cause is elsewhere. If it was last written before the GRN, the
+       projection never saw the new stock. */
     const lines = await sql`
       SELECT id::text AS id, line_no, item_code, item_group, qty,
              stock_status, stock_qty_ready, cancelled,
              warehouse_id::text AS warehouse_id, allocated_batch_no,
-             variants::text AS variants
+             variants::text AS variants,
+             created_at::text AS created_at, updated_at::text AS updated_at
         FROM scm.mfg_sales_order_items
        WHERE company_id = ${CO}::bigint AND doc_no = ${target.doc_no}
        ORDER BY line_no NULLS LAST, created_at`;
@@ -167,6 +173,24 @@ async function main() {
       const vk = computeVariantKey(l.item_group, l.variants ? JSON.parse(l.variants) : null);
       note(`    #${String(l.line_no ?? '?').padStart(2)} ${String(l.item_code).padEnd(24)} group=${String(l.item_group ?? '-').padEnd(10)} qty=${l.qty} stored=${String(l.stock_status).padEnd(8)} ready=${l.stock_qty_ready ?? '-'} batch=${l.allocated_batch_no ?? '-'}`);
       note(`        wh=${(l.warehouse_id ?? 'NULL').slice(0, 8)}  variant_key=${JSON.stringify(vk)}  bucket=${(l.warehouse_id ?? WH_NONE)}::${l.item_code}::${vk}`);
+      note(`        line created_at=${l.created_at}  updated_at=${l.updated_at}   <-- vs the GRN timestamps below`);
+    }
+    /* Every stock movement for this order's codes, so the line updated_at can
+       be read against the moment the goods actually landed. */
+    const codesAll = [...new Set(live.map((x) => x.item_code).filter(Boolean))];
+    if (codesAll.length) {
+      const mv = await sql`
+        SELECT product_code, movement_type, qty, coalesce(variant_key,'') AS variant_key,
+               source_doc_type, source_doc_no, warehouse_id::text AS warehouse_id,
+               created_at::text AS created_at
+          FROM scm.inventory_movements
+         WHERE product_code IN ${sql(codesAll)}
+         ORDER BY created_at DESC
+         LIMIT 40`;
+      note(`\n    --- last ${mv.length} stock movement(s) for this order's codes (ALL companies) ---`);
+      for (const m of mv) {
+        note(`      ${m.created_at}  ${String(m.movement_type).padEnd(4)} ${String(m.product_code).padEnd(24)} qty=${String(m.qty).padStart(4)} key=${JSON.stringify(m.variant_key)} src=${m.source_doc_type ?? '-'} ${m.source_doc_no ?? ''}`);
+      }
     }
     const r = summariseReadiness(live.map((l) => ({ item_group: l.item_group, item_code: l.item_code, stock_status: l.stock_status, cancelled: false })));
     note(`    >>> computed stockRemark = ${JSON.stringify(r.stockRemark)}   pendingCategories=${JSON.stringify(r.pendingCategories)}`);
