@@ -988,8 +988,18 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 | candidate | verdict |
 |---|---|
 | `scm.mfg_sales_orders.balance_centi` | **NO.** `recomputeTotals` writes `balance_centi = local_total_centi = total_revenue_centi = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
-| the view's `balance_centi_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger |
-| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES.** What `GET /mfg-sales-orders/:docNo` and the customer-facing print show. The rule was lifted out of that route into a shared pure module so the account book and the screen cannot compute different numbers |
+| the view's `balance_centi_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger. **Since mig 0301 (2026-08-16) it is SIGNED** — the `GREATEST(…, 0)` floor was removed so an over-collected order shows red instead of a comfortable RM 0.00 |
+| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts:79` calls THIS |
+| `soBalanceCenti` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). It answers 0 whenever `total_revenue_centi` is 0, because that column is unset on 2,687 of production's 2,824 live orders and a bare subtraction would paint RM 9.26m of false over-collection |
+
+> **The two names are the point.** `soOutstandingCenti` (floored) is what SUMS
+> and what leaves the building; `soBalanceCenti` (signed) is what a person
+> reads. They are deliberately not interchangeable, and the guard that used to
+> REFUSE an over-collection outright was removed on 2026-08-16 — over-collection
+> is legal now, so the money is recorded and the balance simply goes negative.
+> Before that, the refusal fell on the person holding the customer's cash, and
+> the observed workaround was to re-price a line upward until the payment fit
+> (HC-SO-2608-002: an RM 250 line edit 76 seconds before the payment).
 
 Paid is the payments ledger PLUS the header `deposit_centi` **only when no
 `is_deposit` ledger row exists** — modern orders write the deposit as a ledger

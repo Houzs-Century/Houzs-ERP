@@ -968,11 +968,28 @@ deliveryPlanning.get('/', async (c) => {
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
-      // stock — stock_remark names what is MISSING: "" / "READY" / "SHORT: …",
-      // never READY while short. `| null` so ASSR rows (no stock) share the shape.
-      stock_status: (readiness.isFullyReady ? 'READY' : readyToShip ? 'READY (PARTIAL)' : 'PENDING') as string | null,
+      /* stock — THREE fields, three different questions, and they must not
+         invent vocabulary for each other.
+
+         stock_status is a STATUS. There is deliberately no third value here.
+         "READY (PARTIAL)" used to sit in this expression, built locally rather
+         than taken from the rollup, and it survived the 2026-08-16 fix that
+         removed the string everywhere else — so DeliveryPlanningBoard grouped
+         rows under a "READY (PARTIAL)" header while every row beneath it read
+         "SHORT: ACCESSORY". That is the lie the owner named ("骗人"), one screen
+         over from where it was fixed. WHAT is missing is stock_remark's job;
+         WHETHER it can leave is is_ship_ready's.
+
+         `| null` so ASSR rows (no stock at all) share the shape. */
+      stock_status: (readiness.isFullyReady ? 'READY' : 'PENDING') as string | null,
       stock_remark: readiness.stockRemark as string | null,
       is_main_ready: readiness.isMainReady as boolean | null,
+      /* THE ship gate — see summariseReadiness. Shipped beside is_main_ready
+         because that one is VACUOUSLY true when the SO carries no main line, so
+         a consumer gating on it green-lights an empty document (16 husks reached
+         READY_TO_SHIP that way on 2026-08-13). A consumer that means "can this
+         leave" wants THIS field. */
+      is_ship_ready: readyToShip as boolean | null,
       // multi-company: readable company code for the shared-queue Company column
       // (HOUZS / 2990). null when unresolved (pre-migration / cold-start).
       company_code: codeMap.get(Number(r.company_id)) ?? null,
@@ -1148,6 +1165,8 @@ deliveryPlanning.get('/', async (c) => {
           stock_status: null,
           stock_remark: null,
           is_main_ready: null,
+          /* Not a stock-bearing row — it has nothing to be ready FOR. */
+          is_ship_ready: null,
           // ASSR (service) cases live in public.assr_cases (no scm company_id yet)
           // — no company label on the shared queue.
           company_code: null,
@@ -1310,6 +1329,8 @@ deliveryPlanning.get('/', async (c) => {
         stock_status: null,
         stock_remark: null,
         is_main_ready: null,
+        /* Not a stock-bearing row — it has nothing to be ready FOR. */
+        is_ship_ready: null,
         company_code: null,
         region: primaryRegion,
         regions: [...regionSet],
@@ -1448,6 +1469,8 @@ deliveryPlanning.get('/', async (c) => {
           stock_status: null,
           stock_remark: null,
           is_main_ready: null,
+          /* Not a stock-bearing row — it has nothing to be ready FOR. */
+          is_ship_ready: null,
           company_code: null,
           region: primaryRegion,
           regions: [...regionSet],
