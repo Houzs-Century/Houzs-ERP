@@ -71,6 +71,7 @@ import { deriveBranding } from '../lib/so-display-branding';
 import { paginateAll } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -968,11 +969,8 @@ deliveryPlanning.get('/', async (c) => {
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
-      // stock — stock_remark names what is MISSING: "" / "READY" / "SHORT: …",
-      // never READY while short. `| null` so ASSR rows (no stock) share the shape.
-      stock_status: (readiness.isFullyReady ? 'READY' : readyToShip ? 'READY (PARTIAL)' : 'PENDING') as string | null,
-      stock_remark: readiness.stockRemark as string | null,
-      is_main_ready: readiness.isMainReady as boolean | null,
+      // stock — the four fields and why they differ: lib/so-readiness-row.ts
+      ...readinessRowFields(readiness),
       // multi-company: readable company code for the shared-queue Company column
       // (HOUZS / 2990). null when unresolved (pre-migration / cold-start).
       company_code: codeMap.get(Number(r.company_id)) ?? null,
@@ -1145,9 +1143,7 @@ deliveryPlanning.get('/', async (c) => {
           arrives_em_warehouse_date: null,
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
           // Stock columns are not meaningful for a Service Case.
-          stock_status: null,
-          stock_remark: null,
-          is_main_ready: null,
+          ...NO_STOCK_ROW,
           // ASSR (service) cases live in public.assr_cases (no scm company_id yet)
           // — no company label on the shared queue.
           company_code: null,
@@ -1307,9 +1303,7 @@ deliveryPlanning.get('/', async (c) => {
         delivery_substatus: null,
         arrives_em_warehouse_date: null,
         do_date: null,
-        stock_status: null,
-        stock_remark: null,
-        is_main_ready: null,
+        ...NO_STOCK_ROW,
         company_code: null,
         region: primaryRegion,
         regions: [...regionSet],
@@ -1445,9 +1439,7 @@ deliveryPlanning.get('/', async (c) => {
           delivery_substatus: null,
           arrives_em_warehouse_date: null,
           do_date: null,
-          stock_status: null,
-          stock_remark: null,
-          is_main_ready: null,
+          ...NO_STOCK_ROW,
           company_code: null,
           region: primaryRegion,
           regions: [...regionSet],
