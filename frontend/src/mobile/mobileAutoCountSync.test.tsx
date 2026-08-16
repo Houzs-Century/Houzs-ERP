@@ -80,6 +80,17 @@ async function mount(body: AcOutboxResponse | Error) {
 
 const chip = (name: RegExp) => screen.getByRole("button", { name });
 
+/* `data-ac-row`, not `.card`: the list is windowed now and the windowing
+   component owns the element wrapping each card. */
+const cardOf = (docNo: string) =>
+  screen.getByText(docNo).closest("[data-ac-row]") as HTMLElement;
+
+/** Open a card by its always-visible reason line — the line IS the opener. */
+async function openRow(docNo: string) {
+  await userEvent.click(within(cardOf(docNo)).getByRole("button", { expanded: false }));
+  return cardOf(docNo);
+}
+
 const busy = payload({
   counts: { pending: 1, sent: 1, failed: 1, skipped: 1, requeued: 1, attention: 2, total: 5 },
   rows: [
@@ -134,28 +145,43 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
 });
 
 describe("MobileAutoCountSync — the reason is on the row here too", () => {
-  it("gives a held-back document the same three parts the desktop page gives it", async () => {
+  /* The headline is on the card with no click — the same rule the desktop page
+     follows, and the one the owner rejected an earlier design for breaking. */
+  it("shows the same headline the desktop page shows, before any click", async () => {
     await mount(busy);
     const copy = AC_REASON_COPY["missing-location"]!;
     expect(await screen.findByText(copy.headline)).toBeTruthy();
-    expect(screen.getByText(copy.explain)).toBeTruthy();
-    /* Two of them: the held-back row and the not-accepted row both carry one. */
-    expect(screen.getAllByText("To fix").length).toBe(2);
-    expect(screen.getByText(new RegExp(copy.toFix.slice(0, 30)))).toBeTruthy();
+    expect(screen.queryByText(copy.explain)).toBeNull();
+    expect(screen.queryByText("To fix")).toBeNull();
+  });
+
+  it("puts the same rest of it behind opening the card", async () => {
+    await mount(busy);
+    const copy = AC_REASON_COPY["missing-location"]!;
+    await screen.findByText("DO-K");
+    const card = await openRow("DO-K");
+    expect(within(card).getByText(copy.explain)).toBeTruthy();
+    expect(within(card).getByText("To fix")).toBeTruthy();
+    expect(within(card).getByText(new RegExp(copy.toFix.slice(0, 30)))).toBeTruthy();
   });
 
   it("makes the same distinction about who was asked", async () => {
     await mount(busy);
-    const card = (await screen.findByText("DO-K")).closest(".card")!;
-    expect(within(card as HTMLElement).getByText("AutoCount was not asked")).toBeTruthy();
-    const failed = screen.getByText("SO-F").closest(".card")!;
-    expect(within(failed as HTMLElement).getByText("AutoCount replied")).toBeTruthy();
-    expect(within(failed as HTMLElement).getByText(/FK_SO_SalesAgent/)).toBeTruthy();
+    await screen.findByText("DO-K");
+    const card = await openRow("DO-K");
+    expect(within(card).getByText("AutoCount was not asked")).toBeTruthy();
+    const failed = await openRow("SO-F");
+    expect(within(failed).getByText("AutoCount replied")).toBeTruthy();
+    expect(within(failed).getByText(/FK_SO_SalesAgent/)).toBeTruthy();
   });
 
   it("marks a re-queued refusal as history, not an open item", async () => {
     await mount(busy);
-    expect(await screen.findByText(/record of the first refusal/i)).toBeTruthy();
+    await screen.findByText("IV-R");
+    expect(within(cardOf("IV-R")).getByText(/this row is history/i)).toBeTruthy();
+    const card = await openRow("IV-R");
+    expect(within(card).getByText(/record of the first refusal/i)).toBeTruthy();
+    expect(within(card).queryByText("To fix")).toBeNull();
   });
 
   it("prints none of the machinery, even when the server sends it", async () => {
@@ -200,10 +226,11 @@ describe("MobileAutoCountSync — Send again", () => {
 
   it("offers the button on the same rows the desktop page offers it on", async () => {
     await mount(busy);
-    const offered = (await screen.findByText("SO-F")).closest(".card")!;
-    expect(within(offered as HTMLElement).getByRole("button", { name: "Send again" })).toBeTruthy();
-    const notOffered = screen.getByText("DO-K").closest(".card")!;
-    expect(within(notOffered as HTMLElement).queryByRole("button", { name: "Send again" })).toBeNull();
+    await screen.findByText("SO-F");
+    const offered = cardOf("SO-F");
+    expect(within(offered).getByRole("button", { name: "Send again" })).toBeTruthy();
+    const notOffered = cardOf("DO-K");
+    expect(within(notOffered).queryByRole("button", { name: "Send again" })).toBeNull();
   });
 
   it("says so on the row when the document is on its way again", async () => {
@@ -244,18 +271,19 @@ describe("MobileAutoCountSync — an accepted re-send stops giving orders about 
       new_row_id: "ob-9", reason: null,
     });
     await mount(busy);
-    const card = (await screen.findByText("SO-F")).closest(".card")!;
-    expect(within(card as HTMLElement).getByText("To fix")).toBeTruthy();
+    await screen.findByText("SO-F");
+    const card = await openRow("SO-F");
+    expect(within(card).getByText("To fix")).toBeTruthy();
 
-    await userEvent.click(within(card as HTMLElement).getByRole("button", { name: "Send again" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Send again" }));
 
     expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
-    const after = screen.getByText("SO-F").closest(".card")!;
-    expect(within(after as HTMLElement).queryByText("To fix")).toBeNull();
-    expect(within(after as HTMLElement).queryByText("AutoCount replied")).toBeNull();
+    const after = cardOf("SO-F");
+    expect(within(after).queryByText("To fix")).toBeNull();
+    expect(within(after).queryByText("AutoCount replied")).toBeNull();
     /* Replaced by what to do NOW, keyed by the outcome code. */
-    expect(within(after as HTMLElement).getByText("To do")).toBeTruthy();
-    expect(within(after as HTMLElement).getByText(/next five-minute send/)).toBeTruthy();
+    expect(within(after).getByText("To do")).toBeTruthy();
+    expect(within(after).getByText(/next five-minute send/)).toBeTruthy();
   });
 
   it("keeps the old reason when the re-send was refused — nothing changed", async () => {
@@ -266,11 +294,67 @@ describe("MobileAutoCountSync — an accepted re-send stops giving orders about 
       new_row_id: null, reason: null,
     });
     await mount(busy);
-    const card = (await screen.findByText("SO-F")).closest(".card")!;
-    await userEvent.click(within(card as HTMLElement).getByRole("button", { name: "Send again" }));
+    await screen.findByText("SO-F");
+    const card = await openRow("SO-F");
+    await userEvent.click(within(card).getByRole("button", { name: "Send again" }));
     expect(await screen.findByText(/AutoCount already accepted this one/)).toBeTruthy();
-    const after = screen.getByText("SO-F").closest(".card")!;
-    expect(within(after as HTMLElement).getByText("To fix")).toBeTruthy();
-    expect(within(after as HTMLElement).getByText(/do not look for a way round it/i)).toBeTruthy();
+    const after = cardOf("SO-F");
+    expect(within(after).getByText("To fix")).toBeTruthy();
+    expect(within(after).getByText(/do not look for a way round it/i)).toBeTruthy();
+  });
+});
+
+/* The same four things the desktop page's last describe block guards, asserted
+   here because desktop and mobile are one product and a simplification landing
+   on one surface only is the recurring bug class this repo names. */
+describe("MobileAutoCountSync — a thousand documents", () => {
+  const manyRows = (n: number): AcOutboxRow[] =>
+    Array.from({ length: n }, (_, i) => row({
+      id: `x${i}`, doc_no: `SO-${i}`, status: "sent", state: "sent",
+      ac_doc_no: `AC-${i}`, sent_at: "2026-08-15T01:00:00.000Z",
+    }));
+
+  it("opens on the documents that need attention, not on everything", async () => {
+    await mount(busy);
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
+  });
+
+  it("keeps everything one click away", async () => {
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: /Everything\s*5/ }));
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
+  });
+
+  it("gives a document already in AutoCount one card and nothing to open", async () => {
+    await mount(payload({
+      rows: [row({ id: "s", doc_no: "GR-S", doc_type: "GR", op: "po_to_gr", status: "sent",
+        state: "sent", ac_doc_no: "GR-00123", sent_at: "2026-08-15T01:00:00.000Z" })],
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+    }));
+    await screen.findByText("GR-S");
+    const card = cardOf("GR-S");
+    expect(within(card).queryByRole("button", { expanded: false })).toBeNull();
+    expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
+    expect(within(card).getByText(/In the account book as GR-00123/)).toBeTruthy();
+  });
+
+  it("does not put several hundred cards into the page at once", async () => {
+    await mount(payload({
+      rows: manyRows(400),
+      counts: { pending: 0, sent: 400, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 400 },
+    }));
+    await screen.findByText("SO-0");
+    const mounted = document.querySelectorAll("[data-ac-row]").length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(400);
+  });
+
+  it("says nothing needs attention rather than telling you to try another filter", async () => {
+    await mount(payload({
+      rows: [],
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+    }));
+    expect(await screen.findByText(/Nothing needs your attention/)).toBeTruthy();
+    expect(screen.queryByText(/Try another status/)).toBeNull();
   });
 });
