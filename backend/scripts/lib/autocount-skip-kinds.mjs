@@ -78,6 +78,24 @@ export const AC_SKIP_KINDS = [
       'a line carries no stock location — set the warehouse on the line, or the sales location on the document',
   },
   {
+    kind: 'missing-agent',
+    needle: 'refused, nothing sent (MissingAgentError)',
+    remedy:
+      'the sales order names no salesperson AutoCount knows — assign a salesperson on the order, then send it again',
+  },
+  {
+    kind: 'missing-sales-location',
+    needle: 'refused, nothing sent (MissingSalesLocationError)',
+    remedy:
+      'the sales order itself carries no stock location and has no live line to take one from — set the sales location, or add a line with a warehouse',
+  },
+  {
+    kind: 'missing-creditor',
+    needle: 'refused, nothing sent (MissingCreditorError)',
+    remedy:
+      "the purchase order's supplier has no AutoCount creditor code — fill in scm.suppliers.code for that supplier, then send it again",
+  },
+  {
     kind: 'compose-failed',
     needle: 'compose failed, nothing sent',
     remedy:
@@ -95,8 +113,32 @@ export const AC_SKIP_KINDS = [
   },
   {
     kind: 'no-autocount-shape',
-    needle: 'AutoCount has no shape',
-    remedy: 'merged conversion (N sources -> 1 document) — must be worked by hand',
+    needle: 'AutoCount transfers from ONE source document',
+    remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
+  },
+  {
+    kind: 'dtlkey-subset',
+    needle: 'carry no AutoCount DtlKey',
+    remedy:
+      'a PART of the parent was transferred and the ERP cannot name which lines — backfill linked_ac_dtlkey on the SOURCE document, then raise this document again',
+  },
+  {
+    kind: 'cancelled-before-send',
+    needle: 'cancelled in the ERP before it was written to AutoCount',
+    remedy:
+      'nothing to do — the document was cancelled while its create was still queued, so neither ever reached the account book',
+  },
+  {
+    kind: 'edit-before-counterpart',
+    needle: 'edited before its AutoCount counterpart existed',
+    remedy:
+      'the conversion that creates this document is still queued and will transfer the source lines, not this edit — save the document again once it has drained',
+  },
+  {
+    kind: 'grn-mislinked',
+    needle: 'not of this goods receipt',
+    remedy:
+      "the goods receipt's AutoCount number is its purchase order's, a cutover convention — the real receipt numbers are on the PO (linked_ac_grn_docnos), and nothing can be sent for this GRN until one is chosen",
   },
 ];
 

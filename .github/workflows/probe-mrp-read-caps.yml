@@ -1,0 +1,68 @@
+# Read-only. Measures how many rows each of MRP's reads actually matches, and
+# where one named SO line ranks under that read's own ORDER BY — so a row
+# ceiling below the requested limit (which routes/mrp.ts's truncation guard
+# cannot see) becomes visible. Writes nothing.
+name: probe-mrp-read-caps
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: 'SO doc no, e.g. HC-SO-2608-003'
+        required: true
+        default: ""
+        type: string
+      code:
+        description: 'item code to spread-check, e.g. JAGER-(K) (blank = skip)'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-mrp-read-caps
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-read-caps.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          CODE: ${{ inputs.code }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-read-caps.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          CODE: ${{ inputs.code }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

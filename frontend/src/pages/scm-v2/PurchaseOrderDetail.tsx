@@ -44,6 +44,7 @@ import {
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
+import { convertToLink } from '../../lib/convertScope';
 
 /* dd/mm/yyyy — the V2 detail header's date shape, for the meta line. */
 const fmtDmy = (iso: string | null | undefined): string => {
@@ -970,7 +971,7 @@ export const PurchaseOrderDetail = () => {
               supplier. */}
           {(po.status === 'PARTIALLY_RECEIVED' || po.status === 'RECEIVED') && (
             <Button variant="ghost" size="md"
-              onClick={() => navigate(`/scm/purchase-returns/new?poId=${po.id}`)}>
+              onClick={() => navigate(convertToLink('poToPr', po.id))}>
               <span>Raise Return</span>
             </Button>
           )}

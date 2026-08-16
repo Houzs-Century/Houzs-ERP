@@ -117,9 +117,16 @@ export type PlanningOrder = {
   /* The latest DO's OWN document date (delivery_orders.do_date); null when this
      SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
+  /* A STATUS: 'READY' | 'PENDING' only. There is no third value — the string
+     "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
+     this field and produced a header that contradicted every row under it. */
   stock_status: string;
+  /* The LABEL: '' | 'READY' | 'SHORT: <categories>'. Names what is MISSING. */
   stock_remark: string;
+  /* VACUOUSLY true when the SO has no main line — do not gate shipping on it. */
   is_main_ready: boolean;
+  /* THE ship gate. Use this, not is_main_ready, to ask "can this leave". */
+  is_ship_ready: boolean;
   /* Multi-company: readable company code for the SHARED cross-company queue
      (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;

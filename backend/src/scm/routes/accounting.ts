@@ -26,8 +26,12 @@ import { MIGRATED_NO_GL_MESSAGE } from '../lib/migrated-chain';
 import { paginateAll } from '../lib/paginate-all';
 import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
-import { nextJeNo, jePrefixForCompany } from '../lib/doc-no';
 import { hasHouzsPerm } from '../lib/houzs-perms';
+import { postJournal, reverseJournal } from '../../acc/engine';
+import { backfillSoPayments } from '../../acc/payments';
+import { computeDailyBank } from '../../acc/daily-bank';
+import { systemTakings, postCashOverShort } from '../../acc/daily-close';
+import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -146,7 +150,11 @@ accounting.post('/journal-entries', async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const entryDate = body.entryDate ?? todayMyt();
-  const sourceType = String(body.sourceType ?? 'MANUAL');
+  /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
+     body.sourceType, which let an operator mint an entry that impersonates a
+     document type ('SI', 'PV', …) — colliding with the real document's
+     idempotency and dodging the manual-journal control-account block. */
+  const sourceType = 'MANUAL';
   const sourceDocNo = body.sourceDocNo ?? null;
   const narration = body.narration ?? null;
   const lines = Array.isArray(body.lines) ? (body.lines as JeLineIn[]) : [];
@@ -161,43 +169,40 @@ accounting.post('/journal-entries', async (c) => {
   if (dr === 0) return c.json({ error: 'zero_amount' }, 400);
 
   const sb = c.get('supabase');
-  const jeNo = await nextJeNo(sb, new Date(entryDate), companyDocPrefix(c));
-
   const jeCompanyId = activeCompanyId(c);
-  const { data: je, error: jeErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(jeCompanyId != null ? { company_id: jeCompanyId } : {}),
-      je_no: jeNo,
-      entry_date: entryDate,
-      source_type: sourceType,
-      source_doc_no: sourceDocNo,
-      narration,
-      total_debit_sen: dr,
-      total_credit_sen: cr,
-    })
-    .select('*')
-    .single();
-  if (jeErr) return c.json({ error: 'insert_failed', reason: jeErr.message }, 500);
 
-  const lineRows = lines.map((l, i) => ({
-    ...(jeCompanyId != null ? { company_id: jeCompanyId } : {}),
-    journal_entry_id: je.id,
-    line_no: i + 1,
-    account_code: l.accountCode,
-    debit_sen: Number(l.debitSen ?? 0),
-    credit_sen: Number(l.creditSen ?? 0),
-    party_type: l.partyType ?? null,
-    party_code: l.partyCode ?? null,
-    party_name: l.partyName ?? null,
-    notes: l.notes ?? null,
-  }));
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', je.id);
-    return c.json({ error: 'lines_insert_failed', reason: linesErr.message }, 500);
+  /* Through the ONE gate (acc/engine), as a DRAFT — posting stays a separate,
+     gated step. The engine additionally validates the chart, which this route
+     never did: an account code the company does not have (or a parent header,
+     or a deactivated account) is now a 400 instead of a line the trial balance
+     can see but the chart cannot explain. */
+  const r = await postJournal(sb, {
+    companyId: jeCompanyId ?? null,
+    entryDate,
+    sourceType,
+    sourceDocNo,
+    narration,
+    lines: lines.map((l) => ({
+      accountCode: l.accountCode,
+      debitSen: Number(l.debitSen ?? 0),
+      creditSen: Number(l.creditSen ?? 0),
+      partyType: l.partyType ?? null,
+      partyCode: l.partyCode ?? null,
+      partyName: l.partyName ?? null,
+      notes: l.notes ?? null,
+    })),
+    postNow: false,
+  });
+  if (!r.ok) {
+    if (r.status === 'account_invalid' || r.status === 'bad_line') return c.json({ error: r.status, reason: r.reason }, 400);
+    if (r.status === 'lines_insert_failed') return c.json({ error: 'lines_insert_failed', reason: r.reason }, 500);
+    return c.json({ error: 'insert_failed', reason: r.reason }, 500);
   }
-  return c.json({ journalEntry: je, lineCount: lineRows.length }, 201);
+  const { data: je, error: jeReadErr } = await sb.from('journal_entries').select('*').eq('id', r.jeId).maybeSingle();
+  // The draft IS created at this point — a failed read-back degrades the
+  // response body, never the outcome.
+  if (jeReadErr) return c.json({ journalEntry: { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
+  return c.json({ journalEntry: je ?? { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
 });
 
 /* POST /journal-entries/:id/post — mark a journal entry posted.
@@ -330,29 +335,6 @@ export type PostPiResult =
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
-  // Idempotency — an ACTIVE (non-reversed) PI JE already exists?
-  /* This guard is the ONLY thing that makes posting idempotent, and `?? []` folded
-     a failed read into "no JE exists yet" — so a transient blip does not skip the
-     posting, it posts a SECOND Dr Inventory / Cr AP for the same invoice and
-     doubles the supplier's payable in the GL. Nothing is written before this
-     point, so returning strands nothing: the PI simply stays unposted and a later
-     call (this function is called on confirm and by resyncPiAccounting) posts it
-     once, correctly. A PI that has genuinely never been posted resolves
-     error === null with data === [] and MUST still fall through. */
-  const { data: existingRows, error: existErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no, reversed')
-    .eq('source_type', 'PI')
-    .eq('source_doc_no', invoiceNumber);
-  if (existErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-accounting] idempotency read failed — PI NOT posted:', invoiceNumber, existErr.message);
-    return { ok: false, status: 'post_failed', reason: existErr.message };
-  }
-  const active = ((existingRows ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>)
-    .find((r) => !r.reversed);
-  if (active) return { ok: true, status: 'already_posted', jeNo: active.je_no, jeId: active.id };
-
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
     .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
@@ -396,66 +378,35 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
   const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate); // MYR posted to the GL
 
   const supplier = pi.suppliers ?? { code: null, name: null };
-  const lines: JeLineIn[] = [
-    {
-      accountCode: '1200',                                   // Inventory (simplification: all PI → Inventory)
-      debitSen: totalSen,
-      notes: `Inventory from ${pi.invoice_number}`,
-    },
-    {
-      accountCode: '2000',                                   // Accounts Payable
-      creditSen: totalSen,
-      partyType: 'SUPPLIER',
-      partyCode: supplier.code ?? null,
-      partyName: supplier.name ?? null,
-      notes: `AP for ${pi.invoice_number}`,
-    },
-  ];
-
-  const jeNo = await nextJeNo(sb, new Date(pi.invoice_date), jePrefixForCompany(pi.company_id));
   // Multi-company (mig 0061): the JE + its lines belong to the PI's company.
   const companyId = pi.company_id ?? null;
-  const { data: je, error: jeErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(companyId != null ? { company_id: companyId } : {}),
-      je_no: jeNo,
-      entry_date: pi.invoice_date,
-      source_type: 'PI',
-      source_doc_no: pi.invoice_number,
-      narration: `Purchase invoice ${pi.invoice_number} — ${supplier.name ?? ''}`,
-      total_debit_sen: totalSen,
-      total_credit_sen: totalSen,
-    })
-    .select('*')
-    .single();
-  if (jeErr) return { ok: false, status: 'je_insert_failed', reason: jeErr.message };
 
-  const lineRows = lines.map((l, i) => ({
-    ...(companyId != null ? { company_id: companyId } : {}),
-    journal_entry_id: je.id,
-    line_no: i + 1,
-    account_code: l.accountCode,
-    debit_sen: l.debitSen ?? 0,
-    credit_sen: l.creditSen ?? 0,
-    party_type: l.partyType ?? null,
-    party_code: l.partyCode ?? null,
-    party_name: l.partyName ?? null,
-    notes: l.notes ?? null,
-  }));
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', je.id);
-    return { ok: false, status: 'lines_insert_failed', reason: linesErr.message };
+  /* Through the ONE gate (acc/engine). The engine owns the idempotency guard
+     (fails closed on a read blip — a blip must never book a SECOND payable),
+     the je_no mint, and the write sequence; this function owns the PI
+     specifics: the fetch, the migrated guard, FX, and the rule's lines. */
+  const roles = await resolveRoles(sb, companyId);
+  const r = await postJournal(sb, {
+    companyId,
+    entryDate: pi.invoice_date,
+    sourceType: 'PI',
+    sourceDocNo: pi.invoice_number,
+    narration: `Purchase invoice ${pi.invoice_number} — ${supplier.name ?? ''}`,
+    lines: piLines(roles, pi, supplier, totalSen),
+  });
+  if (r.ok) {
+    if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
+    return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId, totalSen };
   }
-
-  const { error: postErr } = await sb
-    .from('journal_entries')
-    .update({ posted: true })
-    .eq('id', je.id);
-  if (postErr) return { ok: false, status: 'post_failed', reason: postErr.message };
-
-  return { ok: true, status: 'posted', jeNo: je.je_no, jeId: je.id, totalSen };
+  if (r.status === 'idempotency_read_failed') {
+    /* eslint-disable-next-line no-console */
+    console.error('[pi-accounting] idempotency read failed — PI NOT posted:', invoiceNumber, r.reason);
+    return { ok: false, status: 'post_failed', reason: r.reason };
+  }
+  if (r.status === 'je_insert_failed' || r.status === 'lines_insert_failed' || r.status === 'post_failed') {
+    return { ok: false, status: r.status, reason: r.reason };
+  }
+  return { ok: false, status: 'post_failed', reason: `${r.status}: ${r.reason ?? ''}` };
 }
 
 accounting.post('/post/pi/:invoiceNumber', async (c) => {
@@ -516,119 +467,22 @@ export async function reversePiAccounting(
   sb: any,
   invoiceNumber: string,
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
-  // Find the ACTIVE (non-reversed) PI JE — an invoice may carry several
-  // historical PI JEs after edit-driven void+repost cycles (resyncPiAccounting),
-  // so we void the live one, not an arbitrary `.limit(1)` row. Nothing live →
-  // nothing to reverse.
-  /* A failed read used to return { ok:true, 'nothing_to_reverse' }: the PI is
-     cancelled, the caller logs nothing, and Dr Inventory / Cr Payables stays live
-     against it — payables and inventory value both left overstated, which is the
-     exact condition the contra above exists to undo ("取消 PI 要追溯回去"). */
-  const { data: origRows, error: origErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, narration, company_id')
-    .eq('source_type', 'PI')
-    .eq('source_doc_no', invoiceNumber);
-  if (origErr) return { ok: false, status: 'reversal_read_failed', reason: `origRows: ${origErr.message}` };
-  const orig = ((origRows ?? []) as Array<{ id: string; je_no: string; entry_date: string; reversed: boolean; total_debit_sen: number; total_credit_sen: number; narration: string | null; company_id: number | null }>)
-    .find((r) => !r.reversed);
-  if (!orig) return { ok: true, status: 'nothing_to_reverse' };
-
-  // Idempotency guard — a reversing JE already tied to THIS original exists (the
-  // flag never stuck). Keyed on reversed_by_je = orig.id, NOT just "any reversal
-  // for this invoice", so a prior cycle's reversal doesn't block voiding the
-  // current live JE.
-  /* Idempotency guard — a blip defeats it rather than degrading it, writing a
-     SECOND contra JE so the cancellation is booked twice. Nothing written yet. */
-  const { data: revExisting, error: revExistErr } = await sb
-    .from('journal_entries')
-    .select('id, je_no')
-    .eq('source_type', 'PI_REVERSAL')
-    .eq('reversed_by_je', orig.id)
-    .limit(1);
-  if (revExistErr) return { ok: false, status: 'reversal_read_failed', reason: `revExisting: ${revExistErr.message}` };
-  if (revExisting && revExisting.length > 0) {
-    // The reversing JE exists but the flag never got set — make the flag stick.
-    await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revExisting[0].id }).eq('id', orig.id);
-    return { ok: true, status: 'already_reversed' };
-  }
-
-  const totalSen = Number(orig.total_debit_sen ?? orig.total_credit_sen ?? 0);
-  if (totalSen <= 0) {
-    // Nothing of value to reverse — just flag it so re-cancels no-op.
-    await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
-    return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id };
-  }
-
-  // Load the original lines so the reversal mirrors the SAME accounts + parties,
-  // just with debit/credit swapped (a faithful contra entry).
-  /* Caught before the `?? []` fold, which cannot tell a failed read from a
-     line-less original and would silently contra the canonical Dr 2000 / Cr 1200
-     instead of the accounts the original actually used. Still pre-write. */
-  const { data: origLines, error: origLinesErr } = await sb
-    .from('journal_entry_lines')
-    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes')
-    .eq('journal_entry_id', orig.id)
-    .order('line_no');
-  if (origLinesErr) return { ok: false, status: 'reversal_read_failed', reason: `origLines: ${origLinesErr.message}` };
-  const oLines = (origLines ?? []) as Array<{
-    account_code: string; debit_sen: number; credit_sen: number;
-    party_type: string | null; party_code: string | null; party_name: string | null; notes: string | null;
-  }>;
-
-  // Multi-company (mig 0061): a reversal belongs to the same company as the JE it undoes.
-  const companyId = orig.company_id ?? null;
-  const revJeNo = await nextJeNo(sb, new Date(orig.entry_date), jePrefixForCompany(companyId));
-  const { data: revJe, error: revErr } = await sb
-    .from('journal_entries')
-    .insert({
-      ...(companyId != null ? { company_id: companyId } : {}),
-      je_no: revJeNo,
-      entry_date: todayMyt(),
-      source_type: 'PI_REVERSAL',
-      source_doc_no: invoiceNumber,
-      narration: `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
-      total_debit_sen: totalSen,
-      total_credit_sen: totalSen,
-      reversed_by_je: orig.id,
-    })
-    .select('*')
-    .single();
-  if (revErr) return { ok: false, status: 'reversal_insert_failed', reason: revErr.message };
-
-  // Swap each original line's debit/credit so the reversal nets the original to
-  // zero (Dr Payables / Cr Inventory). Fall back to the canonical 2-line entry
-  // if the original had no lines.
-  const companyLine = companyId != null ? { company_id: companyId } : {};
-  const swapped = oLines.length > 0
-    ? oLines.map((l, i) => ({
-        ...companyLine,
-        journal_entry_id: revJe.id,
-        line_no: i + 1,
-        account_code: l.account_code,
-        debit_sen: Number(l.credit_sen ?? 0),
-        credit_sen: Number(l.debit_sen ?? 0),
-        party_type: l.party_type ?? null,
-        party_code: l.party_code ?? null,
-        party_name: l.party_name ?? null,
-        notes: `Reversal — ${l.notes ?? ''}`.trim(),
-      }))
-    : [
-        { ...companyLine, journal_entry_id: revJe.id, line_no: 1, account_code: '2000', debit_sen: totalSen, credit_sen: 0, party_type: null, party_code: null, party_name: null, notes: `Reverse AP ${invoiceNumber}` },
-        { ...companyLine, journal_entry_id: revJe.id, line_no: 2, account_code: '1200', debit_sen: 0, credit_sen: totalSen, party_type: null, party_code: null, party_name: null, notes: `Reverse inventory ${invoiceNumber}` },
-      ];
-  const { error: linesErr } = await sb.from('journal_entry_lines').insert(swapped);
-  if (linesErr) {
-    await sb.from('journal_entries').delete().eq('id', revJe.id);
-    return { ok: false, status: 'reversal_lines_failed', reason: linesErr.message };
-  }
-
-  // Post the reversal + flag the original. Order matters: if the flag update
-  // fails the reversing JE still exists, so guard #2 makes a retry idempotent.
-  await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
-  await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
-
-  return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id };
+  /* Through the ONE gate (acc/engine): find the ACTIVE PI JE, write a faithful
+     contra (same accounts + parties, sides swapped), post it, flag the
+     original. The engine fails CLOSED on every read - a failed lookup must
+     never read as "nothing to reverse" while Dr Inventory / Cr Payables stays
+     live against a cancelled invoice. Fallback (line-less original) mirrors
+     the historical canonical contra: Dr AP / Cr Inventory. */
+  return reverseJournal(sb, {
+    sourceType: 'PI',
+    sourceDocNo: invoiceNumber,
+    narration: (orig) => `Reversal of ${orig.je_no} — Purchase invoice ${invoiceNumber} cancelled`,
+    entryDate: todayMyt(),
+    fallbackLines: (totalSen) => [
+      { accountCode: DEFAULT_ROLE_CODES.AP, debitSen: totalSen, creditSen: 0, notes: `Reverse AP ${invoiceNumber}` },
+      { accountCode: DEFAULT_ROLE_CODES.INVENTORY, debitSen: 0, creditSen: totalSen, notes: `Reverse inventory ${invoiceNumber}` },
+    ],
+  });
 }
 
 /* ── resyncPiAccounting (2026-06-01) — re-align a posted PI's GL after a line edit
@@ -754,4 +608,483 @@ accounting.get('/ap-aging', async (c) => {
     .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ apAging: data ?? [] });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 1 — chart management, manual-JV reversal, control-account self-check
+   ════════════════════════════════════════════════════════════════════════ */
+
+const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']);
+
+/* POST /accounts — add an account to the ACTIVE company's chart. */
+accounting.post('/accounts', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const code = String(body.accountCode ?? '').trim();
+  const name = String(body.accountName ?? '').trim();
+  const type = String(body.accountType ?? '').trim().toUpperCase();
+  const parent = body.parentCode ? String(body.parentCode).trim() : null;
+  if (!code) return c.json({ error: 'code_required' }, 400);
+  if (!name) return c.json({ error: 'name_required' }, 400);
+  if (!ACCOUNT_TYPES.has(type)) return c.json({ error: 'bad_type', message: 'accountType must be ASSET / LIABILITY / EQUITY / INCOME / EXPENSE' }, 400);
+
+  const sb = c.get('supabase');
+  if (parent) {
+    const { data: p, error: pErr } = await sb.from('accounts').select('account_code, account_type')
+      .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+    if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+    if (!p) return c.json({ error: 'parent_not_found', message: `Parent ${parent} does not exist in this company's chart` }, 400);
+    if ((p as { account_type?: string }).account_type !== type) {
+      return c.json({ error: 'parent_type_mismatch', message: 'A child must carry the same type as its parent' }, 400);
+    }
+  }
+  const { data: dup, error: dupErr } = await sb.from('accounts').select('account_code')
+    .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (dupErr) return c.json({ error: 'load_failed', reason: dupErr.message }, 500);
+  if (dup) return c.json({ error: 'code_exists' }, 409);
+
+  const { data: created, error } = await sb.from('accounts')
+    .insert({ company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true })
+    .select('account_code, account_name, account_type, parent_code, is_active')
+    .single();
+  if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
+  return c.json({ account: created }, 201);
+});
+
+/* PATCH /accounts/:code — rename / re-parent / activate-deactivate. The CODE
+   itself is immutable: history references it, and a deactivated row is the
+   alias record a rename leaves behind (brief 2.9). */
+accounting.patch('/accounts/:code', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const code = c.req.param('code');
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const sb = c.get('supabase');
+  const { data: existing, error: exErr } = await sb.from('accounts').select('account_code, account_name, parent_code, is_active, account_type')
+    .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+  if (!existing) return c.json(NOT_THIS_COMPANY, 404);
+
+  const patch: Record<string, unknown> = {};
+  if (body.accountName != null) {
+    const name = String(body.accountName).trim();
+    if (!name) return c.json({ error: 'name_required' }, 400);
+    patch.account_name = name;
+  }
+  if (body.parentCode !== undefined) {
+    const parent = body.parentCode ? String(body.parentCode).trim() : null;
+    if (parent === code) return c.json({ error: 'parent_self' }, 400);
+    if (parent) {
+      const { data: p, error: pErr } = await sb.from('accounts').select('account_code, account_type')
+        .eq('company_id', co.companyId).eq('account_code', parent).maybeSingle();
+      if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+      if (!p) return c.json({ error: 'parent_not_found' }, 400);
+      if ((p as { account_type?: string }).account_type !== (existing as { account_type?: string }).account_type) {
+        return c.json({ error: 'parent_type_mismatch' }, 400);
+      }
+    }
+    patch.parent_code = parent;
+  }
+  if (body.isActive !== undefined) {
+    const active = body.isActive === true;
+    if (!active) {
+      /* Deactivating a PARENT would orphan its children's grouping, and
+         deactivating a ROLE account would stop the posting rules dead —
+         refuse both, and say why. */
+      const { data: kids, error: kidsErr } = await sb.from('accounts').select('account_code')
+        .eq('company_id', co.companyId).eq('parent_code', code).eq('is_active', true).limit(1);
+      if (kidsErr) return c.json({ error: 'load_failed', reason: kidsErr.message }, 500);
+      if (kids && kids.length > 0) return c.json({ error: 'has_active_children' }, 409);
+      const { data: role, error: roleErr } = await sb.from('acc_account_roles').select('role')
+        .eq('company_id', co.companyId).eq('account_code', code).maybeSingle();
+      if (roleErr) return c.json({ error: 'load_failed', reason: roleErr.message }, 500);
+      if (role) return c.json({ error: 'role_account', message: `This account is the ${(role as { role?: string }).role} role account - repoint the role first` }, 409);
+    }
+    patch.is_active = active;
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_update' }, 400);
+
+  const { data: updated, error } = await sb.from('accounts').update(patch)
+    .eq('company_id', co.companyId).eq('account_code', code)
+    .select('account_code, account_name, account_type, parent_code, is_active')
+    .maybeSingle();
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  return c.json({ account: updated });
+});
+
+/* POST /journal-entries/:id/reverse — void a MANUAL journal with a contra.
+   Document-sourced entries are NOT reversible here: cancel the document and
+   its own flow writes the contra (one lifecycle per document, brief 2.8). */
+accounting.post('/journal-entries/:id/reverse', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = c.req.param('id');
+  const sb = c.get('supabase');
+
+  const { data: je, error: jeLoadErr } = await scopeToCompanyId(
+    sb.from('journal_entries').select('id, je_no, source_type, posted, reversed').eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (jeLoadErr) return c.json({ error: 'load_failed', reason: jeLoadErr.message }, 500);
+  if (!je) return c.json(NOT_THIS_COMPANY, 404);
+  const row = je as { je_no: string; source_type: string; posted?: boolean; reversed?: boolean };
+  if (row.source_type !== 'MANUAL') {
+    return c.json({ error: 'not_manual', message: 'Only manual journals reverse here - cancel the source document instead.' }, 409);
+  }
+  if (row.posted !== true) return c.json({ error: 'not_posted', message: 'A draft has booked nothing - post it first or leave it.' }, 409);
+  if (row.reversed === true) return c.json({ error: 'already_reversed' }, 409);
+
+  const r = await reverseJournal(sb, {
+    sourceType: 'MANUAL',
+    jeId: id,
+    companyId: co.companyId,
+    narration: (orig) => `Reversal of ${orig.je_no} - manual journal voided`,
+  });
+  if (!r.ok) return c.json({ error: r.status, reason: r.reason }, 500);
+  return c.json({ ok: true, ...('jeNo' in r ? { jeNo: r.jeNo, jeId: r.jeId } : {}), status: r.status });
+});
+
+/* GET /control-check — reconciliation layer 1 (brief 3.5): control account
+   vs the documents that are supposed to explain it, named to the doc.
+
+   For each control role (AR from SI documents, AP from PI documents) it
+   reports DRIFT docs (document total != its ACTIVE journal total, including
+   a confirmed doc with NO journal and a journal whose doc is gone) and
+   FOREIGN lines (control-account lines from a source no rule maps there).
+   Sums run over POSTED, non-reversed entries — the same predicate every
+   balance view uses. */
+accounting.get('/control-check', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const roles = await resolveRoles(sb, companyId);
+
+  type Drift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
+  type Foreign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
+  type CheckOk = { role: string; accountCode: string; glBalanceSen: number; driftDocs: Drift[]; foreignLines: Foreign[]; ok: boolean };
+  type CheckErr = { role: string; accountCode: string; error: string };
+
+  const runCheck = async (role: 'AR' | 'AP', accountCode: string): Promise<CheckOk | CheckErr> => {
+    const expectedSource = role === 'AR' ? 'SI' : 'PI';
+
+    const { data: jes, error: jesErr } = await sb.from('journal_entries')
+      .select('id, je_no, source_doc_no, total_debit_sen')
+      .eq('company_id', companyId).eq('source_type', expectedSource)
+      .eq('posted', true).eq('reversed', false);
+    if (jesErr) return { role, accountCode, error: jesErr.message };
+    const jeByDoc = new Map<string, { jeTotal: number }>();
+    for (const j of (jes ?? []) as Array<{ source_doc_no: string | null; total_debit_sen: number }>) {
+      if (j.source_doc_no) jeByDoc.set(j.source_doc_no, { jeTotal: Number(j.total_debit_sen ?? 0) });
+    }
+
+    const drift: Drift[] = [];
+    if (role === 'AR') {
+      const { data: docs, error } = await sb.from('sales_invoices')
+        .select('invoice_number, total_centi, status, migrated_no_stock')
+        .eq('company_id', companyId);
+      if (error) return { role, accountCode, error: error.message };
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; status: string | null; migrated_no_stock: boolean | null }>) {
+        const s = (d.status ?? '').toUpperCase();
+        const je = jeByDoc.get(d.invoice_number);
+        if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
+          if (je) drift.push({ docNo: d.invoice_number, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: `journal active but document is ${d.migrated_no_stock ? 'migrated' : s}` });
+          jeByDoc.delete(d.invoice_number);
+          continue;
+        }
+        const docTotal = Number(d.total_centi ?? 0);
+        if (!je) {
+          if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
+        } else {
+          if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total' });
+          jeByDoc.delete(d.invoice_number);
+        }
+      }
+    } else {
+      const { data: docs, error } = await sb.from('purchase_invoices')
+        .select('invoice_number, total_centi, exchange_rate, status, migrated_no_stock')
+        .eq('company_id', companyId);
+      if (error) return { role, accountCode, error: error.message };
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
+        const s = (d.status ?? '').toUpperCase();
+        const je = jeByDoc.get(d.invoice_number);
+        if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
+          if (je) drift.push({ docNo: d.invoice_number, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: `journal active but document is ${d.migrated_no_stock ? 'migrated' : s}` });
+          jeByDoc.delete(d.invoice_number);
+          continue;
+        }
+        /* PI posts on demand — a confirmed PI with no journal is NORMAL here,
+           not drift (the AP aging is the place that surfaces unposted PIs). */
+        if (!je) continue;
+        const docTotal = toMyrSen(Number(d.total_centi ?? 0), safeRate(d.exchange_rate));
+        if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total (MYR)' });
+        jeByDoc.delete(d.invoice_number);
+      }
+    }
+    for (const [docNo, je] of jeByDoc) {
+      drift.push({ docNo, docTotalSen: 0, jeTotalSen: je.jeTotal, diffSen: je.jeTotal, note: 'journal active but document not found' });
+    }
+
+    const { data: lines, error: linesErr } = await paginateAll<Record<string, unknown>>((from, to) =>
+      sb.from('v_gl_entries').select('*').eq('company_id', companyId).eq('account_code', accountCode).order('line_id').range(from, to));
+    if (linesErr) return { role, accountCode, error: linesErr.message };
+    let bal = 0;
+    const foreign: Foreign[] = [];
+    /* What LEGITIMATELY moves each control account: the document that books it
+       plus everything that settles it. AR moves on invoices AND on customer
+       payments (SOPAY/SIPAY, phase 2A); AP moves on purchase invoices AND on
+       the payment vouchers that settle them. Anything else on the account is
+       the finding. */
+    const family = role === 'AR'
+      ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
+      : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
+    for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
+      bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
+      if (!family.has(l.source_type)) {
+        foreign.push({ jeNo: l.je_no, sourceType: l.source_type, debitSen: Number(l.debit_sen ?? 0), creditSen: Number(l.credit_sen ?? 0) });
+      }
+    }
+
+    return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
+  };
+
+  const checks = [await runCheck('AR', roles.AR), await runCheck('AP', roles.AP)];
+  return c.json({ checks });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phase 2A — acquirer master + customer-payment backfill
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* GET /acquirers — the §2.13 master: the acquirer the screen names and the
+   accounts the ledger books are ONE row. Phase 2B's reconciliation reads the
+   决定4 config columns and refuses to auto-confirm an acquirer left NULL. */
+accounting.get('/acquirers', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const { data, error } = await sb.from('acc_acquirers').select('*')
+    .eq('company_id', co.companyId).order('code');
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ acquirers: data ?? [] });
+});
+
+/* POST /backfill/customer-payments — walk SO payment rows that never reached
+   the ledger and post them through the gate. Batched (default 200, max 500)
+   and idempotent: the engine guard + the acc_je_one_active_source index make
+   re-runs converge instead of double-posting. NOT company-scoped on purpose -
+   each payment resolves its own SO's company, and the historical debt spans
+   both books. Call repeatedly until `remaining` is 0. */
+accounting.post('/backfill/customer-payments', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
+  let body: any = {};
+  try { body = await c.req.json(); } catch { body = {}; }
+  const limit = Math.max(1, Math.min(500, Number(body.limit ?? 200) || 200));
+  const sb = c.get('supabase');
+  const r = await backfillSoPayments(sb, limit);
+  if (!r.ok) return c.json({ error: 'backfill_failed', reason: r.reason }, 500);
+  return c.json(r);
+});
+
+/* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
+   money is today and how much can actually move. Live from the ledger, no
+   cache (2.3) - so it can never disagree with the trial balance. */
+accounting.get('/daily-bank', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const dateQ = c.req.query('date') ?? todayMyt();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
+  const sb = c.get('supabase');
+
+  const { data: moneyRaw, error: mErr } = await sb.from('accounts')
+    .select('account_code, account_name')
+    .eq('company_id', co.companyId).eq('acc_money', true).eq('is_active', true)
+    .order('account_code');
+  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  const money = (moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>;
+
+  const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
+    .select('code, transit_account_code')
+    .eq('company_id', co.companyId).eq('is_active', true).order('code');
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  /* One transit account may serve several acquirers until 决定4 assigns each
+     its own - collapse duplicates so the board does not count a balance twice. */
+  const transitByAccount = new Map<string, string>();
+  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string }>) {
+    const existing = transitByAccount.get(a.transit_account_code);
+    transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
+  }
+  const transitCodes = [...transitByAccount.keys()];
+  const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
+    .select('account_code, account_name')
+    .eq('company_id', co.companyId).in('account_code', transitCodes.length ? transitCodes : ['—none—']);
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+  const nameOf = new Map(((transitNamesRaw ?? []) as Array<{ account_code: string; account_name: string }>)
+    .map((r) => [r.account_code, r.account_name]));
+  const transitAccounts = transitCodes.map((code) => ({
+    acquirerCode: transitByAccount.get(code) ?? code,
+    account_code: code,
+    account_name: nameOf.get(code) ?? code,
+  }));
+
+  const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
+  if (allCodes.length === 0) {
+    return c.json(computeDailyBank(date, [], [], []));
+  }
+  const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
+    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
+      .eq('company_id', co.companyId)
+      .in('account_code', allCodes)
+      .lte('entry_date', date)
+      .order('line_id')
+      .range(from, to));
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+
+  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never));
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Daily close (cashup, brief 3.5 layer 2)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* GET /daily-close?date= — system takings per bucket (live) merged with any
+   saved counts. The system side is recomputed on every read: a count sheet
+   must always face today's truth, not the truth at first open. */
+accounting.get('/daily-close', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const dateQ = c.req.query('date') ?? todayMyt();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
+  const sb = c.get('supabase');
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  const { data: savedRaw, error: sErr } = await sb.from('acc_daily_closes')
+    .select('bucket, system_sen, counted_sen, diff_sen, status, notes')
+    .eq('company_id', co.companyId).eq('close_date', date);
+  if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+  const saved = new Map(((savedRaw ?? []) as Array<{ bucket: string; system_sen: number; counted_sen: number | null; status: string; notes: string | null }>)
+    .map((r) => [r.bucket, r]));
+
+  const bucketKeys = [...new Set(['cash', 'transfer', ...takings.buckets.keys(), ...saved.keys()])];
+  const rows = bucketKeys.map((bucket) => {
+    const sys = takings.buckets.get(bucket) ?? 0;
+    const row = saved.get(bucket);
+    const counted = row?.counted_sen ?? null;
+    return {
+      bucket,
+      systemSen: sys,
+      countedSen: counted,
+      diffSen: counted == null ? null : counted - sys,
+      status: row?.status ?? 'DRAFT',
+      notes: row?.notes ?? null,
+    };
+  });
+  return c.json({ date, rows });
+});
+
+/* PUT /daily-close — save counted amounts (draft). Upsert per bucket. */
+accounting.put('/daily-close', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to close the day." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const date = String(body.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: 'bad_date' }, 400);
+  const entries = Array.isArray(body.buckets) ? body.buckets : [];
+  const sb = c.get('supabase');
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  for (const e of entries as Array<{ bucket?: string; countedSen?: number | null; notes?: string | null }>) {
+    const bucket = String(e.bucket ?? '').trim();
+    if (!bucket) continue;
+    const counted = e.countedSen == null ? null : Number(e.countedSen);
+    if (counted != null && (!Number.isInteger(counted) || counted < 0)) {
+      return c.json({ error: 'bad_amount', message: `${bucket}: counted amount must be non-negative integer sen` }, 400);
+    }
+    const sys = takings.buckets.get(bucket) ?? 0;
+    /* Refuse to edit a CONFIRMED bucket - the day is closed; corrections go
+       through a manual journal, on the record. */
+    const { data: existing, error: exErr } = await sb.from('acc_daily_closes')
+      .select('id, status').eq('company_id', co.companyId).eq('close_date', date).eq('bucket', bucket).maybeSingle();
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (existing && (existing as { status?: string }).status === 'CONFIRMED') {
+      return c.json({ error: 'already_confirmed', message: `${bucket} is confirmed for ${date}` }, 409);
+    }
+    if (existing) {
+      const { error } = await sb.from('acc_daily_closes')
+        .update({ counted_sen: counted, system_sen: sys, notes: e.notes ?? null, updated_at: new Date().toISOString() })
+        .eq('id', (existing as { id: number }).id);
+      if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    } else {
+      const { error } = await sb.from('acc_daily_closes')
+        .insert({ company_id: co.companyId, close_date: date, bucket, counted_sen: counted, system_sen: sys, notes: e.notes ?? null });
+      if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    }
+  }
+  return c.json({ ok: true });
+});
+
+/* POST /daily-close/confirm — freeze the day: refresh system figures, mark
+   every saved bucket CONFIRMED, and post the CASH over/short THAT MOMENT
+   (brief 3.5: 对账确认的那一刻就产生分录). Card/transfer differences are
+   settlement timing and belong to layer 3 - recorded, never posted here. */
+accounting.post('/daily-close/confirm', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to close the day." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const date = String(body.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: 'bad_date' }, 400);
+  const sb = c.get('supabase');
+
+  const { data: rowsRaw, error: rErr } = await sb.from('acc_daily_closes')
+    .select('id, bucket, counted_sen, status')
+    .eq('company_id', co.companyId).eq('close_date', date);
+  if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
+  const rows = (rowsRaw ?? []) as Array<{ id: number; bucket: string; counted_sen: number | null; status: string }>;
+  if (rows.length === 0) return c.json({ error: 'nothing_to_confirm', message: 'Save the counted amounts first.' }, 400);
+  const cashRow = rows.find((r) => r.bucket === 'cash');
+  if (cashRow && cashRow.counted_sen == null) {
+    return c.json({ error: 'cash_not_counted', message: 'Count the cash drawer before confirming - the whole point of the close.' }, 400);
+  }
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  const user = c.get('houzsUser') as { name?: string } | undefined;
+  let cashPosting: { status: string; jeNo?: string } | null = null;
+  for (const row of rows) {
+    const sys = takings.buckets.get(row.bucket) ?? 0;
+    if (row.bucket === 'cash' && row.counted_sen != null) {
+      const diff = row.counted_sen - sys;
+      const posted = await postCashOverShort(sb, co.companyId, date, diff);
+      if (!posted.ok) return c.json({ error: 'over_short_failed', reason: posted.reason ?? posted.status }, 500);
+      cashPosting = { status: posted.status, ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
+    }
+    const { error } = await sb.from('acc_daily_closes')
+      .update({
+        system_sen: sys,
+        status: 'CONFIRMED',
+        confirmed_by: user?.name ?? null,
+        confirmed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', row.id);
+    if (error) return c.json({ error: 'confirm_failed', reason: error.message }, 500);
+  }
+  return c.json({ ok: true, confirmed: rows.length, cashPosting });
 });

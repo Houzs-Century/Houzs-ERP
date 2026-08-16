@@ -1,0 +1,131 @@
+// ---------------------------------------------------------------------------
+// convertScope — the ONE place a "Convert to X" link's scope parameter is named.
+//
+// Every conversion in this ERP is a picker page owned by the DESTINATION
+// document (`/scm/grns/from-po`, `/scm/sales-invoices/from-do`, …). A
+// source-side "Convert to X" button navigates to that picker and has to say
+// WHICH source document the operator came from, or they land on a global list
+// of everything and hunt for the document they were just looking at.
+//
+// Two ways that failed, both found on 2026-08-16:
+//   1. The caller appended a scope parameter and the picker never read it —
+//      `?do=`, `?grn=`, `?so=` were constructed, navigated with, and discarded.
+//   2. The caller and the destination spelled it differently — the GRN screens
+//      sent `?fromGrn=` while PurchaseReturnNew read `grnId`, so "Convert to
+//      Purchase Return" always opened blank.
+//
+// Both are invisible at compile time when each site invents its own string. So
+// the name is written ONCE, here, keyed by the conversion PAIR, and both sides
+// import it: the caller builds with `convertToLink()`, the destination reads
+// with `readConvertScope()`. A misspelt pair is a type error.
+//
+// And an unrecognised parameter is REPORTED, never dropped: `readConvertScope`
+// returns the parameters the screen does not understand and
+// `<UnrecognisedScopeNotice>` puts them on the operator's screen. A silently
+// ignored parameter is precisely how (2) survived — the screen looked like a
+// normal blank form.
+// ---------------------------------------------------------------------------
+
+/* Every source→destination convert that carries a SCOPE (which source document
+   am I converting?). Keyed by pair, not by route, because one destination can
+   legitimately be scoped by more than one kind of source: a Purchase Return is
+   raised either from a GRN or straight from a PO, and those are two parameters
+   on one route.
+
+   NOT in this table, deliberately: `appendTo…`-style parameters
+   (`/scm/grns/from-po?appendToGrn=`, `/scm/purchase-orders/from-so?poId=`).
+   Those name an existing DESTINATION document to append the picked lines into
+   — the opposite direction — and mixing the two concepts in one table is how
+   the next reader gets it backwards.
+
+   `key` is the value the picker matches its rows on, and it is NOT always a
+   UUID: the SO→DO picker's rows are keyed on the SO document number, because
+   `deliverable-so-lines` returns `docNo` and no order id. The parameter is
+   named for what it actually carries. */
+export const CONVERT_LINKS = {
+  poToGrn:  { path: '/scm/grns/from-po',               param: 'poId'    },
+  grnToPi:  { path: '/scm/purchase-invoices/from-grn', param: 'grnId'   },
+  grnToPr:  { path: '/scm/purchase-returns/new',       param: 'grnId'   },
+  poToPr:   { path: '/scm/purchase-returns/new',       param: 'poId'    },
+  doToSi:   { path: '/scm/sales-invoices/from-do',     param: 'doId'    },
+  soToDo:   { path: '/scm/delivery-orders/from-so',    param: 'soDocNo' },
+} as const;
+
+export type ConvertPair = keyof typeof CONVERT_LINKS;
+
+/* Build the "Convert to X" URL. `keys` may be one source key or many — the
+   multi-source form is what the PO list's bulk "Convert to GRN" bar sends, and
+   every picker below understands it. */
+export function convertToLink(pair: ConvertPair, keys: string | readonly string[]): string {
+  const { path, param } = CONVERT_LINKS[pair];
+  const list = (typeof keys === 'string' ? [keys] : keys)
+    .map((k) => String(k).trim())
+    .filter(Boolean);
+  if (list.length === 0) return path;
+  return `${path}?${param}=${encodeURIComponent(list.join(','))}`;
+}
+
+export type ConvertScope = {
+  /* The source keys this screen was scoped to. EMPTY means "no scope was
+     asked for" — the full, global picker, which is a legitimate entry point
+     (the list toolbar's plain "From PO" button). */
+  keys: Set<string>;
+  /* Parameters in the URL that this screen does not understand. Non-empty
+     means a caller is talking to this screen in a language it does not speak,
+     and the operator is about to be handed the wrong thing quietly. */
+  unknown: string[];
+};
+
+/* Read the scope a "Convert to X" link carried.
+ *
+ * `alsoKnown` is REQUIRED, not optional, and that is the repo rule about a
+ * parameter that DECIDES something: it decides whether a parameter counts as
+ * unrecognised. An optional list would default to "" at every call site that
+ * forgot it, and every one of those screens would then shout about its own
+ * legitimate parameters — so the guard would be turned off again, by hand, one
+ * screen at a time. Pass `[]` when the screen takes nothing else; that reads as
+ * a decision.
+ */
+export function readConvertScope(
+  pair: ConvertPair,
+  search: URLSearchParams,
+  alsoKnown: readonly string[],
+): ConvertScope {
+  const { param } = CONVERT_LINKS[pair];
+  const raw = search.get(param);
+  const keys = new Set(
+    (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  );
+  const known = new Set<string>([param, ...alsoKnown]);
+  const unknown: string[] = [];
+  for (const name of search.keys()) {
+    if (known.has(name) || unknown.includes(name)) continue;
+    unknown.push(name);
+  }
+  return { keys, unknown };
+}
+
+/* The loud half. A parameter this screen cannot act on is shown to the operator
+   rather than dropped, because the failure it hides looks exactly like normal
+   use: a blank form, or a picker listing everything. */
+export const UnrecognisedScopeNotice = ({ unknown }: { unknown: string[] }) => {
+  if (unknown.length === 0) return null;
+  return (
+    <p
+      role="alert"
+      style={{
+        margin: '0 0 var(--space-2)',
+        padding: 'var(--space-2) var(--space-3)',
+        border: '1px solid var(--c-burnt)',
+        borderRadius: 'var(--radius-sm)',
+        fontSize: 'var(--fs-12)',
+        color: 'var(--c-burnt)',
+      }}
+    >
+      This link carried {unknown.map((u) => `"${u}"`).join(', ')}, which this
+      screen does not understand — it has NOT been applied, so nothing below is
+      narrowed by it. The button that sent you here is out of date; please
+      report it.
+    </p>
+  );
+};
