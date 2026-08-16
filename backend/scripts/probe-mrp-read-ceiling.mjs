@@ -110,9 +110,30 @@ const sql = DSN ? postgres(DSN, { ssl: 'require', prepare: false, max: 1 }) : nu
 const PAGE = 1000;
 const reqs = (n) => Math.max(1, Math.ceil(Number(n) / PAGE));
 
+/* The ceiling's CONFIGURED value, from the DB side, as a cross-check on the
+   measurement above — and the only reading available when the REST secrets are
+   not in scope. PostgREST takes db-max-rows from a role GUC, so it is sitting in
+   pg_roles.rolconfig / pg_settings as plain text. It matters beyond MRP:
+   paginateAll pages in PAGE=1000 windows and stops on the first short page, so a
+   ceiling BELOW 1000 would make page 1 look short and truncate every paged read
+   in the codebase a second way. */
+async function ceilingSetting() {
+  note('\n=== 1b. the configured db-max-rows, from the DB side ===');
+  const roles = await sql`
+    SELECT r.rolname, unnest(coalesce(r.rolconfig, '{}'))::text AS cfg
+      FROM pg_roles r WHERE r.rolconfig IS NOT NULL`;
+  const hits = roles.filter((r) => /max.?rows/i.test(r.cfg));
+  if (hits.length === 0) note('  no *max-rows* GUC set on any role (PostgREST default is 1000)');
+  for (const r of hits) note(`  role ${r.rolname}: ${r.cfg}`);
+  const gucs = await sql`
+    SELECT name, setting FROM pg_settings WHERE name ILIKE '%max_rows%' OR name ILIKE 'pgrst%'`;
+  for (const g of gucs) note(`  pg_settings ${g.name} = ${g.setting}`);
+}
+
 async function sqlPart() {
   note('\n=== 2. row counts of every read in computeMrp, and the requests paging costs ===');
   if (!sql) { note('  SKIPPED — DATABASE_URL not set'); return; }
+  try { await ceilingSetting(); } catch (e) { note(`  (role config unreadable: ${e.message})`); }
 
   const one = async (label, q) => {
     const [r] = await q;

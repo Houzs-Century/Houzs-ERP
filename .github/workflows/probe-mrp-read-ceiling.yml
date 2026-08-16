@@ -41,6 +41,10 @@ jobs:
   run-prod:
     if: ${{ inputs.target == 'prod' }}
     runs-on: ubuntu-latest
+    # SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are Production-environment secrets,
+    # not repo-level ones — without this the REST half of the probe silently
+    # skipped (run 31941352447) because both came through as empty strings.
+    environment: Production
     defaults: { run: { working-directory: backend } }
     steps:
       - uses: actions/checkout@v7
