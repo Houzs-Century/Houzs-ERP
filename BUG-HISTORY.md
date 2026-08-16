@@ -58,6 +58,126 @@ orders.
 **Ref.** PR #2327, 2026-08-16. Rule in full, including why the host's `mvid` is
 NOT the gate: `docs/autocount-sync-reasons.md` §6.
 
+## The AutoCount deploy's rollback had never worked, and it left the service DOWN [critical]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** A routine rebuild on the office host, 2026-08-16 22:09. The deploy
+correctly refused the new exe, printed `the new exe did not pass verification -
+rolling back`, and then died inside the rollback:
+
+```
+Copy-Item : The process cannot access the file 'C:\Temp\AcSyncService.exe'
+            because it is being used by another process.
+At C:\Temp\acbuild-0816b\deploy-on-host.ps1:243 char:3
++   Copy-Item $prev $exe -Force
+```
+
+Measured aftermath on the host: `Get-Process *AcSync*` empty, `/health` "Unable
+to connect". ERP write-back was dead for roughly ten minutes, until it was
+restored by hand. **The outage happened because the deploy was run, and the
+rollback that was supposed to make that safe did not work.**
+
+**Root cause (traced, not guessed).** The PowerShell error names the line, and
+the source matches it exactly. On `origin/main` before this fix:
+
+```powershell
+241  Get-Process -Name "AcSyncService" -EA SilentlyContinue | Stop-Process -Force
+242  if (Test-Path $prev) {
+243    Copy-Item $prev $exe -Force
+```
+
+`Stop-Process -Force` signals the process and **returns**; Windows holds the
+executable's image file open until the process has actually exited. There is no
+wait of any kind between 241 and 243, so the copy ran against a locked file.
+`$ErrorActionPreference = 'Stop'` (line 41) then made that a terminating error,
+so the script ended before the `Start-Process` on line 244 that was meant to
+bring the old exe back. The new process had already been killed. Neither exe was
+running and the last thing the console printed was a stack trace, not "the
+service is down".
+
+It had never been caught because the rollback only runs when verification fails,
+and verification had never failed before. **The first time the safety net was
+needed was the first time it was executed** — and the script's header, the
+runbook and the handling listing had all been citing "it rolls back by itself"
+as the reason a rebuild is low-risk. The forward swap has the same race with a
+`Start-Sleep -Seconds 2` over it (line 180 stop, line 187 copy); it happened to
+win that evening.
+
+**Fix.** `Stop-AcSyncAndWait` kills, `WaitForExit`s each handle, then polls the
+process NAME until it is gone. `Wait-FileWritable` then opens the destination
+with `FileShare::None` in a retry loop, because the process being gone and the
+file being free are different facts. `Copy-Verified` retries the copy and
+**compares SHA256 of source and destination** — a `Copy-Item` that did not throw
+is not a copy that landed. `Invoke-Rollback` is one implementation used by both
+failure paths: stop, wait, verified copy, start, then **poll `/health` until it
+answers**. The backup moved to BEFORE the stop (reading a running image is
+allowed on Windows), so a deploy that cannot take a rollback target refuses
+without ever creating an outage window; and the no-`prev` path no longer kills
+the running process to reach a state with nothing running. Finally, every exit
+routes through `Complete-Exit`, whose last act is to ask whether anything is
+answering `/health` — if not, and this run stopped or replaced the service, it
+prints a full-width red banner with the five recovery commands and exits **2**
+(`0` deployed, `1` refused/rolled back with the service running).
+
+**NOT verified, and this matters.** There is no Windows host, no PowerShell and
+no AutoCount licence on the development side; `pwsh` is not installed on the
+machine this was written on. The script has never been executed or even parsed
+by a real PowerShell. What was checked is balance of braces, parens, brackets
+and quotes plus call-before-define, by a tokenizer self-tested against the
+known-good pre-change script and two deliberate breakages. **The script's own
+next run on the host is the test.** `docs/acsync-deploy-rollback-coe.md`.
+
+**Ref.** fix/acsync-deploy-rollback-preflight, 2026-08-16.
+
+## The AutoCount deploy tested its SQL connection only AFTER stopping the service [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Same run, 2026-08-16. The deploy read the server from `setup.json`,
+compiled 77,824 bytes, stopped the running service, swapped the exe, started it,
+and only then discovered the address was unreachable:
+
+```
+connection line assembled from setup.json — server '192.168.1.190\A2006'
+/ensure-masters: (500) ... error: 26 - Error Locating Server/Instance Specified
+```
+
+A whole deploy cycle plus a service stop, spent on a string that could have been
+checked in seconds.
+
+**Root cause (traced).** SQL is LOCAL to that box and `setup.json`'s address
+points at a subnet the machine is not on. Measured on the host: `.\A2006` and
+`localhost\A2006` both resolve to `DESKTOP-TQ4S0IT\A2006`; `192.168.1.190\A2006`
+fails with error 26. The host's own addresses are `10.147.17.100`,
+`192.168.0.104` and `169.254.*`. Nothing in the script asked the question early:
+`/health` answers from compile-time CONSTANTS and passes regardless, so
+`/ensure-masters` — which runs after the stop, the swap and the start — was the
+first thing that could notice.
+
+**Fix.** A SQL pre-flight in section 3, before substitution, compile, backup or
+stop: it opens a real `SqlConnection` with the same server, user, password and
+book the exe is about to be compiled with, and reads `DB_NAME()` back so the
+answer is about the BOOK and not just the socket. On failure it names the server
+tried and where it came from, prints the host's own IPv4 addresses, says
+`-Server '.\A2006'` is the override, and refuses having changed nothing. It then
+probes the local instance and, if one answers, prints the exact re-run command.
+It does **not** switch automatically: two SQL instances can each hold a database
+called `AED_HOUZS` — a restored backup is one — and pointing production
+write-back at the wrong copy silently is worse than a refused deploy.
+
+**`setup.json` was deliberately NOT changed.** It lives at
+`C:\InistateConnector\setup.json` and belongs to Inistate, the system this ERP
+is replacing and which is still running. `-Server` is our side of the fix.
+
+**An unresolved contradiction, recorded not bridged.**
+`docs/autocount-handling-listing.md` said the file names `192.168.1.198\A2006`;
+this transcript read `192.168.1.190\A2006`. One is wrong or the file changed, and
+nobody has looked — so the doc now carries the contradiction instead of a
+number. Both are on a subnet the host is not on, so no conclusion here depends
+on it, and the next run prints the server it read before touching anything.
+
+**Ref.** fix/acsync-deploy-rollback-preflight, 2026-08-16.
 ## AutoCount Sync printed a four-part reason on every row, and every row [medium]
 
 <!-- area: AutoCount sync + write-back -->
