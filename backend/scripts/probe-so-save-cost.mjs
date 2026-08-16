@@ -55,16 +55,23 @@ const CHUNK = 200;   // paginate-all.ts chunkIn default `size`
 const pagesFor = (rows) => Math.floor(rows / PAGE) + 1;
 const chunksFor = (ids) => Math.max(1, Math.ceil(ids / CHUNK));
 
+/* Printed as each one lands, not collected and printed at the end: the first
+   run of this probe died on step 4 (an enum column) and threw away the three
+   counts it had already got right. A number that has been measured must reach
+   the log before the next statement can fail. */
 async function count(label, query) {
   const t0 = Date.now();
   const rows = await sql.unsafe(query);
-  return { label, ms: Date.now() - t0, n: Number(rows[0].n) };
+  const out = { label, ms: Date.now() - t0, n: Number(rows[0].n) };
+  note(`  ${String(out.n).padStart(7)}  ${out.label}   [${out.ms} ms]`);
+  return out;
 }
 
 async function main() {
   note(`=== SO save cost drivers — ${new Date().toISOString()} (read-only) ===\n`);
 
   const steps = [];
+  note('--- row counts (each measured as ONE set-based query) ---');
   steps.push(await count('live SOs — sweep step 1',
     `SELECT count(*)::int AS n FROM scm.mfg_sales_orders s WHERE ${LIVE_SO}`));
   steps.push(await count('non-cancelled lines on them — step 2',
@@ -78,7 +85,7 @@ async function main() {
      WHERE ${LIVE_SO} AND i.cancelled = false
        AND (upper(coalesce(i.item_group,'')) LIKE '%SOFA%'
             OR i.item_code IN (SELECT code FROM scm.mfg_products
-                                WHERE upper(coalesce(category,'')) = 'SOFA'))`));
+                                WHERE upper(coalesce(category::text,'')) = 'SOFA'))`));
   steps.push(await count('bedframe + sofa lines — step 6b bound-PO read', `
     SELECT count(*)::int AS n
       FROM scm.mfg_sales_order_items i
@@ -100,10 +107,8 @@ async function main() {
   const [orders, lines, products, sofaLines, boundLines, codes, doItems, dos] = steps;
   const dbMs = steps.reduce((a, s) => a + s.ms, 0);
 
-  note('--- row counts (each measured as ONE set-based query) ---');
-  for (const s of steps) note(`  ${String(s.n).padStart(7)}  ${s.label}   [${s.ms} ms]`);
-  note(`\n  ${String(doItems.n).padStart(7)}  (DO lines is listed above; it is the single largest driver)`);
-  note(`  the same information as 8 set-based SQL queries costs ${dbMs} ms of database time.`);
+  note(`\n  the same information, asked as 8 set-based SQL queries, costs ${dbMs} ms of`);
+  note('  database time in total. The database is not the problem.');
 
   /* The sweep does not issue set-based queries. It issues paginated / chunked
      PostgREST requests — one HTTPS round trip each, in series. */
@@ -136,17 +141,23 @@ async function main() {
 
   /* How often anyone pays it — so the per-save seconds can be turned into
      operator-hours rather than left as an anecdote. */
-  const freq = await sql.unsafe(`
-    SELECT action, count(*)::int AS n
-      FROM scm.mfg_so_audit_log
-     WHERE created_at >= now() - interval '14 days'
-       AND action IN ('CREATE','ADD_LINE','UPDATE_LINE','DELETE_LINE')
-       AND coalesce(source,'') <> 'auto-allocation'
-     GROUP BY action ORDER BY n DESC`);
   note('\n--- how often a sweep is paid for (last 14 days, human actions only) ---');
-  let humanWrites = 0;
-  for (const r of freq) { humanWrites += Number(r.n); note(`  ${String(r.n).padStart(6)}  ${r.action}`); }
-  note(`  ${String(humanWrites).padStart(6)}  TOTAL  (~${(humanWrites / 14).toFixed(0)}/day)`);
+  try {
+    const freq = await sql.unsafe(`
+      SELECT action::text AS action, count(*)::int AS n
+        FROM scm.mfg_so_audit_log
+       WHERE created_at >= now() - interval '14 days'
+         AND action::text IN ('CREATE','ADD_LINE','UPDATE_LINE','DELETE_LINE')
+         AND coalesce(source::text,'') <> 'auto-allocation'
+       GROUP BY 1 ORDER BY n DESC`);
+    let humanWrites = 0;
+    for (const r of freq) { humanWrites += Number(r.n); note(`  ${String(r.n).padStart(6)}  ${r.action}`); }
+    note(`  ${String(humanWrites).padStart(6)}  TOTAL  (~${(humanWrites / 14).toFixed(0)}/day)`);
+  } catch (e) {
+    /* Sizing colour, not the finding. Say the shape is unknown rather than let
+       it delete the numbers above. */
+    note(`  (unavailable: ${e instanceof Error ? e.message : String(e)})`);
+  }
 
   note('\n--- who waits for that sweep today (mfg-sales-orders.ts on main) ---');
   note('  POST /                          awaits it before returning 201  (SO create)');
