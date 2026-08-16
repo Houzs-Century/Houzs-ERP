@@ -800,9 +800,19 @@ Friday:
   an operator uses to check exactly that.
 - **The over-transfer handler was uncompilable and is now gone.** The SDK raises a WinForms dialog
   for over-transfer, and the obvious fix is to subscribe to the event and answer it
-  programmatically. That event's `EventArgs` type is **not public**, so it cannot be subscribed at
-  all — the handler could never have compiled. The condition is instead made **unreachable**, by
-  only ever transferring what is outstanding.
+  programmatically. That event's `EventArgs` type is **not public**, so a handler that NAMES it
+  could never have compiled. The condition was instead made **unreachable**, by only ever
+  transferring what is outstanding.
+
+  > **CORRECTED 2026-08-17.** Both halves stopped being true. *"It cannot be subscribed at all"*
+  > is wrong: a handler does not have to name the args type. .NET's relaxed delegate binding
+  > matches a method declared with `object` parameters to a delegate whose parameters are any
+  > reference types, so `Delegate.CreateDelegate` binds one — which is what `Watch()` in
+  > `AcSyncService.cs` now does. And *"unreachable"* stopped holding the day the ERP began naming
+  > `DtlKeys`: `DtlKeys()` returns a supplied list verbatim, so the
+  > `(Qty - TransferedQty) > 0` predicate is never evaluated for those lines. The event is now
+  > subscribed and **logged only** — nothing answers it, because confirming an over-transfer would
+  > silently accept shipping more than was ordered.
 
 ---
 
