@@ -29,6 +29,7 @@ import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { backfillSoPayments } from '../../acc/payments';
+import { computeDailyBank } from '../../acc/daily-bank';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -890,4 +891,61 @@ accounting.post('/backfill/customer-payments', async (c) => {
   const r = await backfillSoPayments(sb, limit);
   if (!r.ok) return c.json({ error: 'backfill_failed', reason: r.reason }, 500);
   return c.json(r);
+});
+
+/* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
+   money is today and how much can actually move. Live from the ledger, no
+   cache (2.3) - so it can never disagree with the trial balance. */
+accounting.get('/daily-bank', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const dateQ = c.req.query('date') ?? todayMyt();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
+  const sb = c.get('supabase');
+
+  const { data: moneyRaw, error: mErr } = await sb.from('accounts')
+    .select('account_code, account_name')
+    .eq('company_id', co.companyId).eq('acc_money', true).eq('is_active', true)
+    .order('account_code');
+  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  const money = (moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>;
+
+  const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
+    .select('code, transit_account_code')
+    .eq('company_id', co.companyId).eq('is_active', true).order('code');
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  /* One transit account may serve several acquirers until 决定4 assigns each
+     its own - collapse duplicates so the board does not count a balance twice. */
+  const transitByAccount = new Map<string, string>();
+  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string }>) {
+    const existing = transitByAccount.get(a.transit_account_code);
+    transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
+  }
+  const transitCodes = [...transitByAccount.keys()];
+  const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
+    .select('account_code, account_name')
+    .eq('company_id', co.companyId).in('account_code', transitCodes.length ? transitCodes : ['—none—']);
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+  const nameOf = new Map(((transitNamesRaw ?? []) as Array<{ account_code: string; account_name: string }>)
+    .map((r) => [r.account_code, r.account_name]));
+  const transitAccounts = transitCodes.map((code) => ({
+    acquirerCode: transitByAccount.get(code) ?? code,
+    account_code: code,
+    account_name: nameOf.get(code) ?? code,
+  }));
+
+  const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
+  if (allCodes.length === 0) {
+    return c.json(computeDailyBank(date, [], [], []));
+  }
+  const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
+    sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes')
+      .eq('company_id', co.companyId)
+      .in('account_code', allCodes)
+      .lte('entry_date', date)
+      .order('line_id')
+      .range(from, to));
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+
+  return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never));
 });
