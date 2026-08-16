@@ -89,19 +89,32 @@ export function variantKeyMirror(itemGroup, attrs) {
     others: [],
     service: [],
   };
+  const ALL_IDENTITY_ATTRS = ["fabricCode", "seatHeight", "gap", "divanHeight", "legHeight", "totalHeight"];
+  const UNKNOWN_GROUP_SLUG = "!group";
   const norm = (v) => (v == null ? "" : String(v).trim().toLowerCase());
+  const readAttr = (a, k) => (k === "fabricCode"
+    ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
+    : k === "seatHeight"
+      ? (a.seatHeight ?? a.depth)
+      : k === "legHeight"
+        ? (a.legHeight ?? a.sofaLegHeight)
+        : a[k]);
   const group = norm(itemGroup);
   const a = attrs ?? {};
+  const known = ATTRS_BY_GROUP[group];
   const parts = [];
-  for (const k of ATTRS_BY_GROUP[group] ?? []) {
-    const raw = k === "fabricCode"
-      ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
-      : k === "seatHeight"
-        ? (a.seatHeight ?? a.depth)
-        : k === "legHeight"
-          ? (a.legHeight ?? a.sofaLegHeight)
-          : a[k];
-    const val = norm(raw);
+  /* Unrecognised / NULL item_group is QUARANTINED, not emptied (owner
+     2026-08-16) — it used to drop every attribute and key '' . */
+  if (known === undefined) {
+    const quarantined = [];
+    for (const k of ALL_IDENTITY_ATTRS) {
+      const val = norm(readAttr(a, k));
+      if (val) quarantined.push(`${k.toLowerCase()}=${val}`);
+    }
+    if (quarantined.length > 0) parts.push(`${UNKNOWN_GROUP_SLUG}=${group || "none"}`, ...quarantined);
+  }
+  for (const k of known ?? []) {
+    const val = norm(readAttr(a, k));
     if (val) parts.push(`${k.toLowerCase()}=${val}`);
   }
   const specials = Array.isArray(a.specials) && a.specials.length > 0

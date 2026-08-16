@@ -815,26 +815,10 @@ export async function computeMrp(
     });
 
     let stockLeft = stockByKey.get(k) ?? 0;
-    // Clone PO supply so the greedy walk can mutate qtyLeft without touching the
-    // shared map. Fold in the same-warehouse EMPTY-variant PO pool (legacy POs
-    // created before SO→PO carried variants → key ''), so a PO raised for a
-    // bedframe still shows as supply against the variant row.
-    //
-    // Audit R4 (legacy-variant double-count) — the legacy '' pool is a FALLBACK,
-    // NOT an addition. It is folded in ONLY when this real-variant bucket has no
-    // PO supply of its own; it must never be added ON TOP of the variant's own
-    // PO. Adding both let a single physical legacy PO line count its quantity
-    // twice — once against the real-variant row (as extra supply) and again as
-    // the '' bucket's own supply / against every other variant row of the SKU —
-    // inflating PO Outstanding and over-covering demand (understating shortage).
-    // Prefer the real variant; '' answers only when the real one is silent.
-    const legacyKey = composite(whId, code, '');
-    const ownPo = poByKey.get(k) ?? [];
-    const useLegacy = bucket.vkey !== '' && legacyKey !== k && ownPo.length === 0;
-    const poQueue: PoSupply[] = [
-      ...ownPo,
-      ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : []),
-    ].map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    // Supply is the bucket's OWN key only — owner's rule, 2026-08-16. Clone so
+    // the greedy walk can mutate qtyLeft without touching the shared map.
+    const poQueue: PoSupply[] = (poByKey.get(k) ?? [])
+      .map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
 
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
@@ -899,8 +883,7 @@ export async function computeMrp(
     if (lines.length === 0) continue;
 
     const stock = stockByKey.get(k) ?? 0;
-    const poOutstanding = (poOutstandingByKey.get(k) ?? 0)
-      + (useLegacy ? (poOutstandingByKey.get(legacyKey) ?? 0) : 0);
+    const poOutstanding = poOutstandingByKey.get(k) ?? 0;
     const shortage = lines.reduce((acc, l) => acc + l.shortageQty, 0);
     const main = mainByCode.get(code);
     const wh = whId ? whById.get(whId) : null;
@@ -966,7 +949,7 @@ export async function computeMrp(
 
   const sofaSets: SofaSet[] = [];
   for (const [k, bucket] of sofaByKey.entries()) {
-    const { whId, code, vkey, rows } = bucket;
+    const { whId, rows } = bucket;
     const wh = whId ? whById.get(whId) : null;
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
@@ -977,21 +960,9 @@ export async function computeMrp(
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
     let stockLeft = stockByKey.get(k) ?? 0;
-    /* Audit D2 (2026-08-01) — the sofa path never folded in the same-warehouse
-       EMPTY-variant legacy PO pool, so an open legacy-'' sofa PO was invisible
-       here and the set read as a phantom shortage (over-ordering the same
-       goods twice). Mirror of section 7's R4-guarded fallback, EXACTLY: the
-       legacy pool answers ONLY when this variant bucket has no PO supply of
-       its own — never on top of it (that is the R4 double-count). The audit
-       measured 0 live (warehouse,item) groups drawing one legacy pool from
-       more than one bucket, so this is forward-safety, not a live repair. */
-    const legacyKey = composite(whId, code, '');
-    const ownPo = poByKey.get(k) ?? [];
-    const useLegacy = vkey !== '' && legacyKey !== k && ownPo.length === 0;
-    const poQueue: PoSupply[] = [
-      ...ownPo,
-      ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : []),
-    ].map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+    // Same rule as section 7: this bucket's own key is the whole supply pool.
+    const poQueue: PoSupply[] = (poByKey.get(k) ?? [])
+      .map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
 
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;

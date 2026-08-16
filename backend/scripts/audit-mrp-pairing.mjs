@@ -43,7 +43,14 @@ const ATTRS_BY_GROUP = {
   bedframe: ["fabricCode", "gap", "divanHeight", "legHeight", "totalHeight"],
   mattress: [], accessory: [], others: [], service: [],
 };
+const ALL_IDENTITY_ATTRS = ["fabricCode", "seatHeight", "gap", "divanHeight", "legHeight", "totalHeight"];
+const UNKNOWN_GROUP_SLUG = "!group";
 const vnorm = (v) => (v == null ? "" : String(v).trim().toLowerCase());
+const readAttr = (a, k) =>
+  k === "fabricCode" ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
+  : k === "seatHeight" ? (a.seatHeight ?? a.depth)
+  : k === "legHeight" ? (a.legHeight ?? a.sofaLegHeight)
+  : a[k];
 const normSpecials = (specials) => {
   if (!Array.isArray(specials) || specials.length === 0) return "";
   return specials
@@ -53,14 +60,21 @@ const normSpecials = (specials) => {
 function computeVariantKey(itemGroup, attrs) {
   const group = vnorm(itemGroup);
   const a = attrs ?? {};
+  const known = ATTRS_BY_GROUP[group];
   const parts = [];
-  for (const k of ATTRS_BY_GROUP[group] ?? []) {
-    const raw = k === "fabricCode"
-      ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
-      : k === "seatHeight" ? (a.seatHeight ?? a.depth)
-      : k === "legHeight" ? (a.legHeight ?? a.sofaLegHeight)
-      : a[k];
-    const val = vnorm(raw);
+  /* Unknown/NULL item_group quarantine (owner 2026-08-16) — lockstep with
+     src/scm/shared/variant-key.ts. A group nobody recognises used to drop every
+     attribute and key '' ; it now keys distinctly so it cannot collide. */
+  if (known === undefined) {
+    const quarantined = [];
+    for (const k of ALL_IDENTITY_ATTRS) {
+      const val = vnorm(readAttr(a, k));
+      if (val) quarantined.push(`${k.toLowerCase()}=${val}`);
+    }
+    if (quarantined.length > 0) parts.push(`${UNKNOWN_GROUP_SLUG}=${group || "none"}`, ...quarantined);
+  }
+  for (const k of known ?? []) {
+    const val = vnorm(readAttr(a, k));
     if (val) parts.push(`${k.toLowerCase()}=${val}`);
   }
   const sp = normSpecials(a.specials);
@@ -380,18 +394,19 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       const rows = sortRows(bucket.rows);
       let stockLeft = stockByKey.get(k) ?? 0;
       const ownPo = poByKey.get(k) ?? [];
-      /* mrp.ts legacy '' fallback pool — since 2026-08-01 (audit D2 fix) the
-         SOFA path folds it in too, under the SAME R4 guard (only when the
-         bucket has no PO supply of its own, never additive). One rule, both
-         paths; isSofa no longer changes the supply queue. */
+      /* mrp.ts supply pool — this bucket's OWN key, nothing else. The legacy ''
+         fallback that used to feed a specific-variant bucket from the
+         unspecified-variant PO pool was REMOVED 2026-08-16 (owner: 变体不同 =
+         不同的东西，不能拿来抵). Section (D) below still measures what it WOULD
+         have moved, so the removal stays audited rather than forgotten. */
       const legacyKey = composite(whId, code, "");
-      const useLegacy = vkey !== "" && legacyKey !== k && ownPo.length === 0;
-      if (useLegacy && (poByKey.get(legacyKey) ?? []).length > 0) {
+      const wouldHaveUsedLegacy = vkey !== "" && legacyKey !== k && ownPo.length === 0;
+      if (wouldHaveUsedLegacy && (poByKey.get(legacyKey) ?? []).length > 0) {
         const gk = `${whId ?? WH_NONE}|${code}`;
         const arr = legacyUseByWhCode.get(gk) ?? [];
         arr.push(vkey); legacyUseByWhCode.set(gk, arr);
       }
-      const poQueue = [...ownPo, ...(useLegacy ? (poByKey.get(legacyKey) ?? []) : [])]
+      const poQueue = [...ownPo]
         .map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
       for (const r of rows) {
         const eff = effQtyOf(r);
@@ -625,18 +640,16 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("======== (D) CAN THE SAME UNIT BE PROMISED TWICE? ========");
   notice("  Within one computeMrp pass the pool is a single mutable queue per bucket, so a unit");
   notice("  taken by one SO line is gone for the next. Two things can break that:");
-  notice(`  1. LEGACY '' VARIANT POOL. A real-variant bucket with no PO supply of its own falls`);
-  notice(`     back to the same-warehouse EMPTY-variant PO pool. The R4 fix stops it being added`);
-  notice(`     ON TOP of a bucket's own supply — it does NOT stop TWO different variant buckets`);
-  notice(`     of the same (warehouse, item) each cloning the SAME legacy pool.`);
-  notice(`     Each bucket clones the legacy entries (.map(p => ({...p}))), so two clones
-     decrement independently and the SAME physical units cover both.
-     BLAST RADIUS: variant_key is '' for MATTRESS and ACCESSORY (ATTRS_BY_GROUP has no
-     attributes for them), so 'vkey !== ""' is false and they never take the fallback.
-     Since 2026-08-01 the SOFA path folds the legacy pool in under the SAME R4 guard
-     (audit D2 fix — a legacy sofa PO used to be invisible there, reading as phantom
-     shortage), so BEDFRAME and SOFA are the two categories this sharing can reach.
-     (warehouse,item) groups where >1 variant bucket draws on one legacy pool: ${legacyShared.length}`);
+  notice(`  1. LEGACY '' VARIANT POOL — REMOVED 2026-08-16. A specific-variant bucket with no PO`);
+  notice(`     supply of its own used to fall back to the same-warehouse EMPTY-variant PO pool.`);
+  notice(`     The owner's rule retires it: a different variant is a DIFFERENT THING and cannot`);
+  notice(`     satisfy the order, and '' is "variant unspecified", not "this variant". Supply is`);
+  notice(`     now the bucket's own key only, so a '' PO can neither cover a variant row nor be`);
+  notice(`     cloned into two variant rows at once (the N-fold count this section used to`);
+  notice(`     measure). The counters below are the COUNTERFACTUAL: what the retired fallback`);
+  notice(`     would still be moving if it were live. Non-zero is not a defect — it is the size`);
+  notice(`     of the shortage the removal now shows the buyer.`);
+  notice(`     (warehouse,item) groups where >1 variant bucket WOULD have drawn one '' pool: ${legacyShared.length}`);
   for (const l of legacyShared.slice(0, 20)) notice(`      ${pad(l.gk, 46)} variants: ${l.vkeys.map((v) => v || "''").join(" ; ")}`);
   const legacySofaDraws = [];
   for (const [k, b] of sofaBuckets) {
@@ -645,10 +658,62 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     const legacyKey = composite(b.whId, b.code, "");
     if ((poByKey.get(legacyKey) ?? []).length > 0) legacySofaDraws.push(k);
   }
-  notice(`  1b. Sofa buckets with no own PO supply drawing on an open legacy '' PO (the blind`);
-  notice(`      spot closed 2026-08-01 — these used to read as phantom shortage; they are now`);
-  notice(`      covered by the fallback): ${legacySofaDraws.length}`);
+  notice(`  1b. Sofa buckets with no own PO supply sitting beside an open '' PO of the same`);
+  notice(`      (warehouse, item). These now read as SHORTAGE — the '' PO is for an`);
+  notice(`      unspecified sofa and may not be spent on this one: ${legacySofaDraws.length}`);
   for (const k of legacySofaDraws.slice(0, 15)) notice(`      ${k}`);
+
+  /* 1c. THE HOLE THAT OUTLIVES THE FALLBACK — an item_group nobody recognises.
+     computeVariantKey looks the group up in ATTRS_BY_GROUP; a NULL, blank or
+     misspelt group used to miss and DROP every attribute the line carried,
+     keying '' — an identity claim of "nothing distinguishes this" made about a
+     line that said otherwise. Since 2026-08-16 such a group keys
+     `!group=<group>|<attrs>` instead, which can collide with no real bucket.
+     A row counted under KEY MOVED is one whose bucket changed with that fix:
+     loud (visible shortage / unmatched stock), never silent substitution — but
+     it is still a row whose stock stops matching what is on the shelf, so the
+     healthy reading is 0. Tables are DISCOVERED from information_schema, not
+     listed, so a new keyed table cannot quietly escape the census. */
+  const preQuarantine = (k) => (k.startsWith("!group=")
+    ? (k.split("|").find((p) => p.startsWith("special=")) ?? "")
+    : k);
+  const keyedTables = await sql`
+    SELECT table_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND column_name = 'item_group'
+    INTERSECT
+    SELECT table_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND column_name = 'variants'
+    INTERSECT
+    SELECT table_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND column_name = 'company_id'
+     ORDER BY 1`;
+  const KNOWN_GROUPS = Object.keys(ATTRS_BY_GROUP);
+  notice(`  1c. item_group census — ${keyedTables.length} scm table(s) key a variant from a group.`);
+  notice(`      recognised: ${KNOWN_GROUPS.join(", ")}`);
+  notice(`      ${pad("table", 36)} ${pad("rows", 8)} ${pad("unknwn", 7)} ${pad("KEYMOVED", 9)}  spellings`);
+  let censusMoved = 0;
+  for (const t of keyedTables) {
+    const [{ total }] = await sql`
+      SELECT count(*)::bigint AS total FROM scm.${sql(t.table_name)} WHERE company_id = ${companyId}::bigint`;
+    const odd = await sql`
+      SELECT item_group, variants FROM scm.${sql(t.table_name)}
+       WHERE company_id = ${companyId}::bigint
+         AND coalesce(lower(btrim(item_group)), '') <> ALL (${KNOWN_GROUPS}::text[])`;
+    const spell = new Map();
+    let moved = 0;
+    for (const r of odd) {
+      const g = vnorm(r.item_group);
+      spell.set(g, (spell.get(g) ?? 0) + 1);
+      const vk = computeVariantKey(r.item_group, r.variants ?? null);
+      if (vk !== preQuarantine(vk)) moved += 1;
+    }
+    censusMoved += moved;
+    const sample = [...spell.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+      .map(([g, c]) => `${g === "" ? "(null/blank)" : g}x${c}`).join(" ");
+    notice(`      ${pad(t.table_name, 36)} ${pad(num(total), 8)} ${pad(odd.length, 7)} ${pad(moved, 9)}  ${sample}`);
+  }
+  notice(`      ROWS WHOSE VARIANT KEY MOVED (expect 0): ${censusMoved}`);
+
   const claimTotals = new Map();
   for (const [poNumber, claims] of poConsumedBy) claimTotals.set(poNumber, claims.reduce((a, c) => a + c.qty, 0));
   const poLeftByNumber = new Map();

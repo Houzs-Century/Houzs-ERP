@@ -66,6 +66,12 @@ const BASE_TABLES: Record<string, Row[]> = {
 
 const opts = { catFilter: null, whFilter: null, includeUndated: true, companyId: null, leadBuffers: NO_BUFFERS };
 
+/* The fake client is structurally narrower than the real SupabaseClient (it
+   implements only the operators this engine chains), so it needs a cast. Name
+   the target type instead of reaching for `any` — new tests use this. */
+type MrpClient = Parameters<typeof computeMrp>[0];
+const asClient = (sb: ReturnType<typeof fakeSb>): MrpClient => sb as unknown as MrpClient;
+
 // SO demand line for BF-100 in warehouse W1 with a real fabric variant.
 const demandRed = (qty: number): Row => ({
   id: 'si-red', doc_no: 'SO-1', item_code: 'BF-100', description: 'Baron Bedframe',
@@ -122,10 +128,14 @@ describe('computeMrp — legacy-variant double-count (audit R4)', () => {
     expect(res.totals.shortageUnits).toBe(3);
   });
 
-  test('a real variant with NO own PO still draws the legacy "" pool (fallback preserved)', async () => {
-    // Demand 5 of RED, no RED PO — only a legacy '' PO for 5. The fallback must
-    // still fire so a pre-variant PO covers the variant row (the behaviour the
-    // fold-in exists for). Correct answer: covered by PO-LEGACY, shortage 0.
+  /* Owner's rule, 2026-08-16: 变体不同 = 不同的东西，不能拿来抵. A PO with NO
+     variant is "variant unspecified", not "this variant", so it may not satisfy
+     a specific-variant order. The fallback these two tests used to assert is
+     REMOVED — a `''` PO now supplies the `''` bucket and nothing else. */
+  test('a real variant with NO own PO does NOT draw the "" pool — it is a shortage', async () => {
+    // Demand 5 of RED, no RED PO — only an unspecified-variant '' PO for 5.
+    // Before: covered by PO-LEGACY, shortage 0 (a real shortage hidden behind
+    // goods that are not this fabric). After: shortage 5, PO Outstanding 0.
     const sb = fakeSb({
       mfg_sales_order_items: [demandRed(5)],
       purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
@@ -144,11 +154,66 @@ describe('computeMrp — legacy-variant double-count (audit R4)', () => {
     expect(res.skus).toHaveLength(1);
     const row = res.skus[0]!;
     expect(row.variantKey).toBe('fabriccode=red');
+    expect(row.poOutstanding).toBe(0);
+    expect(row.shortage).toBe(5);
+    expect(res.totals.shortageUnits).toBe(5);
+    expect(row.lines).toHaveLength(1);
+    expect(row.lines[0]!.source).toBe('shortage');
+    expect(row.lines[0]!.poNumber).toBeNull();
+  });
+
+  test('the "" bucket still draws its OWN "" pool — only the cross-variant hop is gone', async () => {
+    // The removal narrows supply to the bucket's own key; it must not starve
+    // the unclassified bucket of the unclassified pool.
+    const sb = fakeSb({
+      mfg_sales_order_items: [{ ...demandRed(5), variants: {} }],
+      purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
+      inventory_balances: [],
+      mfg_products: [],
+      warehouses: [],
+      supplier_material_bindings: [],
+      suppliers: [],
+      mrp_category_lead_times: [],
+      fabric_trackings: [],
+      delivery_order_items: [],
+      delivery_return_items: [],
+    });
+
+    const res = await computeMrp(asClient(sb), opts);
+    const row = res.skus[0]!;
+    expect(row.variantKey).toBe('');
     expect(row.poOutstanding).toBe(5);
     expect(row.shortage).toBe(0);
-    expect(row.lines).toHaveLength(1);
-    expect(row.lines[0]!.source).toBe('po');
     expect(row.lines[0]!.poNumber).toBe('PO-LEGACY');
+  });
+
+  /* The trap the fallback made reachable, end to end. A PO line whose
+     item_group is NULL used to key '' whatever its variants held (variant-key.ts
+     `ATTRS_BY_GROUP[group] ?? []`), and the fallback then spent it on every
+     variant of that SKU. Both halves are closed: the line keys distinctly AND
+     nothing folds a foreign key into this bucket. */
+  test('a PO line with a NULL item_group cannot cover a real variant, even carrying the same fabric', async () => {
+    const sb = fakeSb({
+      mfg_sales_order_items: [demandRed(5)],
+      purchase_order_items: [
+        { ...poLine('PO-NOGROUP', 5, { fabricCode: 'RED' }, '2026-10-01'), item_group: null },
+      ],
+      inventory_balances: [],
+      mfg_products: [],
+      warehouses: [],
+      supplier_material_bindings: [],
+      suppliers: [],
+      mrp_category_lead_times: [],
+      fabric_trackings: [],
+      delivery_order_items: [],
+      delivery_return_items: [],
+    });
+
+    const res = await computeMrp(asClient(sb), opts);
+    const row = res.skus[0]!;
+    expect(row.variantKey).toBe('fabriccode=red');
+    expect(row.poOutstanding).toBe(0);
+    expect(row.shortage).toBe(5);   // was 0 — the null-group PO covered everything
   });
 });
 
@@ -277,11 +342,12 @@ const sofaPoLine = (poNumber: string, qty: number, variant: Row | null, eta: str
   },
 });
 
-describe('computeMrp — sofa legacy "" pool fallback (audit D2, mirrors section 7 R4)', () => {
-  test('a sofa variant with NO own PO draws the legacy "" pool (no more phantom shortage)', async () => {
-    // Demand a 5-set of RED sofa; the ONLY supply is a legacy '' PO for 5.
-    // Before the fix the sofa path never looked at the legacy pool, so this
-    // read as shortage 5 while the same-warehouse PO sat open — over-ordering.
+describe('computeMrp — sofa supply is the set\'s own variant key (owner 2026-08-16)', () => {
+  test('a sofa variant with NO own PO does NOT draw the "" pool — it is a shortage', async () => {
+    // Demand a 5-set of RED sofa; the ONLY supply is an unspecified-variant ''
+    // PO for 5. Between 2026-08-01 and 2026-08-16 the sofa path folded that in
+    // and read shortage 0; under the owner's rule the '' PO is a different
+    // thing and this is a real 5-unit shortage the buyer must see.
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
@@ -293,12 +359,13 @@ describe('computeMrp — sofa legacy "" pool fallback (audit D2, mirrors section
     expect(res.sofaSets).toHaveLength(1);
     const set = res.sofaSets[0]!;
     expect(set.variantKey).toBe('fabriccode=red');
-    expect(set.orderedQty).toBe(5);
-    expect(set.shortageQty).toBe(0);
-    expect(set.poNumber).toBe('PO-LEGACY-SOFA');
+    expect(set.orderedQty).toBe(0);
+    expect(set.shortageQty).toBe(5);
+    expect(set.poNumber).toBeNull();
+    expect(res.totals.sofaSetShortageCount).toBe(1);
   });
 
-  test('a sofa variant WITH its own PO ignores the legacy pool entirely (fallback, never additive)', async () => {
+  test('a sofa variant WITH its own PO is covered by that PO alone', async () => {
     // Demand 8; own RED PO 5 + legacy '' PO 5. The R4 rule: legacy answers ONLY
     // when the variant's own pool is empty. Correct: covered 5 by PO-RED-SOFA,
     // shortage 3. (Additive bug shape: covered 8, shortage 0 — the same
@@ -321,9 +388,8 @@ describe('computeMrp — sofa legacy "" pool fallback (audit D2, mirrors section
     expect(res.totals.sofaSetShortageCount).toBe(1);
   });
 
-  test('a sofa line with NO variant key ("" bucket) never self-folds', async () => {
-    // '' demand draws the '' pool as its OWN pool — the useLegacy guard
-    // (vkey !== '') must not double it.
+  test('a sofa line with NO variant key ("" bucket) still draws its own "" pool', async () => {
+    // '' demand draws the '' pool as its OWN pool, exactly once.
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [{ ...sofaDemand('si-sofa', 'SO-9', 8, '2026-12-01'), variants: {} }],

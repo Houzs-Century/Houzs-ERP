@@ -69,8 +69,12 @@ export type VariantAttrs = {
 };
 
 /** Which physical attributes count toward identity, per category, in a fixed
- *  order so the key is deterministic. Specials are appended for every group. */
-const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
+ *  order so the key is deterministic. Specials are appended for every group.
+ *  The value type carries `| undefined` because the lookup key is a normalised
+ *  free-text `item_group`, not this object's own key set — a MISS is the whole
+ *  point of the unknown-group branch below, and typing the miss away is what
+ *  let `?? []` silently swallow it for months. */
+const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs> | undefined> = {
   sofa: ['fabricCode', 'seatHeight', 'legHeight'],
   bedframe: ['fabricCode', 'gap', 'divanHeight', 'legHeight', 'totalHeight'],
   mattress: [],
@@ -79,7 +83,38 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   service: [],
 };
 
+/** Every attribute that counts toward identity for SOME group, in one fixed
+ *  order — the union of ATTRS_BY_GROUP. Only the unknown-group path below reads
+ *  it; a recognised group still emits exactly its own list, in its own order,
+ *  so no existing key moves. */
+const ALL_IDENTITY_ATTRS: Array<keyof VariantAttrs> = [
+  'fabricCode', 'seatHeight', 'gap', 'divanHeight', 'legHeight', 'totalHeight',
+];
+
+/** The slug that fronts an UNRECOGNISED-item_group key. It is deliberately not
+ *  a legal attribute slug (`fabriccode` / `seatheight` / `gap` / `divanheight` /
+ *  `legheight` / `totalheight` / `special` are the only ones a recognised group
+ *  can emit), so a quarantined key can never equal a real variant bucket, and
+ *  it is never empty, so it can never equal the unclassified '' bucket either. */
+export const UNKNOWN_GROUP_SLUG = '!group';
+
 const norm = (v: unknown): string => (v == null ? '' : String(v).trim().toLowerCase());
+
+/** Read one identity attribute, honouring its alias spellings.
+ *  Fabric is stored under any of fabricCode / colorCode / colourCode /
+ *  fabricColor (the GRN-family editors use fabricColor) — treat them as one
+ *  attribute so colour participates in the bucket identity regardless of which
+ *  form wrote the line. Seat / leg get the same treatment for the POS sofa
+ *  vocabulary (so-variant-rule axes): seatHeight ← depth, legHeight ←
+ *  sofaLegHeight — otherwise a POS sofa and an identical Backend sofa land in
+ *  different stock buckets (audit 2026-06-11 I3). Canonical key wins when both
+ *  are present. Historical rows are NOT migrated — pre-fix stock may sit under
+ *  legacy keys (POS sofas keyed without seat/leg). */
+const readAttr = (a: VariantAttrs, k: keyof VariantAttrs): unknown =>
+  k === 'fabricCode' ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
+    : k === 'seatHeight' ? (a.seatHeight ?? a.depth)
+      : k === 'legHeight' ? (a.legHeight ?? a.sofaLegHeight)
+        : (a[k] as unknown);
 
 /** Specials → a normalized, order-independent, comma-joined string. */
 const normSpecials = (specials: VariantAttrs['specials']): string => {
@@ -99,6 +134,23 @@ const normSpecials = (specials: VariantAttrs['specials']): string => {
  * values are dropped, and specials are sorted. Identical attribute sets always
  * yield an identical string. Returns '' when nothing meaningful is set
  * (legacy / unclassified bucket).
+ *
+ * UNRECOGNISED item_group (owner 2026-08-16). `ATTRS_BY_GROUP[group]` used to
+ * fall back to `[]`, so a group that is NULL, blank, or simply misspelt
+ * ('bedframes', 'bed frame', a typo in an import) DROPPED every attribute the
+ * line carried and keyed to '' — the unclassified bucket — no matter what the
+ * variants JSON held. That is silent: a bedframe PO line written with a null
+ * item_group pooled with, and could be spent on, goods that share nothing with
+ * it. An unrecognised group now keys DISTINCTLY instead: `!group=<group>` in
+ * front of every identity attribute the line does carry. That key can equal no
+ * real variant bucket and no '' bucket, so a mis-grouped line is quarantined —
+ * it supplies nothing and nothing supplies it, which surfaces as a visible
+ * shortage / unmatched stock rather than as silent substitution.
+ *
+ * A group with NO identity attributes at all still keys '' — that is the
+ * documented legacy/unclassified bucket, it holds real production stock, and
+ * re-keying it would move that stock out from under every row that reads it.
+ * Quarantine only fires where something was previously being THROWN AWAY.
  */
 export function computeVariantKey(
   itemGroup: string | null | undefined,
@@ -106,26 +158,22 @@ export function computeVariantKey(
 ): string {
   const group = norm(itemGroup);
   const a = attrs ?? {};
+  const known = ATTRS_BY_GROUP[group];
   const parts: string[] = [];
 
-  for (const k of ATTRS_BY_GROUP[group] ?? []) {
-    // Fabric is stored under any of fabricCode / colorCode / colourCode /
-    // fabricColor (the GRN-family editors use fabricColor) — treat them as one
-    // attribute so colour participates in the bucket identity regardless of which
-    // form wrote the line. Seat / leg get the same treatment for the POS sofa
-    // vocabulary (so-variant-rule axes): seatHeight ← depth, legHeight ←
-    // sofaLegHeight — otherwise a POS sofa and an identical Backend sofa land
-    // in different stock buckets (audit 2026-06-11 I3). Canonical key wins
-    // when both are present. Historical rows are NOT migrated — pre-fix stock
-    // may sit under legacy keys (POS sofas keyed without seat/leg).
-    const raw = k === 'fabricCode'
-      ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
-      : k === 'seatHeight'
-        ? (a.seatHeight ?? a.depth)
-        : k === 'legHeight'
-          ? (a.legHeight ?? a.sofaLegHeight)
-          : (a[k] as unknown);
-    const val = norm(raw);
+  if (known === undefined) {
+    const quarantined: string[] = [];
+    for (const k of ALL_IDENTITY_ATTRS) {
+      const val = norm(readAttr(a, k));
+      if (val) quarantined.push(`${k.toLowerCase()}=${val}`);
+    }
+    if (quarantined.length > 0) {
+      parts.push(`${UNKNOWN_GROUP_SLUG}=${group || 'none'}`, ...quarantined);
+    }
+  }
+
+  for (const k of known ?? []) {
+    const val = norm(readAttr(a, k));
     if (val) parts.push(`${k.toLowerCase()}=${val}`);
   }
 
@@ -137,6 +185,7 @@ export function computeVariantKey(
 
 /** Human-readable labels for the canonical key's attribute slugs. */
 const VARIANT_LABELS: Record<string, string> = {
+  '!group': 'Unknown group',
   fabriccode: 'Fabric',
   seatheight: 'Seat',
   gap: 'Gap',

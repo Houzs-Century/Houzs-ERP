@@ -1,3 +1,81 @@
+## MRP let a variant-less PO satisfy a specific-variant order, and an unrecognised item_group keyed to nothing [high]
+
+<!-- area: Inventory, costing, FIFO -->
+
+**Symptom.** Dormant, not observed by staff — found by reading the engine
+against the owner's rule of 2026-08-16: *变体不同 = 不同的东西，不能拿来抵* (a
+different variant is a DIFFERENT ITEM and may not satisfy the order).
+`computeMrp` contradicted it twice. A demand bucket for a SPECIFIC variant with
+no PO supply of its own folded in the same-warehouse EMPTY-variant ('') PO
+pool, so an open PO for an *unspecified* bedframe or sofa covered demand for a
+named fabric/gap/divan/leg/height and the row read COVERED instead of SHORT.
+Worse, each eligible bucket cloned that pool independently, so one physical ''
+PO line could be promised to several different variants at once.
+
+**Root cause (traced).** Two independent holes that fed each other.
+(1) `routes/mrp.ts` §7 and §8 built the supply queue as
+`[...ownPo, ...(useLegacy ? poByKey.get(legacyKey) : [])]` with
+`useLegacy = bucket.vkey !== '' && legacyKey !== k && ownPo.length === 0`, and
+`poOutstanding` added the legacy pool on the same condition. `''` is "variant
+unspecified", not "this variant" — the fallback was a substitution rule the
+business never agreed to.
+(2) `shared/variant-key.ts` did `ATTRS_BY_GROUP[group] ?? []`, so ANY
+unrecognised `item_group` — NULL, blank, or a misspelling like `bedframes` /
+`bed frame` — silently DROPPED every attribute the line carried and keyed `''`.
+One bedframe PO line written with a null group therefore landed in the
+unclassified bucket and, through (1), covered every variant of that SKU. The
+type made the miss invisible: `Record<string, Array<...>>` claimed the lookup
+could not fail.
+
+**Fix.** Supply is a bucket's OWN key and nothing else — the `''` fallback is
+gone from both the general path and the sofa path, and from `poOutstanding`.
+`''` demand still draws the `''` pool: that is its own key. An unrecognised
+group is now QUARANTINED rather than emptied: it keys `!group=<group>|<attrs>`,
+a string no recognised group can emit (their only slugs are
+fabriccode/seatheight/gap/divanheight/legheight/totalheight/special) and which
+is never `''` — so a mis-grouped line supplies nothing and is supplied by
+nothing, surfacing as a visible shortage or unmatched stock instead of a silent
+substitution. A row with NO identity attributes still keys `''`: that is the
+documented unclassified bucket, it holds live stock, and re-keying it would
+hide real goods. `ATTRS_BY_GROUP` is typed `| undefined` so the miss is a fact
+the compiler carries. All four copies of the key moved together —
+`frontend/src/vendor/shared/variant-key.ts`,
+`scripts/lib/ledger-repair-core.mjs` (`variantKeyMirror`) and
+`scripts/audit-mrp-pairing.mjs`.
+
+**Production blast radius, measured BEFORE and AFTER (read-only).**
+`mrp-pairing-audit.yml` — the replica of this engine — dispatched twice against
+prod on 2026-08-16: run 31941441821 on `main` (BEFORE) and run 31941455857 on
+the fix branch (AFTER). Every measured number is identical. Company 1: demand
+21652 units, 5021 from on-hand, 1840 from open PO, SHORTAGE 14791, PO
+Outstanding 1878 — same in both runs, and the per-category shortage table
+(ACCESSORY 3865 lines / 8063 units, MATTRESS 2834 / 3368, BEDFRAME 2148 / 2446,
+SOFA 895 / 902) is byte-identical. Company 2: demand 180, 59 on-hand, 19 PO,
+SHORTAGE 102, PO Outstanding 19 — likewise. Of 540 notice lines the ONLY
+differences are the prose rewritten in this PR and the new census block.
+**Zero rows change: no shortage appears that did not exist before.** The new
+§(D)1c census discovers every scm table carrying (item_group, variants,
+company_id) — 14 of them — and finds **0** rows with an unrecognised group and
+**0** rows whose variant key moves, over 15360 rows for company 1
+(mfg_sales_order_items 13922, purchase_order_items 873, grn_items 504,
+delivery_order_items 61) and 711 rows for company 2. Both changes are
+forward-safety, not a live repair.
+
+**One claim this refuted.** "The fallback is reachable only for BEDFRAME and
+SOFA" is not true in principle: `special=` is appended for EVERY group, outside
+`ATTRS_BY_GROUP`, so a mattress or accessory carrying a special add-on keys
+non-empty and WAS eligible. Production run 31938131926 counted 47 specials-only
+demand buckets in company 1 — of which 0 sit outside bedframe/sofa today, which
+is the only reason the category claim happened to hold.
+
+**Tests.** `src/scm/routes/mrp.test.ts` 3 fail before / 16 pass after; new
+`src/scm/shared/variant-key.test.ts` 6 fail before / 23 pass after (it also
+pins every recognised group's key byte-for-byte, because a moved key re-buckets
+live stock). Suites green: backend light 322 files / 4905 tests, workers 41 /
+335, frontend 150 / 1459. `mrp.ts` is 29 lines shorter.
+
+**Ref.** fix/mrp-variant-supply-boundary, 2026-08-16.
+
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
 <!-- area: Accounting + GL -->

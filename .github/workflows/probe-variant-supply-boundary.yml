@@ -1,0 +1,63 @@
+# Read-only. Measures the blast radius of the MRP variant-supply boundary change
+# (drop the empty-variant PO fallback + quarantine an unrecognised item_group)
+# BEFORE and AFTER, from a single read of production. SELECT and
+# information_schema only — writes nothing, no DDL.
+name: probe-variant-supply-boundary
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "Company id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+      verbose:
+        description: "Print every bucket, not only the ones that move"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: probe-variant-supply-boundary-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # tsx so the REAL computeVariantKey / composite / resolveLineWarehouseId
+      # are imported from src, never re-implemented here.
+      - run: npx tsx scripts/probe-variant-supply-boundary.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/probe-variant-supply-boundary.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          VERBOSE: ${{ inputs.verbose && '1' || '0' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

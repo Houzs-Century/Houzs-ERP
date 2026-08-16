@@ -151,12 +151,27 @@ the two-demand-sets divergence the audit caught.
   byte-identical to `inventory_balances.variant_key`.
 - Order: delivery date ascending (nulls last), tie-break SO doc no. Stock
   first, then POs by earliest ETA, remainder = shortage.
-- **Legacy `''` pool rule (R4 + audit D2)**: a real-variant bucket with NO PO
-  supply of its own falls back to the same-warehouse empty-variant PO pool —
-  a FALLBACK, never additive. Applies to the general path (section 7) AND the
-  sofa path (section 8, since 2026-08-01). Known accepted limitation: two
-  different variant buckets of one (warehouse, item) can each clone the same
-  legacy pool (audit D-1 measures it; 0 live groups today).
+- **A bucket's supply is its OWN key and nothing else** (owner 2026-08-16:
+  *变体不同 = 不同的东西，不能拿来抵* — a different variant is a DIFFERENT ITEM
+  and may not satisfy the order). Both the general path (section 7) and the
+  sofa path (section 8) read `poByKey.get(k)` only.
+  **The legacy `''` pool rule (R4 + audit D2) is RETIRED.** A specific-variant
+  bucket with no PO supply of its own used to fold in the same-warehouse
+  empty-variant PO pool, so a PO for an *unspecified* bedframe/sofa covered
+  demand for a specific fabric/gap/divan/leg/height and hid a real shortage.
+  `''` means "variant unspecified", not "this variant". With the hop gone, the
+  N-fold clone that rule carried (two variant buckets each cloning one `''`
+  pool) is gone with it. `''` demand still draws the `''` pool — that is the
+  bucket's own key. Do not re-add the fallback; `audit-mrp-pairing.mjs` §(D)
+  keeps measuring the counterfactual so its absence stays audited.
+- **An unrecognised `item_group` is quarantined, not emptied.** `computeVariantKey`
+  used to do `ATTRS_BY_GROUP[group] ?? []`, so a NULL, blank or misspelt group
+  dropped every attribute the line carried and keyed `''`. It now emits
+  `!group=<group>|<attrs>` — a key that can collide with no real variant bucket
+  and with no `''` bucket, so a mis-grouped line supplies nothing and is
+  supplied by nothing (visible shortage / unmatched stock, never silent
+  substitution). A row with NO identity attributes still keys `''`: that is the
+  documented unclassified bucket and it holds live stock.
 - Sofa is grouped as per-SO-line SETS (section 8) drawing from the same pooled
   supply; set-level atomicity lives in `so-stock-allocation.ts` 7b (one
   covering batch or PENDING) and `ship-commitment.ts`, NOT here.
@@ -208,7 +223,10 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/src/scm/lib/ship-commitment.ts` | Commitment deduction/add-back contract (`applyCommittedSupply`) |
 | `backend/src/scm/routes/po-so-coverage.ts` | PO->SO precedence (delivered lock > stored link > MRP floating) |
 | `backend/scripts/audit-mrp-pairing.mjs` | Read-only production detector — a REPLICA of sections 1-8; update it in the same PR as any allocation-rule change. Section (H) (2026-08-02) additionally enforces the owner's purchasing rule: cancelled/DRAFT POs fully out of the formula, and no over-ordering beyond demand for MATTRESS/BEDFRAME/SOFA (only ACCESSORY may be bought for stock) — reported per PO document with reason codes (STOCK-SLICE / SO-DONE / BUCKET-SPLIT / NO-DEMAND) plus received-but-unowned dead stock per bucket |
-| `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment |
+| `backend/src/scm/shared/variant-key.ts` | `computeVariantKey` — the bucket identity itself. Vendored byte-for-byte to `frontend/src/vendor/shared/variant-key.ts` (`check-shared-mirrors.mjs --strict` refereess the pair) and mirrored by hand in `scripts/lib/ledger-repair-core.mjs` (`variantKeyMirror`, pinned by `tests/ledgerRepairCore.test.ts`) and in `scripts/audit-mrp-pairing.mjs`. Four copies — change all four or the lockstep test fails. |
+| `backend/src/scm/routes/mrp.test.ts` | Unit tests: own-key-only supply (general + sofa), the retired `''` fallback, unrecognised-group quarantine end-to-end, D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment |
+| `backend/src/scm/shared/variant-key.test.ts` | The key contract: recognised groups pinned byte-for-byte (live stock must not move), quarantine cannot collide, `''` unclassified bucket preserved |
+| `backend/scripts/probe-variant-supply-boundary.mjs` | Read-only production probe — shortage rows/units BEFORE vs AFTER both changes, plus the `item_group` census (how many rows' keys move). Workflow `probe-variant-supply-boundary.yml`. |
 
 ## 8. Traps
 
