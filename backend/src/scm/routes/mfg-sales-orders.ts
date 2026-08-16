@@ -215,7 +215,8 @@ import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
-import { summariseReadiness } from '../lib/so-readiness';
+import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
@@ -1662,16 +1663,22 @@ mfgSalesOrders.get('/', async (c) => {
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
        "Stock Remark" the operator's existing ERP shows: READY when everything
-       in, READY (PARTIAL) when MAIN done + ACC outstanding, else list the
-       categories still pending. */
+       that must be allocated is in, else SHORT: <the categories still missing>
+       (owner 2026-08-16 — the label must name what is missing, never read READY
+       while something is short). `category` rides along from the catalog map
+       already built above (productCategory, zero extra reads): it is
+       isServiceLine's strongest signal, so a delivery/dispose SKU whose line
+       item_group was saved as 'others' is still recognised as a SERVICE line
+       and cannot masquerade as a short accessory. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     {
-      const linesByDoc = new Map<string, Array<{ item_group: string | null; item_code: string | null; stock_status: string; cancelled: boolean }>>();
+      const linesByDoc = new Map<string, ReadinessLine[]>();
       for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>) {
         const arr = linesByDoc.get(it.doc_no) ?? [];
         arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: it.cancelled });
         linesByDoc.set(it.doc_no, arr);
       }
+      attachLineCategories(linesByDoc.values(), productCategory);
       for (const [docNo, ls] of linesByDoc) {
         readinessByDoc.set(docNo, summariseReadiness(ls));
       }
@@ -11608,12 +11615,28 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  // are OK. isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  //
+  // item_code + the catalog category ride the read (2026-08-16). Without them
+  // this path could not see a SERVICE line at all: it passed item_group alone,
+  // so a delivery-fee SKU saved with item_group 'others' counted as a short
+  // accessory and held the whole order back — while the list endpoint and the
+  // allocation sweep, which do pass the code, disagreed with it on the same SO.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
-    .select('item_group, stock_status, cancelled')
+    .select('item_group, item_code, stock_status, cancelled')
     .eq('doc_no', docNo);
-  const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
+  const liveRows: ReadinessLine[] = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>)
+    .filter((l) => !l.cancelled);
+  /* One bounded catalog read for THIS SO's codes (a single order — tens of rows
+     at most), through the same helper the list and the board use, so
+     isServiceLine gets its strongest signal here too.
+     Refuse on failure, do NOT fall through: this decides whether a line is a
+     SERVICE, i.e. whether it can hold the SO out of READY_TO_SHIP. The line flip
+     above is already committed and the allocation sweep re-derives the header
+     idempotently, so refusing costs the caller a retry, not the edit. */
+  const { error: catErr } = await resolveLineCategories(sb, [liveRows], (q) => scopeToCompany(q, c));
+  if (catErr) return c.json({ error: 'load_failed', reason: catErr.message }, 500);
   const readiness = summariseReadiness(liveRows);
   const allReady = readiness.isShipReady;
 
