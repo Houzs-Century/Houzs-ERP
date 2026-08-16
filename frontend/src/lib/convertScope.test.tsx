@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -114,7 +115,10 @@ describe("no site hand-builds a convert link", () => {
     "src/pages/scm-v2/convert-scope-pickers.test.tsx",
   ];
 
-  const SRC = resolve(process.cwd(), "src");
+  // Resolved from THIS file, not process.cwd(): the scan must find the same
+  // tree whichever directory vitest was launched from.
+  const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const APP = resolve(SRC, "..");
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of readdirSync(dir)) {
       const p = join(dir, e);
@@ -128,7 +132,7 @@ describe("no site hand-builds a convert link", () => {
     const paths = [...new Set(Object.values(CONVERT_LINKS).map((l) => l.path))];
     const offences: string[] = [];
     for (const file of walk(SRC)) {
-      const rel = relative(resolve(process.cwd()), file).replace(/\\/g, "/");
+      const rel = relative(APP, file).replace(/\\/g, "/");
       if (EXEMPT.includes(rel)) continue;
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
