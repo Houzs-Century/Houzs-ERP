@@ -266,6 +266,64 @@ try {
       notice(`  - ${r.doc_type} ${r.doc_no} (${r.op}): ${String(r.last_error ?? "").slice(0, 300)}`);
     }
   }
+  /* WHICH MASTER, not just "a master". Every refusal this queue has recorded
+     names a CONSTRAINT and not a VALUE: FK_SO_SalesAgent says the agent is
+     missing and never says WHO, MissingLocationError names the lines and not
+     the warehouse they should have had. So the one question a human then asks -
+     "which agent? which location? which item?" - could only be answered by
+     opening the payload in a SQL console, which is exactly what CLAUDE.md says
+     never to require.
+
+     The values come straight out of the stored payload, so this reports what
+     was SENT rather than what the ERP holds now. That distinction matters: a
+     row that failed a week ago failed on the data as it was then. */
+  const stuck = await pg`
+    SELECT doc_type, doc_no, op, status,
+           payload -> 'body' ->> 'Agent'            AS agent,
+           payload -> 'body' ->> 'SalesLocation'    AS sales_location,
+           payload -> 'body' ->> 'PurchaseLocation' AS purchase_location,
+           payload -> 'body' ->> 'CreditorCode'     AS creditor,
+           payload -> 'body' -> 'Details'           AS details
+      FROM scm.autocount_outbox
+     WHERE status IN ('failed', 'skipped', 'pending')
+     ORDER BY created_at DESC
+     LIMIT 40`;
+
+  if (stuck.length) {
+    notice(
+      `MASTER DATA ON THE STUCK ROWS — ${stuck.length} row(s). ` +
+        "A foreign key names the CONSTRAINT; these are the VALUES behind it. " +
+        "Each one has to exist in AutoCount, or /ensure-masters has to be able to open it.",
+    );
+    const agents = new Set();
+    const locations = new Set();
+    const items = new Set();
+    for (const r of stuck) {
+      const lines = Array.isArray(r.details) ? r.details : [];
+      const lineLoc = [...new Set(lines.map((d) => (d?.Location ?? "").toString().trim()).filter(Boolean))];
+      const lineItems = [...new Set(lines.map((d) => (d?.ItemCode ?? "").toString().trim()).filter(Boolean))];
+      const blankLoc = lines.filter((d) => !(d?.Location ?? "").toString().trim()).length;
+      if (r.agent) agents.add(r.agent);
+      for (const l of lineLoc) locations.add(l);
+      for (const i of lineItems) items.add(i);
+      notice(
+        `  - ${r.doc_type} ${r.doc_no} (${r.op}, ${r.status}): ` +
+          `agent=${JSON.stringify(r.agent)} ` +
+          `salesLocation=${JSON.stringify(r.sales_location)} ` +
+          (r.purchase_location ? `purchaseLocation=${JSON.stringify(r.purchase_location)} ` : "") +
+          (r.creditor ? `creditor=${JSON.stringify(r.creditor)} ` : "") +
+          `lines=${lines.length}` +
+          (blankLoc ? ` BLANK-LOCATION=${blankLoc}` : "") +
+          (lineLoc.length ? ` lineLocations=${lineLoc.join("|")}` : "") +
+          (lineItems.length ? ` items=${lineItems.slice(0, 6).join("|")}` : ""),
+      );
+    }
+    /* The DISTINCT sets are the actual work list. One agent blocking eleven
+       documents is one decision, not eleven. */
+    if (agents.size) notice(`  DISTINCT AGENTS to check in AutoCount (${agents.size}): ${[...agents].join(" | ")}`);
+    if (locations.size) notice(`  DISTINCT LINE LOCATIONS (${locations.size}): ${[...locations].join(" | ")}`);
+    if (items.size) notice(`  DISTINCT ITEM CODES (${items.size}): ${[...items].slice(0, 25).join(" | ")}`);
+  }
 } finally {
   await pg.end({ timeout: 5 });
 }
