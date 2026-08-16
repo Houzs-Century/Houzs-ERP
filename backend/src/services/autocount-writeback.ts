@@ -214,6 +214,17 @@ export interface ErpSoHeader {
    *  reliably as two columns did. Do not reintroduce a second source, or a
    *  second name, for it. Goes out as the `PDate` UDF. */
   processing_date?: string | null;
+  /**
+   * The order's delivery date, which THIS BOOK keeps in
+   * `SalesExemptionExpiryDate`.
+   *
+   * Owner 2026-08-16: *"就是用我们 delivery date 放进去 sales exemption date
+   * 而已，一样的东西"*. AutoCount's sales-order HEADER has no delivery date of
+   * its own — the SDK lists `DeliveryDate` on the six DETAIL classes and nowhere
+   * else — so this book uses the exemption expiry, and Inistate, the connector
+   * the ERP replaces, writes it there.
+   */
+  customer_delivery_date?: string | null;
   /** AutoCount SO number this ERP order came FROM, when it was imported at the
    *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
@@ -352,6 +363,8 @@ export interface AcCreateSoPayload {
   InvAddr2: string | null;
   InvAddr3: string | null;
   InvAddr4: string | null;
+  /** The delivery date — see `customer_delivery_date` on `ErpSoHeader`. */
+  SalesExemptionExpiryDate: string | null;
   UDF: Record<string, string>;
   Details: AcDetail[];
 }
@@ -1173,6 +1186,10 @@ export function composeCreateSo(
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
       PAYEMENT: composePaymentUdf(paymentRefs),
     }),
+    /* PRESENT-AND-NULL BLANKS IT, absent leaves AutoCount's default — the same
+       rule as the line delivery date, and for the same reason: an order the ERP
+       has no delivery date for must not inherit one. */
+    SalesExemptionExpiryDate: acUdfDate(header.customer_delivery_date),
     Details: details,
   };
 }
@@ -1612,6 +1629,11 @@ export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
   processing_date: 'PDate',
 };
 
+/** Header dates with no foreign key behind them, so a cleared one may travel. */
+export const CLEARABLE_SO_DATE_FIELDS: Readonly<Record<string, string>> = {
+  customer_delivery_date: 'SalesExemptionExpiryDate',
+};
+
 /**
  * The keys this edit must send as an EXPLICIT NULL, from the ERP columns the
  * request wrote.
@@ -1628,6 +1650,9 @@ export function clearedAcKeys(
   const isBlank = (col: string) => String(saved[col] ?? '').trim() === '';
   const header: string[] = [];
   for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
+    if (touched.has(col) && isBlank(col)) header.push(key);
+  }
+  for (const [col, key] of Object.entries(CLEARABLE_SO_DATE_FIELDS)) {
     if (touched.has(col) && isBlank(col)) header.push(key);
   }
   /* The address is a package: if any of its columns was written and the packer

@@ -118,6 +118,11 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Details',
       'DocDate', 'DocNo', 'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4', 'Phone',
       'Ref', 'SalesLocation',
+      /* The DELIVERY DATE. AutoCount's sales-order header has no field of its
+         own for it — the SDK puts `DeliveryDate` on the six DETAIL classes and
+         nowhere else — so this book keeps it in the exemption expiry, which is
+         where Inistate writes it too. Owner 2026-08-16. */
+      'SalesExemptionExpiryDate',
     ].sort());
     expect(detailKeys(CS_CREATE_SO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
@@ -187,7 +192,11 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
 
   test('/edit — the envelope, the header allow-list, and the line fields', () => {
     expect(headerKeys(CS_EDIT)).toEqual(['DocNo', 'DocType', 'Header', 'Lines'].sort());
-    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate']);
+    /* Two DATE keys read outside the string loop below, and they have to be:
+       that loop assigns through reflection with Str(), and a Nullable<DateTime>
+       property given a string throws inside Set(), which swallows it — the field
+       would look wired and write nothing. */
+    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate', 'SalesExemptionExpiryDate']);
     expect(csEditHeaderAllowList()).toEqual([
       'Agent', 'Attention', 'CreditorName', 'DebtorName', 'DeliverAddr1', 'DeliverAddr2',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Description',

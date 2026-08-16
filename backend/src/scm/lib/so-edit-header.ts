@@ -97,6 +97,10 @@ function soEditHeader(
        Blank still omits — the book keeps whatever it has. */
     DeliverPhone1: (h.emergency_contact_phone as string) ?? null,
     ...soInvoiceAddress(h),
+    /* The delivery date, in the field this book keeps it in. Omit-when-absent
+       like the rest; a cleared one travels through clearedAcKeys, which lists it
+       as a date with no foreign key behind it. */
+    SalesExemptionExpiryDate: acUdfDate(h.customer_delivery_date as string | null | undefined),
   });
   const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
   if (agent) out.Agent = agent;
