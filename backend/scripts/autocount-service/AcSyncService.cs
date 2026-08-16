@@ -9,15 +9,61 @@
 // This supersedes AcSoService.cs (create-SO only), which proved the approach on
 // 2026-08-07 by writing two real SOs into the LIVE AED_HOUZS book.
 //
-// ── HOW THE SDK ACTUALLY DOES A CONVERSION (reflected off the installed 2.2
-// assemblies on 2026-08-10 — NOT guessed) ──────────────────────────────────
-// There is NO TransferTo/CreateFrom API. Every document class exposes exactly
-// one transfer primitive:
-//     AddPartialTransferDetail(string fromDocType, long[] fromDocDtlKeys, bool)
-// So a conversion is: create the target with cmd.AddNew(), call that with the
-// SOURCE LINE KEYS, set whatever header fields differ, Save(). The SDK writes
-// the DocTransfer bookkeeping itself — the detail classes expose NO settable
-// From* fields, so the link cannot be (and must not be) faked by hand.
+// ── HOW THE SDK DOES A CONVERSION ─────────────────────────────────────────
+// CORRECTED 2026-08-17. This block used to open:
+//
+//     "There is NO TransferTo/CreateFrom API. Every document class exposes
+//      exactly one transfer primitive: AddPartialTransferDetail(...) ...
+//      (reflected off the installed 2.2 assemblies on 2026-08-10 — NOT guessed)"
+//
+// That is false, and the parenthesis is the reason it lasted a week: it cites a
+// measurement, so nobody re-took it. The 2026-08-10 dump was taken with
+// BindingFlags.DeclaredOnly — sdk-api-reference.txt says so in its own third
+// paragraph — and DeclaredOnly SKIPS INHERITED MEMBERS. The transfer API is
+// inherited: it lives on SalesDocument / PurchaseDocument, not on DeliveryOrder
+// or GoodsReceivedNote, so a per-subclass DeclaredOnly dump could never show it.
+// "The instrument could not see it" was written down as "it is not there".
+//
+// Re-reflected with BindingFlags.FlattenHierarchy against
+// C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll, on the type
+// AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrder, these exist:
+//
+//   SalesDocument.FullTransfer(String[], TransferFrom, FullTransferOption, Boolean)
+//   SalesDocument.FullTransfer(Int64[],  TransferFrom, FullTransferOption, Boolean)
+//   SalesDocument.FullTransfer(String[], TransferFrom, FullTransferOption)
+//   SalesDocument.PartialTransfer(TransferFrom, String, String, Decimal, Int64)
+//   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal)
+//   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal)
+//   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal, Int64)
+//   SalesDocument.InternalFullTransfer / InternalPartialTransfer / AddPartialTransferRow
+//   DeliveryOrder.AddPartialTransferDetail(String, Int64[], Boolean)   <- what ran until now
+//   DeliveryOrder.AddPartialTransferDetail(String, Int64, Boolean)
+//   DeliveryOrder.get_IsTransferFromSupported() / get_IsTransfered() / get_Transferable()
+//   SalesDocument.add_OnSalesDocumentTransferConflict(SalesDocumentTransferConflictDelegate)
+//   DeliveryOrder.add_ConfirmOverTransferedQtyEvent(ConfirmOverTransferedQtyEventHandler)
+//   InvoicingDocument.add_ShowEditTransferDetailFormEvent(ShowEditTransferDetailFormEventHandler)
+//   InvoicingDocument.IsFullTransfered() / IsInTransfer() / IsPartialTransfer()
+//   InvoicingDocument.IsNotTransferedDetail(Int64) / GetValidTransferDetailRows(Int64)
+//
+// AutoCount.Invoicing.dll also ships
+// FixPartialTransferTransferedQty.FixPartialTransfer(String, DBSetting, Boolean)
+// — a vendor repair for partial-transfer quantities going out of sync. This
+// service does not call it; it exists here as a warning about how easily the
+// remainder bookkeeping gets wrong.
+//
+// NOTHING HERE IS TYPED AGAINST THOSE SIGNATURES. RunTransfer binds them by the
+// parameter NAMES in the assembly's own metadata and logs every overload it
+// finds, because this file compiles nowhere but the office host and neither
+// FullTransferOption's shape nor PartialTransfer's argument order can be
+// established from off it. The reasoning is written out above
+// TryDocumentedTransfer. LogTransferApi re-takes the dump above on every
+// service start, so the next reader does not have to trust this comment.
+//
+// The vendor's own pages, which set the debtor/creditor and the document date
+// on the target BEFORE calling the transfer — the order Convert_ now follows:
+//   wiki.autocountsoft.com/wiki/Programmer:Goods_Received_Note_Transfer_from_Purchase_Order
+//   wiki.autocountsoft.com/wiki/Programmer:Sales_Invoice
+//   wiki.autocountsoft.com/wiki/Programmer:Delivery_Order
 //
 // fromDocType literals are the ones the live book already stores in
 // DODTL/GRDTL/IVDTL/PIDTL.FromDocType: "SO", "PO", "DO", "GR".
@@ -25,11 +71,6 @@
 // Cancel is a COMMAND method, not a flag: InvoicingCommonCommand.CancelDocument
 // (docNo, userID) — inherited by every invoicing command. Setting Cancelled on
 // the entity would bypass AutoCount's transferred-document guards.
-//
-// Headless safety: the SDK raises WinForms dialogs for over-transfer. That
-// event's EventArgs type is not public, so it cannot be subscribed; the
-// condition is instead made unreachable by only ever transferring what is
-// outstanding. See the note above OverQty's former site.
 //
 // Build (on the AutoCount host):
 //   csc.exe /platform:x64 ^
@@ -826,46 +867,72 @@ class AcSyncService {
   }
 
   // ── conversions (SO->DO, PO->GR, DO->IV, GR->PI) ──────────────────────────
-  // One code path: resolve the source lines, create the target, hand the line
-  // keys to AddPartialTransferDetail, apply header overrides, Save.
+  /* One code path: PLAN the shape, create the target, set the master fields the
+     vendor's own examples set FIRST, run the transfer, apply the rest of the
+     header, Save.
+
+     THE ORDER IS THE VENDOR'S, and it changed here on 2026-08-17. This method
+     used to be AddNew() -> transfer -> SalesHeader() -> Save(), so every
+     conversion ran its transfer against a target carrying no debtor and no
+     creditor: neither SalesHeader nor PurchaseHeader sets one, and the only
+     reason a GRN has a supplier at all is transferMaster:true copying it out of
+     the source inside the SDK. All three vendor pages for this API set the
+     account and the document date on the TARGET before calling the transfer:
+
+       wiki.autocountsoft.com/wiki/Programmer:Goods_Received_Note_Transfer_from_Purchase_Order
+       wiki.autocountsoft.com/wiki/Programmer:Sales_Invoice
+       wiki.autocountsoft.com/wiki/Programmer:Delivery_Order
+
+     LEFT AS A CONTRADICTION RATHER THAN BRIDGED. DO-011260 was written on
+     2026-08-12 through the OLD order and it worked, so "the target has no
+     debtor" cannot on its own be the whole of what has failed since. Something
+     else changed between that document and HC-DO-2608-001; this reorder makes
+     the call match the vendor's, it does not claim to be the proven cause. */
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
-    /* MANY SOURCE DOCUMENTS INTO ONE TARGET is native, and this is the only
-       thing that stood in its way. AddPartialTransferDetail takes an ARRAY of
-       line keys and never asks which document they came from, and DtlKeys()
-       already returns an explicit DtlKeys[] verbatim without checking it
-       against FromDocNo. So a payload naming lines from several sales orders
-       already reaches the SDK correctly - the route just refused to accept one,
-       because FromDocNo was demanded unconditionally.
+    var plan = PlanTransfer(p, fromType, fromDocNo);
+    Log("  " + fromType + "->" + toType + " shape: " + plan.Why);
 
-       FromDocNo is the FALLBACK lookup key: it is how the outstanding lines are
-       found when the ERP does not name them. When the ERP names them, it has
-       nothing left to say, so it is optional. Owner 2026-08-16: a DO from
-       several SOs, an invoice from several DOs, a GRN from several POs, a
-       purchase invoice from several GRNs - AutoCount does all four. */
-    var explicitKeys = new List<object>(List(p, "DtlKeys")).Count > 0;
-    if (string.IsNullOrEmpty(fromDocNo) && !explicitKeys)
-      throw new Exception("FromDocNo required when DtlKeys is not given - it is how the outstanding lines are found");
-    var dtlKeys = DtlKeys(p, fromType, fromDocNo);
+    /* LINE KEYS, for the two things that need them whatever the shape: the
+       AddPartialTransferDetail primitive, and DescribeSourceKeys on a failure.
+       A FULL transfer names DOCUMENTS, so its keys are resolved the way this
+       service has always resolved them - every still-outstanding line on each
+       named source, read out of the book. */
+    long[] dtlKeys;
+    if (plan.Full) {
+      var all = new List<long>();
+      foreach (var no in plan.FromDocNos) all.AddRange(DtlKeys(p, fromType, no));
+      dtlKeys = all.ToArray();
+    } else {
+      dtlKeys = plan.DtlKeys;
+    }
     if (dtlKeys.Length == 0)
       throw new Exception("no transferable lines on " + fromType + " " + Or(fromDocNo, "(the given DtlKeys)"));
 
-    /* ONE CALL PER SOURCE DOCUMENT. AddPartialTransferDetail takes an array of
-       line keys, but they must all belong to the SAME source document: handed a
-       mixed array AutoCount answers
+    /* ONE CALL PER SOURCE DOCUMENT for the primitive. AddPartialTransferDetail
+       takes an array of line keys, but they must all belong to the SAME source
+       document: handed a mixed array AutoCount answers
 
          AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
 
        measured on the live book 2026-08-16 with two sales orders in one array.
-
-       Merging several sources into one target is still native - the target
-       accepts the call repeatedly. So the keys are grouped by the document they
-       actually belong to, read from the book rather than taken on trust, and
-       the transfer is invoked once per group. Owner 2026-08-16: a DO from
-       several SOs, an invoice from several DOs, a GRN from several POs, a
-       purchase invoice from several GRNs. */
+       The documented FullTransfer takes an ARRAY of document numbers and has no
+       such restriction, which is why the multi-source WHOLE-document case
+       belongs there and this grouping is only the primitive's problem. */
     var keysByDoc = KeysBySourceDoc(fromType, dtlKeys);
+
+    var x = new Xfer();
+    x.FromType = fromType;
+    x.ToType = toType;
+    x.Plan = plan;
+    x.DtlKeys = dtlKeys;
+    x.KeysByDoc = keysByDoc;
+    x.PurchaseSide = (toType == "GR" || toType == "PI");
+    x.DocDate = Date(p, "DocDate");
+    x.S = s;
+    x.SourceDocNos = plan.Full ? plan.FromDocNos : new List<string>(keysByDoc.Keys).ToArray();
+    ReadSourceAccount(x);
 
     /* THE FAILURE HAS TO NAME THE LINES. AutoCount answers a source line it
        will not take with
@@ -878,35 +945,17 @@ class AcSyncService {
        HC-DO-2608-001 spent all six of its attempts on it and HC-DO-2608-002
        five more, and none of the eleven runs produced a single new fact.
 
-       Why the message is so empty HERE in particular: when the ERP names the
-       lines, DtlKeys() returns the supplied list VERBATIM, so neither of the
-       predicates this service otherwise applies -
-
-           h.Cancelled = 'F'    and    (d.Qty - ISNULL(d.TransferedQty,0)) > 0
-
-       - is evaluated for them, and AutoCount is the first thing in the chain to
-       look at those lines at all. So the numbers are read back out of the book
-       and appended to whatever the SDK threw.
-
-       WRAPS THE WHOLE ARM, not just the transfer call. Where the SDK raises
-       this is not established from off the host - AddPartialTransferDetail is
-       where a mixed key array raises it, and Save() is equally able to - so
-       narrowing the catch to the Add would be a guess about the frame, and a
-       wrong guess costs the diagnostic exactly on the runs that need it.
-
-       DELIBERATELY NOT A PRE-FLIGHT REFUSAL. Re-applying those two predicates
-       to the supplied keys and refusing early reads as the obvious fix, and it
-       cannot be justified from off the host: this file compiles nowhere but the
-       office machine, so a predicate even slightly stricter than AutoCount's
-       own would turn working transfers into refusals with nobody able to see it
-       first. Every call below is unchanged, and so are its arguments; only the
-       text a failure carries is better. The worst case is today. */
+       WRAPS THE WHOLE ARM, not just the transfer call - where the SDK raises
+       this is not established from off the host, and narrowing the catch would
+       be a guess about the frame that costs the diagnostic on the runs that
+       need it. */
     try {
       switch (toType) {
         case "DO": {
           var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false); };
+          RunTransfer(doc, x);
           SalesHeader(doc, p);
           doc.Save();
           return doc.DocNo;
@@ -914,7 +963,8 @@ class AcSyncService {
         case "IV": {
           var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false); };
+          RunTransfer(doc, x);
           SalesHeader(doc, p);
           doc.Save();
           return doc.DocNo;
@@ -926,9 +976,8 @@ class AcSyncService {
                IndexOutOfRangeException: There is no row at position -1
              inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
              returning -1 and used as an index. The frame names its arguments but
-             not their VALUES, so they go in the log before the call: whichever
-             run fails next, the inputs are on record rather than reconstructed. */
-          Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
+             not their VALUES, so they go in the log before the call. */
+          Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, k => k.ToString())) + "]");
           // transferMaster MUST be true on the purchase side. That flag copies the
           // source PO's header master (supplier/currency/terms) onto the target; with
           // false the GRN is built with no supplier, the purchase detail ctor looks
@@ -936,11 +985,13 @@ class AcSyncService {
           // "there is no row at position -1". The sales classes tolerate false, so they
           // are left alone — DO-011260 and DO-011262 were both created that way.
           //
-          // This comment said "DO and IV are PROVEN with it" and cited those same two
-          // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
-          // and /do-to-iv has still never run. Run status does not belong in a comment:
+          // ReadSourceAccount now also sets the creditor EXPLICITLY before the transfer,
+          // which is the vendor's order; the flag stays true because that is what has
+          // been running, and dropping it would be a second unverifiable change inside
+          // one call. Run status does not belong in a comment:
           // docs/generated/autocount-coverage.md is the one place that states it.
-          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          RunTransfer(doc, x);
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
           doc.Save();
@@ -950,7 +1001,8 @@ class AcSyncService {
           var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
           // see the GR case above — purchase side needs transferMaster = true
-          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          RunTransfer(doc, x);
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
           doc.Save();
@@ -968,6 +1020,633 @@ class AcSyncService {
         ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why, ex);
     }
     throw new Exception("unsupported target " + toType);
+  }
+
+  /* ── WHICH SHAPE: FULL or PARTIAL, and the ERP decides it ─────────────────
+     Owner 2026-08-16: 「你要确保它是可以 partially transfer 跟 fully transfer 的。
+     跟着我们的 ERP 就对了」 - both shapes have to work, and ours is the authority
+     on which one this document is.
+
+     ONE PLACE, and it is this method. The signal is what the payload SAYS, never
+     what the numbers happen to add up to:
+
+       DtlKeys ABSENT   -> FULL. The ERP is moving the whole source document:
+                           every line, full quantity. FullTransfer takes an ARRAY
+                           of document numbers, so several sources into one
+                           target is native here and needs no grouping.
+       DtlKeys PRESENT  -> PARTIAL BY LINE. The ERP has NAMED the lines it took.
+                           It stays partial even when the named set turns out to
+                           be everything still outstanding: promoting it because
+                           the numbers match today would be this service
+                           deciding, and they are only equal until the next
+                           document.
+       Details[].Qty    -> PARTIAL BY QUANTITY. The ERP is taking part of a LINE
+                           - 3 of 5 - and that number is the number AutoCount
+                           must receive.
+
+     WHAT THE PAYLOAD CANNOT SAY TODAY, stated rather than papered over: the four
+     conversions send { DocNo, DocDate?, Ref?, DtlKeys? } and no per-line
+     quantity at all (autocount-outbox.ts, enqueueConvert). Every documented
+     PartialTransfer overload takes a Decimal quantity, so none of them can be
+     filled from what this service is actually told, and a by-line partial moves
+     each named line at its OUTSTANDING quantity - which is what
+     AddPartialTransferDetail does and what has always happened here. For the ERP
+     to express "3 of 5" it has to send Details:[{ DtlKey, Qty }]. This method
+     reads that the moment it appears, and RunTransfer REFUSES rather than
+     shipping a quantity nobody asked for. */
+  class TransferPlan {
+    public bool Full;
+    public string[] FromDocNos;
+    public long[] DtlKeys;
+    public Dictionary<long, decimal> QtyByKey;
+    public string Why;
+  }
+
+  static TransferPlan PlanTransfer(Dictionary<string, object> p, string fromType, string fromDocNo) {
+    var plan = new TransferPlan();
+    plan.QtyByKey = new Dictionary<long, decimal>();
+    foreach (var od in List(p, "Details")) {
+      var it = od as Dictionary<string, object>;
+      if (it == null || !it.ContainsKey("DtlKey") || !it.ContainsKey("Qty")) continue;
+      plan.QtyByKey[System.Convert.ToInt64(it["DtlKey"])] = Dec(it, "Qty", 0);
+    }
+
+    var keys = LongList(p, "DtlKeys");
+    if (keys.Length == 0) {
+      if (plan.QtyByKey.Count > 0)
+        throw new Exception("a per-line Qty was sent without DtlKeys - a partial quantity has to name the line it is a quantity OF");
+      var nos = new List<string>();
+      foreach (var o in List(p, "FromDocNos")) {
+        var no = o == null ? "" : o.ToString().Trim();
+        if (no.Length > 0 && !nos.Contains(no)) nos.Add(no);
+      }
+      if (nos.Count == 0 && !string.IsNullOrEmpty(fromDocNo)) nos.Add(fromDocNo);
+      if (nos.Count == 0)
+        throw new Exception("FromDocNo (or FromDocNos) required when DtlKeys is not given - it is how the source documents are named");
+      plan.Full = true;
+      plan.FromDocNos = nos.ToArray();
+      plan.Why = "FULL - the ERP named no lines, so " + string.Join(" + ", plan.FromDocNos) + " transfers whole";
+      return plan;
+    }
+
+    plan.Full = false;
+    plan.DtlKeys = keys;
+    if (plan.QtyByKey.Count == 0) {
+      plan.Why = "PARTIAL BY LINE - the ERP named " + keys.Length +
+        " source line(s) and no quantity, so each moves at its outstanding quantity";
+      return plan;
+    }
+    foreach (var k in keys)
+      if (!plan.QtyByKey.ContainsKey(k))
+        throw new Exception("DtlKey " + k + " was named with no Qty while other lines on the same document carry one - " +
+          "a partial quantity is all-or-nothing per document, because a line with no number would silently move its whole outstanding quantity");
+    var parts = new List<string>();
+    foreach (var k in keys) parts.Add(k + "=" + plan.QtyByKey[k]);
+    plan.Why = "PARTIAL BY QUANTITY - the ERP is taking " + string.Join(", ", parts.ToArray());
+    return plan;
+  }
+
+  /* Everything one transfer needs, so the four arms above read as four
+     documents rather than four copies of the same dozen arguments. */
+  class Xfer {
+    public string FromType, ToType;
+    public TransferPlan Plan;
+    public long[] DtlKeys;
+    public Dictionary<string, List<long>> KeysByDoc;
+    public string[] SourceDocNos;
+    public bool PurchaseSide;
+    public DateTime? DocDate;
+    public string AccountCode, AccountName;
+    public AutoCount.Authentication.UserSession S;
+    /* AddPartialTransferDetail, bound to the arm's own document. The documented
+       call for "these lines, whatever is outstanding", and the fallback for
+       everything else. */
+    public Action Primitive;
+    public Dictionary<long, Dictionary<string, object>> LineCache =
+      new Dictionary<long, Dictionary<string, object>>();
+  }
+
+  /* WHOSE DOCUMENT THIS IS, off the SOURCE header in the book.
+     The conversion payload carries no debtor and no creditor - it never has -
+     so the account cannot come from the ERP without a contract change. The
+     source document's own header is the next authority, and it is the same row
+     transferMaster copies from inside the SDK.
+
+     Two sources with two different accounts is a FINDING, not something to pick
+     from: it is logged and nothing is set, because a document written to the
+     wrong customer is worse than one written with none. */
+  static void ReadSourceAccount(Xfer x) {
+    try {
+      if (Array.IndexOf(DocTypes, x.FromType) < 0) return;
+      var hdr = x.FromType;
+      var codeCol = x.PurchaseSide ? "CreditorCode" : "DebtorCode";
+      var nameCol = x.PurchaseSide ? "CreditorName" : "DebtorName";
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        var absent = new List<string>();
+        var cols = ExistingColumns(cn, hdr, new string[] { codeCol, nameCol }, absent);
+        if (cols.IndexOf(codeCol) < 0) {
+          Log("  source account: " + hdr + " has no " + codeCol + " column - leaving the target's account to the transfer");
+          return;
+        }
+        var seen = new Dictionary<string, string>();
+        using (var cmd = cn.CreateCommand()) {
+          var names = new List<string>();
+          for (int i = 0; i < x.SourceDocNos.Length; i++) {
+            var nm = "@d" + i;
+            names.Add(nm);
+            var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = x.SourceDocNos[i];
+            cmd.Parameters.Add(pr);
+          }
+          cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + hdr + "] WHERE DocNo IN (" +
+            string.Join(", ", names.ToArray()) + ")";
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              var row = RowToDict(rd, cols);
+              var code = row.ContainsKey(codeCol) && row[codeCol] != null ? row[codeCol].ToString().Trim() : "";
+              if (code.Length == 0) continue;
+              seen[code] = row.ContainsKey(nameCol) && row[nameCol] != null ? row[nameCol].ToString() : "";
+            }
+          }
+        }
+        if (seen.Count == 0) { Log("  source account: no " + codeCol + " on " + string.Join(" + ", x.SourceDocNos)); return; }
+        if (seen.Count > 1) {
+          var all = new List<string>(seen.Keys);
+          Log("  source account: the named sources carry DIFFERENT " + codeCol + "s (" + string.Join(", ", all.ToArray()) +
+              ") - setting none, because one document cannot belong to two accounts");
+          return;
+        }
+        foreach (var kv in seen) { x.AccountCode = kv.Key; x.AccountName = kv.Value; }
+        Log("  source account: " + codeCol + "=" + x.AccountCode + " read off " + string.Join(" + ", x.SourceDocNos));
+      }
+    } catch (Exception ex) {
+      /* A diagnostic read must never cost the conversion: with no account the
+         transfer behaves exactly as it did before this change. */
+      Log("  source account could not be read: " + ex.Message);
+    }
+  }
+
+  /* ── the transfer itself ──────────────────────────────────────────────────
+     Master fields first (the vendor's order), then the diagnostics that used to
+     report to nobody, then the call the shape asks for. Worst case is exactly
+     what ran yesterday. */
+  static void RunTransfer(object doc, Xfer x) {
+    SetMaster(doc, x);
+    LogTransferApi(doc);
+    PreflightTransferFromSupported(doc);
+    SubscribeTransferDiagnostics(doc);
+    if (!x.Plan.Full) PreflightValidItems(x);
+
+    /* A by-line partial carries no quantity, and every PartialTransfer overload
+       demands one. AddPartialTransferDetail is not a workaround for this shape:
+       it is the documented call for "these lines, at whatever is outstanding",
+       and the only one whose arguments the ERP actually sends. */
+    if (!x.Plan.Full && x.Plan.QtyByKey.Count == 0) {
+      Log("  transfer: AddPartialTransferDetail per source document - the ERP named lines and no quantity");
+      x.Primitive();
+      return;
+    }
+
+    string why;
+    if (TryDocumentedTransfer(doc, x, out why)) return;
+
+    if (x.Plan.QtyByKey.Count > 0)
+      /* NOT falling back, on purpose. AddPartialTransferDetail moves each line's
+         whole OUTSTANDING quantity, so falling back on a plan that says "3 of 5"
+         would ship 5 and answer ok. A refusal is recoverable; a live account
+         book holding a quantity nobody authorised is not. */
+      throw new Exception("this conversion is a PARTIAL QUANTITY transfer and the documented PartialTransfer call could not be used (" +
+        why + "). Refusing rather than falling back, because the fallback moves each line's whole outstanding quantity, " +
+        @"which is not what the ERP asked for. The overloads this host's assemblies actually expose, with their parameter names, are in C:\Temp\ac-sync-service.log immediately above this line.");
+
+    Log("  transfer: falling back to AddPartialTransferDetail (" + why + ")");
+    x.Primitive();
+  }
+
+  /* The debtor/creditor and the document date, BEFORE the transfer.
+     Logged either way - a master field that silently fails to apply is how this
+     service spent a week transferring into a document with no account. */
+  static void SetMaster(object doc, Xfer x) {
+    if (x.DocDate.HasValue) {
+      try {
+        doc.GetType().GetProperty("DocDate", Reach).SetValue(doc, x.DocDate.Value, null);
+        Log("  master: DocDate=" + x.DocDate.Value.ToString("yyyy-MM-dd") + " set BEFORE the transfer");
+      } catch (Exception ex) { Log("  master: DocDate NOT applied: " + ex.Message); }
+    }
+    if (string.IsNullOrEmpty(x.AccountCode)) { Log("  master: no account to set - the transfer decides it"); return; }
+    var codeProp = x.PurchaseSide ? "CreditorCode" : "DebtorCode";
+    var nameProp = x.PurchaseSide ? "CreditorName" : "DebtorName";
+    try {
+      doc.GetType().GetProperty(codeProp, Reach).SetValue(doc, x.AccountCode, null);
+      Log("  master: " + codeProp + "=" + x.AccountCode + " set BEFORE the transfer");
+    } catch (Exception ex) { Log("  master: " + codeProp + " NOT applied: " + ex.Message); }
+    if (!string.IsNullOrEmpty(x.AccountName)) {
+      try { doc.GetType().GetProperty(nameProp, Reach).SetValue(doc, x.AccountName, null); }
+      catch (Exception ex) { Log("  master: " + nameProp + " NOT applied: " + ex.Message); }
+    }
+  }
+
+  /* Public instance members INCLUDING inherited ones. Named, and used
+     everywhere below, because leaving it out is the whole bug this file is
+     being corrected for. */
+  const BindingFlags Reach = BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+
+  /* ── what the assemblies on THIS host actually expose ─────────────────────
+     Printed once per document class per process, with parameter NAMES.
+
+     THIS IS THE PART THAT PAYS FOR ITSELF. The header of this file asserted for
+     a week that FullTransfer and PartialTransfer do not exist, on the strength
+     of a reflection run taken with BindingFlags.DeclaredOnly - which skips
+     inherited members, and every one of them is inherited from SalesDocument /
+     PurchaseDocument. A dump nobody can re-take is how that survived seven days
+     of work built on top of it. This one re-takes itself on every service
+     start, into the log the operator already reads through /last-errors. */
+  static readonly Dictionary<string, bool> LoggedApis = new Dictionary<string, bool>();
+
+  static string Sig(System.Reflection.MethodInfo m) {
+    var ps = new List<string>();
+    foreach (var pi in m.GetParameters()) ps.Add(pi.ParameterType.Name + " " + pi.Name);
+    return m.DeclaringType.Name + "." + m.Name + "(" + string.Join(", ", ps.ToArray()) + ")";
+  }
+
+  static void LogTransferApi(object doc) {
+    try {
+      var t = doc.GetType();
+      if (LoggedApis.ContainsKey(t.FullName)) return;
+      LoggedApis[t.FullName] = true;
+      foreach (var want in new string[] { "FullTransfer", "PartialTransfer", "AddPartialTransferDetail" }) {
+        var found = 0;
+        foreach (var m in t.GetMethods(Reach)) {
+          if (m.Name != want) continue;
+          found++;
+          Log("  SDK " + t.Name + ": " + Sig(m));
+        }
+        if (found == 0)
+          Log("  SDK " + t.Name + ": NO " + want + " (searched with FlattenHierarchy, so inherited members ARE included)");
+      }
+    } catch (Exception ex) { Log("  SDK api dump failed: " + ex.Message); }
+  }
+
+  /* IsTransferFromSupported - the pre-flight this service never made.
+     FALSE means the document CLASS will not be built by transfer at all, which
+     is a different failure from a source line being rejected, and the two are
+     indistinguishable inside "Invalid transfer item." */
+  static void PreflightTransferFromSupported(object doc) {
+    try {
+      var pi = doc.GetType().GetProperty("IsTransferFromSupported", Reach);
+      if (pi == null) { Log("  IsTransferFromSupported: not exposed on " + doc.GetType().Name); return; }
+      var v = pi.GetValue(doc, null);
+      if (v is bool && !((bool) v))
+        Log("  IsTransferFromSupported = FALSE on " + doc.GetType().Name +
+            " - this document class will not accept a transfer at all, so nothing below is about the source lines");
+      else
+        Log("  IsTransferFromSupported = " + v);
+    } catch (Exception ex) { Log("  IsTransferFromSupported could not be read: " + ex.Message); }
+  }
+
+  /* WHICH OF OUR KEYS AUTOCOUNT ITSELF CALLS VALID, asked before a document
+     exists. TransferHelper.CheckAndGetValidPartialTransferItem is the vendor's
+     own validator and the most likely origin of
+
+       AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+     thrown inside GeneralSalesPartialTransferDetail..ctor. Calling it here moves
+     that throw to a point where the keys are still in hand and nothing has been
+     written, and the DataTable it returns on success says exactly which keys
+     survived - the fact eleven production attempts never produced. */
+  static void PreflightValidItems(Xfer x) {
+    try {
+      var t = x.PurchaseSide
+        ? AutoCount.Invoicing.Purchase.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting)
+        : AutoCount.Invoicing.Sales.TransferHelper.CheckAndGetValidPartialTransferItem(x.FromType, x.DtlKeys, x.S.DBSetting);
+      if (t == null) { Log("  valid-transfer-item check: returned NULL for " + x.DtlKeys.Length + " key(s)"); return; }
+      var cols = new List<string>();
+      foreach (System.Data.DataColumn c in t.Columns) cols.Add(c.ColumnName);
+      Log("  valid-transfer-item check: " + t.Rows.Count + " row(s) for " + x.DtlKeys.Length +
+          " key(s); columns = " + string.Join(", ", cols.ToArray()));
+      if (t.Rows.Count < x.DtlKeys.Length)
+        Log("  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)");
+    } catch (Exception ex) {
+      Log("  valid-transfer-item check THREW " + ex.GetType().FullName + ": " + ex.Message.Trim() +
+          " - that is the vendor's own validator refusing these keys, before any document was created");
+    }
+  }
+
+  /* ── the three things the SDK tries to say, and used to say to nobody ─────
+     The header of this file argued the over-transfer event cannot be subscribed
+     because its EventArgs type is not public. A public args type is not needed:
+     .NET's relaxed delegate binding lets a handler declared with `object`
+     parameters bind to a delegate whose parameters are any reference types, so
+     Delegate.CreateDelegate binds one without ever naming them.
+
+     LOG ONLY. Nothing here answers a confirmation or cancels anything - the
+     handler reads the event's arguments back by reflection and writes them to
+     the log. Answering "yes" to an over-transfer prompt would silently accept
+     shipping more than was ordered, which is the one outcome this service must
+     never produce on its own.
+
+     A delegate that RETURNS something is deliberately NOT subscribed: a void
+     handler cannot bind to it, and inventing a return value is answering a
+     question the SDK asked. Its signature is logged instead. */
+  static void SubscribeTransferDiagnostics(object doc) {
+    Watch(doc, "OnSalesDocumentTransferConflict");
+    Watch(doc, "ConfirmOverTransferedQtyEvent");
+    Watch(doc, "ShowEditTransferDetailFormEvent");
+  }
+
+  class TransferWatch {
+    public string Evt;
+    public void On1(object a) { Report(new object[] { a }); }
+    public void On2(object a, object b) { Report(new object[] { a, b }); }
+    public void On3(object a, object b, object c) { Report(new object[] { a, b, c }); }
+
+    void Report(object[] args) {
+      /* An exception thrown out of an event handler unwinds through the SDK's
+         own transfer code. Whatever this costs, it must not be the document. */
+      try {
+        var parts = new List<string>();
+        /* args[0] is the sender on every .NET event shape; the interesting half
+           is what follows it. A one-argument delegate has no sender to skip. */
+        for (int i = args.Length > 1 ? 1 : 0; i < args.Length; i++) parts.Add(Describe(args[i]));
+        Log("  SDK EVENT " + Evt + ": " + string.Join(" | ", parts.ToArray()));
+      } catch (Exception ex) {
+        try { Log("  SDK EVENT " + Evt + " fired but could not be read: " + ex.Message); } catch { }
+      }
+    }
+
+    static string Describe(object o) {
+      if (o == null) return "null";
+      var t = o.GetType();
+      if (o is string || t.IsPrimitive || o is decimal || o is DateTime) return t.Name + "=" + o;
+      var parts = new List<string>();
+      foreach (var pi in t.GetProperties(Reach)) {
+        if (pi.GetIndexParameters().Length > 0) continue;
+        string v;
+        try { var raw = pi.GetValue(o, null); v = raw == null ? "null" : raw.ToString(); }
+        catch (Exception ex) { v = "(unreadable: " + ex.Message + ")"; }
+        if (v.Length > 200) v = v.Substring(0, 200) + "...";
+        parts.Add(pi.Name + "=" + v);
+      }
+      if (parts.Count == 0) return t.FullName + " (no readable properties)";
+      return t.Name + " { " + string.Join(", ", parts.ToArray()) + " }";
+    }
+  }
+
+  static void Watch(object doc, string evtName) {
+    try {
+      var ev = doc.GetType().GetEvent(evtName, Reach);
+      if (ev == null) { Log("  transfer event " + evtName + ": not on " + doc.GetType().Name); return; }
+      var invoke = ev.EventHandlerType.GetMethod("Invoke");
+      if (invoke == null) { Log("  transfer event " + evtName + ": " + ev.EventHandlerType.Name + " has no Invoke"); return; }
+      if (invoke.ReturnType != typeof(void)) {
+        Log("  transfer event " + evtName + " NOT subscribed: " + ev.EventHandlerType.Name + " returns " +
+            invoke.ReturnType.Name + ", and answering it would be this service deciding");
+        return;
+      }
+      var n = invoke.GetParameters().Length;
+      if (n < 1 || n > 3) {
+        Log("  transfer event " + evtName + " NOT subscribed: " + n + " argument(s), no reporter of that arity");
+        return;
+      }
+      var watch = new TransferWatch();
+      watch.Evt = evtName;
+      var handler = Delegate.CreateDelegate(ev.EventHandlerType, watch, "On" + n, false, false);
+      if (handler == null) {
+        Log("  transfer event " + evtName + " NOT subscribed: " + ev.EventHandlerType.Name +
+            " would not bind to an all-object reporter of " + n + " argument(s)");
+        return;
+      }
+      ev.AddEventHandler(doc, handler);
+      Log("  transfer event " + evtName + " subscribed (" + ev.EventHandlerType.Name + ", " + n + " arg)");
+    } catch (Exception ex) { Log("  transfer event " + evtName + " could not be subscribed: " + ex.Message); }
+  }
+
+  /* ── the documented call, bound by the assembly's OWN parameter names ─────
+     LATE-BOUND ON PURPOSE, and this is the one decision here that needs
+     defending. FullTransfer's third argument is a FullTransferOption and
+     PartialTransfer's are three or four unnamed strings and decimals; neither
+     the option type's shape nor the argument ORDER can be established from off
+     the host, and this file compiles nowhere but the office machine. Writing
+     `TransferFrom.SalesOrder` and being wrong costs a failed build and another
+     round trip; writing PartialTransfer's decimals in the wrong order and being
+     wrong costs a live account book holding a quantity nobody sent.
+
+     So nothing is bound by POSITION. Every argument is matched against the
+     parameter's own NAME and TYPE out of the assembly's metadata, and an
+     overload with one parameter this service cannot name is not called at all.
+     The TransferFrom value is not guessed either: TransferHelper's own
+     DocumentTypeToTransferFrom converts the doc-type strings already in hand.
+
+     A bool parameter is deliberately UNFILLABLE. FullTransfer's trailing
+     Boolean has no established meaning here, so the three-argument overload is
+     the one that binds - presumably why the vendor ships it. */
+  static object TransferFromValue(Xfer x) {
+    if (x.PurchaseSide) return AutoCount.Invoicing.Purchase.TransferHelper.DocumentTypeToTransferFrom(x.FromType);
+    return AutoCount.Invoicing.Sales.TransferHelper.DocumentTypeToTransferFrom(x.FromType);
+  }
+
+  static bool TryDocumentedTransfer(object doc, Xfer x, out string why) {
+    why = "";
+    object transferFrom;
+    try {
+      transferFrom = TransferFromValue(x);
+      Log("  TransferFrom for '" + x.FromType + "' = " + transferFrom + " (" + transferFrom.GetType().FullName + ")");
+    } catch (Exception ex) {
+      why = "TransferHelper.DocumentTypeToTransferFrom('" + x.FromType + "') threw " + ex.GetType().Name + ": " + ex.Message;
+      Log("  " + why);
+      return false;
+    }
+
+    /* A FULL transfer is ONE call naming every source document. A PARTIAL BY
+       QUANTITY is one call PER LINE, because every PartialTransfer overload
+       carries a single item and a single quantity. Every call is bound before
+       any of them is invoked, so a set this service cannot express is refused
+       whole rather than transferred halfway. */
+    var lines = new List<long>();
+    if (x.Plan.Full) lines.Add(0L); else lines.AddRange(x.Plan.DtlKeys);
+
+    var wanted = x.Plan.Full ? "FullTransfer" : "PartialTransfer";
+    var calls = new List<object[]>();
+    System.Reflection.MethodInfo chosen = null;
+    var rejected = new List<string>();
+    /* Reflected ONCE, so "the same overload" below is reference identity on the
+       same MethodInfo instances rather than on whatever a second GetMethods
+       call happens to hand back. */
+    var methods = doc.GetType().GetMethods(Reach);
+
+    foreach (var key in lines) {
+      System.Reflection.MethodInfo best = null;
+      object[] bestArgs = null;
+      foreach (var m in methods) {
+        if (m.Name != wanted) continue;
+        if (chosen != null && m != chosen) continue;   // every line uses the same overload
+        var ps = m.GetParameters();
+        var args = new object[ps.Length];
+        var ok = true;
+        for (int i = 0; i < ps.Length; i++) {
+          object v;
+          if (!BindTransferArg(ps[i], x, transferFrom, key, out v)) {
+            rejected.Add(Sig(m) + " -> cannot fill '" + ps[i].Name + "' (" + ps[i].ParameterType.Name + ")");
+            ok = false;
+            break;
+          }
+          args[i] = v;
+        }
+        if (!ok) continue;
+        /* Fewest parameters wins: each extra one is another flag whose meaning
+           is not established, and the vendor ships the short overload for
+           callers with nothing to say about them. */
+        if (best == null || ps.Length < best.GetParameters().Length) { best = m; bestArgs = args; }
+      }
+      if (best == null) {
+        why = "no " + wanted + " overload could be filled without guessing" +
+              (rejected.Count == 0 ? " (the class exposes none)" : "; " + string.Join(" ; ", rejected.ToArray()));
+        Log("  " + why);
+        return false;
+      }
+      chosen = best;
+      calls.Add(bestArgs);
+    }
+
+    try {
+      Log("  transfer: calling " + Sig(chosen) + " x" + calls.Count);
+      foreach (var args in calls) chosen.Invoke(doc, args);
+      Log("  transfer: " + chosen.Name + " returned without throwing");
+      return true;
+    } catch (System.Reflection.TargetInvocationException tie) {
+      var inner = tie.InnerException == null ? (Exception) tie : tie.InnerException;
+      why = chosen.Name + " threw " + inner.GetType().FullName + ": " + inner.Message.Trim();
+      Log("  " + why);
+      /* A throw PART WAY THROUGH a per-line loop leaves the in-memory document
+         holding some of the lines. The caller must not then run the primitive
+         on top of it, which is why a partial-quantity plan refuses instead of
+         falling back. */
+      return false;
+    } catch (Exception ex) {
+      why = chosen.Name + " could not be invoked: " + ex.GetType().Name + ": " + ex.Message;
+      Log("  " + why);
+      return false;
+    }
+  }
+
+  /* One argument, filled or refused. Type first, because the enum and the
+     option type are unmistakable; then the parameter NAME, lower-cased, because
+     the vendor's own metadata is the only non-guessed source for what a string
+     or a decimal in this position means. Every value comes from the ERP's
+     payload or from the SOURCE LINE's own row in the book - never from a
+     literal invented here. */
+  static bool BindTransferArg(System.Reflection.ParameterInfo pi, Xfer x, object transferFrom, long key, out object value) {
+    value = null;
+    var t = pi.ParameterType;
+    var n = (pi.Name ?? "").ToLowerInvariant();
+
+    if (t.IsInstanceOfType(transferFrom)) { value = transferFrom; return true; }
+    if (t == typeof(string[])) {
+      if (!x.Plan.Full) return false;
+      value = x.Plan.FromDocNos;
+      return true;
+    }
+    if (t == typeof(long[])) return false;   // source DocKeys, which this service does not hold
+    if (t == typeof(bool)) return false;     // meaning not established - see the note above
+
+    if (t == typeof(string)) {
+      if (n.Contains("docno")) {
+        var no = SourceDocNoOf(x, key);
+        if (no == null) return false;
+        value = no;
+        return true;
+      }
+      /* itemCode / location / uom / batchNo, read off the source line itself. */
+      var col = SourceLineColumn(n);
+      if (col == null) return false;
+      var cell = SourceLineCell(x, key, col);
+      if (cell == null) return false;
+      value = cell;
+      return true;
+    }
+    if (t == typeof(decimal)) {
+      if (n.Contains("qty") && x.Plan.QtyByKey.ContainsKey(key)) { value = x.Plan.QtyByKey[key]; return true; }
+      return false;
+    }
+    if (t == typeof(long)) {
+      /* Only a PARTIAL call addresses one line, so `key` means nothing on a
+         full transfer and must not be filled in as a zero. */
+      if (!x.Plan.Full && n.Contains("dtlkey")) { value = key; return true; }
+      return false;
+    }
+
+    /* Whatever FullTransferOption turns out to be. An enum or a struct has a
+       zero value; anything else is left alone rather than constructed. Both the
+       type and, for an enum, every member it carries are logged, so ONE run on
+       the host turns this unknown into a recorded fact. */
+    if (t.IsEnum) {
+      value = Enum.ToObject(t, 0);
+      Log("  bind: '" + pi.Name + "' is " + t.FullName + ", using its default " + value +
+          "; the members are " + string.Join(", ", Enum.GetNames(t)));
+      return true;
+    }
+    if (t.IsValueType) {
+      value = Activator.CreateInstance(t);
+      Log("  bind: '" + pi.Name + "' is the value type " + t.FullName + ", using its default value");
+      return true;
+    }
+    return false;
+  }
+
+  /* Which source document a named line sits on. KeysBySourceDoc already read it
+     out of the book, so this is a lookup and not a second query. */
+  static string SourceDocNoOf(Xfer x, long key) {
+    if (x.Plan.Full) return x.SourceDocNos.Length == 1 ? x.SourceDocNos[0] : null;
+    foreach (var g in x.KeysByDoc) if (g.Value.Contains(key)) return g.Key;
+    return null;
+  }
+
+  /* A parameter name this service is willing to answer, and the detail column
+     that answers it. Anything not on this list is refused rather than filled
+     with a plausible value. */
+  static string SourceLineColumn(string lowerName) {
+    if (lowerName.Contains("itemcode")) return "ItemCode";
+    if (lowerName.Contains("location")) return "Location";
+    if (lowerName.Contains("uom")) return "UOM";
+    if (lowerName.Contains("batch")) return "BatchNo";
+    return null;
+  }
+
+  /* Cached PER REQUEST, on the Xfer, and deliberately not in a static: this
+     service is long-lived, a DtlKey's row can be edited between two calls, and
+     a process-wide cache of the account book is a stale answer waiting to
+     happen. */
+  static string SourceLineCell(Xfer x, long key, string column) {
+    try {
+      Dictionary<string, object> row;
+      if (!x.LineCache.TryGetValue(key, out row)) {
+        var dtl = x.FromType + "DTL";
+        if (Array.IndexOf(DtlTables, dtl) < 0) return null;
+        __DBLINE__
+        using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+          cn.Open();
+          var absent = new List<string>();
+          var cols = ExistingColumns(cn, dtl, new string[] { "ItemCode", "Location", "UOM", "BatchNo" }, absent);
+          if (cols.Count == 0) return null;
+          using (var cmd = cn.CreateCommand()) {
+            cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + dtl + "] WHERE DtlKey = @k";
+            var pr = cmd.CreateParameter(); pr.ParameterName = "@k"; pr.Value = key;
+            cmd.Parameters.Add(pr);
+            using (var rd = cmd.ExecuteReader()) {
+              if (!rd.Read()) return null;
+              row = RowToDict(rd, cols);
+            }
+          }
+        }
+        x.LineCache[key] = row;
+      }
+      if (!row.ContainsKey(column) || row[column] == null) return null;
+      return row[column].ToString();
+    } catch (Exception ex) {
+      Log("  source line " + key + "." + column + " could not be read: " + ex.Message);
+      return null;
+    }
   }
 
   /* WHAT THE BOOK HOLDS for a set of source line keys, as one line of text.
@@ -1070,17 +1749,27 @@ class AcSyncService {
     return (q - t).ToString();
   }
 
-  /* OVER-TRANSFER: unreachable by construction, not answered by a handler.
-     Every document class exposes ConfirmOverTransferedQtyEvent, but its
-     EventArgs type is not public in AutoCount.Invoicing — reflection against
-     the real assemblies found the delegate and no matching public args type,
-     so it cannot be subscribed from outside the SDK, and naming it does not
-     compile. Instead the condition is made impossible: DtlKeys() only ever
-     selects source lines with (Qty - TransferedQty) > 0 and transfers exactly
-     what is outstanding. If a caller passes explicit DtlKeys that would
-     over-transfer, AutoCount raises PartialTransferQtyLessThanTransferedQty
-     Exception (or a sibling) and the service returns that as an error — the
-     failure mode is a refused call, never a silently accepted over-ship. */
+  /* OVER-TRANSFER: now REPORTED, having been declared unreachable.
+     This block used to argue that ConfirmOverTransferedQtyEvent "cannot be
+     subscribed from outside the SDK" because reflection found the delegate and
+     no matching public EventArgs type, and that the condition was instead made
+     impossible by only ever transferring what is outstanding. The first half is
+     wrong: a delegate does not need a public argument type to be bound.
+     Delegate.CreateDelegate matches a handler declared with `object` parameters
+     to a delegate whose parameters are any reference types (relaxed delegate
+     binding, .NET 2.0 onwards), which is what Watch() above does - it never
+     names the args type, so nothing has to compile against it.
+
+     The second half stopped being true the day the ERP started naming DtlKeys:
+     DtlKeys() returns a supplied list VERBATIM, so the
+     (Qty - TransferedQty) > 0 predicate is never evaluated for those lines and
+     the over-transfer condition is reachable from a payload.
+
+     What happens now: the event is subscribed, its arguments are read back by
+     reflection and written to the log, and NOTHING is answered. A handler that
+     confirmed the prompt would silently accept shipping more than was ordered.
+     If AutoCount refuses instead, the refusal is returned as an error, which is
+     the outcome this service wants. */
 
   /* SO -> PO, which is NOT one of the four above and cannot use Convert_.
      AddPartialTransferDetail("SO", keys, ...) is the sales-side primitive; a
@@ -1207,6 +1896,37 @@ class AcSyncService {
        it throws, the old call runs and the document is written exactly as it is
        written today — one-sided link and all. The worst case is what we already
        have; the best case is the link AutoCount actually reads. */
+    /* THE SAME DIAGNOSTICS THE FOUR CONVERSIONS NOW GET. This route shares
+       their failure mode - it transfers sales lines into a purchase document
+       through the same SDK machinery - and it had the same blind spots: no
+       record of which overloads the host actually exposes, no pre-flight, and
+       three transfer events reporting to nobody. The creditor is already set
+       above, which is the vendor's order and the one thing this route had
+       right when Convert_ did not.
+
+       WHICH SHAPE IS NOT DECIDED HERE, and that is deliberate: the ERP decides
+       whether a purchase order is a transfer at all, in
+       scm/shared/po-transfer-shape.ts, and it decides the quantity in
+       Details[].Qty, which phase two below applies line by line. A consolidated
+       purchase never reaches this route. */
+    LogTransferApi(po);
+    PreflightTransferFromSupported(po);
+    SubscribeTransferDiagnostics(po);
+    /* The SO-SPECIFIC validator, not the general one Convert_ uses. SO -> PO is
+       a sales source on a purchase target, and the purchase TransferHelper
+       ships a method for exactly that pairing -
+       CheckAndGetValidSOTransferItem(Int64, DBSetting) - so a refusal here is
+       about the sales line and not about a doc-type the general validator was
+       never meant to be handed. */
+    foreach (var k in keys) {
+      try {
+        var row = AutoCount.Invoicing.Purchase.TransferHelper.CheckAndGetValidSOTransferItem(k, s.DBSetting);
+        Log("  valid-SO-transfer-item " + k + ": " + (row == null ? "NULL - AutoCount will not take this sales line" : "ok"));
+      } catch (Exception ex) {
+        Log("  valid-SO-transfer-item " + k + " THREW " + ex.GetType().FullName + ": " + ex.Message.Trim());
+      }
+    }
+
     var typedTransfer = false;
     try {
       po.AddPartialTransferDetail("SO", keys, false);

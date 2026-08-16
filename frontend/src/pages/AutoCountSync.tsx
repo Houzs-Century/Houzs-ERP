@@ -54,33 +54,39 @@ import {
   AC_DOC_TYPES,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
+  AC_LOAD_FAILED_LINE,
   AC_NOT_ASKED_NOTE,
-  AC_REPLY_LABEL,
+  AC_ONLY_SUPERSEDED_LINE,
   AC_REQUEUED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
+  AC_SUPERSEDED_NOTE,
+  AC_TECHNICAL_LABEL,
   acAge,
   acDocTypePlural,
   acDocTypeCounts,
   acEmptyLine,
   acHeadline,
   acListTitle,
-  acReplySource,
   acRowDetail,
   acRowStandsAt,
   acRowsOfType,
+  acSplitSuperseded,
   acStateCount,
   acStateLabel,
   acStateTone,
+  acSupersededHeading,
   acWritebackLine,
   useAcExpandedRows,
   useAcRequeue,
+  useAcSupersededGroup,
   useAutoCountOutbox,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
   type AcRequeueNote,
+  type AcSaid,
   type AcTone,
 } from "../lib/autocountOutbox";
 
@@ -134,6 +140,34 @@ function StateBadge({ state }: { state: string }) {
 }
 
 /**
+ * THE MACHINERY, one level further in than the reason.
+ *
+ * A separate, collapsed, labelled block — not a longer quote. The AutoCount
+ * service started appending the account book's own numbers per line on
+ * 2026-08-16 and the diagnostic is genuinely valuable: it is what refuted the
+ * standing explanation for HC-DO-2608-001 and -002. It is also
+ * `Qty=1.00000000 TransferedQty=0.00000000 Transferable=T docCancelled=F`,
+ * four lines of it, on a screen a warehouse clerk opens to ask whether a
+ * delivery went out. Both are true, so both get a place, and the label says
+ * which reader each is for.
+ */
+function TechnicalNote({ text }: { text: string }) {
+  return (
+    <details
+      data-ac-technical=""
+      className="mt-1.5 rounded border border-dashed border-border bg-canvas px-2 py-1"
+    >
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-ink-muted">
+        {AC_TECHNICAL_LABEL}
+      </summary>
+      <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-ink-muted">
+        {text}
+      </p>
+    </details>
+  );
+}
+
+/**
  * WHAT A MACHINE SAID, quoted.
  *
  * Separated from the plain-language reason above it on purpose. That is the
@@ -142,22 +176,23 @@ function StateBadge({ state }: { state: string }) {
  * facts that change what the reader should go and do, and until the rebuild the
  * page could not tell them apart at all. Behind the opener since the rows had
  * to get short, never flattened into one label.
+ *
+ * It renders the shared layer's AcSaid rather than reading the row itself:
+ * whether a note is a sentence worth showing or machinery to fold away is one
+ * decision, made once, for both surfaces.
  */
-function WhatWasSaid({ row }: { row: AcOutboxRow }) {
-  const source = acReplySource(row.state, row.reason);
-  const label = AC_REPLY_LABEL[source];
-
+function WhatWasSaid({ said }: { said: AcSaid }) {
   return (
     <div className="mt-2 border-t border-dashed border-border pt-2 text-[12px]">
-      <span className="font-semibold uppercase tracking-wide text-ink-muted">{label}</span>
-      {source === "erp" && <span className="ml-2 text-ink-muted">{AC_NOT_ASKED_NOTE}</span>}
-      {row.reason ? (
+      <span className="font-semibold uppercase tracking-wide text-ink-muted">{said.label}</span>
+      {said.notAsked && <span className="ml-2 text-ink-muted">{AC_NOT_ASKED_NOTE}</span>}
+      {said.silent && <span className="ml-2 italic text-ink-muted">Nothing came back with it.</span>}
+      {said.said !== null && (
         <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11.5px] text-ink">
-          {row.reason}
+          {said.said}
         </p>
-      ) : (
-        <span className="ml-2 italic text-ink-muted">Nothing came back with it.</span>
       )}
+      {said.technical !== null && <TechnicalNote text={said.technical} />}
     </div>
   );
 }
@@ -265,7 +300,7 @@ function OutboxRowCard(
           {detail.showRequeuedNote && (
             <p className="max-w-[84ch] text-[13px] text-ink-muted">{AC_REQUEUED_NOTE}</p>
           )}
-          {detail.showSaid && <WhatWasSaid row={row} />}
+          {detail.said && <WhatWasSaid said={detail.said} />}
         </div>
       )}
 
@@ -294,6 +329,7 @@ function OutboxRowCard(
               {note.quote}
             </p>
           )}
+          {note.quoteTechnical && <TechnicalNote text={note.quoteTechnical} />}
         </div>
       )}
     </div>
@@ -337,12 +373,19 @@ export function AutoCountSync() {
   const reload = q.reload;
   const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
   const expanded = useAcExpandedRows();
+  const history = useAcSupersededGroup();
 
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
   const loaded = d?.rows ?? [];
   const typeCounts = acDocTypeCounts(loaded);
   const rows = acRowsOfType(loaded, docType);
+  /* HISTORY IS NOT A TASK LIST. Six of fifteen rows on the live page were
+     "already sent again", two documents appearing twice. They stay reachable —
+     folded under the list, and the Sent again chip still shows them as the
+     list — but they no longer stand between the reader and a live refusal. The
+     counts on the chips are untouched: they are the server's. */
+  const split = acSplitSuperseded(rows, state);
 
   /* The state counts are the SERVER's, exact and whole-company. The type counts
      are of the rows actually loaded — a different kind of number, and the only
@@ -386,7 +429,10 @@ export function AutoCountSync() {
           swallowed into an empty table. */}
       {q.error && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
-          The queue could not be read, so nothing below is the current picture: {q.error}
+          <p className="font-semibold">{AC_LOAD_FAILED_LINE}</p>
+          {/* QUOTED, not spliced into the sentence above. Whatever a transport
+              layer produced is a machine's words like any other on this page. */}
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px]">{q.error}</p>
         </div>
       )}
 
@@ -470,17 +516,21 @@ export function AutoCountSync() {
               <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
                 {acEmptyLine(d, state)}
               </div>
+            ) : split.live.length === 0 ? (
+              <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
+                {AC_ONLY_SUPERSEDED_LINE}
+              </div>
             ) : (
               /* WINDOWED. The same component eight mobile screens and DataTable
                  already use, rather than a second mechanism: below its own
                  threshold it renders every row exactly as a plain map did, and
                  above it only the visible slice is in the DOM. */
               <MobileVirtualList
-                items={rows}
+                items={split.live}
                 getKey={(r) => r.id}
                 gap={6}
                 estimateHeight={52}
-                ariaLabel={`${rows.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
+                ariaLabel={`${split.live.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
                 renderItem={(r) => (
                   <OutboxRowCard
                     row={r}
@@ -493,6 +543,51 @@ export function AutoCountSync() {
                   />
                 )}
               />
+            )}
+
+            {/* THE RECORD, FOLDED. Under the live list, never inside it. The
+                rows are not rendered at all until it is opened — a superseded
+                row costs nothing to keep and should cost nothing to ignore. */}
+            {split.superseded.length > 0 && (
+              <div className="rounded-lg border border-dashed border-border bg-surface">
+                <button
+                  type="button"
+                  aria-expanded={history.open}
+                  onClick={history.toggle}
+                  className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[12.5px] font-semibold text-ink-muted"
+                >
+                  <ChevronRight
+                    size={13}
+                    className={cn("shrink-0 transition-transform", history.open && "rotate-90")}
+                  />
+                  {acSupersededHeading(split.superseded.length)}
+                </button>
+                {history.open && (
+                  <div className="border-t border-border px-3 py-2">
+                    <p className="mb-2 max-w-[84ch] text-[12px] text-ink-muted">
+                      {AC_SUPERSEDED_NOTE}
+                    </p>
+                    <MobileVirtualList
+                      items={split.superseded}
+                      getKey={(r) => r.id}
+                      gap={6}
+                      estimateHeight={52}
+                      ariaLabel={`${split.superseded.length} superseded rows, kept as a record.`}
+                      renderItem={(r) => (
+                        <OutboxRowCard
+                          row={r}
+                          maxAttempts={maxAttempts}
+                          sending={requeue.sendingId === r.id}
+                          note={requeue.notes[r.id]}
+                          open={expanded.isOpen(r)}
+                          onToggle={() => expanded.toggle(r)}
+                          onSendAgain={() => void requeue.sendAgain(r.id)}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
+              </div>
             )}
 
             {/* The five words on the badges, explained once. Taken from the

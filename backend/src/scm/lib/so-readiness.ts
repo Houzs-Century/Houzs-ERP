@@ -8,36 +8,59 @@
 //   - PATCH /:docNo/items/:itemId/stock-status (manual READY toggle)
 //   - GET /mfg-sales-orders (list aggregate — emits stock_remark per row)
 //
-// Remark output — states WHAT IS STILL MISSING (owner, 2026-08-16). It used to
-// state what was READY, and that phrasing let the label contradict the ship gate
-// computed three lines above it:
+// Remark output — names WHAT IS READY. It is the warehouse's "Remark 2"
+// vocabulary, reproduced from AutoCount (docs/stock-reconciliation.md §2), and
+// staff scan the column to know what they can PULL now without asking the
+// salesperson. Confirmed by the owner on 2026-08-16 against real orders.
 //
-//   · An accessory-only SO with one short accessory line has mainCount === 0, so
-//     isMainReady was VACUOUSLY true, so the remark read "READY (PARTIAL)" while
-//     isShipReady was false. The owner hit this on a real order and called it
-//     骗人 — a lie. 「只有配件,有一行没齐 → READY (PARTIAL) ← 骗人 / 明说还缺什么」
-//   · A service-only SO had every line `continue`d, so it looked identical to an
-//     SO with no lines at all and could never be ready. The owner's ruling:
-//     「如果那张单只有 accessories 的话，accessories ready 应该直接呈现 ready。
-//       如果它是 service 的单，也应该直接 ready」
+//   ""              — nothing is ready yet, or the SO has no live lines at all.
+//   "READY"         — every live line is in: MAIN + accessories + service.
+//   "PARTIAL"       — every MAIN line is in, an accessory is still pending. The
+//                     order can still ship; accessories never block delivery.
+//   "BEDFRAME"      — that category is fully in, another MAIN category is not.
+//   "MATTRESS/ACC"  — "/"-joined list of the groups that ARE in. Fixed order:
+//                     BEDFRAME, SOFA, MATTRESS, then ACC (§2.4 — AutoCount's
+//                     hand-typed Remark2 is order-insensitive, the ERP is the
+//                     canonical side).
 //
-// So the vocabulary is now:
-//   ""                            — the SO has NO live lines at all. Nothing to
-//                                   say, and (see isShipReady) nothing to ship.
-//   "READY"                       — everything that must be allocated IS. Covers
-//                                   an accessory-only SO with all accessories in,
-//                                   and a service-only SO (services carry no
-//                                   inventory, so there is nothing to wait for).
-//   "SHORT: ACCESSORY"            — the named categories are NOT all allocated.
-//   "SHORT: BEDFRAME, ACCESSORY"    Main cats first (sorted), ACCESSORY last.
+// TWO RULES THIS VOCABULARY MUST KEEP, both bought on 2026-08-16.
 //
-// The string NEVER contains the substring "READY" while anything is short — that
-// is the whole point of the rewrite, and soReadinessRemark.test.ts pins it.
+//  1. "PARTIAL" REQUIRES A MAIN LINE. It means "the main products are ready" —
+//     an SO with no main line has none, so nothing is ready and the cell says
+//     NOTHING. Never branch the label on bare isMainReady: that flag is
+//     VACUOUSLY TRUE at mainCount === 0, which is how an accessory-only SO with
+//     one short accessory came to read "READY (PARTIAL)" three lines above an
+//     isShipReady of false. The owner called it 骗人 — a lie.
+//     「只有配件,有一行没齐 → READY (PARTIAL) ← 骗人 / 明说还缺什么」
+//  2. A SERVICE-ONLY SO IS READY ON SIGHT. Service lines are COUNTED, never
+//     dropped: `continue` alone made such an SO byte-identical to one with no
+//     lines, so it could never be ready. Owner: 「如果那张单只有 accessories
+//     的话，accessories ready 应该直接呈现 ready。如果它是 service 的单，也应该
+//     直接 ready」
+//
+// The string never contains the substring "READY" while anything is short —
+// "PARTIAL" is the label, NOT "READY (PARTIAL)" (owner, 2026-08-16). That
+// invariant survives the ready-side vocabulary and soReadinessRemark.test.ts
+// pins it over every shape.
+//
+// HISTORY. Between 2026-08-16 morning (PR #2295) and this change the remark
+// named what was MISSING — "SHORT: BEDFRAME, ACCESSORY". That half was a
+// correct fix to a real lie applied to the wrong half of the function: the bug
+// was branching on isMainReady, not the direction of the vocabulary. Rule 1
+// above is that fix, kept. A stored remark or an AutoCount export from that
+// window can still read "SHORT: ...".
 // ----------------------------------------------------------------------------
 
 import { isServiceLine } from '../shared';
 
-export const MAIN_CATEGORIES = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
+/* Emission order for the ready list, and the source of MAIN_CATEGORIES so the
+   two cannot drift apart. docs/stock-reconciliation.md §2.4 records why the
+   order is fixed here: AutoCount holds "BEDFRAME/ACC" 31 times and
+   "ACC/BEDFRAME" twice for the same meaning, so the ERP is the canonical side
+   and the parity checker compares order-insensitively. */
+export const MAIN_CATEGORY_ORDER = ['BEDFRAME', 'SOFA', 'MATTRESS'] as const;
+
+export const MAIN_CATEGORIES = new Set<string>(MAIN_CATEGORY_ORDER);
 
 /** Normalise a free-text item_group to one of the known buckets. */
 export function normCategory(raw: string | null | undefined): string {
@@ -77,9 +100,9 @@ export type ReadinessSummary = {
   svcCount:     number;
   /** True when every MAIN line is READY (regardless of accessories).
    *  VACUOUSLY TRUE when there is no MAIN line — that is the right reading for
-   *  an accessory-only order and a trap everywhere else. Never label off this
-   *  flag (that is exactly the bug fixed on 2026-08-16); the ship gate is
-   *  isShipReady and the label is stockRemark. */
+   *  an accessory-only order and a trap everywhere else. Never read it BARE:
+   *  the ship gate is isShipReady, and the one place the label reads it
+   *  ("PARTIAL") pairs it with `mainCount > 0` for exactly this reason. */
   isMainReady:  boolean;
   /** True when the SO has at least one live line and every stock-bearing one —
    *  MAIN and accessory — is READY. Service-only SOs qualify: they have a live
@@ -88,10 +111,16 @@ export type ReadinessSummary = {
   /** THE ship gate — use this, never bare isMainReady (see below). False for a
    *  line-less SO. */
   isShipReady:  boolean;
-  /** UI label per the contract above (empty string when SO has no lines). */
+  /** UI label per the contract above (empty string when nothing is ready). */
   stockRemark:  string;
-  /** Category labels still short of READY, dedup'd, MAIN cats sorted with the
-   *  single collapsed "ACCESSORY" entry last. This IS what stockRemark names. */
+  /** Groups that ARE fully allocated, in emission order (MAIN_CATEGORY_ORDER,
+   *  then the single collapsed "ACC" entry). This IS what stockRemark names,
+   *  except in the two states that have their own word — "READY" and
+   *  "PARTIAL". Empty when nothing is ready yet. */
+  readyCategories: string[];
+  /** Groups still short of READY — the complement, kept for internal callers
+   *  that need to ask "what are we waiting on". MAIN cats sorted, the single
+   *  collapsed "ACC" entry last. NOT what the label names. */
   pendingCategories: string[];
 };
 
@@ -102,9 +131,11 @@ export type ReadinessSummary = {
 export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
   const live = lines.filter((l) => !l.cancelled);
   let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0;
-  /* MAIN categories carrying at least one unallocated line — the remark names
-     THESE. (The old per-category total/ready tally that fed the "what IS ready"
-     string is gone with that string.) */
+  /* Per-MAIN-category totals, so the label can name the categories that are
+     FULLY in ("BEDFRAME" when every bedframe line is READY while a mattress
+     line on the same SO is not). A category is ready only when total === ready;
+     one short line among ten disqualifies it. */
+  const mainByCat = new Map<string, { total: number; ready: number }>();
   const pendingMainCats = new Set<string>();
   let anyAccPending = false;
 
@@ -130,8 +161,11 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
     const isReady = l.stock_status === 'READY';
     if (isMain) {
       mainCount += 1;
-      if (isReady) mainReady += 1;
+      const cell = mainByCat.get(cat) ?? { total: 0, ready: 0 };
+      cell.total += 1;
+      if (isReady) { mainReady += 1; cell.ready += 1; }
       else pendingMainCats.add(cat);
+      mainByCat.set(cat, cell);
     } else {
       accCount += 1;
       if (isReady) accReady += 1;
@@ -170,26 +204,41 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
      ship, per the owner's ruling. */
   const isShipReady  = mainCount > 0 ? isMainReady : isFullyReady;
 
-  /* What is SHORT — MAIN cats with any unallocated line (sorted), then the one
-     collapsed ACCESSORY entry. Services never appear: they have no stock. */
-  const pc = [...pendingMainCats].sort();
-  if (anyAccPending) pc.push('ACCESSORY');
+  /* What IS ready — MAIN cats with every line allocated, in emission order,
+     then the one collapsed ACC entry. Services never appear in either list:
+     they carry no stock, so there is nothing for them to be ready FOR. */
+  const readyCats: string[] = [];
+  for (const cat of MAIN_CATEGORY_ORDER) {
+    const cell = mainByCat.get(cat);
+    if (cell && cell.total > 0 && cell.ready === cell.total) readyCats.push(cat);
+  }
+  if (accCount > 0 && accReady === accCount) readyCats.push('ACC');
 
-  /* Stock remark — names WHAT IS MISSING. Deliberately NOT branched on
-     isMainReady: that flag is vacuously true for an SO with no main line, which
-     is how an accessory-only SO with a short line came to be labelled
-     "READY (PARTIAL)" while its own ship gate said false. */
+  /* The complement — what is still short. Not the label; kept for callers that
+     ask "what are we waiting on" (the probe scripts do). */
+  const pc = [...pendingMainCats].sort();
+  if (anyAccPending) pc.push('ACC');
+
+  /* Stock remark — names WHAT IS READY.
+
+     Deliberately NOT branched on bare isMainReady. That flag is VACUOUSLY TRUE
+     when mainCount === 0, and reading it alone is exactly how an accessory-only
+     SO with one short accessory came to print "READY (PARTIAL)" beside its own
+     isShipReady of false. `mainCount > 0 &&` is that fix, and it is the
+     difference between this and the pre-2026-08-16 code: PARTIAL asserts "the
+     MAIN products are in", so an SO with no main line can never earn it and
+     falls through to the ready list — which is empty while its accessories are
+     short, so the cell says nothing. */
   let stockRemark: string;
   if (liveCount === 0) {
     stockRemark = '';                       // no lines — say nothing, ship nothing
   } else if (isFullyReady) {
     stockRemark = 'READY';                  // incl. service-only and acc-only-all-in
+  } else if (mainCount > 0 && isMainReady) {
+    stockRemark = 'PARTIAL';                // every MAIN in, an accessory is not
   } else {
-    /* pc is non-empty here by construction: liveCount > 0 and !isFullyReady can
-       only mean a main or an accessory line is short. The fallback exists so a
-       future bucket added above can never emit a bare "SHORT: ". */
-    stockRemark = pc.length > 0 ? `SHORT: ${pc.join(', ')}` : '';
+    stockRemark = readyCats.join('/');      // '' when nothing is ready yet
   }
 
-  return { mainCount, mainReady, accCount, accReady, svcCount, isMainReady, isFullyReady, isShipReady, stockRemark, pendingCategories: pc };
+  return { mainCount, mainReady, accCount, accReady, svcCount, isMainReady, isFullyReady, isShipReady, stockRemark, readyCategories: readyCats, pendingCategories: pc };
 }

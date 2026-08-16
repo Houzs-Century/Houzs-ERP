@@ -181,16 +181,66 @@ function acRows(total: number): AcOutboxRow[] {
     if (i % 5 === 2) {
       return {
         ...base,
-        op: "create_so",
-        doc_type: "SO",
-        doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
+        op: "so_to_do",
+        doc_type: "DO",
+        doc_no: `HC-DO-2608-${String(i).padStart(4, "0")}`,
         status: "failed",
         state: "failed",
         attempts: 6,
-        reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent",
+        /* THE WALL, verbatim. AcSyncService started appending the account book's
+           own numbers per line on 2026-08-16 and the owner read the result on
+           the live page. The lab has to carry the real string or it measures a
+           row nobody has. */
+        reason:
+          "Gave up after 6 attempts. Last error: Invalid transfer item. || source SO lines as the "
+          + "book holds them: 905348 on SO HC-SO-2608-002 [AK-ULTIMATE MATT (K)] Qty=1.00000000 "
+          + "TransferedQty=0.00000000 Transferable=T docCancelled=F outstanding=1.00000000; "
+          + "905349 on SO HC-SO-2608-002 [HOK-1013 (K)] Qty=1.00000000 TransferedQty=0.00000000 "
+          + "Transferable=T docCancelled=F outstanding=1.00000000",
         reason_kind: null,
         needs_attention: true,
         can_requeue: true,
+      };
+    }
+    if (i % 5 === 3) {
+      return {
+        ...base,
+        op: "do_to_iv",
+        doc_type: "IV",
+        doc_no: `HC-IV-2608-${String(i).padStart(4, "0")}`,
+        status: "skipped",
+        state: "skipped",
+        /* THE SENTENCE AS THE QUEUE STILL HOLDS IT. recordParentlessCreate no
+           longer writes the SDK method name, and scm.autocount_outbox is
+           append-only — every row written before that change keeps it, so this
+           is what the page has to cope with, not what the writer now produces. */
+        reason:
+          "created with no source delivery order, so there is no source document to transfer "
+          + "from. AutoCount builds a DO / GRN / Invoice only by transferring a source document's "
+          + "lines (AddPartialTransferDetail is the SDK's only primitive), so this document "
+          + "cannot be created in the account book at all and will stay ERP-only.",
+        reason_kind: "no-source-document",
+        needs_attention: true,
+        can_requeue: false,
+      };
+    }
+    if (i % 5 === 4) {
+      return {
+        ...base,
+        op: "so_to_do",
+        doc_type: "DO",
+        /* Deliberately the SAME two document numbers, repeatedly: his live page
+           had HC-DO-2608-001 and -002 each appearing twice, which is what makes
+           a list of history read as a list of problems. */
+        doc_no: `HC-DO-2608-00${(i % 2) + 1}`,
+        status: "skipped",
+        state: "requeued",
+        reason:
+          "[re-queued 2026-08-16T02:00:00.000Z -> outbox ob-x] refused, nothing sent "
+          + "(ItemCodeError): 9028-1S resolves to no single AutoCount item",
+        reason_kind: "item-code",
+        needs_attention: false,
+        can_requeue: false,
       };
     }
     return {
@@ -214,14 +264,18 @@ function acPayload(total: number): AcOutboxResponse {
   const rows = acRows(total);
   const failed = rows.filter((r) => r.state === "failed").length;
   const skipped = rows.filter((r) => r.state === "skipped").length;
+  const requeued = rows.filter((r) => r.state === "requeued").length;
   return {
     writeback: { value: "1", on: true, scope: "1" },
     counts: {
       pending: 0,
-      sent: rows.length - failed - skipped,
+      sent: rows.length - failed - skipped - requeued,
       failed,
       skipped,
-      requeued: 0,
+      requeued,
+      /* Re-queued rows are NOT attention — their documents went through under a
+         newer row. Counting them here is the phantom-failure bug #2189 left
+         behind, and the lab must not reproduce a shape the server cannot send. */
       attention: failed + skipped,
       total: rows.length,
     },

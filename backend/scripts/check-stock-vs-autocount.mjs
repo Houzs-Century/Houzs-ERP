@@ -106,7 +106,16 @@ function summariseReadiness(lines) {
   const isFullyReady = (mainCount + accCount) > 0 && mainReady === mainCount && accReady === accCount;
   if (mainCount + accCount === 0) return "";
   if (isFullyReady) return "READY";
-  if (isMainReady) return "READY (PARTIAL)";
+  /* `mainCount > 0 &&` is load-bearing, and this copy was missing it until
+     2026-08-16: isMainReady is VACUOUSLY true when the SO has no main line, so
+     an accessory-only order with one short accessory scored as the partial
+     state and was counted "not falsifiable per category" instead of compared.
+     PARTIAL asserts "the MAIN products are in" — an order with no main line
+     cannot earn it and falls through to the (empty) ready list.
+     The token is the bare word, matching the ERP since 2026-08-16 evening;
+     AutoCount's corpus holds the older "READY (PARTIAL)" spelling and `canon`
+     below folds the two together. */
+  if (mainCount > 0 && isMainReady) return "PARTIAL";
   const readyCats = [];
   for (const cat of ["BEDFRAME", "SOFA", "MATTRESS"]) {
     const cell = mainByCat.get(cat);
@@ -422,8 +431,17 @@ async function main() {
      up as "BEDFRAME/ACC" 31 times and "ACC/BEDFRAME" twice. Comparing the raw
      strings would report the second spelling as a disagreement when the two
      systems in fact agree. Order-insensitive is the honest comparison; the
-     raw-string count is kept beside it so the cosmetic gap stays visible. */
-  const canon = (s) => (s || "").split("/").map((t) => t.trim()).filter(Boolean).sort().join("/");
+     raw-string count is kept beside it so the cosmetic gap stays visible.
+
+     Second spelling difference, same shape: AutoCount holds "READY (PARTIAL)"
+     for the state the ERP has called the bare "PARTIAL" since 2026-08-16. Same
+     meaning, one generation apart, so it is folded here rather than counted as
+     a disagreement — a stored remark cannot be re-typed retroactively. */
+  const canon = (s) => {
+    const t = (s || "").trim().toUpperCase();
+    if (t === "READY (PARTIAL)") return "PARTIAL";
+    return (s || "").split("/").map((x) => x.trim()).filter(Boolean).sort().join("/");
+  };
 
   const matrix = new Map();
   const mismatches = [];
