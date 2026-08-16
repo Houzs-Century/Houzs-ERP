@@ -65,10 +65,34 @@ SHIPPED(4) → DELIVERED(5) → INVOICED(6) → CLOSED(7)`. `CANCELLED` and `ON_
 are side states and are deliberately UNRANKED.
 
 **There are TWO write paths to this column, and only one passes the guard.**
-The guard's own header says so: the AUTO state machine
-(`so-stock-allocation.ts`, `so-delivery-sync.ts`, `routes/delivery-returns.ts`)
-writes the column DIRECTLY and never calls `soStatusTransitionError`. So every
-row below names both.
+The guard's own header says so: the AUTO state machine writes the column
+DIRECTLY and never calls `soStatusTransitionError`. So every row below names
+both.
+
+**The automatic half is smaller than the guard's comment suggests — exactly TWO
+modules, writing exactly THREE values between them:**
+
+| Module | Writes | When |
+|---|---|---|
+| `scm/lib/so-stock-allocation.ts` | `READY_TO_SHIP` (advance), `CONFIRMED` (regress) | stock allocation makes the SO ship-ready, or stops doing so |
+| `scm/lib/so-delivery-sync.ts` | `DELIVERED` (advance), `READY_TO_SHIP` (release) | every live line becomes fully covered, or stops being (a DO is cancelled, a line shrinks) |
+
+Both go through `advanceSoGeneration`, which stands down while a human holds the
+SO's edit lease. `routes/delivery-returns.ts` is named alongside them in the
+guard's comment and it IS a trigger, but it writes no status itself — it calls
+`syncSoDeliveredFromDo`, one module down. Verified by grep: `delivery-returns.ts`
+does not reference `mfg_sales_orders` at all.
+
+**Nothing in this tree automatically writes `SHIPPED`, `INVOICED` or `CLOSED` on
+a Sales Order.** All three are manual-only. That is worth holding next to §0.6:
+the pill an operator reads says "Invoiced" off `lifecycle_state`, while the
+column behind it has not moved and will not move on its own.
+
+`so-delivery-sync`'s release target is `READY_TO_SHIP`, not `SHIPPED` — the enum
+has no `PARTIALLY_DELIVERED`, and only an SO whose stored status is *exactly*
+`DELIVERED` is released. INVOICED / CLOSED / ON_HOLD / CANCELLED are left to
+manual control: an invoiced order is not un-delivered by a DO edit, finance
+unwinds the SI first.
 
 | Value | In the owner's words | Set MANUALLY by | Set AUTOMATICALLY by | What it blocks |
 |---|---|---|---|---|
@@ -76,10 +100,10 @@ row below names both.
 | `CONFIRMED` | the order is real | `PATCH /:docNo/status` (the list's "Confirm" button) | **regress** from `READY_TO_SHIP` by `recomputeSoStockAllocation` when the order stops being ship-ready | — |
 | `IN_PRODUCTION` | proceeded | `PATCH /:docNo/status` — this is the transition that stamps `proceeded_at` ONCE | — | — |
 | `READY_TO_SHIP` | stock is in, call the customer | `PATCH /:docNo/status` | **advance** by `recomputeSoStockAllocation` when `isShipReady` and current is `CONFIRMED` or `IN_PRODUCTION` | — |
-| `SHIPPED` | goods left | `PATCH /:docNo/status` | `so-delivery-sync.ts` on DO ship | — |
-| `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` when every line is fully delivered | — |
-| `INVOICED` | billed | `PATCH /:docNo/status` | invoice post path | — |
-| `CLOSED` | done | `PATCH /:docNo/status` | — | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
+| `SHIPPED` | goods left | `PATCH /:docNo/status` | **nothing** | — |
+| `DELIVERED` | customer has it | `PATCH /:docNo/status` | `so-delivery-sync.ts` — advance, when every live line is fully covered and the current status is one of CONFIRMED / IN_PRODUCTION / READY_TO_SHIP / SHIPPED | — |
+| `INVOICED` | billed | `PATCH /:docNo/status` | **nothing** | — |
+| `CLOSED` | done | `PATCH /:docNo/status` | **nothing** | Terminal for MRP/allocation (`SO_TERMINAL_STATES`): the order stops being demand. |
 | `CANCELLED` | killed | `PATCH /:docNo/status` | — | **FINAL.** Cannot be reactivated (`so_cancelled_final`, 409) — the deposit already became customer credit. If it also reached AutoCount, a second guard refuses first (`cancel_is_final`, 409) because the 2.2 SDK has no un-cancel. Terminal for MRP/allocation. |
 | `ON_HOLD` | paused | `PATCH /:docNo/status` | — | Blocks conversion: the From-SO PO picker filters ON_HOLD out. Unranked, so it may be entered from anywhere and resumed to anywhere — **except `ON_HOLD → DRAFT`, which is refused** (409), because reaching DRAFT is what unlocks the cascading `DELETE`. |
 
