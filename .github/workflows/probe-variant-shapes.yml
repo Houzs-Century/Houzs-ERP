@@ -17,6 +17,11 @@ on:
         required: true
         default: ""
         type: string
+      wh:
+        description: "restrict the printed demand lines to one warehouse id (blank = all)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: probe-variant-shapes
