@@ -33,9 +33,17 @@ coherent (`inventory_balances` is a view with no id, so it orders by its full
 group-by tuple). The cap and the guard are deleted rather than re-tuned — a bigger
 `.limit()` is the same bug with a bigger wrong number. The test fake now enforces
 the real 1000-row ceiling, so a fixture larger than the cap can only be read by
-code that pages. Downstream, `soDeliverableRemaining` now chunks its four IN-lists:
-MRP hands it ~2,800 doc numbers and ~13,900 uuids where it used to get ~1000, which
-would have been a 414 rather than a query.
+code that pages.
+
+**The downstream call paging forced open.** `soDeliverableRemaining` puts its
+argument straight into `.in('doc_no', …)` and the resulting line ids into
+`.in('so_item_id', …)`. Paging demand takes it from ~700 docs to ~2,800 docs /
+~13,900 uuids — a ~500KB request line, i.e. a 414 rather than a query, which would
+have taken MRP from wrong to broken. MRP now calls it in batches of 200 docs and
+merges the (disjoint, so_item_id-keyed) result maps. Batched at the CALLER on
+purpose: every other caller passes a handful of docs, so the scale problem is
+MRP's, and 200 docs reproduces the ~1000-line-per-call shape this path has always
+run against instead of imposing an untested one on the DO picker and convert flow.
 
 **Ref.** fix/mrp-paging-and-strict-variants, 2026-08-16.
 

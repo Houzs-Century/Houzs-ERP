@@ -517,8 +517,34 @@ export async function computeMrp(
   // delivered-net-of-returns per line and drop any line with nothing left to
   // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
   // convert flow uses), so MRP can never disagree with the SO's remaining.
+  //
+  /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
+     above changed this call's scale by more than an order of magnitude: MRP used
+     to hand over the ~700 doc numbers riding on a 1000-row demand slice, and now
+     hands over every open sales order — ~2,800 docs / ~13,900 lines in prod on
+     2026-08-16. soDeliverableRemaining puts its argument straight into
+     `.in('doc_no', …)` and then puts the resulting line ids into
+     `.in('so_item_id', …)`; those are uuids, so the un-batched form is a ~500KB
+     request line. That is a 414, not a query — the page would have gone from
+     wrong to broken.
+
+     Batching HERE rather than inside soDeliverableRemaining is deliberate. Every
+     other caller (the DO picker, the convert flow) passes a handful of docs and
+     is unaffected, so the scale problem belongs to MRP, not to the shared
+     function — and a chunk size of 200 docs reproduces almost exactly the ~1000
+     lines per call that this code path has been running against in production all
+     along, rather than inventing an untested shape for every consumer.
+
+     Safe to split because the function is already per-document internally: it
+     groups by doc_no and walks each SO's own build order ("the walk MUST run per
+     doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
+     partial maps is a union of disjoint key sets. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
-  const deliverable = await soDeliverableRemaining(sb, demandDocNos);
+  const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
+  for (let i = 0; i < demandDocNos.length; i += 200) {
+    const part = await soDeliverableRemaining(sb, demandDocNos.slice(i, i + 200));
+    for (const [soItemId, d] of part) deliverable.set(soItemId, d);
+  }
   const deliveredNetOf = (soItemId: string): number => {
     const d = deliverable.get(soItemId);
     if (!d) return 0;
