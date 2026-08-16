@@ -71,3 +71,23 @@ export function effectiveLineStockStatus(
   if (stored === 'PARTIAL') return 'PARTIAL';
   return 'PENDING';
 }
+
+/**
+ * The same verdict for a whole page of lines, keyed by line id.
+ *
+ * `coverage` is `mrpLineCoverage(...)`'s output, or `null` when the caller has
+ * no MRP result at all (computeMrp is best-effort in every handler that runs
+ * it). `null` is not "no coverage for this line" — it is "no MRP ran" — and
+ * both collapse to the same fail-soft answer: the stored value stands.
+ */
+export function effectiveStockByLine(
+  lines: Array<{ id: string; stock_status?: string | null }>,
+  coverage: Map<string, { source: string }> | null,
+): Map<string, EffectiveStockStatus> {
+  const out = new Map<string, EffectiveStockStatus>();
+  for (const l of lines) {
+    const live = (coverage?.get(l.id)?.source ?? null) as LiveStockState;
+    out.set(l.id, effectiveLineStockStatus(l.stock_status ?? null, live));
+  }
+  return out;
+}
