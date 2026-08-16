@@ -114,10 +114,13 @@ describe('the rollup the owner reads, fed the two ways', () => {
    helper nobody calls is exactly how that ships again. */
 describe('the SO list rolls up the shared rule, not a raw stored column', () => {
   it('the list readiness rollup is fed the effective status, not the stored column', () => {
-    expect(mfgSalesOrders).toContain('const effective = effectiveStockByLine(');
-    expect(mfgSalesOrders).toContain("stock_status: effective.get(it.id) ?? 'PENDING',");
-    // The pre-fix line. If this comes back, the board has its own opinion again.
+    // The rollup's input is built by the shared module, with the live coverage.
+    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows ?? [], mrpForList ? mrpLineCoverage(mrpForList) : null)');
+    /* The pre-fix shape: the handler building ReadinessLine rows itself off the
+       raw stored column. If any of these comes back the board has its own
+       opinion again, which is the whole defect. */
     expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status, cancelled:');
+    expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status });');
   });
 
   it('both line-detail handlers publish the verdict, so the pill cannot compute its own', () => {
